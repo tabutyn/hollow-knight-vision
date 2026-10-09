@@ -3055,10 +3055,25 @@ final class GroundHypothesisTracker {
                 }
             }
             guard !errors.isEmpty else { return nil }
-            let inliers = errors.values.filter { $0.error <= 12 }
-            return .init(tested: errors.count, inliers: inliers.count,
-                horizontalSpread: (inliers.map(\.x).max() ?? 0) - (inliers.map(\.x).min() ?? 0),
-                error: errors.values.reduce(0) { $0 + min(32, $1.error) } / CGFloat(errors.count))
+            var inlierCount = 0
+            var minimumInlierX = CGFloat.greatestFiniteMagnitude
+            var maximumInlierX = -CGFloat.greatestFiniteMagnitude
+            var totalError = CGFloat.zero
+            for value in errors.values {
+                totalError += min(CGFloat(32), value.error)
+                guard value.error <= 12 else { continue }
+                inlierCount += 1
+                minimumInlierX = min(minimumInlierX, value.x)
+                maximumInlierX = max(maximumInlierX, value.x)
+            }
+            let horizontalSpread = inlierCount > 0 ? maximumInlierX - minimumInlierX : 0
+            let averageError = totalError / CGFloat(errors.count)
+            return GroundGlobalCorrectionPolicy.Quality(
+                tested: errors.count,
+                inliers: inlierCount,
+                horizontalSpread: horizontalSpread,
+                error: averageError
+            )
         }
         let refinement = GroundPoseRefinementSearch.offset(radius: refinementRadius,
             quality: refinementQuality) ?? .init(dx: 0, dy: 0)
