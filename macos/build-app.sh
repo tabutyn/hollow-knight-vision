@@ -21,6 +21,11 @@ cp "$script_dir/Resources/HollowKnightVision.icns" \
 rm -rf "$contents_dir/Resources/TrainingPython"
 cp -R "$script_dir/TrainingPython" "$contents_dir/Resources/TrainingPython"
 cp "$script_dir/Info.plist" "$contents_dir/Info.plist"
+build_version=$(git -C "$script_dir" rev-list --count HEAD 2>/dev/null || print 1)
+if [[ ! "$build_version" =~ '^[0-9]+$' ]]; then
+  build_version=1
+fi
+plutil -replace CFBundleVersion -string "$build_version" "$contents_dir/Info.plist"
 python3 - "$script_dir" "$contents_dir/Resources/runtime-build-info.json" <<'PY'
 import hashlib, json, pathlib, subprocess, sys
 root = pathlib.Path(sys.argv[1])
