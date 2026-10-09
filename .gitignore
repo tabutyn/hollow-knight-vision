@@ -18,6 +18,7 @@ artifacts/
 *.mov
 *.mp4
 !artwork/app-icon-source.png
+!artwork/app-icon-monocle-overlay.png
 **/labeling-v1/
 **/training-v1/datasets/
 **/atlases/
