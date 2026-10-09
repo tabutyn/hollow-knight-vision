@@ -55,10 +55,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .filter { $0.processIdentifier != currentPID }
         .forEach { $0.terminate() }
 
-        if let iconURL = Bundle.main.url(
-            forResource: "HollowKnightVision",
-            withExtension: "icns"
-        ), let icon = NSImage(contentsOf: iconURL) {
+        if let iconFilename = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleIconFile"
+        ) as? String,
+           let resourceURL = Bundle.main.resourceURL,
+           let icon = NSImage(contentsOf: resourceURL.appendingPathComponent(iconFilename)) {
             NSApp.applicationIconImage = icon
         }
         NSApp.setActivationPolicy(.regular)

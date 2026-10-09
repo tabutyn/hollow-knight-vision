@@ -8,6 +8,11 @@ swift build -c release --package-path "$script_dir" --scratch-path "$scratch_dir
 app_dir="$script_dir/build/Hollow Knight Vision.app"
 contents_dir="$app_dir/Contents"
 mkdir -p "$contents_dir/MacOS" "$contents_dir/Resources" "$contents_dir/Helpers"
+build_version=$(git -C "$script_dir" rev-list --count HEAD 2>/dev/null || print 1)
+if [[ ! "$build_version" =~ '^[0-9]+$' ]]; then
+  build_version=1
+fi
+icon_filename="HollowKnightVision-$build_version.icns"
 cp "$scratch_dir/release/HollowKnightVision" "$contents_dir/MacOS/HollowKnightVision"
 cp "$scratch_dir/release/HollowKnightVisionTrainer" "$contents_dir/Helpers/HollowKnightVisionTrainer"
 cp "$script_dir/Sources/HollowKnightVision/Resources/labeling-contracts.json" \
@@ -16,16 +21,14 @@ cp "$script_dir/Sources/HollowKnightVision/Resources/hud-stencil-template.json" 
   "$contents_dir/Resources/hud-stencil-template.json"
 cp "$script_dir/Sources/HollowKnightVision/Resources/menu-stencil-positions.json" \
   "$contents_dir/Resources/menu-stencil-positions.json"
+rm -f "$contents_dir/Resources"/HollowKnightVision*.icns
 cp "$script_dir/Resources/HollowKnightVision.icns" \
-  "$contents_dir/Resources/HollowKnightVision.icns"
+  "$contents_dir/Resources/$icon_filename"
 rm -rf "$contents_dir/Resources/TrainingPython"
 cp -R "$script_dir/TrainingPython" "$contents_dir/Resources/TrainingPython"
 cp "$script_dir/Info.plist" "$contents_dir/Info.plist"
-build_version=$(git -C "$script_dir" rev-list --count HEAD 2>/dev/null || print 1)
-if [[ ! "$build_version" =~ '^[0-9]+$' ]]; then
-  build_version=1
-fi
 plutil -replace CFBundleVersion -string "$build_version" "$contents_dir/Info.plist"
+plutil -replace CFBundleIconFile -string "$icon_filename" "$contents_dir/Info.plist"
 python3 - "$script_dir" "$contents_dir/Resources/runtime-build-info.json" <<'PY'
 import hashlib, json, pathlib, subprocess, sys
 root = pathlib.Path(sys.argv[1])
