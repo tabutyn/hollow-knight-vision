@@ -55,6 +55,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .filter { $0.processIdentifier != currentPID }
         .forEach { $0.terminate() }
 
+        if let iconURL = Bundle.main.url(
+            forResource: "HollowKnightVision",
+            withExtension: "icns"
+        ), let icon = NSImage(contentsOf: iconURL) {
+            NSApp.applicationIconImage = icon
+        }
         NSApp.setActivationPolicy(.regular)
         let initialFrame = NSScreen.main?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 900, height: 720)
