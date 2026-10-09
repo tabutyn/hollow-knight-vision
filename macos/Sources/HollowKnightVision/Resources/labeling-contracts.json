@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "defaultMaximum": 1,
+  "occurrences": [
+    { "classIdentifier": "shared.select-decoration", "allowedCounts": [0, 2] },
+    { "classIdentifier": "select-profile.clear-save" },
+    { "classIdentifier": "enemies.crawlid" },
+    { "classIdentifier": "enemies.vengfly" },
+    { "classIdentifier": "world.geo-deposit" }
+  ],
+  "pairs": [
+    {
+      "identifier": "yes-no",
+      "classIdentifiers": ["shared.yes", "shared.no"]
+    }
+  ],
+  "labelSets": [
+    { "contextIdentifier": "main-title", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "options", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "game-options", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "audio", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "video", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "screen-scale", "requiresAllContextObjects": true, "occurrenceOverrides": {
+      "screen-scale.screen-corner": { "minimum": 2, "maximum": 2 },
+      "screen-scale.scale": { "minimum": 1, "maximum": 1 },
+      "shared.select-decoration": { "minimum": 2, "maximum": 2 },
+      "shared.back": { "minimum": 1, "maximum": 1 }
+    } },
+    { "contextIdentifier": "brightness", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "video-advanced-settings", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "controller", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "remap-controller", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "controller-advanced-settings", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "keyboard", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "mods", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "achievements", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "extras", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "credits", "requiresAllContextObjects": false },
+    { "contextIdentifier": "hidden-dreams", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "the-grimm-troupe", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "lifeblood", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "godmaster", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "select-profile", "requiresAllContextObjects": true, "occurrenceOverrides": { "select-profile.clear-save": { "minimum": 0 }, "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "clear-save", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "pause", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "quit-to-menu", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
+    { "contextIdentifier": "inventory", "requiresAllContextObjects": true, "occurrenceOverrides": { "inventory.corner": { "minimum": 4, "maximum": 4 } } },
+    { "contextIdentifier": "game", "requiresAllContextObjects": true, "occurrenceOverrides": {
+      "game.geo": { "minimum": 0, "maximum": 1 },
+      "enemies.crawlid": { "minimum": 0 },
+      "enemies.vengfly": { "minimum": 0 },
+      "enemies.shade": { "minimum": 0, "maximum": 1 },
+      "world.geo-deposit": { "minimum": 0 },
+      "world.lifeblood-cacoon": { "minimum": 0, "maximum": 1 },
+      "world.sign": { "minimum": 0, "maximum": 1 }
+    } },
+    { "contextIdentifier": "quit-game", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } }
+  ]
+}

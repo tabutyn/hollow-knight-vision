@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
+    <Compile Include="../../src/HollowKnightVision.Windows.Host/BmpWriter.cs" Link="BmpWriter.cs" />
+  </ItemGroup>
+</Project>

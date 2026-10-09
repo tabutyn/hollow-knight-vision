@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>HollowKnightVision.Windows</AssemblyName>
+    <DisableRarCache>true</DisableRarCache>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
+    <ProjectReference Include="../HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj" />
+    <Content Include="../../../models/shared-object-model/**">
+      <Link>models/shared-object-model/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

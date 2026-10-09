@@ -1,0 +1,28 @@
+.DS_Store
+**/.build/
+**/bin/
+**/obj/
+**/.training-venv/
+**/__pycache__/
+**/.pytest_cache/
+artifacts/
+
+# Captures, labels, screenshots, recordings, and rebuilt datasets stay local.
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.gif
+*.tiff
+*.heic
+*.mov
+*.mp4
+**/labeling-v1/
+**/training-v1/datasets/
+**/atlases/
+**/routes/
+
+# Only the reviewed ONNX runtime model is distributed.
+*.pt
+*.mlmodel
+*.mlpackage/
