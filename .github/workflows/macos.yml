@@ -12,8 +12,10 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Swift tests
-        run: swift test --package-path macos
+      - name: Portable Swift tests
+        # MenuStencilTests audit a user-generated local screenshot/calibration
+        # corpus. The standalone repository intentionally does not distribute it.
+        run: swift test --package-path macos --skip MenuStencilTests
       - name: Python unit tests
         run: |
           python3 macos/test-analyze-input-paths.py
