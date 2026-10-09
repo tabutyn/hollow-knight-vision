@@ -2138,10 +2138,13 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         width: Int = 64,
         height: Int = 36
     ) -> LowResolutionMotionGrid {
-        let pixels = (0..<(width * height)).map { index -> UInt8 in
+        var pixels = [UInt8]()
+        pixels.reserveCapacity(width * height)
+        for index in 0..<(width * height) {
             let x = index % width
             let y = index / width
-            return UInt8((x * seed + y * 73 + x * y * 11 + seed * 3) & 0xff)
+            let value = (x * seed + y * 73 + x * y * 11 + seed * 3) & 0xff
+            pixels.append(UInt8(value))
         }
         return LowResolutionMotionGrid(width: width, height: height, luma: pixels)
     }
