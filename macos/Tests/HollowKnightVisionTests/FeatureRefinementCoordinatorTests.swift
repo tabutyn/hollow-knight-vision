@@ -82,17 +82,19 @@ final class FeatureRefinementCoordinatorTests: XCTestCase {
         let rejected = expectation(description: "invalidated correction rejected")
         rejected.isInverted = true
         let request = FeatureRefinementRequest(generation: 3, timestamp: 1)
+        let releaseWork = DispatchSemaphore(value: 0)
 
         owner.sync {
             coordinator.didPublishRegistration(request)
             coordinator.submit(request, work: {
                 started.fulfill()
-                Thread.sleep(forTimeInterval: 0.08)
+                _ = releaseWork.wait(timeout: .now() + 1)
                 return 1
             }, receive: { _ in rejected.fulfill() })
         }
         wait(for: [started], timeout: 1)
         owner.sync { coordinator.invalidate(before: 4) }
+        releaseWork.signal()
         wait(for: [rejected], timeout: 0.2)
     }
 }
