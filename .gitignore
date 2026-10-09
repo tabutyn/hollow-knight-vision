@@ -17,6 +17,7 @@ artifacts/
 *.heic
 *.mov
 *.mp4
+!artwork/app-icon-source.png
 **/labeling-v1/
 **/training-v1/datasets/
 **/atlases/

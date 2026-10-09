@@ -112,6 +112,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     // No-menu gameplay is the common case. Probe every menu set at 10 Hz;
     // after a scene locks, its single probe returns to capture cadence.
     private let menuStencilTracker = MenuStencilTracker(
+        loadsDeployedCatalog: false,
         minimumSearchInterval: 0.1,
         selectorCalibrationURL: MenuStencilCalibration.writableURL(),
         selectorCalibrationMirrorURL: MenuStencilCalibration.projectMirrorURL()
@@ -504,6 +505,11 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             }
         }
         accumulator.smoothing = 1
+        // A mature local stencil corpus can take minutes to rebuild. Loading
+        // it synchronously here prevents AppKit from creating the first window
+        // and makes a healthy running game look undiscovered. The existing
+        // reload queue publishes the finished catalog onto the sample queue.
+        refreshMenuStencilCatalog()
         reloadActiveObjectModels()
         refreshAtlasSavedStates()
     }
@@ -2294,7 +2300,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                 return SourceWindowIdentity.isCaptureWindow(
                     applicationName: window.owningApplication?.applicationName,
                     bundleIdentifier: window.owningApplication?.bundleIdentifier,
-                    windowLayer: window.windowLayer
+                    windowLayer: window.windowLayer,
+                    windowSize: window.frame.size
                 )
             }
             .max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }

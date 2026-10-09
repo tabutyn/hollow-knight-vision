@@ -1943,12 +1943,13 @@ final class MenuStencilTracker {
 
     init(
         catalog: MenuStencilCatalog? = nil,
+        loadsDeployedCatalog: Bool = true,
         minimumSearchInterval: Double = 0,
         selectorCalibrationURL: URL? = nil,
         selectorCalibrationMirrorURL: URL? = nil
     ) {
-        let usesDeployedCatalog = catalog == nil
-        let resolvedCatalog = catalog ?? .humanLabeled
+        let usesDeployedCatalog = catalog == nil && loadsDeployedCatalog
+        let resolvedCatalog = usesDeployedCatalog ? .humanLabeled : catalog
         self.catalog = resolvedCatalog
         self.selectorCalibrationURL = Self.resolvedSelectorCalibrationURL(
             usesDeployedCatalog: usesDeployedCatalog,

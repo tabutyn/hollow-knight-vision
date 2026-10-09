@@ -16,6 +16,8 @@ cp "$script_dir/Sources/HollowKnightVision/Resources/hud-stencil-template.json" 
   "$contents_dir/Resources/hud-stencil-template.json"
 cp "$script_dir/Sources/HollowKnightVision/Resources/menu-stencil-positions.json" \
   "$contents_dir/Resources/menu-stencil-positions.json"
+cp "$script_dir/Resources/HollowKnightVision.icns" \
+  "$contents_dir/Resources/HollowKnightVision.icns"
 rm -rf "$contents_dir/Resources/TrainingPython"
 cp -R "$script_dir/TrainingPython" "$contents_dir/Resources/TrainingPython"
 cp "$script_dir/Info.plist" "$contents_dir/Info.plist"

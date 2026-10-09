@@ -5,6 +5,7 @@
     <UseWPF>true</UseWPF>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>HollowKnightVision.Windows</AssemblyName>
+    <ApplicationIcon>Resources\HollowKnightVision.ico</ApplicationIcon>
     <DisableRarCache>true</DisableRarCache>
   </PropertyGroup>
   <ItemGroup>

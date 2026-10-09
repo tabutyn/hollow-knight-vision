@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Identifies the running Hollow Knight process from its owning application.
@@ -21,9 +22,15 @@ enum SourceWindowIdentity {
     static func isCaptureWindow(
         applicationName: String?,
         bundleIdentifier: String?,
-        windowLayer: Int
+        windowLayer: Int,
+        windowSize: CGSize
     ) -> Bool {
-        windowLayer == 0 && isHollowKnight(
+        windowLayer == 0
+            && windowSize.width.isFinite
+            && windowSize.height.isFinite
+            && windowSize.width >= 320
+            && windowSize.height >= 180
+            && isHollowKnight(
             applicationName: applicationName,
             bundleIdentifier: bundleIdentifier
         )

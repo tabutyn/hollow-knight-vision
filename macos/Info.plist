@@ -4,6 +4,7 @@
 <dict>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleExecutable</key><string>HollowKnightVision</string>
+  <key>CFBundleIconFile</key><string>HollowKnightVision.icns</string>
   <key>CFBundleIdentifier</key><string>com.ballroller.hollow-knight-vision</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Hollow Knight Vision</string>

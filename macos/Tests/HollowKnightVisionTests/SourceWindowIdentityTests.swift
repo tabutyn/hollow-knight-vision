@@ -38,7 +38,8 @@ final class SourceWindowIdentityTests: XCTestCase {
         XCTAssertTrue(SourceWindowIdentity.isCaptureWindow(
             applicationName: "Hollow Knight",
             bundleIdentifier: "unity.Team Cherry.Hollow Knight",
-            windowLayer: 0
+            windowLayer: 0,
+            windowSize: CGSize(width: 1470, height: 923)
         ))
     }
 
@@ -46,7 +47,23 @@ final class SourceWindowIdentityTests: XCTestCase {
         XCTAssertFalse(SourceWindowIdentity.isCaptureWindow(
             applicationName: "Hollow Knight",
             bundleIdentifier: "unity.Team Cherry.Hollow Knight",
-            windowLayer: 1
+            windowLayer: 1,
+            windowSize: CGSize(width: 1470, height: 923)
         ))
+    }
+
+    func testCaptureWindowRejectsStartupUtilityWindows() {
+        for size in [
+            CGSize(width: 1470, height: 33),
+            CGSize(width: 1470, height: 44),
+            CGSize(width: 64, height: 64),
+        ] {
+            XCTAssertFalse(SourceWindowIdentity.isCaptureWindow(
+                applicationName: "Hollow Knight",
+                bundleIdentifier: "unity.Team Cherry.Hollow Knight",
+                windowLayer: 0,
+                windowSize: size
+            ))
+        }
     }
 }
