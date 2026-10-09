@@ -1,0 +1,13 @@
+Generator: built-in image_gen tool
+Date: 2026-10-09
+Edit target: artwork/app-icon-source.png at revision 2a6751e
+
+Use case: precise-object-edit
+Asset type: Hollow Knight Vision desktop application icon, square 1024 x 1024.
+Input image is the edit target: the existing approved app icon.
+Primary request: make ONLY the monocle substantially more robotic and detailed. Replace the thin circular spectacle on the viewer's right eye with an unmistakable compact robot vision assembly.
+Preserve the existing large mask silhouette, exact horn shapes, thick black outer contour, flat pale white mask coloration and subtle original shading, left black eye, right black eye position, overall framing and clean solid white background. Do not redesign or render the mask in 3D. The edit is confined to the existing right-eye monocle and its nearby attachment area.
+Monocle design: bold layered dark graphite and brushed titanium housing, concentric stepped rings with clearly machined edges, 6-8 asymmetrical segmented armor plates around the outer bezel, visible inset hex screws, tiny vent slots, fine engraved circuit traces and tick marks. Add a small articulated mechanical hinge and two-piece temple arm to the right. The right eye remains a recognizable dark oval opening framed by the assembly; a restrained partial camera-shutter iris and small cyan optical sensor accents give it machine-vision character. Keep the eye opening mostly dark rather than filling it with a giant glowing orb. Use small cyan illuminated segments instead of one continuous thin neon loop. Include one small status diode and a compact rectangular electronic module on the outside of the ring.
+Style: polished precision-machined illustrated hardware integrated into the existing simple graphic icon. Mechanical construction must read at Dock size; macro shapes are bold, micro-detail is secondary. Moderately detailed, clean, coherent hardware; no ornamental steampunk gears. The hardware can look dimensional, but the mask remains its exact existing flat art.
+Composition: keep the large monocle centered around the same right eye; do not cover the left eye or horns. Do not crop or expand the head. Maintain white background edge to edge.
+No words, no letters, no logo text, no watermark, no extra eye, no full robot face, no metal across the whole mask. Return just one finished icon, not a mockup or comparison.

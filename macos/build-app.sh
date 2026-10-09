@@ -12,7 +12,10 @@ build_version=$(git -C "$script_dir" rev-list --count HEAD 2>/dev/null || print 
 if [[ ! "$build_version" =~ '^[0-9]+$' ]]; then
   build_version=1
 fi
-icon_filename="HollowKnightVision-$build_version.icns"
+# Refresh the icon resource even when artwork changes before the next commit.
+icon_digest=$(shasum -a 256 "$script_dir/Resources/HollowKnightVision.icns")
+icon_digest=${icon_digest%% *}
+icon_filename="HollowKnightVision-$build_version-${icon_digest[1,12]}.icns"
 cp "$scratch_dir/release/HollowKnightVision" "$contents_dir/MacOS/HollowKnightVision"
 cp "$scratch_dir/release/HollowKnightVisionTrainer" "$contents_dir/Helpers/HollowKnightVisionTrainer"
 cp "$script_dir/Sources/HollowKnightVision/Resources/labeling-contracts.json" \
