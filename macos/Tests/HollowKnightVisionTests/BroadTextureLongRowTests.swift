@@ -31,9 +31,13 @@ final class BroadTextureLongRowTests: XCTestCase {
 
     func testRepeatedTextureCannotChooseAnAmbiguousLongRowPhase() {
         let width = 640, height = 360
-        let pixels: [UInt8] = (0..<(width * height)).map { i in
-            let x = (i % width) % 16, y = (i / width) % 16
-            return UInt8((x * 37 + y * 71 + x * y * 3) % 256)
+        var pixels = [UInt8]()
+        pixels.reserveCapacity(width * height)
+        for i in 0..<(width * height) {
+            let x = (i % width) % 16
+            let y = (i / width) % 16
+            let value = (x * 37 + y * 71 + x * y * 3) % 256
+            pixels.append(UInt8(value))
         }
         let solver = GroundCameraSolver()
         _ = solver.solve(pixels: pixels, width: width, height: height,
