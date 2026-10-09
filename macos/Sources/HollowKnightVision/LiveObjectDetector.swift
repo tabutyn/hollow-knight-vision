@@ -31,10 +31,7 @@ struct LiveTensor4D {
         case .int32:
             let pointer = values.dataPointer.assumingMemoryBound(to: Int32.self)
             return Double(pointer[offset])
-        case .int8:
-            let pointer = values.dataPointer.assumingMemoryBound(to: Int8.self)
-            return Double(pointer[offset])
-        @unknown default:
+        default:
             return values[[0, channel, y, x].map(NSNumber.init(value:))].doubleValue
         }
     }

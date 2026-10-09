@@ -156,10 +156,18 @@ final class GroundLinePresence {
     }
 
     func state(minimumX: CGFloat, maximumX: CGFloat, worldY: CGFloat) -> GroundLinePresenceState? {
-        indices(in: (worldY - 4)...(worldY + 4)).map { records[$0] }.filter {
-            abs($0.worldY - worldY) <= 4
-                && min($0.maximumX, maximumX) - max($0.minimumX, minimumX) >= 8
-        }.min { abs($0.worldY - worldY) < abs($1.worldY - worldY) }?.state
+        var closest: Record?
+        var closestDistance = CGFloat.greatestFiniteMagnitude
+        for index in indices(in: (worldY - 4)...(worldY + 4)) {
+            let record = records[index]
+            let distance = abs(record.worldY - worldY)
+            guard distance <= 4 else { continue }
+            let overlap = min(record.maximumX, maximumX) - max(record.minimumX, minimumX)
+            guard overlap >= 8, distance < closestDistance else { continue }
+            closest = record
+            closestDistance = distance
+        }
+        return closest?.state
     }
 
     func reviews(camera: CGPoint, width: Int, height: Int) -> [GroundLinePresenceReview] {
