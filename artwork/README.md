@@ -1,17 +1,19 @@
 # Application icon
 
 `app-icon-source.png` is the 1024×1024 master for the macOS and Windows
-application icons. Its monocle uses segmented metal plating, fasteners, a
-mechanical shutter iris, an articulated arm, and cyan sensor indicators.
+application icons. It uses a red HAL-inspired bionic eye, concentric metal
+rings, and mechanical connections over the head and around its right side.
+The face has circular eyes, a flat horizontal chin, and a plain white
+background without a cast shadow.
 
-The current artwork was edited with the built-in image generation tool from
-the previous icon composite. That composite used Hollow Knight's installed
-`PlayerIcon.icns` with a right-eye monocle. The edit preserves the original
-mask design and white background; it is not a pixel-identical composite.
-The complete editing prompt is recorded in `app-icon-robotic-prompt.txt`.
+The current artwork was generated with the built-in image generation tool,
+using Hollow Knight's installed `PlayerIcon.icns` as the geometric reference.
+It follows the original head proportions; it is not a pixel-identical edit.
+The complete prompt is recorded in `app-icon-hal-prompt.txt`.
 
-`app-icon-monocle-overlay.png` is the earlier thin-ring overlay retained for
-provenance. It is not used by the current icon.
+`app-icon-monocle-overlay.png` and `app-icon-robotic-prompt.txt` are retained
+for provenance of the earlier monocle designs. Neither is used by the current
+icon.
 
 The compiled files are `macos/Resources/HollowKnightVision.icns` and
 `windows/src/HollowKnightVision.Windows.App/Resources/HollowKnightVision.ico`.
