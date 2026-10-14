@@ -37,15 +37,9 @@ enum LabelingFrameOpeningPolicy {
                 LabelingContext.containing(classIdentifier: $0)
             } ?? .game
         }
-        let context: LabelingContext
-        if let preferredClassIdentifier,
-           normalizedSavedContext.labels.contains(where: { $0.id == preferredClassIdentifier }) {
-            context = normalizedSavedContext
-        } else {
-            context = preferredClassIdentifier.flatMap {
-                LabelingContext.containing(classIdentifier: $0)
-            } ?? normalizedSavedContext
-        }
+        // A saved screenshot owns its context. A previously selected object
+        // may choose a class within it, but must never reclassify the image.
+        let context = normalizedSavedContext
         return LabelingFrameOpenState(
             context: context,
             selectedClassIdentifier: classIdentifierForOpening(

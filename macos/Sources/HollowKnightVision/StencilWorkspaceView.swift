@@ -94,7 +94,7 @@ struct StencilWorkspaceView: View {
                                             Text(coordinator.text(name)).font(.system(size: 11, weight: .semibold))
                                                 .foregroundStyle(.white).padding(.horizontal, 3).padding(.vertical, 1)
                                                 .background(.blue).fixedSize()
-                                                .offset(y: rect.minY * proxy.size.height >= 20 ? -20 : rect.height * proxy.size.height + 2)
+                                                .offset(y: annotation.classIdentifier != LabelingClassIdentity.selectDecoration && rect.minY * proxy.size.height >= 20 ? -20 : rect.height * proxy.size.height + 2)
                                         }
                                         .position(x: rect.midX * proxy.size.width,
                                                   y: rect.midY * proxy.size.height)

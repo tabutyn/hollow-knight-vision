@@ -2571,7 +2571,7 @@ public partial class MainWindow : Window
                 IsHitTestVisible = false, Child = new TextBlock { Text = initialization.Text(name),
                     Foreground = Brushes.White, FontSize = 11 } };
             Canvas.SetLeft(caption, box.X * CanvasWidth);
-            Canvas.SetTop(caption, box.Y * CanvasHeight >= 20 ? box.Y * CanvasHeight - 20 : (box.Y + box.Height) * CanvasHeight + 2);
+            Canvas.SetTop(caption, identifier != "shared.select-decoration" && box.Y * CanvasHeight >= 20 ? box.Y * CanvasHeight - 20 : (box.Y + box.Height) * CanvasHeight + 2);
             LabelCanvas.Children.Add(caption);
         }
     }

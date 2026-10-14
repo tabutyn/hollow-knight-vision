@@ -1223,7 +1223,7 @@ struct LabelingEditorView: View {
                     .padding(.horizontal, 4).padding(.vertical, 2)
                     .background(color.opacity(0.95), in: RoundedRectangle(cornerRadius: 3))
                     .fixedSize()
-                    .offset(y: displayRect.minY >= 22 ? -22 : displayRect.height + 3)
+                    .offset(y: classIdentifier != LabelingClassIdentity.selectDecoration && displayRect.minY >= 22 ? -22 : displayRect.height + 3)
             }
             .frame(width: displayRect.width, height: displayRect.height)
             .position(x: displayRect.midX, y: displayRect.midY)

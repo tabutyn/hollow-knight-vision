@@ -33,6 +33,23 @@ final class LabelingEditorViewTests: XCTestCase {
         )
     }
 
+    func testSavedStencilContextOverridesPreviouslySelectedGameplayObject() throws {
+        for context in StencilInitializationPolicy.requiredContexts {
+            let identifier = try XCTUnwrap(context.labels.first?.id)
+            let manifest = LabelingExampleManifest(schemaVersion: LabelingExampleManifest.currentSchemaVersion,
+                id: UUID(), imageIdentifier: UUID(), imageFilename: "image.png", imageWidth: 640, imageHeight: 360,
+                captureGroupIdentifier: UUID(), contextIdentifier: context.storageIdentifier,
+                annotations: [LabelingExampleAnnotation(LabelingDraftRectangle(id: UUID(), classID: identifier,
+                    normalizedRect: CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.1)))],
+                knownClassIdentifiers: [identifier], completion: .draft, createdAt: Date())
+            let state = try XCTUnwrap(LabelingFrameOpeningPolicy.stateForOpening(manifest,
+                preferredClassIdentifier: "game.playable-knight"))
+            XCTAssertEqual(state.context, context)
+            XCTAssertEqual(state.selectedClassIdentifier, identifier)
+            XCTAssertEqual(state.draft.rectangles.first?.classID, identifier)
+        }
+    }
+
     func testRecentFrameOpeningSelectsAnObjectFromTheFrameContext() {
         XCTAssertEqual(
             LabelingFrameOpeningPolicy.classIdentifierForOpening(
