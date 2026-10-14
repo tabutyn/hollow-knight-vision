@@ -1350,45 +1350,49 @@ struct DashboardView: View {
         )
     }
 
+    private var visibleWorkspaces: [DashboardWorkspace] {
+        DashboardControlVisibility.workspaces.filter { destination in
+            if destination == .model { return initialization.isFirstPhaseComplete }
+            if destination == .hacker { return model.canUseHacker && model.liveGameStatus == "Gameplay" }
+            return true
+        }
+    }
+
+    private func workspaceTitle(_ destination: DashboardWorkspace) -> String {
+        destination == .stencils ? initialization.buttonTitle : visionText(destination.rawValue)
+    }
+
+    private var workspaceSelection: Binding<DashboardWorkspace> {
+        Binding(get: { workspace }, set: selectWorkspace)
+    }
+
     private var workspaceSelector: some View {
-        StableSegmentedPicker(
-            label: "Workspace",
-            choices: DashboardControlVisibility.workspaces.filter {
-                ($0 != .model || initialization.isFirstPhaseComplete)
-                    && ($0 != .hacker || (model.canUseHacker && model.liveGameStatus == "Gameplay"))
-            },
-            title: { $0 == .stencils ? initialization.buttonTitle : visionText($0.rawValue) },
-            selection: Binding(
-                get: { workspace },
-                set: selectWorkspace
-            )
+        StableSegmentedPicker<DashboardWorkspace>(
+            label: "Workspace", choices: visibleWorkspaces,
+            title: workspaceTitle, selection: workspaceSelection
         )
         .frame(width: 410)
-        .overlay {
-            ZStack {
-                ForEach(DashboardWorkspace.allCases) { destination in
-                    Button("Open \(destination.rawValue)") {
-                        if destination == .label && workspace == .label {
-                            selectWorkspace(.gameplay)
-                        } else if destination == .model && workspace == .model {
-                            selectWorkspace(.gameplay)
-                        } else if (destination == .ops || destination == .hacker)
-                            && workspace == destination {
-                            selectWorkspace(.gameplay)
-                        } else {
-                            selectWorkspace(destination)
-                        }
-                    }
-                    .keyboardShortcut(
-                        KeyEquivalent(destination.shortcutCharacter),
-                        modifiers: []
-                    )
-                }
+        .overlay(workspaceShortcuts)
+    }
+
+    private var workspaceShortcuts: some View {
+        ZStack {
+            ForEach(DashboardWorkspace.allCases) { destination in
+                Button("Open \(destination.rawValue)") { performWorkspaceShortcut(destination) }
+                    .keyboardShortcut(KeyEquivalent(destination.shortcutCharacter), modifiers: [])
             }
-            .frame(width: 1, height: 1)
-            .opacity(0)
-            .accessibilityHidden(true)
-            .allowsHitTesting(false)
+        }
+        .frame(width: 1, height: 1)
+        .opacity(0)
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
+    }
+
+    private func performWorkspaceShortcut(_ destination: DashboardWorkspace) {
+        if destination != .gameplay && destination != .stencils && workspace == destination {
+            selectWorkspace(.gameplay)
+        } else {
+            selectWorkspace(destination)
         }
     }
 
