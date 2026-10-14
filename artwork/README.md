@@ -3,13 +3,16 @@
 `app-icon-source.png` is the 1024×1024 master for the macOS and Windows
 application icons. It uses a red HAL-inspired bionic eye, concentric metal
 rings, and mechanical connections over the head and around its right side.
-The face has circular eyes, a flat horizontal chin, and a plain white
-background without a cast shadow.
+The face has circular eyes and a flat horizontal chin. The artwork sits on a
+white macOS-style rounded tile with transparent outer corners and no cast
+shadow, so the Dock does not render it as an opaque square.
 
 The current artwork was generated with the built-in image generation tool,
 using Hollow Knight's installed `PlayerIcon.icns` as the geometric reference.
 It follows the original head proportions; it is not a pixel-identical edit.
-The complete prompt is recorded in `app-icon-hal-prompt.txt`.
+The complete character prompt is recorded in `app-icon-hal-prompt.txt`. The
+rounded tile was composited after generation so the approved character pixels
+remain unchanged apart from uniform scaling.
 
 `app-icon-monocle-overlay.png` and `app-icon-robotic-prompt.txt` are retained
 for provenance of the earlier monocle designs. Neither is used by the current
