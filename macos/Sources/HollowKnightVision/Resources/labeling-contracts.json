@@ -15,6 +15,7 @@
     }
   ],
   "labelSets": [
+    { "contextIdentifier": "gameplay-hud", "requiresAllContextObjects": true, "occurrenceOverrides": { "game.health": { "minimum": 2, "maximum": 2 } } },
     { "contextIdentifier": "main-title", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
     { "contextIdentifier": "options", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },
     { "contextIdentifier": "game-options", "requiresAllContextObjects": true, "occurrenceOverrides": { "shared.select-decoration": { "minimum": 2, "maximum": 2 } } },

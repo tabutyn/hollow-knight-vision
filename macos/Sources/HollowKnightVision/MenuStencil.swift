@@ -207,7 +207,7 @@ struct MenuStencilCatalog {
                 ?? ((try? MenuStencilLiveCaptureStore().load()) ?? []))
         var scenes = [Scene]()
         for context in LabelingContext.contractSetCases where
-            context != .game && (includedContexts?.contains(context) ?? true) {
+            context != .game && context != .gameplayHUD && (includedContexts?.contains(context) ?? true) {
             let allContextExamples = examples.filter {
                 $0.manifest.contextIdentifier == context.storageIdentifier
                     && !Self.isSelectorCorrectionExample($0)
@@ -222,9 +222,7 @@ struct MenuStencilCatalog {
                             )
                     }
                 }
-                return LabelingContractEvaluator.evaluate($0).allSatisfy {
-                    $0.isSatisfied
-                }
+                return StencilInitializationPolicy.acceptsMenuExample($0)
             }
             if let scene = Self.makeScene(
                 context: context,
@@ -747,7 +745,18 @@ struct MenuStencilCatalog {
             }!
         }
 
-        let ranked = compatible.sorted { left, right in
+        let languageCounts = Dictionary(grouping: compatible) {
+            $0.manifest.resolvedLanguageIdentifier
+        }.mapValues(\.count)
+        let baseLanguage = languageCounts[
+            HollowKnightMenuLanguage.english.rawValue
+        ] != nil ? HollowKnightMenuLanguage.english.rawValue
+            : languageCounts.max { left, right in
+                left.value == right.value ? left.key > right.key : left.value < right.value
+            }!.key
+        let ranked = compatible.filter {
+            $0.manifest.resolvedLanguageIdentifier == baseLanguage
+        }.sorted { left, right in
             let leftUnselected = selectedIdentifiers[left.id] != probeIdentifier
             let rightUnselected = selectedIdentifiers[right.id] != probeIdentifier
             if leftUnselected != rightUnselected { return leftUnselected }
@@ -806,6 +815,17 @@ struct MenuStencilCatalog {
                     band: 0..<height
                   ) else { continue }
             supplementalPixels[example.id] = pixels
+        }
+        var allSourcePixels = sourcePixels
+        for example in compatible where allSourcePixels[example.id] == nil {
+            guard let image = try? store.loadImage(for: example),
+                  let pixels = ImageStencilPixels(
+                    image,
+                    referenceWidth: width,
+                    referenceHeight: height,
+                    band: 0..<height
+                  ) else { continue }
+            allSourcePixels[example.id] = pixels
         }
         guard let firstSource = sources.first,
               sourcePixels[firstSource.id] != nil else { return nil }
@@ -876,7 +896,7 @@ struct MenuStencilCatalog {
                     kind: "\(identifier).human-box.\(example.id.uuidString.lowercased())",
                     reference: focused.reference,
                     sampleStride: 1,
-                    languageIdentifier: HollowKnightMenuLanguage.english.rawValue
+                    languageIdentifier: example.manifest.resolvedLanguageIdentifier
                 ))
             }
             let anchorBounds = latestHumanBounds ?? humanConsensus.bounds
@@ -901,9 +921,40 @@ struct MenuStencilCatalog {
                 kind: identifier,
                 reference: humanConsensus.reference,
                 sampleStride: 1,
-                languageIdentifier: HollowKnightMenuLanguage.english.rawValue
+                languageIdentifier: baseLanguage
             )]
             variants.append(contentsOf: focusedVariants)
+            var humanConsensusByLanguage = [String: MenuStencilConsensus.Result]()
+            for language in languageCounts.keys.sorted() where language != baseLanguage {
+                let captures = compatible.filter {
+                    $0.manifest.resolvedLanguageIdentifier == language
+                }.prefix(8).compactMap { example -> MenuStencilConsensus.Capture? in
+                    guard let pixels = allSourcePixels[example.id]
+                            ?? supplementalPixels[example.id],
+                          let annotation = annotation(identifier, in: example)
+                    else { return nil }
+                    return MenuStencilConsensus.Capture(
+                        pixels: pixels,
+                        annotationBounds: expandedStencilBounds(
+                            pixelBounds(annotation, width: width, height: height),
+                            context: context,
+                            classIdentifier: identifier
+                        )
+                    )
+                }
+                guard let consensus = MenuStencilConsensus.buildLocalizedText(
+                    captures: Array(captures),
+                    nominalBounds: medianBounds[identifier] ?? bounds
+                ) else { continue }
+                humanConsensusByLanguage[language] = consensus
+                variants.append(makeVariant(
+                    kind: "\(identifier).human.\(language)",
+                    reference: consensus.reference,
+                    sampleStride: 1,
+                    languageIdentifier: language,
+                    nominalBounds: consensus.bounds
+                ))
+            }
             // A user may leave a focused draft with only the object that is
             // failing. These drafts intentionally omit selector annotations,
             // so they cannot define a scene alone. Once the scene exists,
@@ -926,23 +977,23 @@ struct MenuStencilCatalog {
             // A focused incomplete correction can be a valid object variant,
             // but must not replace the multi-capture title consensus used to
             // choose between these two scenes.
-            let englishLiveConsensus = liveConsensusByLanguage[
-                HollowKnightMenuLanguage.english.rawValue
-            ]
+            let baseLiveConsensus = liveConsensusByLanguage[baseLanguage]
             let probeReference = context == .quitGame || context == .quitToMenu
-                ? (englishLiveConsensus?.reference ?? humanConsensus.reference)
+                ? (baseLiveConsensus?.reference ?? humanConsensus.reference)
                 : (focusedProbeReference ?? humanConsensus.reference)
             let probe = makeVariant(
                 kind: identifier,
                 reference: probeReference,
                 sampleStride: 2,
-                languageIdentifier: HollowKnightMenuLanguage.english.rawValue
+                languageIdentifier: baseLanguage
             )
-            let foreignProbeVariants = liveConsensusByLanguage.keys.sorted().compactMap {
+            let foreignProbeLanguages = Set(liveConsensusByLanguage.keys)
+                .union(humanConsensusByLanguage.keys)
+            let foreignProbeVariants = foreignProbeLanguages.sorted().compactMap {
                 language -> Variant? in
-                guard language != HollowKnightMenuLanguage.english.rawValue,
+                guard language != baseLanguage,
                       let consensus = liveConsensusByLanguage[language]
-                else { return nil }
+                        ?? humanConsensusByLanguage[language] else { return nil }
                 return makeVariant(
                     kind: "\(identifier).probe.\(language)",
                     reference: consensus.reference,
@@ -997,7 +1048,8 @@ struct MenuStencilCatalog {
                 variants.append(makeVariant(
                     kind: side,
                     reference: reference,
-                    sampleStride: 2
+                    sampleStride: 2,
+                    languageIdentifier: example.manifest.resolvedLanguageIdentifier
                 ))
             }
             selectorVariants[side] = variants
@@ -1006,17 +1058,6 @@ struct MenuStencilCatalog {
         // Selector decorations move with the selected row, so consensus must
         // be built separately at every captured row. This removes animated
         // background pixels while preserving the exact screen-space position.
-        var allSourcePixels = sourcePixels
-        for example in compatible where allSourcePixels[example.id] == nil {
-            guard let image = try? store.loadImage(for: example),
-                  let pixels = ImageStencilPixels(
-                    image,
-                    referenceWidth: width,
-                    referenceHeight: height,
-                    band: 0..<height
-                  ) else { continue }
-            allSourcePixels[example.id] = pixels
-        }
         func localizedSelectorBounds(
             in pixels: ImageStencilPixels,
             around bounds: CGRect,
@@ -1159,7 +1200,7 @@ struct MenuStencilCatalog {
                             selectors[index], width: width, height: height
                         )
                     ),
-                    nil
+                    example.manifest.resolvedLanguageIdentifier
                 )
             }
             let measuredBounds = calibration?.selectors.first(where: {

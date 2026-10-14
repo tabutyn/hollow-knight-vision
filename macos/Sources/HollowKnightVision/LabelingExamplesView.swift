@@ -133,6 +133,11 @@ enum RecentCapturedFrameLabelingPolicy {
 }
 
 struct RecentFramesView: View {
+    @Environment(\.visionLanguage) private var visionLanguage
+    private func visionText(_ key: String, _ values: [String: String] = [:]) -> String {
+        StencilGuidanceText(language: visionLanguage).text(key, values)
+    }
+
     let examples: [SavedLabelingExample]
     let capturedFrames: [RecentCapturedFrame]
     let onOpen: (SavedLabelingExample) -> Void
@@ -144,15 +149,15 @@ struct RecentFramesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Recent Frames")
+                Text(visionText("Recent Frames"))
                     .font(.headline)
                 Spacer()
-                Button("Resume (L)") {
+                Button(visionText("Resume (L)")) {
                     onResume()
                     dismiss()
                 }
                 .keyboardShortcut("l", modifiers: [])
-                Button("Close") {
+                Button(visionText("Close")) {
                     dismiss()
                 }
             }
@@ -181,13 +186,13 @@ struct RecentFramesView: View {
 
     private var recentLabeledFrames: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Recent Labeled Frames")
+            Text(visionText("Recent Labeled Frames"))
                 .font(.headline)
             if examples.isEmpty {
                 ContentUnavailableView(
-                    "No Recent Labeled Frames",
+                    visionText("No Recent Labeled Frames"),
                     systemImage: "rectangle.and.pencil.and.ellipsis",
-                    description: Text("Label an object to save a frame.")
+                    description: Text(visionText("Label an object to save a frame."))
                 )
             } else {
                 ScrollView {
@@ -214,13 +219,13 @@ struct RecentFramesView: View {
 
     private var recentCapturedFrames: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Recent Captured Frames")
+            Text(visionText("Recent Captured Frames"))
                 .font(.headline)
             if capturedFrames.isEmpty {
                 ContentUnavailableView(
-                    "No Recent Captured Frames",
+                    visionText("No Recent Captured Frames"),
                     systemImage: "photo.stack",
-                    description: Text("Resume gameplay briefly to fill the capture buffer.")
+                    description: Text(visionText("Resume gameplay briefly to fill the capture buffer."))
                 )
             } else {
                 ScrollView {
@@ -255,6 +260,11 @@ struct RecentFramesView: View {
 }
 
 private struct RecentCapturedFrameThumbnail: View {
+    @Environment(\.visionLanguage) private var visionLanguage
+    private func visionText(_ key: String, _ values: [String: String] = [:]) -> String {
+        StencilGuidanceText(language: visionLanguage).text(key, values)
+    }
+
     let frame: RecentCapturedFrame
 
     var body: some View {
@@ -294,6 +304,11 @@ private struct RecentCapturedFrameThumbnail: View {
 }
 
 private struct LabelingExampleThumbnail: View {
+    @Environment(\.visionLanguage) private var visionLanguage
+    private func visionText(_ key: String, _ values: [String: String] = [:]) -> String {
+        StencilGuidanceText(language: visionLanguage).text(key, values)
+    }
+
     let example: SavedLabelingExample
     let selectedClassID: String?
 

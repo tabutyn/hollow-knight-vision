@@ -102,7 +102,6 @@ struct HackerPreparedFrame: @unchecked Sendable {
     let capturedAt: TimeInterval
     let integratesAtlas: Bool
     let roomPlacementReady: Bool
-    let hudStencil: HUDStencilResult?
 }
 
 struct HackerAtlasOutput: @unchecked Sendable {
@@ -402,21 +401,12 @@ final class HackerFramePreparer: @unchecked Sendable {
         let facingRight: Bool
     }
 
-    private let context: CIContext
-    private let hudStencilTracker = HUDStencilTracker()
     private var anchorPositions = [String: CGPoint]()
     private var lastPlayableReference: PlayableReference?
-    private var hudGeneration: UInt64 = 1
-
-    init(context: CIContext = CIContext(options: [.cacheIntermediates: false])) {
-        self.context = context
-    }
 
     func reset() {
         anchorPositions.removeAll(keepingCapacity: true)
         lastPlayableReference = nil
-        hudGeneration &+= 1
-        hudStencilTracker.reset()
     }
 
     func process(_ match: HackerMatchedFrame) -> HackerPreparedFrame? {
@@ -432,12 +422,6 @@ final class HackerFramePreparer: @unchecked Sendable {
         guard let cleanedFrame = frameReplacingMarker(image, markerBounds: marker) else {
             return nil
         }
-        let hudStencil = hudStencilTracker.observe(
-            cleanedFrame,
-            gameplay: match.sample.heroAvailable,
-            timestamp: match.capture.capturedAt,
-            generation: hudGeneration
-        )
 
         let position = HackerAtlasCameraPlacement.cameraPosition(transform)
         let heroScreenPoint = Self.heroScreenPoint(
@@ -501,8 +485,7 @@ final class HackerFramePreparer: @unchecked Sendable {
             unityFrame: match.capture.unityFrame,
             capturedAt: match.capture.capturedAt,
             integratesAtlas: match.capture.integratesAtlas,
-            roomPlacementReady: roomPlacementReady,
-            hudStencil: hudStencil
+            roomPlacementReady: roomPlacementReady
         )
     }
 
@@ -589,12 +572,26 @@ final class HackerFramePreparer: @unchecked Sendable {
             .intersection(extent)
         guard sourceBounds.width == markerBounds.width,
               sourceBounds.height == markerBounds.height else { return image }
-        let source = CIImage(cgImage: image)
-        let replacement = source.cropped(to: sourceBounds).transformed(
-            by: CGAffineTransform(translationX: 0, y: markerBounds.height)
+        // The capture is already a CPU-readable image. Repair this tiny strip
+        // without submitting a full-frame GPU render and waiting for readback
+        // on the live presentation worker.
+        let crop = CGRect(
+            x: sourceBounds.minX, y: extent.height - sourceBounds.maxY,
+            width: sourceBounds.width, height: sourceBounds.height
         )
-        let cleaned = replacement.composited(over: source).cropped(to: extent)
-        return context.createCGImage(cleaned, from: extent)
+        let colorSpace = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
+            ?? CGColorSpaceCreateDeviceRGB()
+        guard let replacement = image.cropping(to: crop),
+              let bitmap = CGContext(
+                data: nil, width: image.width, height: image.height,
+                bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else { return nil }
+        bitmap.interpolationQuality = .none
+        bitmap.setBlendMode(.copy)
+        bitmap.draw(image, in: extent)
+        bitmap.draw(replacement, in: markerBounds)
+        return bitmap.makeImage()
     }
 
 }
@@ -615,6 +612,7 @@ final class HackerAtlasPipeline: @unchecked Sendable {
         let sceneName: String
         let position: CGPoint
         let composer: LiveTiledAtlas
+        let hudStencilTracker = HUDStencilTracker()
         var fadeReference: FadeReference?
         var lastIntegratedUnityFrame: Int?
 
@@ -717,16 +715,22 @@ final class HackerAtlasPipeline: @unchecked Sendable {
     ) -> HackerAtlasOutput? {
         let image = prepared.liveImage
         let extent = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        // HUD recognition is needed only for atlas writes. Keep it on this
+        // bounded compositor worker, off the every-frame presentation path.
+        let hudStencil = state.hudStencilTracker.observe(
+            image, gameplay: prepared.sample.heroAvailable,
+            timestamp: prepared.capturedAt, generation: 0
+        )
         let hero = heroBounds(sample: prepared.sample, frameSize: extent.size)
         let fallback = SceneRegions.hud(in: extent, knight: hero)
         let regions = SceneRegions(
             knight: hero,
-            health: prepared.hudStencil?.healthBounds ?? fallback.health,
-            geo: prepared.hudStencil?.geo ?? fallback.geo,
-            mana: prepared.hudStencil?.manaBounds ?? fallback.mana,
+            health: hudStencil?.healthBounds ?? fallback.health,
+            geo: hudStencil?.geo ?? fallback.geo,
+            mana: hudStencil?.manaBounds ?? fallback.mana,
             hudStencilRects: SceneRegions.atlasHUDMaskRects(
                 in: extent,
-                hudStencil: prepared.hudStencil
+                hudStencil: hudStencil
             )
         )
         guard let atlasFrame = FrameRegionRenderer.mapFrame(

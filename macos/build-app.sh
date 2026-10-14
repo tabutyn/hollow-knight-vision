@@ -24,6 +24,10 @@ cp "$script_dir/Sources/HollowKnightVision/Resources/hud-stencil-template.json" 
   "$contents_dir/Resources/hud-stencil-template.json"
 cp "$script_dir/Sources/HollowKnightVision/Resources/menu-stencil-positions.json" \
   "$contents_dir/Resources/menu-stencil-positions.json"
+cp "$script_dir/Sources/HollowKnightVision/Resources/labeling-contexts.json" \
+  "$contents_dir/Resources/labeling-contexts.json"
+cp "$script_dir/Sources/HollowKnightVision/Resources/stencil-guidance.json" \
+  "$contents_dir/Resources/stencil-guidance.json"
 rm -f "$contents_dir/Resources"/HollowKnightVision*.icns(N)
 cp "$script_dir/Resources/HollowKnightVision.icns" \
   "$contents_dir/Resources/$icon_filename"

@@ -290,7 +290,7 @@ final class LabelingExampleStoreTests: XCTestCase {
 
         let migrated = try LabelingExampleStore(rootURL: rootURL).loadManifest(at: exampleURL)
 
-        XCTAssertEqual(migrated.schemaVersion, 4)
+        XCTAssertEqual(migrated.schemaVersion, LabelingExampleManifest.currentSchemaVersion)
         XCTAssertEqual(migrated.annotations.map(\.classIdentifier), ["options.game"])
         XCTAssertEqual(
             migrated.knownClassIdentifiers,

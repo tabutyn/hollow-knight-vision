@@ -3,6 +3,14 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../src/HollowKnightVision.Windows.App/GameRuntimeModeValue.cs" Link="GameRuntimeModeValue.cs" />
+    <Compile Include="../../src/HollowKnightVision.Windows.App/StencilInitialization.cs" Link="StencilInitialization.cs" />
+    <Compile Include="../../src/HollowKnightVision.Windows.App/StencilGuidanceText.cs" Link="StencilGuidanceText.cs" />
+    <Compile Include="../../src/HollowKnightVision.Windows.App/VisionResetController.cs" Link="VisionResetController.cs" />
+    <Content Include="../../../macos/Sources/HollowKnightVision/Resources/labeling-contracts.json;../../../macos/Sources/HollowKnightVision/Resources/labeling-contexts.json;../../../macos/Sources/HollowKnightVision/Resources/stencil-guidance.json">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <ProjectReference Include="../../src/HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
     <Compile Include="../../src/HollowKnightVision.Windows.Host/BmpWriter.cs" Link="BmpWriter.cs" />
   </ItemGroup>

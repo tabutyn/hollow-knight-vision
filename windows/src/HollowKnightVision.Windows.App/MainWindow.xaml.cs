@@ -23,6 +23,8 @@ public partial class MainWindow : Window
     private const double CanvasWidth = 640;
     private const double CanvasHeight = 360;
     private readonly ObservableCollection<SavedLabelingExample> examples = [];
+    private readonly GameRuntimeMode gameMode;
+    private readonly string? gamePath;
     private readonly ObservableCollection<EditableBox> boxes = [];
     private SavedLabelingExample? currentExample;
     private BgraFrame? currentFrame;
@@ -34,8 +36,10 @@ public partial class MainWindow : Window
     private readonly WindowsGameControlForwarder gameControls = new();
     private readonly DispatcherTimer inputHeartbeat;
     private readonly HashSet<Key> forwardedKeys = [];
-    private readonly GroundTruthAtlasMosaic gameplayAtlas = new();
+    private readonly GroundTruthAtlasMosaic gameplayAtlas = new(pixelsPerWorldUnit: 1);
     private readonly GroundTruthAtlasMosaic hackerAtlas = new();
+    private readonly VisualGameplayTracker visualGameplayTracker = new();
+    private readonly WindowsMenuStencilRecognizer menuStencilRecognizer;
     private readonly Dictionary<AtlasTileCoordinate, Image> gameplayTileImages = [];
     private readonly Dictionary<AtlasTileCoordinate, Image> hackerTileImages = [];
     private readonly Stack<IReadOnlyList<EditableBox>> labelUndo = [];
@@ -45,6 +49,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, RoomEdit> rooms = new(StringComparer.Ordinal);
     private readonly AtlasStateStore atlasStateStore;
     private readonly UserObjectCatalog objectCatalog;
+    private readonly StencilInitializationCoordinator initialization;
     private readonly List<ClassChoice> customObjectChoices = [];
     private readonly string activeAtlasDirectory;
     private readonly string hackerEditPath;
@@ -88,24 +93,21 @@ public partial class MainWindow : Window
     private Point? roomDragStart;
     private double roomOriginalOffsetX;
     private double roomOriginalOffsetY;
+    private string? initializationTargetContext;
+    private bool refreshingClassChoices;
+    private bool factoryResetRequested;
+    private string? recognizedMenuContext;
 
     private sealed record VisionAnalysisResult(
+        BgraFrame Frame,
         IReadOnlyList<ObjectDetection> Detections,
         IReadOnlyList<DetectedFloorLine> Ground,
         AtlasMosaicDelta? GameplayTiles,
         AtlasMosaicDelta? HackerTiles,
-        ReceiverGroundTruthSample? Telemetry,
+        ReceiverGroundTruthSample GameplayTelemetry,
+        ReceiverGroundTruthSample? ReceiverTelemetry,
+        string? MenuContext,
         LowResolutionTranslationDiagnostic? Motion);
-
-    private static readonly string[] MacLabelingContexts =
-    [
-        "Main Title", "Options", "Game Options", "Audio", "Video", "Screen Scale",
-        "Brightness", "Video Advanced Settings", "Controller", "Remap Controller",
-        "Controller Advanced Settings", "Keyboard", "Mods", "Achievements", "Extras",
-        "Credits", "Hidden Dreams", "The Grimm Troupe", "Lifeblood", "Godmaster",
-        "Select Profile", "Clear Save", "Pause", "Quit To Menu", "Inventory", "Gameplay",
-        "Quit Game", "Enemies", "World", "Shared"
-    ];
 
     private static readonly ClassChoice[] GameplayClassChoices =
     [
@@ -121,8 +123,10 @@ public partial class MainWindow : Window
         new("Sign", "world.sign")
     ];
 
-    public MainWindow()
+    public MainWindow(GameRuntimeMode gameMode, string? gamePath = null)
     {
+        this.gameMode = gameMode;
+        this.gamePath = gamePath;
         InitializeComponent();
         _ = WindowsDpiAwareness.TryEnablePerMonitorV2();
         var visibleFrame = SystemParameters.WorkArea;
@@ -139,7 +143,11 @@ public partial class MainWindow : Window
         {
             Interval = TimeSpan.FromMilliseconds(16)
         };
-        inputHeartbeat.Tick += (_, _) => gameControls.Heartbeat();
+        inputHeartbeat.Tick += (_, _) =>
+        {
+            gameControls.Heartbeat();
+            UpdateModeAvailability();
+        };
         PreviewKeyDown += MainWindow_PreviewKeyDown;
         PreviewKeyUp += MainWindow_PreviewKeyUp;
         PreviewGotKeyboardFocus += MainWindow_PreviewGotKeyboardFocus;
@@ -156,6 +164,9 @@ public partial class MainWindow : Window
             new ClassChoice(item.Name, item.Identifier)));
         hackerEditPath = IOPath.Combine(root, "atlas-v1", "hacker-edits.json");
         ExamplesRootText.Text = IOPath.Combine(root, "labeling-v1", "examples");
+        initialization = new StencilInitializationCoordinator(
+            new LabelingExampleStore(ExamplesRootText.Text), gameMode);
+        menuStencilRecognizer = new WindowsMenuStencilRecognizer(ExamplesRootText.Text, initialization.LanguageIdentifier);
         ModelExamplesRootText.Text = ExamplesRootText.Text;
         DatasetRootText.Text = IOPath.Combine(root, "training-v1", "datasets");
         TrainingOutputText.Text = IOPath.Combine(root, "training-v1", "runs", Guid.NewGuid().ToString("N"));
@@ -177,19 +188,32 @@ public partial class MainWindow : Window
             "routes",
             DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture));
         InputPathText.Text = "";
-        ContextCombo.ItemsSource = MacLabelingContexts;
-        ContextCombo.SelectedItem = "Gameplay";
+        RefreshContextChoices();
+        foreach (var item in StencilInitializationCoordinator.SupportedLanguages)
+            SettingsLanguageCombo.Items.Add(new ComboBoxItem { Content = item.Name, Tag = item.Identifier });
+        SettingsLanguageCombo.SelectedItem = SettingsLanguageCombo.Items.Cast<ComboBoxItem>()
+            .First(item => Equals(item.Tag, initialization.LanguageIdentifier));
+        ContextCombo.SelectedValue = "Gameplay";
         ClassCombo.ItemsSource = AvailableClassChoices("Gameplay");
         ClassCombo.SelectedIndex = 0;
         ClassIdentifierText.Text = GameplayClassChoices[0].Identifier;
         LoadPersistentAtlas();
         LoadHackerEdits();
         RefreshExamples();
+        RefreshInitializationStatus();
         RefreshOps();
+        UpdateModeAvailability();
+        RefreshSettingsText();
         Loaded += async (_, _) =>
         {
-            gameControls.Start();
-            inputHeartbeat.Start();
+            if (gameMode == GameRuntimeMode.Modded)
+            {
+                gameControls.Start();
+                inputHeartbeat.Start();
+            }
+
+            PathRecordingButton.Visibility = gameMode == GameRuntimeMode.Modded
+                ? Visibility.Visible : Visibility.Collapsed;
             if (latestAtlas is not null)
             {
                 try
@@ -212,11 +236,31 @@ public partial class MainWindow : Window
         startupCancellation?.Cancel();
         inputHeartbeat.Stop();
         ReleaseForwardedInput();
-        PersistActiveAtlas(force: true);
-        PersistHackerEdits();
+        if (!factoryResetRequested)
+        {
+            PersistActiveAtlas(force: true);
+            PersistHackerEdits();
+        }
+        else if (atlasPersistTask is not null)
+        {
+            atlasPersistTask.GetAwaiter().GetResult();
+            atlasPersistTask = null;
+        }
         gameControls.DisposeAsync().AsTask().GetAwaiter().GetResult();
         StopVision();
         base.OnClosed(e);
+        if (factoryResetRequested)
+        {
+            try
+            {
+                _ = VisionResetController.FactoryReset();
+            }
+            catch (Exception error)
+            {
+                MessageBox.Show(error.Message, "Factory reset failed", MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        }
     }
 
     private async Task EnsureGameAndVisionAsync()
@@ -226,6 +270,32 @@ public partial class MainWindow : Window
         startupCancellation = cancellation;
         try
         {
+            string? explicitExecutable = null;
+            if (!string.IsNullOrWhiteSpace(gamePath))
+            {
+                explicitExecutable = HollowKnightGameLauncher.ResolveExecutable(gamePath);
+                HollowKnightGameLauncher.ValidateInstallation(
+                    explicitExecutable,
+                    requireModded: gameMode == GameRuntimeMode.Modded);
+                var running = Process.GetProcessesByName("hollow_knight");
+                try
+                {
+                    if (running.Length > 0 && !running.Any(process =>
+                            string.Equals(
+                                TryExecutablePath(process),
+                                explicitExecutable,
+                                StringComparison.OrdinalIgnoreCase)))
+                    {
+                        throw new InvalidOperationException(
+                            "A different Hollow Knight installation is already running. " +
+                            "Close it before launching the selected --game-path.");
+                    }
+                }
+                finally
+                {
+                    foreach (var process in running) process.Dispose();
+                }
+            }
             var window = HollowKnightWindowLocator.FindBest();
             if (window is null)
             {
@@ -234,7 +304,7 @@ public partial class MainWindow : Window
                 {
                     if (runningGame.Length == 0)
                     {
-                        _ = HollowKnightGameLauncher.Start();
+                        _ = HollowKnightGameLauncher.Start(explicitExecutable ?? gamePath);
                     }
                 }
                 finally
@@ -269,6 +339,16 @@ public partial class MainWindow : Window
         }
     }
 
+    private static string? TryExecutablePath(Process process)
+    {
+        try { return process.MainModule?.FileName; }
+        catch (Exception error) when (error is InvalidOperationException
+            or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
     private static async Task<HollowKnightWindow> WaitForGameWindowAsync(
         CancellationToken cancellationToken)
     {
@@ -285,7 +365,7 @@ public partial class MainWindow : Window
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (!IsActive) return;
-        if (FirstResponderConsumesTextInput()) return;
+        if (FirstResponderConsumesTextInput() && !(SettingsOverlay.Visibility == Visibility.Visible && key is Key.Left or Key.Right or Key.Up or Key.Down)) return;
         if (workspace == "Label" && key == Key.Z
             && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
         {
@@ -302,12 +382,12 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
-        if (workspace == "Label") return;
-        if (workspace == "Model" && key is Key.Left or Key.Right or Key.Up or Key.Down or Key.X)
+        if (workspace == "Label" && SettingsOverlay.Visibility != Visibility.Visible) return;
+        if (SettingsOverlay.Visibility != Visibility.Visible && workspace == "Model" && key is Key.Left or Key.Right or Key.Up or Key.Down or Key.X)
         {
             return;
         }
-        if (!TryMapGameButton(key, out var button)) return;
+        if (gameMode != GameRuntimeMode.Modded || !TryMapGameButton(key, out var button)) return;
         if (button is InputButtons.Inventory or InputButtons.PauseMenu
             && !gameControls.MenuShortcutsAvailable)
         {
@@ -322,10 +402,10 @@ public partial class MainWindow : Window
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (!IsActive && !forwardedKeys.Contains(key)) return;
-        if (!TryMapGameButton(key, out var button)) return;
+        if (gameMode != GameRuntimeMode.Modded || !TryMapGameButton(key, out var button)) return;
         if (!forwardedKeys.Remove(key))
         {
-            if (FirstResponderConsumesTextInput()) return;
+            if (FirstResponderConsumesTextInput() && !(SettingsOverlay.Visibility == Visibility.Visible && key is Key.Left or Key.Right or Key.Up or Key.Down)) return;
             if (workspace == "Label"
                 || workspace == "Model" && key is Key.Left or Key.Right or Key.Up or Key.Down or Key.X)
             {
@@ -353,6 +433,11 @@ public partial class MainWindow : Window
 
     private bool HandleLocalShortcut(Key key)
     {
+        if (SettingsOverlay.Visibility == Visibility.Visible)
+        {
+            if (key == Key.Escape) SettingsOverlay.Visibility = Visibility.Collapsed;
+            return key is not (Key.Left or Key.Right or Key.Up or Key.Down);
+        }
         if (workspace == "Label")
         {
             var mode = key switch
@@ -365,6 +450,7 @@ public partial class MainWindow : Window
             };
             if (mode is not null)
             {
+                if (mode == LabelNegativeButton && CurrentContextName != "Gameplay") return true;
                 mode.IsChecked = true;
                 LabelMode_Click(mode, new RoutedEventArgs());
                 return true;
@@ -375,7 +461,7 @@ public partial class MainWindow : Window
                 return true;
             }
         }
-        if (key == Key.X && workspace is "Label" or "Model")
+        if (key == Key.X && workspace is "Label" or "Model" or "Stencil")
         {
             SelectWorkspace("Gameplay");
             return true;
@@ -384,6 +470,7 @@ public partial class MainWindow : Window
         {
             Key.G => "Gameplay",
             Key.L => "Label",
+            Key.S => "Stencil",
             Key.M => "Model",
             Key.H => "Hacker",
             Key.O => "Ops",
@@ -451,15 +538,16 @@ public partial class MainWindow : Window
             RoomEditorMouseDown(e);
             return;
         }
-        if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0
-            && (workspace == "Gameplay" ? gameplayFraming : hackerInteractionMode) == "Free Fly")
+        if ((workspace == "Gameplay" ? gameplayFraming : hackerInteractionMode) == "Current"
+            || (Keyboard.Modifiers & ModifierKeys.Shift) != 0
+                && (workspace == "Gameplay" ? gameplayFraming : hackerInteractionMode) == "Free Fly")
         {
             var surface = workspace == "Gameplay" ? GameplayAtlasCanvas : AtlasCanvas;
             viewportPanStart = e.GetPosition((IInputElement)sender);
             viewportPanMatrix = (surface.RenderTransform as MatrixTransform)?.Matrix ?? Matrix.Identity;
             Mouse.Capture((IInputElement)sender, CaptureMode.Element);
             e.Handled = true;
-            return;
+            if ((workspace == "Gameplay" ? gameplayFraming : hackerInteractionMode) != "Current") return;
         }
         if (!ForwardsGamePointer()) return;
         var normalized = NormalizedGamePointer(e);
@@ -498,6 +586,13 @@ public partial class MainWindow : Window
         if (viewportPanStart is { } panStart && e.LeftButton == MouseButtonState.Pressed)
         {
             var current = e.GetPosition((IInputElement)sender);
+            if ((current - panStart).Length < 4) return;
+            if (passingPrimaryMouse && lastForwardedPointer is { } pointer) {
+                gameControls.ForwardPointer("leftUp", pointer.X, pointer.Y);
+                passingPrimaryMouse = false;
+            }
+            if (workspace == "Gameplay") gameplayFraming = "Free Fly";
+            else hackerInteractionMode = "Free Fly";
             var matrix = viewportPanMatrix;
             matrix.OffsetX += current.X - panStart.X;
             matrix.OffsetY += current.Y - panStart.Y;
@@ -547,7 +642,7 @@ public partial class MainWindow : Window
             viewportPanStart = null;
             Mouse.Capture(null);
             e.Handled = true;
-            return;
+            if (!passingPrimaryMouse) return;
         }
         if (!passingPrimaryMouse) return;
         var normalized = NormalizedGamePointer(e) ?? lastForwardedPointer;
@@ -632,7 +727,7 @@ public partial class MainWindow : Window
             Height = restoredWindowBounds.Height;
             windowZoomed = false;
             WindowZoomButton.Content = "\uE922";
-            WindowZoomButton.ToolTip = "Maximize";
+            WindowZoomButton.ToolTip = initialization.Text("Maximize");
             return;
         }
 
@@ -666,6 +761,11 @@ public partial class MainWindow : Window
         if (IsLoaded) SelectWorkspace("Label");
     }
 
+    private void StencilsWorkspace_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsLoaded) SelectWorkspace("Stencil");
+    }
+
     private void ModelWorkspace_Click(object sender, RoutedEventArgs e)
     {
         if (IsLoaded) SelectWorkspace("Model");
@@ -681,9 +781,22 @@ public partial class MainWindow : Window
         if (IsLoaded) SelectWorkspace("Ops");
     }
 
-    private void SelectWorkspace(string destination)
+    private void SelectWorkspace(string destination, bool capture = true)
     {
+        if (destination == "Model" && !initialization.IsFirstPhaseComplete) return;
+        if (destination == "Hacker" && (!CanUseHacker() || recognizedMenuContext != "game"))
+        {
+            SetStatus(gameMode == GameRuntimeMode.Normal
+                ? "Hacker requires Modded Hollow Knight. Gameplay remains available."
+                : "Hacker is waiting for compatible ground-truth telemetry.");
+            GameplayWorkspaceButton.IsChecked = workspace == "Gameplay";
+            return;
+        }
+        if (destination == "Ops") { Settings_Click(this, new RoutedEventArgs()); return; }
         var leavingLabel = workspace == "Label" && destination != "Label";
+        if (leavingLabel && initializationTargetContext is not null
+            && !initialization.Steps.Any(step => step.ContextIdentifier == initializationTargetContext))
+            initializationTargetContext = null;
         if (destination is "Label" or "Model") ReleaseForwardedInput();
         if (destination is not ("Gameplay" or "Hacker")) SendPointerExit();
         workspace = destination;
@@ -691,12 +804,13 @@ public partial class MainWindow : Window
         LabelPanel.Visibility = destination == "Label" ? Visibility.Visible : Visibility.Collapsed;
         ModelPanel.Visibility = destination == "Model" ? Visibility.Visible : Visibility.Collapsed;
         HackerPanel.Visibility = destination == "Hacker" ? Visibility.Visible : Visibility.Collapsed;
-        OpsPanel.Visibility = destination == "Ops" ? Visibility.Visible : Visibility.Collapsed;
+
         GameplayControlsPanel.Visibility = destination == "Gameplay"
             ? Visibility.Visible : Visibility.Collapsed;
         HackerControlsPanel.Visibility = destination == "Hacker"
             ? Visibility.Visible : Visibility.Collapsed;
-        PathRecordingButton.Visibility = destination is "Gameplay" or "Hacker"
+        PathRecordingButton.Visibility = gameMode == GameRuntimeMode.Modded
+            && destination is "Gameplay" or "Hacker"
             ? Visibility.Visible : Visibility.Collapsed;
 
         GameplayWorkspaceButton.IsChecked = destination == "Gameplay";
@@ -705,7 +819,29 @@ public partial class MainWindow : Window
         HackerWorkspaceButton.IsChecked = destination == "Hacker";
         OpsWorkspaceButton.IsChecked = destination == "Ops";
 
-        if (destination == "Label") CaptureFrame_Click(this, new RoutedEventArgs());
+        if (destination == "Label" && capture)
+        {
+            initialization.Refresh();
+            var step = initialization.Steps.FirstOrDefault(item => item.ContextIdentifier == initializationTargetContext)
+                ?? (initialization.IsFirstPhaseComplete ? null : initialization.Steps.FirstOrDefault());
+            if (initializationTargetContext is null && !initialization.HasUsableHUD
+                && !initialization.Steps.Any(item => item.ContextIdentifier is "main-title" or "select-profile"))
+                step = new StencilInitializationStep("gameplay-hud", "Gameplay HUD", "game.health", "Health", 1, 2);
+            var target = initialization.Contexts.FirstOrDefault(item => item.Identifier == initializationTargetContext);
+            if (recognizedMenuContext == "game") ContextCombo.SelectedValue = "Gameplay";
+            else if (target is not null) ContextCombo.SelectedValue = target.Name;
+            else if (step is not null) ContextCombo.SelectedValue = step.ContextName;
+            var context = StencilInitializationPolicy.NormalizeContext(CurrentContextName);
+            var saved = context == "game" ? null : initialization.ExampleFor(context);
+            if (saved is not null) OpenLabelExample(saved);
+            else CaptureFrame_Click(this, new RoutedEventArgs());
+            RefreshClassChoices();
+        }
+        StencilsPanel.Visibility = destination == "Stencil" ? Visibility.Visible : Visibility.Collapsed;
+        StencilsWorkspaceButton.IsChecked = destination == "Stencil";
+        if (destination == "Stencil") RefreshStencilsWorkspace();
+        RefreshGuidance();
+        UpdateModeAvailability();
         if (destination == "Model") RefreshModelWorkspace();
         if (destination == "Ops") RefreshOps();
         if (destination == "Hacker") RedrawHackerEdits();
@@ -715,32 +851,252 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool CanUseHacker() =>
+        gameMode == GameRuntimeMode.Modded && gameControls.HasFreshGroundTruth;
+
+    private bool CanUseOps() =>
+        gameMode == GameRuntimeMode.Modded && gameControls.PlayerOpsAvailable;
+
+    private bool ShowsOpsControl() => workspace == "Gameplay" && gameMode == GameRuntimeMode.Modded
+        && visionCancellation is not null && recognizedMenuContext == "game";
+
+    private void UpdateModeAvailability()
+    {
+        if (HackerWorkspaceButton is null || OpsWorkspaceButton is null) return;
+        if (initialization is null) return;
+        GameplayControlsPanel.Visibility = workspace == "Gameplay" && initialization.IsFirstPhaseComplete
+            && visionCancellation is not null && recognizedMenuContext == "game" ? Visibility.Visible : Visibility.Collapsed;
+        ModelWorkspaceButton.Visibility = initialization.IsFirstPhaseComplete ? Visibility.Visible : Visibility.Collapsed;
+        StencilDetectionCheck.IsEnabled = initialization.IsFirstPhaseComplete;
+        ObjectDetectionCheck.IsEnabled = initialization.IsFirstPhaseComplete && trainedGameplayModelReady;
+        if (!StencilDetectionCheck.IsEnabled) StencilDetectionCheck.IsChecked = false;
+        if (!ObjectDetectionCheck.IsEnabled) ObjectDetectionCheck.IsChecked = false;
+        ObjectDetectionOptions.IsEnabled = ObjectDetectionCheck.IsEnabled && ObjectDetectionCheck.IsChecked == true;
+        StencilLockedText.Visibility = StencilDetectionCheck.IsEnabled ? Visibility.Collapsed : Visibility.Visible;
+        ModelLockedText.Visibility = ObjectDetectionCheck.IsEnabled ? Visibility.Collapsed : Visibility.Visible;
+        HackerWorkspaceButton.IsEnabled = CanUseHacker();
+        OpsWorkspaceButton.IsEnabled = CanUseOps();
+        OpsWorkspaceButton.Visibility = Visibility.Collapsed;
+        OpsPanel.Visibility = CanUseOps() && recognizedMenuContext == "game" ? Visibility.Visible : Visibility.Collapsed;
+        OpsSettingsTitle.Visibility = OpsPanel.Visibility;
+        HackerWorkspaceButton.Visibility = CanUseHacker() && recognizedMenuContext == "game" ? Visibility.Visible : Visibility.Collapsed;
+        HackerWorkspaceButton.ToolTip = CanUseHacker()
+            ? null
+            : gameMode == GameRuntimeMode.Normal
+                ? "Available in Modded mode"
+                : "Waiting for receiver telemetry";
+        OpsWorkspaceButton.ToolTip = CanUseOps()
+            ? null
+            : gameMode == GameRuntimeMode.Normal
+                ? "Available in Modded mode"
+                : "Waiting for player-ops capability";
+    }
+
+    private void SettingsBackdrop_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (ReferenceEquals(e.OriginalSource, SettingsOverlay)) SettingsOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private bool trainedGameplayModelReady;
+
+    private bool HasTrainedGameplayModel() => TrainedModelReadiness.IsReady(VisionRunText.Text.Trim(),
+        examples.Where(item => StencilInitializationPolicy.NormalizeContext(item.Manifest.ContextIdentifier) == "game"
+            && item.Manifest.Annotations.Any(box => !box.IsHardNegative)).Select(item => item.Id).ToHashSet());
+
+    private void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshSettingsText();
+        ReleaseForwardedInput();
+        RefreshAtlasManager();
+        if (CanUseOps()) RefreshOps();
+        HackerAtlasManager.Visibility = workspace == "Hacker" ? Visibility.Visible : Visibility.Collapsed;
+        SettingsOverlay.Visibility = SettingsOverlay.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private readonly Dictionary<(DependencyObject, DependencyProperty), string> originalCaptions = [];
+    private void LocalizeControls(DependencyObject parent)
+    {
+        void Translate(DependencyObject item, DependencyProperty property)
+        {
+            if (!originalCaptions.TryGetValue((item, property), out var original)) {
+                if (item.GetValue(property) is not string text || string.IsNullOrEmpty(text)) return;
+                original = text;
+                originalCaptions[(item, property)] = original;
+            }
+            item.SetValue(property, initialization.Text(original));
+        }
+        if (parent is ButtonBase button && button.Name is not ("StencilsWorkspaceButton" or "SettingsFactoryButton"))
+            Translate(parent, ContentControl.ContentProperty);
+        if (parent is FrameworkElement element && element.ToolTip is string) Translate(element, FrameworkElement.ToolTipProperty);
+        if (parent is TextBlock textBlock && (string.IsNullOrEmpty(textBlock.Name) || textBlock.Name == "OpsSettingsTitle")) Translate(parent, TextBlock.TextProperty);
+        foreach (var child in LogicalTreeHelper.GetChildren(parent).OfType<DependencyObject>()) LocalizeControls(child);
+    }
+
+    private void RefreshSettingsText()
+    {
+        trainedGameplayModelReady = HasTrainedGameplayModel();
+        UpdateModeAvailability();
+        SettingsTitle.Text = initialization.Text("settings");
+        SettingsButton.ToolTip = SettingsTitle.Text;
+        DebugSettings.Text = initialization.Text("debugView");
+        GameStateCheck.Content = initialization.Text("gameState");
+        SettingsLanguageTitle.Text = initialization.Text("language");
+        SettingsFactoryButton.Content = initialization.Text("factory");
+        ModelLockedText.Text = initialization.Text("modelLocked");
+        StencilLockedText.Text = initialization.Text("stencilLocked");
+        LocalizeControls(this);
+        RefreshContextChoices();
+        RefreshClassChoices();
+    }
+
+    private void SettingsLanguage_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (initialization is null || SettingsLanguageCombo.SelectedItem is not ComboBoxItem item
+            || item.Tag is not string language || language == initialization.LanguageIdentifier) return;
+        initialization.SetLanguage(language);
+        initializationTargetContext = null;
+        if (workspace is "Label" or "Model") SelectWorkspace("Gameplay");
+        menuStencilRecognizer.Refresh(initialization.LanguageIdentifier);
+        RefreshInitializationStatus();
+        RefreshSettingsText();
+        if (workspace == "Stencil") RefreshStencilsWorkspace();
+    }
+
+    private void ResetStencils_Click(object sender, RoutedEventArgs e)
+    {
+        SettingsOverlay.Visibility = Visibility.Collapsed;
+        ResetStencils();
+    }
+
+    private void FactoryReset_Click(object sender, RoutedEventArgs e)
+    {
+        SettingsOverlay.Visibility = Visibility.Collapsed;
+        RequestFactoryReset();
+    }
+
+    private void RefreshGuidance()
+    {
+        if (StencilGuidanceText is null || initialization is null) return;
+        StencilGuidanceText.Text = initialization.Guidance(
+            workspace == "Label" ? StencilInitializationPolicy.NormalizeContext(CurrentContextName) : null,
+            ClassIdentifierText.Text, initializationTargetContext) ?? "";
+        StencilGuidanceText.Visibility = StencilGuidanceText.Text.Length == 0
+            ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void RefreshInitializationStatus()
+    {
+        initialization.Refresh();
+        initialization.HasUsableHUD = menuStencilRecognizer.HasGameplayReference;
+        UpdateModeAvailability();
+        StencilsWorkspaceButton.Content = initialization.ButtonTitle;
+        RefreshGuidance();
+    }
+
+    private void ResetStencils()
+    {
+        if (MessageBox.Show(this,
+                initialization.Text("resetMessage"),
+                initialization.Text("resetTitle"), MessageBoxButton.YesNo, MessageBoxImage.Warning)
+            != MessageBoxResult.Yes) return;
+        try
+        {
+            var backup = VisionResetController.ResetStencils(ExamplesRootText.Text);
+            initializationTargetContext = null;
+            if (workspace is "Label" or "Model") SelectWorkspace("Gameplay");
+            currentExample = null;
+            currentFrame = null;
+            boxes.Clear();
+            RefreshExamples();
+            menuStencilRecognizer.Refresh(initialization.LanguageIdentifier);
+            RefreshInitializationStatus();
+            if (workspace == "Stencil") RefreshStencilsWorkspace();
+            SetStatus(backup is null ? "Stencil setup was already empty."
+                : $"Stencil setup reset. Backup: {backup}");
+        }
+        catch (Exception error)
+        {
+            ShowError(error);
+        }
+    }
+
+    private void RequestFactoryReset()
+    {
+        if (MessageBox.Show(this,
+                initialization.Text("factoryMessage"),
+                initialization.Text("factoryTitle"), MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        factoryResetRequested = true;
+        Close();
+    }
+
+    private sealed record ContextChoice(string Name, string Display);
+    private string CurrentContextName => ContextCombo.SelectedValue as string ?? "Gameplay";
+    private void RefreshContextChoices()
+    {
+        var current = CurrentContextName;
+        ContextCombo.DisplayMemberPath = nameof(ContextChoice.Display);
+        ContextCombo.SelectedValuePath = nameof(ContextChoice.Name);
+        ContextCombo.ItemsSource = StencilInitializationPolicy.AllContexts
+            .Where(item => gameMode == GameRuntimeMode.Modded || item.Identifier != "mods")
+            .Select(item => new ContextChoice(item.Name, initialization.Text(item.Name))).ToArray();
+        ContextCombo.SelectedValue = current;
+    }
+
     private void ContextCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (ClassCombo is null) return;
-        var context = ContextCombo.SelectedItem as string;
-        ClassCombo.ItemsSource = AvailableClassChoices(context);
-        ClassCombo.SelectedIndex = 0;
+        RefreshClassChoices();
+    }
+
+    private void RefreshClassChoices()
+    {
+        if (ClassCombo is null || initialization is null) return;
+        if (refreshingClassChoices) return;
+        refreshingClassChoices = true;
+        try
+        {
+            var previous = ClassIdentifierText.Text;
+            var choices = AvailableClassChoices(CurrentContextName);
+            ClassCombo.ItemsSource = choices;
+            var selected = choices.FirstOrDefault(item => item.Identifier == previous) ?? choices.FirstOrDefault();
+            ClassCombo.SelectedItem = selected;
+            ClassIdentifierText.Text = selected?.Identifier ?? "";
+            NewObjectButton.Visibility = CurrentContextName == "Gameplay" ? Visibility.Visible : Visibility.Collapsed;
+            LabelNegativeButton.Visibility = NewObjectButton.Visibility;
+            if (CurrentContextName != "Gameplay") {
+                if (LabelNegativeButton.IsChecked == true) LabelAddButton.IsChecked = true;
+                LabelNegativeButton.IsChecked = false;
+                HardNegativeCheck.IsChecked = false;
+            }
+        }
+        finally { refreshingClassChoices = false; }
+        RefreshGuidance();
     }
 
     private ClassChoice[] AvailableClassChoices(string? context)
     {
-        var prefix = context switch
+        var identifier = StencilInitializationPolicy.NormalizeContext(context ?? "Gameplay");
+        var stencil = StencilInitializationPolicy.AllContexts.FirstOrDefault(item => item.Identifier == identifier);
+        if (stencil is not null && identifier != "game")
         {
-            "Enemies" => "enemies.",
-            "World" => "world.",
-            _ => null
-        };
+            return stencil.Requirements.Where(item => !item.ModdedOnly || gameMode == GameRuntimeMode.Modded)
+                .Where(item => LabelAddButton.IsChecked != true || initialization.IsFirstPhaseComplete
+                    || item.Identifier != "select-profile.clear-save")
+                .Where(item => LabelAddButton.IsChecked != true || boxes.Count(box => !box.IsNegative
+                    && LabelingClassIdentity.CanonicalIdentifier(box.ClassIdentifier) == item.Identifier) < Math.Max(1, item.Count))
+                .Select(item => new ClassChoice(initialization.Text(item.Identifier == "shared.select-decoration"
+                    ? boxes.Count(box => !box.IsNegative && box.ClassIdentifier == item.Identifier) == 0
+                        ? "Left Select Decoration" : "Right Select Decoration" : item.Name), item.Identifier)).ToArray();
+        }
         return GameplayClassChoices.Concat(customObjectChoices)
-            .Where(choice => prefix is null || choice.Identifier.StartsWith(prefix, StringComparison.Ordinal))
             .DistinctBy(choice => choice.Identifier, StringComparer.Ordinal)
-            .OrderBy(choice => choice.Name, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+            .Select(choice => choice with { Name = initialization.Text(choice.Name) }).ToArray();
     }
 
     private void NewObject_Click(object sender, RoutedEventArgs e)
     {
-        var context = ContextCombo.Text;
+        var context = CurrentContextName;
         var group = context switch
         {
             "Enemies" => "enemies",
@@ -779,14 +1135,14 @@ public partial class MainWindow : Window
         var field = new TextBox { MinWidth = 280, Margin = new Thickness(12) };
         var dialog = new Window
         {
-            Title = $"New {group} object",
+            Title = initialization.Text("newObject", ("group", initialization.Text(group))),
             Owner = this,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             SizeToContent = SizeToContent.WidthAndHeight,
             ResizeMode = ResizeMode.NoResize
         };
-        var confirm = new Button { Content = "Add", IsDefault = true, MinWidth = 80, Margin = new Thickness(4) };
-        var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 80, Margin = new Thickness(4) };
+        var confirm = new Button { Content = initialization.Text("Add"), IsDefault = true, MinWidth = 80, Margin = new Thickness(4) };
+        var cancel = new Button { Content = initialization.Text("Cancel"), IsCancel = true, MinWidth = 80, Margin = new Thickness(4) };
         confirm.Click += (_, _) =>
         {
             if (string.IsNullOrWhiteSpace(field.Text)) return;
@@ -796,7 +1152,7 @@ public partial class MainWindow : Window
         buttons.Children.Add(cancel);
         buttons.Children.Add(confirm);
         var panel = new StackPanel();
-        panel.Children.Add(new TextBlock { Text = "Object name", Margin = new Thickness(12, 12, 12, 0) });
+        panel.Children.Add(new TextBlock { Text = initialization.Text("Object name"), Margin = new Thickness(12, 12, 12, 0) });
         panel.Children.Add(field);
         panel.Children.Add(buttons);
         dialog.Content = panel;
@@ -806,7 +1162,7 @@ public partial class MainWindow : Window
 
     private void ClassCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (ClassIdentifierText is null) return;
+        if (ClassIdentifierText is null || refreshingClassChoices) return;
         if (ClassCombo.SelectedItem is ClassChoice choice)
         {
             ClassIdentifierText.Text = choice.Identifier;
@@ -818,11 +1174,14 @@ public partial class MainWindow : Window
                 PersistLabelDraft();
             }
         }
+        RefreshGuidance();
     }
 
     private void LabelMode_Click(object sender, RoutedEventArgs e)
     {
-        HardNegativeCheck.IsChecked = LabelNegativeButton.IsChecked == true;
+        if (CurrentContextName != "Gameplay" && LabelNegativeButton.IsChecked == true) LabelAddButton.IsChecked = true;
+        HardNegativeCheck.IsChecked = CurrentContextName == "Gameplay" && LabelNegativeButton.IsChecked == true;
+        RefreshClassChoices();
     }
 
     private void ModelTab_Click(object sender, RoutedEventArgs e)
@@ -837,10 +1196,12 @@ public partial class MainWindow : Window
 
     private async void MacTrain_Click(object sender, RoutedEventArgs e)
     {
-        var classes = examples
+        var classes = examples.Where(example =>
+                StencilInitializationPolicy.NormalizeContext(example.Manifest.ContextIdentifier) == "game")
             .SelectMany(example => example.Manifest.Annotations)
             .Where(annotation => !annotation.IsHardNegative)
             .Select(annotation => annotation.ClassIdentifier)
+            .Where(identifier => identifier is not ("game.health" or "game.mana" or "game.geo"))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         if (classes.Length == 0) return;
@@ -849,44 +1210,34 @@ public partial class MainWindow : Window
         if (Directory.Exists(LatestDatasetText.Text)) await RunTrainerAsync(validateOnly: false);
     }
 
-    private void DebugViewCheck_Changed(object sender, RoutedEventArgs e)
+    private void GameStateCheck_Changed(object sender, RoutedEventArgs e)
     {
-        if (DebugPopup is null) return;
-        DebugPopup.IsOpen = DebugViewCheck.IsChecked == true;
+        if (VisionStatusOverlay is not null)
+            VisionStatusOverlay.Visibility = GameStateCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ObjectDetectionCheck_Changed(object sender, RoutedEventArgs e)
     {
         if (ObjectDetectionOptions is null) return;
-        ObjectDetectionOptions.Visibility = ObjectDetectionCheck.IsChecked == true
-            ? Visibility.Visible : Visibility.Collapsed;
+        ObjectDetectionOptions.IsEnabled = ObjectDetectionCheck.IsEnabled && ObjectDetectionCheck.IsChecked == true;
     }
 
     private void RawDetectionCheck_Changed(object sender, RoutedEventArgs e) =>
         rawDetectionEnabled = RawDetectionCheck.IsChecked == true;
 
-    private void ManageAtlas_Click(object sender, RoutedEventArgs e)
-    {
-        var hacker = workspace == "Hacker";
-        GameplayAtlasManager.Visibility = hacker ? Visibility.Collapsed : Visibility.Visible;
-        HackerAtlasManager.Visibility = hacker ? Visibility.Visible : Visibility.Collapsed;
-        if (!hacker) RefreshAtlasManager();
-        AtlasManagerOverlay.Visibility = Visibility.Visible;
-    }
-
     private void AtlasManagerDone_Click(object sender, RoutedEventArgs e) =>
-        AtlasManagerOverlay.Visibility = Visibility.Collapsed;
+        SettingsOverlay.Visibility = Visibility.Collapsed;
 
     private void GameplayFraming_Click(object sender, RoutedEventArgs e)
     {
-        gameplayFraming = (sender as Button)?.Content?.ToString() ?? gameplayFraming;
+        gameplayFraming = (sender as Button)?.Tag?.ToString() ?? gameplayFraming;
         if (gameplayFraming == "Free Fly") SendPointerExit();
         ApplyViewport(GameplayAtlasCanvas, GameplayPanel, gameplayFraming, GameplayImage);
     }
 
     private void HackerMode_Click(object sender, RoutedEventArgs e)
     {
-        var mode = (sender as Button)?.Content?.ToString();
+        var mode = (sender as Button)?.Tag?.ToString();
         hackerInteractionMode = mode ?? hackerInteractionMode;
         HackerGroundToolbar.Visibility = mode == "Ground"
             ? Visibility.Visible : Visibility.Collapsed;
@@ -949,16 +1300,16 @@ public partial class MainWindow : Window
         var controls = new DockPanel { LastChildFill = false };
         controls.Children.Add(new TextBlock
         {
-            Text = "Recent Frames",
+            Text = initialization.Text("Recent Frames"),
             FontSize = 18,
             FontWeight = FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center
         });
-        var close = new Button { Content = "Close", Margin = new Thickness(6, 0, 0, 0) };
+        var close = new Button { Content = initialization.Text("Close"), Margin = new Thickness(6, 0, 0, 0) };
         close.Click += (_, _) => window.Close();
         DockPanel.SetDock(close, Dock.Right);
         controls.Children.Add(close);
-        var resume = new Button { Content = "Resume (L)", Margin = new Thickness(6, 0, 0, 0) };
+        var resume = new Button { Content = initialization.Text("Resume (L)"), Margin = new Thickness(6, 0, 0, 0) };
         resume.Click += (_, _) => window.Close();
         DockPanel.SetDock(resume, Dock.Right);
         controls.Children.Add(resume);
@@ -1051,28 +1402,19 @@ public partial class MainWindow : Window
                         return CpuBgraNormalizer.Normalize(capture.Capture(window, ++frameId));
                     }, cancellation.Token);
                     var bitmap = FrameBitmap(frame);
-                    if (gameControls.TryGetFreshGroundTruth(
-                            TimeSpan.FromMilliseconds(500),
-                            out var telemetry))
-                    {
-                        PresentGameplayFrame(frame, telemetry, bitmap);
-                        if (workspace == "Hacker") PresentHackerFrame(frame, telemetry, bitmap);
-                    }
-                    else
-                    {
-                        GameplayImage.Source = bitmap;
-                        GameplayImage.Width = frame.Width;
-                        GameplayImage.Height = frame.Height;
-                        Canvas.SetLeft(GameplayImage, 0);
-                        Canvas.SetTop(GameplayImage, 0);
-                    }
+                    GameplayImage.Source = bitmap;
+                    GameplayImage.Width = frame.Width;
+                    GameplayImage.Height = frame.Height;
                     analysisFrames.Publish(frame);
                     if (analysisAvailable.CurrentCount == 0)
                     {
                         analysisAvailable.Release();
                     }
                     GameplayPlaceholder.Visibility = Visibility.Collapsed;
-                    VisionStatusText.Text = "Gameplay";
+                    VisionStatusText.Text = Volatile.Read(ref recognizedMenuContext) is { } state
+                        ? initialization.Text(state == "game" ? "Gameplay" : ContextDisplayName(state))
+                        : initialization.Text("Finding State");
+                    UpdateModeAvailability();
 
                     var remaining = TimeSpan.FromMilliseconds(33) - iteration.Elapsed;
                     if (remaining > TimeSpan.Zero)
@@ -1097,7 +1439,8 @@ public partial class MainWindow : Window
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
             GameplayPlaceholder.Visibility = Visibility.Visible;
-            VisionStatusText.Text = "Finding State";
+            VisionStatusText.Text = initialization.Text("Finding State");
+            UpdateModeAvailability();
         }
         catch (Exception error)
         {
@@ -1137,6 +1480,7 @@ public partial class MainWindow : Window
         BgraFrame frame,
         OnnxObjectDetector? detector)
     {
+        var menuContext = menuStencilRecognizer.Detect(frame);
         var detections = detector?.Detect(frame, rawDetectionEnabled)
             ?? Array.Empty<ObjectDetection>();
         var foreground = detections.Select(DetectionPixelRect).ToArray();
@@ -1155,31 +1499,35 @@ public partial class MainWindow : Window
             : GroundLineDetector.RejectKnownForegroundLines(
                 ground, frame.Height, foreground);
 
-        var grid = LowResolutionMotionGrid.FromFrame(frame);
-        var motion = previousMotionGrid is null
-            ? null
-            : LowResolutionRoomMotionTracker.DiagnoseTranslation(previousMotionGrid, grid);
-        previousMotionGrid = grid;
+        LowResolutionTranslationDiagnostic? motion = null;
+        if (menuContext == "game")
+        {
+            var grid = LowResolutionMotionGrid.FromFrame(frame);
+            motion = previousMotionGrid is null
+                ? null
+                : LowResolutionRoomMotionTracker.DiagnoseTranslation(previousMotionGrid, grid);
+            previousMotionGrid = grid;
+        }
         latestMotion = motion;
 
         AtlasMosaicDelta? gameplayTiles = null;
         AtlasMosaicDelta? hackerTiles = null;
-        ReceiverGroundTruthSample? telemetry = null;
+        var visualTelemetry = visualGameplayTracker.Observe(frame, motion);
+        var gameplayAccepted = menuContext == "game"
+            && gameplayAtlas.AddFrame(frame, visualTelemetry);
+        if (gameplayAccepted && (gameplayAtlas.AcceptedFrameCount == 1
+            || gameplayAtlas.AcceptedFrameCount % 3 == 0))
+        {
+            gameplayTiles = gameplayAtlas.SnapshotSince(
+                Interlocked.Read(ref gameplayRenderedRevision));
+        }
+        ReceiverGroundTruthSample? receiverTelemetry = null;
         if (gameControls.TryGetFreshGroundTruth(
                 TimeSpan.FromMilliseconds(500), out var sample))
         {
-            telemetry = sample;
-            var gameplayAccepted = gameplayAtlas.AddFrame(frame, sample);
-            var hackerAccepted = workspace == "Hacker"
-                && (gameplayAtlas.AcceptedFrameCount == 1
-                    || gameplayAtlas.AcceptedFrameCount % 3 == 0)
+            receiverTelemetry = sample;
+            var hackerAccepted = menuContext == "game" && workspace == "Hacker"
                 && hackerAtlas.AddFrame(frame, sample);
-            if (gameplayAccepted && (gameplayAtlas.AcceptedFrameCount == 1
-                || gameplayAtlas.AcceptedFrameCount % 3 == 0))
-            {
-                gameplayTiles = gameplayAtlas.SnapshotSince(
-                    Interlocked.Read(ref gameplayRenderedRevision));
-            }
             if (hackerAccepted)
             {
                 hackerTiles = hackerAtlas.SnapshotSince(
@@ -1187,11 +1535,24 @@ public partial class MainWindow : Window
             }
         }
         return new VisionAnalysisResult(
-            detections, ground, gameplayTiles, hackerTiles, telemetry, motion);
+            frame, detections, ground, gameplayTiles, hackerTiles,
+            visualTelemetry, receiverTelemetry, menuContext, motion);
     }
 
     private void ApplyVisionAnalysis(VisionAnalysisResult result)
     {
+        Volatile.Write(ref recognizedMenuContext, result.MenuContext);
+        PresentGameplayFrame(
+            result.Frame,
+            result.GameplayTelemetry,
+            FrameBitmap(result.Frame));
+        if (workspace == "Hacker" && result.ReceiverTelemetry is not null)
+        {
+            PresentHackerFrame(
+                result.Frame,
+                result.ReceiverTelemetry,
+                FrameBitmap(result.Frame));
+        }
         DrawDetections(result.Detections, result.Ground);
         if (result.GameplayTiles is not null)
         {
@@ -1221,11 +1582,10 @@ public partial class MainWindow : Window
                 hackerLiveTelemetry);
             Interlocked.Exchange(ref hackerRenderedRevision, result.HackerTiles.Revision);
         }
-        if (result.Telemetry is not null)
-        {
-            UpdateTrackedGround(result.Ground, result.Telemetry);
-            UpdateRoomTopology(result.Telemetry);
-        }
+        if (result.MenuContext == "game")
+            UpdateTrackedGround(result.Ground, result.GameplayTelemetry);
+        if (result.MenuContext == "game" && result.ReceiverTelemetry is not null)
+            UpdateRoomTopology(result.ReceiverTelemetry);
         DrawMotionOverlay(result.Motion);
         PersistActiveAtlas(force: false);
     }
@@ -1281,11 +1641,7 @@ public partial class MainWindow : Window
         }
         if (StencilDetectionCheck.IsChecked == true)
         {
-            foreach (var area in new[]
-            {
-                new Rect(0, 0, CanvasWidth, 48),
-                new Rect(0, CanvasHeight - 38, CanvasWidth, 38)
-            })
+            foreach (var area in menuStencilRecognizer.MatchedBounds)
             {
                 var stencil = new Rectangle
                 {
@@ -1708,29 +2064,110 @@ public partial class MainWindow : Window
         ModelExamplesRootText.Text = ExamplesRootText.Text;
         if (UntrainedCountText is not null)
         {
-            UntrainedCountText.Text = $"+{examples.Count}";
-            MacTrainButton.IsEnabled = examples.Any(example =>
-                example.Manifest.Annotations.Any(annotation => !annotation.IsHardNegative));
+            var gameplayExamples = examples.Where(example =>
+                StencilInitializationPolicy.NormalizeContext(example.Manifest.ContextIdentifier) == "game").ToArray();
+            UntrainedCountText.Text = $"+{gameplayExamples.Length}";
+            MacTrainButton.IsEnabled = gameplayExamples.Any(example =>
+                example.Manifest.Annotations.Any(annotation => !annotation.IsHardNegative
+                    && annotation.ClassIdentifier is not ("game.health" or "game.mana" or "game.geo")));
         }
+        trainedGameplayModelReady = HasTrainedGameplayModel();
         SetStatus($"Loaded {examples.Count} labeling examples.");
         if (ModelSummaryPanel is not null && workspace == "Model") RefreshModelWorkspace();
     }
 
+    private void RefreshStencilsWorkspace()
+    {
+        initialization.Refresh();
+        StencilsPanel.Children.Clear();
+        StencilsPanel.ColumnDefinitions.Clear();
+        StencilsPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) });
+        StencilsPanel.ColumnDefinitions.Add(new ColumnDefinition());
+        var list = new ListBox { Margin = new Thickness(8) };
+        var detail = new StackPanel { Margin = new Thickness(16) };
+        Grid.SetColumn(detail, 1);
+        var sidebar = new DockPanel();
+        var reset = new Button { Content = initialization.Text("reset"), Foreground = Brushes.IndianRed,
+            Margin = new Thickness(12), HorizontalAlignment = HorizontalAlignment.Left };
+        reset.Click += (_, _) => ResetStencils();
+        DockPanel.SetDock(reset, Dock.Bottom);
+        sidebar.Children.Add(reset);
+        sidebar.Children.Add(list);
+        StencilsPanel.Children.Add(sidebar);
+        StencilsPanel.Children.Add(detail);
+        var lastPhase = 0;
+        foreach (var context in initialization.Contexts)
+        {
+            var phase = StencilInitializationPolicy.Phase(context.Identifier);
+            if (phase != lastPhase) {
+                list.Items.Add(new ListBoxItem { Content = initialization.Text($"phase{phase}"), IsEnabled = false,
+                    FontWeight = FontWeights.SemiBold, Padding = new Thickness(8, 16, 8, 4) });
+                lastPhase = phase;
+            }
+            var complete = !initialization.Steps.Any(step => step.ContextIdentifier == context.Identifier)
+                && (context.Identifier != "gameplay-hud" || initialization.HasUsableHUD);
+            list.Items.Add(new ListBoxItem
+            {
+                Content = $"{(complete ? "✓" : "○")}  {initialization.ScreenName(context.Name)}",
+                Tag = context.Identifier, Padding = new Thickness(8)
+            });
+        }
+        list.SelectionChanged += (_, _) =>
+        {
+            if (list.SelectedItem is not ListBoxItem item || item.Tag is not string context) return;
+            initializationTargetContext = context;
+            RefreshGuidance();
+            detail.Children.Clear();
+            if (initialization.ExampleFor(context) is { } example)
+            {
+                detail.Children.Add(new Image { Source = LoadBitmap(example.ImagePath),
+                    Stretch = Stretch.Uniform, MaxHeight = 500 });
+                var edit = new Button { Content = initialization.Text("edit"),
+                    HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 12, 0, 0) };
+                edit.Click += (_, _) =>
+                {
+                    SelectWorkspace("Label", capture: false);
+                    OpenLabelExample(example);
+                };
+                var actions = new StackPanel { Orientation = Orientation.Horizontal };
+                actions.Children.Add(edit);
+                var delete = new Button { Content = initialization.Text("deleteScreenshot"), Foreground = Brushes.IndianRed,
+                    Margin = new Thickness(8, 12, 0, 0) };
+                delete.Click += (_, _) => {
+                    try {
+                        new LabelingExampleStore(ExamplesRootText.Text).Delete(example);
+                        if (currentExample?.Id == example.Id) { currentExample = null; boxes.Clear(); }
+                        RefreshExamples();
+                        menuStencilRecognizer.Refresh(initialization.LanguageIdentifier);
+                        RefreshInitializationStatus();
+                        RefreshStencilsWorkspace();
+                    } catch (Exception error) { ShowError(error); }
+                };
+                actions.Children.Add(delete);
+                detail.Children.Add(actions);
+            }
+        };
+        list.SelectedItem = list.Items.Cast<ListBoxItem>().FirstOrDefault(item => Equals(item.Tag, initializationTargetContext))
+            ?? list.Items.Cast<ListBoxItem>().FirstOrDefault(item => item.Tag is string);
+    }
+
     private void RefreshModelWorkspace()
     {
-        var annotations = examples.SelectMany(example => example.Manifest.Annotations).ToArray();
+        var modelExamples = examples.Where(example =>
+            StencilInitializationPolicy.NormalizeContext(example.Manifest.ContextIdentifier) == "game").ToArray();
+        var annotations = modelExamples.SelectMany(example => example.Manifest.Annotations).ToArray();
         var counts = annotations
             .Where(annotation => !annotation.IsHardNegative)
             .GroupBy(annotation => annotation.ClassIdentifier, StringComparer.Ordinal)
             .OrderBy(group => group.Count())
             .ToArray();
-        UntrainedCountText.Text = $"+{examples.Count}";
+        UntrainedCountText.Text = $"+{modelExamples.Length}";
 
         ModelSummaryPanel.Children.Clear();
         var summary = new StackPanel { Margin = new Thickness(8) };
         summary.Children.Add(new TextBlock
         {
-            Text = "Least Registrations", FontSize = 16, FontWeight = FontWeights.SemiBold
+            Text = initialization.Text("Least Registrations"), FontSize = 16, FontWeight = FontWeights.SemiBold
         });
         foreach (var group in counts)
         {
@@ -1743,14 +2180,14 @@ public partial class MainWindow : Window
         summary.Children.Add(new Separator { Margin = new Thickness(0, 12, 0, 8) });
         summary.Children.Add(new TextBlock
         {
-            Text = $"{examples.Count} screenshots  •  {annotations.Count(annotation => !annotation.IsHardNegative)} positive  •  {annotations.Count(annotation => annotation.IsHardNegative)} negative",
+            Text = initialization.Text("modelCounts", ("count", modelExamples.Length.ToString()), ("positive", annotations.Count(annotation => !annotation.IsHardNegative).ToString()), ("negative", annotations.Count(annotation => annotation.IsHardNegative).ToString())),
             Foreground = Brushes.Gray
         });
         if (counts.Length == 0)
         {
             summary.Children.Add(new TextBlock
             {
-                Text = "No labeled registrations.", Foreground = Brushes.Gray,
+                Text = initialization.Text("No labeled registrations."), Foreground = Brushes.Gray,
                 Margin = new Thickness(0, 8, 0, 0)
             });
         }
@@ -1771,7 +2208,7 @@ public partial class MainWindow : Window
             detail.Children.Clear();
             if (identifier is null) return;
             identifier = identifier.Split("    ")[0];
-            foreach (var example in examples.Where(example => example.Manifest.Annotations.Any(
+            foreach (var example in modelExamples.Where(example => example.Manifest.Annotations.Any(
                          annotation => !annotation.IsHardNegative
                              && annotation.ClassIdentifier == identifier)).Take(20))
             {
@@ -1788,7 +2225,7 @@ public partial class MainWindow : Window
 
         ModelScreenshotsPanel.Children.Clear();
         var gallery = new WrapPanel();
-        foreach (var example in examples.OrderByDescending(item => item.Manifest.CreatedAt))
+        foreach (var example in modelExamples.OrderByDescending(item => item.Manifest.CreatedAt))
         {
             gallery.Children.Add(new Image
             {
@@ -1840,7 +2277,7 @@ public partial class MainWindow : Window
             currentExample = selected;
             currentFrame = null;
             captureGroupIdentifier = selected.Manifest.CaptureGroupIdentifier;
-            ContextCombo.Text = selected.Manifest.ContextIdentifier;
+            ContextCombo.SelectedValue = ContextDisplayName(selected.Manifest.ContextIdentifier);
             KnownClassesText.Text = string.Join(Environment.NewLine,
                 selected.Manifest.EffectiveKnownClassIdentifiers);
             boxes.Clear();
@@ -1851,6 +2288,7 @@ public partial class MainWindow : Window
             }
             LabelImage.Source = LoadBitmap(selected.ImagePath);
             RedrawBoxes();
+            RefreshClassChoices();
             SetStatus($"Editing {selected.Manifest.Id:D}.");
         }
         catch (Exception error)
@@ -1863,7 +2301,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            var context = ContextCombo.Text.Trim();
+            var context = StencilInitializationPolicy.NormalizeContext(CurrentContextName);
             if (context.Length == 0) throw new InvalidOperationException("Choose a context.");
             var annotations = boxes.Select(box => box.ToAnnotation()).ToArray();
             var known = ParseIdentifiers(KnownClassesText.Text)
@@ -1878,18 +2316,34 @@ public partial class MainWindow : Window
                     context,
                     annotations,
                     known,
-                    captureGroupIdentifier: captureGroupIdentifier)
+                    captureGroupIdentifier: captureGroupIdentifier,
+                    languageIdentifier: initialization.LanguageIdentifier)
                 : store.Update(currentExample, context, annotations, known);
             SetStatus($"Saved label example {currentExample.Id:D}.");
             RefreshExamples();
+            menuStencilRecognizer.Refresh(initialization.LanguageIdentifier);
             ExamplesList.SelectedItem = examples.FirstOrDefault(example =>
                 example.Id == currentExample.Id);
+            RefreshInitializationStatus();
+            RefreshClassChoices();
+
         }
         catch (Exception error)
         {
             ShowError(error);
         }
     }
+
+    private static string ContextDisplayName(string identifier) =>
+        StencilInitializationPolicy.NormalizeContext(identifier) switch
+        {
+            "main-title" => "Main Title",
+            "select-profile" => "Select Profile",
+            "quit-to-menu" => "Quit To Menu",
+            "game" => "Gameplay",
+            var value => CultureInfo.InvariantCulture.TextInfo.ToTitleCase(
+                value.Replace('-', ' '))
+        };
 
     private void DeleteExample_Click(object sender, RoutedEventArgs e)
     {
@@ -1911,6 +2365,8 @@ public partial class MainWindow : Window
             LabelImage.Source = null;
             boxes.Clear();
             RefreshExamples();
+            menuStencilRecognizer.Refresh(initialization.LanguageIdentifier);
+            RefreshInitializationStatus();
         }
         catch (Exception error)
         {
@@ -1921,7 +2377,8 @@ public partial class MainWindow : Window
     private void LabelCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (LabelImage.Source is null) return;
-        if (string.IsNullOrWhiteSpace(ClassIdentifierText.Text))
+        if ((LabelAddButton.IsChecked == true || LabelNegativeButton.IsChecked == true)
+            && string.IsNullOrWhiteSpace(ClassIdentifierText.Text))
         {
             SetStatus("Enter a class identifier before drawing.");
             return;
@@ -1962,6 +2419,8 @@ public partial class MainWindow : Window
             }
             return;
         }
+        if (LabelAddButton.IsChecked == true && !AvailableClassChoices(CurrentContextName)
+            .Any(item => item.Identifier == ClassIdentifierText.Text)) return;
         PushLabelUndo();
         dragStart = point;
         dragPreview = new Rectangle
@@ -2101,6 +2560,19 @@ public partial class MainWindow : Window
             rectangle.Width = box.Width * CanvasWidth;
             rectangle.Height = box.Height * CanvasHeight;
             LabelCanvas.Children.Add(rectangle);
+            var identifier = box.ClassIdentifier;
+            var definition = StencilInitializationPolicy.AllContexts.SelectMany(item => item.Requirements)
+                .FirstOrDefault(item => item.Identifier == identifier);
+            var name = definition?.Name ?? customObjectChoices.FirstOrDefault(item => item.Identifier == identifier)?.Name ?? identifier;
+            if (identifier == "shared.select-decoration")
+                name = boxes.Where(item => item.ClassIdentifier == identifier && !item.IsNegative)
+                    .OrderBy(item => item.X).FirstOrDefault() == box ? "Left Select Decoration" : "Right Select Decoration";
+            var caption = new Border { Background = Brushes.DodgerBlue, Padding = new Thickness(3, 1, 3, 1),
+                IsHitTestVisible = false, Child = new TextBlock { Text = initialization.Text(name),
+                    Foreground = Brushes.White, FontSize = 11 } };
+            Canvas.SetLeft(caption, box.X * CanvasWidth);
+            Canvas.SetTop(caption, box.Y * CanvasHeight >= 20 ? box.Y * CanvasHeight - 20 : (box.Y + box.Height) * CanvasHeight + 2);
+            LabelCanvas.Children.Add(caption);
         }
     }
 
@@ -2115,7 +2587,8 @@ public partial class MainWindow : Window
             var snapshot = new LabelingDatasetExporter(DatasetRootText.Text).Export(
                 ModelIdentifierText.Text.Trim(),
                 classes,
-                store.Load());
+                store.Load().Where(example =>
+                    StencilInitializationPolicy.NormalizeContext(example.Manifest.ContextIdentifier) == "game").ToArray());
             LatestDatasetText.Text = snapshot.DirectoryPath;
             SetStatus(
                 $"Exported {snapshot.Manifest.Items.Count} items: "
@@ -2199,6 +2672,7 @@ public partial class MainWindow : Window
             if (!validateOnly)
             {
                 VisionRunText.Text = TrainingOutputText.Text.Trim();
+                trainedGameplayModelReady = HasTrainedGameplayModel();
             }
             SetStatus(validateOnly
                 ? "Dataset validation passed."
@@ -2233,7 +2707,7 @@ public partial class MainWindow : Window
             "Capture policy: target-window PrintWindow with GDI fallback, normalized to 640x360 on CPU"
         });
         OpsStatusText.Text = gameControls.PlayerOpsAvailable
-            ? "Loading player state…" : "Updated game receiver is not ready.";
+            ? initialization.Text("Loading player state…") : initialization.Text("Updated game receiver is not ready.");
         _ = QueryPlayerOpsAsync();
     }
 
@@ -2247,7 +2721,7 @@ public partial class MainWindow : Window
     private async void OpsApply_Click(object sender, RoutedEventArgs e)
     {
         if (!TryReadPlayerTestState(out var state)) return;
-        OpsStatusText.Text = "Applying player state…";
+        OpsStatusText.Text = initialization.Text("Applying player state…");
         var acknowledgement = await gameControls.PerformPlayerOpsAsync(
             session => ReceiverPlayerOpsCommand.Apply(session, state));
         ApplyPlayerOpsAcknowledgement(acknowledgement);
@@ -2263,7 +2737,7 @@ public partial class MainWindow : Window
             random.Next(0, 100 + slots * 33), slots,
             random.Next(0, 10_000), OpsInvincibleCheck.IsChecked == true);
         SetPlayerTestState(state);
-        OpsStatusText.Text = "Randomizing player state…";
+        OpsStatusText.Text = initialization.Text("Randomizing player state…");
         var acknowledgement = await gameControls.PerformPlayerOpsAsync(
             session => ReceiverPlayerOpsCommand.Apply(session, state));
         ApplyPlayerOpsAcknowledgement(acknowledgement);
@@ -2271,7 +2745,7 @@ public partial class MainWindow : Window
 
     private async void OpsRestoreEnemies_Click(object sender, RoutedEventArgs e)
     {
-        OpsStatusText.Text = "Restoring enemies…";
+        OpsStatusText.Text = initialization.Text("Restoring enemies…");
         var acknowledgement = await gameControls.PerformPlayerOpsAsync(
             ReceiverPlayerOpsCommand.RestoreEnemies);
         ApplyPlayerOpsAcknowledgement(acknowledgement);
@@ -2291,7 +2765,7 @@ public partial class MainWindow : Window
         {
             if (!int.TryParse(controls[index].Text, out values[index]))
             {
-                OpsStatusText.Text = "Enter whole numbers for player state.";
+                OpsStatusText.Text = initialization.Text("Enter whole numbers for player state.");
                 state = PlayerTestState.Default;
                 return false;
             }
@@ -2307,17 +2781,17 @@ public partial class MainWindow : Window
     {
         if (acknowledgement is null)
         {
-            OpsStatusText.Text = "Updated game receiver is not ready.";
+            OpsStatusText.Text = initialization.Text("Updated game receiver is not ready.");
             return;
         }
         if (!acknowledgement.Accepted)
         {
-            OpsStatusText.Text = acknowledgement.Failure ?? "Player operation failed.";
+            OpsStatusText.Text = acknowledgement.Failure ?? initialization.Text("Player operation failed.");
             return;
         }
         if (acknowledgement.State is not null) SetPlayerTestState(acknowledgement.State.Normalized());
         OpsStatusText.Text = acknowledgement.EnemiesRestored is not null
-            ? "Enemies restored." : "Player state updated.";
+            ? initialization.Text("Enemies restored.") : initialization.Text("Player state updated.");
     }
 
     private void SetPlayerTestState(PlayerTestState state)
@@ -2585,6 +3059,7 @@ public partial class MainWindow : Window
             catch (JsonException) { }
         }
         gameplayAtlas.Reset();
+        visualGameplayTracker.Reset();
         foreach (var path in Directory.EnumerateFiles(activeAtlasDirectory, "tile_*_*.bmp"))
         {
             var coordinate = ParseAtlasTile(path);
@@ -2688,7 +3163,7 @@ public partial class MainWindow : Window
             ResetGameplayAtlas(deleteArchive: true);
             CopyDirectory(atlasStateStore.WorldPath(state), activeAtlasDirectory);
             LoadPersistentAtlas();
-            AtlasManagerOverlay.Visibility = Visibility.Collapsed;
+            SettingsOverlay.Visibility = Visibility.Collapsed;
         }
         catch (Exception error) { ShowError(error); }
     }
@@ -2696,6 +3171,7 @@ public partial class MainWindow : Window
     private void ResetGameplayAtlas(bool deleteArchive)
     {
         gameplayAtlas.Reset();
+        visualGameplayTracker.Reset();
         trackedGround.Clear();
         gameplayRenderedRevision = gameplayAtlas.Revision;
         gameplayPersistedRevision = gameplayAtlas.Revision;
@@ -2722,7 +3198,7 @@ public partial class MainWindow : Window
         PersistHackerEdits();
         HackerLiveImage.Visibility = Visibility.Collapsed;
         AtlasEmptyPanel.Visibility = Visibility.Visible;
-        AtlasManagerOverlay.Visibility = Visibility.Collapsed;
+        SettingsOverlay.Visibility = Visibility.Collapsed;
         RedrawHackerEdits();
     }
 

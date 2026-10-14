@@ -30,11 +30,46 @@ struct HUDStencilTemplate: Decodable {
         return template
     }()
 
+    static func captured(examples: [SavedLabelingExample], languageIdentifier: String) -> HUDStencilTemplate? {
+        guard let example = StencilInitializationPolicy.representativeExample(
+            examples: examples, context: .gameplayHUD, languageIdentifier: languageIdentifier, mode: .normal
+        ), let image = try? LabelingExampleStore().loadImage(for: example),
+        let pixels = ImageStencilPixels(image, referenceWidth: 640, referenceHeight: 360, band: 0..<80)
+        else { return nil }
+        let boxes = example.manifest.annotations.filter {
+            !$0.isHardNegative && $0.classIdentifier == "game.health"
+        }.map { annotation in
+            let box = annotation.normalizedRect
+            return CGRect(x: box.minX * 640, y: box.minY * 360,
+                          width: box.width * 640, height: box.height * 360).integral
+        }.sorted { $0.minX < $1.minX }
+        guard boxes.count == 2, boxes[0].maxX <= boxes[1].minX,
+              abs(boxes[0].midY - boxes[1].midY) < max(boxes[0].height, boxes[1].height) / 2,
+              boxes.allSatisfy({ $0.minY >= 0 && $0.maxY <= 80 && $0.maxX <= 320 }) else { return nil }
+        let atoms = boxes.compactMap { box -> Atom? in
+            guard let reference = pixels.reference(in: box) else { return nil }
+            return Atom(kind: "full", rect: [box.minX, box.minY, box.width, box.height], rgb: reference.rgb)
+        }
+        let result = Self(schemaVersion: 1, sourceExampleID: example.id.uuidString,
+            referenceWidth: 640, referenceHeight: 360, healthPitch: boxes[1].midX - boxes[0].midX,
+            health: atoms, manaMain: [], manaContainer: [0, 0, 0, 0], manaReserves: [], geo: [0, 0, 0, 0])
+        guard atoms.count == 2 && result.isValid,
+              HUDStencilTracker(template: result).observe(image, gameplay: true, timestamp: 0, generation: 0)?.establishesGameplay == true
+        else { return nil }
+        // Setup learns the full-health row and its pitch. Retain the stock
+        // empty/lifeblood appearance variants so damage doesn't close the
+        // Gameplay gate before the user has trained an object model.
+        return Self(schemaVersion: result.schemaVersion, sourceExampleID: result.sourceExampleID,
+            referenceWidth: result.referenceWidth, referenceHeight: result.referenceHeight,
+            healthPitch: result.healthPitch, health: result.health + (bundled?.health ?? []),
+            manaMain: result.manaMain, manaContainer: result.manaContainer,
+            manaReserves: result.manaReserves, geo: result.geo)
+    }
+
     var isValid: Bool {
         schemaVersion == 1 && referenceWidth > 0 && referenceHeight > 0
-            && healthPitch.isFinite && healthPitch > 4 && health.count == 3
-            && !manaReserves.isEmpty && manaContainer.count == 4 && geo.count == 4
-            && !manaMain.isEmpty
+            && healthPitch.isFinite && healthPitch > 4 && !health.isEmpty
+            && manaContainer.count == 4 && geo.count == 4
             && (health + manaMain + manaReserves).allSatisfy {
                 $0.rect.count == 4 && $0.rect.allSatisfy(\.isFinite)
                     && $0.rect[2] > 0 && $0.rect[3] > 0
@@ -260,8 +295,10 @@ final class HUDStencilTracker {
         }
         return HUDStencilResult(health: health, manaMain: manaMain, manaReserves: mana,
             healthMasks: healthMasks,
-            manaMasks: [outputRect(rect(template.manaContainer).offsetBy(dx: offset.x, dy: offset.y), margin: 2)] + reserveMasks,
-            geo: outputRect(rect(template.geo).offsetBy(dx: offset.x, dy: offset.y), margin: 1),
+            manaMasks: (rect(template.manaContainer).isEmpty ? []
+                : [outputRect(rect(template.manaContainer).offsetBy(dx: offset.x, dy: offset.y), margin: 2)]) + reserveMasks,
+            geo: rect(template.geo).isEmpty ? .zero
+                : outputRect(rect(template.geo).offsetBy(dx: offset.x, dy: offset.y), margin: 1),
             holdsHealthMask: holdingHealth, sourceTimestamp: timestamp)
     }
 

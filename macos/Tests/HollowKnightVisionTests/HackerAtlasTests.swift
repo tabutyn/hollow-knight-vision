@@ -114,9 +114,7 @@ final class HackerAtlasTests: XCTestCase {
     }
 
     func testPipelineConnectsRoomsAndRestoresOriginalSceneAnchor() throws {
-        let preparer = HackerFramePreparer(context: CIContext(options: [
-            .useSoftwareRenderer: true,
-        ]))
+        let preparer = HackerFramePreparer()
         let pipeline = HackerAtlasPipeline(context: CIContext(options: [
             .useSoftwareRenderer: true,
         ]))
@@ -166,9 +164,7 @@ final class HackerAtlasTests: XCTestCase {
     }
 
     func testNewRoomAlignsKnightsDoorwayPositionAcrossSceneCoordinates() throws {
-        let preparer = HackerFramePreparer(context: CIContext(options: [
-            .useSoftwareRenderer: true,
-        ]))
+        let preparer = HackerFramePreparer()
         let pipeline = HackerAtlasPipeline(context: CIContext(options: [
             .useSoftwareRenderer: true,
         ]))
@@ -209,9 +205,7 @@ final class HackerAtlasTests: XCTestCase {
     }
 
     func testPipelineReinsertsLastBrightFrameWhenRoomFadesToBlack() throws {
-        let preparer = HackerFramePreparer(context: CIContext(options: [
-            .useSoftwareRenderer: true,
-        ]))
+        let preparer = HackerFramePreparer()
         let pipeline = HackerAtlasPipeline(context: CIContext(options: [
             .useSoftwareRenderer: true,
         ]))
@@ -245,9 +239,7 @@ final class HackerAtlasTests: XCTestCase {
     }
 
     func testNewestHackerFrameOverwritesOverlapAndAddsDarkRoomPixels() throws {
-        let preparer = HackerFramePreparer(context: CIContext(options: [
-            .useSoftwareRenderer: true,
-        ]))
+        let preparer = HackerFramePreparer()
         let pipeline = HackerAtlasPipeline(context: CIContext(options: [
             .useSoftwareRenderer: true,
         ]))
@@ -286,9 +278,7 @@ final class HackerAtlasTests: XCTestCase {
     }
 
     func testHackerAtlasUsesPixelStencilToRemoveHUD() throws {
-        let preparer = HackerFramePreparer(context: CIContext(options: [
-            .useSoftwareRenderer: true,
-        ]))
+        let preparer = HackerFramePreparer()
         let pipeline = HackerAtlasPipeline(context: CIContext(options: [
             .useSoftwareRenderer: true,
         ]))
@@ -300,7 +290,10 @@ final class HackerAtlasTests: XCTestCase {
                 heroScreenX: 32, heroScreenY: 18
             )
         )))
-        let stencil = try XCTUnwrap(prepared.hudStencil)
+        let stencil = try XCTUnwrap(HUDStencilTracker().observe(
+            prepared.liveImage, gameplay: true,
+            timestamp: prepared.capturedAt, generation: 0
+        ))
         XCTAssertFalse(stencil.omittedRects.isEmpty)
         let output = try XCTUnwrap(pipeline.process(prepared))
 
@@ -327,9 +320,7 @@ final class HackerAtlasTests: XCTestCase {
     }
 
     func testCutsceneWithoutHeroDoesNotBecomeARoom() throws {
-        let preparer = HackerFramePreparer(context: CIContext(options: [
-            .useSoftwareRenderer: true,
-        ]))
+        let preparer = HackerFramePreparer()
         let pipeline = HackerAtlasPipeline(context: CIContext(options: [
             .useSoftwareRenderer: true,
         ]))
@@ -358,10 +349,42 @@ final class HackerAtlasTests: XCTestCase {
         XCTAssertEqual(output.knownScenes, ["Room A", "Room B"])
     }
 
+    func testLiveMarkerRepairPreservesPixelsAndCopiesCorrectRows() throws {
+        let width = 640, height = 360
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height { for x in 0..<width {
+            let i = (y * width + x) * 4
+            pixels[i] = UInt8(x % 256)
+            pixels[i + 1] = UInt8(y % 256)
+            pixels[i + 2] = UInt8((x + y) % 256)
+        } }
+        let provider = try XCTUnwrap(CGDataProvider(data: Data(pixels) as CFData))
+        let image = try XCTUnwrap(CGImage(
+            width: width, height: height, bitsPerComponent: 8,
+            bitsPerPixel: 32, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false,
+            intent: .defaultIntent
+        ))
+        let prepared = try XCTUnwrap(HackerFramePreparer().process(match(
+            image: image, sample: sample(frame: 4, cameraX: 0),
+            integratesAtlas: false
+        )))
+        let repaired = try rgbaPixels(prepared.liveImage)
+        var expected = pixels
+        for y in 0..<6 { for x in 0..<120 {
+            let destination = (y * width + x) * 4
+            let source = ((y + 6) * width + x) * 4
+            expected.replaceSubrange(destination..<(destination + 4),
+                                     with: pixels[source..<(source + 4)])
+        } }
+        XCTAssertTrue(repaired == expected,
+                      "repair must copy the adjacent strip without shifting or recoloring the game")
+    }
+
     func testPipelineClearsRenderedMarkerAtCapturedTopEdge() throws {
-        let preparer = HackerFramePreparer(context: CIContext(options: [
-            .useSoftwareRenderer: true,
-        ]))
+        let preparer = HackerFramePreparer()
         let pipeline = HackerAtlasPipeline(context: CIContext(options: [
             .useSoftwareRenderer: true,
         ]))
@@ -386,9 +409,7 @@ final class HackerAtlasTests: XCTestCase {
     }
 
     func testEveryMatchedFramePreparesWhileOnlyCadencedFramesIntegrate() throws {
-        let preparer = HackerFramePreparer(context: CIContext(options: [
-            .useSoftwareRenderer: true,
-        ]))
+        let preparer = HackerFramePreparer()
         let pipeline = HackerAtlasPipeline(context: CIContext(options: [
             .useSoftwareRenderer: true,
         ]))

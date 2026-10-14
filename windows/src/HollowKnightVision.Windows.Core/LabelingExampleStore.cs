@@ -53,9 +53,13 @@ public sealed record LabelingExampleManifest(
     IReadOnlyList<LabelingExampleAnnotation> Annotations,
     IReadOnlyList<string>? KnownClassIdentifiers,
     LabelingExampleCompletion Completion,
-    DateTimeOffset CreatedAt)
+    DateTimeOffset CreatedAt,
+    string? LanguageIdentifier = null)
 {
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 5;
+
+    [JsonIgnore]
+    public string ResolvedLanguageIdentifier => LanguageIdentifier ?? "en";
 
     [JsonIgnore]
     public IReadOnlyList<string> EffectiveKnownClassIdentifiers => SchemaVersion >= 2
@@ -165,7 +169,8 @@ public sealed class LabelingExampleStore
         IEnumerable<LabelingExampleAnnotation> annotations,
         IEnumerable<string>? knownClassIdentifiers = null,
         LabelingExampleCompletion completion = LabelingExampleCompletion.Draft,
-        Guid? captureGroupIdentifier = null)
+        Guid? captureGroupIdentifier = null,
+        string languageIdentifier = "en")
     {
         ArgumentNullException.ThrowIfNull(image);
         ArgumentException.ThrowIfNullOrWhiteSpace(contextIdentifier);
@@ -193,7 +198,8 @@ public sealed class LabelingExampleStore
             canonicalAnnotations,
             introduced,
             completion,
-            now());
+            now(),
+            languageIdentifier);
 
         Directory.CreateDirectory(RootDirectory);
         var finalDirectory = Path.Combine(RootDirectory, id.ToString("D").ToLowerInvariant());

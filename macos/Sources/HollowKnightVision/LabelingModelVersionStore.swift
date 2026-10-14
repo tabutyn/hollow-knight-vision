@@ -412,6 +412,16 @@ final class LabelingModelVersionStore {
         return artifacts
     }
 
+    func hasTrainedGameplayModel(exampleIDs: Set<UUID>, candidates: [LabelingModelCandidate]) throws -> Bool {
+        guard !exampleIDs.isEmpty else { return false }
+        return try activeModelArtifacts().contains { artifact in
+            guard fileManager.fileExists(atPath: artifact.modelURL.path),
+                  let point = try restorePoints(for: artifact.classIdentifier).first(where: { $0.version == artifact.version }),
+                  let candidate = candidates.first(where: { $0.id == point.sourceRunIdentifier }) else { return false }
+            return candidate.predictionReview?.examples.contains { exampleIDs.contains($0.exampleIdentifier) } == true
+        }
+    }
+
     private func loadRegistry() throws -> Registry {
         let url = rootURL.appendingPathComponent(Self.registryFilename)
         guard fileManager.fileExists(atPath: url.path) else { return Registry() }

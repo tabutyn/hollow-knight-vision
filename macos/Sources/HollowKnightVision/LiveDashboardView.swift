@@ -41,13 +41,26 @@ enum PathRecordingPresentationPolicy {
 enum DashboardWorkspace: String, CaseIterable, Identifiable {
     case gameplay = "Gameplay"
     case label = "Label"
+    case stencils = "Stencil"
     case model = "Model"
     case hacker = "Hacker"
     case ops = "Ops"
 
     var id: Self { self }
     var shortcutCharacter: Character { rawValue.lowercased().first! }
-    var supportsGameplayExitShortcut: Bool { self == .label || self == .model }
+    var supportsGameplayExitShortcut: Bool { self == .label || self == .model || self == .stencils }
+}
+
+enum DashboardControlVisibility {
+    static func showsFraming(workspace: DashboardWorkspace, phaseOneComplete: Bool,
+                             recognizedContext: String?) -> Bool {
+        workspace == .gameplay && phaseOneComplete && recognizedContext == "Gameplay"
+    }
+    static func showsOps(workspace: DashboardWorkspace, mode: HollowKnightRuntimeMode,
+                         recognizedContext: String?) -> Bool {
+        workspace == .gameplay && mode == .modded && recognizedContext == "Gameplay"
+    }
+    static let workspaces = DashboardWorkspace.allCases.filter { $0 != .ops }
 }
 
 enum HackerInteractionMode: String, CaseIterable, Identifiable {
@@ -157,40 +170,43 @@ enum DebugViewAvailabilityPolicy {
 }
 
 private struct DebugView: View {
+    @Environment(\.visionLanguage) private var visionLanguage
+    private func visionText(_ key: String, _ values: [String: String] = [:]) -> String {
+        StencilGuidanceText(language: visionLanguage).text(key, values)
+    }
+
     @ObservedObject var model: LiveCaptureModel
     let showsGroundTrackingTools: Bool
+    @Binding var showsGameState: Bool
+    let stencilReady: Bool
+    let modelReady: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Toggle("Object Detection", isOn: $model.objectDetectionEnabled)
-                .toggleStyle(.checkbox)
-            if model.objectDetectionEnabled {
-                Toggle("Raw Detection", isOn: $model.objectDetectionRawEnabled)
-                    .toggleStyle(.checkbox)
-                HStack(spacing: 8) {
-                    Text("Detection Extend")
+            Toggle(visionText("Game State"), isOn: $showsGameState)
+            Toggle(visionText("Stencil Detection"), isOn: $model.stencilDetectionEnabled)
+                .disabled(!stencilReady)
+            if !stencilReady { Text(visionText("stencilLocked")).font(.caption).foregroundStyle(.secondary) }
+            Toggle(visionText("Object Detection"), isOn: $model.objectDetectionEnabled)
+                .disabled(!modelReady)
+            if !modelReady { Text(visionText("modelLocked")).font(.caption).foregroundStyle(.secondary) }
+            Group {
+                Toggle(visionText("Raw Detection"), isOn: $model.objectDetectionRawEnabled)
+                HStack {
+                    Text(visionText("Detection Extend"))
                     Slider(value: $model.objectDetectionExtension, in: 0...0.5)
                     Text(model.objectDetectionExtension, format: .percent.precision(.fractionLength(0)))
-                        .monospacedDigit()
-                        .frame(width: 38, alignment: .trailing)
+                        .monospacedDigit().frame(width: 38, alignment: .trailing)
                 }
-                Toggle("Detection Pixels", isOn: $model.objectDetectionPixelsEnabled)
-                    .toggleStyle(.checkbox)
-            }
-            Toggle("Stencil Detection", isOn: $model.stencilDetectionEnabled)
-                .toggleStyle(.checkbox)
-            if showsGroundTrackingTools {
-                Divider()
-                Toggle("Ground Features", isOn: $model.groundHypothesesEnabled)
-                    .toggleStyle(.checkbox)
-                Toggle("Transitions", isOn: $model.transitionDiagnosticsEnabled)
-                    .toggleStyle(.checkbox)
-                Toggle("Coarse Motion Overlay", isOn: $model.coarseMotionDiagnosticsEnabled)
-                    .toggleStyle(.checkbox)
-            }
-        }
-        .padding(14)
-        .frame(width: 300)
+                Toggle(visionText("Detection Pixels"), isOn: $model.objectDetectionPixelsEnabled)
+            }.disabled(!modelReady || !model.objectDetectionEnabled)
+            Divider()
+            Group {
+                Toggle(visionText("Ground Features"), isOn: $model.groundHypothesesEnabled)
+                Toggle(visionText("Transitions"), isOn: $model.transitionDiagnosticsEnabled)
+                Toggle(visionText("Coarse Motion Overlay"), isOn: $model.coarseMotionDiagnosticsEnabled)
+            }.disabled(!showsGroundTrackingTools)
+        }.toggleStyle(.checkbox)
     }
 }
 
@@ -274,6 +290,11 @@ enum MenuObjectParticleMotion {
 }
 
 private struct MenuObjectBackdrop: View {
+    @Environment(\.visionLanguage) private var visionLanguage
+    private func visionText(_ key: String, _ values: [String: String] = [:]) -> String {
+        StencilGuidanceText(language: visionLanguage).text(key, values)
+    }
+
     let context: LabelingContext
     let objectAtlas: LabelingObjectAtlasSnapshot?
     @State private var startedAt = Date()
@@ -362,6 +383,10 @@ private struct MenuObjectBackdrop: View {
 }
 
 struct DashboardView: View {
+    private func visionText(_ key: String, _ values: [String: String] = [:]) -> String {
+        initialization.text(key, values)
+    }
+
     @ObservedObject var model: LiveCaptureModel
     @State private var workspace = DashboardWorkspace.gameplay
     @State private var viewportFraming: LayerSceneFramingMode = .current
@@ -371,8 +396,11 @@ struct DashboardView: View {
     @State private var hackerViewportTransformStore = LayerSceneViewportTransformStore()
     @State private var hackerInteractionMode = HackerInteractionMode.fit
     @State private var hackerRoomDrag: (id: UUID, point: CGPoint)?
-    @State private var showingAtlasManager = false
-    @State private var showingDebugView = false
+    @State private var showsGameState = false
+    @State private var showingSettings = false
+    @State private var confirmsStencilReset = false
+    @State private var confirmsFactoryReset = false
+    @State private var initializationTargetContext: LabelingContext?
     @State private var labelingContext: LabelingContext
     @State private var labelingDraft = LabelingDraftState()
     @State private var labelingSelectedClassID: String
@@ -394,10 +422,13 @@ struct DashboardView: View {
     @State private var modelWorkspaceSelection = LabelingModelWorkspaceSelection()
     @State private var modelCandidates = [LabelingModelCandidate]()
     @State private var activeModelVersionName = "Default"
+    @State private var trainedGameplayModelReady = false
     @State private var hasUntrainedLabelChanges = false
     @State private var untrainedLabeledImageCount = 0
     @State private var trainingAlertMessage: String?
+    @State private var lockedWorkspaceMessage: String?
     @StateObject private var labelingTrainer = LabelingTrainingController()
+    @StateObject private var initialization = StencilInitializationCoordinator()
     @StateObject private var groundFeatureWindowController = GroundFeatureWindowController()
     @StateObject private var groundTruthLabelController = GroundTruthLabelController()
     private let labelingExampleStore = LabelingExampleStore()
@@ -436,6 +467,7 @@ struct DashboardView: View {
             )
             .frame(width: 0, height: 0)
         }
+        .onChange(of: showingSettings) { _, active in model.setSettingsDialogActive(active) }
         .sheet(item: $recentFramesPresentation) { presentation in
             RecentFramesView(
                 examples: presentation.examples,
@@ -445,19 +477,59 @@ struct DashboardView: View {
                 onResume: resumeFromRecentFrames
             )
         }
-        .sheet(isPresented: $showingAtlasManager) {
-            AtlasManagerView(model: model, workspace: workspace)
+        .onChange(of: initialization.isFirstPhaseComplete) { _, ready in
+            if !ready {
+                model.objectDetectionEnabled = false
+                model.stencilDetectionEnabled = false
+                if workspace == .model { selectWorkspace(.gameplay) }
+            }
+        }
+        .onChange(of: initialization.examples) { _, _ in
+            trainedGameplayModelReady = hasTrainedGameplayModel()
+            if !trainedGameplayModelReady { model.objectDetectionEnabled = false }
+        }
+        .overlay {
+            if showingSettings {
+                ZStack {
+                    Color.black.opacity(0.55).ignoresSafeArea().onTapGesture { showingSettings = false }
+                    settingsContent.environment(\.visionLanguage, initialization.language)
+                }
+                .accessibilityAddTraits(.isModal)
+            }
+        }
+        .alert(initialization.text("resetTitle"), isPresented: $confirmsStencilReset) {
+            Button(initialization.text("cancel"), role: .cancel) {}
+            Button(initialization.text("reset"), role: .destructive, action: resetStencils)
+        } message: {
+            Text(initialization.text("resetMessage"))
+        }
+        .alert(initialization.text("factoryTitle"), isPresented: $confirmsFactoryReset) {
+            Button(initialization.text("cancel"), role: .cancel) {}
+            Button(initialization.text("factoryAction"), role: .destructive, action: factoryReset)
+        } message: {
+            Text(initialization.text("factoryMessage"))
         }
         .alert(
-            "Training Failed",
+            visionText("Training Failed"),
             isPresented: Binding(
                 get: { trainingAlertMessage != nil },
                 set: { if !$0 { trainingAlertMessage = nil } }
             )
         ) {
-            Button("OK", role: .cancel) {}
+            Button(visionText("OK"), role: .cancel) {}
         } message: {
             Text(trainingAlertMessage ?? "Unknown training error")
+        }
+        .alert(
+            visionText("Modded Hollow Knight Required"),
+            isPresented: Binding(
+                get: { lockedWorkspaceMessage != nil },
+                set: { if !$0 { lockedWorkspaceMessage = nil } }
+            )
+        ) {
+            Button(visionText("OK"), role: .cancel) {}
+        } message: {
+            Text(lockedWorkspaceMessage ?? "")
         }
         .onAppear {
             if CommandLine.arguments.contains("--show-ground-label-context")
@@ -468,6 +540,7 @@ struct DashboardView: View {
             refreshLatestModelCandidate()
             autoPromoteLatestModelCandidate()
             rebuildLabelingObjectAtlas()
+            initialization.refresh(mode: model.gameMode)
         }
         .onDisappear {
             model.setModelReviewActive(false)
@@ -492,15 +565,42 @@ struct DashboardView: View {
                 labelingEditorIdentity = UUID()
                 refreshTrainingEligibility()
                 refreshLatestModelCandidate()
-                openPendingModelErrorExampleIfNeeded()
+                if pendingModelErrorExample != nil {
+                    openPendingModelErrorExampleIfNeeded()
+                } else {
+                    restoreStencilDraftIfAvailable()
+                }
             } else {
                 recentFramesPresentation = nil
                 editingLabelingExample = nil
                 reopenedLabelImage = nil
             }
         }
+        .onChange(of: model.gameMode) { _, mode in
+            initialization.refresh(mode: mode)
+        }
         .onChange(of: labelingContext) { _, context in
             labelingSelectionPreferences.saveContext(context)
+            if workspace == .label, model.labelImage != nil,
+               editingLabelingExample?.manifest.contextIdentifier != context.storageIdentifier {
+                editingLabelingExample = nil
+                reopenedLabelImage = nil
+                labelingDraft.reset()
+                labelingCaptureGroupIdentifier = UUID()
+                restoreStencilDraftIfAvailable()
+            }
+        }
+        .onChange(of: initialization.language) { _, _ in
+            initializationTargetContext = nil
+            if workspace == .label || workspace == .model {
+                let wasShowingSettings = showingSettings
+                showingSettings = false
+                selectWorkspace(.gameplay)
+                showingSettings = wasShowingSettings
+            }
+            model.stencilDetectionEnabled = false
+            model.objectDetectionEnabled = false
+            model.refreshMenuStencilCatalog()
         }
         .onChange(of: labelingSelectedClassID) { _, _ in
             labelingSelectionPreferences.saveClassIdentifier(labelingSelectedClassID)
@@ -527,6 +627,7 @@ struct DashboardView: View {
                 liveBounds: model.liveBounds
             )
         }
+        .environment(\.visionLanguage, initialization.language)
     }
 
     private var canvas: some View {
@@ -540,7 +641,29 @@ struct DashboardView: View {
             }
             if workspace == .ops {
                 PlayerOpsView(model: model)
-            } else if let reviewingModelCandidate {
+            } else if workspace == .stencils {
+                StencilWorkspaceView(
+                    coordinator: initialization,
+                    onOpen: { example in
+                        initializationTargetContext = LabelingContext(storageIdentifier: example.manifest.contextIdentifier)
+                        openModelErrorExample(example.id)
+                    },
+                    onSelect: { initializationTargetContext = $0 },
+                    onReset: { confirmsStencilReset = true },
+                    onDelete: { example in
+                        do {
+                            try labelingExampleStore.delete(example)
+                            if editingLabelingExample?.id == example.id {
+                                editingLabelingExample = nil
+                                reopenedLabelImage = nil
+                                labelingDraft.reset()
+                            }
+                            initialization.refresh(mode: model.gameMode)
+                            model.refreshMenuStencilCatalog()
+                        } catch { labelingSaveError = error.localizedDescription }
+                    }
+                )
+            } else if workspace == .model {
                 LabelingModelWorkspaceView(
                     candidate: reviewingModelCandidate,
                     context: $labelingContext,
@@ -559,7 +682,7 @@ struct DashboardView: View {
                     },
                     selection: $modelWorkspaceSelection
                 )
-                .id(reviewingModelCandidate.id)
+                .id(reviewingModelCandidate?.id)
             } else if let labelImage = model.labelImage {
                 LabelingEditorView(
                     image: reopenedLabelImage ?? labelImage,
@@ -569,7 +692,8 @@ struct DashboardView: View {
                     context: $labelingContext,
                     draft: $labelingDraft,
                     selectedClassID: $labelingSelectedClassID,
-                    initialEditorMode: labelingEditorMode
+                    initialEditorMode: labelingEditorMode,
+                    gameMode: model.gameMode, includesDeferredLabels: initialization.isFirstPhaseComplete
                 )
                 .id(labelingEditorIdentity)
             } else if workspace == .hacker {
@@ -614,7 +738,7 @@ struct DashboardView: View {
                     Image(systemName: "viewfinder")
                         .font(.system(size: 34, weight: .light))
                         .foregroundStyle(.cyan.opacity(0.8))
-                    Text("Starting live atlas…")
+                    Text(visionText("Starting live atlas…"))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -646,7 +770,7 @@ struct DashboardView: View {
             }
         }
         .overlay(alignment: .bottomLeading) {
-            if workspace == .gameplay
+            if showsGameState && workspace == .gameplay
                 && model.labelImage == nil && reviewingModelCandidate == nil {
                 Text(LiveGameStatusPresentationPolicy.text(
                     recognizedContext: model.liveGameStatus,
@@ -683,7 +807,7 @@ struct DashboardView: View {
                                 .black.opacity(0.72),
                                 in: RoundedRectangle(cornerRadius: 7)
                             )
-                            .accessibilityLabel("Coarse motion diagnostic status")
+                            .accessibilityLabel(visionText("Coarse motion diagnostic status"))
                     }
                 }
                     .padding(8)
@@ -740,7 +864,7 @@ struct DashboardView: View {
                     .font(.system(size: 34, weight: .light))
                     .foregroundStyle(.green.opacity(0.8))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .accessibilityLabel("Waiting for frame-matched game camera")
+                    .accessibilityLabel(visionText("Waiting for frame-matched game camera"))
             }
         }
     }
@@ -757,7 +881,7 @@ struct DashboardView: View {
     }
 
     private func handleHackerViewportInteraction() {
-        guard hackerInteractionMode == .fit else { return }
+        guard hackerInteractionMode == .fit || hackerInteractionMode == .current else { return }
         selectHackerInteractionMode(.freeFly)
     }
 
@@ -913,7 +1037,7 @@ struct DashboardView: View {
         .padding(.horizontal, 7)
         .padding(.vertical, 5)
         .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 7))
-        .accessibilityLabel("Ground Features color legend")
+        .accessibilityLabel(visionText("Ground Features color legend"))
     }
 
     private func legendRow(_ label: String, _ color: Color) -> some View {
@@ -1108,59 +1232,114 @@ struct DashboardView: View {
 
     private var controls: some View {
         HStack(spacing: 8) {
-                workspaceSelector
-                if PathRecordingPresentationPolicy.showsControl(
-                    workspace: workspace,
-                    recognizedContext: model.liveGameStatus
-                ) {
-                    pathRecordingButton
-                }
-                if let pathRecordingIssue = model.pathRecordingIssue {
-                    Text(pathRecordingIssue)
-                        .foregroundStyle(.red)
-                        .lineLimit(1)
-                        .help(pathRecordingIssue)
-                }
-                if let labelingSaveError, model.labelImage != nil || reviewingModelCandidate != nil {
-                    Text(labelingSaveError)
-                        .foregroundStyle(.red)
-                        .lineLimit(1)
-                        .help(labelingSaveError)
-                }
-                Spacer()
-                if workspace == .gameplay
-                    && model.labelImage == nil && reviewingModelCandidate == nil {
-                    Toggle("Debug View", isOn: $showingDebugView)
-                        .toggleStyle(.checkbox)
-                        .popover(isPresented: $showingDebugView, arrowEdge: .bottom) {
-                            DebugView(
-                                model: model,
-                                showsGroundTrackingTools: DebugViewAvailabilityPolicy
-                                    .showsGroundTrackingTools(
-                                        workspace: workspace,
-                                        recognizedContext: model.liveGameStatus
-                                    )
-                            )
-                        }
-                    Button("Manage Atlas") { showingAtlasManager = true }
-                    framingButton(.freeFly, title: "Free Fly")
-                    framingButton(.fit, title: "Fit")
-                    framingButton(.current, title: "Current")
-                }
-                if workspace == .hacker {
-                    Button("Manage Atlas") { showingAtlasManager = true }
-                    ForEach(HackerInteractionMode.allCases) { mode in
-                        hackerInteractionButton(mode)
-                    }
-                }
+            workspaceSelector
+            if let guidance = initialization.guidance(
+                labelingContext: workspace == .label ? labelingContext : nil,
+                selectedClassIdentifier: labelingSelectedClassID,
+                navigationContext: initializationTargetContext
+            ) {
+                Text(guidance)
+                    .foregroundStyle(.blue)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(guidance)
+                    .frame(minWidth: 80, maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("stencil-guidance")
+            } else {
+                Spacer(minLength: 0)
+            }
+            if let labelingSaveError {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red).help(labelingSaveError)
+            }
+            if PathRecordingPresentationPolicy.showsControl(
+                workspace: workspace, recognizedContext: model.liveGameStatus
+            ) && model.gameMode == .modded {
+                pathRecordingButton
+            }
+            if let issue = model.pathRecordingIssue {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red).help(issue)
+            }
+            if DashboardControlVisibility.showsFraming(workspace: workspace,
+                phaseOneComplete: initialization.isFirstPhaseComplete, recognizedContext: model.liveGameStatus) {
+                framingButton(.freeFly, title: "Free Fly")
+                framingButton(.fit, title: "Fit")
+                framingButton(.current, title: "Current")
+            }
+            Button { showingSettings.toggle() } label: {
+                Image(systemName: "gearshape")
+            }
+            .accessibilityLabel(initialization.text("settings"))
+            .help(initialization.text("settings"))
+
         }
         .font(.caption)
         .buttonStyle(.bordered)
         .lineLimit(1)
     }
 
+    private func hasTrainedGameplayModel() -> Bool {
+        // Bundled models and models trained on a previous, cleared dataset do not
+        // unlock detection for a fresh setup. Require an active artifact and a
+        // completed run that evaluated one of the user's current gameplay labels.
+        let exampleIDs = Set(initialization.examples.filter {
+            $0.manifest.contextIdentifier == "game" && $0.manifest.annotations.contains { !$0.isHardNegative }
+        }.map(\.id))
+        return (try? labelingModelVersionStore.hasTrainedGameplayModel(
+            exampleIDs: exampleIDs, candidates: modelCandidates)) == true
+    }
+
+    private var settingsContent: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(initialization.text("settings")).font(.title2.weight(.semibold))
+                Spacer()
+                Button(visionText("Done")) { showingSettings = false }
+                    .keyboardShortcut(.cancelAction)
+            }.padding(20)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    AtlasManagerView(model: model, workspace: workspace)
+                    if workspace == .hacker {
+                        Picker(visionText("Hacker"), selection: Binding(get: { hackerInteractionMode }, set: selectHackerInteractionMode)) {
+                            ForEach(HackerInteractionMode.allCases) { mode in Text(visionText(mode.rawValue)).tag(mode) }
+                        }
+                    }
+                    Divider()
+                    if model.canUseOps && model.liveGameStatus == "Gameplay" {
+                        Text(visionText("Ops")).font(.headline)
+                        PlayerOpsView(model: model)
+                        Divider()
+                    }
+                    Text(initialization.text("debugView")).font(.headline)
+                    DebugView(model: model,
+                        showsGroundTrackingTools: DebugViewAvailabilityPolicy.showsGroundTrackingTools(
+                            workspace: workspace, recognizedContext: model.liveGameStatus),
+                        showsGameState: $showsGameState, stencilReady: initialization.isFirstPhaseComplete,
+                        modelReady: initialization.isFirstPhaseComplete && trainedGameplayModelReady)
+                    Divider()
+                    Picker(initialization.text("language"), selection: $initialization.language) {
+                        ForEach(HollowKnightMenuLanguage.allCases, id: \.self) { language in
+                            Text(language.nativeName).tag(language)
+                        }
+                    }
+                    Divider()
+                    Button(initialization.text("factory"), role: .destructive) {
+                        showingSettings = false
+                        confirmsFactoryReset = true
+                    }
+                }.padding(20)
+            }
+        }
+        .frame(width: 620)
+        .frame(maxHeight: 760)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.15)))
+        .padding(24)
+    }
+
     private func openGroundLabelContext() {
-        showingDebugView = false
         model.groundHypothesesEnabled = true
         selectWorkspace(.hacker)
         selectHackerInteractionMode(.ground)
@@ -1174,14 +1353,17 @@ struct DashboardView: View {
     private var workspaceSelector: some View {
         StableSegmentedPicker(
             label: "Workspace",
-            choices: DashboardWorkspace.allCases,
-            title: { $0.rawValue },
+            choices: DashboardControlVisibility.workspaces.filter {
+                ($0 != .model || initialization.isFirstPhaseComplete)
+                    && ($0 != .hacker || (model.canUseHacker && model.liveGameStatus == "Gameplay"))
+            },
+            title: { $0 == .stencils ? initialization.buttonTitle : visionText($0.rawValue) },
             selection: Binding(
                 get: { workspace },
                 set: selectWorkspace
             )
         )
-        .frame(width: 380)
+        .frame(width: 410)
         .overlay {
             ZStack {
                 ForEach(DashboardWorkspace.allCases) { destination in
@@ -1220,7 +1402,7 @@ struct DashboardView: View {
                 } else {
                     Image(systemName: model.isPathRecording ? "stop.circle.fill" : "record.circle")
                 }
-                Text("K").fontWeight(.semibold)
+                Text(visionText("K")).fontWeight(.semibold)
             }
         }
         .keyboardShortcut("k", modifiers: [])
@@ -1241,7 +1423,18 @@ struct DashboardView: View {
     }
 
     private func selectWorkspace(_ destination: DashboardWorkspace) {
-        guard destination != workspace else { return }
+        guard !showingSettings, destination != workspace else { return }
+        guard destination != .model || initialization.isFirstPhaseComplete else { return }
+        if destination == .hacker && (!model.canUseHacker || model.liveGameStatus != "Gameplay") {
+            lockedWorkspaceMessage = model.gameMode == .normal
+                ? "Start Vision in Modded mode to use Hacker. Gameplay recognition and the visual atlas remain available in Normal mode."
+                : "Hacker will unlock after a compatible Vision receiver provides ground-truth telemetry."
+            return
+        }
+        if destination == .ops {
+            showingSettings = true
+            return
+        }
         guard !labelingTrainer.isRunning,
               !model.isPathRecording,
               !model.isPathCheckpointPending else { return }
@@ -1249,14 +1442,9 @@ struct DashboardView: View {
             guard model.canToggleLabelMode else { return }
             labelingEditorMode = .add
         }
-        if destination == .model {
-            guard latestModelCandidate != nil else { return }
-        }
-        if destination != .gameplay {
-            showingDebugView = false
-        }
 
-        if reviewingModelCandidate != nil {
+
+        if workspace == .model || reviewingModelCandidate != nil {
             closeModelReview()
         }
         if model.isLabelModeActive {
@@ -1265,8 +1453,13 @@ struct DashboardView: View {
         }
 
         switch destination {
-        case .gameplay, .ops:
+        case .gameplay, .ops, .stencils:
             workspace = destination
+            if let target = initializationTargetContext,
+               !initialization.steps.contains(where: { $0.context == target }) {
+                initializationTargetContext = nil
+            }
+            if destination == .stencils { initialization.refresh(mode: model.gameMode) }
         case .hacker:
             workspace = .hacker
             groundTruthLabelController.enter(
@@ -1276,10 +1469,30 @@ struct DashboardView: View {
             )
             hackerFramingRequest &+= 1
         case .label:
+            initialization.refresh(mode: model.gameMode)
+            if recognizedLabelingContext == .game {
+                labelingContext = .game
+                labelingSelectedClassID = LabelingContext.game.labels.first?.id ?? ""
+            } else if let target = initializationTargetContext, initialization.contexts.contains(target) {
+                labelingContext = target
+                labelingSelectedClassID = initialization.steps.first(where: { $0.context == target })?.classIdentifier
+                    ?? target.labels.first?.id ?? ""
+            } else if !initialization.isFirstPhaseComplete, let step = initialization.currentStep {
+                labelingContext = step.context
+                labelingSelectedClassID = step.classIdentifier
+            } else if let context = recognizedLabelingContext {
+                labelingContext = context
+                labelingSelectedClassID = context.labels.first?.id ?? ""
+            }
             workspace = .label
             model.toggleLabelMode()
         case .model:
-            guard let latestModelCandidate else { return }
+            labelingContext = .game
+            if !LabelingSharedModelPolicy.classIdentifiers.contains(labelingSelectedClassID) {
+                labelingSelectedClassID = LabelingContext.game.labels.first {
+                    LabelingSharedModelPolicy.classIdentifiers.contains($0.id)
+                }?.id ?? ""
+            }
             workspace = .model
             reviewingModelCandidate = latestModelCandidate
             model.setModelReviewActive(true)
@@ -1293,7 +1506,7 @@ struct DashboardView: View {
     }
 
     private func framingButton(_ mode: LayerSceneFramingMode, title: String) -> some View {
-        Button(title) {
+        Button(visionText(title)) {
             viewportFraming = mode
             framingRequest &+= 1
         }
@@ -1306,7 +1519,7 @@ struct DashboardView: View {
     }
 
     private func hackerInteractionButton(_ mode: HackerInteractionMode) -> some View {
-        Button(mode.rawValue) {
+        Button(visionText(mode.rawValue)) {
             selectHackerInteractionMode(mode)
         }
         .tint(hackerInteractionMode == mode ? .cyan : .gray)
@@ -1332,6 +1545,10 @@ struct DashboardView: View {
             try persistCurrentLabelingExample(rectangles: committedDraft.rectangles)
             labelingSaveError = nil
             rebuildLabelingObjectAtlas()
+            initialization.refresh(mode: model.gameMode)
+            // Keep guidance in the footer while the user finishes the screen.
+            // Never interrupt labeling with another setup sheet.
+
         } catch {
             labelingSaveError = "Auto-save failed: \(error.localizedDescription)"
         }
@@ -1372,7 +1589,8 @@ struct DashboardView: View {
                     image: frame.image,
                     context: openState.context,
                     rectangles: openState.draft.rectangles,
-                    captureGroupIdentifier: labelingCaptureGroupIdentifier
+                    captureGroupIdentifier: labelingCaptureGroupIdentifier,
+                    languageIdentifier: initialization.language.rawValue
                 )
             }
             labelingContext = openState.context
@@ -1437,7 +1655,11 @@ struct DashboardView: View {
             closeModelReview()
             workspace = .label
             if model.labelImage != nil {
-                openPendingModelErrorExampleIfNeeded()
+                if pendingModelErrorExample != nil {
+                    openPendingModelErrorExampleIfNeeded()
+                } else {
+                    restoreStencilDraftIfAvailable()
+                }
             } else if model.canToggleLabelMode {
                 model.toggleLabelMode()
             } else {
@@ -1477,7 +1699,7 @@ struct DashboardView: View {
 
     private var canTrainSelectedObject: Bool {
         let isLabeling = model.labelImage != nil
-        guard isLabeling || reviewingModelCandidate != nil else { return false }
+        guard isLabeling || workspace == .model else { return false }
         let currentRectangles = isLabeling ? labelingDraft.rectangles : []
         let editingExampleIdentifier = isLabeling ? editingLabelingExample?.id : nil
         if labelingContext == .mainTitle {
@@ -1500,13 +1722,13 @@ struct DashboardView: View {
 
     private var trainingHelp: String {
         canTrainSelectedObject
-            ? "Update \(selectedModelName) with all labeled objects"
-            : "Label one \(labelingContext.rawValue) object to enable training"
+            ? visionText("updateModel", ["model": visionText(selectedModelName)])
+            : visionText("enableTraining")
     }
 
     private func refreshTrainingEligibility() {
         do {
-            let allExamples = try labelingExampleStore.loadExamples()
+            let allExamples = try labelingExampleStore.loadTrainingExamples(in: .game)
             var exampleIDsByClass = [String: Set<UUID>]()
             var exampleIDsByContext = [String: Set<UUID>]()
             for example in allExamples {
@@ -1554,7 +1776,7 @@ struct DashboardView: View {
     }
 
     private func refreshTrainingNotification() {
-        let examples = (try? labelingExampleStore.loadTrainingExamples()) ?? []
+        let examples = (try? labelingExampleStore.loadTrainingExamples(in: .game)) ?? []
         let modificationDates = examples.compactMap { example in
             try? example.directoryURL
                 .appendingPathComponent(LabelingExampleStore.manifestFilename)
@@ -1586,7 +1808,7 @@ struct DashboardView: View {
                editingLabelingExample != nil || !labelingDraft.rectangles.isEmpty {
                 try persistCurrentLabelingExample()
             }
-            let examples = try labelingExampleStore.loadTrainingExamples()
+            let examples = try labelingExampleStore.loadTrainingExamples(in: .game)
             let snapshot = try labelingDatasetExporter.exportSharedModel(
                 classIdentifiers: selectedTrainingClassIdentifiers,
                 examples: examples
@@ -1631,11 +1853,51 @@ struct DashboardView: View {
                 image: image,
                 context: labelingContext,
                 rectangles: rectangles,
-                captureGroupIdentifier: labelingCaptureGroupIdentifier
+                captureGroupIdentifier: labelingCaptureGroupIdentifier,
+                languageIdentifier: initialization.language.rawValue
             )
         }
         model.refreshMenuStencilCatalog()
         refreshTrainingEligibility()
+    }
+
+    private func restoreStencilDraftIfAvailable() {
+        guard labelingContext != .game else { return }
+        if let example = initialization.example(for: labelingContext) {
+            openLabelingExample(example, preferredClassIdentifier: labelingSelectedClassID)
+        }
+        let remaining = StencilLabelSelectionPolicy.availableLabels(
+            context: labelingContext, rectangles: labelingDraft.rectangles,
+            mode: model.gameMode, hidesCompleted: true, includesDeferredLabels: initialization.isFirstPhaseComplete
+        )
+        labelingSelectedClassID = remaining.first?.id ?? ""
+    }
+
+    private func resetStencils() {
+        do {
+            _ = try VisionResetController.resetStencils()
+            if workspace == .label || workspace == .model { selectWorkspace(.gameplay) }
+            model.stencilDetectionEnabled = false
+            model.objectDetectionEnabled = false
+            initializationTargetContext = nil
+            editingLabelingExample = nil
+            reopenedLabelImage = nil
+            labelingDraft.reset()
+            model.refreshMenuStencilCatalog()
+            initialization.refresh(mode: model.gameMode)
+            refreshTrainingEligibility()
+        } catch {
+            labelingSaveError = "Stencil reset failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func factoryReset() {
+        do {
+            _ = try VisionResetController.factoryReset()
+            NSApp.terminate(nil)
+        } catch {
+            labelingSaveError = "Factory reset failed: \(error.localizedDescription)"
+        }
     }
 
     private func refreshLatestModelCandidate() {
@@ -1643,10 +1905,8 @@ struct DashboardView: View {
             let candidates = try labelingModelReviewStore.loadCandidates()
             try labelingModelVersionStore.synchronizeCandidates(candidates)
             try labelingModelVersionStore.reconcileDevelopmentCandidates(candidates)
-            modelCandidates = candidates.filter {
-                $0.summary.classIdentifier == selectedModelIdentifier
-            }
-            latestModelCandidate = modelCandidates.last
+            modelCandidates = candidates
+            latestModelCandidate = candidates.last { $0.summary.classIdentifier == selectedModelIdentifier }
             refreshActiveModelVersion()
             refreshTrainingNotification()
         } catch {
@@ -1657,6 +1917,7 @@ struct DashboardView: View {
     }
 
     private func refreshActiveModelVersion() {
+        trainedGameplayModelReady = hasTrainedGameplayModel()
         do {
             activeModelVersionName = try labelingModelVersionStore.activeSelection(
                 for: selectedModelIdentifier

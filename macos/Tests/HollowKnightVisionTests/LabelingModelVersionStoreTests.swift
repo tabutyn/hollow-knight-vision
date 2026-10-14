@@ -231,6 +231,30 @@ final class LabelingModelVersionStoreTests: XCTestCase {
         )
     }
 
+    func testDetectionRequiresActiveArtifactTrainedOnCurrentLabels() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let base = try candidate(classIdentifier: "shared-object-model", completedAt: Date(), modelContents: "model", runsRoot: root)
+        let exampleID = UUID()
+        let trained = LabelingModelCandidate(runURL: base.runURL, datasetURL: base.datasetURL, summary: base.summary,
+            predictionReview: .init(examples: [.init(exampleIdentifier: exampleID, imageFilename: "image.png",
+                split: "train", human: [], predictions: [])], metrics: .init(confidenceThreshold: 0.5,
+                intersectionOverUnionThreshold: 0.5, truePositives: 1, falsePositives: 0, falseNegatives: 0,
+                precision: 1, recall: 1, meanIntersectionOverUnion: 1)))
+        let store = LabelingModelVersionStore(rootURL: root.appendingPathComponent("models"))
+        try store.synchronizeCandidates([trained])
+        XCTAssertFalse(try store.hasTrainedGameplayModel(exampleIDs: [exampleID], candidates: [trained]))
+        _ = try store.promote(trained)
+        XCTAssertTrue(try store.hasTrainedGameplayModel(exampleIDs: [exampleID], candidates: [trained]))
+        XCTAssertFalse(try store.hasTrainedGameplayModel(exampleIDs: [], candidates: [trained]))
+        XCTAssertFalse(try store.hasTrainedGameplayModel(exampleIDs: [UUID()], candidates: [trained]))
+        XCTAssertFalse(try store.hasTrainedGameplayModel(exampleIDs: [exampleID], candidates: [base]))
+        let artifact = try XCTUnwrap(store.activeModelArtifacts().first)
+        try FileManager.default.removeItem(at: artifact.modelURL)
+        XCTAssertFalse(try store.hasTrainedGameplayModel(exampleIDs: [exampleID], candidates: [trained]))
+    }
+
     private func candidate(
         classIdentifier: String,
         completedAt: Date,

@@ -1,0 +1,858 @@
+[
+  {
+    "contextIdentifier": "main-title",
+    "name": "Main Title",
+    "objects": [
+      {
+        "id": "main-title.hollow-knight-logo",
+        "name": "Hollow Knight Title"
+      },
+      {
+        "id": "main-title.start-game",
+        "name": "Start Game"
+      },
+      {
+        "id": "shared.options",
+        "name": "Options"
+      },
+      {
+        "id": "shared.achievements",
+        "name": "Achievements"
+      },
+      {
+        "id": "shared.extras",
+        "name": "Extras"
+      },
+      {
+        "id": "quit-game.quit-game",
+        "name": "Quit Game"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "options",
+    "name": "Options",
+    "objects": [
+      {
+        "id": "shared.options",
+        "name": "Options"
+      },
+      {
+        "id": "options.game",
+        "name": "Game"
+      },
+      {
+        "id": "shared.audio",
+        "name": "Audio"
+      },
+      {
+        "id": "shared.video",
+        "name": "Video"
+      },
+      {
+        "id": "shared.controller",
+        "name": "Controller"
+      },
+      {
+        "id": "shared.keyboard",
+        "name": "Keyboard"
+      },
+      {
+        "id": "shared.mods",
+        "name": "Mods"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "game-options",
+    "name": "Game Options",
+    "objects": [
+      {
+        "id": "game-options.game-options",
+        "name": "Game Options"
+      },
+      {
+        "id": "game-options.language",
+        "name": "Language"
+      },
+      {
+        "id": "game-options.camera-shake",
+        "name": "Camera Shake"
+      },
+      {
+        "id": "game-options.hud-appearance",
+        "name": "HUD Apperance"
+      },
+      {
+        "id": "game-options.show-achievements",
+        "name": "Show Achievements"
+      },
+      {
+        "id": "game-options.backer-credits",
+        "name": "Backer Credits"
+      },
+      {
+        "id": "shared.reset-defaults",
+        "name": "Reset Defaults"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "audio",
+    "name": "Audio",
+    "objects": [
+      {
+        "id": "shared.audio",
+        "name": "Audio"
+      },
+      {
+        "id": "audio.master-volume",
+        "name": "Master Volume"
+      },
+      {
+        "id": "audio.sound-volume",
+        "name": "Sound Volume"
+      },
+      {
+        "id": "audio.music-volume",
+        "name": "Music Volume"
+      },
+      {
+        "id": "shared.reset-defaults",
+        "name": "Reset Defaults"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "video",
+    "name": "Video",
+    "objects": [
+      {
+        "id": "shared.video",
+        "name": "Video"
+      },
+      {
+        "id": "video.resolution",
+        "name": "Resolution"
+      },
+      {
+        "id": "video.full-screen",
+        "name": "Full Screen"
+      },
+      {
+        "id": "video.v-sync",
+        "name": "V-Sync"
+      },
+      {
+        "id": "video.frame-rate-cap",
+        "name": "Frame Rate Cap"
+      },
+      {
+        "id": "video.screen-scale",
+        "name": "Screen Scale"
+      },
+      {
+        "id": "shared.brightness",
+        "name": "Brightness"
+      },
+      {
+        "id": "shared.advanced-settings",
+        "name": "Advanced Settings"
+      },
+      {
+        "id": "shared.reset-defaults",
+        "name": "Reset Defaults"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "screen-scale",
+    "name": "Screen Scale",
+    "objects": [
+      {
+        "id": "screen-scale.scale",
+        "name": "Scale"
+      },
+      {
+        "id": "screen-scale.screen-corner",
+        "name": "Screen Corner"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "brightness",
+    "name": "Brightness",
+    "objects": [
+      {
+        "id": "shared.brightness",
+        "name": "Brightness"
+      },
+      {
+        "id": "brightness.pointer",
+        "name": "Pointer"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "video-advanced-settings",
+    "name": "Video Advanced Settings",
+    "objects": [
+      {
+        "id": "shared.advanced-settings",
+        "name": "Advanced Settings"
+      },
+      {
+        "id": "video-advanced.particle-effects",
+        "name": "Particle Effects"
+      },
+      {
+        "id": "video-advanced.blur-quality",
+        "name": "Blur Quality"
+      },
+      {
+        "id": "video-advanced.dithering",
+        "name": "Dithering"
+      },
+      {
+        "id": "video-advanced.film-grain",
+        "name": "Film Grain"
+      },
+      {
+        "id": "shared.reset-defaults",
+        "name": "Reset Defaults"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "controller",
+    "name": "Controller",
+    "objects": [
+      {
+        "id": "shared.controller",
+        "name": "Controller"
+      },
+      {
+        "id": "controller.controller-diagram",
+        "name": "Controller Diagram"
+      },
+      {
+        "id": "controller.remap-controls",
+        "name": "Remap Controlls"
+      },
+      {
+        "id": "shared.advanced-settings",
+        "name": "Advanced Settings"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "remap-controller",
+    "name": "Remap Controller",
+    "objects": [
+      {
+        "id": "remap-controller.header",
+        "name": "Remap Controller"
+      },
+      {
+        "id": "shared.jump",
+        "name": "Jump"
+      },
+      {
+        "id": "shared.attack",
+        "name": "Attack"
+      },
+      {
+        "id": "shared.dash",
+        "name": "Dash"
+      },
+      {
+        "id": "shared.focus-cast",
+        "name": "Focus / Cast"
+      },
+      {
+        "id": "shared.quick-map",
+        "name": "Quick Map"
+      },
+      {
+        "id": "shared.super-dash",
+        "name": "Super Dash"
+      },
+      {
+        "id": "shared.dream-nail",
+        "name": "Dream Nail"
+      },
+      {
+        "id": "shared.quick-cast",
+        "name": "Quick Cast"
+      },
+      {
+        "id": "shared.reset-defaults",
+        "name": "Reset Defaults"
+      },
+      {
+        "id": "remap-controller.done",
+        "name": "Done"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "controller-advanced-settings",
+    "name": "Controller Advanced Settings",
+    "objects": [
+      {
+        "id": "shared.advanced-settings",
+        "name": "Advanced Settings"
+      },
+      {
+        "id": "controller-advanced.vibration",
+        "name": "Vibration"
+      },
+      {
+        "id": "controller-advanced.native-input",
+        "name": "Native Controller Input"
+      },
+      {
+        "id": "controller-advanced.mfi",
+        "name": "MFI"
+      },
+      {
+        "id": "shared.reset-defaults",
+        "name": "Reset Defaults"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "keyboard",
+    "name": "Keyboard",
+    "objects": [
+      {
+        "id": "shared.keyboard",
+        "name": "Keyboard"
+      },
+      {
+        "id": "keyboard.up",
+        "name": "Up"
+      },
+      {
+        "id": "keyboard.down",
+        "name": "Down"
+      },
+      {
+        "id": "shared.jump",
+        "name": "Jump"
+      },
+      {
+        "id": "shared.attack",
+        "name": "Attack"
+      },
+      {
+        "id": "shared.dash",
+        "name": "Dash"
+      },
+      {
+        "id": "shared.focus-cast",
+        "name": "Focus / Cast"
+      },
+      {
+        "id": "keyboard.left",
+        "name": "Left"
+      },
+      {
+        "id": "keyboard.right",
+        "name": "Right"
+      },
+      {
+        "id": "shared.quick-map",
+        "name": "Quick Map"
+      },
+      {
+        "id": "shared.super-dash",
+        "name": "Super Dash"
+      },
+      {
+        "id": "shared.dream-nail",
+        "name": "Dream Nail"
+      },
+      {
+        "id": "shared.quick-cast",
+        "name": "Quick Cast"
+      },
+      {
+        "id": "inventory.inventory",
+        "name": "Inventory"
+      },
+      {
+        "id": "shared.reset-defaults",
+        "name": "Reset Defaults"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "mods",
+    "name": "Mods",
+    "objects": [
+      {
+        "id": "shared.mods",
+        "name": "Mods"
+      },
+      {
+        "id": "mods.mod-decoration",
+        "name": "Mod Decoration"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "achievements",
+    "name": "Achievements",
+    "objects": [
+      {
+        "id": "shared.achievements",
+        "name": "Achievements"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "extras",
+    "name": "Extras",
+    "objects": [
+      {
+        "id": "shared.extras",
+        "name": "Extras"
+      },
+      {
+        "id": "extras.menu-style",
+        "name": "Menu Style"
+      },
+      {
+        "id": "extras.credits",
+        "name": "Credits"
+      },
+      {
+        "id": "extras.hidden-dreams",
+        "name": "Hidden Dreams"
+      },
+      {
+        "id": "extras.the-grimm-troupe",
+        "name": "The Grimm Troupe"
+      },
+      {
+        "id": "extras.lifeblood",
+        "name": "Lifeblood"
+      },
+      {
+        "id": "extras.godmaster",
+        "name": "Godmaster"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "credits",
+    "name": "Credits",
+    "objects": [
+      {
+        "id": "extras.credits",
+        "name": "Credits"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "hidden-dreams",
+    "name": "Hidden Dreams",
+    "objects": [
+      {
+        "id": "extras.hidden-dreams",
+        "name": "Hidden Dreams"
+      },
+      {
+        "id": "hidden-dreams.poster",
+        "name": "Hidden Dreams Poster"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "the-grimm-troupe",
+    "name": "The Grimm Troupe",
+    "objects": [
+      {
+        "id": "extras.the-grimm-troupe",
+        "name": "The Grimm Troupe"
+      },
+      {
+        "id": "grimm-troupe.poster",
+        "name": "Grimm Troupe Poster"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "lifeblood",
+    "name": "Lifeblood",
+    "objects": [
+      {
+        "id": "extras.lifeblood",
+        "name": "Lifeblood"
+      },
+      {
+        "id": "lifeblood.poster",
+        "name": "Lifeblood Poster"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "godmaster",
+    "name": "Godmaster",
+    "objects": [
+      {
+        "id": "extras.godmaster",
+        "name": "Godmaster"
+      },
+      {
+        "id": "godmaster.poster",
+        "name": "Godmaster Poster"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "select-profile",
+    "name": "Select Profile",
+    "objects": [
+      {
+        "id": "select-profile.heading",
+        "name": "Select Profile"
+      },
+      {
+        "id": "select-profile.slot-1",
+        "name": "1."
+      },
+      {
+        "id": "select-profile.slot-2",
+        "name": "2."
+      },
+      {
+        "id": "select-profile.slot-3",
+        "name": "3."
+      },
+      {
+        "id": "select-profile.slot-4",
+        "name": "4."
+      },
+      {
+        "id": "select-profile.clear-save",
+        "name": "Clear Save"
+      },
+      {
+        "id": "shared.back",
+        "name": "Back"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "clear-save",
+    "name": "Clear Save",
+    "objects": [
+      {
+        "id": "clear-save.heading",
+        "name": "Clear Save?"
+      },
+      {
+        "id": "shared.yes",
+        "name": "Yes"
+      },
+      {
+        "id": "shared.no",
+        "name": "No"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "pause",
+    "name": "Pause",
+    "objects": [
+      {
+        "id": "pause.header",
+        "name": "Header"
+      },
+      {
+        "id": "pause.continue",
+        "name": "Continue"
+      },
+      {
+        "id": "shared.options",
+        "name": "Options"
+      },
+      {
+        "id": "quit-to-menu.quit-to-menu",
+        "name": "Quit To Menu"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "quit-to-menu",
+    "name": "Quit To Menu",
+    "objects": [
+      {
+        "id": "quit-to-menu.quit-to-menu",
+        "name": "Quit To Menu"
+      },
+      {
+        "id": "shared.yes",
+        "name": "Yes"
+      },
+      {
+        "id": "shared.no",
+        "name": "No"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "inventory",
+    "name": "Inventory",
+    "objects": [
+      {
+        "id": "inventory.inventory",
+        "name": "Inventory"
+      },
+      {
+        "id": "inventory.corner",
+        "name": "Inventory Corner"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "gameplay-hud",
+    "name": "Gameplay HUD",
+    "objects": [
+      {
+        "id": "game.health",
+        "name": "Health"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "game",
+    "name": "Gameplay",
+    "objects": [
+      {
+        "id": "game.playable-knight",
+        "name": "Hallow Knight"
+      },
+      {
+        "id": "game.mana",
+        "name": "Mana"
+      },
+      {
+        "id": "game.health",
+        "name": "Health"
+      },
+      {
+        "id": "game.geo",
+        "name": "Geode"
+      },
+      {
+        "id": "enemies.crawlid",
+        "name": "Crawlid"
+      },
+      {
+        "id": "enemies.vengfly",
+        "name": "Vengfly"
+      },
+      {
+        "id": "enemies.shade",
+        "name": "Shade"
+      },
+      {
+        "id": "world.geo-deposit",
+        "name": "Geo Deposit"
+      },
+      {
+        "id": "world.lifeblood-cacoon",
+        "name": "Lifeblood Cacoon"
+      },
+      {
+        "id": "world.sign",
+        "name": "Sign"
+      }
+    ]
+  },
+  {
+    "contextIdentifier": "quit-game",
+    "name": "Quit Game",
+    "objects": [
+      {
+        "id": "quit-game.quit-game",
+        "name": "Quit Game"
+      },
+      {
+        "id": "shared.yes",
+        "name": "Yes"
+      },
+      {
+        "id": "shared.no",
+        "name": "No"
+      },
+      {
+        "id": "shared.select-decoration",
+        "name": "Select Decorations"
+      }
+    ]
+  }
+]

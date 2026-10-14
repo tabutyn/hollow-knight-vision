@@ -153,67 +153,67 @@ final class LabelingEditorViewTests: XCTestCase {
 
     func testLabelSetsContainTheirExpectedObjects() {
         XCTAssertEqual(LabelingContext.mainTitle.labels.map(\.name), [
-            "Hallow Knight Title", "Start Game", "Options", "Achievements", "Extras",
-            "Quit Game", "Select Decoration",
+            "Hollow Knight Title", "Start Game", "Options", "Achievements", "Extras",
+            "Quit Game", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.options.labels.map(\.name), [
             "Options", "Game", "Audio", "Video", "Controller", "Keyboard", "Mods", "Back",
-            "Select Decoration",
+            "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.gameOptions.labels.map(\.name), [
             "Game Options", "Language", "Camera Shake", "HUD Apperance",
             "Show Achievements", "Backer Credits", "Reset Defaults", "Back",
-            "Select Decoration",
+            "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.audio.labels.map(\.name), [
             "Audio", "Master Volume", "Sound Volume", "Music Volume", "Reset Defaults", "Back",
-            "Select Decoration",
+            "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.video.labels.map(\.name), [
             "Video", "Resolution", "Full Screen", "V-Sync", "Frame Rate Cap", "Screen Scale",
             "Brightness", "Advanced Settings", "Reset Defaults", "Back",
-            "Select Decoration",
+            "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.screenScale.labels.map(\.name), [
-            "Scale", "Screen Corner", "Select Decoration", "Back",
+            "Scale", "Screen Corner", "Select Decorations", "Back",
         ])
         XCTAssertEqual(LabelingContext.brightness.labels.map(\.name), [
-            "Brightness", "Pointer", "Back", "Select Decoration",
+            "Brightness", "Pointer", "Back", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.videoAdvancedSettings.labels.map(\.name), [
             "Advanced Settings", "Particle Effects", "Blur Quality", "Dithering",
-            "Film Grain", "Reset Defaults", "Back", "Select Decoration",
+            "Film Grain", "Reset Defaults", "Back", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.controller.labels.map(\.name), [
             "Controller", "Controller Diagram", "Remap Controlls", "Advanced Settings", "Back",
-            "Select Decoration",
+            "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.remapController.labels.map(\.name), [
             "Remap Controller", "Jump", "Attack", "Dash", "Focus / Cast", "Quick Map",
             "Super Dash", "Dream Nail", "Quick Cast", "Reset Defaults", "Done",
-            "Select Decoration",
+            "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.controllerAdvancedSettings.labels.map(\.name), [
             "Advanced Settings", "Vibration", "Native Controller Input", "MFI",
-            "Reset Defaults", "Back", "Select Decoration",
+            "Reset Defaults", "Back", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.keyboard.labels.map(\.name), [
             "Keyboard", "Up", "Down", "Jump", "Attack", "Dash", "Focus / Cast", "Left",
             "Right", "Quick Map", "Super Dash", "Dream Nail", "Quick Cast", "Inventory",
-            "Reset Defaults", "Back", "Select Decoration",
+            "Reset Defaults", "Back", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.mods.labels.map(\.name), [
-            "Mods", "Mod Decoration", "Back", "Select Decoration",
+            "Mods", "Mod Decoration", "Back", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.achievements.labels.map(\.name), [
-            "Achievements", "Back", "Select Decoration",
+            "Achievements", "Back", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.selectProfile.labels.map(\.name), [
             "Select Profile", "1.", "2.", "3.", "4.", "Clear Save", "Back",
-            "Select Decoration",
+            "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.clearSave.labels.map(\.name), [
-            "Clear Save?", "Yes", "No", "Select Decoration",
+            "Clear Save?", "Yes", "No", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.game.labels.map(\.name), [
             "Hallow Knight", "Mana", "Health", "Geode", "Crawlid", "Vengfly",
@@ -226,32 +226,32 @@ final class LabelingEditorViewTests: XCTestCase {
             "Geo Deposit", "Lifeblood Cacoon", "Sign",
         ])
         XCTAssertEqual(LabelingContext.pause.labels.map(\.name), [
-            "Header", "Continue", "Options", "Quit To Menu", "Select Decoration",
+            "Header", "Continue", "Options", "Quit To Menu", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.quitToMenu.labels.map(\.name), [
-            "Quit To Menu", "Yes", "No", "Select Decoration",
+            "Quit To Menu", "Yes", "No", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.extras.labels.map(\.name), [
             "Extras", "Menu Style", "Credits", "Hidden Dreams", "The Grimm Troupe",
-            "Lifeblood", "Godmaster", "Back", "Select Decoration",
+            "Lifeblood", "Godmaster", "Back", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.hiddenDreams.labels.map(\.name), [
-            "Hidden Dreams", "Hidden Dreams Poster", "Back", "Select Decoration",
+            "Hidden Dreams", "Hidden Dreams Poster", "Back", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.grimmTroupe.labels.map(\.name), [
-            "The Grimm Troupe", "Grimm Troupe Poster", "Back", "Select Decoration",
+            "The Grimm Troupe", "Grimm Troupe Poster", "Back", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.lifeblood.labels.map(\.name), [
-            "Lifeblood", "Lifeblood Poster", "Back", "Select Decoration",
+            "Lifeblood", "Lifeblood Poster", "Back", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.godmaster.labels.map(\.name), [
-            "Godmaster", "Godmaster Poster", "Back", "Select Decoration",
+            "Godmaster", "Godmaster Poster", "Back", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.inventory.labels.map(\.name), [
             "Inventory", "Inventory Corner",
         ])
         XCTAssertEqual(LabelingContext.quitGame.labels.map(\.name), [
-            "Quit Game", "Yes", "No", "Select Decoration",
+            "Quit Game", "Yes", "No", "Select Decorations",
         ])
     }
 

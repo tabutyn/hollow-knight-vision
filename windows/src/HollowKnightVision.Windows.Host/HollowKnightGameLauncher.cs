@@ -23,7 +23,29 @@ public static partial class HollowKnightGameLauncher
             if (File.Exists(candidate)) return Path.GetFullPath(candidate);
         }
         throw new FileNotFoundException(
-            "Hollow Knight executable not found. Pass --game-exe PATH.");
+            "Hollow Knight executable not found. Pass --game-path PATH.");
+    }
+
+    public static void ValidateInstallation(string executable, bool requireModded)
+    {
+        var gameRoot = Path.GetDirectoryName(Path.GetFullPath(executable))!;
+        var managed = Path.Combine(gameRoot, "hollow_knight_Data", "Managed");
+        var loader = Path.Combine(managed, "MMHOOK_Assembly-CSharp.dll");
+        var receiver = Path.Combine(
+            managed, "Mods", "HollowKnightVisionInputReceiver",
+            "HollowKnightVisionInputReceiver.dll");
+        if (!requireModded && File.Exists(loader))
+        {
+            throw new InvalidOperationException(
+                "Normal mode requires an unmodified Hollow Knight installation. " +
+                "Choose a stock executable with --game-path.");
+        }
+        if (requireModded && (!File.Exists(loader) || !File.Exists(receiver)))
+        {
+            throw new InvalidOperationException(
+                "Modded mode requires the matching Modding API loader and " +
+                "HollowKnightVisionInputReceiver. Choose that executable with --game-path.");
+        }
     }
 
     public static Process Start(string? explicitPath = null)

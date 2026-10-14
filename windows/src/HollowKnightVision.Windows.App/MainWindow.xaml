@@ -98,7 +98,7 @@
                         <TextBlock Text="⌖" FontSize="34" Foreground="#CC00FFFF" HorizontalAlignment="Center"/>
                         <TextBlock Text="Starting live atlas…" FontSize="13" Foreground="#999999" Margin="0,7,0,0"/>
                     </StackPanel>
-                    <Border VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="10" Padding="10,6"
+                    <Border x:Name="VisionStatusOverlay" Visibility="Collapsed" VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="10" Padding="10,6"
                             CornerRadius="0" Background="#A0000000">
                         <TextBlock x:Name="VisionStatusText" Text="Gameplay" FontSize="30" FontWeight="SemiBold"
                                    FontFamily="Consolas" Foreground="#F19A38"/>
@@ -107,21 +107,21 @@
 
                 <!-- Label: exact Mac toolbar order above a frozen clean screenshot. -->
                 <Grid x:Name="LabelPanel" Visibility="Collapsed">
-                    <Grid.RowDefinitions><RowDefinition Height="46"/><RowDefinition Height="1"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                    <Border Style="{StaticResource Toolbar}"><Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="86"/><RowDefinition Height="1"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Border Style="{StaticResource Toolbar}"><Grid><Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
                             <ComboBox x:Name="ContextCombo" Width="175" SelectionChanged="ContextCombo_SelectionChanged"/>
-                            <ComboBox x:Name="ClassCombo" Width="175" Margin="4,0,0,0" IsEditable="True"
+                            <ComboBox x:Name="ClassCombo" Width="300" Margin="4,0,0,0" IsEditable="False"
                                       SelectionChanged="ClassCombo_SelectionChanged"/>
-                            <Button Content="+ Object" Margin="4,0,0,0" Click="NewObject_Click"/>
+                            <Button x:Name="NewObjectButton" Content="+ Object" Margin="4,0,0,0" Click="NewObject_Click"/>
                         </StackPanel>
-                        <UniformGrid Width="290" Columns="4" HorizontalAlignment="Center">
+                        <UniformGrid Grid.Row="1" Width="360" Columns="4" HorizontalAlignment="Left">
                             <RadioButton x:Name="LabelAddButton" GroupName="LabelMode" Content="Add" Style="{StaticResource Segment}" IsChecked="True" Click="LabelMode_Click"/>
                             <RadioButton x:Name="LabelModifyButton" GroupName="LabelMode" Content="Modify" Style="{StaticResource Segment}" Click="LabelMode_Click"/>
                             <RadioButton x:Name="LabelDeleteButton" GroupName="LabelMode" Content="Delete" Style="{StaticResource Segment}" Click="LabelMode_Click"/>
                             <RadioButton x:Name="LabelNegativeButton" GroupName="LabelMode" Content="Negative" Style="{StaticResource Segment}" Click="LabelMode_Click"/>
                         </UniformGrid>
-                        <Button Content="Recent Frames" HorizontalAlignment="Right" Click="RecentFrames_Click"/>
+                        <Button Grid.Row="1" Content="Recent Frames" HorizontalAlignment="Right" Click="RecentFrames_Click"/>
                     </Grid></Border>
                     <Border Grid.Row="1" Background="#55FFFFFF"/>
                     <Grid Grid.Row="2" Background="Black">
@@ -134,6 +134,8 @@
                         </Grid></Viewbox>
                     </Grid>
                 </Grid>
+
+                <Grid x:Name="StencilsPanel" Visibility="Collapsed"/>
 
                 <!-- Model: same toolbar and initial Summary arrangement as the Mac workspace. -->
                 <Grid x:Name="ModelPanel" Visibility="Collapsed">
@@ -152,13 +154,7 @@
                     </Grid></Border>
                     <Border Grid.Row="1" Background="#55FFFFFF"/>
                     <Grid Grid.Row="2">
-                        <Grid x:Name="ModelSummaryPanel" Margin="14">
-                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition Width="230"/><ColumnDefinition Width="1.3*"/></Grid.ColumnDefinitions>
-                            <StackPanel Margin="5"><TextBlock Text="Least Registrations" FontSize="16" FontWeight="SemiBold"/><Separator Margin="0,8"/><DockPanel Margin="4"><TextBlock Text="Hallow Knight"/><TextBlock DockPanel.Dock="Right" Text="0" Foreground="#F19A38"/></DockPanel><DockPanel Margin="4"><TextBlock Text="Crawlid"/><TextBlock DockPanel.Dock="Right" Text="0" Foreground="#F19A38"/></DockPanel><DockPanel Margin="4"><TextBlock Text="Vengfly"/><TextBlock DockPanel.Dock="Right" Text="0" Foreground="#F19A38"/></DockPanel><DockPanel Margin="4"><TextBlock Text="Shade"/><TextBlock DockPanel.Dock="Right" Text="0" Foreground="#F19A38"/></DockPanel><DockPanel Margin="4"><TextBlock Text="Geo Deposit"/><TextBlock DockPanel.Dock="Right" Text="0" Foreground="#F19A38"/></DockPanel><DockPanel Margin="4"><TextBlock Text="Lifeblood Cacoon"/><TextBlock DockPanel.Dock="Right" Text="0" Foreground="#F19A38"/></DockPanel><DockPanel Margin="4"><TextBlock Text="Sign"/><TextBlock DockPanel.Dock="Right" Text="0" Foreground="#F19A38"/></DockPanel></StackPanel>
-                            <StackPanel Grid.Column="1" Margin="5"><TextBlock Text="Most Errors" FontSize="16" FontWeight="SemiBold"/><Separator Margin="0,8"/><DockPanel Margin="4"><TextBlock Text="Hallow Knight"/><TextBlock DockPanel.Dock="Right" Text="0 TP" Foreground="#999999"/></DockPanel><DockPanel Margin="4"><TextBlock Text="Crawlid"/><TextBlock DockPanel.Dock="Right" Text="0 TP" Foreground="#999999"/></DockPanel><DockPanel Margin="4"><TextBlock Text="Vengfly"/><TextBlock DockPanel.Dock="Right" Text="0 TP" Foreground="#999999"/></DockPanel><DockPanel Margin="4"><TextBlock Text="Shade"/><TextBlock DockPanel.Dock="Right" Text="0 TP" Foreground="#999999"/></DockPanel><DockPanel Margin="4"><TextBlock Text="Geo Deposit"/><TextBlock DockPanel.Dock="Right" Text="0 TP" Foreground="#999999"/></DockPanel><DockPanel Margin="4"><TextBlock Text="Lifeblood Cacoon"/><TextBlock DockPanel.Dock="Right" Text="0 TP" Foreground="#999999"/></DockPanel><DockPanel Margin="4"><TextBlock Text="Sign"/><TextBlock DockPanel.Dock="Right" Text="0 TP" Foreground="#999999"/></DockPanel></StackPanel>
-                            <StackPanel Grid.Column="2" Margin="5"><TextBlock Text="Contract Breach" FontSize="16" FontWeight="SemiBold"/><Separator Margin="0,8"/><TextBlock Text="No unexempted breaches." Foreground="#999999" TextWrapping="Wrap"/></StackPanel>
-                            <StackPanel Grid.Column="3" Margin="5"><TextBlock Text="Errors" FontSize="16" FontWeight="SemiBold"/><Separator Margin="0,8"/><TextBlock Text="No failed screenshots for this object." Foreground="#999999" TextWrapping="Wrap"/></StackPanel>
-                        </Grid>
+                        <Grid x:Name="ModelSummaryPanel" Margin="14"/>
                         <Grid x:Name="ModelObjectsPanel" Visibility="Collapsed" Margin="14">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="240"/><ColumnDefinition/></Grid.ColumnDefinitions>
                             <StackPanel><TextBlock Text="Objects" FontSize="16" FontWeight="SemiBold"/><Separator Margin="0,8"/><TextBlock Text="Hallow Knight" Padding="8"/><TextBlock Text="Crawlid" Padding="8"/><TextBlock Text="Vengfly" Padding="8"/><TextBlock Text="Shade" Padding="8"/><TextBlock Text="Geo Deposit" Padding="8"/><TextBlock Text="Lifeblood Cacoon" Padding="8"/><TextBlock Text="Sign" Padding="8"/></StackPanel>
@@ -202,9 +198,62 @@
                     </Grid>
                 </Grid>
 
+
+            </Grid>
+        </Border>
+
+        <!-- One bottom row; diagnostic and atlas settings live behind the gear. -->
+        <Grid Grid.Row="1" MinHeight="32" Background="#03070A">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                <RadioButton x:Name="GameplayWorkspaceButton" GroupName="Workspace" Content="Gameplay" Style="{StaticResource Segment}" IsChecked="True" Checked="GameplayWorkspace_Click"/>
+                <RadioButton x:Name="LabelWorkspaceButton" GroupName="Workspace" Content="Label" Style="{StaticResource Segment}" Checked="LabelWorkspace_Click"/>
+                <RadioButton x:Name="StencilsWorkspaceButton" GroupName="Workspace" Content="Stencil" Style="{StaticResource Segment}" Checked="StencilsWorkspace_Click"/>
+                <RadioButton x:Name="ModelWorkspaceButton" GroupName="Workspace" Content="Model" Style="{StaticResource Segment}" Checked="ModelWorkspace_Click"/>
+                <RadioButton x:Name="HackerWorkspaceButton" GroupName="Workspace" Content="Hacker" Style="{StaticResource Segment}" Checked="HackerWorkspace_Click"/>
+                <RadioButton x:Name="OpsWorkspaceButton" Visibility="Collapsed" GroupName="Workspace" Content="Ops" Style="{StaticResource Segment}" Checked="OpsWorkspace_Click"/>
+            </StackPanel>
+            <TextBlock x:Name="StencilGuidanceText" Grid.Column="1" Foreground="#5AA7FF" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="10,0"
+                       ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                <Button x:Name="PathRecordingButton" Content="K" Click="PathRecording_Click"/>
+                <StackPanel x:Name="GameplayControlsPanel" Orientation="Horizontal">
+                    <Button Content="Free Fly" Tag="Free Fly" Click="GameplayFraming_Click"/>
+                    <Button Content="Fit" Tag="Fit" Click="GameplayFraming_Click"/>
+                    <Button Content="Current" Tag="Current" Click="GameplayFraming_Click"/>
+                </StackPanel>
+            </StackPanel>
+            <Button x:Name="SettingsButton" Grid.Column="3" Content="⚙" FontSize="18" ToolTip="Settings" AutomationProperties.Name="Settings" Click="Settings_Click"/>
+        </Grid>
+
+        <Grid x:Name="SettingsOverlay" MouseLeftButtonDown="SettingsBackdrop_Click" Grid.RowSpan="2" Background="#99000000" Visibility="Collapsed" Panel.ZIndex="100">
+            <Border Width="620" MaxHeight="760" Margin="24" Background="#202124" BorderBrush="#55FFFFFF" BorderThickness="1" CornerRadius="14" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top" Margin="20">
+                        <Button DockPanel.Dock="Right" Content="Done" Click="AtlasManagerDone_Click"/>
+                        <TextBlock x:Name="SettingsTitle" Text="Settings" FontSize="20" FontWeight="SemiBold"/>
+                    </DockPanel>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="20,0,20,20">
+                            <StackPanel x:Name="GameplayAtlasManager">
+                    <DockPanel><TextBlock Text="Manage Atlas" FontSize="18" FontWeight="SemiBold"/></DockPanel>
+                    <TextBlock Text="The active atlas auto-saves. Save State creates a named restore point; New archives the active atlas before clearing it." FontSize="12" Foreground="#999999" TextWrapping="Wrap" Margin="0,12"/>
+                    <DockPanel><Button DockPanel.Dock="Right" Content="Save State" Click="AtlasSaveState_Click"/><TextBox x:Name="AtlasStateNameText"/></DockPanel>
+                    <ListBox x:Name="AtlasStatesList" Height="180" Margin="0,12" SelectionChanged="AtlasStatesList_SelectionChanged"/>
+                    <DockPanel><Button Content="New" Click="AtlasNew_Click"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="AtlasDeleteStateButton" Content="Delete" Click="AtlasDeleteState_Click" IsEnabled="False"/><Button x:Name="AtlasLoadStateButton" Content="Load" Click="AtlasLoadState_Click" IsEnabled="False"/></StackPanel></DockPanel>
+                </StackPanel>
+                            <StackPanel x:Name="HackerAtlasManager" Visibility="Collapsed" Margin="0,20,0,0">
+                                <TextBlock Text="Manage Hacker Atlas" FontWeight="SemiBold"/>
+                                <Button Content="Delete Atlas" HorizontalAlignment="Left" Foreground="#FF6868" Click="HackerDeleteAtlas_Click"/>
+                            </StackPanel>
+                            <WrapPanel x:Name="HackerControlsPanel" Visibility="Collapsed" Margin="0,12">
+                                <Button Content="Ground" Tag="Ground" Click="HackerMode_Click"/><Button Content="Rooms" Tag="Rooms" Click="HackerMode_Click"/>
+                                <Button Content="Fit" Tag="Fit" Click="HackerMode_Click"/><Button Content="Free Fly" Tag="Free Fly" Click="HackerMode_Click"/><Button Content="Current" Tag="Current" Click="HackerMode_Click"/>
+                            </WrapPanel>
+                            <TextBlock x:Name="OpsSettingsTitle" Text="Ops" FontWeight="SemiBold" Visibility="Collapsed"/>
                 <!-- Ops: exact Mac PlayerOpsView copy. -->
                 <Grid x:Name="OpsPanel" Visibility="Collapsed">
-                    <Grid Width="720" HorizontalAlignment="Left" Margin="28"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <Grid HorizontalAlignment="Stretch" Margin="0,12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                         <Grid Grid.Row="0" Margin="0,0,0,18"><Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="190"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
                             <TextBlock Text="Max Health" Margin="0,7"/><TextBox x:Name="OpsMaxHealthText" Grid.Column="1" Text="5" Width="72" HorizontalAlignment="Right"/>
                             <TextBlock Grid.Row="1" Text="Health" Margin="0,7"/><TextBox x:Name="OpsHealthText" Grid.Row="1" Grid.Column="1" Text="5" Width="72" HorizontalAlignment="Right"/>
@@ -219,69 +268,33 @@
                         <StackPanel Grid.Row="5" Orientation="Horizontal"><Button Content="Apply" Click="OpsApply_Click"/><Button Content="Reload" Click="OpsReload_Click"/><TextBlock x:Name="OpsStatusText" Foreground="#999999" VerticalAlignment="Center" Margin="8,0"/></StackPanel>
                     </Grid>
                 </Grid>
-            </Grid>
-        </Border>
+                            <Separator Margin="0,20"/>
+                            <TextBlock x:Name="DebugSettings" Text="Debug View" FontWeight="SemiBold" Margin="0,0,0,12"/>
 
-        <!-- Same bottom control row and conditional control ordering as DashboardView.controls. -->
-        <Grid Grid.Row="1" Height="32" Margin="0" Background="#03070A">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="380"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-            <UniformGrid Grid.Column="0" Columns="5">
-                <RadioButton x:Name="GameplayWorkspaceButton" GroupName="Workspace" Content="Gameplay" Style="{StaticResource Segment}" IsChecked="True" Checked="GameplayWorkspace_Click"/>
-                <RadioButton x:Name="LabelWorkspaceButton" GroupName="Workspace" Content="Label" Style="{StaticResource Segment}" Checked="LabelWorkspace_Click"/>
-                <RadioButton x:Name="ModelWorkspaceButton" GroupName="Workspace" Content="Model" Style="{StaticResource Segment}" Checked="ModelWorkspace_Click"/>
-                <RadioButton x:Name="HackerWorkspaceButton" GroupName="Workspace" Content="Hacker" Style="{StaticResource Segment}" Checked="HackerWorkspace_Click"/>
-                <RadioButton x:Name="OpsWorkspaceButton" GroupName="Workspace" Content="Ops" Style="{StaticResource Segment}" Checked="OpsWorkspace_Click"/>
-            </UniformGrid>
-            <Button x:Name="PathRecordingButton" Grid.Column="1" Content="K" Click="PathRecording_Click" Margin="8,0,3,0"/>
-            <StackPanel x:Name="GameplayControlsPanel" Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
-                <CheckBox x:Name="DebugViewCheck" Content="Debug View" VerticalAlignment="Center" Margin="0,0,8,0" Checked="DebugViewCheck_Changed" Unchecked="DebugViewCheck_Changed"/>
-                <Button Content="Manage Atlas" Click="ManageAtlas_Click"/>
-                <Button Content="Free Fly" Click="GameplayFraming_Click"/>
-                <Button Content="Fit" Click="GameplayFraming_Click"/>
-                <Button Content="Current" Click="GameplayFraming_Click"/>
-            </StackPanel>
-            <StackPanel x:Name="HackerControlsPanel" Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" Visibility="Collapsed">
-                <Button Content="Manage Atlas" Click="ManageAtlas_Click"/>
-                <Button Content="Ground" Click="HackerMode_Click"/>
-                <Button Content="Rooms" Click="HackerMode_Click"/>
-                <Button Content="Fit" Click="HackerMode_Click"/>
-                <Button Content="Free Fly" Click="HackerMode_Click"/>
-                <Button Content="Current" Click="HackerMode_Click"/>
-            </StackPanel>
-        </Grid>
-
-        <!-- Mac Debug View popover. -->
-        <Popup x:Name="DebugPopup" Placement="Top" PlacementTarget="{Binding ElementName=DebugViewCheck}" StaysOpen="False" AllowsTransparency="True">
-            <Border Background="#F0202124" BorderBrush="#55FFFFFF" BorderThickness="1" CornerRadius="0" Padding="14" Width="300">
-                <StackPanel>
+                            <CheckBox x:Name="GameStateCheck" Content="Game State" Margin="0,0,0,10" Checked="GameStateCheck_Changed" Unchecked="GameStateCheck_Changed"/>
                     <CheckBox x:Name="ObjectDetectionCheck" Content="Object Detection" Margin="0,0,0,10" Checked="ObjectDetectionCheck_Changed" Unchecked="ObjectDetectionCheck_Changed"/>
-                    <StackPanel x:Name="ObjectDetectionOptions" Visibility="Collapsed">
+                    <TextBlock x:Name="ModelLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
+                    <StackPanel x:Name="ObjectDetectionOptions" IsEnabled="False">
                         <CheckBox x:Name="RawDetectionCheck" Content="Raw Detection" Margin="0,0,0,10" Checked="RawDetectionCheck_Changed" Unchecked="RawDetectionCheck_Changed"/>
                         <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="38"/></Grid.ColumnDefinitions><TextBlock Text="Detection Extend"/><Slider x:Name="DetectionExtendSlider" Grid.Column="1" Minimum="0" Maximum="50" Margin="8,0" ValueChanged="DetectionExtendSlider_ValueChanged"/><TextBlock x:Name="DetectionExtendText" Grid.Column="2" Text="0%" FontFamily="Consolas" HorizontalAlignment="Right"/></Grid>
                         <CheckBox x:Name="DetectionPixelsCheck" Content="Detection Pixels" Margin="0,0,0,10"/>
                     </StackPanel>
                     <CheckBox x:Name="StencilDetectionCheck" Content="Stencil Detection" Margin="0,0,0,10"/>
+                    <TextBlock x:Name="StencilLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
                     <Separator Margin="0,0,0,10"/>
                     <CheckBox x:Name="GroundFeaturesCheck" Content="Ground Features" Margin="0,0,0,10"/>
                     <CheckBox x:Name="TransitionsCheck" Content="Transitions" Margin="0,0,0,10"/>
                     <CheckBox x:Name="CoarseMotionCheck" Content="Coarse Motion Overlay"/>
-                </StackPanel>
-            </Border>
-        </Popup>
 
-        <!-- SwiftUI sheet equivalent; content switches for Gameplay/Hacker. -->
-        <Grid x:Name="AtlasManagerOverlay" Grid.RowSpan="2" Background="#88000000" Visibility="Collapsed">
-            <Border x:Name="GameplayAtlasManager" Width="480" MinHeight="330" Background="#202124" BorderBrush="#66FFFFFF" BorderThickness="1" CornerRadius="0" Padding="18" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <StackPanel>
-                    <DockPanel><TextBlock Text="Manage Atlas" FontSize="18" FontWeight="SemiBold"/><Button DockPanel.Dock="Right" Content="Done" Click="AtlasManagerDone_Click"/></DockPanel>
-                    <TextBlock Text="The active atlas auto-saves. Save State creates a named restore point; New archives the active atlas before clearing it." FontSize="12" Foreground="#999999" TextWrapping="Wrap" Margin="0,12"/>
-                    <DockPanel><Button DockPanel.Dock="Right" Content="Save State" Click="AtlasSaveState_Click"/><TextBox x:Name="AtlasStateNameText"/></DockPanel>
-                    <ListBox x:Name="AtlasStatesList" Height="180" Margin="0,12" SelectionChanged="AtlasStatesList_SelectionChanged"/>
-                    <DockPanel><Button Content="New" Click="AtlasNew_Click"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="AtlasDeleteStateButton" Content="Delete" Click="AtlasDeleteState_Click" IsEnabled="False"/><Button x:Name="AtlasLoadStateButton" Content="Load" Click="AtlasLoadState_Click" IsEnabled="False"/></StackPanel></DockPanel>
-                </StackPanel>
-            </Border>
-            <Border x:Name="HackerAtlasManager" Width="360" Height="150" Background="#202124" BorderBrush="#66FFFFFF" BorderThickness="1" CornerRadius="0" Padding="18" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
-                <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions><DockPanel><TextBlock Text="Manage Hacker Atlas" FontSize="18" FontWeight="SemiBold"/><Button DockPanel.Dock="Right" Content="Done" Click="AtlasManagerDone_Click"/></DockPanel><Button Grid.Row="2" Content="Delete Atlas" HorizontalAlignment="Left" Foreground="#FF6868" Click="HackerDeleteAtlas_Click"/></Grid>
+
+                            <Separator Margin="0,20"/>
+                            <TextBlock x:Name="SettingsLanguageTitle" Text="Game language" Margin="0,0,0,5"/>
+                            <ComboBox x:Name="SettingsLanguageCombo" SelectionChanged="SettingsLanguage_Changed" Margin="0,0,0,12"/>
+                            <Separator Margin="0,12"/>
+                            <Button x:Name="SettingsFactoryButton" Content="Factory Reset…" Foreground="#FF6868" HorizontalAlignment="Left" Click="FactoryReset_Click"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
             </Border>
         </Grid>
 

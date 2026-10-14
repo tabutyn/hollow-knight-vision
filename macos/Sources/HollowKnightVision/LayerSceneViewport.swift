@@ -1001,7 +1001,7 @@ final class LayerMetalView: MTKView, MTKViewDelegate {
       passingPrimaryMouse = forwardPointer(.leftDown, at: location, event: event)
       // The live frame owns ordinary clicks. The empty canvas owns drags,
       // so a panned-away game remains recoverable without a modifier key.
-      drag = passingPrimaryMouse ? nil : location
+      drag = passingPrimaryMouse && coordinator?.framingMode != .current ? nil : location
       dragStart = drag
       dragged = false
       return
@@ -1034,6 +1034,13 @@ final class LayerMetalView: MTKView, MTKViewDelegate {
       coordinator.onGroundLabelPointer(.changed, point, 8 / coordinator.zoom)
       needsDisplay = true
       return
+    }
+    if passingPrimaryMouse, coordinator?.framingMode == .current, let start = dragStart {
+      let location = convert(event.locationInWindow, from: nil)
+      if hypot(location.x - start.x, location.y - start.y) > 4 {
+        _ = forwardPointer(.leftUp, at: location, event: event)
+        passingPrimaryMouse = false
+      }
     }
     if passingPrimaryMouse {
       _ = forwardPointer(

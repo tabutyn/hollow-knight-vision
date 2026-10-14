@@ -46,6 +46,16 @@ internal sealed class WindowsGameControlForwarder : IAsyncDisposable
         get { lock (stateLock) return playerOpsAvailable; }
     }
 
+    internal bool HasFreshGroundTruth
+    {
+        get
+        {
+            var latest = Volatile.Read(ref latestGroundTruth);
+            return latest is not null
+                && DateTimeOffset.UtcNow - latest.ReceivedAt <= TimeSpan.FromMilliseconds(500);
+        }
+    }
+
     internal bool IsRecording
     {
         get { lock (stateLock) return recordingEvents is not null; }

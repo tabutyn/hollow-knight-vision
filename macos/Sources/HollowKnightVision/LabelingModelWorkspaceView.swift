@@ -34,7 +34,12 @@ private struct LabelingObjectReference: Identifiable {
 }
 
 struct LabelingModelWorkspaceView: View {
-    let candidate: LabelingModelCandidate
+    @Environment(\.visionLanguage) private var visionLanguage
+    private func visionText(_ key: String, _ values: [String: String] = [:]) -> String {
+        StencilGuidanceText(language: visionLanguage).text(key, values)
+    }
+
+    let candidate: LabelingModelCandidate?
     @Binding var context: LabelingContext
     @Binding var selectedClassIdentifier: String
     let activeVersionName: String
@@ -81,29 +86,27 @@ struct LabelingModelWorkspaceView: View {
             ),
             titleVisibility: .visible
         ) {
-            Button(deletionButtonTitle, role: .destructive) {
+            Button(visionText(deletionButtonTitle), role: .destructive) {
                 let identifiers = pendingDeletionIdentifiers
                 pendingDeletionIdentifiers.removeAll()
                 deleteScreenshots(identifiers: identifiers)
             }
-            Button("Cancel", role: .cancel) {
+            Button(visionText("Cancel"), role: .cancel) {
                 pendingDeletionIdentifiers.removeAll()
             }
         } message: {
-            Text("Images, labels, and exemptions will be removed. This cannot be undone.")
+            Text(visionText("Images, labels, and exemptions will be removed. This cannot be undone."))
         }
     }
 
     private var deletionConfirmationTitle: String {
-        pendingDeletionIdentifiers.count == 1
-            ? "Permanently delete this screenshot?"
-            : "Permanently delete \(pendingDeletionIdentifiers.count) screenshots?"
+        visionText("deleteScreenshotsTitle", ["count": String(pendingDeletionIdentifiers.count)])
     }
 
     private var deletionButtonTitle: String {
         pendingDeletionIdentifiers.count == 1
             ? "Delete Screenshot"
-            : "Delete \(pendingDeletionIdentifiers.count) Screenshots"
+            : visionText("Delete {count} Screenshots", ["count": String(pendingDeletionIdentifiers.count)])
     }
 
     private var controls: some View {
@@ -124,9 +127,9 @@ struct LabelingModelWorkspaceView: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(untrainedLabeledImageCount > 0 ? .blue : .secondary)
                 if isTraining {
-                    Button("Stop Training", action: onStopTraining).tint(.red)
+                    Button(visionText("Stop Training"), action: onStopTraining).tint(.red)
                     ProgressView().controlSize(.small)
-                    Text(trainingProgress ?? "Preparing…")
+                    Text(trainingProgress ?? visionText("Preparing…"))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 } else {
@@ -135,17 +138,17 @@ struct LabelingModelWorkspaceView: View {
                             if hasUntrainedLabelChanges {
                                 Circle().fill(.blue).frame(width: 7, height: 7)
                             }
-                            Text("Train")
+                            Text(visionText("Train"))
                         }
                     }
                     .disabled(!canTrain || !breachedExamples.isEmpty)
                     .help(
                         breachedExamples.isEmpty
                             ? trainingHelp
-                            : "Fix or exempt \(breachedExamples.count) contract-breaching screenshot(s) before training"
+                            : visionText("fixLabels", ["count": String(breachedExamples.count)])
                     )
                 }
-                Text(activeVersionName)
+                Text(visionText(activeVersionName))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
@@ -153,7 +156,7 @@ struct LabelingModelWorkspaceView: View {
             StableSegmentedPicker(
                 label: "Model section",
                 choices: LabelingModelTab.allCases,
-                title: { $0.rawValue },
+                title: { visionText($0.rawValue) },
                 selection: $selection.tab
             )
             .frame(width: 300)
@@ -199,7 +202,6 @@ struct LabelingModelWorkspaceView: View {
                 Text("\(truePositiveCount(for: value.classIdentifier)) TP")
                     .foregroundStyle(.secondary)
             }
-            contractBreachPanel.frame(width: 230)
             summaryPreview
         }
         .padding(14)
@@ -211,7 +213,7 @@ struct LabelingModelWorkspaceView: View {
         @ViewBuilder trailing: @escaping (LabelingObjectPrioritySummary) -> Trailing
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.headline)
+            Text(visionText(title)).font(.headline)
             Divider()
             ScrollView {
                 LazyVStack(spacing: 3) {
@@ -249,7 +251,7 @@ struct LabelingModelWorkspaceView: View {
     private var contractBreachPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text("Contract Breach").font(.headline)
+                Text(visionText("Contract Breach")).font(.headline)
                 Spacer()
                 Button(role: .destructive) {
                     pendingDeletionIdentifiers = selectedContractDeletionIdentifiers
@@ -260,13 +262,13 @@ struct LabelingModelWorkspaceView: View {
                     )
                 }
                 .disabled(selectedContractDeletionIdentifiers.isEmpty)
-                .help("Delete selected screenshots")
+                .help(visionText("Delete selected screenshots"))
             }
             Divider()
             ScrollView {
                 LazyVStack(spacing: 4) {
                     if breachedExamples.isEmpty {
-                        Text("No unexempted breaches.")
+                        Text(visionText("No unexempted breaches."))
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 8)
@@ -309,7 +311,7 @@ struct LabelingModelWorkspaceView: View {
                     .frame(width: 18, height: 18)
             }
             .buttonStyle(.plain)
-            .help("Select for deletion")
+            .help(visionText("Select for deletion"))
 
             Button {
                 selection.summaryReviewClassIdentifier = nil
@@ -339,13 +341,7 @@ struct LabelingModelWorkspaceView: View {
         }
     }
 
-    @ViewBuilder private var summaryPreview: some View {
-        if selection.summaryReviewClassIdentifier != nil {
-            priorityFailurePreview
-        } else {
-            contractBreachPreview
-        }
-    }
+    private var summaryPreview: some View { priorityFailurePreview }
 
     private var priorityFailurePreview: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -377,7 +373,7 @@ struct LabelingModelWorkspaceView: View {
                     openForRepair(example)
                 }
             } else {
-                Text("No failed screenshots for this object.")
+                Text(visionText("No failed screenshots for this object."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -403,12 +399,12 @@ struct LabelingModelWorkspaceView: View {
                     }
                 }
                 Divider()
-                Button("Delete Screenshot", role: .destructive) {
+                Button(visionText("Delete Screenshot"), role: .destructive) {
                     pendingDeletionIdentifiers = [example.id]
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
             } else {
-                Text("Select a contract breach.")
+                Text(visionText("Select a contract breach."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -435,13 +431,10 @@ struct LabelingModelWorkspaceView: View {
     private var objectCatalog: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(LabelingContext.objectCatalogCases) { group in
-                    Text(group.rawValue)
-                        .font(.caption.weight(.bold))
-                        .padding(.top, 9)
-                        .padding(.horizontal, 8)
-                    Divider()
-                    ForEach(group.labels) { definition in
+                ForEach([LabelingContext.game]) { group in
+                    ForEach((group.labels + UserObjectCatalogStore.definitions(for: .game)).filter {
+                        LabelingSharedModelPolicy.classIdentifiers.contains($0.id)
+                    }) { definition in
                         Button {
                             context = LabelingContext.contractSetCases.contains(group)
                                 ? group
@@ -475,7 +468,7 @@ struct LabelingModelWorkspaceView: View {
             Text(objectName(selectedClassIdentifier)).font(.headline).padding(.horizontal, 9)
             Divider()
             if selectedObjectReferences.isEmpty {
-                Text("No positive reference boxes.")
+                Text(visionText("No positive reference boxes."))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -554,7 +547,7 @@ struct LabelingModelWorkspaceView: View {
                     onOpenExample(example.id, .delete)
                 }
             } else {
-                Text("Select a reference screenshot.").foregroundStyle(.secondary)
+                Text(visionText("Select a reference screenshot.")).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -563,17 +556,15 @@ struct LabelingModelWorkspaceView: View {
 
     private var screenshots: some View {
         HStack(spacing: 0) {
-            screenshotGroups.frame(width: 190)
-            Divider()
             screenshotList.frame(width: 270)
             Divider()
             screenshotContracts
         }
         .overlay {
             ZStack {
-                Button("Previous Screenshot") { moveScreenshot(by: -1) }
+                Button(visionText("Previous Screenshot")) { moveScreenshot(by: -1) }
                     .keyboardShortcut(.upArrow, modifiers: [])
-                Button("Next Screenshot") { moveScreenshot(by: 1) }
+                Button(visionText("Next Screenshot")) { moveScreenshot(by: 1) }
                     .keyboardShortcut(.downArrow, modifiers: [])
             }
             .frame(width: 1, height: 1)
@@ -605,7 +596,7 @@ struct LabelingModelWorkspaceView: View {
             selection.screenshotIdentifier = filteredScreenshots.first?.id
         } label: {
             HStack {
-                Text(title).lineLimit(1)
+                Text(visionText(title)).lineLimit(1)
                 Spacer()
                 Text("\(screenshotCount(group: identifier))").foregroundStyle(.secondary)
             }
@@ -663,7 +654,7 @@ struct LabelingModelWorkspaceView: View {
                     openForRepair(example)
                 }
                 Divider()
-                Text("Contracts").font(.headline)
+                Text(visionText("Contracts")).font(.headline)
                 ScrollView {
                     contractTermsGrid {
                         ForEach(evaluations(for: example)) { evaluation in
@@ -672,12 +663,12 @@ struct LabelingModelWorkspaceView: View {
                     }
                 }
                 Divider()
-                Button("Delete Screenshot", role: .destructive) {
+                Button(visionText("Delete Screenshot"), role: .destructive) {
                     pendingDeletionIdentifiers = [example.id]
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
             } else {
-                Text("Select a screenshot.")
+                Text(visionText("Select a screenshot."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -699,7 +690,7 @@ struct LabelingModelWorkspaceView: View {
                     .frame(maxWidth: .infinity, maxHeight: maximumHeight)
             }
             .buttonStyle(.plain)
-            .help("Open screenshot in Label")
+            .help(visionText("Open screenshot in Label"))
             if !example.manifest.annotations.isEmpty {
                 LabelingObjectLegend(
                     classIdentifiers: example.manifest.annotations.map(\.classIdentifier),
@@ -815,7 +806,7 @@ struct LabelingModelWorkspaceView: View {
         } else if objectAtlasIsLoading {
             ProgressView().controlSize(.mini)
         } else {
-            Text(definition.name)
+            Text(visionText(definition.name))
                 .font(.caption)
                 .lineLimit(1)
         }
@@ -845,10 +836,10 @@ struct LabelingModelWorkspaceView: View {
     private var priorities: [LabelingObjectPrioritySummary] {
         LabelingObjectPriorityAnalyzer.summaries(
             examples: examples,
-            review: candidate.predictionReview,
+            review: candidate?.predictionReview,
             classIdentifiers: LabelingSharedModelPolicy.classIdentifiers,
             reviewedClassIdentifiers: Set(
-                (candidate.summary.classIdentifiers ?? []).map(
+                (candidate?.summary.classIdentifiers ?? []).map(
                     LabelingClassIdentity.canonicalIdentifier
                 )
             )
@@ -864,7 +855,7 @@ struct LabelingModelWorkspaceView: View {
     }
 
     private var reviewSummaries: [String: LabelingClassReviewSummary] {
-        guard let review = candidate.predictionReview else { return [:] }
+        guard let review = candidate?.predictionReview else { return [:] }
         return Dictionary(uniqueKeysWithValues: LabelingPredictionReviewAnalyzer.summaries(
             review: review,
             classIdentifiers: Array(LabelingSharedModelPolicy.classIdentifiers)
@@ -873,7 +864,7 @@ struct LabelingModelWorkspaceView: View {
 
     private var selectedFailureExampleIdentifiers: [UUID] {
         guard let classIdentifier = selection.summaryReviewClassIdentifier,
-              let review = candidate.predictionReview else { return [] }
+              let review = candidate?.predictionReview else { return [] }
         return LabelingFailureReviewNavigator.orderedExampleIdentifiers(
             for: classIdentifier,
             review: review
@@ -896,7 +887,7 @@ struct LabelingModelWorkspaceView: View {
     private var selectedFailurePredictions: [LabelingReviewBox] {
         guard let example = selectedFailureExample,
               let classIdentifier = selection.summaryReviewClassIdentifier,
-              let review = candidate.predictionReview,
+              let review = candidate?.predictionReview,
               let reviewed = review.examples.first(where: { $0.id == example.id })
         else { return [] }
         return reviewed.predictions.filter {
@@ -1139,7 +1130,10 @@ struct LabelingModelWorkspaceView: View {
 
     private func reloadExamples() {
         do {
-            examples = try exampleStore.loadExamples()
+            examples = try exampleStore.loadExamples().filter {
+                $0.manifest.contextIdentifier == LabelingContext.game.storageIdentifier
+            }
+            selection.screenshotGroup = "all"
             exemptions = Dictionary(uniqueKeysWithValues: examples.map {
                 ($0.id, exemptionStore.load(for: $0))
             })

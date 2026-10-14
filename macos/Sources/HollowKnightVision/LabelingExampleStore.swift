@@ -172,7 +172,7 @@ struct LabelingExampleAnnotation: Codable, Equatable, Identifiable {
 }
 
 struct LabelingExampleManifest: Codable, Equatable, Identifiable {
-    static let currentSchemaVersion = 4
+    static let currentSchemaVersion = 5
 
     let schemaVersion: Int
     let id: UUID
@@ -184,8 +184,43 @@ struct LabelingExampleManifest: Codable, Equatable, Identifiable {
     let contextIdentifier: String
     let annotations: [LabelingExampleAnnotation]
     let knownClassIdentifiers: [String]?
+    let languageIdentifier: String?
     let completion: LabelingExampleCompletion
     let createdAt: Date
+
+    init(
+        schemaVersion: Int,
+        id: UUID,
+        imageIdentifier: UUID,
+        imageFilename: String,
+        imageWidth: Int,
+        imageHeight: Int,
+        captureGroupIdentifier: UUID,
+        contextIdentifier: String,
+        annotations: [LabelingExampleAnnotation],
+        knownClassIdentifiers: [String]?,
+        languageIdentifier: String? = nil,
+        completion: LabelingExampleCompletion,
+        createdAt: Date
+    ) {
+        self.schemaVersion = schemaVersion
+        self.id = id
+        self.imageIdentifier = imageIdentifier
+        self.imageFilename = imageFilename
+        self.imageWidth = imageWidth
+        self.imageHeight = imageHeight
+        self.captureGroupIdentifier = captureGroupIdentifier
+        self.contextIdentifier = contextIdentifier
+        self.annotations = annotations
+        self.knownClassIdentifiers = knownClassIdentifiers
+        self.languageIdentifier = languageIdentifier
+        self.completion = completion
+        self.createdAt = createdAt
+    }
+
+    var resolvedLanguageIdentifier: String {
+        languageIdentifier ?? HollowKnightMenuLanguage.legacyDefault.rawValue
+    }
 
     var effectiveKnownClassIdentifiers: [String] {
         // Schema 1 briefly wrote the entire catalog, including objects the user
@@ -229,6 +264,7 @@ struct LabelingExampleManifest: Codable, Equatable, Identifiable {
             annotations: canonicalAnnotations,
             knownClassIdentifiers: knownClassIdentifiers == nil
                 ? nil : canonicalKnownClassIdentifiers.sorted(),
+            languageIdentifier: languageIdentifier,
             completion: completion,
             createdAt: createdAt
         )
@@ -274,7 +310,7 @@ final class LabelingExampleStore {
         rootURL: URL = LabelingExampleStore.defaultRootURL(),
         fileManager: FileManager = .default
     ) {
-        self.rootURL = rootURL.standardizedFileURL
+        self.rootURL = URL(fileURLWithPath: rootURL.standardizedFileURL.path, isDirectory: true)
         self.fileManager = fileManager
     }
 
@@ -297,6 +333,7 @@ final class LabelingExampleStore {
         rectangles: [LabelingDraftRectangle],
         completion: LabelingExampleCompletion = .draft,
         captureGroupIdentifier: UUID? = nil,
+        languageIdentifier: String = HollowKnightMenuLanguage.legacyDefault.rawValue,
         now: Date = Date()
     ) throws -> SavedLabelingExample {
         let exampleIdentifier = UUID()
@@ -312,6 +349,7 @@ final class LabelingExampleStore {
             contextIdentifier: context.storageIdentifier,
             annotations: rectangles.map(LabelingExampleAnnotation.init).map(\.canonicalized),
             knownClassIdentifiers: knownClassIdentifiers.sorted(),
+            languageIdentifier: languageIdentifier,
             completion: completion,
             createdAt: now
         )
@@ -462,6 +500,7 @@ final class LabelingExampleStore {
             ),
             annotations: annotations,
             knownClassIdentifiers: knownClassIdentifiers.sorted(),
+            languageIdentifier: previous.languageIdentifier,
             completion: completion,
             createdAt: previous.createdAt
         )

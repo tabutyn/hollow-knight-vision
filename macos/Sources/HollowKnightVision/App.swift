@@ -24,22 +24,54 @@ struct HollowKnightVisionLaunchOptions: Equatable {
 
     let autoNavigateToGameplay: Bool
     let automationControlEnabled: Bool
+    let gameMode: HollowKnightRuntimeMode?
+    let gameModeError: HollowKnightRuntimeModeArgumentError?
+    let gamePath: String?
+    let gamePathError: HollowKnightGamePathArgumentError?
 
     init(arguments: [String]) {
         autoNavigateToGameplay = arguments.contains(Self.autoNavigateFlag)
         automationControlEnabled = arguments.contains(Self.automationControlFlag)
+        do {
+            gameMode = try HollowKnightRuntimeModeParser.parse(arguments)
+            gameModeError = nil
+        } catch let error as HollowKnightRuntimeModeArgumentError {
+            gameMode = nil
+            gameModeError = error
+        } catch {
+            gameMode = nil
+            gameModeError = .invalidValue("unknown")
+        }
+        do {
+            gamePath = try HollowKnightGamePathParser.parse(arguments)
+            gamePathError = nil
+        } catch let error as HollowKnightGamePathArgumentError {
+            gamePath = nil
+            gamePathError = error
+        } catch {
+            gamePath = nil
+            gamePathError = .missingValue
+        }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model: LiveCaptureModel
     private let automationControlEnabled: Bool
+    private let requestedGamePath: String?
+    private let requiresGameModeChoice: Bool
     private var automationController: GameAutomationController?
     private var viewerPanel: NSWindow?
 
     override init() {
         let options = HollowKnightVisionLaunchOptions(arguments: CommandLine.arguments)
-        model = LiveCaptureModel(autoNavigateToGameplay: options.autoNavigateToGameplay)
+        let savedMode = HollowKnightRuntimeModePreferences().load()
+        requestedGamePath = options.gamePath
+        requiresGameModeChoice = options.gameMode == nil && savedMode == nil
+        model = LiveCaptureModel(
+            autoNavigateToGameplay: options.autoNavigateToGameplay,
+            gameMode: options.gameMode ?? savedMode ?? .normal
+        )
         automationControlEnabled = options.automationControlEnabled
         super.init()
     }
@@ -63,6 +95,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.applicationIconImage = icon
         }
         NSApp.setActivationPolicy(.regular)
+        // Make first-run mode selection the first visible app UI. Showing the
+        // dashboard first can leave its modal alert on another Space or hidden
+        // behind the large dashboard window.
+        NSApp.activate(ignoringOtherApps: true)
+        if requiresGameModeChoice {
+            let gameMode = Self.chooseGameMode()
+            HollowKnightRuntimeModePreferences().save(gameMode)
+            model.configureGameMode(gameMode)
+        }
+
+        showDashboard()
+        model.startGame(gamePath: requestedGamePath)
+        if automationControlEnabled {
+            automationController = GameAutomationController(model: model)
+            automationController?.start()
+        }
+        model.startCapture()
+    }
+
+    private func showDashboard() {
         let initialFrame = NSScreen.main?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 900, height: 720)
         let panel = VisionPanel(
@@ -81,16 +133,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.acceptsMouseMovedEvents = true
         viewerPanel = panel
         panel.makeKeyAndOrderFront(nil)
-        // A normal app still needs to become active once when it is launched.
-        // After this, ordinary window selection and Cmd-Tab determine ordering;
-        // Vision never raises itself again or activates Hollow Knight.
-        NSApp.activate(ignoringOtherApps: true)
-        model.startGameControls()
-        if automationControlEnabled {
-            automationController = GameAutomationController(model: model)
-            automationController?.start()
-        }
-        model.startCapture()
+    }
+
+    private static func chooseGameMode() -> HollowKnightRuntimeMode {
+        let alert = NSAlert()
+        alert.messageText = visionText("Choose how to run Hollow Knight")
+        alert.informativeText = visionText("runtimeHelp")
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: visionText(HollowKnightRuntimeMode.normal.title))
+        alert.addButton(withTitle: visionText(HollowKnightRuntimeMode.modded.title))
+        alert.window.level = .modalPanel
+        alert.window.center()
+        alert.window.makeKeyAndOrderFront(nil)
+        return alert.runModal() == .alertSecondButtonReturn ? .modded : .normal
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -211,6 +266,15 @@ final class GameAutomationController {
 @main
 struct HollowKnightVisionApp: App {
     init() {
+        let launchOptions = HollowKnightVisionLaunchOptions(arguments: CommandLine.arguments)
+        if let error = launchOptions.gameModeError {
+            fputs("\(error.localizedDescription)\n", stderr)
+            exit(64)
+        }
+        if let error = launchOptions.gamePathError {
+            fputs("\(error.localizedDescription)\n", stderr)
+            exit(64)
+        }
         if let retired = HollowKnightVisionLaunchOptions.retiredArgument(in: CommandLine.arguments) {
             fputs("Retired option: \(retired). See RETIRED_FEATURES.md for supported workflows.\n", stderr)
             exit(64)

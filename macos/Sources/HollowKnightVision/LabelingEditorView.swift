@@ -29,6 +29,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
     case pause = "Pause"
     case quitToMenu = "Quit To Menu"
     case inventory = "Inventory"
+    case gameplayHUD = "Gameplay HUD"
     case game = "Gameplay"
     case quitGame = "Quit Game"
     case enemies = "Enemies"
@@ -64,6 +65,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
         case .pause: return "pause"
         case .quitToMenu: return "quit-to-menu"
         case .inventory: return "inventory"
+        case .gameplayHUD: return "gameplay-hud"
         case .game: return "game"
         case .quitGame: return "quit-game"
         case .enemies: return "enemies"
@@ -99,6 +101,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
         case "pause": self = .pause
         case "quit-to-menu": self = .quitToMenu
         case "inventory": self = .inventory
+        case "gameplay-hud": self = .gameplayHUD
         case "game": self = .game
         case "quit-game": self = .quitGame
         case "enemies": self = .enemies
@@ -112,13 +115,13 @@ enum LabelingContext: String, CaseIterable, Identifiable {
         switch self {
         case .mainTitle:
             return [
-                .init(id: "main-title.hollow-knight-logo", name: "Hallow Knight Title"),
+                .init(id: "main-title.hollow-knight-logo", name: "Hollow Knight Title"),
                 .init(id: "main-title.start-game", name: "Start Game"),
                 .init(id: LabelingClassIdentity.options, name: "Options"),
                 .init(id: LabelingClassIdentity.achievements, name: "Achievements"),
                 .init(id: LabelingClassIdentity.extras, name: "Extras"),
                 .init(id: LabelingClassIdentity.quitGame, name: "Quit Game"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .options:
             return [
@@ -130,7 +133,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: LabelingClassIdentity.keyboard, name: "Keyboard"),
                 .init(id: LabelingClassIdentity.mods, name: "Mods"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .gameOptions:
             return [
@@ -142,7 +145,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: "game-options.backer-credits", name: "Backer Credits"),
                 .init(id: LabelingClassIdentity.resetDefaults, name: "Reset Defaults"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .audio:
             return [
@@ -152,7 +155,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: "audio.music-volume", name: "Music Volume"),
                 .init(id: LabelingClassIdentity.resetDefaults, name: "Reset Defaults"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .video:
             return [
@@ -166,13 +169,13 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: LabelingClassIdentity.advancedSettings, name: "Advanced Settings"),
                 .init(id: LabelingClassIdentity.resetDefaults, name: "Reset Defaults"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .screenScale:
             return [
                 .init(id: "screen-scale.scale", name: "Scale"),
                 .init(id: "screen-scale.screen-corner", name: "Screen Corner"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
             ]
         case .brightness:
@@ -180,7 +183,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: LabelingClassIdentity.brightness, name: "Brightness"),
                 .init(id: "brightness.pointer", name: "Pointer"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .videoAdvancedSettings:
             return [
@@ -191,7 +194,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: "video-advanced.film-grain", name: "Film Grain"),
                 .init(id: LabelingClassIdentity.resetDefaults, name: "Reset Defaults"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .controller:
             return [
@@ -200,7 +203,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: "controller.remap-controls", name: "Remap Controlls"),
                 .init(id: LabelingClassIdentity.advancedSettings, name: "Advanced Settings"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .remapController:
             return [
@@ -215,7 +218,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: LabelingClassIdentity.quickCast, name: "Quick Cast"),
                 .init(id: LabelingClassIdentity.resetDefaults, name: "Reset Defaults"),
                 .init(id: "remap-controller.done", name: "Done"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .controllerAdvancedSettings:
             return [
@@ -225,7 +228,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: "controller-advanced.mfi", name: "MFI"),
                 .init(id: LabelingClassIdentity.resetDefaults, name: "Reset Defaults"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .keyboard:
             return [
@@ -245,20 +248,20 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: "inventory.inventory", name: "Inventory"),
                 .init(id: LabelingClassIdentity.resetDefaults, name: "Reset Defaults"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .mods:
             return [
                 .init(id: LabelingClassIdentity.mods, name: "Mods"),
                 .init(id: "mods.mod-decoration", name: "Mod Decoration"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .achievements:
             return [
                 .init(id: LabelingClassIdentity.achievements, name: "Achievements"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .extras:
             return [
@@ -270,7 +273,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: "extras.lifeblood", name: "Lifeblood"),
                 .init(id: "extras.godmaster", name: "Godmaster"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .credits:
             return [
@@ -281,28 +284,28 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: "extras.hidden-dreams", name: "Hidden Dreams"),
                 .init(id: "hidden-dreams.poster", name: "Hidden Dreams Poster"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .grimmTroupe:
             return [
                 .init(id: "extras.the-grimm-troupe", name: "The Grimm Troupe"),
                 .init(id: "grimm-troupe.poster", name: "Grimm Troupe Poster"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .lifeblood:
             return [
                 .init(id: "extras.lifeblood", name: "Lifeblood"),
                 .init(id: "lifeblood.poster", name: "Lifeblood Poster"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .godmaster:
             return [
                 .init(id: "extras.godmaster", name: "Godmaster"),
                 .init(id: "godmaster.poster", name: "Godmaster Poster"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .selectProfile:
             return [
@@ -313,14 +316,14 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: "select-profile.slot-4", name: "4."),
                 .init(id: "select-profile.clear-save", name: "Clear Save"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .clearSave:
             return [
                 .init(id: "clear-save.heading", name: "Clear Save?"),
                 .init(id: LabelingClassIdentity.yes, name: "Yes"),
                 .init(id: LabelingClassIdentity.no, name: "No"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .pause:
             return [
@@ -328,20 +331,22 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: "pause.continue", name: "Continue"),
                 .init(id: LabelingClassIdentity.options, name: "Options"),
                 .init(id: LabelingClassIdentity.quitToMenu, name: "Quit To Menu"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .quitToMenu:
             return [
                 .init(id: LabelingClassIdentity.quitToMenu, name: "Quit To Menu"),
                 .init(id: LabelingClassIdentity.yes, name: "Yes"),
                 .init(id: LabelingClassIdentity.no, name: "No"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .inventory:
             return [
                 .init(id: "inventory.inventory", name: "Inventory"),
                 .init(id: "inventory.corner", name: "Inventory Corner"),
             ]
+        case .gameplayHUD:
+            return [.init(id: "game.health", name: "Health")]
         case .game:
             return [
                 .init(id: "game.playable-knight", name: "Hallow Knight"),
@@ -360,7 +365,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
                 .init(id: LabelingClassIdentity.quitGame, name: "Quit Game"),
                 .init(id: LabelingClassIdentity.yes, name: "Yes"),
                 .init(id: LabelingClassIdentity.no, name: "No"),
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
             ]
         case .enemies:
             return [
@@ -376,7 +381,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
             ]
         case .shared:
             return [
-                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decoration"),
+                .init(id: LabelingClassIdentity.selectDecoration, name: "Select Decorations"),
                 .init(id: LabelingClassIdentity.back, name: "Back"),
                 .init(id: LabelingClassIdentity.options, name: "Options"),
                 .init(id: LabelingClassIdentity.achievements, name: "Achievements"),
@@ -458,16 +463,32 @@ struct LabelingClassDefinition: Identifiable, Hashable {
 /// The set/object navigator is shared by labeling and model review so both
 /// modes operate on the same persisted selection and use the same controls.
 struct LabelingObjectSelectionControls: View {
+    @Environment(\.visionLanguage) private var visionLanguage
+    private func visionText(_ key: String, _ values: [String: String] = [:]) -> String {
+        StencilGuidanceText(language: visionLanguage).text(key, values)
+    }
+
     @Binding var context: LabelingContext
     @Binding var selectedClassID: String
+    let rectangles: [LabelingDraftRectangle]
+    let mode: HollowKnightRuntimeMode
+    let hidesCompleted: Bool
+    let includesDeferredLabels: Bool
     @State private var customObjects = UserObjectCatalogStore.load().objects
 
     init(
         context: Binding<LabelingContext>,
-        selectedClassID: Binding<String>
+        selectedClassID: Binding<String>,
+        rectangles: [LabelingDraftRectangle] = [],
+        mode: HollowKnightRuntimeMode = .modded,
+        hidesCompleted: Bool = false, includesDeferredLabels: Bool = false
     ) {
         _context = context
         _selectedClassID = selectedClassID
+        self.rectangles = rectangles
+        self.mode = mode
+        self.hidesCompleted = hidesCompleted
+        self.includesDeferredLabels = includesDeferredLabels
     }
 
     private var availableLabels: [LabelingClassDefinition] {
@@ -479,50 +500,57 @@ struct LabelingObjectSelectionControls: View {
             default: return false
             }
         }.map { LabelingClassDefinition(id: $0.identifier, name: $0.name) }
-        return Array(Dictionary(
-            (context.labels + custom).map { ($0.id, $0) },
-            uniquingKeysWith: { first, _ in first }
-        ).values).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return StencilLabelSelectionPolicy.availableLabels(
+            context: context, custom: custom, rectangles: rectangles,
+            mode: mode, hidesCompleted: hidesCompleted, includesDeferredLabels: includesDeferredLabels
+        )
     }
 
     var body: some View {
         HStack(spacing: 4) {
-            Picker("Set", selection: contextSelection) {
+            Picker(visionText("Set"), selection: contextSelection) {
                 ForEach(LabelingContext.selectableCases) { item in
-                    Text(item.rawValue).tag(item)
+                    Text(visionText(item.rawValue)).tag(item)
                 }
             }
             .frame(width: 175)
             .labelsHidden()
             .pickerStyle(.menu)
 
-            Picker("Object", selection: $selectedClassID) {
-                ForEach(availableLabels) { item in
-                    Text(item.name).tag(item.id)
+            if availableLabels.isEmpty {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            } else {
+                Picker(visionText("Object"), selection: $selectedClassID) {
+                    ForEach(availableLabels) { item in
+                        Text(visionText(item.name)).tag(item.id)
+                    }
                 }
+                .frame(minWidth: 280, idealWidth: 340)
+                .fixedSize(horizontal: true, vertical: false)
+                .labelsHidden()
+                .pickerStyle(.menu)
             }
-            .frame(width: 175)
-            .labelsHidden()
-            .pickerStyle(.menu)
 
-            Menu {
-                ForEach(UserObjectGroup.allCases, id: \.rawValue) { group in
-                    Button(group.title) { createObject(in: group) }
+            if context == .game {
+                Menu {
+                    ForEach(UserObjectGroup.allCases, id: \.rawValue) { group in
+                        Button(visionText(group.title)) { createObject(in: group) }
+                    }
+                } label: {
+                    Text(visionText("+ Object"))
                 }
-            } label: {
-                Text("+ Object")
+                .help(visionText("Create a named gameplay object for labeling and training"))
             }
-            .help("Create a named gameplay object for labeling and training")
         }
         .overlay {
             ZStack {
-                Button("Previous Set") { cycleContext(by: -1) }
+                Button(visionText("Previous Set")) { cycleContext(by: -1) }
                     .keyboardShortcut(.leftArrow, modifiers: [])
-                Button("Next Set") { cycleContext(by: 1) }
+                Button(visionText("Next Set")) { cycleContext(by: 1) }
                     .keyboardShortcut(.rightArrow, modifiers: [])
-                Button("Previous Object") { cycleObject(by: -1) }
+                Button(visionText("Previous Object")) { cycleObject(by: -1) }
                     .keyboardShortcut(.upArrow, modifiers: [])
-                Button("Next Object") { cycleObject(by: 1) }
+                Button(visionText("Next Object")) { cycleObject(by: 1) }
                     .keyboardShortcut(.downArrow, modifiers: [])
             }
             .frame(width: 1, height: 1)
@@ -555,12 +583,12 @@ struct LabelingObjectSelectionControls: View {
 
     private func createObject(in group: UserObjectGroup) {
         let alert = NSAlert()
-        alert.messageText = "New \(group.title)"
-        alert.informativeText = "Name the object you want to detect."
-        alert.addButton(withTitle: "Add")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = visionText("newObject", ["group": visionText(group.title)])
+        alert.informativeText = visionText("nameObject")
+        alert.addButton(withTitle: visionText("Add"))
+        alert.addButton(withTitle: visionText("Cancel"))
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        field.placeholderString = "Object name"
+        field.placeholderString = visionText("Object name")
         alert.accessoryView = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
@@ -639,6 +667,10 @@ enum LabelingEditorMode: String, CaseIterable, Identifiable {
         case .delete: return "3"
         case .negative: return "4"
         }
+    }
+
+    static func available(in context: LabelingContext) -> [Self] {
+        allCases.filter { context == .game || $0 != .negative }
     }
 
     var drawsRectangle: Bool { self == .add || self == .negative }
@@ -932,10 +964,17 @@ enum LabelingViewportTransform {
 }
 
 struct LabelingEditorView: View {
+    @Environment(\.visionLanguage) private var visionLanguage
+    private func visionText(_ key: String, _ values: [String: String] = [:]) -> String {
+        StencilGuidanceText(language: visionLanguage).text(key, values)
+    }
+
     let image: CGImage
     let objectAtlas: LabelingObjectAtlasSnapshot?
     let onShowRecentFrames: () -> Void
     let onDraftCommit: (LabelingDraftState) -> Void
+    let gameMode: HollowKnightRuntimeMode
+    let includesDeferredLabels: Bool
 
     @Binding var context: LabelingContext
     @Binding var draft: LabelingDraftState
@@ -960,12 +999,15 @@ struct LabelingEditorView: View {
         context: Binding<LabelingContext>,
         draft: Binding<LabelingDraftState>,
         selectedClassID: Binding<String>,
-        initialEditorMode: LabelingEditorMode = .add
+        initialEditorMode: LabelingEditorMode = .add,
+        gameMode: HollowKnightRuntimeMode = .modded, includesDeferredLabels: Bool = false
     ) {
         self.image = image
         self.objectAtlas = objectAtlas
         self.onShowRecentFrames = onShowRecentFrames
         self.onDraftCommit = onDraftCommit
+        self.gameMode = gameMode
+        self.includesDeferredLabels = includesDeferredLabels
         _context = context
         _draft = draft
         _selectedClassID = selectedClassID
@@ -993,7 +1035,7 @@ struct LabelingEditorView: View {
                         .frame(width: fitted.width, height: fitted.height)
                         .position(x: fitted.midX, y: fitted.midY)
                         .allowsHitTesting(false)
-                        .accessibilityLabel("Frozen clean game screenshot")
+                        .accessibilityLabel(visionText("Frozen clean game screenshot"))
 
                     // Zoomed image can extend beyond canvas. Keep drawing hit-region
                     // inside canvas so it never covers toolbar controls above.
@@ -1009,6 +1051,7 @@ struct LabelingEditorView: View {
                             annotationOverlay(
                                 displayRect: displayRect,
                                 classIdentifier: rectangle.classID,
+                                labelName: annotationName(rectangle),
                                 isSelected: rectangle.id == draft.selectedID,
                                 isNegative: rectangle.isNegative
                             )
@@ -1058,30 +1101,24 @@ struct LabelingEditorView: View {
     }
 
     private var editorControls: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
                 LabelingObjectSelectionControls(
-                    context: $context,
-                    selectedClassID: $selectedClassID
+                    context: $context, selectedClassID: $selectedClassID,
+                    rectangles: draft.rectangles, mode: gameMode,
+                    hidesCompleted: editorMode == .add, includesDeferredLabels: includesDeferredLabels
                 )
-                if let icon = objectAtlas?.icon(for: selectedClassID) {
-                    LabelingToolbarObjectIcon(
-                        image: icon,
-                        classIdentifier: selectedClassID
-                    )
-                }
+                Spacer(minLength: 0)
             }
-            .fixedSize(horizontal: true, vertical: false)
-
-            Spacer(minLength: 12)
-            StableSegmentedPicker(
-                label: "Editing mode", choices: LabelingEditorMode.allCases,
-                title: { $0.rawValue }, selection: $editorMode
-            )
-            .frame(width: 290)
-
-            Button("Recent Frames", action: onShowRecentFrames)
-                .keyboardShortcut("r", modifiers: [])
+            HStack {
+                StableSegmentedPicker(
+                    label: "Editing mode", choices: LabelingEditorMode.available(in: context),
+                    title: { visionText($0.rawValue) }, selection: $editorMode
+                ).frame(minWidth: 290, idealWidth: 360, maxWidth: 440)
+                Spacer(minLength: 8)
+                Button(visionText("Recent Frames"), action: onShowRecentFrames)
+                    .keyboardShortcut("r", modifiers: [])
+            }
         }
         .font(.caption)
         .padding(.horizontal, 12)
@@ -1090,12 +1127,12 @@ struct LabelingEditorView: View {
         .background(.regularMaterial)
         .overlay {
             ZStack {
-                Button("Undo") {
+                Button(visionText("Undo")) {
                     undoLastChange()
                 }
                 .disabled(!draft.canUndo)
                 .keyboardShortcut("z", modifiers: .command)
-                ForEach(LabelingEditorMode.allCases) { mode in
+                ForEach(LabelingEditorMode.available(in: context)) { mode in
                     Button("\(mode.rawValue) mode") {
                         editorMode = mode
                     }
@@ -1114,14 +1151,41 @@ struct LabelingEditorView: View {
                 draft.select(classID: newClassID)
             }
         }
+        .onChange(of: editorMode) { _, _ in reconcileObjectSelection() }
+        .onChange(of: context) { _, _ in reconcileObjectSelection() }
         .onAppear {
+            reconcileObjectSelection()
             draft.select(classID: selectedClassID)
         }
+    }
+
+    private func reconcileObjectSelection() {
+        if context != .game && editorMode == .negative { editorMode = .add }
+        let available = StencilLabelSelectionPolicy.availableLabels(
+            context: context, custom: UserObjectCatalogStore.definitions(for: context),
+            rectangles: draft.rectangles, mode: gameMode, hidesCompleted: editorMode == .add, includesDeferredLabels: includesDeferredLabels
+        )
+        if !available.contains(where: { $0.id == selectedClassID }) {
+            selectedClassID = available.first?.id ?? ""
+        }
+    }
+
+    private func annotationName(_ rectangle: LabelingDraftRectangle) -> String {
+        let identifier = LabelingClassIdentity.canonicalIdentifier(rectangle.classID)
+        if identifier == LabelingClassIdentity.selectDecoration {
+            let decorations = draft.rectangles.filter {
+                !$0.isNegative && LabelingClassIdentity.canonicalIdentifier($0.classID) == identifier
+            }.sorted { $0.normalizedRect.minX < $1.normalizedRect.minX }
+            return visionText(decorations.first?.id == rectangle.id ? "Left Select Decoration" : "Right Select Decoration")
+        }
+        return visionText((context.labels + UserObjectCatalogStore.definitions(for: context))
+            .first { LabelingClassIdentity.canonicalIdentifier($0.id) == identifier }?.name ?? identifier)
     }
 
     private func annotationOverlay(
         displayRect: CGRect,
         classIdentifier: String,
+        labelName: String,
         isSelected: Bool,
         isNegative: Bool
     ) -> some View {
@@ -1153,19 +1217,13 @@ struct LabelingEditorView: View {
                 }
             }
             .overlay(alignment: .topLeading) {
-                if let icon = objectAtlas?.icon(for: classIdentifier) {
-                    annotationIconBadge(
-                        icon,
-                        color: color,
-                        isNegative: isNegative
-                    )
-                    // Keep the icon immediately attached to the box without
-                    // covering any pixels inside the labeled rectangle.
-                    .offset(
-                        x: 0,
-                        y: displayRect.minY >= 26 ? -24 : displayRect.height + 4
-                    )
-                }
+                Text(labelName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4).padding(.vertical, 2)
+                    .background(color.opacity(0.95), in: RoundedRectangle(cornerRadius: 3))
+                    .fixedSize()
+                    .offset(y: displayRect.minY >= 22 ? -22 : displayRect.height + 3)
             }
             .frame(width: displayRect.width, height: displayRect.height)
             .position(x: displayRect.midX, y: displayRect.midY)
@@ -1271,11 +1329,16 @@ struct LabelingEditorView: View {
                             gestureConsumed = true
                         }
                     case .add:
+                        guard StencilLabelSelectionPolicy.availableLabels(
+                            context: context, custom: UserObjectCatalogStore.definitions(for: context),
+                            rectangles: draft.rectangles, mode: gameMode, hidesCompleted: true, includesDeferredLabels: includesDeferredLabels
+                        ).contains(where: { $0.id == selectedClassID }) else { return }
                         activeDrawingID = draft.beginRectangle(
                             classID: selectedClassID,
                             at: start
                         )
                     case .negative:
+                        guard context == .game else { return }
                         if let corrected = draft.markNegative(at: start) {
                             selectClassIdentifier(corrected.classID)
                             gestureConsumed = true
@@ -1404,6 +1467,7 @@ struct LabelingEditorView: View {
         if let selected = draft.selectedRectangle {
             selectClassIdentifier(selected.classID)
         }
+        reconcileObjectSelection()
         onDraftCommit(draft)
     }
 
@@ -1416,16 +1480,12 @@ struct LabelingEditorView: View {
     }
 
     private func advanceAfterAdding(_ classIdentifier: String) {
-        guard LabelingContractEvaluator.shouldAdvance(
-            afterAdding: classIdentifier,
-            in: context,
-            rectangles: draft.rectangles
-        ),
-        let index = context.labels.firstIndex(where: {
-            LabelingClassIdentity.matches($0.id, classIdentifier)
-        }),
-        index + 1 < context.labels.count else { return }
-        selectedClassID = context.labels[index + 1].id
+        guard context != .game else { return }
+        let remaining = StencilLabelSelectionPolicy.availableLabels(
+            context: context, rectangles: draft.rectangles,
+            mode: gameMode, hidesCompleted: true, includesDeferredLabels: includesDeferredLabels
+        )
+        selectedClassID = remaining.first?.id ?? ""
     }
 
     private func updateZoom(

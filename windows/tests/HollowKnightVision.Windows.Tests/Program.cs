@@ -4,10 +4,15 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using HollowKnightVision.Windows.Core;
+using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Host;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("stencil contracts include all required menu screens", TestStencilContractCoverage),
+    ("stencil reset preserves gameplay training data", TestStencilResetPreservesGameplay),
+    ("partial stencil resumes editing and counts saved Back", TestPartialStencilGuidance),
+    ("object detection requires training on current labels", TestTrainedModelReadiness),
     ("center crop exact", TestCenterCropExact),
     ("center crop wide", TestCenterCropWide),
     ("center crop tall", TestCenterCropTall),
@@ -31,6 +36,7 @@ var tests = new (string Name, Action Run)[]
     ("low resolution motion estimates direction", TestLowResolutionDirection),
     ("low resolution motion survives fade and subcell shift", TestLowResolutionFadeAndSubcell),
     ("low resolution motion rejects static frame", TestLowResolutionRejectsStatic),
+    ("visual gameplay tracker emits receiver-free atlas poses", TestVisualGameplayTracker),
     ("live world pose replacement preserves raw evidence", TestLiveWorldPoseReplacement),
     ("live world rejects invalid graph references", TestLiveWorldRejectsInvalidGraph),
     ("live world room translation moves optimized evidence", TestLiveWorldRoomTranslation),
@@ -83,6 +89,87 @@ await TestReceiverClientLoopback();
 Console.WriteLine("PASS receiver client loopback");
 Console.WriteLine($"Windows core tests passed: {tests.Length + 1}");
 return;
+
+static void TestStencilContractCoverage()
+{
+    Equal(26, StencilInitializationPolicy.Contexts(GameRuntimeMode.Modded).Length);
+    Equal(25, StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal).Length);
+    Equal(189, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Modded));
+    Equal(183, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Normal));
+    var normal = StencilInitializationPolicy.MissingSteps([], "en", GameRuntimeMode.Normal);
+    True(!normal.Any(step => step.ContextIdentifier == "mods" || step.ClassIdentifier == "shared.mods"));
+    Equal("main-title", normal[0].ContextIdentifier);
+    Equal("gameplay-hud", normal.Select(step => step.ContextIdentifier).Distinct().ElementAt(2));
+    Equal("clear-save", normal.Last().ContextIdentifier);
+    True(!normal.Any(step => step.ContextIdentifier == "select-profile" && step.ClassIdentifier == "select-profile.clear-save"));
+    True(normal.Where(step => StencilInitializationPolicy.Phase(step.ContextIdentifier) == 1)
+        .All(step => step.ContextIdentifier is "main-title" or "select-profile" or "gameplay-hud"));
+    foreach (var language in StencilInitializationCoordinator.SupportedLanguages) {
+        foreach (var key in new[] { "phase1", "navigateHUD", "drawHealthFirst", "profilePhaseDone", "stencilLocked", "modelLocked" })
+            True(StencilGuidanceText.Text(language.Identifier, key) != key);
+    }
+    True(normal.Any(step => step.ContextIdentifier == "screen-scale" && step.RequiredCount == 2));
+    True(normal.Any(step => step.ContextIdentifier == "inventory" && step.RequiredCount == 4));
+    True(!normal.Any(step => step.ContextIdentifier is "game" or "credits"));
+}
+
+static void TestPartialStencilGuidance()
+{
+    WithTemporaryDirectory(root => {
+        var store = new LabelingExampleStore(Path.Combine(root, "labeling-v1", "examples"));
+        var example = store.Save(SolidFrame(640, 360, 0, 0, 0), "select-profile",
+            [new LabelingExampleAnnotation(Guid.NewGuid(), "shared.back", .1, .1, .2, .1)]);
+        var setup = new StencilInitializationCoordinator(store, GameRuntimeMode.Modded);
+        Equal("Click Stencil and Edit Labels for Select Profile.", setup.Guidance(null, null, "select-profile")!);
+        True(!setup.Steps.Any(step => step.ContextIdentifier == "select-profile" && step.ClassIdentifier == "shared.back"));
+        store.Delete(example);
+        setup.Refresh();
+        Equal("Select Start Game to navigate to Select Profile and press L.", setup.Guidance(null, null, "select-profile")!);
+    });
+}
+
+static void TestTrainedModelReadiness()
+{
+    WithTemporaryDirectory(root => {
+        var id = Guid.NewGuid();
+        True(!TrainedModelReadiness.IsReady(root, new HashSet<Guid> { id }));
+        File.WriteAllText(Path.Combine(root, "Detector.onnx"), "model");
+        True(!TrainedModelReadiness.IsReady(root, new HashSet<Guid> { id }));
+        File.WriteAllText(Path.Combine(root, "training.json"), "{}");
+        True(!TrainedModelReadiness.IsReady(root, new HashSet<Guid> { id }));
+        File.WriteAllText(Path.Combine(root, "training.json"), JsonSerializer.Serialize(new { predictionsFilename = "predictions.json" }));
+        File.WriteAllText(Path.Combine(root, "predictions.json"), JsonSerializer.Serialize(new { examples = new[] { new { exampleIdentifier = id } } }));
+        True(TrainedModelReadiness.IsReady(root, new HashSet<Guid> { id }));
+        True(!TrainedModelReadiness.IsReady(root, new HashSet<Guid>()));
+        True(!TrainedModelReadiness.IsReady(root, new HashSet<Guid> { Guid.NewGuid() }));
+        File.Delete(Path.Combine(root, "Detector.onnx"));
+        True(!TrainedModelReadiness.IsReady(root, new HashSet<Guid> { id }));
+    });
+}
+
+static void TestStencilResetPreservesGameplay()
+{
+    WithTemporaryDirectory(workspace =>
+    {
+        var support = Path.Combine(workspace, "HollowKnightVision");
+        var store = new LabelingExampleStore(Path.Combine(support, "labeling-v1", "examples"));
+        var frame = SolidFrame(640, 360, 0, 0, 0);
+        var menu = store.Save(frame, "main-title",
+            [new LabelingExampleAnnotation(Guid.NewGuid(), "main-title.start-game", .1, .1, .2, .1)]);
+        var game = store.Save(frame, "game",
+            [new LabelingExampleAnnotation(Guid.NewGuid(), "game.playable-knight", .1, .1, .2, .1)]);
+        var model = Path.Combine(support, "labeling-v1", "model.txt");
+        File.WriteAllText(model, "trained model");
+        var backup = VisionResetController.ResetStencils(store.RootDirectory, support);
+        True(backup is not null);
+        True(!Directory.Exists(menu.DirectoryPath));
+        True(Directory.Exists(Path.Combine(backup!, Path.GetFileName(menu.DirectoryPath))));
+        Equal(1, store.Load().Count);
+        Equal(game.Id, store.Load()[0].Id);
+        Equal("trained model", File.ReadAllText(model));
+        True(VisionResetController.ResetStencils(store.RootDirectory, support) is null);
+    });
+}
 
 static void TestCenterCropExact() => Equal(
     new PixelRect(0, 0, 640, 360),
@@ -531,6 +618,31 @@ static void TestLowResolutionRejectsStatic()
         textureless);
     Equal(LowResolutionTranslationRejection.InsufficientTexture,
         diagnostic.FinalRejection!.Value);
+}
+
+static void TestVisualGameplayTracker()
+{
+    var tracker = new VisualGameplayTracker();
+    var frame = new BgraFrame(
+        640,
+        360,
+        640 * BgraFrame.BytesPerPixel,
+        new byte[640 * 360 * BgraFrame.BytesPerPixel],
+        7,
+        DateTimeOffset.UnixEpoch);
+    var diagnostic = new LowResolutionTranslationDiagnostic(
+        new LowResolutionMotionVector(2, -1, 0.8), null, null);
+    var sample = tracker.Observe(frame, diagnostic);
+
+    Equal("visualTracking", sample.Type);
+    Equal(Guid.Empty, sample.SessionId);
+    Equal(7L, sample.UnityFrame);
+    Close(-13, sample.CameraX);
+    Close(-6.5, sample.CameraY);
+    tracker.Reset();
+    var reset = tracker.Observe(frame, null);
+    Close(0, reset.CameraX);
+    Close(0, reset.CameraY);
 }
 
 static LowResolutionMotionGrid MotionGrid(

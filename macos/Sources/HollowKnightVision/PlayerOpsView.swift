@@ -1,6 +1,11 @@
 import SwiftUI
 
 struct PlayerOpsView: View {
+    @Environment(\.visionLanguage) private var visionLanguage
+    private func visionText(_ key: String, _ values: [String: String] = [:]) -> String {
+        StencilGuidanceText(language: visionLanguage).text(key, values)
+    }
+
     @ObservedObject var model: LiveCaptureModel
 
     var body: some View {
@@ -19,36 +24,34 @@ struct PlayerOpsView: View {
             }
 
             Toggle(
-                "Invincibility — ignore damage and phase through enemies",
+                visionText("Invincibility — ignore damage and phase through enemies"),
                 isOn: invincibility
             )
             .toggleStyle(.checkbox)
             .disabled(model.playerOpsBusy)
 
             HStack(spacing: 10) {
-                Button("Randomize Now") { model.randomizePlayerTestState() }
-                Button("Restore Enemies") { model.restoreEnemies() }
+                Button(visionText("Randomize Now")) { model.randomizePlayerTestState() }
+                Button(visionText("Restore Enemies")) { model.restoreEnemies() }
                 Spacer()
             }
             .disabled(model.playerOpsBusy)
 
             Divider()
             Toggle(
-                "Randomize health, lifeblood, mana, and geo after each Label session",
+                visionText("Randomize health, lifeblood, mana, and geo after each Label session"),
                 isOn: $model.randomizePlayerStateAfterLabel
             )
             .toggleStyle(.checkbox)
 
             if !model.playerOpsStatus.isEmpty {
-                Text(model.playerOpsStatus)
+                Text(visionText(model.playerOpsStatus))
                     .font(.caption.monospaced())
                     .foregroundStyle(model.playerOpsStatus.contains("failed")
                         || model.playerOpsStatus.contains("not ready") ? .red : .secondary)
             }
-            Spacer()
-
             HStack {
-                Button("Reload") { model.resetPlayerTestState() }
+                Button(visionText("Reload")) { model.resetPlayerTestState() }
                     .disabled(model.playerOpsBusy)
                 if model.playerOpsBusy {
                     ProgressView().controlSize(.small)
@@ -56,8 +59,7 @@ struct PlayerOpsView: View {
                 Spacer()
             }
         }
-        .padding(28)
-        .frame(maxWidth: 720, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear { model.refreshPlayerTestState() }
     }
 
@@ -67,7 +69,7 @@ struct PlayerOpsView: View {
         range: ClosedRange<Int>
     ) -> some View {
         GridRow {
-            Text(title)
+            Text(visionText(title))
             Stepper(value: value, in: range) {
                 Text("\(value.wrappedValue)")
                     .monospacedDigit()

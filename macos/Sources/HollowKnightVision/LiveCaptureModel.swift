@@ -23,6 +23,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     @Published private(set) var isCapturing = false
     @Published private(set) var status = "Ready."
     @Published private(set) var inputControlStatus = "Controls unavailable"
+    @Published private(set) var gameMode: HollowKnightRuntimeMode
+    @Published private(set) var receiverCapabilities = Set<String>()
     @Published private(set) var labelPauseState: GamePauseState = .unavailable
     @Published private(set) var isPathRecording = false
     @Published private(set) var isPathPlaybackActive = false
@@ -108,18 +110,22 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     @Published private(set) var coarseMotionDiagnosticStatus = "Coarse Motion · ready"
     @Published var stencilDetectionEnabled = false
     @Published private(set) var menuStencilImage: CGImage?
-    // Owned by sampleQueue. Each result travels with its source capture.
-    // No-menu gameplay is the common case. Probe every menu set at 10 Hz;
-    // after a scene locks, its single probe returns to capture cadence.
-    private let menuStencilTracker = MenuStencilTracker(
-        loadsDeployedCatalog: false,
-        minimumSearchInterval: 0.1,
-        selectorCalibrationURL: MenuStencilCalibration.writableURL(),
-        selectorCalibrationMirrorURL: MenuStencilCalibration.projectMirrorURL()
+    // Admission is owned by sampleQueue; recognition is serialized on its
+    // worker. Hacker reads recent results without blocking live capture.
+    private lazy var menuStencilWorker = LiveMenuStencilWorker(
+        tracker: MenuStencilTracker(
+            loadsDeployedCatalog: false,
+            minimumSearchInterval: 0.1,
+            selectorCalibrationURL: MenuStencilCalibration.writableURL(),
+            selectorCalibrationMirrorURL: MenuStencilCalibration.projectMirrorURL()
+        ),
+        didProcess: { [telemetry] elapsed in
+            telemetry.record(.menuStencil, seconds: elapsed)
+        }
     )
     @Published private(set) var hudStencilImage: CGImage?
     // Owned by sampleQueue. Each result travels with its source capture.
-    private let hudStencilTracker = HUDStencilTracker()
+    private var hudStencilTracker = HUDStencilTracker(template: nil)
     @Published var objectDetectionEnabled = false
     @Published var objectDetectionRawEnabled = false
     @Published var objectDetectionExtension = 0.12
@@ -262,6 +268,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         connectionStateHandler: { [weak self] status in
             DispatchQueue.main.async { self?.inputControlStatus = status }
         },
+        capabilitiesHandler: { [weak self] capabilities in
+            self?.receiverCapabilities = capabilities
+        },
         pauseStateHandler: { [weak self] state in
             DispatchQueue.main.async { self?.applyLabelPauseState(state) }
         },
@@ -344,7 +353,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     private var objectDetectionTracker = LiveObjectDetectionTracker()
     private var objectDetectionIcons = [String: CGImage]()
     private var gameStatusTracker = LiveGameStatusTracker()
-    // Owned by sampleQueue with menuStencilTracker.
+    // Owned by sampleQueue with menu stencil admission.
     private var gameplayMenuEvidenceGate = GameplayMenuEvidenceGate()
     private var quitGameExitWatchGeneration: UInt64 = 0
     private var quitGameExitApplication: NSRunningApplication?
@@ -433,8 +442,12 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         let createsPixelDiagnostic: Bool
     }
 
-    init(autoNavigateToGameplay: Bool = false) {
+    init(
+        autoNavigateToGameplay: Bool = false,
+        gameMode: HollowKnightRuntimeMode = .normal
+    ) {
         self.autoNavigateToGameplay = autoNavigateToGameplay
+        self.gameMode = gameMode
         if UserDefaults.standard.object(
             forKey: Self.randomizePlayerStateAfterLabelDefaultsKey
         ) != nil {
@@ -512,6 +525,10 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         refreshMenuStencilCatalog()
         reloadActiveObjectModels()
         refreshAtlasSavedStates()
+        if gameMode == .normal {
+            inputControlStatus = "Normal mode · use the game window for input"
+            applyLabelPauseState(.ready)
+        }
     }
 
     deinit {
@@ -876,8 +893,34 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         }
     }
 
+    func configureGameMode(_ mode: HollowKnightRuntimeMode) {
+        guard gameMode != mode else { return }
+        gameControlForwarder.stop()
+        gameMode = mode
+        receiverCapabilities = []
+        groundTruthCameraStateLock.lock()
+        latestGroundTruthCameraSample = nil
+        groundTruthCameraStateLock.unlock()
+        if mode == .normal {
+            inputControlStatus = "Normal mode · use the game window for input"
+            applyLabelPauseState(.ready)
+        } else {
+            inputControlStatus = "Modded mode · receiver connecting"
+            applyLabelPauseState(.unavailable)
+        }
+    }
+
+    func startGame(gamePath: String? = nil) {
+        if gameMode == .modded {
+            gameControlForwarder.start(gamePath: gamePath)
+        } else {
+            gameControlForwarder.launchGameOnly(gamePath: gamePath)
+        }
+    }
+
     func startGameControls() {
-        gameControlForwarder.start()
+        configureGameMode(.modded)
+        startGame()
     }
 
     /// The sparse world and the room graph share one autosave directory. A
@@ -1631,6 +1674,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         }
     }
 
+    func setSettingsDialogActive(_ active: Bool) { gameControlForwarder.setSettingsDialogActive(active) }
+
     func setModelReviewActive(_ active: Bool) {
         gameControlForwarder.setReviewNavigationActive(active)
     }
@@ -1648,13 +1693,17 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
 
     func refreshMenuStencilCatalog() {
         let examplesRootURL = LabelingExampleStore.defaultRootURL()
+        let language = UserDefaults.standard.string(forKey: "HollowKnightVision.initialization.language.v1") ?? "en"
         menuStencilReloadQueue.async { [weak self] in
+            let examples = (try? LabelingExampleStore().loadExamples()) ?? []
+            let hud = HUDStencilTemplate.captured(examples: examples, languageIdentifier: language)
             guard let catalog = try? MenuStencilCatalog(
                 examplesRootURL: examplesRootURL,
                 calibration: .loadDefault()
             ) else { return }
             self?.sampleQueue.async { [weak self] in
-                self?.menuStencilTracker.replaceCatalog(catalog)
+                self?.menuStencilWorker.replaceCatalog(catalog)
+                self?.hudStencilTracker = HUDStencilTracker(template: hud)
             }
         }
     }
@@ -1778,7 +1827,23 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     var canToggleLabelMode: Bool {
-        labelPauseState == .ready || labelPauseState == .paused
+        guard labelPauseState == .ready || labelPauseState == .paused else {
+            return false
+        }
+        if labelPauseState == .paused { return true }
+        capturedFrameStateLock.lock()
+        defer { capturedFrameStateLock.unlock() }
+        return latestCleanGameFrame != nil
+    }
+
+    var canUseHacker: Bool {
+        gameMode == .modded
+            && receiverCapabilities.contains(ReceiverControlProtocol.groundTruthCapability)
+    }
+
+    var canUseOps: Bool {
+        gameMode == .modded
+            && receiverCapabilities.contains(ReceiverControlProtocol.playerOpsCapability)
     }
 
     var isLabelModeActive: Bool {
@@ -1813,6 +1878,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func setHackerWorkspaceActive(_ active: Bool) {
+        guard !active || canUseHacker else { return }
         hackerStateLock.lock()
         guard hackerWorkspaceActive != active else {
             hackerStateLock.unlock()
@@ -2026,6 +2092,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                         y: position.y - room.position.y
                     )
                 } ?? .zero
+                LivePresentationTiming.shared.register(
+                    prepared.liveImage, capturedAt: prepared.capturedAt
+                )
                 self.hackerLiveImage = prepared.liveImage
                 self.hackerLiveBounds = prepared.liveBounds.offsetBy(
                     dx: offset.x,
@@ -2140,6 +2209,14 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func toggleLabelMode() {
+        if gameMode == .normal {
+            switch labelPauseState {
+            case .ready: applyLabelPauseState(.paused)
+            case .paused: applyLabelPauseState(.ready)
+            case .unavailable, .pausing, .resuming: break
+            }
+            return
+        }
         switch labelPauseState {
         case .ready:
             gameControlForwarder.setLabelPauseActive(true)
@@ -2432,7 +2509,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             // ScreenCaptureKit may replace its stream while the same game and
             // menu remain visible. Preserve the established menu language
             // across that transport reset while discarding scene ownership.
-            self.menuStencilTracker.reset(preservingLanguage: true)
+            self.menuStencilWorker.reset()
             self.gameplayMenuEvidenceGate.reset()
             if resetCamera {
                 let room = self.visualRoomTracker.reset()
@@ -2619,7 +2696,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             recordHackerCapture(
                 frame,
                 unityFrame: renderedGameFrame,
-                capturedAt: capturedAt,
+                capturedAt: timestamp,
                 integratesAtlas: sampleFrameCount.isMultiple(
                     of: HollowKnightCaptureConfiguration.atlasSampleStride
                 )
@@ -2654,14 +2731,11 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             captureGeneration: captureGeneration,
             timestamp: timestamp
         )
-        let menuStencilStarted = ProcessInfo.processInfo.systemUptime
-        let rawMenuStencil = menuStencilTracker.observe(frame, timestamp: timestamp)
-        let selectorCalibrationDiagnostic =
-            menuStencilTracker.selectorCalibrationDiagnostic
-        telemetry.record(
-            .menuStencil,
-            seconds: ProcessInfo.processInfo.systemUptime - menuStencilStarted
+        let menuObservation = menuStencilWorker.observe(
+            frame, timestamp: timestamp, asynchronously: hackerActive
         )
+        let rawMenuStencil = menuObservation?.observation.result
+        let selectorCalibrationDiagnostic = menuObservation?.observation.diagnostic
         let hudStarted = ProcessInfo.processInfo.systemUptime
         let hudStencil = hudStencilTracker.observe(frame,
             // HUD evidence participates in opening the gameplay gate. Keeping
@@ -4021,6 +4095,10 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
     }
 
     private func enqueue(_ frame: RenderFrame) {
+        // Gameplay tracking and atlas integration have their own workers.
+        // Its hidden preview must not contend with Hacker's live image for
+        // GPU readback or trigger a second set of SwiftUI frame publications.
+        guard !isHackerWorkspaceActive() else { return }
         guard let ticket = framePump.submit(frame, epoch: frame.generation) else { return }
         renderQueue.async { [weak self] in self?.render(ticket) }
     }
@@ -4036,7 +4114,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 renderQueue.async { [weak self] in self?.render(next) }
             }
         }
-        guard ticket.epoch == renderGeneration else { return }
+        guard ticket.epoch == renderGeneration, !isHackerWorkspaceActive() else { return }
         guard let output = atlasPipeline.process(
             frame: snapshot.frame,
             regions: snapshot.regions,
@@ -4065,7 +4143,8 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
         let renderedAt = ProcessInfo.processInfo.systemUptime
         DispatchQueue.main.async { [weak self] in
             guard let self, self.labelImage == nil,
-                  snapshot.generation == self.currentStatusGeneration else { return }
+                  snapshot.generation == self.currentStatusGeneration,
+                  !self.isHackerWorkspaceActive() else { return }
             self.telemetry.record(
                 .mainQueueWait,
                 seconds: ProcessInfo.processInfo.systemUptime - renderedAt

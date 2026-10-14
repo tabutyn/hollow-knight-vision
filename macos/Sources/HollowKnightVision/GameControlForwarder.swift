@@ -183,6 +183,7 @@ final class GameControlForwarder {
 
     private let activityHandler: () -> Void
     private let connectionStateHandler: (String) -> Void
+    private let capabilitiesHandler: (Set<String>) -> Void
     private let pauseStateHandler: (GamePauseState) -> Void
     private let physicalInputHandler: (RecordedGameButton, Bool, TimeInterval) -> Void
     private let groundTruthHandler: (ReceiverGroundTruthSample, TimeInterval) -> Void
@@ -232,22 +233,27 @@ final class GameControlForwarder {
     private var nextPointerSequence: UInt64 = 0
     private var nextPlayerPoseSequence: UInt64 = 0
     private var reviewNavigationActive = false
+    private var settingsDialogActive = false
     private var pauseDesired = false
     private var pauseConfirmed = false
     private var managedApplication: NSRunningApplication?
     private var launchInFlight = false
+    private var requestedGameURL: URL?
+    private var requestedModdedInstallation: Bool?
     private var lastPublishedConnectionState: String?
     private var lastPublishedPauseState: GamePauseState?
 
     init(
         activityHandler: @escaping () -> Void,
         connectionStateHandler: @escaping (String) -> Void = { _ in },
+        capabilitiesHandler: @escaping (Set<String>) -> Void = { _ in },
         pauseStateHandler: @escaping (GamePauseState) -> Void = { _ in },
         physicalInputHandler: @escaping (RecordedGameButton, Bool, TimeInterval) -> Void = { _, _, _ in },
         groundTruthHandler: @escaping (ReceiverGroundTruthSample, TimeInterval) -> Void = { _, _ in }
     ) {
         self.activityHandler = activityHandler
         self.connectionStateHandler = connectionStateHandler
+        self.capabilitiesHandler = capabilitiesHandler
         self.pauseStateHandler = pauseStateHandler
         self.physicalInputHandler = physicalInputHandler
         self.groundTruthHandler = groundTruthHandler
@@ -255,8 +261,10 @@ final class GameControlForwarder {
 
     deinit { stop() }
 
-    func start() {
+    func start(gamePath: String? = nil) {
         guard !started else { return }
+        requestedGameURL = gamePath.map { Self.gameApplicationURL(path: $0) }
+        requestedModdedInstallation = gamePath == nil ? nil : true
         started = true
         installEventMonitor()
         installFocusObservers()
@@ -265,6 +273,12 @@ final class GameControlForwarder {
         publishConnectionState("Controls unavailable")
         publishPauseState(.unavailable)
         stateQueue.async { [weak self] in self?.connect() }
+        _ = ensureGameRunning()
+    }
+
+    func launchGameOnly(gamePath: String? = nil) {
+        requestedGameURL = gamePath.map { Self.gameApplicationURL(path: $0) }
+        requestedModdedInstallation = gamePath == nil ? nil : false
         _ = ensureGameRunning()
     }
 
@@ -322,6 +336,14 @@ final class GameControlForwarder {
                 sessionID: sessionID,
                 renderFrameMarker: enabled
             ))
+        }
+    }
+
+    func setSettingsDialogActive(_ active: Bool) {
+        stateQueue.async { [weak self] in
+            guard let self else { return }
+            self.releaseAllLocked()
+            self.settingsDialogActive = active
         }
     }
 
@@ -615,8 +637,10 @@ final class GameControlForwarder {
 
     private func installEventMonitor() {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
-            guard let self, NSApp.isActive,
-                  !Self.firstResponderConsumesTextInput() else { return event }
+            guard let self, NSApp.isActive else { return event }
+            let settingsArrow = self.stateQueue.sync { self.settingsDialogActive }
+                && [123, 124, 125, 126].contains(event.keyCode)
+            guard settingsArrow || !Self.firstResponderConsumesTextInput() else { return event }
             let relayState = self.stateQueue.sync {
                 (
                     self.activeSupportedKeyCodesLocked,
@@ -899,6 +923,7 @@ final class GameControlForwarder {
         playerOpsCapabilityAvailable = acknowledgement.capabilities.contains(
             ReceiverControlProtocol.playerOpsCapability
         )
+        publishCapabilities(Set(acknowledgement.capabilities))
         pointerLog.notice("receiver pointer capability=\(self.pointerCapabilityAvailable, privacy: .public)")
         guard
               acknowledgement.capabilities.contains(ReceiverControlProtocol.pauseCapability),
@@ -1110,6 +1135,7 @@ final class GameControlForwarder {
         playerPosePlaybackCapabilityAvailable = false
         groundTruthCapabilityAvailable = false
         playerOpsCapabilityAvailable = false
+        publishCapabilities([])
         lastGroundTruthSequence = nil
         failPendingCheckpointCommandsLocked()
         failPendingPlayerOpsCommandsLocked()
@@ -1125,6 +1151,12 @@ final class GameControlForwarder {
             guard let self, self.lastPublishedPauseState != state else { return }
             self.lastPublishedPauseState = state
             self.pauseStateHandler(state)
+        }
+    }
+
+    private func publishCapabilities(_ capabilities: Set<String>) {
+        DispatchQueue.main.async { [capabilitiesHandler] in
+            capabilitiesHandler(capabilities)
         }
     }
 
@@ -1257,6 +1289,7 @@ final class GameControlForwarder {
     }
 
     private var activeSupportedKeyCodesLocked: Set<UInt16> {
+        if settingsDialogActive { return [123, 124, 125, 126] }
         let supported = menuShortcutsCapabilityAvailable
             ? Self.supportedKeyCodes
             : Self.gameplayKeyCodes
@@ -1273,9 +1306,53 @@ final class GameControlForwarder {
     @discardableResult
     private func ensureGameRunning() -> NSRunningApplication? {
         if let managedApplication, !managedApplication.isTerminated { return managedApplication }
-        if let running = Self.hollowKnightApplication() { managedApplication = running; return running }
+        if let gameURL = requestedGameURL {
+            guard FileManager.default.fileExists(atPath: gameURL.path) else {
+                publishConnectionState("Hollow Knight path not found: \(gameURL.path)")
+                return nil
+            }
+            if let requiresModded = requestedModdedInstallation,
+               let issue = Self.installationIssue(
+                gameURL: gameURL,
+                requiresModded: requiresModded
+               ) {
+                publishConnectionState(issue)
+                return nil
+            }
+        }
+        if let running = Self.hollowKnightApplication() {
+            if let expected = requestedGameURL?.standardizedFileURL,
+               running.bundleURL?.standardizedFileURL != expected {
+                publishConnectionState(
+                    "A different Hollow Knight app is already running; close it before using --game-path"
+                )
+                return nil
+            }
+            managedApplication = running
+            return running
+        }
         guard !launchInFlight else { return nil }
         launchInFlight = true
+        if let gameURL = requestedGameURL {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = false
+            configuration.addsToRecentItems = false
+            NSWorkspace.shared.openApplication(
+                at: gameURL,
+                configuration: configuration
+            ) { [weak self] application, error in
+                DispatchQueue.main.async {
+                    self?.launchInFlight = false
+                    self?.managedApplication = application ?? Self.hollowKnightApplication()
+                    if let error {
+                        self?.publishConnectionState(
+                            "Hollow Knight launch failed: \(error.localizedDescription)"
+                        )
+                    }
+                }
+            }
+            return nil
+        }
         // Opening the app bundle directly can stop at Steam's library page
         // without creating the game process. The Steam app ID route performs
         // the launch and loads the installed mod receiver reliably.
@@ -1293,6 +1370,36 @@ final class GameControlForwarder {
                 DispatchQueue.main.async { self?.launchInFlight = false; self?.managedApplication = application ?? Self.hollowKnightApplication() }
             }
         } else { launchInFlight = false }
+        return nil
+    }
+
+    private static func gameApplicationURL(path: String) -> URL {
+        var url = URL(fileURLWithPath: path).standardizedFileURL
+        let original = url
+        while url.pathExtension.lowercased() != "app", url.path != "/" {
+            url.deleteLastPathComponent()
+        }
+        return url.pathExtension.lowercased() == "app" ? url : original
+    }
+
+    private static func installationIssue(
+        gameURL: URL,
+        requiresModded: Bool
+    ) -> String? {
+        let managed = gameURL
+            .appendingPathComponent("Contents/Resources/Data/Managed", isDirectory: true)
+        let loader = managed.appendingPathComponent("MMHOOK_Assembly-CSharp.dll")
+        let receiver = managed.appendingPathComponent(
+            "Mods/HollowKnightVisionInputReceiver/HollowKnightVisionInputReceiver.dll"
+        )
+        let hasLoader = FileManager.default.fileExists(atPath: loader.path)
+        let hasReceiver = FileManager.default.fileExists(atPath: receiver.path)
+        if requiresModded, !hasLoader || !hasReceiver {
+            return "Modded mode requires the matching loader and Vision receiver at --game-path"
+        }
+        if !requiresModded, hasLoader {
+            return "Normal mode requires an unmodified Hollow Knight app at --game-path"
+        }
         return nil
     }
 

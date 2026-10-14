@@ -3,9 +3,9 @@ name: Windows
 on:
   push:
     branches: [main]
-    paths: ["windows/**", "macos/TrainingPython/**", "macos/hollow-knight-input-receiver/**", "models/**", ".github/workflows/windows.yml"]
+    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/HollowKnightVision/Resources/**", "macos/hollow-knight-input-receiver/**", "models/**", ".github/workflows/windows.yml"]
   pull_request:
-    paths: ["windows/**", "macos/TrainingPython/**", "macos/hollow-knight-input-receiver/**", "models/**", ".github/workflows/windows.yml"]
+    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/HollowKnightVision/Resources/**", "macos/hollow-knight-input-receiver/**", "models/**", ".github/workflows/windows.yml"]
 
 jobs:
   build-test:

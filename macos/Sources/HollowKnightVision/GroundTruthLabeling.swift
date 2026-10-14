@@ -537,6 +537,11 @@ final class GroundTruthLabelController: ObservableObject {
 }
 
 struct GroundTruthLabelToolbar: View {
+    @Environment(\.visionLanguage) private var visionLanguage
+    private func visionText(_ key: String, _ values: [String: String] = [:]) -> String {
+        StencilGuidanceText(language: visionLanguage).text(key, values)
+    }
+
     @ObservedObject var controller: GroundTruthLabelController
     let hasCameraTransform: Bool
     var modes = LabelingEditorMode.allCases
@@ -547,11 +552,11 @@ struct GroundTruthLabelToolbar: View {
             StableSegmentedPicker(
                 label: "Ground editing mode",
                 choices: modes,
-                title: { $0.rawValue },
+                title: { visionText($0.rawValue) },
                 selection: $controller.mode
             )
             .frame(width: 290)
-            Button("Undo", action: controller.undo)
+            Button(visionText("Undo"), action: controller.undo)
                 .disabled(!controller.canUndo)
             Text("+\(controller.visiblePositiveCount)  −\(controller.visibleNegativeCount)")
                 .monospacedDigit()
@@ -567,7 +572,7 @@ struct GroundTruthLabelToolbar: View {
                     .help(error)
             }
             Spacer()
-            if let onDone { Button("Done", action: onDone) }
+            if let onDone { Button(visionText("Done"), action: onDone) }
         }
         .font(.caption)
         .padding(.horizontal, 10)
@@ -575,7 +580,7 @@ struct GroundTruthLabelToolbar: View {
         .background(.regularMaterial)
         .overlay {
             ZStack {
-                Button("Undo ground edit", action: controller.undo)
+                Button(visionText("Undo ground edit"), action: controller.undo)
                     .keyboardShortcut("z", modifiers: .command)
                 ForEach(modes) { mode in
                     Button("\(mode.rawValue) ground mode") { controller.mode = mode }

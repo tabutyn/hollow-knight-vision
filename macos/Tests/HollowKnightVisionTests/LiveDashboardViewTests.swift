@@ -3,6 +3,25 @@ import XCTest
 @testable import HollowKnightVision
 
 final class LiveDashboardViewTests: XCTestCase {
+    func testBottomBarControlsAreScopedToGameplayAndModdedGameState() {
+        XCTAssertEqual(DashboardControlVisibility.workspaces, [.gameplay, .label, .stencils, .model, .hacker])
+        for workspace in DashboardWorkspace.allCases {
+            for complete in [false, true] {
+                for context in [nil, "Main Title", "Gameplay"] as [String?] {
+                    XCTAssertEqual(DashboardControlVisibility.showsFraming(workspace: workspace,
+                        phaseOneComplete: complete, recognizedContext: context),
+                        workspace == .gameplay && complete && context == "Gameplay")
+                }
+            }
+            for mode in [HollowKnightRuntimeMode.normal, .modded] {
+                for context in [nil, "Main Title", "Gameplay"] as [String?] {
+                    XCTAssertEqual(DashboardControlVisibility.showsOps(workspace: workspace, mode: mode, recognizedContext: context),
+                                   workspace == .gameplay && mode == .modded && context == "Gameplay")
+                }
+            }
+        }
+    }
+
     func testHackerInteractionModesFormOneOrderedControlGroup() {
         XCTAssertEqual(HackerInteractionMode.allCases.map(\.rawValue), [
             "Ground", "Rooms", "Fit", "Free Fly", "Current",
@@ -40,10 +59,10 @@ final class LiveDashboardViewTests: XCTestCase {
 
     func testDashboardWorkspacesUseFirstLetterShortcuts() {
         XCTAssertEqual(DashboardWorkspace.allCases.map(\.rawValue), [
-            "Gameplay", "Label", "Model", "Hacker", "Ops",
+            "Gameplay", "Label", "Stencil", "Model", "Hacker", "Ops",
         ])
         XCTAssertEqual(DashboardWorkspace.allCases.map(\.shortcutCharacter), [
-            "g", "l", "m", "h", "o",
+            "g", "l", "s", "m", "h", "o",
         ])
         XCTAssertFalse(DashboardWorkspace.gameplay.supportsGameplayExitShortcut)
         XCTAssertTrue(DashboardWorkspace.label.supportsGameplayExitShortcut)

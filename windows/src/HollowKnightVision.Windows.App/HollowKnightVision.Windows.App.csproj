@@ -9,6 +9,16 @@
     <DisableRarCache>true</DisableRarCache>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="../../../macos/Sources/HollowKnightVision/Resources/stencil-guidance.json">
+      <Link>stencil-guidance.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="../../../macos/Sources/HollowKnightVision/Resources/labeling-contracts.json;../../../macos/Sources/HollowKnightVision/Resources/labeling-contexts.json">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <ProjectReference Include="../HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
     <ProjectReference Include="../HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj" />
     <Content Include="../../../models/shared-object-model/**">

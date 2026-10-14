@@ -37,8 +37,19 @@ older running Vision process before the next launch. For an isolated installer
 test, set `HKV_INSTALL_APP_PATH` to an absolute temporary `.app` path.
 
 On first launch, grant **Privacy & Security → Screen & System Audio Recording**.
-The app can launch and position Hollow Knight, then keeps Vision as the active
-application while relaying Arrow, A, X, and Z input to the game.
+The app first asks whether to use Normal or Modded Hollow Knight. Normal mode
+uses capture and visual tracking; Modded mode adds receiver input, Hacker, and
+Ops after the required capabilities connect. Agents can bypass the chooser:
+
+```bash
+macos/run-live.sh --game-mode normal
+macos/run-live.sh --game-mode modded --game-path '/path/to/hollow_knight.app'
+```
+
+An explicit stock path is required for Normal mode if the default Steam copy is
+modded. The bottom-bar gear opens settings; blue guidance directs menu labeling;
+Reset Stencils and Factory Reset create recoverable backups under
+`~/Library/Application Support/HollowKnightVision Backups`.
 
 Automatic title/profile navigation is off by default. Enable it only for an
 automated run:
@@ -113,7 +124,7 @@ Open **Hacker** or press `H` to build and edit a second atlas that is independen
 
 ## Saved-input replay and checks
 
-Gameplay, Label, Model, Ops, and Hacker remain the supported workspaces. The
+Gameplay, Label, Stencil, Model, and Hacker are the workspaces; Ops is part of Settings. The
 old video reconstruction command is retired; recorded game input still replays
 through the actual game and receiver:
 
@@ -137,3 +148,15 @@ trace evaluator reuses the production matcher, joins Hacker truth only by exact
 rendered Unity frame, measures per-step and integrated ground-loss drift, and
 audits room-local place recognition. Recordings made before this trace was
 added report `evaluable: false` rather than an apparent zero-error result.
+
+### Stencil walkthrough and model workspace
+
+The gear opens a centered, scrollable Settings dialog with atlas actions, Debug View, Game language, and Factory Reset. Language names use their native spelling. Navigate to the screen named by the blue guidance in the single bottom row, then press **L** or **Label**. Game State is an optional overlay under Debug View. Free Fly, Fit, and Current appear only after Phase 1 while Gameplay is recognized in the Gameplay workspace; Ops also requires Modded mode and a recognized gameplay state. Required menu labels follow menu order and disappear from Add after their required boxes are present (two for selection decorations); Modify/Delete keep them editable. Gameplay objects remain repeatable and alone expose **+ Object**.
+
+**Stencil** derives its checklist from the contracts: 26 required screens in Modded, 25 in Normal (excluding Mods). Phase 1 is Main Title, Select Profile without Clear Save, and a separately captured Gameplay HUD reference (two adjacent full health icons). It unlocks Model and Stencil Detection. Phase 2 contains the other menu/game screens; Phase 3 contains Clear Save, which requires an existing save and is dismissed with No. Credits has no required boxes. Each stencil category keeps one reference; gameplay model objects remain repeatable. Reset Stencils below the sidebar archives stencil references and calibration while preserving gameplay training examples. Factory Reset also removes stencils. The gear opens a centered, scrolling dialog with Save State, New, Delete, Load, all debug controls, language, and Factory Reset. Object Detection stays disabled until an active model has completed training and evaluation on current gameplay labels; bundled models and models from a cleared dataset do not unlock it. Framing controls require both Phase 1 readiness and recognized Gameplay in the Gameplay workspace.
+
+Localization coverage and remaining native-language/Windows UI checks are tracked in [TODO](../TODO.md).
+
+Existing partial references show **Click Stencil and Edit Labels** guidance. Each reference has **Edit Labels** and **Delete Screen Shot** actions, and label boxes show their localized class names without requiring captured icons. **L** selects Gameplay when gameplay is recognized; explicit Edit Labels still opens the selected stencil. The wider object selector sits above the editing controls to avoid overlap at small window sizes.
+
+Hacker is offered only for recognized gameplay with mod telemetry. Ops controls live in Settings and require recognized gameplay plus the player-ops capability. Clicking outside Settings closes it; arrow keys continue forwarding to the modded game. Dragging in Current camera mode switches to Free Fly while ordinary clicks retain game input.

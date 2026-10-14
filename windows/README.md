@@ -20,12 +20,12 @@ Implemented now:
   segment reassociation parity with the macOS atlas.
 - Named atlas save states, immutable restore paths, archive import, disk usage,
   and permanent state cleanup with macOS-compatible metadata.
-- Atomic schema-v4 labeling examples with positive boxes, hard negatives,
+- Atomic schema-v5 labeling examples with language-specific positive boxes, hard negatives,
   known-empty frames, normalized top-origin coordinates, and PNG capture.
 - Leak-safe dataset export: capture groups and duplicate images remain in one
   split, hard-negative groups stay in training, and every class retains
   positive training data.
-- A WPF Gameplay/Label/Model/Ops/Hacker lab for drawing and editing boxes,
+- A WPF Gameplay/Label/Stencil/Model/Hacker lab for drawing and editing boxes,
   exporting datasets, CPU training, live ONNX review, gameplay startup, and
   atlas recording.
 - The mac-calibrated camera accumulator, fresh-atlas admission gate, and
@@ -70,6 +70,22 @@ The desktop lab contains five workspaces:
 - **Hacker / Atlas** incrementally updates only dirty atlas tiles, supports
   Current/Fit/Free Fly framing, persistent ground and room editing, atlas
   reset, path recording/replay, and offline room-graph build/optimization.
+
+The first desktop launch asks for **Normal Hollow Knight** or **Modded Hollow
+Knight**. Normal keeps local menu recognition and visual Gameplay atlas building
+active without a receiver. Recognized menu frames are excluded from atlas and
+ground updates. Modded enables Hacker only after fresh ground-truth
+telemetry and Ops only after the player-ops capability arrives. For managed
+launches, bypass the chooser and select a dedicated installation:
+
+```powershell
+./HollowKnightVision.Windows.exe --game-mode normal --game-path 'D:\Games\Hollow Knight\hollow_knight.exe'
+./HollowKnightVision.Windows.exe --game-mode modded --game-path 'D:\Modded\Hollow Knight\hollow_knight.exe'
+```
+
+The single bottom bar shows blue guidance for language-specific 640×360 menu labels. The gear opens settings. Reset Stencils and Factory Reset move data to
+`%LOCALAPPDATA%\HollowKnightVision Backups`; neither action edits the game,
+mods, or Hollow Knight saves.
 
 Building does not launch the app or game. Buttons clearly distinguish the one
 workflow that launches Hollow Knight from workflows that only attach to it.
@@ -315,3 +331,15 @@ published readiness probes are CPU-only.
 
 See [WINDOWS_PORT.md](../macos/WINDOWS_PORT.md) for the dependency
 audit and ordered port plan.
+
+### Stencil walkthrough and model workspace
+
+The gear opens a centered, scrollable Settings dialog with atlas actions, Debug View, Game language, and Factory Reset. Language names use their native spelling. Navigate to the screen named by the blue guidance in the single bottom row, then press **L** or **Label**. Game State is an optional overlay under Debug View. Free Fly, Fit, and Current appear only after Phase 1 while Gameplay is recognized in the Gameplay workspace; Ops also requires Modded mode and a recognized gameplay state. Required menu labels follow menu order and disappear from Add after their required boxes are present (two for selection decorations); Modify/Delete keep them editable. Gameplay objects remain repeatable and alone expose **+ Object**.
+
+**Stencil** derives its checklist from the contracts: 26 required screens in Modded, 25 in Normal (excluding Mods). Phase 1 is Main Title, Select Profile without Clear Save, and a separately captured Gameplay HUD reference (two adjacent full health icons). It unlocks Model and Stencil Detection. Phase 2 contains the other menu/game screens; Phase 3 contains Clear Save, which requires an existing save and is dismissed with No. Credits has no required boxes. Each stencil category keeps one reference; gameplay model objects remain repeatable. Reset Stencils below the sidebar archives stencil references and calibration while preserving gameplay training examples. Factory Reset also removes stencils. The gear opens a centered, scrolling dialog with Save State, New, Delete, Load, all debug controls, language, and Factory Reset. Object Detection stays disabled until an active model has completed training and evaluation on current gameplay labels; bundled models and models from a cleared dataset do not unlock it. Framing controls require both Phase 1 readiness and recognized Gameplay in the Gameplay workspace.
+
+Localization coverage and remaining native-language/Windows UI checks are tracked in [TODO](../TODO.md).
+
+Existing partial references show **Click Stencil and Edit Labels** guidance. Each reference has **Edit Labels** and **Delete Screen Shot** actions, and label boxes show their localized class names without requiring captured icons. **L** selects Gameplay when gameplay is recognized; explicit Edit Labels still opens the selected stencil. The wider object selector sits above the editing controls to avoid overlap at small window sizes.
+
+Hacker is offered only for recognized gameplay with mod telemetry. Ops controls live in Settings and require recognized gameplay plus the player-ops capability. Clicking outside Settings closes it; arrow keys continue forwarding to the modded game. Dragging in Current camera mode switches to Free Fly while ordinary clicks retain game input.

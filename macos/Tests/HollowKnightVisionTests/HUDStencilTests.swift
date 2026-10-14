@@ -50,6 +50,51 @@ final class HUDStencilTests: XCTestCase {
         }
     }
 
+    @MainActor func testCapturedHUDUnlocksFirstCampaignWithoutModelOrClearSave() throws {
+        let image = try frame(XCTUnwrap(fixtures().first))
+        let bundled = try XCTUnwrap(HUDStencilTemplate.bundled)
+        let full = try XCTUnwrap(bundled.health.first { $0.kind == "full" }).bounds
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = LabelingExampleStore(rootURL: root)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "HUDCampaignTests.\(UUID().uuidString)"))
+        let coordinator = StencilInitializationCoordinator(store: store, defaults: defaults)
+        coordinator.refresh(mode: .normal)
+        XCTAssertFalse(coordinator.isFirstPhaseComplete)
+        for context in [LabelingContext.mainTitle, .selectProfile] {
+            let boxes = StencilInitializationPolicy.requiredCounts(context: context, mode: .normal).flatMap { requirement in
+                (0..<requirement.count).map { _ in LabelingDraftRectangle(id: UUID(), classID: requirement.definition.id,
+                    normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.1, height: 0.04)) }
+            }
+            _ = try store.saveDraft(image: image, context: context, rectangles: boxes)
+        }
+        coordinator.refresh(mode: .normal)
+        XCTAssertFalse(coordinator.isFirstPhaseComplete)
+        XCTAssertEqual(coordinator.currentStep?.context, .gameplayHUD)
+        XCTAssertEqual(coordinator.guidance(labelingContext: nil, selectedClassIdentifier: nil),
+                       "Enter gameplay, make health icons visible, press L.")
+        XCTAssertTrue(coordinator.guidance(labelingContext: .selectProfile, selectedClassIdentifier: nil)?.contains("Press L") == true)
+        let boxes = (0..<2).map { offset in
+            LabelingDraftRectangle(id: UUID(), classID: "game.health", normalizedRect: CGRect(
+                x: (full.minX + CGFloat(offset) * bundled.healthPitch) / 640, y: full.minY / 360,
+                width: full.width / 640, height: full.height / 360))
+        }
+        let saved = try store.saveDraft(image: image, context: .gameplayHUD, rectangles: boxes)
+        coordinator.refresh(mode: .normal)
+        let custom = try XCTUnwrap(HUDStencilTemplate.captured(examples: try store.loadExamples(), languageIdentifier: "en"))
+        XCTAssertEqual(custom.sourceExampleID, saved.id.uuidString)
+        XCTAssertTrue(try XCTUnwrap(HUDStencilTracker(template: custom).observe(image, gameplay: true,
+            timestamp: 1, generation: 1)).establishesGameplay)
+        for fixture in try fixtures() where (fixture.health?.reduce(0, +) ?? 0) >= 2 {
+            XCTAssertTrue(HUDStencilTracker(template: custom).observe(try frame(fixture), gameplay: true,
+                timestamp: 2, generation: 2)?.establishesGameplay == true, fixture.id)
+        }
+        XCTAssertTrue(coordinator.isFirstPhaseComplete)
+        XCTAssertFalse(coordinator.isComplete, "Later menus must not block Phase 1.")
+        coordinator.language = .french
+        XCTAssertFalse(coordinator.isFirstPhaseComplete, "A language change must relock incomplete references.")
+    }
+
     func testScaledCaptureRetainsCountsAndScalesStencil() throws {
         let fixture = try XCTUnwrap(fixtures().first)
         let tracker = HUDStencilTracker()
