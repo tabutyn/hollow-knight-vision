@@ -7,6 +7,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
         try
         {
             var options = GameLaunchOptions.Parse(e.Args);
@@ -24,6 +25,7 @@ public partial class App : Application
             }
             var window = new MainWindow(mode.Value, options.GamePath);
             MainWindow = window;
+            ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose;
             window.Show();
         }
         catch (Exception error)
