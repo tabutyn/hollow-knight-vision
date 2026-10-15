@@ -15,6 +15,7 @@ usage() {
 Usage: install-app.sh [--no-build] [--repair-dock]
 
 Builds and installs Hollow Knight Vision at its stable application path.
+Refreshes an existing Dock shortcut when dockutil is available.
 
   --no-build      Install the already packaged build/Hollow Knight Vision.app.
   --repair-dock   Replace any pinned copy with the stable installed app.
@@ -104,6 +105,9 @@ fi
 /bin/mv -- "$stage_app" "$install_app"
 /usr/bin/codesign --verify --deep --strict "$install_app"
 
+# ditto preserves the bundle directory's old timestamp. Refresh it so macOS
+# invalidates its cached Finder/Dock icon, including while the app is closed.
+/usr/bin/touch "$install_app/Contents/Info.plist" "$install_app"
 launch_services_register="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 "$launch_services_register" -f "$install_app"
 
@@ -111,7 +115,20 @@ if [[ -e "$previous_app" ]]; then
   /bin/rm -rf -- "$previous_app"
 fi
 
-if $repair_dock; then
+# Replacing the bundle also makes a pinned tile's file bookmark stale. Refresh
+# existing pins automatically; only --repair-dock adds an unpinned application.
+refresh_existing_dock_entry=false
+if [[ "$install_app" == "$canonical_app" ]] && command -v dockutil >/dev/null 2>&1; then
+  while IFS=$'\t' read -r item_label _item_url section _plist item_bundle_id; do
+    if [[ "$section" == "persistentApps" \
+          && ( "$item_label" == "$dock_label" || "$item_bundle_id" == "$bundle_id" ) ]]; then
+      refresh_existing_dock_entry=true
+      break
+    fi
+  done < <(dockutil --list)
+fi
+
+if $repair_dock || $refresh_existing_dock_entry; then
   if ! command -v dockutil >/dev/null 2>&1; then
     print -u2 "dockutil is required only for --repair-dock. The app was installed successfully."
     exit 69
