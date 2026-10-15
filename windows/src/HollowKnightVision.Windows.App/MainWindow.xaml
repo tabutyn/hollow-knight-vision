@@ -222,6 +222,11 @@
                     <Button Content="Fit" Tag="Fit" Click="GameplayFraming_Click"/>
                     <Button Content="Current" Tag="Current" Click="GameplayFraming_Click"/>
                 </StackPanel>
+                <StackPanel x:Name="HackerCameraControlsPanel" Orientation="Horizontal" Visibility="Collapsed">
+                    <Button Content="Free Fly" Tag="Free Fly" Click="HackerMode_Click"/>
+                    <Button Content="Fit" Tag="Fit" Click="HackerMode_Click"/>
+                    <Button Content="Current" Tag="Current" Click="HackerMode_Click"/>
+                </StackPanel>
             </StackPanel>
             <Button x:Name="SettingsButton" Grid.Column="3" Content="⚙" FontSize="18" ToolTip="Settings" AutomationProperties.Name="Settings" Click="Settings_Click"/>
         </Grid>

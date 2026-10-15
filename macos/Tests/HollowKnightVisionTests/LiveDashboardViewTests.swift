@@ -10,7 +10,8 @@ final class LiveDashboardViewTests: XCTestCase {
                 for context in [nil, "Main Title", "Gameplay"] as [String?] {
                     XCTAssertEqual(DashboardControlVisibility.showsFraming(workspace: workspace,
                         phaseOneComplete: complete, recognizedContext: context),
-                        workspace == .gameplay && complete && context == "Gameplay")
+                        context == "Gameplay" && (workspace == .hacker || (workspace == .gameplay && complete)),
+                        "Camera controls: workspace=\(workspace), phaseOneComplete=\(complete), context=\(context ?? "none")")
                 }
             }
             for mode in [HollowKnightRuntimeMode.normal, .modded] {

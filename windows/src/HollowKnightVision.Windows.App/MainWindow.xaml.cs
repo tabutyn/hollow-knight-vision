@@ -866,6 +866,8 @@ public partial class MainWindow : Window
         if (initialization is null) return;
         GameplayControlsPanel.Visibility = workspace == "Gameplay" && initialization.IsFirstPhaseComplete
             && visionCancellation is not null && recognizedMenuContext == "game" ? Visibility.Visible : Visibility.Collapsed;
+        HackerCameraControlsPanel.Visibility = workspace == "Hacker"
+            && visionCancellation is not null && recognizedMenuContext == "game" ? Visibility.Visible : Visibility.Collapsed;
         ModelWorkspaceButton.Visibility = initialization.IsFirstPhaseComplete ? Visibility.Visible : Visibility.Collapsed;
         StencilDetectionCheck.IsEnabled = initialization.IsFirstPhaseComplete;
         ObjectDetectionCheck.IsEnabled = initialization.IsFirstPhaseComplete && trainedGameplayModelReady;

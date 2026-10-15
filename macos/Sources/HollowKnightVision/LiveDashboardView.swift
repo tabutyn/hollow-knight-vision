@@ -54,7 +54,8 @@ enum DashboardWorkspace: String, CaseIterable, Identifiable {
 enum DashboardControlVisibility {
     static func showsFraming(workspace: DashboardWorkspace, phaseOneComplete: Bool,
                              recognizedContext: String?) -> Bool {
-        workspace == .gameplay && phaseOneComplete && recognizedContext == "Gameplay"
+        recognizedContext == "Gameplay"
+            && (workspace == .hacker || (workspace == .gameplay && phaseOneComplete))
     }
     static func showsOps(workspace: DashboardWorkspace, mode: HollowKnightRuntimeMode,
                          recognizedContext: String?) -> Bool {
@@ -1262,9 +1263,15 @@ struct DashboardView: View {
             }
             if DashboardControlVisibility.showsFraming(workspace: workspace,
                 phaseOneComplete: initialization.isFirstPhaseComplete, recognizedContext: model.liveGameStatus) {
-                framingButton(.freeFly, title: "Free Fly")
-                framingButton(.fit, title: "Fit")
-                framingButton(.current, title: "Current")
+                if workspace == .hacker {
+                    hackerInteractionButton(.freeFly)
+                    hackerInteractionButton(.fit)
+                    hackerInteractionButton(.current)
+                } else {
+                    framingButton(.freeFly, title: "Free Fly")
+                    framingButton(.fit, title: "Fit")
+                    framingButton(.current, title: "Current")
+                }
             }
             Button { showingSettings.toggle() } label: {
                 Image(systemName: "gearshape")
