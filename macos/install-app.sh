@@ -55,7 +55,7 @@ if $repair_dock && [[ "$install_app" != "$canonical_app" ]]; then
 fi
 
 if $build_first; then
-  "$script_dir/build-app.sh"
+  "$script_dir/build-app.sh" --package-only
 fi
 
 if [[ ! -x "$source_app/Contents/MacOS/HollowKnightVision" ]]; then
@@ -109,6 +109,11 @@ fi
 # invalidates its cached Finder/Dock icon, including while the app is closed.
 /usr/bin/touch "$install_app/Contents/Info.plist" "$install_app"
 launch_services_register="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [[ "$install_app" == "$canonical_app" ]]; then
+  # The package in build/ is disposable and must never compete with the stable
+  # installed copy when Launch Services resolves this bundle identifier.
+  "$launch_services_register" -u "$source_app" 2>/dev/null || true
+fi
 "$launch_services_register" -f "$install_app"
 
 if [[ -e "$previous_app" ]]; then
@@ -118,11 +123,13 @@ fi
 # Replacing the bundle also makes a pinned tile's file bookmark stale. Refresh
 # existing pins automatically; only --repair-dock adds an unpinned application.
 refresh_existing_dock_entry=false
+dock_replace_target="$dock_label"
 if [[ "$install_app" == "$canonical_app" ]] && command -v dockutil >/dev/null 2>&1; then
   while IFS=$'\t' read -r item_label _item_url section _plist item_bundle_id; do
     if [[ "$section" == "persistentApps" \
           && ( "$item_label" == "$dock_label" || "$item_bundle_id" == "$bundle_id" ) ]]; then
       refresh_existing_dock_entry=true
+      dock_replace_target="$item_label"
       break
     fi
   done < <(dockutil --list)
@@ -133,7 +140,9 @@ if $repair_dock || $refresh_existing_dock_entry; then
     print -u2 "dockutil is required only for --repair-dock. The app was installed successfully."
     exit 69
   fi
-  dockutil --add "$install_app" --replacing "$dock_label"
+  # Replace the exact label discovered by bundle identifier. Some dockutil
+  # versions advertise bundle-ID replacement but only honor the tile label.
+  dockutil --add "$install_app" --replacing "$dock_replace_target"
 
   persistent_matches=0
   canonical_matches=0

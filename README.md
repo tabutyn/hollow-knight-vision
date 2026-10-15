@@ -20,6 +20,11 @@ swift test
 ./build-app.sh
 ```
 
+`build-app.sh` also replaces `/Applications/Hollow Knight Vision.app`, refreshes
+its Launch Services registration, and updates an existing Dock pin. Use
+`./build-app.sh --package-only` only when producing an artifact that must not be
+installed, such as in CI.
+
 Windows 10/11 x64 with .NET 8 SDK and PowerShell:
 
 ```powershell

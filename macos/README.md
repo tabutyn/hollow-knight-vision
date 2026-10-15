@@ -15,6 +15,19 @@ and ordered port gates.
 
 ## Build, capture, and dashboard
 
+After changing code, use the canonical build command:
+
+```bash
+macos/build-app.sh
+```
+
+It builds and signs the application, atomically replaces
+`/Applications/Hollow Knight Vision.app`, unregisters the disposable package
+copy, and refreshes an existing Dock pin. `macos/build-app.sh --package-only`
+is reserved for CI and artifact packaging.
+
+To build, install, and immediately launch the installed copy:
+
 ```bash
 macos/run-live.sh
 ```
@@ -25,7 +38,7 @@ copy. Pin only that application to the Dock. Do not pin the disposable
 `build/Hollow Knight Vision.app` packaging output; doing so gives macOS two
 paths for the same bundle identifier and can produce two Dock icons.
 
-To repair an older Dock item while preserving its position, run once:
+To add the app to the Dock when it is not already pinned, run once:
 
 ```bash
 macos/install-app.sh --repair-dock

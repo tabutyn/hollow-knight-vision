@@ -3,6 +3,37 @@ set -euo pipefail
 
 script_dir=${0:A:h}
 scratch_dir=${HKV_BUILD_SCRATCH_PATH:-"$script_dir/.build"}
+install_after_build=true
+
+usage() {
+  cat <<'EOF'
+Usage: build-app.sh [--package-only]
+
+Builds Hollow Knight Vision and, by default, installs the finished application
+at its stable path so macOS and the Dock cannot keep launching an older build.
+
+  --package-only  Leave the signed bundle in build/ without installing it.
+EOF
+}
+
+while (( $# > 0 )); do
+  case "$1" in
+    --package-only)
+      install_after_build=false
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      print -u2 "Unknown argument: $1"
+      usage >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
 swift build -c release --package-path "$script_dir" --scratch-path "$scratch_dir"
 
 app_dir="$script_dir/build/Hollow Knight Vision.app"
@@ -53,4 +84,9 @@ codesign --force --sign - \
 codesign --force --sign - \
   --requirements '=designated => identifier "com.ballroller.hollow-knight-vision"' \
   "$app_dir"
-echo "$app_dir"
+
+if $install_after_build; then
+  "$script_dir/install-app.sh" --no-build
+else
+  print "Packaged $app_dir"
+fi
