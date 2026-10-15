@@ -34,7 +34,7 @@ public static partial class HollowKnightGameLauncher
         var receiver = Path.Combine(
             managed, "Mods", "HollowKnightVisionInputReceiver",
             "HollowKnightVisionInputReceiver.dll");
-        if (!requireModded && File.Exists(loader))
+        if (!requireModded && (File.Exists(loader) || File.Exists(receiver)))
         {
             throw new InvalidOperationException(
                 "Normal mode requires an unmodified Hollow Knight installation. " +

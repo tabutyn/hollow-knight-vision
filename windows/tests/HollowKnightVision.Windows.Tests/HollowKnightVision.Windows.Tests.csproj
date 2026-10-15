@@ -13,5 +13,6 @@
     </Content>
     <ProjectReference Include="../../src/HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
     <Compile Include="../../src/HollowKnightVision.Windows.Host/BmpWriter.cs" Link="BmpWriter.cs" />
+    <Compile Include="../../src/HollowKnightVision.Windows.Host/HollowKnightGameLauncher.cs" Link="HollowKnightGameLauncher.cs" />
   </ItemGroup>
 </Project>

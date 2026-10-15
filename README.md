@@ -38,6 +38,10 @@ See [macOS instructions](macos/README.md) and [Windows instructions](windows/REA
 
 On first launch, choose **Normal Hollow Knight** or **Modded Hollow Knight**. Normal mode keeps menu recognition and the visual Gameplay atlas available without a game mod. Modded mode also connects to the local receiver; Hacker and Ops remain disabled until their advertised receiver capabilities arrive. Automated launches can use `--game-mode normal` or `--game-mode modded`. Pass `--game-path PATH` to select a separate stock or modded installation explicitly; explicit paths are checked against the selected mode.
 
+Vision also checks the installation behind an already-running game process.
+Normal mode will not capture a copy containing the Modding API loader or Vision
+receiver, and Modded mode will not capture a copy missing either component.
+
 Setup is a three-phase stencil campaign with persistent blue guidance in the bottom bar. Phase 1 captures Main Title, the available Select Profile labels, and two adjacent full health icons in Gameplay HUD. Clear Save is deferred until a save exists; it never blocks first-time setup. Completing Phase 1 unlocks Model and the stencil debug viewer. Free Fly, Fit, and Current appear only while the Gameplay workspace recognizes Gameplay. Phase 2 covers the remaining menu/game screens; Phase 3 covers save-management dialogs. Reset Stencils lives in the Stencil sidebar and preserves gameplay training data. Factory Reset, in the centered scrolling Settings dialog, archives Vision data including stencils without changing Hollow Knight saves, game files, or mods.
 
 Gameplay objects use the learned detector. In **Label**, press **+ Object**, choose Gameplay, Enemy, or World, enter a name, then draw boxes for it. The app stores the new identifier in `object-catalog-v1.json`; dataset export and subsequent training include it without a source-code change. The catalog JSON is deliberately the same schema on both platforms, so it can be copied with the user's private labels when moving a training workspace.

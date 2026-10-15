@@ -60,7 +60,9 @@ macos/run-live.sh --game-mode modded --game-path '/path/to/hollow_knight.app'
 ```
 
 An explicit stock path is required for Normal mode if the default Steam copy is
-modded. The bottom-bar gear opens settings; blue guidance directs menu labeling;
+modded. A running game is checked by its app bundle before capture begins, so
+selecting Normal never falls through to an already-running modded copy. The
+bottom-bar gear opens settings; blue guidance directs menu labeling;
 Reset Stencils and Factory Reset create recoverable backups under
 `~/Library/Application Support/HollowKnightVision Backups`.
 

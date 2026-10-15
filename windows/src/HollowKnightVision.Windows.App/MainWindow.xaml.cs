@@ -277,39 +277,42 @@ public partial class MainWindow : Window
                 HollowKnightGameLauncher.ValidateInstallation(
                     explicitExecutable,
                     requireModded: gameMode == GameRuntimeMode.Modded);
-                var running = Process.GetProcessesByName("hollow_knight");
-                try
+            }
+            var running = Process.GetProcessesByName("hollow_knight");
+            var runningExecutables = new List<string>();
+            try
+            {
+                foreach (var process in running)
                 {
-                    if (running.Length > 0 && !running.Any(process =>
-                            string.Equals(
-                                TryExecutablePath(process),
-                                explicitExecutable,
-                                StringComparison.OrdinalIgnoreCase)))
-                    {
-                        throw new InvalidOperationException(
-                            "A different Hollow Knight installation is already running. " +
-                            "Close it before launching the selected --game-path.");
-                    }
+                    var executable = TryExecutablePath(process) ?? throw new InvalidOperationException(
+                        "Vision could not verify whether the running Hollow Knight installation " +
+                        "matches the selected mode. Close it and launch the intended copy with --game-path.");
+                    HollowKnightGameLauncher.ValidateInstallation(
+                        executable,
+                        requireModded: gameMode == GameRuntimeMode.Modded);
+                    runningExecutables.Add(executable);
                 }
-                finally
+                if (explicitExecutable is not null && runningExecutables.Count > 0
+                    && !runningExecutables.Any(executable => string.Equals(
+                        executable,
+                        explicitExecutable,
+                        StringComparison.OrdinalIgnoreCase)))
                 {
-                    foreach (var process in running) process.Dispose();
+                    throw new InvalidOperationException(
+                        "A different Hollow Knight installation is already running. " +
+                        "Close it before launching the selected --game-path.");
                 }
+            }
+            finally
+            {
+                foreach (var process in running) process.Dispose();
             }
             var window = HollowKnightWindowLocator.FindBest();
             if (window is null)
             {
-                var runningGame = Process.GetProcessesByName("hollow_knight");
-                try
+                if (runningExecutables.Count == 0)
                 {
-                    if (runningGame.Length == 0)
-                    {
-                        _ = HollowKnightGameLauncher.Start(explicitExecutable ?? gamePath);
-                    }
-                }
-                finally
-                {
-                    foreach (var process in runningGame) process.Dispose();
+                    _ = HollowKnightGameLauncher.Start(explicitExecutable ?? gamePath);
                 }
                 window = await WaitForGameWindowAsync(cancellation.Token);
             }
@@ -346,6 +349,27 @@ public partial class MainWindow : Window
             or System.ComponentModel.Win32Exception or NotSupportedException)
         {
             return null;
+        }
+    }
+
+    private void ValidateGameWindowMode(HollowKnightWindow window)
+    {
+        using var process = Process.GetProcessById(window.ProcessId);
+        var executable = TryExecutablePath(process) ?? throw new InvalidOperationException(
+            "Vision could not verify whether the running Hollow Knight installation " +
+            "matches the selected mode. Close it and launch the intended copy with --game-path.");
+        HollowKnightGameLauncher.ValidateInstallation(
+            executable,
+            requireModded: gameMode == GameRuntimeMode.Modded);
+        if (!string.IsNullOrWhiteSpace(gamePath))
+        {
+            var expected = HollowKnightGameLauncher.ResolveExecutable(gamePath);
+            if (!string.Equals(executable, expected, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "A different Hollow Knight installation is running. " +
+                    "Close it before using the selected --game-path.");
+            }
         }
     }
 
@@ -1391,6 +1415,7 @@ public partial class MainWindow : Window
                 detector,
                 cancellation.Token));
             var frameId = 0L;
+            var validatedProcessId = 0;
             try
             {
                 while (!cancellation.IsCancellationRequested)
@@ -1401,6 +1426,11 @@ public partial class MainWindow : Window
                         var window = HollowKnightWindowLocator.FindBest()
                             ?? throw new InvalidOperationException(
                                 "Hollow Knight window not found. Live Vision does not launch it.");
+                        if (window.ProcessId != validatedProcessId)
+                        {
+                            ValidateGameWindowMode(window);
+                            validatedProcessId = window.ProcessId;
+                        }
                         return CpuBgraNormalizer.Normalize(capture.Capture(window, ++frameId));
                     }, cancellation.Token);
                     var bitmap = FrameBitmap(frame);

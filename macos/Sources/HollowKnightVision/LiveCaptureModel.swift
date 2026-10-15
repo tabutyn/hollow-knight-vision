@@ -620,6 +620,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                     onScreenWindowsOnly: false
                 )
                 guard let window = self.bestHollowKnightWindow(in: content.windows) else {
+                    if let issue = self.runningGameCompatibilityIssue(in: content.windows) {
+                        throw CaptureFailure.incompatibleGame(issue)
+                    }
                     throw CaptureFailure.windowNotFound
                 }
                 let configuration = HollowKnightCaptureConfiguration.make(
@@ -2381,7 +2384,32 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                     windowSize: window.frame.size
                 )
             }
+            .filter { captureCompatibilityIssue(for: $0) == nil }
             .max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
+    }
+
+    private func runningGameCompatibilityIssue(in windows: [SCWindow]) -> String? {
+        windows.lazy
+            .filter { window in
+                SourceWindowIdentity.isCaptureWindow(
+                    applicationName: window.owningApplication?.applicationName,
+                    bundleIdentifier: window.owningApplication?.bundleIdentifier,
+                    windowLayer: window.windowLayer,
+                    windowSize: window.frame.size
+                )
+            }
+            .compactMap(captureCompatibilityIssue(for:))
+            .first
+    }
+
+    private func captureCompatibilityIssue(for window: SCWindow) -> String? {
+        guard let processID = window.owningApplication?.processID,
+              let application = NSRunningApplication(processIdentifier: processID),
+              let gameURL = application.bundleURL else {
+            return "Vision could not verify whether the running Hollow Knight installation matches \(gameMode.title). Close it and launch the intended copy with --game-path."
+        }
+        return HollowKnightInstallationPolicy.issue(gameURL: gameURL, mode: gameMode)?
+            .runningApplicationMessage
     }
 
     private func prepareCaptureAttempt(_ streamID: ObjectIdentifier) async {
@@ -2527,6 +2555,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     private func message(for error: Error) -> String {
         if case CaptureFailure.windowNotFound = error {
             return "Hollow Knight window not found. Launch it, disable fullscreen, then press Capture."
+        }
+        if case CaptureFailure.incompatibleGame(let message) = error {
+            return message
         }
         return "Capture failed: \(error.localizedDescription). Screen Recording permission may require an app restart."
     }
@@ -4209,4 +4240,5 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
 
 private enum CaptureFailure: Error {
     case windowNotFound
+    case incompatibleGame(String)
 }

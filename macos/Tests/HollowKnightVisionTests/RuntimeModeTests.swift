@@ -57,4 +57,50 @@ final class RuntimeModeTests: XCTestCase {
         XCTAssertEqual(modded.count, normal.count + 6)
         XCTAssertFalse(normal.contains { $0.context == .mods })
     }
+
+    func testRunningInstallationMustMatchSelectedMode() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("app")
+        let managed = root.appendingPathComponent(
+            "Contents/Resources/Data/Managed",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: managed,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        XCTAssertNil(HollowKnightInstallationPolicy.issue(gameURL: root, mode: .normal))
+        XCTAssertEqual(
+            HollowKnightInstallationPolicy.issue(gameURL: root, mode: .modded),
+            .incompleteModdedGame
+        )
+
+        let receiver = managed.appendingPathComponent(
+            "Mods/HollowKnightVisionInputReceiver/HollowKnightVisionInputReceiver.dll"
+        )
+        try FileManager.default.createDirectory(
+            at: receiver.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        XCTAssertTrue(FileManager.default.createFile(atPath: receiver.path, contents: Data()))
+        XCTAssertEqual(
+            HollowKnightInstallationPolicy.issue(gameURL: root, mode: .normal),
+            .moddedGameInNormalMode
+        )
+        XCTAssertEqual(
+            HollowKnightInstallationPolicy.issue(gameURL: root, mode: .modded),
+            .incompleteModdedGame
+        )
+
+        let loader = managed.appendingPathComponent("MMHOOK_Assembly-CSharp.dll")
+        XCTAssertTrue(FileManager.default.createFile(atPath: loader.path, contents: Data()))
+        XCTAssertNil(HollowKnightInstallationPolicy.issue(gameURL: root, mode: .modded))
+        XCTAssertEqual(
+            HollowKnightInstallationPolicy.issue(gameURL: root, mode: .normal),
+            .moddedGameInNormalMode
+        )
+    }
 }

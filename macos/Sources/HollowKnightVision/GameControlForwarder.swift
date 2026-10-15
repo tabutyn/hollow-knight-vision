@@ -239,7 +239,7 @@ final class GameControlForwarder {
     private var managedApplication: NSRunningApplication?
     private var launchInFlight = false
     private var requestedGameURL: URL?
-    private var requestedModdedInstallation: Bool?
+    private var requestedGameMode: HollowKnightRuntimeMode?
     private var lastPublishedConnectionState: String?
     private var lastPublishedPauseState: GamePauseState?
 
@@ -264,7 +264,7 @@ final class GameControlForwarder {
     func start(gamePath: String? = nil) {
         guard !started else { return }
         requestedGameURL = gamePath.map { Self.gameApplicationURL(path: $0) }
-        requestedModdedInstallation = gamePath == nil ? nil : true
+        requestedGameMode = .modded
         started = true
         installEventMonitor()
         installFocusObservers()
@@ -278,7 +278,7 @@ final class GameControlForwarder {
 
     func launchGameOnly(gamePath: String? = nil) {
         requestedGameURL = gamePath.map { Self.gameApplicationURL(path: $0) }
-        requestedModdedInstallation = gamePath == nil ? nil : false
+        requestedGameMode = .normal
         _ = ensureGameRunning()
     }
 
@@ -1305,18 +1305,22 @@ final class GameControlForwarder {
 
     @discardableResult
     private func ensureGameRunning() -> NSRunningApplication? {
-        if let managedApplication, !managedApplication.isTerminated { return managedApplication }
+        if let managedApplication, !managedApplication.isTerminated {
+            if let issue = runningApplicationIssue(managedApplication) {
+                publishConnectionState(issue)
+                self.managedApplication = nil
+                return nil
+            }
+            return managedApplication
+        }
         if let gameURL = requestedGameURL {
             guard FileManager.default.fileExists(atPath: gameURL.path) else {
                 publishConnectionState("Hollow Knight path not found: \(gameURL.path)")
                 return nil
             }
-            if let requiresModded = requestedModdedInstallation,
-               let issue = Self.installationIssue(
-                gameURL: gameURL,
-                requiresModded: requiresModded
-               ) {
-                publishConnectionState(issue)
+            if let mode = requestedGameMode,
+               let issue = HollowKnightInstallationPolicy.issue(gameURL: gameURL, mode: mode) {
+                publishConnectionState(issue.selectedPathMessage)
                 return nil
             }
         }
@@ -1326,6 +1330,10 @@ final class GameControlForwarder {
                 publishConnectionState(
                     "A different Hollow Knight app is already running; close it before using --game-path"
                 )
+                return nil
+            }
+            if let issue = runningApplicationIssue(running) {
+                publishConnectionState(issue)
                 return nil
             }
             managedApplication = running
@@ -1373,6 +1381,15 @@ final class GameControlForwarder {
         return nil
     }
 
+    private func runningApplicationIssue(_ application: NSRunningApplication) -> String? {
+        guard let mode = requestedGameMode else { return nil }
+        guard let gameURL = application.bundleURL else {
+            return "Vision could not verify whether the running Hollow Knight installation matches \(mode.title). Close it and launch the intended copy with --game-path."
+        }
+        return HollowKnightInstallationPolicy.issue(gameURL: gameURL, mode: mode)?
+            .runningApplicationMessage
+    }
+
     private static func gameApplicationURL(path: String) -> URL {
         var url = URL(fileURLWithPath: path).standardizedFileURL
         let original = url
@@ -1380,27 +1397,6 @@ final class GameControlForwarder {
             url.deleteLastPathComponent()
         }
         return url.pathExtension.lowercased() == "app" ? url : original
-    }
-
-    private static func installationIssue(
-        gameURL: URL,
-        requiresModded: Bool
-    ) -> String? {
-        let managed = gameURL
-            .appendingPathComponent("Contents/Resources/Data/Managed", isDirectory: true)
-        let loader = managed.appendingPathComponent("MMHOOK_Assembly-CSharp.dll")
-        let receiver = managed.appendingPathComponent(
-            "Mods/HollowKnightVisionInputReceiver/HollowKnightVisionInputReceiver.dll"
-        )
-        let hasLoader = FileManager.default.fileExists(atPath: loader.path)
-        let hasReceiver = FileManager.default.fileExists(atPath: receiver.path)
-        if requiresModded, !hasLoader || !hasReceiver {
-            return "Modded mode requires the matching loader and Vision receiver at --game-path"
-        }
-        if !requiresModded, hasLoader {
-            return "Normal mode requires an unmodified Hollow Knight app at --game-path"
-        }
-        return nil
     }
 
     static func hollowKnightApplication() -> NSRunningApplication? {

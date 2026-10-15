@@ -15,6 +15,52 @@ enum HollowKnightRuntimeMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum HollowKnightInstallationIssue: Equatable {
+    case moddedGameInNormalMode
+    case incompleteModdedGame
+
+    var runningApplicationMessage: String {
+        switch self {
+        case .moddedGameInNormalMode:
+            "Normal mode will not capture the running modded Hollow Knight. Close it and launch an unmodified copy, or restart Vision in Modded mode."
+        case .incompleteModdedGame:
+            "Modded mode will not capture this Hollow Knight installation because its Modding API loader or Vision receiver is missing. Close it and launch the configured modded copy, or restart Vision in Normal mode."
+        }
+    }
+
+    var selectedPathMessage: String {
+        switch self {
+        case .moddedGameInNormalMode:
+            "Normal mode requires an unmodified Hollow Knight app at --game-path"
+        case .incompleteModdedGame:
+            "Modded mode requires the matching loader and Vision receiver at --game-path"
+        }
+    }
+}
+
+enum HollowKnightInstallationPolicy {
+    static func issue(
+        gameURL: URL,
+        mode: HollowKnightRuntimeMode,
+        fileManager: FileManager = .default
+    ) -> HollowKnightInstallationIssue? {
+        let managed = gameURL
+            .appendingPathComponent("Contents/Resources/Data/Managed", isDirectory: true)
+        let loader = managed.appendingPathComponent("MMHOOK_Assembly-CSharp.dll")
+        let receiver = managed.appendingPathComponent(
+            "Mods/HollowKnightVisionInputReceiver/HollowKnightVisionInputReceiver.dll"
+        )
+        let hasLoader = fileManager.fileExists(atPath: loader.path)
+        let hasReceiver = fileManager.fileExists(atPath: receiver.path)
+        switch mode {
+        case .normal:
+            return hasLoader || hasReceiver ? .moddedGameInNormalMode : nil
+        case .modded:
+            return hasLoader && hasReceiver ? nil : .incompleteModdedGame
+        }
+    }
+}
+
 enum HollowKnightRuntimeModeArgumentError: Error, Equatable, LocalizedError {
     case missingValue
     case invalidValue(String)

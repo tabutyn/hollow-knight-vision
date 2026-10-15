@@ -10,6 +10,7 @@ using HollowKnightVision.Windows.Host;
 var tests = new (string Name, Action Run)[]
 {
     ("stencil contracts include all required menu screens", TestStencilContractCoverage),
+    ("running game installation matches selected mode", TestGameInstallationMode),
     ("stencil reset preserves gameplay training data", TestStencilResetPreservesGameplay),
     ("partial stencil resumes editing and counts saved Back", TestPartialStencilGuidance),
     ("object detection requires training on current labels", TestTrainedModelReadiness),
@@ -111,6 +112,45 @@ static void TestStencilContractCoverage()
     True(normal.Any(step => step.ContextIdentifier == "screen-scale" && step.RequiredCount == 2));
     True(normal.Any(step => step.ContextIdentifier == "inventory" && step.RequiredCount == 4));
     True(!normal.Any(step => step.ContextIdentifier is "game" or "credits"));
+}
+
+static void TestGameInstallationMode()
+{
+    WithTemporaryDirectory(root => {
+        var executable = Path.Combine(root, "hollow_knight.exe");
+        File.WriteAllBytes(executable, []);
+        var managed = Path.Combine(root, "hollow_knight_Data", "Managed");
+        Directory.CreateDirectory(managed);
+
+        HollowKnightGameLauncher.ValidateInstallation(executable, requireModded: false);
+        True(RejectsInstallation(executable, requireModded: true));
+
+        var receiver = Path.Combine(
+            managed,
+            "Mods", "HollowKnightVisionInputReceiver",
+            "HollowKnightVisionInputReceiver.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(receiver)!);
+        File.WriteAllBytes(receiver, []);
+        True(RejectsInstallation(executable, requireModded: false));
+        True(RejectsInstallation(executable, requireModded: true));
+
+        File.WriteAllBytes(Path.Combine(managed, "MMHOOK_Assembly-CSharp.dll"), []);
+        HollowKnightGameLauncher.ValidateInstallation(executable, requireModded: true);
+        True(RejectsInstallation(executable, requireModded: false));
+    });
+}
+
+static bool RejectsInstallation(string executable, bool requireModded)
+{
+    try
+    {
+        HollowKnightGameLauncher.ValidateInstallation(executable, requireModded);
+        return false;
+    }
+    catch (InvalidOperationException)
+    {
+        return true;
+    }
 }
 
 static void TestPartialStencilGuidance()
