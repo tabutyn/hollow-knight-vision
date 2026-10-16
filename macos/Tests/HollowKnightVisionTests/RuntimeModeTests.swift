@@ -123,6 +123,10 @@ final class RuntimeModeTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let normal = workspace.appendingPathComponent("Normal.app", isDirectory: true)
         let modded = workspace.appendingPathComponent("Modded.app", isDirectory: true)
+        let disabled = workspace.appendingPathComponent(
+            "Modded.app.hkv-disabled",
+            isDirectory: true
+        )
         let shortcut = workspace.appendingPathComponent("Shortcut.app", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: workspace) }
 
@@ -153,10 +157,11 @@ final class RuntimeModeTests: XCTestCase {
             withIntermediateDirectories: true
         )
         XCTAssertTrue(FileManager.default.createFile(atPath: receiver.path, contents: Data()))
+        try FileManager.default.copyItem(at: modded, to: disabled)
         try FileManager.default.createDirectory(at: shortcut, withIntermediateDirectories: true)
 
         let catalog = HollowKnightInstallationDiscovery.catalog(
-            candidateURLs: [shortcut, modded, normal]
+            candidateURLs: [disabled, shortcut, modded, normal]
         )
         XCTAssertEqual(catalog.normal, normal.standardizedFileURL)
         XCTAssertEqual(catalog.modded, modded.standardizedFileURL)

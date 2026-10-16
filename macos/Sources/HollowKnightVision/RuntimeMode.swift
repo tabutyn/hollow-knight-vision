@@ -116,7 +116,8 @@ enum HollowKnightInstallationDiscovery {
         var seen = Set<String>()
         for candidate in candidateURLs {
             let url = gameApplicationURL(path: candidate.path).standardizedFileURL
-            guard seen.insert(url.path).inserted,
+            guard url.pathExtension.lowercased() == "app",
+                  seen.insert(url.path).inserted,
                   fileManager.fileExists(atPath: url.path) else { continue }
             if normal == nil,
                HollowKnightInstallationPolicy.issue(
