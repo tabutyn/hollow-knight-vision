@@ -30,6 +30,12 @@ public static partial class HollowKnightGameLauncher
     {
         var gameRoot = Path.GetDirectoryName(Path.GetFullPath(executable))!;
         var managed = Path.Combine(gameRoot, "hollow_knight_Data", "Managed");
+        var gameAssembly = Path.Combine(managed, "Assembly-CSharp.dll");
+        if (!File.Exists(gameAssembly))
+        {
+            throw new InvalidOperationException(
+                "The selected path is not a complete Hollow Knight installation.");
+        }
         var loader = Path.Combine(managed, "MMHOOK_Assembly-CSharp.dll");
         var receiver = Path.Combine(
             managed, "Mods", "HollowKnightVisionInputReceiver",
@@ -46,6 +52,39 @@ public static partial class HollowKnightGameLauncher
                 "Modded mode requires the matching Modding API loader and " +
                 "HollowKnightVisionInputReceiver. Choose that executable with --game-path.");
         }
+    }
+
+    public static string? FindCompatibleExecutable(
+        bool requireModded,
+        string? explicitPath = null,
+        IEnumerable<string>? additionalCandidates = null)
+    {
+        IEnumerable<string> candidates;
+        if (!string.IsNullOrWhiteSpace(explicitPath))
+        {
+            var full = Path.GetFullPath(explicitPath);
+            candidates = File.Exists(full) ? [full] : [];
+        }
+        else
+        {
+            candidates = (additionalCandidates ?? []).Concat(CandidateExecutables());
+        }
+        foreach (var candidate in candidates
+            .Where(File.Exists)
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                ValidateInstallation(candidate, requireModded);
+                return candidate;
+            }
+            catch (InvalidOperationException)
+            {
+                // This candidate belongs to the other mode or is incomplete.
+            }
+        }
+        return null;
     }
 
     public static Process Start(string? explicitPath = null)
@@ -93,6 +132,8 @@ public static partial class HollowKnightGameLauncher
 
     private static IEnumerable<string> CandidateExecutables()
     {
+        yield return @"D:\Games\Hollow Knight\hollow_knight.exe";
+        yield return @"D:\Modded\Hollow Knight\hollow_knight.exe";
         yield return @"D:\SteamLibrary\steamapps\common\Hollow Knight\hollow_knight.exe";
         yield return Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
@@ -101,15 +142,29 @@ public static partial class HollowKnightGameLauncher
         if (!OperatingSystem.IsWindows()) yield break;
         var steamPath = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam")
             ?.GetValue("SteamPath") as string;
-        if (string.IsNullOrWhiteSpace(steamPath)) yield break;
-        yield return Path.Combine(steamPath, RelativeGamePath);
-
-        var librariesPath = Path.Combine(steamPath, "steamapps", "libraryfolders.vdf");
-        if (!File.Exists(librariesPath)) yield break;
-        foreach (Match match in LibraryPathRegex().Matches(File.ReadAllText(librariesPath)))
+        if (!string.IsNullOrWhiteSpace(steamPath))
         {
-            var root = match.Groups[1].Value.Replace("\\\\", "\\");
-            if (!string.IsNullOrWhiteSpace(root)) yield return Path.Combine(root, RelativeGamePath);
+            yield return Path.Combine(steamPath, RelativeGamePath);
+            var librariesPath = Path.Combine(steamPath, "steamapps", "libraryfolders.vdf");
+            if (File.Exists(librariesPath))
+            {
+                foreach (Match match in LibraryPathRegex().Matches(File.ReadAllText(librariesPath)))
+                {
+                    var root = match.Groups[1].Value.Replace("\\\\", "\\");
+                    if (!string.IsNullOrWhiteSpace(root))
+                        yield return Path.Combine(root, RelativeGamePath);
+                }
+            }
+        }
+
+        foreach (var drive in DriveInfo.GetDrives().Where(drive => drive.IsReady))
+        {
+            yield return Path.Combine(drive.RootDirectory.FullName,
+                "Games", "Hollow Knight", "hollow_knight.exe");
+            yield return Path.Combine(drive.RootDirectory.FullName,
+                "Modded", "Hollow Knight", "hollow_knight.exe");
+            yield return Path.Combine(drive.RootDirectory.FullName,
+                "SteamLibrary", RelativeGamePath);
         }
     }
 

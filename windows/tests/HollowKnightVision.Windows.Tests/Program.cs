@@ -10,6 +10,7 @@ using HollowKnightVision.Windows.Host;
 var tests = new (string Name, Action Run)[]
 {
     ("ordinary launch always requires mode choice", TestRuntimeModeLaunchPolicy),
+    ("chooser enables only complete compatible installations", TestGameInstallationDiscovery),
     ("stencil contracts include all required menu screens", TestStencilContractCoverage),
     ("running game installation matches selected mode", TestGameInstallationMode),
     ("stencil reset preserves gameplay training data", TestStencilResetPreservesGameplay),
@@ -129,6 +130,7 @@ static void TestGameInstallationMode()
         File.WriteAllBytes(executable, []);
         var managed = Path.Combine(root, "hollow_knight_Data", "Managed");
         Directory.CreateDirectory(managed);
+        File.WriteAllBytes(Path.Combine(managed, "Assembly-CSharp.dll"), []);
 
         HollowKnightGameLauncher.ValidateInstallation(executable, requireModded: false);
         True(RejectsInstallation(executable, requireModded: true));
@@ -145,6 +147,33 @@ static void TestGameInstallationMode()
         File.WriteAllBytes(Path.Combine(managed, "MMHOOK_Assembly-CSharp.dll"), []);
         HollowKnightGameLauncher.ValidateInstallation(executable, requireModded: true);
         True(RejectsInstallation(executable, requireModded: false));
+    });
+}
+
+static void TestGameInstallationDiscovery()
+{
+    WithTemporaryDirectory(root => {
+        var executable = Path.Combine(root, "hollow_knight.exe");
+        File.WriteAllBytes(executable, []);
+        var managed = Path.Combine(root, "hollow_knight_Data", "Managed");
+        Directory.CreateDirectory(managed);
+
+        True(HollowKnightGameLauncher.FindCompatibleExecutable(false, executable) is null);
+        True(HollowKnightGameLauncher.FindCompatibleExecutable(true, executable) is null);
+
+        File.WriteAllBytes(Path.Combine(managed, "Assembly-CSharp.dll"), []);
+        Equal(executable, HollowKnightGameLauncher.FindCompatibleExecutable(false, executable)!);
+        True(HollowKnightGameLauncher.FindCompatibleExecutable(true, executable) is null);
+
+        var receiver = Path.Combine(
+            managed,
+            "Mods", "HollowKnightVisionInputReceiver",
+            "HollowKnightVisionInputReceiver.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(receiver)!);
+        File.WriteAllBytes(receiver, []);
+        File.WriteAllBytes(Path.Combine(managed, "MMHOOK_Assembly-CSharp.dll"), []);
+        True(HollowKnightGameLauncher.FindCompatibleExecutable(false, executable) is null);
+        Equal(executable, HollowKnightGameLauncher.FindCompatibleExecutable(true, executable)!);
     });
 }
 

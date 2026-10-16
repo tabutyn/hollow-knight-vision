@@ -58,14 +58,30 @@ struct HollowKnightVisionLaunchOptions: Equatable {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model: LiveCaptureModel
     private let automationControlEnabled: Bool
-    private let requestedGamePath: String?
+    private var requestedGamePath: String?
+    private let requestedGameMode: HollowKnightRuntimeMode?
+    private let availableInstallations: HollowKnightInstallationCatalog
     private let requiresGameModeChoice: Bool
     private var automationController: GameAutomationController?
     private var viewerPanel: NSWindow?
 
     override init() {
         let options = HollowKnightVisionLaunchOptions(arguments: CommandLine.arguments)
-        requestedGamePath = options.gamePath
+        let additionalCandidates = [
+            GameControlForwarder.hollowKnightApplication()?.bundleURL,
+            NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: "unity.Team Cherry.Hollow Knight"
+            ),
+        ].compactMap { $0 }
+        let installations = HollowKnightInstallationDiscovery.discover(
+            explicitPath: options.gamePath,
+            additionalCandidates: additionalCandidates
+        )
+        availableInstallations = installations
+        requestedGameMode = options.gameMode
+        requestedGamePath = options.gameMode.flatMap {
+            installations.installation(for: $0)?.path
+        }
         requiresGameModeChoice = HollowKnightRuntimeModeLaunchPolicy.requiresChoice(
             argumentMode: options.gameMode
         )
@@ -103,8 +119,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // behind the large dashboard window.
         NSApp.activate(ignoringOtherApps: true)
         if requiresGameModeChoice {
-            let gameMode = Self.chooseGameMode()
+            guard let gameMode = Self.chooseGameMode(
+                availableInstallations: availableInstallations
+            ) else {
+                NSApp.terminate(nil)
+                return
+            }
+            requestedGamePath = availableInstallations.installation(for: gameMode)?.path
             model.configureGameMode(gameMode)
+        } else if let requestedGameMode,
+                  requestedGamePath == nil {
+            Self.showMissingInstallation(for: requestedGameMode)
+            NSApp.terminate(nil)
+            return
         }
 
         showDashboard()
@@ -137,17 +164,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.makeKeyAndOrderFront(nil)
     }
 
-    private static func chooseGameMode() -> HollowKnightRuntimeMode {
+    private static func chooseGameMode(
+        availableInstallations: HollowKnightInstallationCatalog
+    ) -> HollowKnightRuntimeMode? {
         let alert = NSAlert()
         alert.messageText = visionText("Choose how to run Hollow Knight")
+        let normalStatus = availableInstallations.normal == nil
+            ? visionText("Installation not found")
+            : visionText("Installation available")
+        let moddedStatus = availableInstallations.modded == nil
+            ? visionText("Installation not found")
+            : visionText("Installation available")
         alert.informativeText = visionText("runtimeHelp")
+            + "\n\n\(visionText(HollowKnightRuntimeMode.normal.title)): \(normalStatus)"
+            + "\n\(visionText(HollowKnightRuntimeMode.modded.title)): \(moddedStatus)"
         alert.alertStyle = .informational
         alert.addButton(withTitle: visionText(HollowKnightRuntimeMode.normal.title))
         alert.addButton(withTitle: visionText(HollowKnightRuntimeMode.modded.title))
+        alert.addButton(withTitle: visionText("Quit"))
+        alert.buttons[0].isEnabled = availableInstallations.normal != nil
+        alert.buttons[1].isEnabled = availableInstallations.modded != nil
         alert.window.level = .modalPanel
         alert.window.center()
         alert.window.makeKeyAndOrderFront(nil)
-        return alert.runModal() == .alertSecondButtonReturn ? .modded : .normal
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return .normal
+        case .alertSecondButtonReturn: return .modded
+        default: return nil
+        }
+    }
+
+    private static func showMissingInstallation(for mode: HollowKnightRuntimeMode) {
+        let alert = NSAlert()
+        alert.messageText = visionText("Installation not found")
+        alert.informativeText = visionText(mode.title)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: visionText("Quit"))
+        alert.runModal()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -270,50 +270,41 @@ public partial class MainWindow : Window
         startupCancellation = cancellation;
         try
         {
-            string? explicitExecutable = null;
-            if (!string.IsNullOrWhiteSpace(gamePath))
-            {
-                explicitExecutable = HollowKnightGameLauncher.ResolveExecutable(gamePath);
-                HollowKnightGameLauncher.ValidateInstallation(
-                    explicitExecutable,
-                    requireModded: gameMode == GameRuntimeMode.Modded);
-            }
+            var selectedExecutable = HollowKnightGameLauncher.FindCompatibleExecutable(
+                    requireModded: gameMode == GameRuntimeMode.Modded,
+                    explicitPath: gamePath)
+                ?? throw new FileNotFoundException(
+                    $"A compatible {gameMode} Hollow Knight installation was not found.");
             var running = Process.GetProcessesByName("hollow_knight");
-            var runningExecutables = new List<string>();
+            var matchingGameIsRunning = false;
             try
             {
                 foreach (var process in running)
                 {
                     var executable = TryExecutablePath(process) ?? throw new InvalidOperationException(
                         "Vision could not verify whether the running Hollow Knight installation " +
-                        "matches the selected mode. Close it and launch the intended copy with --game-path.");
-                    HollowKnightGameLauncher.ValidateInstallation(
+                        "matches the selected mode.");
+                    if (string.Equals(
                         executable,
-                        requireModded: gameMode == GameRuntimeMode.Modded);
-                    runningExecutables.Add(executable);
-                }
-                if (explicitExecutable is not null && runningExecutables.Count > 0
-                    && !runningExecutables.Any(executable => string.Equals(
-                        executable,
-                        explicitExecutable,
-                        StringComparison.OrdinalIgnoreCase)))
-                {
-                    throw new InvalidOperationException(
-                        "A different Hollow Knight installation is already running. " +
-                        "Close it before launching the selected --game-path.");
+                        selectedExecutable,
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        matchingGameIsRunning = true;
+                    }
+                    else
+                    {
+                        await CloseRunningGameAsync(process, cancellation.Token);
+                    }
                 }
             }
             finally
             {
                 foreach (var process in running) process.Dispose();
             }
-            var window = HollowKnightWindowLocator.FindBest();
-            if (window is null)
+            var window = matchingGameIsRunning ? HollowKnightWindowLocator.FindBest() : null;
+            if (!matchingGameIsRunning)
             {
-                if (runningExecutables.Count == 0)
-                {
-                    _ = HollowKnightGameLauncher.Start(explicitExecutable ?? gamePath);
-                }
+                _ = HollowKnightGameLauncher.Start(selectedExecutable);
                 window = await WaitForGameWindowAsync(cancellation.Token);
             }
             cancellation.Token.ThrowIfCancellationRequested();
@@ -339,6 +330,29 @@ public partial class MainWindow : Window
         {
             if (ReferenceEquals(startupCancellation, cancellation)) startupCancellation = null;
             cancellation.Dispose();
+        }
+    }
+
+    private static async Task CloseRunningGameAsync(
+        Process process,
+        CancellationToken cancellationToken)
+    {
+        if (process.HasExited) return;
+        if (!process.CloseMainWindow())
+        {
+            throw new InvalidOperationException(
+                "The running Hollow Knight could not be closed. Close it and try again.");
+        }
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                "The running Hollow Knight did not close within 30 seconds.");
         }
     }
 

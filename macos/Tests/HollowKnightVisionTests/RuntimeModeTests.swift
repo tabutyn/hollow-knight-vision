@@ -80,6 +80,12 @@ final class RuntimeModeTests: XCTestCase {
         )
         defer { try? FileManager.default.removeItem(at: root) }
 
+        XCTAssertEqual(
+            HollowKnightInstallationPolicy.issue(gameURL: root, mode: .normal),
+            .notHollowKnightInstallation
+        )
+        let gameAssembly = managed.appendingPathComponent("Assembly-CSharp.dll")
+        XCTAssertTrue(FileManager.default.createFile(atPath: gameAssembly.path, contents: Data()))
         XCTAssertNil(HollowKnightInstallationPolicy.issue(gameURL: root, mode: .normal))
         XCTAssertEqual(
             HollowKnightInstallationPolicy.issue(gameURL: root, mode: .modded),
@@ -110,5 +116,49 @@ final class RuntimeModeTests: XCTestCase {
             HollowKnightInstallationPolicy.issue(gameURL: root, mode: .normal),
             .moddedGameInNormalMode
         )
+    }
+
+    func testDiscoveryOnlyEnablesCompleteCompatibleInstallations() throws {
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let normal = workspace.appendingPathComponent("Normal.app", isDirectory: true)
+        let modded = workspace.appendingPathComponent("Modded.app", isDirectory: true)
+        let shortcut = workspace.appendingPathComponent("Shortcut.app", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        for game in [normal, modded] {
+            let managed = game.appendingPathComponent(
+                "Contents/Resources/Data/Managed",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: managed, withIntermediateDirectories: true)
+            XCTAssertTrue(FileManager.default.createFile(
+                atPath: managed.appendingPathComponent("Assembly-CSharp.dll").path,
+                contents: Data()
+            ))
+        }
+        let moddedManaged = modded.appendingPathComponent(
+            "Contents/Resources/Data/Managed",
+            isDirectory: true
+        )
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: moddedManaged.appendingPathComponent("MMHOOK_Assembly-CSharp.dll").path,
+            contents: Data()
+        ))
+        let receiver = moddedManaged.appendingPathComponent(
+            "Mods/HollowKnightVisionInputReceiver/HollowKnightVisionInputReceiver.dll"
+        )
+        try FileManager.default.createDirectory(
+            at: receiver.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        XCTAssertTrue(FileManager.default.createFile(atPath: receiver.path, contents: Data()))
+        try FileManager.default.createDirectory(at: shortcut, withIntermediateDirectories: true)
+
+        let catalog = HollowKnightInstallationDiscovery.catalog(
+            candidateURLs: [shortcut, modded, normal]
+        )
+        XCTAssertEqual(catalog.normal, normal.standardizedFileURL)
+        XCTAssertEqual(catalog.modded, modded.standardizedFileURL)
     }
 }

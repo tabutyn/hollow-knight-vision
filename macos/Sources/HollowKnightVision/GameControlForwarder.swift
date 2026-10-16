@@ -263,7 +263,9 @@ final class GameControlForwarder {
 
     func start(gamePath: String? = nil) {
         guard !started else { return }
-        requestedGameURL = gamePath.map { Self.gameApplicationURL(path: $0) }
+        requestedGameURL = gamePath.map {
+            HollowKnightInstallationDiscovery.gameApplicationURL(path: $0)
+        }
         requestedGameMode = .modded
         started = true
         installEventMonitor()
@@ -277,7 +279,9 @@ final class GameControlForwarder {
     }
 
     func launchGameOnly(gamePath: String? = nil) {
-        requestedGameURL = gamePath.map { Self.gameApplicationURL(path: $0) }
+        requestedGameURL = gamePath.map {
+            HollowKnightInstallationDiscovery.gameApplicationURL(path: $0)
+        }
         requestedGameMode = .normal
         _ = ensureGameRunning()
     }
@@ -1325,15 +1329,15 @@ final class GameControlForwarder {
             }
         }
         if let running = Self.hollowKnightApplication() {
-            if let expected = requestedGameURL?.standardizedFileURL,
-               running.bundleURL?.standardizedFileURL != expected {
-                publishConnectionState(
-                    "A different Hollow Knight app is already running; close it before using --game-path"
-                )
-                return nil
-            }
-            if let issue = runningApplicationIssue(running) {
-                publishConnectionState(issue)
+            let expected = requestedGameURL?.standardizedFileURL
+            let runningURL = running.bundleURL?.standardizedFileURL
+            let issue = runningApplicationIssue(running)
+            if runningURL != expected || issue != nil {
+                guard let expected else {
+                    publishConnectionState(issue ?? "A different Hollow Knight app is running")
+                    return nil
+                }
+                switchGame(from: running, to: expected)
                 return nil
             }
             managedApplication = running
@@ -1342,23 +1346,7 @@ final class GameControlForwarder {
         guard !launchInFlight else { return nil }
         launchInFlight = true
         if let gameURL = requestedGameURL {
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = false
-            configuration.addsToRecentItems = false
-            NSWorkspace.shared.openApplication(
-                at: gameURL,
-                configuration: configuration
-            ) { [weak self] application, error in
-                DispatchQueue.main.async {
-                    self?.launchInFlight = false
-                    self?.managedApplication = application ?? Self.hollowKnightApplication()
-                    if let error {
-                        self?.publishConnectionState(
-                            "Hollow Knight launch failed: \(error.localizedDescription)"
-                        )
-                    }
-                }
-            }
+            launchApplication(at: gameURL)
             return nil
         }
         // Opening the app bundle directly can stop at Steam's library page
@@ -1390,13 +1378,59 @@ final class GameControlForwarder {
             .runningApplicationMessage
     }
 
-    private static func gameApplicationURL(path: String) -> URL {
-        var url = URL(fileURLWithPath: path).standardizedFileURL
-        let original = url
-        while url.pathExtension.lowercased() != "app", url.path != "/" {
-            url.deleteLastPathComponent()
+    private func switchGame(from running: NSRunningApplication, to gameURL: URL) {
+        guard !launchInFlight else { return }
+        launchInFlight = true
+        managedApplication = nil
+        _ = running.terminate()
+        waitForTermination(
+            of: running,
+            launch: gameURL,
+            deadline: ProcessInfo.processInfo.systemUptime + 30
+        )
+    }
+
+    private func waitForTermination(
+        of running: NSRunningApplication,
+        launch gameURL: URL,
+        deadline: TimeInterval
+    ) {
+        if running.isTerminated {
+            launchApplication(at: gameURL)
+            return
         }
-        return url.pathExtension.lowercased() == "app" ? url : original
+        guard ProcessInfo.processInfo.systemUptime < deadline else {
+            launchInFlight = false
+            publishConnectionState(visionText("Could not close the running Hollow Knight"))
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.waitForTermination(
+                of: running,
+                launch: gameURL,
+                deadline: deadline
+            )
+        }
+    }
+
+    private func launchApplication(at gameURL: URL) {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.addsToRecentItems = false
+        NSWorkspace.shared.openApplication(
+            at: gameURL,
+            configuration: configuration
+        ) { [weak self] application, error in
+            DispatchQueue.main.async {
+                self?.launchInFlight = false
+                self?.managedApplication = application ?? Self.hollowKnightApplication()
+                if let error {
+                    self?.publishConnectionState(
+                        "Hollow Knight launch failed: \(error.localizedDescription)"
+                    )
+                }
+            }
+        }
     }
 
     static func hollowKnightApplication() -> NSRunningApplication? {

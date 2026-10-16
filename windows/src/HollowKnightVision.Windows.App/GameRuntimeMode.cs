@@ -66,11 +66,11 @@ internal sealed class GameRuntimeModeWindow : Window
         return StencilGuidanceText.Text(language, key);
     }
 
-    internal GameRuntimeModeWindow()
+    internal GameRuntimeModeWindow(bool normalAvailable, bool moddedAvailable)
     {
         Title = "Hollow Knight Vision";
         Width = 480;
-        Height = 250;
+        Height = 310;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var panel = new StackPanel { Margin = new Thickness(24) };
@@ -89,9 +89,22 @@ internal sealed class GameRuntimeModeWindow : Window
             Margin = new Thickness(0, 0, 0, 20)
         });
         var buttons = new UniformGrid { Columns = 2 };
-        buttons.Children.Add(Choice("Normal Hollow Knight", GameRuntimeMode.Normal));
-        buttons.Children.Add(Choice("Modded Hollow Knight", GameRuntimeMode.Modded));
+        var normal = Choice("Normal Hollow Knight", GameRuntimeMode.Normal);
+        normal.IsEnabled = normalAvailable;
+        var modded = Choice("Modded Hollow Knight", GameRuntimeMode.Modded);
+        modded.IsEnabled = moddedAvailable;
+        buttons.Children.Add(normal);
+        buttons.Children.Add(modded);
         panel.Children.Add(buttons);
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"{Text("Normal Hollow Knight")}: "
+                + Text(normalAvailable ? "Installation available" : "Installation not found")
+                + $"\n{Text("Modded Hollow Knight")}: "
+                + Text(moddedAvailable ? "Installation available" : "Installation not found"),
+            Foreground = Brushes.Gray,
+            Margin = new Thickness(6, 10, 6, 0)
+        });
         Content = panel;
     }
 

@@ -83,9 +83,10 @@ launches, bypass the chooser and select a dedicated installation:
 ./HollowKnightVision.Windows.exe --game-mode modded --game-path 'D:\Modded\Hollow Knight\hollow_knight.exe'
 ```
 
-The desktop app verifies the executable behind an already-running window before
-capture. Normal rejects a process with the Modding API loader or Vision receiver;
-Modded requires both.
+The chooser disables a mode when Vision cannot find a complete compatible
+installation. Selecting an available mode gracefully closes a different running
+copy before launching the matching executable. Normal requires an unmodified
+installation; Modded requires both the Modding API loader and Vision receiver.
 
 The single bottom bar shows blue guidance for language-specific 640×360 menu labels. The gear opens settings. Reset Stencils and Factory Reset move data to
 `%LOCALAPPDATA%\HollowKnightVision Backups`; neither action edits the game,

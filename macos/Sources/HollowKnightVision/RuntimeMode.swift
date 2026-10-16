@@ -24,11 +24,14 @@ enum HollowKnightRuntimeModeLaunchPolicy {
 }
 
 enum HollowKnightInstallationIssue: Equatable {
+    case notHollowKnightInstallation
     case moddedGameInNormalMode
     case incompleteModdedGame
 
     var runningApplicationMessage: String {
         switch self {
+        case .notHollowKnightInstallation:
+            "The selected app is not a complete Hollow Knight installation."
         case .moddedGameInNormalMode:
             "Normal mode will not capture the running modded Hollow Knight. Close it and launch an unmodified copy, or restart Vision in Modded mode."
         case .incompleteModdedGame:
@@ -38,6 +41,8 @@ enum HollowKnightInstallationIssue: Equatable {
 
     var selectedPathMessage: String {
         switch self {
+        case .notHollowKnightInstallation:
+            "The selected --game-path is not a complete Hollow Knight installation"
         case .moddedGameInNormalMode:
             "Normal mode requires an unmodified Hollow Knight app at --game-path"
         case .incompleteModdedGame:
@@ -54,6 +59,10 @@ enum HollowKnightInstallationPolicy {
     ) -> HollowKnightInstallationIssue? {
         let managed = gameURL
             .appendingPathComponent("Contents/Resources/Data/Managed", isDirectory: true)
+        let gameAssembly = managed.appendingPathComponent("Assembly-CSharp.dll")
+        guard fileManager.fileExists(atPath: gameAssembly.path) else {
+            return .notHollowKnightInstallation
+        }
         let loader = managed.appendingPathComponent("MMHOOK_Assembly-CSharp.dll")
         let receiver = managed.appendingPathComponent(
             "Mods/HollowKnightVisionInputReceiver/HollowKnightVisionInputReceiver.dll"
@@ -65,6 +74,128 @@ enum HollowKnightInstallationPolicy {
             return hasLoader || hasReceiver ? .moddedGameInNormalMode : nil
         case .modded:
             return hasLoader && hasReceiver ? nil : .incompleteModdedGame
+        }
+    }
+}
+
+struct HollowKnightInstallationCatalog: Equatable {
+    let normal: URL?
+    let modded: URL?
+
+    func installation(for mode: HollowKnightRuntimeMode) -> URL? {
+        switch mode {
+        case .normal: normal
+        case .modded: modded
+        }
+    }
+}
+
+enum HollowKnightInstallationDiscovery {
+    static func discover(
+        explicitPath: String?,
+        additionalCandidates: [URL] = [],
+        fileManager: FileManager = .default
+    ) -> HollowKnightInstallationCatalog {
+        let candidates: [URL]
+        if let explicitPath {
+            candidates = [gameApplicationURL(path: explicitPath)]
+        } else {
+            candidates = additionalCandidates
+                + knownCandidates(fileManager: fileManager)
+                + spotlightCandidates()
+        }
+        return catalog(candidateURLs: candidates, fileManager: fileManager)
+    }
+
+    static func catalog(
+        candidateURLs: [URL],
+        fileManager: FileManager = .default
+    ) -> HollowKnightInstallationCatalog {
+        var normal: URL?
+        var modded: URL?
+        var seen = Set<String>()
+        for candidate in candidateURLs {
+            let url = gameApplicationURL(path: candidate.path).standardizedFileURL
+            guard seen.insert(url.path).inserted,
+                  fileManager.fileExists(atPath: url.path) else { continue }
+            if normal == nil,
+               HollowKnightInstallationPolicy.issue(
+                    gameURL: url,
+                    mode: .normal,
+                    fileManager: fileManager
+               ) == nil {
+                normal = url
+            }
+            if modded == nil,
+               HollowKnightInstallationPolicy.issue(
+                    gameURL: url,
+                    mode: .modded,
+                    fileManager: fileManager
+               ) == nil {
+                modded = url
+            }
+        }
+        return HollowKnightInstallationCatalog(normal: normal, modded: modded)
+    }
+
+    static func gameApplicationURL(path: String) -> URL {
+        var url = URL(fileURLWithPath: path).standardizedFileURL
+        let original = url
+        while url.pathExtension.lowercased() != "app", url.path != "/" {
+            url.deleteLastPathComponent()
+        }
+        return url.pathExtension.lowercased() == "app" ? url : original
+    }
+
+    private static func knownCandidates(fileManager: FileManager) -> [URL] {
+        let home = fileManager.homeDirectoryForCurrentUser
+        let user = NSUserName()
+        var urls = [
+            home.appendingPathComponent("Applications/Hollow Knight.app"),
+            URL(fileURLWithPath: "/Applications/Hollow Knight.app"),
+            home.appendingPathComponent(
+                "Library/Application Support/Steam/steamapps/common/Hollow Knight/hollow_knight.app"
+            ),
+        ]
+        for volume in fileManager.mountedVolumeURLs(
+            includingResourceValuesForKeys: nil,
+            options: [.skipHiddenVolumes]
+        ) ?? [] {
+            urls.append(volume.appendingPathComponent("Applications/Hollow Knight.app"))
+            urls.append(volume.appendingPathComponent(
+                "SteamLibrary/steamapps/common/Hollow Knight/hollow_knight.app"
+            ))
+            urls.append(volume.appendingPathComponent(
+                "Relocated/\(user)/Applications/Hollow Knight.app"
+            ))
+            urls.append(volume.appendingPathComponent(
+                "Relocated/\(user)/steam/steamapps/common/Hollow Knight/hollow_knight.app"
+            ))
+        }
+        return urls
+    }
+
+    private static func spotlightCandidates() -> [URL] {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
+        process.arguments = [
+            "(kMDItemFSName == 'hollow_knight.app'cd) || "
+                + "(kMDItemFSName == 'Hollow Knight.app'cd)",
+        ]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return [] }
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            guard let paths = String(data: data, encoding: .utf8) else { return [] }
+            return paths.split(separator: "\n").map {
+                URL(fileURLWithPath: String($0))
+            }
+        } catch {
+            return []
         }
     }
 }
