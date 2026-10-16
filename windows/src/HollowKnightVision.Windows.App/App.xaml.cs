@@ -11,8 +11,8 @@ public partial class App : Application
         try
         {
             var options = GameLaunchOptions.Parse(e.Args);
-            var mode = options.Mode ?? GameRuntimeModePreferences.Load();
-            if (mode is null)
+            var mode = options.Mode;
+            if (GameRuntimeModeLaunchPolicy.RequiresChoice(mode))
             {
                 var chooser = new GameRuntimeModeWindow();
                 if (chooser.ShowDialog() != true || chooser.Selection is null)
@@ -21,9 +21,10 @@ public partial class App : Application
                     return;
                 }
                 mode = chooser.Selection.Value;
-                GameRuntimeModePreferences.Save(mode.Value);
             }
-            var window = new MainWindow(mode.Value, options.GamePath);
+            var selectedMode = mode
+                ?? throw new InvalidOperationException("A Hollow Knight mode was not selected.");
+            var window = new MainWindow(selectedMode, options.GamePath);
             MainWindow = window;
             ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose;
             window.Show();

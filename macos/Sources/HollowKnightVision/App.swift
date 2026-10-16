@@ -65,12 +65,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     override init() {
         let options = HollowKnightVisionLaunchOptions(arguments: CommandLine.arguments)
-        let savedMode = HollowKnightRuntimeModePreferences().load()
         requestedGamePath = options.gamePath
-        requiresGameModeChoice = options.gameMode == nil && savedMode == nil
+        requiresGameModeChoice = HollowKnightRuntimeModeLaunchPolicy.requiresChoice(
+            argumentMode: options.gameMode
+        )
         model = LiveCaptureModel(
             autoNavigateToGameplay: options.autoNavigateToGameplay,
-            gameMode: options.gameMode ?? savedMode ?? .normal
+            gameMode: HollowKnightRuntimeModeLaunchPolicy.initialMode(
+                argumentMode: options.gameMode
+            )
         )
         automationControlEnabled = options.automationControlEnabled
         super.init()
@@ -95,13 +98,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.applicationIconImage = icon
         }
         NSApp.setActivationPolicy(.regular)
-        // Make first-run mode selection the first visible app UI. Showing the
+        // Make per-launch mode selection the first visible app UI. Showing the
         // dashboard first can leave its modal alert on another Space or hidden
         // behind the large dashboard window.
         NSApp.activate(ignoringOtherApps: true)
         if requiresGameModeChoice {
             let gameMode = Self.chooseGameMode()
-            HollowKnightRuntimeModePreferences().save(gameMode)
             model.configureGameMode(gameMode)
         }
 

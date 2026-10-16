@@ -54,30 +54,6 @@ internal sealed record GameLaunchOptions(GameRuntimeMode? Mode, string? GamePath
     }
 }
 
-internal static class GameRuntimeModePreferences
-{
-    private static string PathName => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "HollowKnightVision", "runtime-mode-v1.txt");
-
-    internal static GameRuntimeMode? Load()
-    {
-        if (!File.Exists(PathName)) return null;
-        return File.ReadAllText(PathName).Trim().ToLowerInvariant() switch
-        {
-            "normal" => GameRuntimeMode.Normal,
-            "modded" => GameRuntimeMode.Modded,
-            _ => null
-        };
-    }
-
-    internal static void Save(GameRuntimeMode mode)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(PathName)!);
-        File.WriteAllText(PathName, mode.ToString().ToLowerInvariant());
-    }
-}
-
 internal sealed class GameRuntimeModeWindow : Window
 {
     internal GameRuntimeMode? Selection { get; private set; }

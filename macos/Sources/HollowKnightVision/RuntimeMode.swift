@@ -4,14 +4,22 @@ enum HollowKnightRuntimeMode: String, Codable, CaseIterable, Identifiable {
     case normal
     case modded
 
-    static let defaultsKey = "HollowKnightVision.runtimeMode.v1"
-
     var id: Self { self }
     var title: String {
         switch self {
         case .normal: "Normal Hollow Knight"
         case .modded: "Modded Hollow Knight"
         }
+    }
+}
+
+enum HollowKnightRuntimeModeLaunchPolicy {
+    static func requiresChoice(argumentMode: HollowKnightRuntimeMode?) -> Bool {
+        argumentMode == nil
+    }
+
+    static func initialMode(argumentMode: HollowKnightRuntimeMode?) -> HollowKnightRuntimeMode {
+        argumentMode ?? .normal
     }
 }
 
@@ -141,26 +149,5 @@ enum HollowKnightGamePathParser {
         }
         guard values.count <= 1 else { throw HollowKnightGamePathArgumentError.repeated }
         return values.first
-    }
-}
-
-struct HollowKnightRuntimeModePreferences {
-    let defaults: UserDefaults
-
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-    }
-
-    func load() -> HollowKnightRuntimeMode? {
-        defaults.string(forKey: HollowKnightRuntimeMode.defaultsKey)
-            .flatMap(HollowKnightRuntimeMode.init(rawValue:))
-    }
-
-    func save(_ mode: HollowKnightRuntimeMode) {
-        defaults.set(mode.rawValue, forKey: HollowKnightRuntimeMode.defaultsKey)
-    }
-
-    func reset() {
-        defaults.removeObject(forKey: HollowKnightRuntimeMode.defaultsKey)
     }
 }

@@ -2,6 +2,14 @@ import XCTest
 @testable import HollowKnightVision
 
 final class RuntimeModeTests: XCTestCase {
+    func testOrdinaryLaunchAlwaysRequiresModeChoice() {
+        XCTAssertTrue(HollowKnightRuntimeModeLaunchPolicy.requiresChoice(argumentMode: nil))
+        XCTAssertFalse(HollowKnightRuntimeModeLaunchPolicy.requiresChoice(argumentMode: .normal))
+        XCTAssertFalse(HollowKnightRuntimeModeLaunchPolicy.requiresChoice(argumentMode: .modded))
+        XCTAssertEqual(HollowKnightRuntimeModeLaunchPolicy.initialMode(argumentMode: nil), .normal)
+        XCTAssertEqual(HollowKnightRuntimeModeLaunchPolicy.initialMode(argumentMode: .modded), .modded)
+    }
+
     func testGameModeArgumentAcceptsBothForms() throws {
         XCTAssertEqual(
             try HollowKnightRuntimeModeParser.parse(["Vision", "--game-mode", "normal"]),

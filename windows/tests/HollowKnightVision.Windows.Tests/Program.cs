@@ -9,6 +9,7 @@ using HollowKnightVision.Windows.Host;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("ordinary launch always requires mode choice", TestRuntimeModeLaunchPolicy),
     ("stencil contracts include all required menu screens", TestStencilContractCoverage),
     ("running game installation matches selected mode", TestGameInstallationMode),
     ("stencil reset preserves gameplay training data", TestStencilResetPreservesGameplay),
@@ -90,6 +91,13 @@ await TestReceiverClientLoopback();
 Console.WriteLine("PASS receiver client loopback");
 Console.WriteLine($"Windows core tests passed: {tests.Length + 1}");
 return;
+
+static void TestRuntimeModeLaunchPolicy()
+{
+    True(GameRuntimeModeLaunchPolicy.RequiresChoice(null));
+    True(!GameRuntimeModeLaunchPolicy.RequiresChoice(GameRuntimeMode.Normal));
+    True(!GameRuntimeModeLaunchPolicy.RequiresChoice(GameRuntimeMode.Modded));
+}
 
 static void TestStencilContractCoverage()
 {

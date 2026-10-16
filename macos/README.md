@@ -50,7 +50,7 @@ older running Vision process before the next launch. For an isolated installer
 test, set `HKV_INSTALL_APP_PATH` to an absolute temporary `.app` path.
 
 On first launch, grant **Privacy & Security → Screen & System Audio Recording**.
-The app first asks whether to use Normal or Modded Hollow Knight. Normal mode
+The app asks on every ordinary launch whether to use Normal or Modded Hollow Knight. Normal mode
 uses capture and visual tracking; Modded mode adds receiver input, Hacker, and
 Ops after the required capabilities connect. Agents can bypass the chooser:
 

@@ -71,8 +71,8 @@ The desktop lab contains five workspaces:
   Current/Fit/Free Fly framing, persistent ground and room editing, atlas
   reset, path recording/replay, and offline room-graph build/optimization.
 
-The first desktop launch asks for **Normal Hollow Knight** or **Modded Hollow
-Knight**. Normal keeps local menu recognition and visual Gameplay atlas building
+Every ordinary desktop launch asks for **Normal Hollow Knight** or **Modded
+Hollow Knight**. Normal keeps local menu recognition and visual Gameplay atlas building
 active without a receiver. Recognized menu frames are excluded from atlas and
 ground updates. Modded enables Hacker only after fresh ground-truth
 telemetry and Ops only after the player-ops capability arrives. For managed
