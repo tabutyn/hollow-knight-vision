@@ -156,8 +156,8 @@ struct PhysicalKeyReconciler {
 }
 
 /// Sends Vision's local keyboard state to the receiver inside Hollow Knight
-/// and normalized pointer events to the in-game receiver. It never activates
-/// the game, posts synthetic macOS input, or moves the system pointer.
+/// and normalized pointer events to the in-game receiver in Modded mode.
+/// Normal mode delegates keyboard input to the native macOS transport.
 final class GameControlForwarder {
     /// Capturing is immediate. Restoring may first load another Unity scene;
     /// the receiver deliberately allows that operation twelve seconds, so the
@@ -188,6 +188,7 @@ final class GameControlForwarder {
     private let physicalInputHandler: (RecordedGameButton, Bool, TimeInterval) -> Void
     private let groundTruthHandler: (ReceiverGroundTruthSample, TimeInterval) -> Void
     private let stateQueue = DispatchQueue(label: "com.ballroller.hollow-knight-vision.input-bridge", qos: .userInteractive)
+    private var nativeForwarder: NormalGameKeyForwarder?
     private var eventMonitor: Any?
     private var notificationObservers = [NSObjectProtocol]()
     private var inputSampler: DispatchSourceTimer?
@@ -283,10 +284,22 @@ final class GameControlForwarder {
             HollowKnightInstallationDiscovery.gameApplicationURL(path: $0)
         }
         requestedGameMode = .normal
+        nativeForwarder?.stop()
+        nativeForwarder = NormalGameKeyForwarder(
+            gameURL: requestedGameURL, activityHandler: activityHandler,
+            statusHandler: connectionStateHandler
+        )
+        nativeForwarder?.start()
         _ = ensureGameRunning()
     }
 
+    func prepareNativeInput() { nativeForwarder?.prepareForInput() }
+    func setNativeLabelingActive(_ active: Bool) { nativeForwarder?.setLabeling(active) }
+    func setNativeReviewActive(_ active: Bool) { nativeForwarder?.setReviewing(active) }
+
     func stop() {
+        nativeForwarder?.stop()
+        nativeForwarder = nil
         guard started else { return }
         started = false
         if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
@@ -328,6 +341,7 @@ final class GameControlForwarder {
     }
 
     func releaseForGroundLabeling() {
+        nativeForwarder?.releaseAll()
         stateQueue.async { [weak self] in self?.releaseAllLocked() }
     }
 
@@ -344,6 +358,7 @@ final class GameControlForwarder {
     }
 
     func setSettingsDialogActive(_ active: Bool) {
+        nativeForwarder?.setSettings(active)
         stateQueue.async { [weak self] in
             guard let self else { return }
             self.releaseAllLocked()

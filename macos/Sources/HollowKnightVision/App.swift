@@ -1,9 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The Vision window deliberately uses normal AppKit window ordering. Input is
-/// received while the user selects this window; it never needs to float above
-/// other applications or borrow focus from the game.
+/// Modded mode uses an ordinary window; its in-game receiver accepts input
+/// while Vision is the active application.
 final class VisionPanel: NSWindow {}
 
 struct HollowKnightVisionLaunchOptions: Equatable {
@@ -146,12 +145,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showDashboard() {
         let initialFrame = NSScreen.main?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 900, height: 720)
-        let panel = VisionPanel(
-            contentRect: initialFrame,
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
+        let style: NSWindow.StyleMask = [.titled, .closable, .resizable, .fullSizeContentView]
+        let panel: NSWindow
+        if model.gameMode == .normal {
+            let nativePanel = NormalVisionPanel(
+                contentRect: initialFrame, styleMask: style.union(.nonactivatingPanel),
+                backing: .buffered, defer: false
+            )
+            nativePanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            panel = nativePanel
+        } else {
+            panel = VisionPanel(contentRect: initialFrame, styleMask: style,
+                                backing: .buffered, defer: false)
+        }
         panel.title = "Hollow Knight Vision"
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
@@ -205,6 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         automationController?.stop()
+        model.stopGameControls()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

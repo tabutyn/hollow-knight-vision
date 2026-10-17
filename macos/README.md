@@ -51,7 +51,7 @@ test, set `HKV_INSTALL_APP_PATH` to an absolute temporary `.app` path.
 
 On first launch, grant **Privacy & Security → Screen & System Audio Recording**.
 The app asks on every ordinary launch whether to use Normal or Modded Hollow Knight. Normal mode
-uses capture and visual tracking; Modded mode adds receiver input, Hacker, and
+uses capture, visual tracking, and native keyboard forwarding; Modded mode adds receiver input, Hacker, and
 Ops after the required capabilities connect. Agents can bypass the chooser:
 
 ```bash
@@ -73,6 +73,20 @@ automated run:
 ```bash
 macos/run-live.sh --auto-navigate-gameplay
 ```
+
+Normal mode forwards arrows and common keyboard controls (A/D/Z/X/C, I,
+Return, Tab, Space, Escape) from the Vision window to the selected unmodified
+Hollow Knight process. macOS Accessibility permission is requested on the first
+forwarded key if needed. If an old build’s Accessibility approval is stale,
+remove Vision from that list and add the installed app again; the prompt links
+to the correct settings pane. Unity ignores background keyboard events, so Normal
+uses a nonactivating key panel: Vision receives the keys while the game remains
+the active application underneath. The panel stays above the game only while
+in use and returns to normal window level when you switch away. Held keys are
+released on focus loss, workspace changes, and exit. Labeling, stencil review,
+model review, and text fields keep their own keys; Settings retains arrow
+forwarding. L and S remain Vision’s labeling and stencil shortcuts. Modded
+mode keeps its receiver and ordinary window behavior.
 
 For local development runs that need repeatable game input without a human
 holding keys, enable the loopback automation channel explicitly and pulse a

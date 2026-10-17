@@ -448,7 +448,7 @@ struct DashboardView: View {
         _labelingSelectedClassID = State(initialValue: selection.classIdentifier)
     }
 
-    var body: some View {
+    private var dashboardContent: some View {
         VStack(spacing: 8) {
             canvas
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -467,6 +467,9 @@ struct DashboardView: View {
                 }
             )
             .frame(width: 0, height: 0)
+        }
+        .onChange(of: workspace) { _, value in
+            model.setNativeReviewActive(value != .gameplay)
         }
         .onChange(of: showingSettings) { _, active in model.setSettingsDialogActive(active) }
         .sheet(item: $recentFramesPresentation) { presentation in
@@ -498,6 +501,10 @@ struct DashboardView: View {
                 .accessibilityAddTraits(.isModal)
             }
         }
+    }
+
+    var body: some View {
+        dashboardContent
         .alert(initialization.text("resetTitle"), isPresented: $confirmsStencilReset) {
             Button(initialization.text("cancel"), role: .cancel) {}
             Button(initialization.text("reset"), role: .destructive, action: resetStencils)

@@ -526,7 +526,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         reloadActiveObjectModels()
         refreshAtlasSavedStates()
         if gameMode == .normal {
-            inputControlStatus = "Normal mode · use the game window for input"
+            inputControlStatus = visionText("nativeInputReady")
             applyLabelPauseState(.ready)
         }
     }
@@ -642,10 +642,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                     self.isCapturing = true
                     self.operationInFlight = false
                     self.status = "Live atlas · waiting for camera lock…"
-                    // Steam activates the game while launching it. Bring the
-                    // ordinary Vision window forward once when capture is
-                    // ready so menu review is visible. No floating level or
-                    // repeated raise timer is installed.
+                    // Bring Vision forward once capture is ready. Normal mode
+                    // keeps Unity active underneath its keyboard-owning panel;
+                    // Modded mode activates the ordinary Vision window.
                     self.positionWindows()
                 }
             } catch {
@@ -905,7 +904,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         latestGroundTruthCameraSample = nil
         groundTruthCameraStateLock.unlock()
         if mode == .normal {
-            inputControlStatus = "Normal mode · use the game window for input"
+            inputControlStatus = visionText("nativeInputReady")
             applyLabelPauseState(.ready)
         } else {
             inputControlStatus = "Modded mode · receiver connecting"
@@ -920,6 +919,10 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             gameControlForwarder.launchGameOnly(gamePath: gamePath)
         }
     }
+
+    func stopGameControls() { gameControlForwarder.stop() }
+
+    func setNativeReviewActive(_ active: Bool) { gameControlForwarder.setNativeReviewActive(active) }
 
     func startGameControls() {
         configureGameMode(.modded)
@@ -2252,6 +2255,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         let completedLabelSession = state == .ready
             && (labelPauseState == .paused || labelPauseState == .resuming)
         labelPauseState = state
+        gameControlForwarder.setNativeLabelingActive(state != .ready)
         switch state {
         case .pausing, .paused, .resuming:
             setObjectInferenceSuspended(true)
@@ -2281,7 +2285,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
         guard let viewer = NSApp.windows.first(where: {
-            $0 is VisionPanel && $0.isVisible
+            ($0 is VisionPanel || $0 is NormalVisionPanel) && $0.isVisible
         }) else { return }
         viewer.setFrame(
             visible,
@@ -2331,7 +2335,11 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             }
         }
         viewer.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if gameMode == .normal {
+            gameControlForwarder.prepareNativeInput()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     /// Unity exposes a tiny helper window before its gameplay window. Choose

@@ -286,7 +286,10 @@
     "enableTraining": "Label one gameplay object to enable training.",
     "fixLabels": "Fix or exempt {count} screenshots that fail labeling checks before training.",
     "deleteScreenshotsTitle": "Permanently delete {count} screenshots?",
-    "Applying latest player state…": "Applying player state…"
+    "Applying latest player state…": "Applying player state…",
+    "nativeInputReady": "Keyboard controls ready",
+    "nativeInputPermission": "Enable Hollow Knight Vision in System Settings → Privacy & Security → Accessibility. If already enabled, remove it from the list and add /Applications/Hollow Knight Vision.app again.",
+    "nativeInputPermissionTitle": "Keyboard controls need Accessibility access"
   },
   "es": {
     "nativeName": "Español",
@@ -575,7 +578,10 @@
     "enableTraining": "Etiqueta un objeto de la partida para habilitar el entrenamiento.",
     "fixLabels": "Corrige o exime {count} capturas que no cumplen las comprobaciones antes de entrenar.",
     "deleteScreenshotsTitle": "¿Eliminar permanentemente {count} capturas?",
-    "Applying latest player state…": "Aplicando estado del jugador…"
+    "Applying latest player state…": "Aplicando estado del jugador…",
+    "nativeInputReady": "Controles de teclado listos",
+    "nativeInputPermission": "Activa Hollow Knight Vision en Ajustes del Sistema → Privacidad y seguridad → Accesibilidad. Si ya está activado, elimínalo de la lista y vuelve a añadir /Applications/Hollow Knight Vision.app.",
+    "nativeInputPermissionTitle": "Los controles de teclado necesitan acceso de accesibilidad"
   },
   "fr": {
     "nativeName": "Français",
@@ -864,7 +870,10 @@
     "enableTraining": "Étiquetez un objet en jeu pour activer l’entraînement.",
     "fixLabels": "Corrigez ou exemptez {count} captures échouant aux vérifications avant l’entraînement.",
     "deleteScreenshotsTitle": "Supprimer définitivement {count} captures ?",
-    "Applying latest player state…": "Application de l’état du joueur…"
+    "Applying latest player state…": "Application de l’état du joueur…",
+    "nativeInputReady": "Commandes clavier prêtes",
+    "nativeInputPermission": "Activez Hollow Knight Vision dans Réglages Système → Confidentialité et sécurité → Accessibilité. Si l’app est déjà activée, retirez-la de la liste et ajoutez à nouveau /Applications/Hollow Knight Vision.app.",
+    "nativeInputPermissionTitle": "Les commandes clavier nécessitent l’accès à l’accessibilité"
   },
   "it": {
     "nativeName": "Italiano",
@@ -1153,7 +1162,10 @@
     "enableTraining": "Etichetta un oggetto di gioco per abilitare l’addestramento.",
     "fixLabels": "Correggi o esenta {count} schermate che non superano i controlli prima dell’addestramento.",
     "deleteScreenshotsTitle": "Eliminare definitivamente {count} schermate?",
-    "Applying latest player state…": "Applicazione stato del giocatore…"
+    "Applying latest player state…": "Applicazione stato del giocatore…",
+    "nativeInputReady": "Comandi da tastiera pronti",
+    "nativeInputPermission": "Abilita Hollow Knight Vision in Impostazioni di Sistema → Privacy e sicurezza → Accessibilità. Se è già abilitato, rimuovilo dall’elenco e aggiungi nuovamente /Applications/Hollow Knight Vision.app.",
+    "nativeInputPermissionTitle": "I comandi da tastiera richiedono l’accesso all’accessibilità"
   },
   "de": {
     "nativeName": "Deutsch",
@@ -1442,7 +1454,10 @@
     "enableTraining": "Beschrifte ein Spielobjekt, um das Training zu aktivieren.",
     "fixLabels": "Korrigiere {count} Screenshots mit Beschriftungsfehlern oder gewähre Ausnahmen vor dem Training.",
     "deleteScreenshotsTitle": "{count} Screenshots endgültig löschen?",
-    "Applying latest player state…": "Spielerstatus wird angewendet…"
+    "Applying latest player state…": "Spielerstatus wird angewendet…",
+    "nativeInputReady": "Tastatursteuerung bereit",
+    "nativeInputPermission": "Aktiviere Hollow Knight Vision unter Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen. Falls es bereits aktiviert ist, entferne es aus der Liste und füge /Applications/Hollow Knight Vision.app erneut hinzu.",
+    "nativeInputPermissionTitle": "Tastatursteuerung benötigt Zugriff auf Bedienungshilfen"
   },
   "pt-BR": {
     "nativeName": "Português (Brasil)",
@@ -1731,7 +1746,10 @@
     "enableTraining": "Rotule um objeto do jogo para habilitar o treinamento.",
     "fixLabels": "Corrija ou isente {count} capturas que falharam nas verificações antes de treinar.",
     "deleteScreenshotsTitle": "Excluir permanentemente {count} capturas?",
-    "Applying latest player state…": "Aplicando estado do jogador…"
+    "Applying latest player state…": "Aplicando estado do jogador…",
+    "nativeInputReady": "Controles do teclado prontos",
+    "nativeInputPermission": "Ative Hollow Knight Vision em Ajustes do Sistema → Privacidade e Segurança → Acessibilidade. Se já estiver ativado, remova-o da lista e adicione /Applications/Hollow Knight Vision.app novamente.",
+    "nativeInputPermissionTitle": "Os controles do teclado precisam de acesso à acessibilidade"
   },
   "ru": {
     "nativeName": "Русский",
@@ -2020,7 +2038,10 @@
     "enableTraining": "Разметьте игровой объект, чтобы включить обучение.",
     "fixLabels": "До обучения исправьте разметку или добавьте исключения для {count} снимков.",
     "deleteScreenshotsTitle": "Удалить {count} снимков навсегда?",
-    "Applying latest player state…": "Применение состояния игрока…"
+    "Applying latest player state…": "Применение состояния игрока…",
+    "nativeInputReady": "Управление с клавиатуры готово",
+    "nativeInputPermission": "Разрешите Hollow Knight Vision в Системные настройки → Конфиденциальность и безопасность → Универсальный доступ. Если разрешение уже включено, удалите приложение из списка и снова добавьте /Applications/Hollow Knight Vision.app.",
+    "nativeInputPermissionTitle": "Для управления с клавиатуры нужен доступ к универсальному доступу"
   },
   "ja": {
     "nativeName": "日本語",
@@ -2309,7 +2330,10 @@
     "enableTraining": "ゲーム内オブジェクトにラベルを付けると学習が有効になります。",
     "fixLabels": "学習前にチェックに失敗した{count}枚の画像を修正するか例外にしてください。",
     "deleteScreenshotsTitle": "{count}枚のスクリーンショットを完全に削除しますか？",
-    "Applying latest player state…": "プレイヤー状態を適用中…"
+    "Applying latest player state…": "プレイヤー状態を適用中…",
+    "nativeInputReady": "キーボード操作の準備完了",
+    "nativeInputPermission": "システム設定 → プライバシーとセキュリティ → アクセシビリティで Hollow Knight Vision を許可してください。すでに許可されている場合は、一覧から削除して /Applications/Hollow Knight Vision.app を追加し直してください。",
+    "nativeInputPermissionTitle": "キーボード操作にはアクセシビリティの許可が必要です"
   },
   "ko": {
     "nativeName": "한국어",
@@ -2598,7 +2622,10 @@
     "enableTraining": "게임 객체 하나에 라벨을 붙이면 학습이 활성화됩니다.",
     "fixLabels": "학습 전에 검사에 실패한 스크린샷 {count}개를 수정하거나 예외 처리하세요.",
     "deleteScreenshotsTitle": "스크린샷 {count}개를 영구 삭제할까요?",
-    "Applying latest player state…": "플레이어 상태 적용 중…"
+    "Applying latest player state…": "플레이어 상태 적용 중…",
+    "nativeInputReady": "키보드 조작 준비 완료",
+    "nativeInputPermission": "시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용에서 Hollow Knight Vision을 허용하세요. 이미 허용되어 있다면 목록에서 제거한 뒤 /Applications/Hollow Knight Vision.app을 다시 추가하세요.",
+    "nativeInputPermissionTitle": "키보드 조작에는 손쉬운 사용 권한이 필요합니다"
   },
   "zh-Hans": {
     "nativeName": "简体中文",
@@ -2887,7 +2914,10 @@
     "enableTraining": "标注一个游戏对象以启用训练。",
     "fixLabels": "训练前请修正未通过标注检查的 {count} 张截图，或将其设为例外。",
     "deleteScreenshotsTitle": "永久删除 {count} 张截图？",
-    "Applying latest player state…": "正在应用玩家状态…"
+    "Applying latest player state…": "正在应用玩家状态…",
+    "nativeInputReady": "键盘控制已就绪",
+    "nativeInputPermission": "请在系统设置 → 隐私与安全性 → 辅助功能中启用 Hollow Knight Vision。如果已经启用，请从列表中移除，然后重新添加 /Applications/Hollow Knight Vision.app。",
+    "nativeInputPermissionTitle": "键盘控制需要辅助功能权限"
   },
   "zh-Hant": {
     "nativeName": "繁體中文",
@@ -3176,6 +3206,9 @@
     "enableTraining": "標註一個遊戲物件以啟用訓練。",
     "fixLabels": "訓練前請修正未通過標註檢查的 {count} 張截圖，或將其設為例外。",
     "deleteScreenshotsTitle": "永久刪除 {count} 張截圖？",
-    "Applying latest player state…": "正在套用玩家狀態…"
+    "Applying latest player state…": "正在套用玩家狀態…",
+    "nativeInputReady": "鍵盤控制已就緒",
+    "nativeInputPermission": "請在系統設定 → 隱私權與安全性 → 輔助使用中啟用 Hollow Knight Vision。如果已經啟用，請從列表中移除，再重新加入 /Applications/Hollow Knight Vision.app。",
+    "nativeInputPermissionTitle": "鍵盤控制需要輔助使用權限"
   }
 }
