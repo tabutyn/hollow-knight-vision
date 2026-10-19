@@ -23,8 +23,10 @@ macos/build-app.sh
 
 It builds and signs the application, atomically replaces
 `/Applications/Hollow Knight Vision.app`, unregisters the disposable package
-copy, and refreshes an existing Dock pin. `macos/build-app.sh --package-only`
-is reserved for CI and artifact packaging.
+copy, and rebuilds one canonical Dock pin in its original position. Duplicate
+Vision pins and stale recent tiles are removed without changing other Dock
+items or settings. The package copy is deleted after a successful install.
+`macos/build-app.sh --package-only` is reserved for CI and artifact packaging.
 
 To build, install, and immediately launch the installed copy:
 
@@ -46,8 +48,12 @@ macos/install-app.sh --repair-dock
 
 The installer stages and verifies the new bundle before replacing the installed
 copy, registers only the canonical path with Launch Services, and terminates an
-older running Vision process before the next launch. For an isolated installer
-test, set `HKV_INSTALL_APP_PATH` to an absolute temporary `.app` path.
+older running Vision process before the next launch. If that process does not
+exit, installation stops before replacing the app. Dock refresh is mandatory
+and uses built-in macOS preferences, without requiring `dockutil`. For an isolated
+installer test, set `HKV_INSTALL_APP_PATH` to an absolute temporary `.app` path.
+Run `python3 macos/test-refresh-dock.py` for Dock regression tests; preference
+writes in these tests target temporary plist files, never the live Dock.
 
 On first launch, grant **Privacy & Security → Screen & System Audio Recording**.
 The app asks on every ordinary launch whether to use Normal or Modded Hollow Knight. Normal mode

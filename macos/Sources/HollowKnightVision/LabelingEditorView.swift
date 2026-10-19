@@ -513,7 +513,7 @@ struct LabelingObjectSelectionControls: View {
                     Text(visionText(item.rawValue)).tag(item)
                 }
             }
-            .frame(width: 175)
+            .frame(width: 145)
             .labelsHidden()
             .pickerStyle(.menu)
 
@@ -525,8 +525,7 @@ struct LabelingObjectSelectionControls: View {
                         Text(visionText(item.name)).tag(item.id)
                     }
                 }
-                .frame(minWidth: 280, idealWidth: 340)
-                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: 190, idealWidth: 240, maxWidth: 280)
                 .labelsHidden()
                 .pickerStyle(.menu)
             }
@@ -1101,24 +1100,20 @@ struct LabelingEditorView: View {
     }
 
     private var editorControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                LabelingObjectSelectionControls(
-                    context: $context, selectedClassID: $selectedClassID,
-                    rectangles: draft.rectangles, mode: gameMode,
-                    hidesCompleted: editorMode == .add, includesDeferredLabels: includesDeferredLabels
-                )
-                Spacer(minLength: 0)
-            }
-            HStack {
-                StableSegmentedPicker(
-                    label: "Editing mode", choices: LabelingEditorMode.available(in: context),
-                    title: { visionText($0.rawValue) }, selection: $editorMode
-                ).frame(minWidth: 290, idealWidth: 360, maxWidth: 440)
-                Spacer(minLength: 8)
-                Button(visionText("Recent Frames"), action: onShowRecentFrames)
-                    .keyboardShortcut("r", modifiers: [])
-            }
+        HStack(spacing: 8) {
+            LabelingObjectSelectionControls(
+                context: $context, selectedClassID: $selectedClassID,
+                rectangles: draft.rectangles, mode: gameMode,
+                hidesCompleted: editorMode == .add, includesDeferredLabels: includesDeferredLabels
+            )
+            StableSegmentedPicker(
+                label: "Editing mode", choices: LabelingEditorMode.available(in: context),
+                title: { visionText($0.rawValue) }, selection: $editorMode
+            )
+            .frame(minWidth: 240, idealWidth: 290, maxWidth: 340)
+            Spacer(minLength: 0)
+            Button(visionText("Recent Frames"), action: onShowRecentFrames)
+                .keyboardShortcut("r", modifiers: [])
         }
         .font(.caption)
         .padding(.horizontal, 12)

@@ -642,9 +642,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                     self.isCapturing = true
                     self.operationInFlight = false
                     self.status = "Live atlas · waiting for camera lock…"
-                    // Bring Vision forward once capture is ready. Normal mode
-                    // keeps Unity active underneath its keyboard-owning panel;
-                    // Modded mode activates the ordinary Vision window.
+                    // Position the game once capture is ready. Vision keeps its
+                    // compact centered frame while the game fills the screen.
                     self.positionWindows()
                 }
             } catch {
@@ -2287,11 +2286,6 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         guard let viewer = NSApp.windows.first(where: {
             ($0 is VisionPanel || $0 is NormalVisionPanel) && $0.isVisible
         }) else { return }
-        viewer.setFrame(
-            visible,
-            display: true,
-            animate: false
-        )
         tileGameWindow(
             frame: CGRect(
                 x: visible.minX,

@@ -5,8 +5,6 @@ script_dir=${0:A:h}
 source_app="$script_dir/build/Hollow Knight Vision.app"
 canonical_app="/Applications/Hollow Knight Vision.app"
 install_app=${HKV_INSTALL_APP_PATH:-"$canonical_app"}
-bundle_id="com.ballroller.hollow-knight-vision"
-dock_label="Hollow Knight Vision"
 build_first=true
 repair_dock=false
 
@@ -15,10 +13,10 @@ usage() {
 Usage: install-app.sh [--no-build] [--repair-dock]
 
 Builds and installs Hollow Knight Vision at its stable application path.
-Refreshes an existing Dock shortcut when dockutil is available.
+Refreshes and deduplicates Vision Dock entries using macOS preferences.
 
-  --no-build      Install the already packaged build/Hollow Knight Vision.app.
-  --repair-dock   Replace any pinned copy with the stable installed app.
+  --no-build      Install and consume the already packaged application.
+  --repair-dock   Also pin the installed app if it is not already pinned.
 
 Set HKV_INSTALL_APP_PATH to exercise the installer outside /Applications.
 EOF
@@ -90,13 +88,18 @@ trap cleanup EXIT
 # A normal update must not leave an older process owning the Dock icon. SIGTERM
 # gives the app its ordinary termination path before the canonical bundle moves.
 if [[ "$install_app" == "$canonical_app" ]] \
-    && /usr/bin/killall -TERM HollowKnightVision 2>/dev/null; then
+    && /usr/bin/killall -0 HollowKnightVision 2>/dev/null; then
+  /usr/bin/killall -TERM HollowKnightVision
   for _ in {1..50}; do
     if ! /usr/bin/killall -0 HollowKnightVision 2>/dev/null; then
       break
     fi
     sleep 0.1
   done
+  if /usr/bin/killall -0 HollowKnightVision 2>/dev/null; then
+    print -u2 "Vision is still running; installation stopped before replacing the app."
+    exit 75
+  fi
 fi
 
 if [[ -e "$install_app" ]]; then
@@ -120,46 +123,17 @@ if [[ -e "$previous_app" ]]; then
   /bin/rm -rf -- "$previous_app"
 fi
 
-# Replacing the bundle also makes a pinned tile's file bookmark stale. Refresh
-# existing pins automatically; only --repair-dock adds an unpinned application.
-refresh_existing_dock_entry=false
-dock_replace_target="$dock_label"
-if [[ "$install_app" == "$canonical_app" ]] && command -v dockutil >/dev/null 2>&1; then
-  while IFS=$'\t' read -r item_label _item_url section _plist item_bundle_id; do
-    if [[ "$section" == "persistentApps" \
-          && ( "$item_label" == "$dock_label" || "$item_bundle_id" == "$bundle_id" ) ]]; then
-      refresh_existing_dock_entry=true
-      dock_replace_target="$item_label"
-      break
-    fi
-  done < <(dockutil --list)
-fi
-
-if $repair_dock || $refresh_existing_dock_entry; then
-  if ! command -v dockutil >/dev/null 2>&1; then
-    print -u2 "dockutil is required only for --repair-dock. The app was installed successfully."
-    exit 69
+# Recreate all Vision pins against the new bundle, remove stale recent tiles,
+# and refresh the Dock. Failure must fail installation, never silently skip it.
+if [[ "$install_app" == "$canonical_app" ]]; then
+  dock_arguments=()
+  if $repair_dock; then
+    dock_arguments+=(--pin)
   fi
-  # Replace the exact label discovered by bundle identifier. Some dockutil
-  # versions advertise bundle-ID replacement but only honor the tile label.
-  dockutil --add "$install_app" --replacing "$dock_replace_target"
-
-  persistent_matches=0
-  canonical_matches=0
-  while IFS=$'\t' read -r item_label item_url section _plist item_bundle_id; do
-    if [[ "$section" == "persistentApps" \
-          && ( "$item_label" == "$dock_label" || "$item_bundle_id" == "$bundle_id" ) ]]; then
-      (( persistent_matches += 1 ))
-      if [[ "$item_url" == "$canonical_app" \
-            || "$item_url" == "file:///Applications/Hollow%20Knight%20Vision.app/" ]]; then
-        (( canonical_matches += 1 ))
-      fi
-    fi
-  done < <(dockutil --list)
-  if (( persistent_matches != 1 || canonical_matches != 1 )); then
-    print -u2 "Dock repair did not produce one canonical $dock_label entry."
-    exit 70
-  fi
+  python3 "$script_dir/refresh-dock.py" "${dock_arguments[@]}"
+  # A normal build leaves one launchable bundle. --package-only still retains
+  # its artifact because it never invokes this installer.
+  /bin/rm -rf -- "$source_app"
 fi
 
 print "Installed $install_app"

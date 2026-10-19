@@ -5,6 +5,50 @@ import SwiftUI
 /// while Vision is the active application.
 final class VisionPanel: NSWindow {}
 
+private struct GameModeChooserView: View {
+    let icon: NSImage
+    let normalAvailable: Bool
+    let moddedAvailable: Bool
+    let choose: (NSApplication.ModalResponse) -> Void
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 156, height: 156)
+
+            HStack(spacing: 10) {
+                Button(visionText(HollowKnightRuntimeMode.normal.title)) {
+                    choose(.alertFirstButtonReturn)
+                }
+                .disabled(!normalAvailable)
+                .accessibilityLabel(visionText(HollowKnightRuntimeMode.normal.title))
+
+                Button(visionText(HollowKnightRuntimeMode.modded.title)) {
+                    choose(.alertSecondButtonReturn)
+                }
+                .disabled(!moddedAvailable)
+                .accessibilityLabel(visionText(HollowKnightRuntimeMode.modded.title))
+
+                Button(visionText("Quit")) {
+                    choose(.abort)
+                }
+                .keyboardShortcut(.cancelAction)
+                .accessibilityLabel(visionText("Quit"))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.horizontal, 30)
+        .padding(.vertical, 26)
+        .frame(minWidth: 500, minHeight: 270)
+        .background(.regularMaterial)
+    }
+}
+
 struct HollowKnightVisionLaunchOptions: Equatable {
     static let autoNavigateFlag = "--auto-navigate-gameplay"
     static let automationControlFlag = "--enable-automation-control"
@@ -54,7 +98,7 @@ struct HollowKnightVisionLaunchOptions: Equatable {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let model: LiveCaptureModel
     private let automationControlEnabled: Bool
     private var requestedGamePath: String?
@@ -143,8 +187,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showDashboard() {
-        let initialFrame = NSScreen.main?.visibleFrame
-            ?? CGRect(x: 0, y: 0, width: 900, height: 720)
+        let visibleFrame = NSScreen.main?.visibleFrame
+            ?? CGRect(x: 0, y: 0, width: 1_200, height: 800)
+        let windowSize = CGSize(
+            width: min(980, visibleFrame.width),
+            height: min(640, visibleFrame.height)
+        )
+        let initialFrame = CGRect(
+            x: visibleFrame.midX - windowSize.width / 2,
+            y: visibleFrame.midY - windowSize.height / 2,
+            width: windowSize.width,
+            height: windowSize.height
+        )
         let style: NSWindow.StyleMask = [.titled, .closable, .resizable, .fullSizeContentView]
         let panel: NSWindow
         if model.gameMode == .normal {
@@ -166,6 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.contentMinSize = CGSize(width: 720, height: 560)
         panel.contentView = NSHostingView(rootView: DashboardView(model: model))
         panel.acceptsMouseMovedEvents = true
+        panel.delegate = self
         viewerPanel = panel
         panel.makeKeyAndOrderFront(nil)
     }
@@ -173,27 +228,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static func chooseGameMode(
         availableInstallations: HollowKnightInstallationCatalog
     ) -> HollowKnightRuntimeMode? {
-        let alert = NSAlert()
-        alert.messageText = visionText("Choose how to run Hollow Knight")
-        let normalStatus = availableInstallations.normal == nil
-            ? visionText("Installation not found")
-            : visionText("Installation available")
-        let moddedStatus = availableInstallations.modded == nil
-            ? visionText("Installation not found")
-            : visionText("Installation available")
-        alert.informativeText = visionText("runtimeHelp")
-            + "\n\n\(visionText(HollowKnightRuntimeMode.normal.title)): \(normalStatus)"
-            + "\n\(visionText(HollowKnightRuntimeMode.modded.title)): \(moddedStatus)"
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: visionText(HollowKnightRuntimeMode.normal.title))
-        alert.addButton(withTitle: visionText(HollowKnightRuntimeMode.modded.title))
-        alert.addButton(withTitle: visionText("Quit"))
-        alert.buttons[0].isEnabled = availableInstallations.normal != nil
-        alert.buttons[1].isEnabled = availableInstallations.modded != nil
-        alert.window.level = .modalPanel
-        alert.window.center()
-        alert.window.makeKeyAndOrderFront(nil)
-        switch alert.runModal() {
+        let panel = NSPanel(
+            contentRect: CGRect(x: 0, y: 0, width: 500, height: 270),
+            styleMask: [.titled, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.isMovableByWindowBackground = true
+        panel.isReleasedWhenClosed = false
+        panel.level = .modalPanel
+        panel.contentView = NSHostingView(rootView: GameModeChooserView(
+            icon: NSApp.applicationIconImage,
+            normalAvailable: availableInstallations.normal != nil,
+            moddedAvailable: availableInstallations.modded != nil,
+            choose: { NSApp.stopModal(withCode: $0) }
+        ))
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+        let response = NSApp.runModal(for: panel)
+        panel.orderOut(nil)
+        switch response {
         case .alertFirstButtonReturn: return .normal
         case .alertSecondButtonReturn: return .modded
         default: return nil
@@ -214,7 +270,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.stopGameControls()
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    // AppKit excludes panels from its last-window check. Closing the mode
+    // chooser would otherwise schedule a quit despite the Normal dashboard.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window === viewerPanel else { return }
+        // Only the dashboard owns app lifetime; alerts and auxiliary windows
+        // can close without terminating the game-launch/capture sequence.
+        DispatchQueue.main.async { NSApp.terminate(nil) }
+    }
 }
 
 private func gameAutomationDarwinCallback(
