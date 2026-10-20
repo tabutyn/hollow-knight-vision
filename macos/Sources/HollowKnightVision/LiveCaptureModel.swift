@@ -22,6 +22,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
 
     @Published private(set) var isCapturing = false
     @Published private(set) var status = "Ready."
+    @Published private(set) var gameLostCountdown: Int?
     @Published private(set) var inputControlStatus = "Controls unavailable"
     @Published private(set) var gameMode: HollowKnightRuntimeMode
     @Published private(set) var receiverCapabilities = Set<String>()
@@ -357,6 +358,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     private var gameplayMenuEvidenceGate = GameplayMenuEvidenceGate()
     private var quitGameExitWatchGeneration: UInt64 = 0
     private var quitGameExitApplication: NSRunningApplication?
+    private var quitGameExitDiscoveryPending = false
+    private var expectedGameApplicationURL: URL?
     private var quitGameExitConfirmationObserved = false
     private var quitGameExitDeadline: TimeInterval?
     private var quitGameExitObserver: NSObjectProtocol?
@@ -912,11 +915,16 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func startGame(gamePath: String? = nil) {
+        expectedGameApplicationURL = gamePath.map {
+            HollowKnightInstallationDiscovery.gameApplicationURL(path: $0)
+                .standardizedFileURL
+        }
         if gameMode == .modded {
             gameControlForwarder.start(gamePath: gamePath)
         } else {
             gameControlForwarder.launchGameOnly(gamePath: gamePath)
         }
+        armQuitGameExitWatch()
     }
 
     func stopGameControls() { gameControlForwarder.stop() }
@@ -1741,24 +1749,47 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         confirmQuitGameExitWatch()
     }
 
-    /// Arm as soon as the trained screen state recognizes Quit Game / Yes.
-    /// This precedes the click or key event, so a fast Unity shutdown cannot
-    /// race the local input callback. Vision still closes only after the exact
-    /// Hollow Knight process observed here terminates.
+    /// Watch the exact selected installation from launch onward. Quit-screen
+    /// input still confirms intent, but manual closes follow the same path.
     private func armQuitGameExitWatch() {
-        guard quitGameExitApplication == nil,
-              let application = GameControlForwarder.hollowKnightApplication()
-        else { return }
-        quitGameExitApplication = application
-        quitGameExitConfirmationObserved = false
-        quitGameExitDeadline = nil
+        guard gameLostCountdown == nil,
+              quitGameExitApplication == nil,
+              !quitGameExitDiscoveryPending else { return }
+        quitGameExitDiscoveryPending = true
         quitGameExitWatchGeneration &+= 1
-        quitGameExitLog.notice(
-            "armed pid=\(application.processIdentifier, privacy: .public)"
-        )
-        pollForConfirmedGameExit(
-            generation: quitGameExitWatchGeneration
-        )
+        discoverGameApplication(generation: quitGameExitWatchGeneration)
+    }
+
+    private func discoverGameApplication(generation: UInt64) {
+        guard generation == quitGameExitWatchGeneration,
+              gameLostCountdown == nil,
+              quitGameExitApplication == nil else { return }
+        if let application = GameControlForwarder.hollowKnightApplication(),
+           gameApplicationMatchesSelection(application) {
+            quitGameExitDiscoveryPending = false
+            quitGameExitApplication = application
+            quitGameExitConfirmationObserved = false
+            quitGameExitDeadline = nil
+            quitGameExitLog.notice(
+                "armed pid=\(application.processIdentifier, privacy: .public)"
+            )
+            pollForConfirmedGameExit(generation: generation)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.discoverGameApplication(generation: generation)
+        }
+    }
+
+    private func gameApplicationMatchesSelection(
+        _ application: NSRunningApplication
+    ) -> Bool {
+        guard !application.isTerminated,
+              let gameURL = application.bundleURL?.standardizedFileURL else { return false }
+        if let expectedGameApplicationURL {
+            return gameURL == expectedGameApplicationURL
+        }
+        return HollowKnightInstallationPolicy.issue(gameURL: gameURL, mode: gameMode) == nil
     }
 
     private func confirmQuitGameExitWatch() {
@@ -1775,24 +1806,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         quitGameExitLog.notice("confirmation observed")
     }
 
-    private func cancelQuitGameExitWatch() {
-        guard quitGameExitApplication != nil else { return }
-        quitGameExitWatchGeneration &+= 1
-        quitGameExitApplication = nil
-        quitGameExitConfirmationObserved = false
-        quitGameExitDeadline = nil
-        quitGameExitLog.notice("cancelled before confirmation")
-    }
-
     private func updateQuitGameExitWatch(for status: LiveGameStatus?) {
-        if QuitGameTerminationPolicy.recognizesExitIntent(
-            context: status?.context,
-            selectedOption: status?.selectedMenuOption
-        ) {
-            armQuitGameExitWatch()
-        } else if status != nil, !quitGameExitConfirmationObserved {
-            cancelQuitGameExitWatch()
-        }
+        armQuitGameExitWatch()
     }
 
     private func handleTerminatedApplication(_ notification: Notification) {
@@ -1804,7 +1819,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         quitGameExitLog.notice(
             "confirmed termination pid=\(terminated.processIdentifier, privacy: .public)"
         )
-        NSApp.terminate(nil)
+        beginGameLostCountdown()
     }
 
     private func pollForConfirmedGameExit(generation: UInt64) {
@@ -1817,17 +1832,41 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             quitGameExitLog.notice(
                 "confirmed termination by poll pid=\(application.processIdentifier, privacy: .public)"
             )
-            NSApp.terminate(nil)
+            beginGameLostCountdown()
             return
         }
         if let deadline = quitGameExitDeadline,
            ProcessInfo.processInfo.systemUptime >= deadline {
             quitGameExitLog.error("confirmation timed out while game remained running")
-            cancelQuitGameExitWatch()
-            return
+            quitGameExitConfirmationObserved = false
+            quitGameExitDeadline = nil
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             self?.pollForConfirmedGameExit(generation: generation)
+        }
+    }
+
+    private func beginGameLostCountdown() {
+        guard gameLostCountdown == nil else { return }
+        quitGameExitWatchGeneration &+= 1
+        quitGameExitDiscoveryPending = false
+        wantsCapture = false
+        gameControlForwarder.stop()
+        stopCapture()
+        publishGameLostCountdown(GameLossCountdown.initialSeconds)
+    }
+
+    private func publishGameLostCountdown(_ remainingSeconds: Int) {
+        gameLostCountdown = remainingSeconds
+        let delay = remainingSeconds == 0 ? 0.5 : 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self,
+                  self.gameLostCountdown == remainingSeconds else { return }
+            if remainingSeconds == 0 {
+                NSApp.terminate(nil)
+            } else {
+                self.publishGameLostCountdown(remainingSeconds - 1)
+            }
         }
     }
 

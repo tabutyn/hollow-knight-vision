@@ -10,6 +10,9 @@ using HollowKnightVision.Windows.Host;
 var tests = new (string Name, Action Run)[]
 {
     ("ordinary launch always requires mode choice", TestRuntimeModeLaunchPolicy),
+    ("gameplay output waits for fresh game capture", TestGameplayOutputGate),
+    ("menu framing ignores atlas coordinates", TestGameplayFrameCoordinatePolicy),
+    ("game loss countdown uses requested message", TestGameLossCountdown),
     ("chooser enables only complete compatible installations", TestGameInstallationDiscovery),
     ("stencil contracts include all required menu screens", TestStencilContractCoverage),
     ("running game installation matches selected mode", TestGameInstallationMode),
@@ -98,6 +101,34 @@ static void TestRuntimeModeLaunchPolicy()
     True(GameRuntimeModeLaunchPolicy.RequiresChoice(null));
     True(!GameRuntimeModeLaunchPolicy.RequiresChoice(GameRuntimeMode.Normal));
     True(!GameRuntimeModeLaunchPolicy.RequiresChoice(GameRuntimeMode.Modded));
+}
+
+static void TestGameplayOutputGate()
+{
+    True(!GameplayOutputGate.CanShowRestoredAtlas(
+        hasFreshGameFrame: false,
+        explicitlyRequested: false));
+    True(GameplayOutputGate.CanShowRestoredAtlas(
+        hasFreshGameFrame: true,
+        explicitlyRequested: false));
+    True(GameplayOutputGate.CanShowRestoredAtlas(
+        hasFreshGameFrame: false,
+        explicitlyRequested: true));
+}
+
+static void TestGameplayFrameCoordinatePolicy()
+{
+    True(!GameplayOutputGate.UsesAtlasCoordinates(null));
+    True(!GameplayOutputGate.UsesAtlasCoordinates("main-title"));
+    True(!GameplayOutputGate.UsesAtlasCoordinates("select-profile"));
+    True(GameplayOutputGate.UsesAtlasCoordinates("game"));
+}
+
+static void TestGameLossCountdown()
+{
+    Equal(5, GameLossCountdown.InitialSeconds);
+    Equal("Hollow Knight lost. Closing app in 5 seconds", GameLossCountdown.Message(5));
+    Equal("Hollow Knight lost. Closing app in 0 seconds", GameLossCountdown.Message(0));
 }
 
 static void TestStencilContractCoverage()

@@ -38,4 +38,16 @@ final class LiveSessionPolicyTests: XCTestCase {
             isCapturing: true
         ))
     }
+
+    func testGameLossCountdownUsesRequestedMessage() {
+        XCTAssertEqual(GameLossCountdown.initialSeconds, 5)
+        XCTAssertEqual(
+            GameLossCountdown.message(remainingSeconds: 5),
+            "Hollow Knight lost. Closing app in 5 seconds"
+        )
+        XCTAssertEqual(
+            GameLossCountdown.message(remainingSeconds: 0),
+            "Hollow Knight lost. Closing app in 0 seconds"
+        )
+    }
 }

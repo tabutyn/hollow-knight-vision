@@ -9,6 +9,7 @@
     <DisableRarCache>true</DisableRarCache>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="Resources\HollowKnightVision.ico" />
     <Content Include="../../../macos/Sources/HollowKnightVision/Resources/stencil-guidance.json">
       <Link>stencil-guidance.json</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

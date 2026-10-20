@@ -33,6 +33,8 @@ public partial class MainWindow : Window
     private Rectangle? dragPreview;
     private CancellationTokenSource? visionCancellation;
     private CancellationTokenSource? startupCancellation;
+    private CancellationTokenSource? gameLostCountdownCancellation;
+    private Process? monitoredGameProcess;
     private readonly WindowsGameControlForwarder gameControls = new();
     private readonly DispatcherTimer inputHeartbeat;
     private readonly HashSet<Key> forwardedKeys = [];
@@ -67,6 +69,8 @@ public partial class MainWindow : Window
     private string hackerInteractionMode = "Fit";
     private bool pointerWithinLiveFrame;
     private bool passingPrimaryMouse;
+    private bool hasFreshGameFrame;
+    private bool gameLostCountdownStarted;
     private bool isClosing;
     private bool windowZoomed = true;
     private Rect restoredWindowBounds;
@@ -108,6 +112,10 @@ public partial class MainWindow : Window
         ReceiverGroundTruthSample? ReceiverTelemetry,
         string? MenuContext,
         LowResolutionTranslationDiagnostic? Motion);
+
+    private sealed class GameWindowLostException : Exception
+    {
+    }
 
     private static readonly ClassChoice[] GameplayClassChoices =
     [
@@ -233,7 +241,9 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         isClosing = true;
+        gameLostCountdownCancellation?.Cancel();
         startupCancellation?.Cancel();
+        StopMonitoringGameProcess();
         inputHeartbeat.Stop();
         ReleaseForwardedInput();
         if (!factoryResetRequested)
@@ -307,7 +317,12 @@ public partial class MainWindow : Window
                 _ = HollowKnightGameLauncher.Start(selectedExecutable);
                 window = await WaitForGameWindowAsync(cancellation.Token);
             }
+            else if (window is null)
+            {
+                window = await WaitForGameWindowAsync(cancellation.Token);
+            }
             cancellation.Token.ThrowIfCancellationRequested();
+            MonitorGameProcess(window.ProcessId);
             if (visionCancellation is null)
             {
                 StartVision_Click(this, new RoutedEventArgs());
@@ -317,7 +332,7 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
-            if (!isClosing)
+            if (!isClosing && !gameLostCountdownStarted)
             {
                 ShowError(new TimeoutException("Hollow Knight did not open within two minutes."));
             }
@@ -396,6 +411,98 @@ public partial class MainWindow : Window
             var window = HollowKnightWindowLocator.FindBest();
             if (window is not null) return window;
             await Task.Delay(250, cancellationToken);
+        }
+    }
+
+    private void MonitorGameProcess(int processId)
+    {
+        if (monitoredGameProcess is not null)
+        {
+            try
+            {
+                if (monitoredGameProcess.Id == processId) return;
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+
+        StopMonitoringGameProcess();
+        try
+        {
+            var process = Process.GetProcessById(processId);
+            process.EnableRaisingEvents = true;
+            process.Exited += GameProcess_Exited;
+            monitoredGameProcess = process;
+            if (process.HasExited) BeginGameLostCountdown();
+        }
+        catch (ArgumentException)
+        {
+            BeginGameLostCountdown();
+        }
+    }
+
+    private void StopMonitoringGameProcess()
+    {
+        if (monitoredGameProcess is null) return;
+        monitoredGameProcess.Exited -= GameProcess_Exited;
+        monitoredGameProcess.Dispose();
+        monitoredGameProcess = null;
+    }
+
+    private void GameProcess_Exited(object? sender, EventArgs e) =>
+        _ = Dispatcher.InvokeAsync(BeginGameLostCountdown);
+
+    private bool MonitoredGameHasExited()
+    {
+        if (monitoredGameProcess is null) return false;
+        try
+        {
+            return monitoredGameProcess.HasExited;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
+        }
+    }
+
+    private void BeginGameLostCountdown()
+    {
+        if (isClosing || gameLostCountdownStarted) return;
+        gameLostCountdownStarted = true;
+        startupCancellation?.Cancel();
+        inputHeartbeat.Stop();
+        ReleaseForwardedInput();
+        StopVision();
+        SettingsOverlay.Visibility = Visibility.Collapsed;
+        GameLostOverlay.Visibility = Visibility.Visible;
+
+        var cancellation = new CancellationTokenSource();
+        gameLostCountdownCancellation = cancellation;
+        _ = RunGameLostCountdownAsync(cancellation);
+    }
+
+    private async Task RunGameLostCountdownAsync(CancellationTokenSource cancellation)
+    {
+        try
+        {
+            for (var remaining = GameLossCountdown.InitialSeconds; remaining >= 0; remaining--)
+            {
+                GameLostCountdownText.Text = GameLossCountdown.Message(remaining);
+                await Task.Delay(
+                    remaining == 0 ? TimeSpan.FromMilliseconds(500) : TimeSpan.FromSeconds(1),
+                    cancellation.Token);
+            }
+            Close();
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(gameLostCountdownCancellation, cancellation))
+                gameLostCountdownCancellation = null;
+            cancellation.Dispose();
         }
     }
 
@@ -1438,8 +1545,7 @@ public partial class MainWindow : Window
                     var frame = await Task.Run(() =>
                     {
                         var window = HollowKnightWindowLocator.FindBest()
-                            ?? throw new InvalidOperationException(
-                                "Hollow Knight window not found. Live Vision does not launch it.");
+                            ?? throw new GameWindowLostException();
                         if (window.ProcessId != validatedProcessId)
                         {
                             ValidateGameWindowMode(window);
@@ -1448,9 +1554,20 @@ public partial class MainWindow : Window
                         return CpuBgraNormalizer.Normalize(capture.Capture(window, ++frameId));
                     }, cancellation.Token);
                     var bitmap = FrameBitmap(frame);
+                    var firstFreshGameFrame = !hasFreshGameFrame;
+                    hasFreshGameFrame = true;
                     GameplayImage.Source = bitmap;
                     GameplayImage.Width = frame.Width;
                     GameplayImage.Height = frame.Height;
+                    if (firstFreshGameFrame)
+                    {
+                        PositionUnregisteredGameplayFrame(frame);
+                        ApplyViewport(
+                            GameplayAtlasCanvas,
+                            GameplayPanel,
+                            "Current",
+                            GameplayImage);
+                    }
                     analysisFrames.Publish(frame);
                     if (analysisAvailable.CurrentCount == 0)
                     {
@@ -1490,7 +1607,10 @@ public partial class MainWindow : Window
         }
         catch (Exception error)
         {
-            ShowError(error);
+            if (error is GameWindowLostException || MonitoredGameHasExited())
+                BeginGameLostCountdown();
+            else
+                ShowError(error);
         }
         finally
         {
@@ -1591,7 +1711,8 @@ public partial class MainWindow : Window
         PresentGameplayFrame(
             result.Frame,
             result.GameplayTelemetry,
-            FrameBitmap(result.Frame));
+            FrameBitmap(result.Frame),
+            result.MenuContext);
         if (workspace == "Hacker" && result.ReceiverTelemetry is not null)
         {
             PresentHackerFrame(
@@ -2890,16 +3011,45 @@ public partial class MainWindow : Window
     private void PresentGameplayFrame(
         BgraFrame frame,
         ReceiverGroundTruthSample telemetry,
-        BitmapSource bitmap)
+        BitmapSource bitmap,
+        string? menuContext)
     {
         gameplayLiveFrame = frame;
         gameplayLiveTelemetry = telemetry;
         GameplayImage.Source = bitmap;
-        PositionLiveFrame(
-            GameplayAtlasCanvas, GameplayImage, DetectionCanvas,
-            gameplayAtlas, gameplayAtlasMinimumTileX, gameplayAtlasMinimumTileY,
-            frame, telemetry);
-        ApplyViewport(GameplayAtlasCanvas, GameplayPanel, gameplayFraming, GameplayImage);
+        var usesAtlasCoordinates = GameplayOutputGate.UsesAtlasCoordinates(menuContext);
+        if (usesAtlasCoordinates)
+        {
+            PositionLiveFrame(
+                GameplayAtlasCanvas, GameplayImage, DetectionCanvas,
+                gameplayAtlas, gameplayAtlasMinimumTileX, gameplayAtlasMinimumTileY,
+                frame, telemetry);
+        }
+        else
+        {
+            PositionUnregisteredGameplayFrame(frame);
+        }
+        ApplyViewport(
+            GameplayAtlasCanvas,
+            GameplayPanel,
+            usesAtlasCoordinates ? gameplayFraming : "Current",
+            GameplayImage);
+    }
+
+    private void PositionUnregisteredGameplayFrame(BgraFrame frame)
+    {
+        GameplayImage.Width = frame.Width;
+        GameplayImage.Height = frame.Height;
+        Canvas.SetLeft(GameplayImage, 0);
+        Canvas.SetTop(GameplayImage, 0);
+        DetectionCanvas.Width = CanvasWidth;
+        DetectionCanvas.Height = CanvasHeight;
+        Canvas.SetLeft(DetectionCanvas, 0);
+        Canvas.SetTop(DetectionCanvas, 0);
+        DetectionCanvas.RenderTransform = new ScaleTransform(
+            frame.Width / CanvasWidth,
+            frame.Height / CanvasHeight);
+        DetectionCanvas.RenderTransformOrigin = new Point(0, 0);
     }
 
     private void RenderLiveAtlas(
@@ -3086,7 +3236,7 @@ public partial class MainWindow : Window
             }));
     }
 
-    private void LoadPersistentAtlas()
+    private void LoadPersistentAtlas(bool explicitlyRequested = false)
     {
         if (!Directory.Exists(activeAtlasDirectory)) return;
         var metadataPath = IOPath.Combine(activeAtlasDirectory, "atlas.json");
@@ -3119,7 +3269,10 @@ public partial class MainWindow : Window
             gameplayAtlas.RestoreAcceptedFrameCount(restoredMetadata.RegistrationCount);
         }
         gameplayPersistedRevision = gameplayAtlas.Revision;
-        if (gameplayAtlas.TileCount > 0)
+        if (gameplayAtlas.TileCount > 0
+            && GameplayOutputGate.CanShowRestoredAtlas(
+                hasFreshGameFrame,
+                explicitlyRequested))
         {
             var delta = new AtlasMosaicDelta(gameplayAtlas.Revision, gameplayAtlas.Snapshot());
             RenderLiveAtlas(
@@ -3127,6 +3280,15 @@ public partial class MainWindow : Window
                 ref gameplayAtlasMinimumTileX, ref gameplayAtlasMinimumTileY,
                 GameplayImage, gameplayLiveFrame, gameplayLiveTelemetry);
             gameplayRenderedRevision = delta.Revision;
+        }
+        else
+        {
+            foreach (var image in gameplayTileImages.Values)
+                GameplayAtlasCanvas.Children.Remove(image);
+            gameplayTileImages.Clear();
+            GameplayGroundCanvas.Children.Clear();
+            gameplayAtlasMinimumTileX = gameplayAtlasMinimumTileY = null;
+            gameplayRenderedRevision = 0;
         }
     }
 
@@ -3208,7 +3370,7 @@ public partial class MainWindow : Window
         {
             ResetGameplayAtlas(deleteArchive: true);
             CopyDirectory(atlasStateStore.WorldPath(state), activeAtlasDirectory);
-            LoadPersistentAtlas();
+            LoadPersistentAtlas(explicitlyRequested: true);
             SettingsOverlay.Visibility = Visibility.Collapsed;
         }
         catch (Exception error) { ShowError(error); }

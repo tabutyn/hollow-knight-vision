@@ -86,6 +86,7 @@
                       MouseLeftButtonUp="GameViewport_MouseLeftButtonUp"
                       MouseWheel="AtlasViewport_MouseWheel">
                     <Canvas x:Name="GameplayAtlasCanvas" Width="640" Height="360" Background="Black"
+                            HorizontalAlignment="Left" VerticalAlignment="Top"
                             RenderTransformOrigin="0,0">
                         <Image x:Name="GameplayImage" Width="640" Height="360" Stretch="Fill"
                                SnapsToDevicePixels="True" IsHitTestVisible="False" Panel.ZIndex="10"/>
@@ -188,7 +189,8 @@
                           MouseLeftButtonDown="GameViewport_MouseLeftButtonDown"
                           MouseLeftButtonUp="GameViewport_MouseLeftButtonUp"
                           MouseWheel="AtlasViewport_MouseWheel">
-                        <Canvas x:Name="AtlasCanvas" Width="640" Height="360" Background="Black" RenderTransformOrigin="0,0">
+                        <Canvas x:Name="AtlasCanvas" Width="640" Height="360" Background="Black"
+                                HorizontalAlignment="Left" VerticalAlignment="Top" RenderTransformOrigin="0,0">
                             <Image x:Name="HackerLiveImage" Visibility="Collapsed" Stretch="Fill"
                                    SnapsToDevicePixels="True" IsHitTestVisible="False" Panel.ZIndex="10"/>
                             <Canvas x:Name="HackerOverlayCanvas" Width="640" Height="360" Background="Transparent" Panel.ZIndex="20"/>
@@ -312,6 +314,15 @@
             <Button x:Name="WindowZoomButton" Style="{StaticResource CaptionButton}" Content="&#xE923;" ToolTip="Restore Down" Click="WindowZoom_Click"/>
             <Button Style="{StaticResource CaptionButton}" Content="&#xE8BB;" Tag="Close" ToolTip="Close" Click="WindowClose_Click"/>
         </StackPanel>
+
+        <Grid x:Name="GameLostOverlay" Grid.RowSpan="2" Panel.ZIndex="300"
+              Margin="0,-32,0,0" Background="#03070A" Visibility="Collapsed">
+            <TextBlock x:Name="GameLostCountdownText"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Margin="32" TextAlignment="Center" TextWrapping="Wrap"
+                       FontSize="28" FontWeight="SemiBold" Foreground="#ECECEC"
+                       AutomationProperties.LiveSetting="Assertive"/>
+        </Grid>
 
         <!-- Existing implementation controls kept off-screen. Mac exposes none of this machinery. -->
         <Grid Visibility="Collapsed" IsHitTestVisible="False">

@@ -503,8 +503,28 @@ struct DashboardView: View {
         }
     }
 
+    private var visibleContent: some View {
+        Group {
+            if let remainingSeconds = model.gameLostCountdown {
+                ZStack {
+                    Color(red: 0.012, green: 0.026, blue: 0.035)
+                    Text(GameLossCountdown.message(remainingSeconds: remainingSeconds))
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(32)
+                }
+                .preferredColorScheme(.dark)
+                .frame(minWidth: 720, minHeight: 560)
+                .accessibilityElement(children: .combine)
+            } else {
+                dashboardContent
+            }
+        }
+    }
+
     var body: some View {
-        dashboardContent
+        visibleContent
         .alert(initialization.text("resetTitle"), isPresented: $confirmsStencilReset) {
             Button(initialization.text("cancel"), role: .cancel) {}
             Button(initialization.text("reset"), role: .destructive, action: resetStencils)

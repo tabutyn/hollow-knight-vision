@@ -13,3 +13,11 @@ enum LiveCaptureRestartPolicy {
         wantsCapture && !hasStream && !operationInFlight && !isCapturing
     }
 }
+
+enum GameLossCountdown {
+    static let initialSeconds = 5
+
+    static func message(remainingSeconds: Int) -> String {
+        "Hollow Knight lost. Closing app in \(max(0, remainingSeconds)) seconds"
+    }
+}
