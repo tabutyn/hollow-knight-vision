@@ -67,17 +67,20 @@ public sealed class TransitionFrameGate
 public readonly record struct GameplayFrameDecision(bool AdmitsTracking, bool AllowsAtlasWrite,
     bool ResetMotionReference, TransitionFrameDecision Transition);
 
-/// <summary>Capture-worker-owned admission. Presentation status never substitutes for current pixels.</summary>
+/// <summary>
+/// Capture-worker-owned admission. The gameplay latch survives temporary HUD
+/// loss, while the current frame's signal still rejects blackouts and fades.
+/// </summary>
 public sealed class GameplayFrameAdmission
 {
     private readonly TransitionFrameGate transition = new();
     private long? generation;
-    public GameplayFrameDecision Observe(FrameSignalProfile profile, bool hasFreshGameplayEvidence, long captureGeneration)
+    public GameplayFrameDecision Observe(FrameSignalProfile profile, bool gameplayEnabled, long captureGeneration)
     {
         var changed = generation != captureGeneration;
         if (changed) { transition.Reset(); generation = captureGeneration; }
         var decision = transition.Observe(profile);
-        var tracks = hasFreshGameplayEvidence && decision.AdmitsTracking;
+        var tracks = gameplayEnabled && decision.AdmitsTracking;
         // No visual measurement spans a blackout. Its first settled frame is
         // reference-only, not permission to place new room pixels at the old pose.
         return new(tracks, tracks && !decision.ResumedAfterTransition,

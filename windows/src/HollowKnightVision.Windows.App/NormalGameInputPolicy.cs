@@ -11,6 +11,11 @@ internal enum NormalGameRelayAction
     Suppress
 }
 
+internal readonly record struct NormalGameKeyMessage(
+    int Message,
+    nint WParam,
+    nint LParam);
+
 // Virtual-key values keep the routing contract testable without a desktop.
 internal static class NormalGameInputPolicy
 {
@@ -25,9 +30,24 @@ internal static class NormalGameInputPolicy
             or >= 0x25 and <= 0x28 // arrows
             or 0x08 or 0x09 or 0x0D or 0x1B or 0x20); // Backspace, Tab, Enter, Esc, Space
 
-    // Windows cannot keep a modified key local once Unity owns foreground
-    // focus. Passing both halves preserves OS shortcuts (Alt+Tab, Alt+F4,
-    // Win+D, and Ctrl combinations) and prevents a swallowed transition.
+    internal static NormalGameKeyMessage KeyMessage(
+        int virtualKey,
+        ushort scanCode,
+        bool extended,
+        bool down,
+        bool repeat)
+    {
+        // WM_KEYDOWN/WM_KEYUP use a hardware-style scan code. Bits 30 and 31
+        // distinguish repeats and releases; arrows carry the extended-key bit.
+        long lParam = 1L | ((long)scanCode << 16);
+        if (extended) lParam |= 1L << 24;
+        if (repeat || !down) lParam |= 1L << 30;
+        if (!down) lParam |= 1L << 31;
+        return new(down ? 0x0100 : 0x0101, new nint(virtualKey), new nint(lParam));
+    }
+
+    // Modified combinations remain local so Windows and Vision keep their
+    // normal shortcut behavior; only unmodified gameplay keys are posted.
     internal static NormalGameRelayAction RelayAction(
         int key,
         bool down,
@@ -36,8 +56,8 @@ internal static class NormalGameInputPolicy
 }
 
 /// <summary>
-/// Target-bound state for keys synthesized during the one-key Windows focus
-/// handoff. Once Unity owns focus, ordinary hardware input bypasses this state.
+/// Target-bound state for keys posted to the selected game window while Vision
+/// remains foreground.
 /// </summary>
 internal sealed class NormalGameHandoffState
 {

@@ -119,8 +119,8 @@ public sealed class LiveAtlasAutoSavePolicy(Func<DateTimeOffset>? now = null)
 
 /// <summary>
 /// Owns the ordered frame-admission, atlas-composition, and presentation path.
-/// Menu/fade frames are still presented, but only fresh gameplay pixels admitted
-/// by <see cref="GameplayFrameAdmission"/> may establish or refine the atlas.
+/// Menu/fade frames are still presented, but only an established gameplay
+/// session with current visible image signal may establish or refine the atlas.
 /// </summary>
 public sealed class LiveAtlasPresentationPipeline
 {

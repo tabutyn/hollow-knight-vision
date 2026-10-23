@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
 using System.IO;
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -27,6 +28,13 @@ internal static class Program
         // launch Hollow Knight, or touch the user's labels/atlas/game saves.
         _ = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+        if (args.Contains("--input-only"))
+        {
+            TestBackgroundKeyDelivery();
+            Console.WriteLine("Windows background-input regression passed: 1");
+            Application.Current.Shutdown();
+            return;
+        }
         if (args.Contains("--menu-stencil-corpus"))
         {
             MenuStencilCorpusTests.Run();
@@ -81,12 +89,14 @@ internal static class Program
         TestNegativeModeAndFreshProfileChoices();
         TestModeSelection();
         TestBottomControlScope();
+        TestFramingGroupsAreMutuallyExclusive();
         TestHackerInteractionModes();
         TestWorkspaceShortcuts();
         TestPathRecordingAvailability();
         TestWorkspaceExitShortcut();
         TestGroundDebugAvailability();
         TestLaunchPlaceholderNamesGameWait();
+        TestMainWindowHasProductTitle();
         TestGroundFeatureOverlayStartsVisible();
         TestGroundFeatureOverlayUsesMacReviewPalette();
         RuntimeModeTests.Run();
@@ -103,8 +113,8 @@ internal static class Program
         TrainingIntegrationTests.Run();
         ExampleStoreIntegrationTests.Run();
         TestSolidCapture();
-        if (args.Contains("--input")) TestPointerHandoff();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 66 : 65)}");
+        if (args.Contains("--input")) TestBackgroundKeyDelivery();
+        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 68 : 67)}");
         Application.Current.Shutdown();
     }
 
@@ -989,6 +999,26 @@ internal static class Program
         Console.WriteLine("PASS dashboard bottom controls are scoped to gameplay and modded state");
     }
 
+    private static void TestFramingGroupsAreMutuallyExclusive()
+    {
+        foreach (var workspace in DashboardValues("Workspaces"))
+        foreach (var complete in new[] { false, true })
+        foreach (var context in new string?[] { null, "Main Title", "Gameplay" })
+        {
+            var gameplay = Dashboard<bool>(
+                "ShowsGameplayFraming", workspace, complete, context);
+            var hacker = Dashboard<bool>(
+                "ShowsHackerFraming", workspace, context);
+            Check(!(gameplay && hacker),
+                $"Gameplay and Hacker framing both appeared for {workspace}/{complete}/{context ?? "none"}.");
+            Check(gameplay == (workspace == "Gameplay" && complete && context == "Gameplay"),
+                "Gameplay framing escaped its workspace or setup gate.");
+            Check(hacker == (workspace == "Hacker" && context == "Gameplay"),
+                "Hacker framing escaped its workspace.");
+        }
+        Console.WriteLine("PASS Gameplay and Hacker framing groups are mutually exclusive");
+    }
+
     private static void TestHackerInteractionModes()
     {
         var expected = new[] { "Ground", "Rooms", "Fit", "Free Fly", "Current" };
@@ -1718,6 +1748,18 @@ internal static class Program
         Console.WriteLine("PASS launch placeholder names the Hollow Knight wait");
     }
 
+    private static void TestMainWindowHasProductTitle()
+    {
+        var source = File.ReadAllText(System.IO.Path.Combine(
+            AppContext.BaseDirectory,
+            "MainWindow.source.xaml"));
+        Check(Regex.IsMatch(source,
+                @"<Window\s+[^>]*Title\s*=\s*""Hollow Knight Vision""",
+                RegexOptions.Singleline),
+            "The main window does not expose the Hollow Knight Vision product name.");
+        Console.WriteLine("PASS main window exposes product title");
+    }
+
     private static void TestGroundFeatureOverlayStartsVisible()
     {
         var source = File.ReadAllText(System.IO.Path.Combine(
@@ -1785,13 +1827,49 @@ internal static class Program
         Console.WriteLine("PASS live and persistent ground rectangles use Mac review palette");
     }
 
-    private static void TestPointerHandoff()
+    private static void TestBackgroundKeyDelivery()
     {
         var previousFocus = GetForegroundWindow();
         _ = GetCursorPos(out var previousPointer);
         var owner = Offscreen(new Border(), 128, 72);
-        var game = Offscreen(new Border(), 128, 72);
-        owner.Show(); game.Show(); Pump();
+        owner.Show(); Pump();
+        var messages = new ConcurrentQueue<(int Message, nint WParam, bool IsDown)>();
+        using var gameReady = new ManualResetEventSlim();
+        Dispatcher? gameDispatcher = null;
+        nint gameHandle = 0;
+        Exception? gameError = null;
+        var gameThread = new Thread(() =>
+        {
+            try
+            {
+                SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+                var game = Offscreen(new Border(), 128, 72);
+                game.Show();
+                gameHandle = new WindowInteropHelper(game).Handle;
+                var gameSource = HwndSource.FromHwnd(gameHandle)!;
+                HwndSourceHook gameHook = (nint window, int message, nint wParam, nint lParam, ref bool handled) =>
+                {
+                    if (message is 0x0100 or 0x0101)
+                        messages.Enqueue((message, wParam, (GetKeyState(0x27) & 0x8000) != 0));
+                    return 0;
+                };
+                gameSource.AddHook(gameHook);
+                gameDispatcher = Dispatcher.CurrentDispatcher;
+                gameReady.Set();
+                Dispatcher.Run();
+                gameSource.RemoveHook(gameHook);
+                game.Close();
+            }
+            catch (Exception error)
+            {
+                gameError = error;
+                gameReady.Set();
+            }
+        });
+        gameThread.SetApartmentState(ApartmentState.STA);
+        gameThread.Start();
+        Check(gameReady.Wait(3000) && gameError is null && gameHandle != 0,
+            $"Could not create the separate-thread test game: {gameError}");
         var type = typeof(MainWindow).Assembly.GetType("HollowKnightVision.Windows.App.WindowsNormalGameInput")!;
         var input = Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.NonPublic, null,
             [owner, (Func<bool>)(() => true), (Action<Key>)(_ => { }), (Action<string>)(message => Console.WriteLine(message))], null)!;
@@ -1799,7 +1877,6 @@ internal static class Program
         try
         {
             var ownerHandle = new WindowInteropHelper(owner).Handle;
-            var gameHandle = new WindowInteropHelper(game).Handle;
             var foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), out _);
             var currentThread = GetCurrentThreadId();
             var attached = foregroundThread != currentThread && AttachThreadInput(currentThread, foregroundThread, true);
@@ -1811,25 +1888,32 @@ internal static class Program
             var timer = Stopwatch.StartNew();
             while (!prepare.IsCompleted && timer.ElapsedMilliseconds < 3000) { Pump(); Thread.Sleep(5); }
             Check(prepare.IsCompletedSuccessfully && prepare.Result,
-                $"Test game did not receive focus. Status={prepare.Status}; error={prepare.Exception}; foreground={GetForegroundWindow()}, expected={gameHandle}.");
-            // Cursor warps are not raw device movement and must not cause a focus loop.
-            _ = SetCursorPos(previousPointer.X + 1, previousPointer.Y + 1);
-            for (var index = 0; index < 20; index++) { Pump(); Thread.Sleep(5); }
-            Check(GetForegroundWindow() == gameHandle, "A cursor warp incorrectly returned focus.");
-            // SendInput is not a physical HID event and does not produce raw
-            // mouse data. Exercise the same motion handler without pretending
-            // to validate a real device or sending commands to Hollow Knight.
-            Invoke("ReturnPointerAfterDeviceMotion", 12, 4, true);
-            timer.Restart();
-            while (GetForegroundWindow() != ownerHandle && timer.ElapsedMilliseconds < 3000) { Pump(); Thread.Sleep(5); }
-            Check(GetForegroundWindow() == ownerHandle, "Device movement did not return focus to Vision.");
-            Check(!owner.Topmost, "Presentation remained topmost after mouse handoff.");
-            Console.WriteLine("PASS pointer warp ignored; simulated device-motion handler returns focus and releases presentation");
+                $"Vision could not prepare background game input. Status={prepare.Status}; error={prepare.Exception}.");
+            Check((bool)Invoke("ForwardFirstKey", Key.Right, false)!, "Right press was not handled.");
+            Check((bool)Invoke("ForwardFirstKey", Key.Right, true)!, "Right repeat was not handled.");
+            Check((bool)Invoke("ForwardKeyUp", Key.Right)!, "Right release was not handled.");
+            for (var index = 0; index < 20 && messages.Count < 3; index++) { Pump(); Thread.Sleep(5); }
+            Check(messages.Select(item => item.Message).SequenceEqual(new[] { 0x0100, 0x0100, 0x0101 }),
+                $"Game received the wrong key sequence: {string.Join(',', messages.Select(item => $"0x{item.Message:X}"))}.");
+            Check(messages.All(item => item.WParam == new nint(0x27)),
+                "Background key sequence changed the Right virtual key.");
+            Check(messages.Select(item => item.IsDown).SequenceEqual(new[] { true, true, false }),
+                "The game thread could not observe the injected Right key state.");
+            Check(GetForegroundWindow() == ownerHandle,
+                "Forwarding Right raised Hollow Knight above Vision.");
+            Check(GetCursorPos(out var currentPointer)
+                    && currentPointer.X == previousPointer.X
+                    && currentPointer.Y == previousPointer.Y,
+                "Forwarding Right moved the real pointer.");
+            Check(!owner.Topmost, "Background input made Vision permanently topmost.");
+            Console.WriteLine("PASS background arrow delivery keeps Vision focused and leaves the pointer untouched");
         }
         finally
         {
             ((IDisposable)input).Dispose();
-            owner.Close(); game.Close();
+            gameDispatcher?.BeginInvokeShutdown(DispatcherPriority.Send);
+            Check(gameThread.Join(3000), "The separate-thread test game did not close.");
+            owner.Close();
             _ = SetForegroundWindow(previousFocus);
             _ = SetCursorPos(previousPointer.X, previousPointer.Y);
         }
@@ -1844,5 +1928,6 @@ internal static class Program
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(nint window);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out NativePoint point);
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] private static extern short GetKeyState(int key);
     private static void Check(bool value, string message) { if (!value) throw new Exception(message); }
 }

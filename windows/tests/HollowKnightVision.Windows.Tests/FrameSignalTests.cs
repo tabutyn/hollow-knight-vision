@@ -165,7 +165,10 @@ internal static class FrameSignalTests
         var pixels = FrameRegionRenderer.SignalProfile(visible);
         var first = admission.Observe(pixels, true, 1);
         Check(first.AdmitsTracking && first.AllowsAtlasWrite && first.ResetMotionReference);
-        Check(!admission.Observe(pixels, false, 1).AllowsAtlasWrite, "Visible menu became atlas evidence.");
+        Check(admission.Observe(pixels, true, 1).AllowsAtlasWrite,
+            "Established gameplay stopped tracking during temporary HUD loss.");
+        Check(!admission.Observe(pixels, false, 1).AllowsAtlasWrite,
+            "Confirmed menu became atlas evidence.");
         var hudOnly = Frame(640, 360);
         Paint(hudOnly, 30, 20, 120, 25, 255, 255, 255);
         var black = admission.Observe(FrameRegionRenderer.SignalProfile(hudOnly), true, 1);

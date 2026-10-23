@@ -669,6 +669,7 @@ var tests = new List<(string Name, Action Run)>
     ("normal input focus loss drains keys and requires a fresh down", NormalGameKeyForwarderParityTests.TestFocusLossReleasesAllAndRequiresFreshDown),
     ("normal input replacement game cannot inherit held keys", NormalGameKeyForwarderParityTests.TestReplacementGameCannotInheritHeldKeys),
     ("normal input workspace and settings routing matches platform focus", NormalGameKeyForwarderParityTests.TestWorkspaceAndSettingsRouting),
+    ("normal input background messages preserve arrow transition bits", NormalGameKeyForwarderParityTests.TestBackgroundMessagesEncodePhysicalArrowTransitions),
     ("ordinary launch always requires mode choice", TestRuntimeModeLaunchPolicy),
     ("gameplay output waits for fresh game capture", TestGameplayOutputGate),
     ("menu framing ignores atlas coordinates", TestGameplayFrameCoordinatePolicy),

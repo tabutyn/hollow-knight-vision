@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:local="clr-namespace:HollowKnightVision.Windows.App"
-        Title="" Height="760" Width="1100" MinHeight="560" MinWidth="720" WindowStartupLocation="Manual"
+        Title="Hollow Knight Vision" Height="760" Width="1100" MinHeight="560" MinWidth="720" WindowStartupLocation="Manual"
         WindowStyle="None" ResizeMode="CanResize" Background="#03070A" Foreground="#ECECEC" FontFamily="Segoe UI">
     <shell:WindowChrome.WindowChrome>
         <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" UseAeroCaptionButtons="False"/>

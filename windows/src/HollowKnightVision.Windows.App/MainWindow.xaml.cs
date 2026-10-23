@@ -458,8 +458,19 @@ internal static class DashboardPresentationPolicy
         string workspace,
         bool phaseOneComplete,
         string? recognizedContext) =>
-        IsGameplay(recognizedContext)
-        && (workspace == "Hacker" || workspace == "Gameplay" && phaseOneComplete);
+        ShowsGameplayFraming(workspace, phaseOneComplete, recognizedContext)
+        || ShowsHackerFraming(workspace, recognizedContext);
+
+    internal static bool ShowsGameplayFraming(
+        string workspace,
+        bool phaseOneComplete,
+        string? recognizedContext) =>
+        workspace == "Gameplay" && phaseOneComplete && IsGameplay(recognizedContext);
+
+    internal static bool ShowsHackerFraming(
+        string workspace,
+        string? recognizedContext) =>
+        workspace == "Hacker" && IsGameplay(recognizedContext);
 
     internal static bool ShowsOps(
         string workspace,
@@ -1443,6 +1454,11 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        if (normalGameInput is not null)
+        {
+            if (normalGameInput.ForwardKeyUp(key)) e.Handled = true;
+            return;
+        }
         if (!IsActive && !forwardedKeys.Contains(key)) return;
         if (gameMode != GameRuntimeMode.Modded
             || !GameControlKeyPolicy.TryMapReceiverButton(key, out var button)) return;
@@ -1982,12 +1998,12 @@ public partial class MainWindow : Window
         if (initialization is null) return;
         PresentLabelPauseControls(LabelPanel, LabelWorkspaceButton, labelCapture, gameControls.IsRecording);
         GameplayControlsPanel.Visibility = visionCancellation is not null
-            && DashboardPresentationPolicy.ShowsFraming(
+            && DashboardPresentationPolicy.ShowsGameplayFraming(
                 workspace, initialization.IsFirstPhaseComplete, recognizedMenuContext)
             ? Visibility.Visible : Visibility.Collapsed;
         HackerCameraControlsPanel.Visibility = visionCancellation is not null
-            && DashboardPresentationPolicy.ShowsFraming(
-                workspace, initialization.IsFirstPhaseComplete, recognizedMenuContext)
+            && DashboardPresentationPolicy.ShowsHackerFraming(
+                workspace, recognizedMenuContext)
             ? Visibility.Visible : Visibility.Collapsed;
         PathRecordingButton.Visibility = DashboardPresentationPolicy.ShowsPathRecording(
                 workspace, gameMode, recognizedMenuContext)
@@ -3184,7 +3200,13 @@ public partial class MainWindow : Window
         var coarseMotion = inputPathMotionTracker.Observe(
             signal.MotionGrid,
             captureTimestamp);
-        var admission = frameAdmission.Observe(signal, recognition.HasFreshGameplayEvidence, recognition.Generation);
+        // Match Mac: once Gameplay is established, ordinary HUD animation and
+        // temporary HUD loss must not stop camera tracking. Positive menu
+        // recognition releases the latch; the signal gate still blocks fades.
+        var admission = frameAdmission.Observe(
+            signal,
+            recognition.GameplayEnabled,
+            recognition.Generation);
         if (admission.ResetMotionReference)
         {
             frameMotionTracker.Reset();
@@ -3297,8 +3319,6 @@ public partial class MainWindow : Window
         var receiverTelemetry = gameMode == GameRuntimeMode.Modded
             ? exactReceiverTelemetry
             : null;
-        // The presentation latch survives fades and cutscenes. It is not fresh
-        // image evidence: never use that latch alone to admit a frame to the atlas.
         var motionBridgeActive = visualObservation.Source is
             "transition-bridge" or "coarse-presentation";
         var receiverScene = receiverTelemetry?.SceneName?.Trim();

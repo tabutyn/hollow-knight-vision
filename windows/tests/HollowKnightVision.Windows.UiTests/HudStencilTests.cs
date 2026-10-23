@@ -131,6 +131,11 @@ internal static class HudStencilTests
             Refresh();
             Check(!coordinator.IsFirstPhaseComplete,
                 "An empty label store incorrectly completed the first stencil campaign.");
+            var bundledGameplay = recognizer.Observe(Frame(
+                fixtures.First(item => (item.Health?.Sum() ?? 0) >= 2)));
+            Check(bundledGameplay.Context == "game"
+                    && bundledGameplay.HasFreshGameplayEvidence,
+                "Factory Reset removed bundled HUD gameplay recognition.");
             foreach (var contextIdentifier in new[] { "main-title", "select-profile" })
             {
                 var context = StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal)
@@ -702,7 +707,10 @@ internal static class HudStencilTests
             var blank = new BgraFrame(live.Width, live.Height, live.Width * 4, blankPixels, 2, live.ObservedAt.AddSeconds(1));
             var lostHud = observe.Invoke(recognizer, [blank, false])!;
             Check((string?)lostHud.GetType().GetProperty("Context")!.GetValue(lostHud) == "game", "HUD dropout cleared established Gameplay state.");
-            Check(!(bool)lostHud.GetType().GetProperty("HasFreshGameplayEvidence")!.GetValue(lostHud)!, "Presentation latch incorrectly authorizes new atlas pixels.");
+            Check(!(bool)lostHud.GetType().GetProperty("HasFreshGameplayEvidence")!.GetValue(lostHud)!,
+                "HUD dropout was incorrectly reported as fresh gameplay evidence.");
+            Check((bool)lostHud.GetType().GetProperty("GameplayEnabled")!.GetValue(lostHud)!,
+                "Temporary HUD loss disabled Mac-parity gameplay tracking.");
             type.GetMethod("ResetTracking", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(recognizer, null);
             var clockRestart = new BgraFrame(live.Width, live.Height, live.Width * 4, blankPixels, 3, DateTimeOffset.UnixEpoch);
             var restarted = observe.Invoke(recognizer, [clockRestart, false])!;
