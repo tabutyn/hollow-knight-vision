@@ -44,13 +44,21 @@ public sealed partial class GroundCameraSolver
     public static readonly CameraVector HackerCalibratedRecentScale = new(.9809, .9923);
     private readonly bool subpixelEnabled, keyframeSubpixelEnabled, usesAdaptiveRecentMotionScale;
     private readonly CameraVector anchorImageMotionScale, recentImageMotionScale;
+    private readonly GroundComputeBackend matcherBackend;
+    private readonly int maximumLocalSearchRadius;
+    public GroundPatchSearchExecution? LastPatchSearchExecution { get; private set; }
     public GroundCameraSolver(bool subpixelEnabled = false, bool keyframeSubpixelEnabled = false,
-        bool calibratedMotionEnabled = false, CameraVector? imageMotionScale = null, CameraVector? recentImageMotionScale = null)
+        bool calibratedMotionEnabled = false, CameraVector? imageMotionScale = null,
+        CameraVector? recentImageMotionScale = null,
+        GroundComputeBackend matcherBackend = GroundComputeBackend.Cpu,
+        int maximumLocalSearchRadius = 96)
     {
         this.subpixelEnabled = subpixelEnabled; this.keyframeSubpixelEnabled = keyframeSubpixelEnabled;
         usesAdaptiveRecentMotionScale = calibratedMotionEnabled && imageMotionScale is null && recentImageMotionScale is null;
         anchorImageMotionScale = imageMotionScale ?? (calibratedMotionEnabled ? HackerCalibratedAnchorScale : new(1, 1));
         this.recentImageMotionScale = recentImageMotionScale ?? imageMotionScale ?? (calibratedMotionEnabled ? HackerCalibratedRecentScale : new(1, 1));
+        this.matcherBackend = matcherBackend;
+        this.maximumLocalSearchRadius = Math.Max(16, maximumLocalSearchRadius);
     }
     public sealed record Solution(CameraVector ImageTranslation, int Support, double Error, bool ReferenceTrusted = true,
         double? ReferenceTimestamp = null, CameraVector? ReferencePosition = null,
@@ -84,6 +92,7 @@ public sealed partial class GroundCameraSolver
         reference = recentReference = provisionalReference = null; spatialReferences.Clear();
         velocity = imagePosition = CameraVector.Zero; lastAcceptedTimestamp = null;
         frameWidth = frameHeight = 0; Seeded = false; lastAttempt = null; lastObservedPixels = null; DistinctFrame = true;
+        LastPatchSearchExecution = null;
     }
 
     private static bool Valid(byte[] pixels, int width, int height, double timestamp) =>

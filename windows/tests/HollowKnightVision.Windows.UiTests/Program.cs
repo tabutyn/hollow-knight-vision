@@ -5,6 +5,7 @@ using System.IO;
 using System.Collections.ObjectModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Windows.Input;
 using System.Windows;
 using System.Windows.Controls;
@@ -85,6 +86,9 @@ internal static class Program
         TestPathRecordingAvailability();
         TestWorkspaceExitShortcut();
         TestGroundDebugAvailability();
+        TestLaunchPlaceholderNamesGameWait();
+        TestGroundFeatureOverlayStartsVisible();
+        TestGroundFeatureOverlayUsesMacReviewPalette();
         RuntimeModeTests.Run();
         HudStencilTests.Run();
         MenuIntegrationTests.Run();
@@ -100,7 +104,7 @@ internal static class Program
         ExampleStoreIntegrationTests.Run();
         TestSolidCapture();
         if (args.Contains("--input")) TestPointerHandoff();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 63 : 62)}");
+        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 66 : 65)}");
         Application.Current.Shutdown();
     }
 
@@ -1701,6 +1705,85 @@ internal static class Program
 
     private static void Near(double expected, double actual) => Check(Math.Abs(expected - actual) < .001,
         $"Expected {expected}, got {actual}.");
+
+    private static void TestLaunchPlaceholderNamesGameWait()
+    {
+        var source = File.ReadAllText(System.IO.Path.Combine(
+            AppContext.BaseDirectory,
+            "MainWindow.source.xaml"));
+        Check(source.Contains("Text=\"Waiting for Hollow Knight…\"", StringComparison.Ordinal),
+            "The launch placeholder does not say it is waiting for Hollow Knight.");
+        Check(!source.Contains("Text=\"Starting live atlas…\"", StringComparison.Ordinal),
+            "The launch placeholder still claims that the live atlas is starting.");
+        Console.WriteLine("PASS launch placeholder names the Hollow Knight wait");
+    }
+
+    private static void TestGroundFeatureOverlayStartsVisible()
+    {
+        var source = File.ReadAllText(System.IO.Path.Combine(
+            AppContext.BaseDirectory,
+            "MainWindow.source.xaml"));
+        var element = Regex.Match(
+            source,
+            @"<CheckBox\s+[^>]*x:Name=""GroundFeaturesCheck""[^>]*/>",
+            RegexOptions.Singleline);
+        Check(element.Success && Regex.IsMatch(
+                element.Value,
+                @"IsChecked\s*=\s*""True"""),
+            "The Windows ground-feature overlay is not enabled on launch.");
+        Console.WriteLine("PASS ground feature overlay starts visible");
+    }
+
+    private static void TestGroundFeatureOverlayUsesMacReviewPalette()
+    {
+        var result = GroundHypothesisTrackingResult.Empty with
+        {
+            Features =
+            [
+                new(1, 1, 0, new PixelRect(10, 11, 16, 12),
+                    GroundHypothesisClassification.Candidate, null, null),
+                new(2, 1, 1, new PixelRect(20, 21, 16, 12),
+                    GroundHypothesisClassification.GroundPlane, null, null),
+                new(3, 1, 2, new PixelRect(30, 31, 16, 12),
+                    GroundHypothesisClassification.GlobalMatch, null, null),
+                new(4, 1, 3, new PixelRect(40, 41, 16, 12),
+                    GroundHypothesisClassification.Occluded, null, null),
+                new(5, 1, 4, new PixelRect(50, 51, 16, 12),
+                    GroundHypothesisClassification.DepthError, null, null),
+            ],
+        };
+        var canvas = new Canvas();
+        var count = GroundFeatureOverlayPresentation.DrawLive(canvas, result);
+        Check(count == 4 && canvas.Children.Count == 4,
+            "The live renderer did not draw each accepted ground feature exactly once.");
+        Check(canvas.Children.OfType<Rectangle>().All(rectangle =>
+                rectangle.StrokeThickness == 1 && !rectangle.IsHitTestVisible),
+            "Ground feature rectangles do not use the one-pixel non-interactive review style.");
+        var purple = canvas.Children.OfType<Rectangle>()
+            .Single(rectangle => Canvas.GetLeft(rectangle) == 30);
+        Check(purple.Stroke is SolidColorBrush liveBrush
+                && liveBrush.Color == Color.FromRgb(191, 79, 255)
+                && Math.Abs(purple.Opacity - .95) < .001,
+            "Global ground match is not rendered with the Mac purple review color.");
+
+        var atlasFeature = new GroundHypothesisAtlasFeature(
+            7,
+            2,
+            new AtlasPoint(80, 90),
+            Enumerable.Repeat((byte)80, GroundHypothesisTracker.FeaturePixelCount).ToArray(),
+            Enumerable.Repeat(byte.MaxValue, GroundHypothesisTracker.FeaturePixelCount).ToArray());
+        var persistent = GroundFeatureOverlayPresentation.PersistentRectangle(
+            atlasFeature,
+            2,
+            3);
+        Check(persistent.Width == 32 && persistent.Height == 36,
+            "Persistent ground rectangle did not scale with the displayed frame.");
+        Check(persistent.Stroke is SolidColorBrush atlasBrush
+                && atlasBrush.Color == Color.FromRgb(191, 79, 255)
+                && Math.Abs(persistent.Opacity - .95) < .001,
+            "Persistent ground feature is not rendered with the Mac purple review color.");
+        Console.WriteLine("PASS live and persistent ground rectangles use Mac review palette");
+    }
 
     private static void TestPointerHandoff()
     {

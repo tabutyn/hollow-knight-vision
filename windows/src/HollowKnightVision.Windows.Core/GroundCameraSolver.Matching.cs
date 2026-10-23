@@ -26,7 +26,9 @@ public sealed partial class GroundCameraSolver
         if (!Finite(prediction) || Math.Abs(prediction.X) > int.MaxValue - 1024 || Math.Abs(prediction.Y) > int.MaxValue - 1024) return null;
         var predictedX = (int)Math.Round(prediction.X, MidpointRounding.AwayFromZero);
         var predictedY = (int)Math.Round(prediction.Y, MidpointRounding.AwayFromZero);
-        var radiusX = Math.Min(width, (int)Math.Max(16, Math.Min(96, Math.Ceiling(elapsed * 400))));
+        var radiusX = Math.Min(width, (int)Math.Max(
+            16,
+            Math.Min(maximumLocalSearchRadius, Math.Ceiling(elapsed * 400))));
         var radiusY = Math.Min(height, (int)Math.Max(32, Math.Min(64, Math.Ceiling(elapsed * 240))));
         var searchLines = lines.Length == 0 ? prior.Lines.Select(line =>
             new GroundTextureLine(line.Row + predictedY, line.StartX + predictedX, line.EndX + predictedX)).ToArray() : lines;
@@ -45,40 +47,66 @@ public sealed partial class GroundCameraSolver
         if (hypotheses.Length == 0) return null;
         var patches = MakePatches(prior, width, height);
         if (patches.Count < 3) return null;
-        var candidates = new List<Candidate>();
-        var verticalCache = new Dictionary<int, Candidate[]>();
-        foreach (var proposedY in hypotheses)
-            for (var dy = proposedY - 3; dy <= proposedY + 3; dy++)
+        var dySequence = hypotheses
+            .SelectMany(proposedY => Enumerable.Range(proposedY - 3, 7))
+            .ToArray();
+        var uniqueDys = dySequence.Distinct().ToArray();
+        var searchSources = patches.Select(source => new GroundPatchSearchSource(
+            source.X,
+            source.Y,
+            source.Pixels)).ToArray();
+        var searchCandidates = new List<GroundPatchSearchCandidate>(
+            uniqueDys.Length * (radiusX * 2 + 1));
+        foreach (var dy in uniqueDys)
+        for (var dx = predictedX - radiusX; dx <= predictedX + radiusX; dx++)
+        {
+            var samples = new List<GroundPatchSearchSample>(patches.Count);
+            for (var sourceIndex = 0; sourceIndex < patches.Count; sourceIndex++)
             {
-                if (verticalCache.TryGetValue(dy, out var cached)) { candidates.AddRange(cached); continue; }
-                var firstCandidate = candidates.Count;
-                var targetCache = new Dictionary<int, Patch>(); var unavailable = new HashSet<int>();
-                for (var dx = predictedX - radiusX; dx <= predictedX + radiusX; dx++)
+                var source = patches[sourceIndex];
+                var x = source.X + dx;
+                var y = source.Y + dy;
+                if (x < 0 || (long)x + GroundPixels.PatchWidth > width
+                    || y < 0 || (long)y + GroundPixels.PatchHeight > height
+                    || Excluded(
+                        exclusions,
+                        x,
+                        y,
+                        GroundPixels.PatchWidth,
+                        GroundPixels.PatchHeight))
                 {
-                    var errors = new List<(int X, double Error)>();
-                    foreach (var source in patches)
-                    {
-                        var x = source.X + dx; var y = source.Y + dy;
-                        if (x < 0 || (long)x + 16 > width || y < 0 || (long)y + 12 > height || Excluded(exclusions, x, y, 16, 12)) continue;
-                        if (!searchLines.Any(line => Math.Abs((long)line.Row - y) <= 3)) { errors.Add((source.X, 32)); continue; }
-                        var key = y * width + x;
-                        if (!targetCache.TryGetValue(key, out var target))
-                        {
-                            if (unavailable.Contains(key)) { errors.Add((source.X, 32)); continue; }
-                            var sampled = ReadPatch(pixels, width, height, x, y);
-                            if (sampled is null) { unavailable.Add(key); errors.Add((source.X, 32)); continue; }
-                            target = new(x, y, sampled); targetCache.Add(key, target);
-                        }
-                        errors.Add((source.X, PatchError(source, target)));
-                    }
-                    if (errors.Count < 3) continue;
-                    var inliers = errors.Where(value => value.Error <= 18).ToArray();
-                    if (inliers.Length < 3 || inliers.Length * 2 <= errors.Count || inliers.Max(value => value.X) - inliers.Min(value => value.X) < 32) continue;
-                    candidates.Add(new(dx, dy, errors.Sum(value => Math.Min(32, value.Error)) / errors.Count, inliers.Length));
+                    continue;
                 }
-                // Retain duplicate candidates and order, just like the Mac scan.
-                verticalCache.Add(dy, candidates.Skip(firstCandidate).ToArray());
+                var targetOffset = searchLines.Any(line =>
+                    Math.Abs((long)line.Row - y) <= 3)
+                    ? y * width + x
+                    : (int?)null;
+                samples.Add(new GroundPatchSearchSample(
+                    sourceIndex,
+                    targetOffset));
             }
+            searchCandidates.Add(new GroundPatchSearchCandidate(dx, dy, samples));
+        }
+        var execution = GroundPatchMatcher.Shared.Search(
+            searchSources,
+            pixels,
+            width,
+            height,
+            searchCandidates,
+            matcherBackend);
+        LastPatchSearchExecution = execution;
+        var byDy = execution.Results.GroupBy(result => result.Dy)
+            .ToDictionary(group => group.Key, group => group.ToArray());
+        var candidates = new List<Candidate>();
+        foreach (var dy in dySequence)
+        {
+            if (!byDy.TryGetValue(dy, out var row)) continue;
+            candidates.AddRange(row.Select(result => new Candidate(
+                result.Dx,
+                result.Dy,
+                result.Error,
+                result.Support)));
+        }
         var ranked = candidates.OrderBy(value => value.Error).ToArray();
         if (ranked.Length == 0) return null;
         var best = ranked[0];

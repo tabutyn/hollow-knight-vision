@@ -53,7 +53,11 @@ Build on Windows with .NET 8 or newer:
 The resulting CLI host is
 `artifacts/win-x64/HollowKnightVision.Windows.Host.exe`. The desktop lab is
 `artifacts/app-win-x64/HollowKnightVision.Windows.exe`. Both are self-contained;
-the published executables do not require a separate .NET installation.
+the published executables do not require a separate .NET installation. A
+successful `build-windows.ps1` also installs and hash-verifies the desktop app
+at `%LOCALAPPDATA%\Programs\Hollow Knight Vision` and refreshes its Start Menu
+shortcut. The build fails instead of leaving that installed copy stale; close
+the installed app before building.
 
 Parity verification is tracked in `mac-parity-audit.json`. Run
 `./Test-MacParity.ps1` for the complete Mac source/test inventory and remaining
@@ -521,9 +525,20 @@ view's center rather than the mouse. Clicking Current restores its default zoom.
 Gameplay Fit is applied on request or window resize, not when atlas bounds grow;
 unrecognized cutscene frames retain the last live placement. Free Fly uses plain
 left-drag to pan and the wheel to zoom.
-Capture, normalization, diagnostics, and CI need no GPU. Windows Graphics Capture remains
-the planned high-frame-rate backend; that backend will normally use a GPU copy
-path, while the current analysis, inference, and training code is CPU-only.
+Ground Features is enabled when the dashboard opens. Confirmed persistent and
+global-match cells use the same purple review rectangles as Mac; live ground,
+occlusion, and depth-error cells retain the shared green, orange, and red
+palette. Candidate cells remain hidden.
+
+The widened 192-pixel production ground-patch search uses deterministic
+multicore CPU evaluation on Windows and retains a scalar fallback. The smaller
+edge/kernel preprocessing remains scalar automatically because dispatch overhead
+usually costs more than it saves. This ports the latest Mac tracking behavior
+and measurement seams, but it does not claim Apple Metal or NVIDIA execution.
+Set `HKV_WINDOWS_COMPUTE_BENCHMARK=1` while running the core tests to print
+scalar/parallel medians. Capture, normalization, ONNX inference, and training
+remain CPU-only. Windows Graphics Capture is still the planned high-frame-rate
+capture backend and would normally use a GPU copy path.
 
 Diagnose visual camera motion without receiver telemetry or launching the game:
 

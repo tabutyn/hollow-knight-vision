@@ -779,7 +779,8 @@ public partial class MainWindow : Window
     {
         internal GroundHypothesisTracker Tracker { get; } = new(
             minimumObservationSeconds: .2,
-            confirmedLossGraceSeconds: 3);
+            confirmedLossGraceSeconds: 3,
+            productionCameraSolver: true);
         internal GroundSemanticAtlas SemanticAtlas { get; } = new();
         internal GroundReferenceTracker ReferenceTracker { get; } = new();
         internal string? ReceiverSceneName { get; private set; }
@@ -3765,28 +3766,9 @@ public partial class MainWindow : Window
         }
         if (GroundFeaturesCheck.IsChecked == true)
         {
-            foreach (var feature in groundHypotheses.Features.Where(feature =>
-                         feature.Classification != GroundHypothesisClassification.Candidate))
-            {
-                var marker = new Rectangle
-                {
-                    Width = feature.ImageRect.Width,
-                    Height = feature.ImageRect.Height,
-                    Stroke = feature.Classification switch
-                    {
-                        GroundHypothesisClassification.GroundPlane => Brushes.LimeGreen,
-                        GroundHypothesisClassification.GlobalMatch => Brushes.MediumPurple,
-                        GroundHypothesisClassification.Occluded => Brushes.DarkOrange,
-                        _ => Brushes.Red
-                    },
-                    StrokeThickness = 2,
-                    Fill = Brushes.Transparent,
-                    ToolTip = $"ground feature {feature.Id} • {feature.Classification}"
-                };
-                Canvas.SetLeft(marker, feature.ImageRect.X);
-                Canvas.SetTop(marker, feature.ImageRect.Y);
-                DetectionCanvas.Children.Add(marker);
-            }
+            GroundFeatureOverlayPresentation.DrawLive(
+                DetectionCanvas,
+                groundHypotheses);
 
             if (groundHypotheses.CameraTranslation is { } translation
                 && double.IsFinite(translation.X)
@@ -3814,8 +3796,11 @@ public partial class MainWindow : Window
                     X2 = review.Line.XSpan.EndInclusive + 1,
                     Y1 = review.Line.Row + .5,
                     Y2 = review.Line.Row + .5,
-                    Stroke = Brushes.White,
-                    StrokeThickness = 2,
+                    Stroke = GroundFeatureOverlayPresentation.Brush(
+                        DashboardFeatureReviewLineKind.CurrentGround),
+                    StrokeThickness = DashboardFeatureReviewGeometry.LineWidth,
+                    Opacity = DashboardFeatureReviewPalette.Rgba(
+                        DashboardFeatureReviewLineKind.CurrentGround).Alpha,
                     ToolTip = FormattableString.Invariant(
                         $"confirmed ground {review.Id} • {review.DetectedFraction:P0}")
                 });
@@ -3857,17 +3842,10 @@ public partial class MainWindow : Window
             if (!double.IsFinite(feature.AtlasPosition.X)
                 || !double.IsFinite(feature.AtlasPosition.Y)) continue;
             var center = Project(feature.AtlasPosition);
-            var marker = new Rectangle
-            {
-                Width = GroundHypothesisTracker.FeatureWidth * scaleX,
-                Height = GroundHypothesisTracker.FeatureHeight * scaleY,
-                Stroke = Brushes.MediumPurple,
-                StrokeThickness = 2,
-                Fill = Brushes.Transparent,
-                Opacity = .8,
-                IsHitTestVisible = false,
-                ToolTip = $"persistent ground feature {feature.SegmentId}:{feature.SequenceIndex}"
-            };
+            var marker = GroundFeatureOverlayPresentation.PersistentRectangle(
+                feature,
+                scaleX,
+                scaleY);
             Canvas.SetLeft(marker, center.X - marker.Width * .5);
             Canvas.SetTop(marker, center.Y - marker.Height * .5);
             GameplayGroundCanvas.Children.Add(marker);
@@ -3887,9 +3865,11 @@ public partial class MainWindow : Window
                 Y1 = start.Y,
                 X2 = end.X,
                 Y2 = end.Y,
-                Stroke = Brushes.LimeGreen,
-                StrokeThickness = 2,
-                Opacity = .8,
+                Stroke = GroundFeatureOverlayPresentation.Brush(
+                    DashboardFeatureReviewLineKind.PersistentGround),
+                StrokeThickness = DashboardFeatureReviewGeometry.LineWidth,
+                Opacity = DashboardFeatureReviewPalette.Rgba(
+                    DashboardFeatureReviewLineKind.PersistentGround).Alpha,
                 IsHitTestVisible = false,
                 ToolTip = $"persistent ground {groundLine.SegmentId}"
             });

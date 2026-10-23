@@ -17,6 +17,12 @@ if (args is ["--export-dataset-probe", var probeRoot])
 
 var tests = new List<(string Name, Action Run)>
 {
+    ("ground parallel image processing matches CPU exactly", GroundComputeProcessingTests.TestParallelGroundImageProcessingMatchesCpuExactly),
+    ("ground parallel patch search matches CPU selection", GroundComputeProcessingTests.TestParallelPatchSearchMatchesCpuSelection),
+    ("ground widened search recovers motion outside former radius", GroundComputeProcessingTests.TestWiderParallelSearchRecoversMotionOutsideFormerRadius),
+    ("ground parallel solver matches CPU across motion sequence", GroundComputeProcessingTests.TestParallelSolverMatchesCpuAcrossMotionSequence),
+    ("ground release parallel search capacity benchmark", GroundComputeProcessingTests.TestReleaseParallelSearchCapacityBenchmark),
+    ("ground release parallel image benchmark", GroundComputeProcessingTests.TestReleaseParallelGroundImageBenchmark),
     ("ground hypothesis overlay omits a duplicate live ground line", GroundHypothesisLocalParityTests.TestFeatureOverlayDoesNotDrawASecondLiveGroundLine),
     ("ground hypothesis overlay omits persistent atlas lines", GroundHypothesisLocalParityTests.TestFeatureOverlayDoesNotPaintPersistentAtlasLineIntoLiveRaster),
     ("ground hypothesis overlay draws an exact rectangular cell", GroundHypothesisLocalParityTests.TestFeatureOverlayDrawsRectangularGroundCell),
