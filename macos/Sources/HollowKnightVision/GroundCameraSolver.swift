@@ -62,6 +62,9 @@ final class GroundCameraSolver {
     private let anchorImageMotionScale: CGVector
     private let recentImageMotionScale: CGVector
     private let usesAdaptiveRecentMotionScale: Bool
+    private let matcherBackend: GroundComputeBackend
+    private let maximumLocalSearchRadius: Int
+    private(set) var lastPatchSearchExecution: GroundPatchSearchExecution?
 
     static let hackerCalibratedAnchorScale = CGVector(dx: 0.9929, dy: 0.9947)
     static let hackerCalibratedRecentScale = CGVector(dx: 0.9809, dy: 0.9923)
@@ -77,7 +80,9 @@ final class GroundCameraSolver {
             "--ground-hacker-calibrated-motion"
         ),
         imageMotionScale: CGVector? = nil,
-        recentImageMotionScale: CGVector? = nil
+        recentImageMotionScale: CGVector? = nil,
+        matcherBackend: GroundComputeBackend = .cpu,
+        maximumLocalSearchRadius: Int = 96
     ) {
         self.subpixelEnabled = subpixelEnabled
         self.keyframeSubpixelEnabled = keyframeSubpixelEnabled
@@ -88,6 +93,8 @@ final class GroundCameraSolver {
             ?? (calibrated ? Self.hackerCalibratedAnchorScale : CGVector(dx: 1, dy: 1))
         self.recentImageMotionScale = recentImageMotionScale ?? imageMotionScale
             ?? (calibrated ? Self.hackerCalibratedRecentScale : CGVector(dx: 1, dy: 1))
+        self.matcherBackend = matcherBackend
+        self.maximumLocalSearchRadius = max(16, maximumLocalSearchRadius)
     }
 
     struct Solution {
@@ -560,7 +567,10 @@ final class GroundCameraSolver {
         let predictedY = Int((imagePosition.dy - prior.position.dy + velocity.dy * min(elapsed, 0.1)).rounded())
         // Duplicate captures followed by direction look-ahead can jump beyond
         // eight pixels even at 60 Hz. Keep that acceleration inside the search.
-        let radiusX = min(width, max(16, min(96, Int(ceil(elapsed * 400)))))
+        let radiusX = min(
+            width,
+            max(16, min(maximumLocalSearchRadius, Int(ceil(elapsed * 400))))
+        )
         // Hollow Knight can advance its camera by more than eight pixels after
         // a repeated capture, but a different platform hundreds of pixels
         // away is never one-frame camera motion. Keep fast pans while bounding
@@ -650,76 +660,62 @@ final class GroundCameraSolver {
         if diagnostics { traceDetail += " patches=\(patches.count)" }
         guard patches.count >= 3 else { return nil }
         func scan(_ hypotheses: [Int], horizontalRange: ClosedRange<Int>) {
-          var verticalScanCache = [Int: [(dx: Int, dy: Int, error: CGFloat, support: Int)]]()
-          for proposedY in hypotheses {
-            for dy in (proposedY - 3)...(proposedY + 3) {
-                // Adjacent edge rows propose overlapping search bands. Their
-                // absolute dy scans use identical evidence and search bounds.
-                // Reuse the results, retaining candidate order and duplicates
-                // so ranking and ambiguity decisions remain exactly the same.
-                if let cached = verticalScanCache[dy] {
-                    candidates.append(contentsOf: cached)
-                    continue
-                }
-                let firstCandidate = candidates.count
-                // A target patch is addressed only by (x, y). Neighboring
-                // translation candidates request many of the same targets.
-                // Rectify each target once per proposed row.
-                var targetCache = [Int: Patch]()
-                var unavailableTargets = Set<Int>()
-                func evaluate(_ dx: Int) -> (Int, Int, CGFloat, Int)? {
-                    var errors = [(x: Int, error: CGFloat)]()
-                    for source in patches {
+            // Gather every unique Y band into one command buffer. A thread
+            // scores one (dx,dy) candidate across the balanced patch set.
+            // Replaying the original Y sequence preserves ambiguity ranking
+            // when adjacent row hypotheses overlap.
+            let dySequence = hypotheses.flatMap { Array(($0 - 3)...($0 + 3)) }
+            var seen = Set<Int>()
+            let uniqueDYs = dySequence.filter { seen.insert($0).inserted }
+            let searchSources = patches.map {
+                GroundPatchSearchSource(x: $0.x, y: $0.y, pixels: $0.pixels)
+            }
+            var searchCandidates = [GroundPatchSearchCandidate]()
+            searchCandidates.reserveCapacity(uniqueDYs.count * horizontalRange.count)
+            for dy in uniqueDYs {
+                for dx in horizontalRange {
+                    var samples = [GroundPatchSearchSample]()
+                    samples.reserveCapacity(patches.count)
+                    for (sourceIndex, source) in patches.enumerated() {
                         let x = source.x + dx
                         let y = source.y + dy
                         let rect = CGRect(x: x, y: y, width: 16, height: 12)
                         guard x >= 0, x + 16 <= width, y >= 0, y + 12 <= height,
-                              !exclusions.contains(where: { $0.intersects(rect) }) else { continue }
+                              !exclusions.contains(where: { $0.intersects(rect) })
+                        else { continue }
                         // A partially detected row can still verify previously
                         // observed ground texture beyond today's visible edge
                         // islands. This never creates ground or features.
-                        guard searchLines.contains(where: { abs($0.row - y) <= 3 }) else {
-                            errors.append((source.x, 32))
-                            continue
-                        }
-                        let key = y * width + x
-                        let target: Patch
-                        if let cached = targetCache[key] {
-                            target = cached
-                        } else if unavailableTargets.contains(key) {
-                            errors.append((source.x, 32))
-                            continue
-                        } else if let sampled = GroundPixels.patch(
-                            pixels, width: width, height: height,
-                            x: x, y: y
-                        ) {
-                            target = Patch(x: x, y: y, pixels: sampled)
-                            targetCache[key] = target
-                        } else {
-                            unavailableTargets.insert(key)
-                            errors.append((source.x, 32))
-                            continue
-                        }
-                        errors.append((source.x, Self.patchError(source, target)))
+                        let targetOffset = searchLines.contains(where: {
+                            abs($0.row - y) <= 3
+                        }) ? y * width + x : nil
+                        samples.append(GroundPatchSearchSample(
+                            sourceIndex: sourceIndex,
+                            targetOffset: targetOffset
+                        ))
                     }
-                    guard errors.count >= 3 else { return nil }
-                    let inliers = errors.filter { $0.error <= 18 }
-                    guard inliers.count >= 3,
-                          inliers.count * 2 > errors.count,
-                          (inliers.map(\.x).max()! - inliers.map(\.x).min()!) >= 32
-                    else { return nil }
-                    let cost = errors.reduce(CGFloat.zero) { $0 + min(32, $1.error) }
-                        / CGFloat(errors.count)
-                    return (dx, dy, cost, inliers.count)
+                    searchCandidates.append(GroundPatchSearchCandidate(
+                        dx: dx,
+                        dy: dy,
+                        samples: samples
+                    ))
                 }
-                // Edges propose a band, not an exact row. +/-3 includes zero
-                // displacement when the detector wobbles by three pixels.
-                for dx in horizontalRange {
-                    if let value = evaluate(dx) { candidates.append(value) }
-                }
-                verticalScanCache[dy] = Array(candidates[firstCandidate...])
             }
-          }
+            let execution = GroundPatchMatcher.shared.search(
+                sources: searchSources,
+                pixels: pixels,
+                width: width,
+                height: height,
+                candidates: searchCandidates,
+                backend: matcherBackend
+            )
+            lastPatchSearchExecution = execution
+            let byDY = Dictionary(grouping: execution.results, by: \.dy)
+            for dy in dySequence {
+                candidates.append(contentsOf: (byDY[dy] ?? []).map {
+                    (dx: $0.dx, dy: $0.dy, error: $0.error, support: $0.support)
+                })
+            }
         }
         typealias Candidate = (dx: Int, dy: Int, error: CGFloat, support: Int)
         func winner(requiringBroadSupport: Bool) -> Candidate? {

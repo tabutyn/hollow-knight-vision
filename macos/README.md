@@ -27,6 +27,11 @@ copy, and rebuilds one canonical Dock pin in its original position. Duplicate
 Vision pins and stale recent tiles are removed without changing other Dock
 items or settings. The package copy is deleted after a successful install.
 `macos/build-app.sh --package-only` is reserved for CI and artifact packaging.
+Canonical builds use the BallRoller Apple signing certificate, preserving the
+same macOS Accessibility identity across source changes. The installer rejects
+ad-hoc signatures at `/Applications/Hollow Knight Vision.app` so a rebuild
+cannot silently invalidate keyboard and pointer permission again. Set
+`HKV_CODE_SIGN_IDENTITY=-` only with `--package-only` for a disposable bundle.
 
 To build, install, and immediately launch the installed copy:
 
@@ -57,8 +62,8 @@ writes in these tests target temporary plist files, never the live Dock.
 
 On first launch, grant **Privacy & Security → Screen & System Audio Recording**.
 The app asks on every ordinary launch whether to use Normal or Modded Hollow Knight. Normal mode
-uses capture, visual tracking, and native keyboard forwarding; Modded mode adds receiver input, Hacker, and
-Ops after the required capabilities connect. Agents can bypass the chooser:
+uses capture, visual tracking, and native keyboard and pointer forwarding; Modded mode adds receiver input,
+Hacker, and Ops after the required capabilities connect. Agents can bypass the chooser:
 
 ```bash
 macos/run-live.sh --game-mode normal
@@ -82,17 +87,21 @@ macos/run-live.sh --auto-navigate-gameplay
 
 Normal mode forwards arrows and common keyboard controls (A/D/Z/X/C, I,
 Return, Tab, Space, Escape) from the Vision window to the selected unmodified
-Hollow Knight process. macOS Accessibility permission is requested on the first
-forwarded key if needed. If an old build’s Accessibility approval is stale,
-remove Vision from that list and add the installed app again; the prompt links
-to the correct settings pane. Unity ignores background keyboard events, so Normal
+Hollow Knight process. Pointer events over the displayed live frame are mapped
+through the captured content rectangle, including title-bar cropping, and sent
+to the same validated process. macOS Accessibility permission is checked when
+normal input starts, before a key or click can fail silently. Migrating from an
+older ad-hoc build requires removing its stale Accessibility row and approving
+the stable installed app once. Later canonical rebuilds retain that approval.
+The prompt links to the correct settings pane. Unity ignores background keyboard events, so Normal
 uses a nonactivating key panel: Vision receives the keys while the game remains
 the active application underneath. The panel stays above the game only while
 in use and returns to normal window level when you switch away. Held keys are
 released on focus loss, workspace changes, and exit. Labeling, stencil review,
 model review, and text fields keep their own keys; Settings retains arrow
-forwarding. L and S remain Vision’s labeling and stencil shortcuts. Modded
-mode keeps its receiver and ordinary window behavior.
+forwarding. L and S remain Vision’s labeling and stencil shortcuts. The dashboard
+opens at the full usable display size by default. Modded mode keeps its receiver
+and ordinary window behavior.
 
 For local development runs that need repeatable game input without a human
 holding keys, enable the loopback automation channel explicitly and pulse a
@@ -126,6 +135,10 @@ expensive global recovery runs on a separate bounded snapshot worker. Object
 inference runs every fourth capture. See [GROUND_TRACKING.md](GROUND_TRACKING.md)
 for the current tracker and [TRACKING_STABILITY.md](TRACKING_STABILITY.md) for the
 September 26 implementation and live validation.
+Apple-silicon patch search uses Metal with CPU fallback. Ground preprocessing
+also has a pixel-exact Metal implementation, but current measurements keep its
+automatic path on CPU; [GPU_TRACKING.md](GPU_TRACKING.md) records that decision,
+the retained benchmarks, and the expanded recovery-search capacity.
 The sparse atlas has no fixed 4096 × 1440 reset boundary. The live world is saved
 under `~/Library/Application Support/HollowKnightVision/live-world-v3`; Reset atlas
 archives it and starts a fresh world. Set `HKV_LIVE_WORLD_ROOT` to an absolute

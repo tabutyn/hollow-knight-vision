@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir=${0:A:h}
 scratch_dir=${HKV_BUILD_SCRATCH_PATH:-"$script_dir/.build"}
 install_after_build=true
+default_signing_identity="Apple Development: THOMAS ANTHONY BUTYN (S64U9B558U)"
 
 usage() {
   cat <<'EOF'
@@ -35,6 +36,27 @@ while (( $# > 0 )); do
 done
 
 swift build -c release --package-path "$script_dir" --scratch-path "$scratch_dir"
+
+signing_identity=${HKV_CODE_SIGN_IDENTITY:-}
+if [[ -z "$signing_identity" ]]; then
+  available_identities=$(/usr/bin/security find-identity -v -p codesigning 2>/dev/null || true)
+  if [[ "$available_identities" == *"\"$default_signing_identity\""* ]]; then
+    signing_identity="$default_signing_identity"
+  elif $install_after_build; then
+    print -u2 "Stable code-signing identity is unavailable: $default_signing_identity"
+    print -u2 "Canonical builds require a stable signature so macOS Accessibility approval survives rebuilds."
+    exit 69
+  else
+    signing_identity="-"
+    print -u2 "Warning: packaging with an ad-hoc signature; do not install this bundle at the canonical path."
+  fi
+fi
+
+if $install_after_build && [[ "$signing_identity" == "-" ]]; then
+  print -u2 "Canonical builds cannot use an ad-hoc signature."
+  print -u2 "Use --package-only for a disposable ad-hoc bundle."
+  exit 69
+fi
 
 app_dir="$script_dir/build/Hollow Knight Vision.app"
 contents_dir="$app_dir/Contents"
@@ -77,13 +99,24 @@ for path in sorted((root / "Sources").rglob("*.swift")):
 revision = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
 pathlib.Path(sys.argv[2]).write_text(json.dumps({"gitRevision": revision, "swiftSourceSHA256": digest.hexdigest()}))
 PY
-codesign --force --sign - \
-  --identifier "com.ballroller.hollow-knight-vision.trainer" \
-  --requirements '=designated => identifier "com.ballroller.hollow-knight-vision.trainer"' \
+sign_item() {
+  local identifier=$1
+  local item=$2
+  local signing_arguments=(--force --sign "$signing_identity" --identifier "$identifier")
+  if [[ "$signing_identity" == "-" ]]; then
+    signing_arguments+=(--requirements "=designated => identifier \"$identifier\"")
+  else
+    # Local canonical builds do not need a network timestamp. codesign still
+    # creates a certificate-anchored designated requirement with a stable team.
+    signing_arguments+=(--timestamp=none)
+  fi
+  /usr/bin/codesign "${signing_arguments[@]}" "$item"
+}
+
+sign_item \
+  "com.ballroller.hollow-knight-vision.trainer" \
   "$contents_dir/Helpers/HollowKnightVisionTrainer"
-codesign --force --sign - \
-  --requirements '=designated => identifier "com.ballroller.hollow-knight-vision"' \
-  "$app_dir"
+sign_item "com.ballroller.hollow-knight-vision" "$app_dir"
 
 if $install_after_build; then
   "$script_dir/install-app.sh" --no-build

@@ -85,6 +85,16 @@ trap cleanup EXIT
 /usr/bin/ditto --rsrc --extattr "$source_app" "$stage_app"
 /usr/bin/codesign --verify --deep --strict "$stage_app"
 
+if [[ "$install_app" == "$canonical_app" ]]; then
+  signature_details=$(/usr/bin/codesign -d --verbose=4 "$stage_app" 2>&1)
+  if [[ "$signature_details" == *"Signature=adhoc"* \
+      || "$signature_details" != *"TeamIdentifier=MGV4UTVV6J"* ]]; then
+    print -u2 "Canonical installation requires the BallRoller Apple signing identity."
+    print -u2 "Refusing a build whose identity could invalidate macOS Accessibility approval."
+    exit 69
+  fi
+fi
+
 # A normal update must not leave an older process owning the Dock icon. SIGTERM
 # gives the app its ordinary termination path before the canonical bundle moves.
 if [[ "$install_app" == "$canonical_app" ]] \

@@ -13,6 +13,7 @@ final class FramePipelineTelemetry {
         case poseAge
         case motion
         case groundDetection
+        case groundPatchSearch
         case groundTracking
         case globalSearch
         case objectModel

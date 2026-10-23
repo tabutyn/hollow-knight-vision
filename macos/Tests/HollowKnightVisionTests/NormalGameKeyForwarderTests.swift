@@ -51,4 +51,91 @@ final class NormalGameKeyForwarderTests: XCTestCase {
         XCTAssertEqual(GameKeyRelay.action(type: .keyUp, keyCode: 7,
             modifierFlags: .command, supportedKeyCodes: gameplay), .forward)
     }
+
+    func testNativeInputAccessAcceptsEitherMacOSTrustSignal() {
+        XCTAssertFalse(NativeInputAccessPolicy.isGranted(
+            postEvent: false,
+            accessibility: false
+        ))
+        XCTAssertTrue(NativeInputAccessPolicy.isGranted(
+            postEvent: true,
+            accessibility: false
+        ))
+        XCTAssertTrue(NativeInputAccessPolicy.isGranted(
+            postEvent: false,
+            accessibility: true
+        ))
+    }
+
+    func testFreshKeyboardEventsContainOnlyRequestedKeyTransition() throws {
+        let down = try XCTUnwrap(NativeGameEventFactory.keyboard(
+            keyCode: 124,
+            isDown: true
+        ))
+        XCTAssertEqual(down.type, .keyDown)
+        XCTAssertEqual(
+            down.getIntegerValueField(.keyboardEventKeycode),
+            124
+        )
+        XCTAssertEqual(
+            down.getIntegerValueField(.keyboardEventAutorepeat),
+            0
+        )
+        let up = try XCTUnwrap(NativeGameEventFactory.keyboard(
+            keyCode: 124,
+            isDown: false
+        ))
+        XCTAssertEqual(up.type, .keyUp)
+        XCTAssertEqual(up.getIntegerValueField(.keyboardEventKeycode), 124)
+    }
+
+    func testPointerProjectionUsesCapturedContentAndInvertsY() throws {
+        let geometry = NativeGameWindowGeometry(
+            frame: CGRect(x: 100, y: 200, width: 400, height: 228),
+            captureSourceRect: CGRect(x: 0, y: 28, width: 400, height: 200)
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(NativeGamePointerProjection.screenPoint(
+                normalizedPoint: CGPoint(x: 0.25, y: 0.75),
+                geometry: geometry
+            )),
+            CGPoint(x: 200, y: 278)
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(NativeGamePointerProjection.screenPoint(
+                normalizedPoint: CGPoint(x: 0, y: 1),
+                geometry: geometry
+            )),
+            CGPoint(x: 100, y: 228)
+        )
+        XCTAssertNil(NativeGamePointerProjection.screenPoint(
+            normalizedPoint: CGPoint(x: 1.1, y: 0.5),
+            geometry: geometry
+        ))
+    }
+
+    func testFreshPointerEventsUseProjectedLocationAndClickCount() throws {
+        let point = CGPoint(x: 350, y: 420)
+        let down = try XCTUnwrap(NativeGameEventFactory.pointer(
+            kind: .leftDown,
+            screenPoint: point,
+            clickCount: 2
+        ))
+        XCTAssertEqual(down.type, .leftMouseDown)
+        XCTAssertEqual(down.location, point)
+        XCTAssertEqual(down.getIntegerValueField(.mouseEventClickState), 2)
+        XCTAssertNil(NativeGameEventFactory.pointer(
+            kind: .exited,
+            screenPoint: point,
+            clickCount: 1
+        ))
+    }
+
+    func testDashboardDefaultsToFullVisibleFrame() {
+        let visible = CGRect(x: -1_200, y: 25, width: 1_200, height: 775)
+        XCTAssertEqual(
+            DashboardWindowLayout.initialFrame(visibleFrame: visible),
+            visible
+        )
+    }
 }

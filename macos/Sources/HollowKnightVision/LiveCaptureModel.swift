@@ -201,7 +201,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         label: "com.ballroller.hollow-knight-vision.object-inference",
         qos: .userInitiated
     )
-    private let poseImageContext = CIContext(options: [.cacheIntermediates: false])
+    private let poseImageContext = GroundMetalResources.shared.makeImageContext()
     private let framePump = LatestFramePump<RenderFrame>()
     private let visionFramePump = LatestFramePump<VisionFrame>()
     private let objectInferencePump = LatestFramePump<ObjectInferenceFrame>()
@@ -461,11 +461,14 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         let worldRootURL = LiveWorldSessionStore.defaultRootURL()
         roomTopologyURL = worldRootURL.appendingPathComponent("visual-rooms.json")
         atlasPipeline = LiveAtlasPipeline(
-            context: CIContext(options: [.cacheIntermediates: false]),
+            context: GroundMetalResources.shared.makeImageContext(),
             worldRootURL: worldRootURL,
             restoresPersistedWorldOnInitialization: false
         )
         super.init()
+        // Compile the patch-search pipeline before capture begins. The first
+        // gameplay frame should not pay runtime shader setup cost.
+        _ = GroundPatchMatcher.shared.metalAvailable
         quitGameExitObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didTerminateApplicationNotification,
             object: nil,
@@ -645,8 +648,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                     self.isCapturing = true
                     self.operationInFlight = false
                     self.status = "Live atlas · waiting for camera lock…"
-                    // Position the game once capture is ready. Vision keeps its
-                    // compact centered frame while the game fills the screen.
+                    // Position the game once capture is ready. The normal-mode
+                    // panel shares the usable display and forwards input into
+                    // this window without transferring app focus.
                     self.positionWindows()
                 }
             } catch {
@@ -3421,6 +3425,14 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             }
             let groundTrackingSeconds = ProcessInfo.processInfo.systemUptime - groundTrackingStarted
             hadGlobalCorrection = hypothesisTracking?.globalCorrection != nil
+            if let search = groundHypothesisTracker.latestPatchSearchExecution {
+                telemetry.record(.groundPatchSearch, seconds: search.elapsed)
+                if groundTraceEnabled {
+                    groundTraceLog.info(
+                        "patch-search backend=\(search.backend.rawValue, privacy: .public) candidates=\(search.candidateCount, privacy: .public) comparisons=\(search.patchComparisonCount, privacy: .public) milliseconds=\(search.elapsed * 1_000, privacy: .public)"
+                    )
+                }
+            }
             telemetry.record(.groundTracking, seconds: groundTrackingSeconds)
             if let milliseconds = groundHypothesisTracker.completedGlobalSearchMilliseconds {
                 telemetry.record(.globalSearch, seconds: milliseconds / 1_000)

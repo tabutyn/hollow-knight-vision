@@ -470,7 +470,10 @@ final class GameControlForwarder {
     func forwardPointer(
         _ pointerEvent: GamePointerEvent
     ) -> Bool {
-        stateQueue.sync {
+        if let nativeForwarder {
+            return nativeForwarder.forwardPointer(pointerEvent)
+        }
+        return stateQueue.sync {
             guard started, transportReady, pointerCapabilityAvailable,
                   let controlSessionID else {
                 if pointerEvent.kind == .leftDown {

@@ -5,6 +5,16 @@ import SwiftUI
 /// while Vision is the active application.
 final class VisionPanel: NSWindow {}
 
+enum DashboardWindowLayout {
+    static func initialFrame(visibleFrame: CGRect) -> CGRect {
+        guard visibleFrame.origin.x.isFinite, visibleFrame.origin.y.isFinite,
+              visibleFrame.width.isFinite, visibleFrame.height.isFinite,
+              visibleFrame.width > 0, visibleFrame.height > 0
+        else { return CGRect(x: 0, y: 0, width: 1_200, height: 800) }
+        return visibleFrame.standardized
+    }
+}
+
 private struct GameModeChooserView: View {
     let icon: NSImage
     let normalAvailable: Bool
@@ -189,15 +199,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showDashboard() {
         let visibleFrame = NSScreen.main?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 1_200, height: 800)
-        let windowSize = CGSize(
-            width: min(980, visibleFrame.width),
-            height: min(640, visibleFrame.height)
-        )
-        let initialFrame = CGRect(
-            x: visibleFrame.midX - windowSize.width / 2,
-            y: visibleFrame.midY - windowSize.height / 2,
-            width: windowSize.width,
-            height: windowSize.height
+        let initialFrame = DashboardWindowLayout.initialFrame(
+            visibleFrame: visibleFrame
         )
         let style: NSWindow.StyleMask = [.titled, .closable, .resizable, .fullSizeContentView]
         let panel: NSWindow
@@ -221,6 +224,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.contentView = NSHostingView(rootView: DashboardView(model: model))
         panel.acceptsMouseMovedEvents = true
         panel.delegate = self
+        // contentRect construction can add title-bar geometry. Set the outer
+        // frame explicitly so the first dashboard fills the usable display.
+        panel.setFrame(initialFrame, display: false)
         viewerPanel = panel
         panel.makeKeyAndOrderFront(nil)
     }

@@ -556,6 +556,9 @@ final class GroundHypothesisTracker {
     /// integer multiple of featureSize, across every platform and line ID.
     private var globalTilePhaseX: CGFloat?
     private let cameraSolver: GroundCameraSolver
+    var latestPatchSearchExecution: GroundPatchSearchExecution? {
+        cameraSolver.lastPatchSearchExecution
+    }
     private let linePresence: GroundLinePresence
     private var lastTimestamp: Double?
     private var lastGlobalSearchTimestamp: Double?
@@ -600,7 +603,9 @@ final class GroundHypothesisTracker {
         cameraSolver = productionCameraSolver
             ? GroundCameraSolver(
                 keyframeSubpixelEnabled: true,
-                calibratedMotionEnabled: true
+                calibratedMotionEnabled: true,
+                matcherBackend: .automatic,
+                maximumLocalSearchRadius: 192
             )
             : GroundCameraSolver()
         linePresence = GroundLinePresence(minimumObservationSeconds: minimumObservationSeconds,

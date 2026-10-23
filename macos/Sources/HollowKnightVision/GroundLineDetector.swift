@@ -22,6 +22,9 @@ struct GroundEdgeAnalysis {
     let groundEdgePixels: [UInt8]
     var sourceLuma: [UInt8]? = nil
     var validSourcePixels: [UInt8]? = nil
+    /// The image processor computes the edge and fixed ground kernels together.
+    /// Keeping the paired result avoids calculating the fixed kernel twice.
+    var precomputedGroundPixels: [UInt8]? = nil
     /// Opaque capture letterboxing is not a world edge. Nil preserves the
     /// full domain for callers supplying an already computed edge image.
     var validRows: Range<Int>? = nil
@@ -163,28 +166,9 @@ enum GroundLineDetector {
                 dy: -CGFloat(8 + comparisonWeights.count / 2)
             )
         }
-        var groundEdges = [UInt8](repeating: 0, count: width * height)
         var validSourcePixels = [UInt8](repeating: 1, count: width * height)
-        luma.withUnsafeBufferPointer { input in
-            groundEdges.withUnsafeMutableBufferPointer { output in
-                for index in 0..<(width * (height - 1)) {
-                    output[index] = UInt8(abs(Int(input[index]) - Int(input[index + width])))
-                }
-                // Rasterize each rectangle once. Pixel-center rounding keeps
-                // exactly the same mask as the old per-pixel CGRect checks.
-                for rect in exclusions {
-                    let x0 = Int(max(0, min(CGFloat(width), ceil(rect.minX - 0.5))))
-                    let x1 = Int(max(-1, min(CGFloat(width - 1), floor(rect.maxX - 0.5))))
-                    let y0 = Int(max(0, min(CGFloat(height), ceil(CGFloat(height) - 0.5 - rect.maxY))))
-                    let y1 = Int(max(-1, min(CGFloat(height - 1), floor(CGFloat(height) - 0.5 - rect.minY))))
-                    guard x0 <= x1, y0 <= y1 else { continue }
-                    for row in y0...y1 {
-                        output.baseAddress!.advanced(by: row * width + x0)
-                            .update(repeating: 0, count: x1 - x0 + 1)
-                    }
-                }
-            }
-        }
+        // Rasterize each rectangle once. Pixel-center rounding keeps exactly
+        // the same mask as the old per-pixel CGRect checks.
         for rect in exclusions {
             let x0 = Int(max(0, min(CGFloat(width), ceil(rect.minX - 0.5))))
             let x1 = Int(max(-1, min(CGFloat(width - 1), floor(rect.maxX - 0.5))))
@@ -220,14 +204,23 @@ enum GroundLineDetector {
                 with: repeatElement(0, count: (height - contentBottom) * width)
             )
         }
+        let validRows = contentTop == 0 && contentBottom == height
+            ? nil : contentTop..<max(contentTop, contentBottom)
+        guard let processed = GroundImageProcessor.shared.process(
+            luma: luma,
+            width: width,
+            height: height,
+            validSourcePixels: validSourcePixels,
+            validRows: validRows
+        ) else { return nil }
         return GroundEdgeAnalysis(
             width: width,
             height: height,
-            groundEdgePixels: groundEdges,
+            groundEdgePixels: processed.groundEdges,
             sourceLuma: luma,
             validSourcePixels: validSourcePixels,
-            validRows: contentTop == 0 && contentBottom == height
-                ? nil : contentTop..<max(contentTop, contentBottom)
+            precomputedGroundPixels: processed.groundPixels,
+            validRows: validRows
         )
     }
 
@@ -483,6 +476,14 @@ enum GroundLineDetector {
     /// the requested quarter-unit weights multiplied by four. Positive matches
     /// retain their fixed 0...255 contrast scale; the opposite polarity is black.
     static func groundDetectPixels(from analysis: GroundEdgeAnalysis) -> [UInt8] {
+        if let precomputed = analysis.precomputedGroundPixels,
+           precomputed.count == analysis.width * analysis.height {
+            return precomputed
+        }
+        return cpuGroundDetectPixels(from: analysis)
+    }
+
+    static func cpuGroundDetectPixels(from analysis: GroundEdgeAnalysis) -> [UInt8] {
         let width = analysis.width
         let height = analysis.height
         let kernelWidth = comparisonKernelSpan
