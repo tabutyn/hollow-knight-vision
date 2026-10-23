@@ -67,13 +67,28 @@ public sealed class ReceiverClient : IAsyncDisposable
     public Task SendStateAsync(
         bool enabled,
         InputButtons heldButtons,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action<ReceiverInputSnapshot>? beforeSend = null)
     {
         var sequence = checked((ulong)Interlocked.Increment(ref nextSequence));
+        var snapshot = ReceiverInputSnapshot.Create(
+            SessionId,
+            sequence,
+            enabled,
+            heldButtons);
+        beforeSend?.Invoke(snapshot);
         return SendLineAsync(
-            ReceiverWireCodec.EncodeLine(
-                ReceiverInputSnapshot.Create(SessionId, sequence, enabled, heldButtons)),
+            ReceiverWireCodec.EncodeLine(snapshot),
             cancellationToken);
+    }
+
+    public Task SendPauseCommandAsync(ReceiverPauseCommand command, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        if (command.SessionId != SessionId || command.Version != ReceiverProtocol.ControlVersion
+            || command.Type is not ("pause" or "resume") || command.Type == "pause" && command.LeaseMilliseconds is not > 0)
+            throw new ArgumentException("Pause command does not match the negotiated session/protocol.", nameof(command));
+        return SendLineAsync(ReceiverWireCodec.EncodeLine(command), cancellationToken);
     }
 
     public Task SendCheckpointCommandAsync(

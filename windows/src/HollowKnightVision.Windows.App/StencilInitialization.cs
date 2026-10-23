@@ -121,6 +121,12 @@ internal static class StencilInitializationPolicy
         "quit to menu" => "quit-to-menu", "gameplay" => "game",
         _ => context.Trim().ToLowerInvariant().Replace(' ', '-')
     };
+
+    // ComboBox values must use the catalog's exact spelling (not title case:
+    // "Gameplay Hud" does not match "Gameplay HUD").
+    internal static string ContextDisplayName(string identifier) =>
+        AllContexts.FirstOrDefault(context => context.Identifier == NormalizeContext(identifier))?.Name
+        ?? identifier;
 }
 
 internal sealed class StencilInitializationCoordinator

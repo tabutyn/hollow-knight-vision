@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -28,7 +29,10 @@ public sealed record LabelingDatasetItem(
     string ImageFilename,
     int AnnotationCount,
     IReadOnlyList<string>? KnownClassIdentifiers,
-    LabelingDatasetSplit Split);
+    LabelingDatasetSplit Split)
+{
+    [JsonIgnore] public Guid Id => ExampleIdentifier;
+}
 
 public sealed record LabelingDatasetManifest(
     int SchemaVersion,
@@ -40,11 +44,18 @@ public sealed record LabelingDatasetManifest(
     bool IsPreliminary)
 {
     public const int CurrentSchemaVersion = 2;
+    [JsonIgnore] public IReadOnlyList<LabelingDatasetItem> TrainingItems => Items.Where(item => item.Split == LabelingDatasetSplit.Training).ToArray();
+    [JsonIgnore] public IReadOnlyList<LabelingDatasetItem> ValidationItems => Items.Where(item => item.Split == LabelingDatasetSplit.Validation).ToArray();
+    [JsonIgnore] public int TrainingAnnotationCount => TrainingItems.Sum(item => item.AnnotationCount);
+    [JsonIgnore] public int ValidationAnnotationCount => ValidationItems.Sum(item => item.AnnotationCount);
 }
 
 public sealed record LabelingDatasetSnapshot(
     string DirectoryPath,
-    LabelingDatasetManifest Manifest);
+    LabelingDatasetManifest Manifest)
+{
+    [JsonIgnore] public Guid Id => Manifest.Id;
+}
 
 /// <summary>
 /// Exports trainer-ready mac-compatible datasets. Capture groups and duplicate
@@ -56,8 +67,12 @@ public sealed class LabelingDatasetExporter
     public const string ManifestFilename = "dataset.json";
     public const string AnnotationsFilename = "annotations.json";
     public const string SharedObjectModelIdentifier = "shared-object-model";
-    private static readonly JsonSerializerOptions JsonOptions =
-        LabelingExampleStore.CreateJsonOptions();
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false), new DatasetDateConverter() }
+    };
     private readonly Func<Guid> createId;
     private readonly Func<DateTimeOffset> now;
 
@@ -67,12 +82,19 @@ public sealed class LabelingDatasetExporter
         Func<DateTimeOffset>? now = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootDirectory);
-        RootDirectory = Path.GetFullPath(rootDirectory);
+        RootDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootDirectory));
         this.createId = createId ?? Guid.NewGuid;
         this.now = now ?? (() => DateTimeOffset.UtcNow);
     }
 
     public string RootDirectory { get; }
+
+    public LabelingDatasetSnapshot Export(string classIdentifier, IEnumerable<SavedLabelingExample> examples) =>
+        Export(classIdentifier, [classIdentifier], examples);
+
+    public LabelingDatasetSnapshot ExportSharedModel(IEnumerable<string> classIdentifiers,
+        IEnumerable<SavedLabelingExample> examples, string modelIdentifier = SharedObjectModelIdentifier) =>
+        Export(modelIdentifier, classIdentifiers, examples);
 
     public LabelingDatasetSnapshot Export(
         string modelIdentifier,
@@ -87,10 +109,7 @@ public sealed class LabelingDatasetExporter
             .ToHashSet(StringComparer.Ordinal);
         if (included.Count == 0) throw new ArgumentException("Include at least one class.");
 
-        var candidates = examples.Where(example =>
-            example.Manifest.Annotations.Any(annotation => included.Contains(
-                LabelingClassIdentity.CanonicalIdentifier(annotation.ClassIdentifier)))
-            || example.Manifest.EffectiveKnownClassIdentifiers.Any(included.Contains)).ToArray();
+        var candidates = examples.Where(example => IsCandidate(example, included)).ToArray();
         if (!candidates.Any(example => example.Manifest.Annotations.Any(annotation =>
                 !annotation.IsHardNegative
                 && included.Contains(LabelingClassIdentity.CanonicalIdentifier(
@@ -149,6 +168,17 @@ public sealed class LabelingDatasetExporter
         return new LabelingDatasetSnapshot(finalDirectory, manifest);
     }
 
+    private static bool IsCandidate(SavedLabelingExample example, IReadOnlySet<string> included)
+    {
+        // An explicit positive/negative box is direct evidence, even for a legacy/unknown context.
+        if (example.Manifest.Annotations.Any(annotation => included.Contains(
+                LabelingClassIdentity.CanonicalIdentifier(annotation.ClassIdentifier)))) return true;
+        // The remembered catalog is global. A menu that knows about the Knight is not a gameplay negative.
+        // Match Mac's context.labels guard, not context inference or the selected editor object.
+        return LabelingFrameOpeningPolicy.ContextClasses(example.Manifest.ContextIdentifier).Any(included.Contains)
+            && example.Manifest.EffectiveKnownClassIdentifiers.Any(included.Contains);
+    }
+
     private static void WriteSplit(
         LabelingDatasetSplit split,
         IReadOnlyList<SourceRecord> records,
@@ -173,8 +203,8 @@ public sealed class LabelingDatasetExporter
                     new ObjectCoordinates(
                         (annotation.X + annotation.Width / 2) * imageWidth,
                         (annotation.Y + annotation.Height / 2) * imageHeight,
-                        annotation.Width * imageWidth,
-                        annotation.Height * imageHeight),
+                        Math.Abs(annotation.Width) * imageWidth,
+                        Math.Abs(annotation.Height) * imageHeight),
                     annotation.IsHardNegative ? true : null)).ToArray()));
         }
         AtomicFile.Write(
@@ -327,8 +357,11 @@ public sealed class LabelingDatasetExporter
     private SplitLedger LoadSplitLedger()
     {
         if (!File.Exists(SplitLedgerPath)) return new SplitLedger();
-        return JsonSerializer.Deserialize<SplitLedger>(File.ReadAllBytes(SplitLedgerPath), JsonOptions)
-            ?? new SplitLedger();
+        var ledger = JsonSerializer.Deserialize<SplitLedger>(File.ReadAllBytes(SplitLedgerPath), JsonOptions)
+            ?? throw new JsonException("Split ledger is empty.");
+        if (ledger.Assignments is null || ledger.Assignments.Values.Any(value => value is null))
+            throw new JsonException("Invalid split assignments.");
+        return ledger;
     }
 
     private void SaveSplitLedger(SplitLedger ledger) => AtomicFile.Write(
@@ -376,8 +409,15 @@ public sealed class LabelingDatasetExporter
 
     private sealed class SplitLedger
     {
-        public int SchemaVersion { get; init; } = 1;
-        public Dictionary<string, Dictionary<string, LabelingDatasetSplit>> Assignments { get; init; }
+        [JsonRequired] public int SchemaVersion { get; init; } = 1;
+        [JsonRequired] public Dictionary<string, Dictionary<string, LabelingDatasetSplit>> Assignments { get; init; }
             = new(StringComparer.Ordinal);
+    }
+
+    private sealed class DatasetDateConverter : JsonConverter<DateTimeOffset>
+    {
+        public override DateTimeOffset Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options) => reader.GetDateTimeOffset();
+        public override void Write(Utf8JsonWriter writer, DateTimeOffset value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture));
     }
 }

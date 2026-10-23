@@ -1,13 +1,166 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using HollowKnightVision.Windows.Core;
 
 namespace HollowKnightVision.Windows.Host;
 
+public sealed record HollowKnightVisionLaunchOptions(
+    bool AutoNavigateToGameplay,
+    bool AutomationControlEnabled)
+{
+    public const string AutoNavigateFlag = "--auto-navigate-gameplay";
+    public const string AutomationControlFlag = "--enable-automation-control";
+
+    private static readonly HashSet<string> RetiredArguments = new(
+        [
+            "--replay", "--registration", "--ownership", "--benchmark-capture-pixels",
+            "--ground-texture-affine", "--ground-texture-subpixel", "--ground-snap-recovery",
+            "--ground-snap-audit-directory", "--capture-owned-bgra", "--capture-core-image",
+            "--capture-pixel-audit", "--ground-surface-architecture", "--capture-fixed-refresh",
+            "--capture-queue-eight", "--presentation-three-drawables",
+            "--interactive-vision-workers", "--capture-user-activity",
+            "--global-search-stabilized-rows"
+        ],
+        StringComparer.Ordinal);
+
+    public static HollowKnightVisionLaunchOptions Parse(IReadOnlyList<string> arguments)
+    {
+        ArgumentNullException.ThrowIfNull(arguments);
+        return new HollowKnightVisionLaunchOptions(
+            arguments.Contains(AutoNavigateFlag, StringComparer.Ordinal),
+            arguments.Contains(AutomationControlFlag, StringComparer.Ordinal));
+    }
+
+    public static string? RetiredArgument(IReadOnlyList<string> arguments)
+    {
+        ArgumentNullException.ThrowIfNull(arguments);
+        return arguments.FirstOrDefault(argument =>
+            RetiredArguments.Contains(argument.Split('=', 2)[0]));
+    }
+}
+
+public enum GameAutomationButton
+{
+    Left,
+    Right,
+    Down,
+    Up,
+    A,
+    Z,
+    X,
+    Inventory,
+    Pause
+}
+
+public readonly record struct GameAutomationCommand(
+    GameAutomationButton Button,
+    double Duration)
+{
+    public const double DefaultDuration = 1.5;
+    public const double MinimumDuration = 0.05;
+    public const double MaximumDuration = 10;
+
+    public static GameAutomationCommand? Parse(string? serialized)
+    {
+        if (serialized is null) return null;
+        var components = serialized.Split(':', StringSplitOptions.None);
+        if (components.Length is < 1 or > 2
+            || !TryParseButton(components[0], out var button))
+        {
+            return null;
+        }
+        var duration = components.Length == 1
+            ? DefaultDuration
+            : double.TryParse(
+                components[1],
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var requested)
+                ? requested
+                : double.NaN;
+        if (!double.IsFinite(duration)
+            || duration < MinimumDuration
+            || duration > MaximumDuration)
+        {
+            return null;
+        }
+        return new GameAutomationCommand(button, duration);
+    }
+
+    private static bool TryParseButton(string value, out GameAutomationButton button)
+    {
+        button = value switch
+        {
+            "left" => GameAutomationButton.Left,
+            "right" => GameAutomationButton.Right,
+            "down" => GameAutomationButton.Down,
+            "up" => GameAutomationButton.Up,
+            "a" => GameAutomationButton.A,
+            "z" => GameAutomationButton.Z,
+            "x" => GameAutomationButton.X,
+            "inventory" => GameAutomationButton.Inventory,
+            "pause" => GameAutomationButton.Pause,
+            _ => default
+        };
+        return value is "left" or "right" or "down" or "up"
+            or "a" or "z" or "x" or "inventory" or "pause";
+    }
+}
+
 internal static class Program
 {
-    private static async Task<int> Main(string[] arguments)
+    private static readonly JsonSerializerOptions WorldReplayJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+    };
+
+    private static Task<int> Main(string[] arguments) => RunAsync(arguments);
+
+    internal static Task<int> RunAsync(
+        string[] arguments,
+        Func<IReadOnlyList<string>, LiveWorldReplayReport>? replayRunner = null,
+        Func<string[], Task<int>>? normalRunner = null,
+        TextWriter? standardOutput = null,
+        TextWriter? standardError = null)
+    {
+        ArgumentNullException.ThrowIfNull(arguments);
+        if (!arguments.Any(argument =>
+                argument.StartsWith("--world-replay-", StringComparison.Ordinal)))
+        {
+            return normalRunner is null
+                ? RunNormalAsync(arguments)
+                : normalRunner(arguments);
+        }
+
+        replayRunner ??= LiveWorldReplayEvaluator.Run;
+        standardOutput ??= Console.Out;
+        standardError ??= Console.Error;
+        try
+        {
+            var report = replayRunner(arguments);
+            standardOutput.WriteLine(JsonSerializer.Serialize(
+                report,
+                WorldReplayJsonOptions));
+            return Task.FromResult(report.Passed ? 0 : 1);
+        }
+        catch (LiveWorldReplayEvaluatorException error)
+        {
+            standardError.WriteLine(error.Message);
+            return Task.FromResult(
+                error.Error == LiveWorldReplayEvaluatorError.InvalidArgument ? 64 : 1);
+        }
+        catch (Exception error)
+        {
+            standardError.WriteLine(error);
+            return Task.FromResult(1);
+        }
+    }
+
+    private static async Task<int> RunNormalAsync(string[] arguments)
     {
         try
         {
@@ -404,6 +557,17 @@ internal static class Program
                                     Accepted observations per keyframe (default 10).
             --optimize-world DIR    Atomically optimize a persisted room graph using
                                     motion and loop-closure constraints.
+            --world-replay-session DIR
+                                    Replay one persisted scene session without launching
+                                    or attaching to Hollow Knight.
+            --world-replay-report PATH
+                                    Optional atomically written replay report.
+            --world-replay-repeats N
+                                    World replay count (default 3).
+            --world-replay-reopen   Reopen the isolated replay snapshot between passes.
+            --world-replay-one-way  Explicitly evaluate a one-way recording (default).
+            --world-replay-returning
+                                    Require return topology and an accepted loop closure.
             --replay-input-path FILE
                                     Replay a mac-compatible recorded input path through
                                     the receiver; requires an already-running game.
@@ -461,11 +625,17 @@ internal static class Program
     {
         internal static HostOptions Parse(string[] arguments)
         {
+            var launchOptions = HollowKnightVisionLaunchOptions.Parse(arguments);
+            if (HollowKnightVisionLaunchOptions.RetiredArgument(arguments) is { } retired)
+            {
+                throw new ArgumentException(
+                    $"Retired option: {retired}. See RETIRED_FEATURES.md for supported workflows.");
+            }
             var help = arguments.Length == 0;
             var probe = false;
             var receiverProbe = false;
             var groundTruthOnce = false;
-            var autoNavigateGameplay = false;
+            var autoNavigateGameplay = launchOptions.AutoNavigateToGameplay;
             string? gameExecutable = null;
             var startupTimeoutSeconds = 120;
             string? inferenceRunDirectory = null;
@@ -514,7 +684,8 @@ internal static class Program
                     case "--probe": probe = true; break;
                     case "--receiver-probe": receiverProbe = true; break;
                     case "--ground-truth-once": groundTruthOnce = true; break;
-                    case "--auto-navigate-gameplay": autoNavigateGameplay = true; break;
+                    case HollowKnightVisionLaunchOptions.AutoNavigateFlag: break;
+                    case HollowKnightVisionLaunchOptions.AutomationControlFlag: break;
                     case "--game-exe": gameExecutable = RequiredValue(arguments, ref index); break;
                     case "--startup-timeout-seconds":
                         startupTimeoutSeconds = PositiveInt(

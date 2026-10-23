@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -25,6 +26,14 @@ public sealed record LabelingExampleAnnotation(
     public LabelingExampleAnnotation Canonicalized() => this with
     {
         ClassIdentifier = LabelingClassIdentity.CanonicalIdentifier(ClassIdentifier)
+    };
+
+    public LabelingExampleAnnotation Standardized() => this with
+    {
+        X = Math.Min(X, X + Width),
+        Y = Math.Min(Y, Y + Height),
+        Width = Math.Abs(Width),
+        Height = Math.Abs(Height)
     };
 
     public void Validate()
@@ -96,6 +105,7 @@ public sealed record LabelingExampleManifest(
         return this with
         {
             SchemaVersion = CurrentSchemaVersion,
+            ContextIdentifier = LabelingExampleContextInference.Infer(ContextIdentifier, annotations),
             Annotations = annotations,
             KnownClassIdentifiers = known?.Order(StringComparer.Ordinal).ToArray()
         };
@@ -146,7 +156,7 @@ public sealed class LabelingExampleStore
 {
     public const string ManifestFilename = "example.json";
     public const string ImageFilename = "image.png";
-    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+    private static readonly JsonSerializerOptions JsonOptions = CreateManifestJsonOptions();
     private readonly Func<Guid> createId;
     private readonly Func<DateTimeOffset> now;
 
@@ -156,7 +166,7 @@ public sealed class LabelingExampleStore
         Func<DateTimeOffset>? now = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootDirectory);
-        RootDirectory = Path.GetFullPath(rootDirectory);
+        RootDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootDirectory));
         this.createId = createId ?? Guid.NewGuid;
         this.now = now ?? (() => DateTimeOffset.UtcNow);
     }
@@ -176,15 +186,7 @@ public sealed class LabelingExampleStore
         ArgumentException.ThrowIfNullOrWhiteSpace(contextIdentifier);
         ArgumentNullException.ThrowIfNull(annotations);
         var canonicalAnnotations = annotations.Select(CanonicalAndValidated).ToArray();
-        var introduced = Load().SelectMany(example => example.Manifest.Annotations)
-            .Select(annotation => LabelingClassIdentity.CanonicalIdentifier(
-                annotation.ClassIdentifier))
-            .Concat(canonicalAnnotations.Select(annotation => annotation.ClassIdentifier))
-            .Concat((knownClassIdentifiers ?? []).Select(
-                LabelingClassIdentity.CanonicalIdentifier))
-            .Distinct(StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
+        var introduced = IntroducedClassIdentifiers(canonicalAnnotations, knownClassIdentifiers);
         var id = createId();
         var manifest = new LabelingExampleManifest(
             LabelingExampleManifest.CurrentSchemaVersion,
@@ -253,6 +255,35 @@ public sealed class LabelingExampleStore
         return examples.OrderByDescending(example => example.Manifest.CreatedAt).ToArray();
     }
 
+    public IReadOnlyList<SavedLabelingExample> LoadContainingClass(string classIdentifier)
+    {
+        var canonical = LabelingClassIdentity.CanonicalIdentifier(classIdentifier);
+        return Load().Where(example => example.Manifest.Annotations.Any(annotation =>
+            LabelingClassIdentity.CanonicalIdentifier(annotation.ClassIdentifier) == canonical)).ToArray();
+    }
+
+    // Completion is not an admission gate on Mac: a draft with an introduced
+    // target (including an explicitly empty frame) is still training evidence.
+    public IReadOnlyList<SavedLabelingExample> LoadTrainingExamples(string? classIdentifier = null)
+    {
+        var canonical = classIdentifier is null ? null : LabelingClassIdentity.CanonicalIdentifier(classIdentifier);
+        return Load().Where(example => canonical is null
+            ? HasTrainingEvidence(example)
+            : example.Manifest.Annotations.Any(annotation =>
+                LabelingClassIdentity.CanonicalIdentifier(annotation.ClassIdentifier) == canonical)
+                || example.Manifest.EffectiveKnownClassIdentifiers.Contains(canonical, StringComparer.Ordinal)).ToArray();
+    }
+
+    public IReadOnlyList<SavedLabelingExample> LoadTrainingExamplesInContext(string contextIdentifier)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(contextIdentifier);
+        return Load().Where(example => example.Manifest.ContextIdentifier == contextIdentifier
+            && HasTrainingEvidence(example)).ToArray();
+    }
+
+    private static bool HasTrainingEvidence(SavedLabelingExample example) =>
+        example.Manifest.Annotations.Count > 0 || example.Manifest.EffectiveKnownClassIdentifiers.Count > 0;
+
     public LabelingExampleManifest LoadManifest(string directoryPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
@@ -273,13 +304,10 @@ public sealed class LabelingExampleStore
         var migrated = manifest.Canonicalized();
         var needsMigration = manifest.SchemaVersion
                 != LabelingExampleManifest.CurrentSchemaVersion
-            || manifest.Annotations.Any(annotation => annotation.Canonicalized() != annotation)
-            || (manifest.KnownClassIdentifiers?.Select(
-                    LabelingClassIdentity.CanonicalIdentifier)
-                .Order(StringComparer.Ordinal)
-                .SequenceEqual(
-                    manifest.KnownClassIdentifiers.Order(StringComparer.Ordinal),
-                    StringComparer.Ordinal) == false);
+            || migrated.ContextIdentifier != manifest.ContextIdentifier
+            || !migrated.Annotations.SequenceEqual(manifest.Annotations)
+            || (manifest.KnownClassIdentifiers is not null
+                && !migrated.KnownClassIdentifiers!.SequenceEqual(manifest.KnownClassIdentifiers, StringComparer.Ordinal));
         if (needsMigration) WriteManifest(migrated, manifestPath);
         return migrated;
     }
@@ -293,20 +321,15 @@ public sealed class LabelingExampleStore
     {
         EnsureOwned(example);
         ArgumentException.ThrowIfNullOrWhiteSpace(contextIdentifier);
+        ArgumentNullException.ThrowIfNull(annotations);
         var canonicalAnnotations = annotations.Select(CanonicalAndValidated).ToArray();
-        var known = example.Manifest.EffectiveKnownClassIdentifiers
-            .Concat(canonicalAnnotations.Select(annotation => annotation.ClassIdentifier))
-            .Concat((knownClassIdentifiers ?? []).Select(
-                LabelingClassIdentity.CanonicalIdentifier))
-            .Distinct(StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
+        var known = IntroducedClassIdentifiers(canonicalAnnotations, knownClassIdentifiers);
         var updated = example.Manifest with
         {
             SchemaVersion = LabelingExampleManifest.CurrentSchemaVersion,
-            ContextIdentifier = example.Manifest.Annotations.Count == 0
+            ContextIdentifier = LabelingExampleContextInference.Infer(example.Manifest.Annotations.Count == 0
                 ? contextIdentifier
-                : example.Manifest.ContextIdentifier,
+                : example.Manifest.ContextIdentifier, canonicalAnnotations),
             Annotations = canonicalAnnotations,
             KnownClassIdentifiers = known,
             Completion = completion
@@ -334,10 +357,23 @@ public sealed class LabelingExampleStore
     private static LabelingExampleAnnotation CanonicalAndValidated(
         LabelingExampleAnnotation annotation)
     {
-        var canonical = annotation.Canonicalized();
+        ArgumentNullException.ThrowIfNull(annotation);
+        var canonical = annotation.Canonicalized().Standardized() with
+        {
+            IsNegative = annotation.IsHardNegative ? true : null
+        };
         canonical.Validate();
         return canonical;
     }
+
+    private string[] IntroducedClassIdentifiers(IReadOnlyList<LabelingExampleAnnotation> annotations,
+        IEnumerable<string>? explicitKnownClasses) => Load().SelectMany(example => example.Manifest.Annotations)
+        .Select(annotation => LabelingClassIdentity.CanonicalIdentifier(annotation.ClassIdentifier))
+        .Concat(annotations.Select(annotation => annotation.ClassIdentifier))
+        // The CLI can explicitly introduce classes. The graphical editor must
+        // not pass its previous manifest's remembered snapshot here.
+        .Concat((explicitKnownClasses ?? []).Select(LabelingClassIdentity.CanonicalIdentifier))
+        .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
 
     private static void WriteManifest(LabelingExampleManifest manifest, string path)
     {
@@ -350,6 +386,22 @@ public sealed class LabelingExampleStore
         WriteIndented = true,
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
+
+    private static JsonSerializerOptions CreateManifestJsonOptions() => new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false), new ManifestDateConverter() }
+    };
+
+    private sealed class ManifestDateConverter : JsonConverter<DateTimeOffset>
+    {
+        // Accept previous Windows fractional timestamps as well as Mac JSON.
+        public override DateTimeOffset Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options) => reader.GetDateTimeOffset();
+        public override void Write(Utf8JsonWriter writer, DateTimeOffset value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture));
+    }
 }
 
 internal static class AtomicFile

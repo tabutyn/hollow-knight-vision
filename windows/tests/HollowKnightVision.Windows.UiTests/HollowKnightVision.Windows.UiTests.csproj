@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="../../src/HollowKnightVision.Windows.App/MainWindow.xaml" Link="MainWindow.source.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../../macos/Tests/HollowKnightVisionTests/hud-stencil-cases.json" Link="hud-stencil-cases.json" CopyToOutputDirectory="PreserveNewest" />
+    <ProjectReference Include="../../src/HollowKnightVision.Windows.App/HollowKnightVision.Windows.App.csproj" />
+  </ItemGroup>
+</Project>

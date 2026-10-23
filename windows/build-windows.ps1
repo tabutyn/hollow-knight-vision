@@ -27,6 +27,7 @@ function Invoke-Dotnet {
 Invoke-Dotnet build "$root/src/HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj" -c $configuration
 Invoke-Dotnet build "$root/src/HollowKnightVision.Windows.App/HollowKnightVision.Windows.App.csproj" -c $configuration
 Invoke-Dotnet run --project "$root/tests/HollowKnightVision.Windows.Tests/HollowKnightVision.Windows.Tests.csproj" -c $configuration
+Invoke-Dotnet run --project "$root/tests/HollowKnightVision.Windows.UiTests/HollowKnightVision.Windows.UiTests.csproj" -c $configuration
 Invoke-Dotnet run --project "$root/../macos/hollow-knight-input-receiver/tests/HollowKnightVisionInputReceiver.ProtocolTests.csproj" -c $configuration --disable-build-servers
 Invoke-Dotnet publish "$root/src/HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj" `
   -c $configuration -r win-x64 --self-contained true -o "$root/artifacts/win-x64"

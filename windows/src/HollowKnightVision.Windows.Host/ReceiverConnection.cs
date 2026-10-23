@@ -14,7 +14,8 @@ internal static class ReceiverConnection
         (await ConnectNegotiatedWithRetryAsync(cancellationToken).ConfigureAwait(false)).Client;
 
     internal static async Task<NegotiatedReceiver> ConnectNegotiatedWithRetryAsync(
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool renderFrameMarker = false)
     {
         while (true)
         {
@@ -22,7 +23,9 @@ internal static class ReceiverConnection
             var receiver = new ReceiverClient();
             try
             {
-                await receiver.ConnectAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+                await receiver.ConnectAsync(
+                    renderFrameMarker,
+                    cancellationToken).ConfigureAwait(false);
                 while (true)
                 {
                     var line = await receiver.ReceiveLineAsync(cancellationToken).ConfigureAwait(false)

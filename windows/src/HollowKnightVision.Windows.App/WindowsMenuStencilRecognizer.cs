@@ -1,167 +1,175 @@
 using System.IO;
-using System.Windows;
+using System.Text.Json;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using HollowKnightVision.Windows.Core;
 
 namespace HollowKnightVision.Windows.App;
 
-/// <summary>
-/// Matches the neutral-bright text and selector pixels inside the user's own
-/// label boxes. Templates remain local and work without receiver telemetry.
-/// </summary>
+/// <summary>Owns the user's contract-validated menu catalog and captured HUD reference.</summary>
 internal sealed class WindowsMenuStencilRecognizer
 {
-    private sealed record Patch(int X, int Y, int Width, int Height, bool[] Bright, int BrightCount);
-    private sealed record Template(string ContextIdentifier, Patch[] Patches);
-
-    private readonly string examplesRoot;
-    private Template[] templates = [];
-    private Rect[] matchedBounds = [];
+    internal sealed record Observation(LiveGameStatus? Status, LiveGameStatus? RecognizedStatus,
+        MenuStencilResult? Menu, HudStencilResult? Hud, long Generation, IReadOnlyList<ObjectDetection> Detections, string Diagnostic)
+    {
+        public string? Context => Status?.ContextIdentifier;
+        public bool HasFreshGameplayEvidence => RecognizedStatus?.IsGameplay == true;
+        public LiveObjectDetectionSnapshot Objects { get; init; } = LiveObjectDetectionSnapshot.Empty;
+        public LiveObjectInferenceDiagnostics ObjectDiagnostics { get; init; } = new();
+    }
+    private readonly string examplesRoot, calibrationPath;
+    private readonly object gate = new();
+    private readonly LiveMenuStencilWorker menuWorker;
+    private readonly LiveGameStatusPipeline statusPipeline = new();
+    private readonly LiveObjectInferenceWorker objects = new();
+    private double objectExtension = .12;
+    private bool createsPixelDiagnostic;
+    private IReadOnlySet<string> customClassIdentifiers = new HashSet<string>();
+    private HudStencilTemplate? hudTemplate;
+    private HudStencilTracker hud = new(null);
+    private HudStencilResult? latestHud;
+    private long generation;
+    private bool acceptsFrames = true;
     private string language;
-    internal bool HasGameplayReference => Volatile.Read(ref templates).Any(item => item.ContextIdentifier == "gameplay-hud");
-    internal IReadOnlyList<Rect> MatchedBounds => Volatile.Read(ref matchedBounds);
+    internal bool HasGameplayReference { get { lock (gate) return hudTemplate is not null; } }
+    internal HudStencilResult? LatestHud => Volatile.Read(ref latestHud);
+    internal bool IsCurrent(long value) => Interlocked.Read(ref generation) == value;
+    internal void ConfigureObjectDiagnostics(double extension, bool pixels)
+    {
+        lock (gate) { objectExtension = double.IsFinite(extension) ? Math.Clamp(extension, 0, .5) : .12; createsPixelDiagnostic = pixels; }
+    }
+    internal void SetObjectInferenceSuspended(bool suspended) => objects.SetSuspended(suspended);
+    internal void ResetObjectInference() => objects.Reset();
+    internal Task DrainObjectInferenceAsync() => objects.WhenIdleAsync();
+    internal LiveObjectDetectionSnapshot SnapshotObjectsAt(BgraFrame frame) => objects.Snapshot(
+        Interlocked.Read(ref generation), (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds);
 
     internal WindowsMenuStencilRecognizer(string examplesRoot, string language = "en")
     {
-        this.examplesRoot = examplesRoot;
-        this.language = language;
+        this.examplesRoot = Path.GetFullPath(examplesRoot); this.language = language;
+        calibrationPath = MenuStencilCalibration.WritablePath(this.examplesRoot);
+        var calibration = new MenuSelectorCalibrationTracker(calibrationPath,
+            MenuStencilCalibration.ProjectMirrorPath(Environment.GetCommandLineArgs()),
+            fallbackCalibration: MenuStencilCalibration.LoadDefault(calibrationPath));
+        menuWorker = new(new MenuStencilTracker(minimumSearchInterval: .1, calibration: calibration));
         Refresh();
     }
-
     internal void Refresh(string? language = null)
     {
-        if (language is not null) this.language = language;
-        var next = new List<Template>();
-        foreach (var example in new LabelingExampleStore(examplesRoot).Load())
+        lock (gate)
         {
-            if (example.Manifest.ResolvedLanguageIdentifier != this.language) continue;
-            var context = StencilInitializationPolicy.NormalizeContext(
-                example.Manifest.ContextIdentifier);
-            if (!StencilInitializationPolicy.RequiredContexts.Any(item => item.Identifier == context)) continue;
-            if (example.Manifest.ImageWidth != 640 || example.Manifest.ImageHeight != 360
-                || example.Manifest.Annotations.Count < (context == "gameplay-hud" ? 2 : 3)) continue;
+            if (language is not null) this.language = language;
+            var examples = new LabelingExampleStore(examplesRoot).Load();
+            HudStencilTemplate? nextHud = null;
+            var example = StencilInitializationPolicy.RepresentativeExample(examples, "gameplay-hud", this.language, GameRuntimeMode.Normal);
+            if (example is not null)
+                try { nextHud = HudStencilTemplate.Captured(LoadFrame(example.ImagePath), example.Manifest.Annotations, example.Id.ToString()); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException or FormatException) { }
+            IReadOnlyList<MenuStencilLiveSource> live = [];
+            try { live = new MenuStencilLiveCaptureStore(MenuStencilLiveCaptureStore.RootForExamples(examplesRoot)).Load().Select(item => item.Source).ToArray(); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { }
+            MenuStencilCatalog catalog;
             try
             {
-                var image = LoadFrame(example.ImagePath);
-                var patches = example.Manifest.Annotations
-                    .Where(annotation => !annotation.IsHardNegative)
-                    .Select(annotation => MakePatch(image, annotation))
-                    .Where(patch => patch.BrightCount >= 3)
-                    .ToArray();
-                if (context == "gameplay-hud") {
-                    var ordered = patches.OrderBy(patch => patch.X).ToArray();
-                    if (ordered.Length != 2 || ordered.Any(patch => patch.Y < 0 || patch.Y + patch.Height > 80
-                        || patch.X + patch.Width > 320) || ordered[0].X + ordered[0].Width > ordered[1].X
-                        || Math.Abs(ordered[0].Y + ordered[0].Height / 2.0 - ordered[1].Y - ordered[1].Height / 2.0)
-                            >= Math.Max(ordered[0].Height, ordered[1].Height) / 2.0) continue;
-                }
-                if (patches.Length >= (context == "gameplay-hud" ? 2 : 3)) next.Add(new Template(context, patches));
+                catalog = new MenuStencilCatalogBuilder(LabelingContractCatalog.ScreenContexts, LoadFrame,
+                    item => LabelingContractEvaluator.AcceptsMenuExample(item)).Build(examples, MenuStencilCalibration.LoadDefault(calibrationPath), live);
             }
-            catch (Exception error) when (error is IOException
-                or NotSupportedException or ArgumentException)
+            catch (MenuStencilCatalogUnavailableException) { catalog = new([], 640, 360, 0, 360, []); }
+            menuWorker.ReplaceCatalog(catalog);
+            hudTemplate = nextHud; hud = new(nextHud);
+            statusPipeline.Reset(preservingGameplay: true);
+            objects.Reset();
+            try
             {
+                var support = Path.GetDirectoryName(Path.GetDirectoryName(examplesRoot))!;
+                customClassIdentifiers = new UserObjectCatalog(Path.Combine(support, "object-catalog-v1.json")).Load()
+                    .Select(item => item.Identifier).ToHashSet(StringComparer.Ordinal);
             }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+            { customClassIdentifiers = new HashSet<string>(); }
+            Volatile.Write(ref latestHud, null); Interlocked.Increment(ref generation);
         }
-        Volatile.Write(ref templates, next.ToArray());
     }
-
-    internal string? Detect(BgraFrame frame)
+    internal void ResetTracking()
     {
-        var candidates = Volatile.Read(ref templates);
-        string? bestContext = null;
-        var bestScore = 0.0;
-        Rect[] bounds = [];
-        foreach (var template in candidates)
+        lock (gate)
         {
-            var scores = template.Patches.Select(patch => Compare(frame, patch)).ToArray();
-            var matched = scores.Count(score => score >= 0.42);
-            var minimum = template.ContextIdentifier == "gameplay-hud" ? 2 : 3;
-            if (matched < Math.Max(minimum, (int)Math.Ceiling(scores.Length * 0.6))) continue;
-            var score = scores.OrderByDescending(value => value)
-                .Take(Math.Max(minimum, (int)Math.Ceiling(scores.Length * 0.75)))
-                .Average();
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bounds = template.Patches.Where((_, index) => scores[index] >= 0.42)
-                    .Select(patch => new Rect(patch.X, patch.Y, patch.Width, patch.Height)).ToArray();
-                bestContext = template.ContextIdentifier == "gameplay-hud" ? "game" : template.ContextIdentifier;
-            }
+            menuWorker.Reset(); hud = new(hudTemplate); acceptsFrames = true;
+            statusPipeline.Reset(preservingGameplay: true);
+            objects.Reset();
+            Volatile.Write(ref latestHud, null); Interlocked.Increment(ref generation);
         }
-        Volatile.Write(ref matchedBounds, bestScore >= 0.48 ? bounds : []);
-        return bestScore >= 0.48 ? bestContext : null;
     }
-
-    private static Patch MakePatch(BgraFrame frame, LabelingExampleAnnotation annotation)
+    internal void ResetGameSession()
     {
-        var x = Math.Clamp((int)Math.Floor(annotation.X * frame.Width), 0, frame.Width - 1);
-        var y = Math.Clamp((int)Math.Floor(annotation.Y * frame.Height), 0, frame.Height - 1);
-        var width = Math.Clamp((int)Math.Ceiling(annotation.Width * frame.Width), 1, frame.Width - x);
-        var height = Math.Clamp((int)Math.Ceiling(annotation.Height * frame.Height), 1, frame.Height - y);
-        var bright = new bool[width * height];
-        var count = 0;
-        for (var row = 0; row < height; row++)
+        lock (gate)
         {
-            var source = frame.Row(y + row);
-            for (var column = 0; column < width; column++)
-            {
-                if (!IsNeutralBright(source, (x + column) * BgraFrame.BytesPerPixel)) continue;
-                bright[row * width + column] = true;
-                count++;
-            }
+            menuWorker.Reset(); hud = new(hudTemplate); statusPipeline.Reset();
+            objects.Reset();
+            Volatile.Write(ref latestHud, null); Interlocked.Increment(ref generation);
         }
-        return new Patch(x, y, width, height, bright, count);
     }
-
-    private static double Compare(BgraFrame frame, Patch patch)
+    internal void StopTracking()
     {
-        var width = Math.Min(patch.Width, frame.Width - patch.X);
-        var height = Math.Min(patch.Height, frame.Height - patch.Y);
-        if (width <= 0 || height <= 0) return 0;
-        var liveCount = 0;
-        var overlap = 0;
-        for (var row = 0; row < height; row++)
+        lock (gate)
         {
-            var source = frame.Row(patch.Y + row);
-            for (var column = 0; column < width; column++)
-            {
-                if (!IsNeutralBright(source, (patch.X + column) * BgraFrame.BytesPerPixel)) continue;
-                liveCount++;
-                if (patch.Bright[row * patch.Width + column]) overlap++;
-            }
+            // Drain running calibration writes before shutdown/factory reset
+            // archives the support directory. Late capture work cannot restart it.
+            acceptsFrames = false; menuWorker.Reset(); hud = new(hudTemplate);
+            statusPipeline.Reset(preservingGameplay: true);
+            objects.Reset();
+            Volatile.Write(ref latestHud, null); Interlocked.Increment(ref generation);
         }
-        return patch.BrightCount + liveCount == 0
-            ? 0
-            : 2.0 * overlap / (patch.BrightCount + liveCount);
     }
-
-    private static bool IsNeutralBright(ReadOnlySpan<byte> row, int offset)
+    internal Observation Observe(BgraFrame frame, bool asynchronously = false) => Analyze(frame, asynchronously, null);
+    // Exact analysis remains useful for isolated PNG/contract checks. Production
+    // capture uses AnalyzeLive and never waits for the object model.
+    internal Observation Analyze(BgraFrame frame, bool asynchronously, Func<IReadOnlyList<ObjectDetection>>? inferObjects)
+        => AnalyzeCore(frame, asynchronously, inferObjects, asynchronousObjects: false);
+    internal Observation AnalyzeLive(BgraFrame frame, bool asynchronously, Func<IReadOnlyList<ObjectDetection>>? inferObjects)
+        => AnalyzeCore(frame, asynchronously, inferObjects, asynchronousObjects: true);
+    internal Observation AnalyzeLiveWithPublication(BgraFrame frame, bool asynchronously,
+        Func<IReadOnlyList<ObjectDetection>>? inferObjects, Action<LiveObjectInferencePublication> onPublished)
+        => AnalyzeCore(frame, asynchronously, inferObjects, asynchronousObjects: true, onPublished);
+    private Observation AnalyzeCore(BgraFrame frame, bool asynchronously, Func<IReadOnlyList<ObjectDetection>>? inferObjects,
+        bool asynchronousObjects, Action<LiveObjectInferencePublication>? onPublished = null)
     {
-        var blue = row[offset];
-        var green = row[offset + 1];
-        var red = row[offset + 2];
-        var minimum = Math.Min(red, Math.Min(green, blue));
-        var maximum = Math.Max(red, Math.Max(green, blue));
-        return minimum >= 115 && maximum - minimum <= 90;
+        lock (gate)
+        {
+            if (!acceptsFrames) return new(null, null, null, null, generation, [], "stopped");
+            var timestamp = (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds;
+            var menuObservation = menuWorker.Observe(frame, timestamp, asynchronously)?.Observation;
+            var rawMenu = menuObservation?.Result;
+            // HUD must run before the menu/gameplay decision. A false menu
+            // candidate must not suppress the health evidence that disproves it.
+            var hudResult = hud.Observe(frame, true, timestamp, generation);
+            var snapshot = LiveObjectDetectionSnapshot.Empty;
+            IReadOnlyList<ObjectDetection> InferAndTrack()
+            {
+                snapshot = objects.Observe(frame, generation, inferObjects!, objectExtension, createsPixelDiagnostic,
+                    asynchronously: asynchronousObjects, onPublished: onPublished);
+                return snapshot.Tracked;
+            }
+            var state = statusPipeline.Observe(rawMenu, hudResult, timestamp, CreditsVisualSignature.IsLikelyCredits(frame),
+                inferObjects is null ? null : InferAndTrack, customClassIdentifiers);
+            // Menus admit no new object work and expose no object overlay. Like
+            // Mac, prior bounded work may finish but retains its capture age.
+            Volatile.Write(ref latestHud, hudResult);
+            var diagnostic = rawMenu is null ? "raw=none admitted=false" : FormattableString.Invariant(
+                $"raw={rawMenu.ContextIdentifier}/{rawMenu.SelectedOption ?? "none"} phase={rawMenu.Phase} confidence={rawMenu.Confidence:F3} evidence={rawMenu.SceneEvidenceRatio:F3} language={rawMenu.LanguageIdentifier ?? "shared"} comparisons={rawMenu.ComparisonCount} admitted={(state.Menu is null ? "false" : "true")}; calibration={menuObservation?.Diagnostic ?? "idle"}");
+            return new(state.Status, state.RecognizedStatus, state.Menu, hudResult, generation, state.Detections, diagnostic)
+                { Objects = snapshot, ObjectDiagnostics = objects.Diagnostics };
+        }
     }
-
+    // Kept for HUD integration checks; production consumes one atomic observation.
+    internal string? Detect(BgraFrame frame) => Observe(frame).RecognizedStatus?.ContextIdentifier;
     private static BgraFrame LoadFrame(string path)
     {
-        var decoder = BitmapDecoder.Create(
-            new Uri(path, UriKind.Absolute),
-            BitmapCreateOptions.PreservePixelFormat,
-            BitmapCacheOption.OnLoad);
+        var decoder = BitmapDecoder.Create(new Uri(path, UriKind.Absolute), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
         BitmapSource source = decoder.Frames[0];
-        if (source.Format != PixelFormats.Bgra32)
-        {
-            source = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
-        }
-        var stride = source.PixelWidth * BgraFrame.BytesPerPixel;
-        var pixels = new byte[stride * source.PixelHeight];
+        if (source.Format != PixelFormats.Bgra32) source = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+        var stride = source.PixelWidth * BgraFrame.BytesPerPixel; var pixels = new byte[stride * source.PixelHeight];
         source.CopyPixels(pixels, stride, 0);
-        return new BgraFrame(
-            source.PixelWidth, source.PixelHeight, stride, pixels, 0,
-            DateTimeOffset.UnixEpoch);
+        return new(source.PixelWidth, source.PixelHeight, stride, pixels, 0, DateTimeOffset.UnixEpoch);
     }
 }
