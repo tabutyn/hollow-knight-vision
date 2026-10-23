@@ -115,7 +115,7 @@ internal static class LabelingCommandRunner
         var snapshot = exporter.Export(
             command.ModelIdentifier,
             command.KnownClassIdentifiers,
-            store.Load());
+            store.LoadTrainingExamples());
         WriteJson(new
         {
             ok = true,

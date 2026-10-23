@@ -213,123 +213,210 @@ public sealed class GameStartupCoordinator
 }
 
 /// <summary>
-/// CPU-only startup recognizer. Coordinates come from the bundled macOS
-/// menu-stencil calibration at 640x360. It validates neutral bright UI strokes
-/// in both selector decorations and multiple menu anchors before naming a row.
+/// CPU-only startup recognizer. Stable menu identity and selection come from
+/// the shared menu stencil result; pixels are retained only for the startup HUD
+/// fallback and the coarse profile-one geometry used before stencils settle.
 /// </summary>
 public sealed class GameStartupDetector
 {
-    private readonly record struct Rect(double X, double Y, double Width, double Height);
-    private readonly record struct Selection(string Name, Rect Left, Rect Right);
+    private const int SampleWidth = 320;
 
-    private static readonly Rect[] TitleAnchors =
-    [
-        new(289, 209, 61, 9), new(297, 231, 45, 8), new(283, 254, 75, 7),
-        new(303, 274, 35, 8), new(291, 296, 57, 10)
-    ];
+    private readonly record struct Rect(double X, double Y, double Width, double Height)
+    {
+        public double MidY => Y + Height / 2;
+    }
 
-    private static readonly Selection[] TitleSelections =
-    [
-        new("Start Game", new(267, 201, 14, 11), new(359, 202, 13, 11)),
-        new("Options", new(276, 224, 12, 10), new(351, 223, 14, 11)),
-        new("Achievements", new(260, 246, 13, 9), new(368, 246, 11, 9)),
-        new("Extras", new(282.5, 267.5, 13, 10), new(346.5, 267.5, 13, 11)),
-        new("Quit Game", new(269, 288, 14, 11), new(356, 287, 15, 13))
-    ];
-
-    private static readonly Rect[] ProfileAnchors =
-    [
-        new(252, 26, 139, 15), new(101, 102, 13, 14), new(100, 156, 14, 14),
-        new(100, 209, 14, 15), new(92, 260, 22, 17), new(309, 304, 27, 8)
-    ];
-
-    private static readonly Selection[] ProfileSelections =
-    [
-        new("1.", new(57, 100, 15, 13), new(434, 100, 15, 14)),
-        new("2.", new(57, 154, 15, 13), new(434, 154, 16, 13)),
-        new("3.", new(57, 207, 15, 13), new(434, 207, 15, 14)),
-        new("4.", new(57, 262, 15, 11), new(433, 260, 17, 14)),
-        new("Back", new(282, 299, 16, 14), new(346, 299, 15, 14))
-    ];
-
-    public GameStartupEvidence Detect(BgraFrame frame, bool gameplayIsLatched = false)
+    public GameStartupEvidence Detect(
+        BgraFrame frame,
+        MenuStencilResult? menuStencil = null,
+        HudStencilResult? hudStencil = null,
+        bool gameplayIsLatched = false)
     {
         ArgumentNullException.ThrowIfNull(frame);
-        var menu = DetectMenu(frame);
-        if (gameplayIsLatched) return menu ?? GameStartupEvidence.Unknown;
-
-        if (HasBrightContent(frame, new Rect(0.045 * 640, 0.035 * 360, 0.085 * 640, 0.18 * 360), 8)
-            && HasBrightContent(frame, new Rect(0.115 * 640, 0.045 * 360, 0.16 * 640, 0.11 * 360), 8))
+        GameStartupEvidence? MenuEvidence()
         {
-            return new GameStartupEvidence(null, true);
-        }
-        return menu ?? GameStartupEvidence.Unknown;
-    }
-
-    private static GameStartupEvidence? DetectMenu(BgraFrame frame)
-    {
-        var titleAnchors = TitleAnchors.Count(rect => HasBrightContent(frame, rect, 4));
-        if (titleAnchors >= 3 && TrySelected(frame, TitleSelections, out var titleSelection))
-        {
-            return new GameStartupEvidence(GameStartupScreen.Title, false, titleSelection);
-        }
-
-        var profileAnchors = ProfileAnchors.Count(rect => HasBrightContent(frame, rect, 3));
-        if (profileAnchors >= 3 && TrySelected(frame, ProfileSelections, out var profileSelection))
-        {
-            return new GameStartupEvidence(GameStartupScreen.ProfileOne, false, profileSelection);
-        }
-        return null;
-    }
-
-    private static bool TrySelected(
-        BgraFrame frame,
-        IReadOnlyList<Selection> selections,
-        out string? selected)
-    {
-        Selection? best = null;
-        var bestScore = 0;
-        foreach (var candidate in selections)
-        {
-            var left = BrightPixelCount(frame, candidate.Left);
-            var right = BrightPixelCount(frame, candidate.Right);
-            var score = Math.Min(left, right);
-            if (score >= 3 && score > bestScore)
+            if (menuStencil?.IsMatch != true) return null;
+            return menuStencil.ContextIdentifier switch
             {
-                best = candidate;
-                bestScore = score;
-            }
+                "main-title" => new GameStartupEvidence(
+                    GameStartupScreen.Title,
+                    GameplayLikely: false,
+                    menuStencil.SelectedOption),
+                "select-profile" => new GameStartupEvidence(
+                    GameStartupScreen.ProfileOne,
+                    GameplayLikely: false,
+                    menuStencil.SelectedOption),
+                _ => GameStartupEvidence.Unknown
+            };
         }
-        selected = best?.Name;
-        return selected is not null;
+
+        if (gameplayIsLatched)
+        {
+            return MenuEvidence() ?? GameStartupEvidence.Unknown;
+        }
+
+        var sampleHeight = Math.Max(
+            1,
+            (int)Math.Round(
+                frame.Height * (double)SampleWidth / Math.Max(1, frame.Width),
+                MidpointRounding.AwayFromZero));
+        var mana = BrightBounds(
+            frame,
+            sampleHeight,
+            new Rect(0.045, 0.035, 0.085, 0.18),
+            minimumPixels: 8);
+        var health = BrightBounds(
+            frame,
+            sampleHeight,
+            new Rect(0.115, 0.045, 0.16, 0.11),
+            minimumPixels: 8);
+        if (hudStencil?.EstablishesGameplay == true || mana is not null && health is not null)
+        {
+            return new GameStartupEvidence(null, GameplayLikely: true);
+        }
+
+        if (MenuEvidence() is { } menu) return menu;
+        return ProfileEvidence(frame, sampleHeight) ?? GameStartupEvidence.Unknown;
     }
 
-    private static bool HasBrightContent(BgraFrame frame, Rect rect, int minimumPixels) =>
-        BrightPixelCount(frame, rect) >= minimumPixels;
-
-    private static int BrightPixelCount(BgraFrame frame, Rect referenceRect)
+    private static GameStartupEvidence? ProfileEvidence(
+        BgraFrame frame,
+        int sampleHeight)
     {
-        var x0 = Math.Clamp((int)Math.Floor(referenceRect.X * frame.Width / 640.0), 0, frame.Width);
-        var x1 = Math.Clamp((int)Math.Ceiling(
-            (referenceRect.X + referenceRect.Width) * frame.Width / 640.0), 0, frame.Width);
-        var y0 = Math.Clamp((int)Math.Floor(referenceRect.Y * frame.Height / 360.0), 0, frame.Height);
-        var y1 = Math.Clamp((int)Math.Ceiling(
-            (referenceRect.Y + referenceRect.Height) * frame.Height / 360.0), 0, frame.Height);
-        var count = 0;
+        var left = BrightBounds(
+            frame,
+            sampleHeight,
+            new Rect(0.075, 0.245, 0.075, 0.13),
+            minimumPixels: 5);
+        var numberOne = BrightBounds(
+            frame,
+            sampleHeight,
+            new Rect(0.145, 0.245, 0.08, 0.13),
+            minimumPixels: 7);
+        var right = BrightBounds(
+            frame,
+            sampleHeight,
+            new Rect(0.64, 0.245, 0.09, 0.13),
+            minimumPixels: 5);
+        if (left is null || numberOne is null || right is null)
+        {
+            return null;
+        }
+
+        var minimumMidY = Math.Min(left.Value.MidY, Math.Min(numberOne.Value.MidY, right.Value.MidY));
+        var maximumMidY = Math.Max(left.Value.MidY, Math.Max(numberOne.Value.MidY, right.Value.MidY));
+        return maximumMidY - minimumMidY <= sampleHeight * 0.055
+            ? new GameStartupEvidence(GameStartupScreen.ProfileOne, GameplayLikely: false)
+            : null;
+    }
+
+    private static Rect? BrightBounds(
+        BgraFrame frame,
+        int sampleHeight,
+        Rect normalizedRoi,
+        int minimumPixels)
+    {
+        var x0 = Math.Clamp((int)Math.Floor(normalizedRoi.X * SampleWidth), 0, SampleWidth);
+        var x1 = Math.Clamp(
+            (int)Math.Ceiling((normalizedRoi.X + normalizedRoi.Width) * SampleWidth),
+            0,
+            SampleWidth);
+        var y0 = Math.Clamp((int)Math.Floor(normalizedRoi.Y * sampleHeight), 0, sampleHeight);
+        var y1 = Math.Clamp(
+            (int)Math.Ceiling((normalizedRoi.Y + normalizedRoi.Height) * sampleHeight),
+            0,
+            sampleHeight);
+        if (x0 >= x1 || y0 >= y1) return null;
+
+        var mask = new bool[SampleWidth * sampleHeight];
         for (var y = y0; y < y1; y++)
         {
-            var row = frame.Row(y);
+            var sourceY = Math.Min(
+                frame.Height - 1,
+                (int)((long)y * frame.Height / sampleHeight));
+            var row = frame.Row(sourceY);
             for (var x = x0; x < x1; x++)
             {
-                var offset = x * BgraFrame.BytesPerPixel;
+                var sourceX = Math.Min(
+                    frame.Width - 1,
+                    (int)((long)x * frame.Width / SampleWidth));
+                var offset = sourceX * BgraFrame.BytesPerPixel;
                 var blue = row[offset];
                 var green = row[offset + 1];
                 var red = row[offset + 2];
                 var minimum = Math.Min(red, Math.Min(green, blue));
                 var maximum = Math.Max(red, Math.Max(green, blue));
-                if (minimum >= 145 && maximum - minimum <= 72) count++;
+                if (minimum >= 145 && maximum - minimum <= 72)
+                {
+                    mask[y * SampleWidth + x] = true;
+                }
             }
         }
-        return count;
+
+        var visited = new bool[mask.Length];
+        var retained = new List<(int X, int Y)>();
+        for (var y = y0; y < y1; y++)
+        {
+            for (var x = x0; x < x1; x++)
+            {
+                var start = y * SampleWidth + x;
+                if (!mask[start] || visited[start]) continue;
+                var queue = new List<(int X, int Y)> { (x, y) };
+                var component = new List<(int X, int Y)>();
+                visited[start] = true;
+                for (var cursor = 0; cursor < queue.Count; cursor++)
+                {
+                    var point = queue[cursor];
+                    component.Add(point);
+                    for (var neighborY = Math.Max(y0, point.Y - 1);
+                         neighborY <= Math.Min(y1 - 1, point.Y + 1);
+                         neighborY++)
+                    {
+                        for (var neighborX = Math.Max(x0, point.X - 1);
+                             neighborX <= Math.Min(x1 - 1, point.X + 1);
+                             neighborX++)
+                        {
+                            var index = neighborY * SampleWidth + neighborX;
+                            if (!mask[index] || visited[index]) continue;
+                            visited[index] = true;
+                            queue.Add((neighborX, neighborY));
+                        }
+                    }
+                }
+
+                var lowY = component.Min(point => point.Y);
+                var highY = component.Max(point => point.Y);
+                if (component.Count >= 2 && highY > lowY)
+                {
+                    retained.AddRange(component);
+                }
+            }
+        }
+
+        var regionWidth = x1 - x0;
+        var regionHeight = y1 - y0;
+        var regionArea = checked(regionWidth * regionHeight);
+        if (retained.Count < minimumPixels
+            || retained.Count > regionArea * 0.6)
+        {
+            return null;
+        }
+        var lowX = retained.Min(point => point.X);
+        var highX = retained.Max(point => point.X);
+        var retainedLowY = retained.Min(point => point.Y);
+        var retainedHighY = retained.Max(point => point.Y);
+        var retainedWidth = highX - lowX + 1;
+        var retainedHeight = retainedHighY - retainedLowY + 1;
+        if (retainedWidth >= regionWidth * 0.9
+            && retainedHeight >= regionHeight * 0.9
+            && retained.Count > regionArea * 0.25)
+        {
+            return null;
+        }
+        return new Rect(
+            lowX,
+            retainedLowY,
+            retainedWidth,
+            retainedHeight);
     }
 }

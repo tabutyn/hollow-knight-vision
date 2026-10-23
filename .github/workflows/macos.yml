@@ -15,7 +15,14 @@ jobs:
       - name: Portable Swift tests
         # MenuStencilTests audit a user-generated local screenshot/calibration
         # corpus. The standalone repository intentionally does not distribute it.
-        run: swift test --package-path macos --skip MenuStencilTests
+        run: swift test --package-path macos --enable-code-coverage --skip MenuStencilTests
+      - name: Upload measured Swift coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: HollowKnightVision-macOS-coverage
+          path: macos/.build/**/codecov/**
+          if-no-files-found: warn
       - name: Python unit tests
         run: |
           python3 macos/test-analyze-input-paths.py

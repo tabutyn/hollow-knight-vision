@@ -23,6 +23,42 @@ public readonly record struct GroundTheoryTuning(
 {
     public static GroundTheoryTuning Default => new(10, 48, 36, 180);
     public static GroundTheoryTuning SemanticDefault => new(8, 40, 40, 180);
+
+    public static GroundTheoryTuning LaunchTuning(
+        IReadOnlyList<string> arguments,
+        GroundTheoryTuning? basis = null)
+    {
+        ArgumentNullException.ThrowIfNull(arguments);
+        var baseline = basis ?? Default;
+
+        int Value(string name, int fallback, int lower, int upper)
+        {
+            var prefix = $"--{name}=";
+            for (var index = arguments.Count - 1; index >= 0; index--)
+            {
+                var argument = arguments[index];
+                if (!argument.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                return int.TryParse(
+                    argument.AsSpan(prefix.Length),
+                    System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var parsed)
+                    ? Math.Clamp(parsed, lower, upper)
+                    : fallback;
+            }
+            return fallback;
+        }
+
+        return new GroundTheoryTuning(
+            Value("ground-threshold", baseline.GroundThreshold, 1, 255),
+            Value(
+                "ground-minimum-segment",
+                baseline.MinimumSegmentLength,
+                1,
+                2_048),
+            Value("ground-line-separation", baseline.LineSeparation, 0, 512),
+            Value("ground-occlusion-gap", baseline.OcclusionMergeGap, 0, 4_096));
+    }
 }
 
 public sealed record DetectedFloorLine
@@ -50,6 +86,36 @@ public sealed record DetectedFloorLine
     public CleanFloorLine ToSemanticLine() => new(Row, XSpan);
 }
 
+/// <summary>
+/// Reusable result of ground-theory analysis. Accepted runs and cleaned lines
+/// are computed together so detection and diagnostics can share the same work.
+/// </summary>
+public sealed class GroundTheoryAnalysis
+{
+    internal GroundTheoryAnalysis(
+        GroundComparisonAnalysis comparison,
+        GroundTheoryTuning tuning,
+        IReadOnlyList<IReadOnlyList<DetectedFloorLine>> acceptedRunsByRow,
+        IReadOnlyList<DetectedFloorLine> cleanFloorLines)
+    {
+        Comparison = comparison;
+        Tuning = tuning;
+        AcceptedRunsByRow = acceptedRunsByRow;
+        CleanFloorLines = cleanFloorLines;
+        SelectedRows = acceptedRunsByRow
+            .Select((runs, row) => (runs, row))
+            .Where(item => item.runs.Count > 0)
+            .Select(item => item.row)
+            .ToArray();
+    }
+
+    public GroundComparisonAnalysis Comparison { get; }
+    public GroundTheoryTuning Tuning { get; }
+    public IReadOnlyList<IReadOnlyList<DetectedFloorLine>> AcceptedRunsByRow { get; }
+    public IReadOnlyList<DetectedFloorLine> CleanFloorLines { get; }
+    public IReadOnlyList<int> SelectedRows { get; }
+}
+
 public readonly record struct GroundLineSegment(
     double FrameY,
     int MinimumFrameX,
@@ -61,6 +127,77 @@ public sealed record GroundLineDetection(
     IReadOnlyList<GroundLineSegment> Segments,
     IReadOnlyList<double> NotchFrameXs,
     double Confidence);
+
+/// <summary>
+/// Shared detector/tracker pixels. Windows captures are top-origin BGRA; the
+/// weighted conversion is the DeviceGray adaptation and performs no resizing
+/// or interpolation. Texture patches are exact 16x12 row-major samples.
+/// </summary>
+public static class GroundPixels
+{
+    public const int PatchWidth = 16;
+    public const int PatchHeight = 12;
+    public const int PatchPixelCount = PatchWidth * PatchHeight;
+
+    public static byte[]? Luma(BgraFrame frame) =>
+        Luma(frame, frame?.Width ?? 0, frame?.Height ?? 0);
+
+    public static byte[]? Luma(BgraFrame? frame, int width, int height)
+    {
+        if (frame is null
+            || width <= 0
+            || height <= 0
+            || width != frame.Width
+            || height != frame.Height)
+        {
+            return null;
+        }
+        var length = checked(width * height);
+        var luma = new byte[length];
+        for (var row = 0; row < height; row++)
+        {
+            var source = frame.Row(row);
+            var targetOffset = row * width;
+            for (var x = 0; x < width; x++)
+            {
+                var offset = x * BgraFrame.BytesPerPixel;
+                luma[targetOffset + x] = (byte)((19 * source[offset]
+                    + 183 * source[offset + 1]
+                    + 54 * source[offset + 2]
+                    + 128) >> 8);
+            }
+        }
+        return luma;
+    }
+
+    public static byte[]? Patch(
+        IReadOnlyList<byte>? pixels,
+        int width,
+        int height,
+        int x,
+        int y)
+    {
+        if (pixels is null
+            || width <= 0
+            || height <= 0
+            || pixels.Count < (long)width * height
+            || x < 0
+            || (long)x + PatchWidth > width
+            || y < 0
+            || (long)y + PatchHeight > height)
+        {
+            return null;
+        }
+        var values = new byte[PatchPixelCount];
+        for (var row = 0; row < PatchHeight; row++)
+        for (var column = 0; column < PatchWidth; column++)
+        {
+            values[row * PatchWidth + column] =
+                pixels[(y + row) * width + x + column];
+        }
+        return values;
+    }
+}
 
 /// <summary>
 /// CPU ground-line extractor matching the macOS 32-column by 8-row theory.
@@ -79,20 +216,8 @@ public static class GroundLineDetector
         var width = frame.Width;
         var height = frame.Height;
         var length = checked(width * height);
-        var luma = new byte[length];
-        for (var row = 0; row < height; row++)
-        {
-            var source = frame.Row(row);
-            var targetOffset = row * width;
-            for (var x = 0; x < width; x++)
-            {
-                var offset = x * BgraFrame.BytesPerPixel;
-                luma[targetOffset + x] = (byte)((19 * source[offset]
-                    + 183 * source[offset + 1]
-                    + 54 * source[offset + 2]
-                    + 128) >> 8);
-            }
-        }
+        var luma = GroundPixels.Luma(frame, width, height)
+            ?? throw new InvalidOperationException("Capture could not be converted to luma.");
 
         var edges = new byte[length];
         for (var index = 0; index < width * (height - 1); index++)
@@ -158,6 +283,93 @@ public static class GroundLineDetector
             analysis.ValidSourcePixels);
     }
 
+    public static BgraFrame DebugImage(
+        BgraFrame frame,
+        IReadOnlyList<PixelRect>? excludedRects = null)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        var analysis = Analyze(frame, excludedRects);
+        var pixels = new byte[checked(analysis.Width * analysis.Height * BgraFrame.BytesPerPixel)];
+        for (var index = 0; index < analysis.GroundEdgePixels.Length; index++)
+        {
+            var value = analysis.GroundEdgePixels[index];
+            var offset = index * BgraFrame.BytesPerPixel;
+            pixels[offset] = value;
+            pixels[offset + 1] = value;
+            pixels[offset + 2] = value;
+            pixels[offset + 3] = byte.MaxValue;
+        }
+        return DiagnosticFrame(
+            analysis.Width,
+            analysis.Height,
+            pixels,
+            frame.CaptureId,
+            frame.ObservedAt);
+    }
+
+    /// <summary>
+    /// Progressive ground review. Cyan is raw threshold evidence and green is
+    /// evidence belonging to a contiguous island that survives Minimum Segment.
+    /// Pixels use BGRA byte order while preserving the Mac presentation colors.
+    /// </summary>
+    public static BgraFrame GroundStageImage(
+        GroundComparisonAnalysis analysis,
+        GroundTheoryTuning tuning) => GroundStageImage(Theory(analysis, tuning));
+
+    public static BgraFrame GroundStageImage(GroundTheoryAnalysis theory)
+    {
+        ArgumentNullException.ThrowIfNull(theory);
+        var analysis = theory.Comparison;
+        var tuning = theory.Tuning;
+        ValidateComparisonAnalysis(analysis);
+        var threshold = (byte)Math.Clamp(tuning.GroundThreshold, 0, 255);
+        var pixels = new byte[checked(
+            analysis.Width * analysis.Height * BgraFrame.BytesPerPixel)];
+        for (var index = 0; index < analysis.GroundPixels.Length; index++)
+        {
+            if (analysis.GroundPixels[index] >= threshold)
+                PaintBgra(pixels, index, red: 0, green: 230, blue: 255);
+        }
+        var accepted = theory.AcceptedRunsByRow;
+        for (var row = 0; row < accepted.Count; row++)
+        {
+            var rowOffset = row * analysis.Width;
+            foreach (var run in accepted[row])
+            for (var x = run.XSpan.Start; x <= run.XSpan.EndInclusive; x++)
+            {
+                var index = rowOffset + x;
+                if (analysis.GroundPixels[index] >= threshold)
+                    PaintBgra(pixels, index, red: 70, green: 255, blue: 120);
+            }
+        }
+        return DiagnosticFrame(analysis.Width, analysis.Height, pixels);
+    }
+
+    public static BgraFrame CleanedImage(
+        GroundComparisonAnalysis analysis,
+        GroundTheoryTuning tuning)
+    {
+        ValidateComparisonAnalysis(analysis);
+        var pixels = new byte[checked(
+            analysis.Width * analysis.Height * BgraFrame.BytesPerPixel)];
+        foreach (var floor in CleanFloorLines(analysis, tuning))
+        {
+            if (floor.Row < 0 || floor.Row >= analysis.Height) continue;
+            for (var x = Math.Max(0, floor.XSpan.Start);
+                 x <= Math.Min(analysis.Width - 1, floor.XSpan.EndInclusive);
+                 x++)
+            {
+                PaintBgra(
+                    pixels,
+                    floor.Row * analysis.Width + x,
+                    red: 70,
+                    green: 255,
+                    blue: 120);
+            }
+        }
+        return DiagnosticFrame(analysis.Width, analysis.Height, pixels);
+    }
+
     public static byte[] GroundDetectPixels(GroundEdgeAnalysis analysis)
     {
         ValidateEdgeAnalysis(analysis);
@@ -189,16 +401,14 @@ public static class GroundLineDetector
 
         const int halfHeight = 4;
         const int responseScale = ComparisonKernelSpan * 10;
-        var validStart = 0;
-        var validEnd = height;
-        if (analysis.ValidRows is { } validRows)
-        {
-            validStart = validRows.Start.GetOffset(height);
-            validEnd = validRows.End.GetOffset(height);
-        }
         for (var row = halfHeight; row <= height - halfHeight; row++)
         {
-            if (row - halfHeight < validStart || row + halfHeight >= validEnd) continue;
+            if (analysis.ValidRows is { } validRows
+                && (row - halfHeight < validRows.Start.GetOffset(height)
+                    || row + halfHeight >= validRows.End.GetOffset(height)))
+            {
+                continue;
+            }
             for (var x = halfWidth; x <= width - halfWidth; x++)
             {
                 var a = horizontalSums[(row - 4) * width + x];
@@ -221,23 +431,87 @@ public static class GroundLineDetector
 
     public static IReadOnlyList<DetectedFloorLine> CleanFloorLines(
         GroundComparisonAnalysis analysis,
-        GroundTheoryTuning tuning) => Theory(analysis, tuning, validateSurface: false);
+        GroundTheoryTuning tuning) => Theory(analysis, tuning).CleanFloorLines;
+
+    public static IReadOnlyList<DetectedFloorLine> CleanFloorLines(
+        GroundTheoryAnalysis theory)
+    {
+        ArgumentNullException.ThrowIfNull(theory);
+        return theory.CleanFloorLines;
+    }
 
     public static IReadOnlyList<DetectedFloorLine> SemanticFloorLines(
         GroundComparisonAnalysis analysis,
-        GroundTheoryTuning tuning) => Theory(analysis, tuning, validateSurface: true);
+        GroundTheoryTuning tuning) => CreateTheory(analysis, tuning, validateSurface: true)
+            .CleanFloorLines;
+
+    /// <summary>
+    /// Suppresses stale rejected projections that cover a presently confirmed
+    /// surface. Eight pixels matches the detector kernel height: records this
+    /// close with shared columns describe the same rendered edge, not two
+    /// independently reviewable platforms. Confirmed lines sort last too.
+    /// </summary>
+    public static IReadOnlyList<GroundLinePresenceReview> DisplayPresenceReviews(
+        IReadOnlyList<GroundLinePresenceReview> reviews)
+    {
+        ArgumentNullException.ThrowIfNull(reviews);
+        var confirmed = reviews
+            .Where(review => review.State == GroundLinePresenceState.Confirmed)
+            .ToArray();
+        return reviews.Where(review =>
+        {
+            if (review.State != GroundLinePresenceState.Rejected) return true;
+            return !confirmed.Any(accepted =>
+                Math.Abs(accepted.Line.Row - review.Line.Row) <= 8
+                && Math.Min(
+                        accepted.Line.XSpan.EndInclusive,
+                        review.Line.XSpan.EndInclusive)
+                    - Math.Max(
+                        accepted.Line.XSpan.Start,
+                        review.Line.XSpan.Start)
+                    + 1 >= 8);
+        }).OrderBy(review => review.State switch
+        {
+            GroundLinePresenceState.Rejected => 0,
+            GroundLinePresenceState.Observing => 1,
+            GroundLinePresenceState.Confirmed => 2,
+            _ => int.MaxValue
+        }).ToArray();
+    }
+
+    /// <summary>
+    /// Feature review shows only accepted world structure. Observing and
+    /// rejected records remain active in lifecycle decisions but are not
+    /// rendered as cyan/yellow atlas diagnostics.
+    /// </summary>
+    public static IReadOnlyList<GroundLinePresenceReview> FeatureHypothesisPresenceReviews(
+        IReadOnlyList<GroundLinePresenceReview> reviews) =>
+        DisplayPresenceReviews(reviews)
+            .Where(review => review.State == GroundLinePresenceState.Confirmed)
+            .ToArray();
 
     public static GroundLineDetection? Detect(
         GroundComparisonAnalysis analysis,
         double searchMinimumFrameY,
         double searchMaximumFrameY,
-        GroundTheoryTuning tuning)
+        GroundTheoryTuning tuning) => Detect(
+            Theory(analysis, tuning),
+            searchMinimumFrameY,
+            searchMaximumFrameY);
+
+    public static GroundLineDetection? Detect(
+        GroundTheoryAnalysis theory,
+        double searchMinimumFrameY,
+        double searchMaximumFrameY)
     {
+        ArgumentNullException.ThrowIfNull(theory);
         if (!double.IsFinite(searchMinimumFrameY) || !double.IsFinite(searchMaximumFrameY))
         {
             throw new ArgumentOutOfRangeException(nameof(searchMinimumFrameY));
         }
-        var lines = CleanFloorLines(analysis, tuning);
+        var analysis = theory.Comparison;
+        ValidateComparisonAnalysis(analysis);
+        var lines = theory.CleanFloorLines;
         var segments = lines.Select(line =>
         {
             var sum = 0L;
@@ -330,55 +604,34 @@ public static class GroundLineDetector
         }).ToArray();
     }
 
-    private static IReadOnlyList<DetectedFloorLine> Theory(
+    public static GroundTheoryAnalysis Theory(
+        GroundComparisonAnalysis analysis,
+        GroundTheoryTuning tuning) => CreateTheory(analysis, tuning, validateSurface: false);
+
+    private static GroundTheoryAnalysis CreateTheory(
         GroundComparisonAnalysis analysis,
         GroundTheoryTuning tuning,
         bool validateSurface)
     {
         ValidateComparisonAnalysis(analysis);
-        var threshold = Math.Clamp(tuning.GroundThreshold, 0, 255);
+        var accepted = AcceptedRunsByRow(analysis, tuning, validateSurface);
+        var lines = BuildTheoryLines(analysis, tuning, validateSurface, accepted);
+        var sharedRuns = Enumerable.Range(0, analysis.Height)
+            .Select(row => (IReadOnlyList<DetectedFloorLine>)lines
+                .Where(line => line.Row == row)
+                .ToArray())
+            .ToArray();
+        return new GroundTheoryAnalysis(analysis, tuning, sharedRuns, lines);
+    }
+
+    private static IReadOnlyList<DetectedFloorLine> BuildTheoryLines(
+        GroundComparisonAnalysis analysis,
+        GroundTheoryTuning tuning,
+        bool validateSurface,
+        List<CandidateRun>[] accepted)
+    {
         var minimumLength = Math.Max(1, tuning.MinimumSegmentLength);
-        var maximumGap = Math.Max(0, tuning.OcclusionMergeGap);
-        var accepted = new List<CandidateRun>[analysis.Height];
         var surface = validateSurface ? new GroundSurfaceEvidence(analysis) : null;
-
-        for (var row = 0; row < analysis.Height; row++)
-        {
-            var rawRuns = new List<PixelSpan>();
-            int? start = null;
-            var offset = row * analysis.Width;
-            for (var x = 0; x < analysis.Width; x++)
-            {
-                if (analysis.GroundPixels[offset + x] >= threshold)
-                {
-                    start ??= x;
-                }
-                else if (start is { } runStart)
-                {
-                    rawRuns.Add(new PixelSpan(runStart, x - 1));
-                    start = null;
-                }
-            }
-            if (start is { } finalStart)
-            {
-                rawRuns.Add(new PixelSpan(finalStart, analysis.Width - 1));
-            }
-
-            accepted[row] = MergeGroundRuns(rawRuns, maximumGap).Where(run =>
-            {
-                var evidenceLength = run.EvidenceSpans.Sum(SpanLength);
-                if (SpanLength(run.Span) < minimumLength || evidenceLength < minimumLength)
-                {
-                    return false;
-                }
-                if (!validateSurface) return true;
-                var strongThreshold = Math.Min(255, threshold + 1);
-                var strong = run.EvidenceSpans.Sum(span => CountMatching(
-                    span,
-                    x => analysis.GroundPixels[offset + x] >= strongThreshold));
-                return strong >= minimumLength;
-            }).ToList();
-        }
 
         var candidates = accepted.SelectMany((runs, row) => runs.Select(run =>
             new ScoredRun(
@@ -455,6 +708,53 @@ public static class GroundLineDetector
         return results.OrderBy(line => line.Row).ThenBy(line => line.XSpan.Start).ToArray();
     }
 
+    private static List<CandidateRun>[] AcceptedRunsByRow(
+        GroundComparisonAnalysis analysis,
+        GroundTheoryTuning tuning,
+        bool validateSurface)
+    {
+        ValidateComparisonAnalysis(analysis);
+        var threshold = Math.Clamp(tuning.GroundThreshold, 0, 255);
+        var minimumLength = Math.Max(1, tuning.MinimumSegmentLength);
+        var maximumGap = Math.Max(0, tuning.OcclusionMergeGap);
+        var accepted = new List<CandidateRun>[analysis.Height];
+
+        for (var row = 0; row < analysis.Height; row++)
+        {
+            var rawRuns = new List<PixelSpan>();
+            int? start = null;
+            var offset = row * analysis.Width;
+            for (var x = 0; x < analysis.Width; x++)
+            {
+                if (analysis.GroundPixels[offset + x] >= threshold)
+                {
+                    start ??= x;
+                }
+                else if (start is { } runStart)
+                {
+                    rawRuns.Add(new PixelSpan(runStart, x - 1));
+                    start = null;
+                }
+            }
+            if (start is { } finalStart)
+                rawRuns.Add(new PixelSpan(finalStart, analysis.Width - 1));
+
+            accepted[row] = MergeGroundRuns(rawRuns, maximumGap).Where(run =>
+            {
+                var evidenceLength = run.EvidenceSpans.Sum(SpanLength);
+                if (SpanLength(run.Span) < minimumLength || evidenceLength < minimumLength)
+                    return false;
+                if (!validateSurface) return true;
+                var strongThreshold = Math.Min(255, threshold + 1);
+                var strong = run.EvidenceSpans.Sum(span => CountMatching(
+                    span,
+                    x => analysis.GroundPixels[offset + x] >= strongThreshold));
+                return strong >= minimumLength;
+            }).ToList();
+        }
+        return accepted;
+    }
+
     private static IReadOnlyList<CandidateRun> MergeGroundRuns(
         IReadOnlyList<PixelSpan> runs,
         int maximumGap)
@@ -502,6 +802,34 @@ public static class GroundLineDetector
         rect.Y - vertical,
         checked(rect.Width + horizontal * 2),
         checked(rect.Height + vertical * 2));
+
+    private static BgraFrame DiagnosticFrame(
+        int width,
+        int height,
+        byte[] pixels,
+        long captureId = 0,
+        DateTimeOffset? observedAt = null) => new(
+            width,
+            height,
+            checked(width * BgraFrame.BytesPerPixel),
+            pixels,
+            captureId,
+            observedAt ?? DateTimeOffset.UnixEpoch);
+
+    private static void PaintBgra(
+        byte[] pixels,
+        int index,
+        byte red,
+        byte green,
+        byte blue,
+        byte alpha = byte.MaxValue)
+    {
+        var offset = checked(index * BgraFrame.BytesPerPixel);
+        pixels[offset] = blue;
+        pixels[offset + 1] = green;
+        pixels[offset + 2] = red;
+        pixels[offset + 3] = alpha;
+    }
 
     private static void ValidateEdgeAnalysis(GroundEdgeAnalysis analysis)
     {
@@ -611,5 +939,294 @@ public static class GroundLineDetector
             || analysis.ValidSourcePixels[index] != 0;
 
         private sealed record Band(int[] Sums, int[] Counts);
+    }
+}
+
+/// <summary>
+/// Tracks the currently relevant horizontal navigation surface. Image evidence
+/// owns the line position; the Knight is only a hint for which edge is ground.
+/// Knight and exclusion rectangles use top-left capture coordinates.
+/// </summary>
+public sealed class GroundReferenceTracker
+{
+    public const int MinimumStableObservations = 3;
+    public const int MaximumCandidateObservations = 6;
+    public const int MaximumMissedObservations = 12;
+
+    private readonly object sync = new();
+    private readonly List<double> candidateWorldYs = [];
+    private readonly List<double> switchWorldYs = [];
+    private GroundReferenceEstimate? estimate;
+    private int missedObservations;
+
+    public GroundReferenceEstimate? Observe(
+        BgraFrame frame,
+        AtlasPoint cameraPosition,
+        double solveWidth,
+        PixelRect? knightRect,
+        IReadOnlyList<PixelRect> excluding,
+        GroundEdgeAnalysis? edgeAnalysis = null,
+        GroundComparisonAnalysis? comparisonAnalysis = null,
+        GroundTheoryTuning? tuning = null) => ObserveCore(
+            frame,
+            cameraPosition,
+            solveWidth,
+            knightRect,
+            excluding,
+            edgeAnalysis,
+            comparisonAnalysis,
+            tuning,
+            theoryAnalysis: null);
+
+    public GroundReferenceEstimate? Observe(
+        BgraFrame frame,
+        AtlasPoint cameraPosition,
+        double solveWidth,
+        PixelRect? knightRect,
+        IReadOnlyList<PixelRect> excluding,
+        GroundTheoryAnalysis theoryAnalysis)
+    {
+        ArgumentNullException.ThrowIfNull(theoryAnalysis);
+        return ObserveCore(
+            frame,
+            cameraPosition,
+            solveWidth,
+            knightRect,
+            excluding,
+            edgeAnalysis: null,
+            comparisonAnalysis: null,
+            tuning: null,
+            theoryAnalysis);
+    }
+
+    private GroundReferenceEstimate? ObserveCore(
+        BgraFrame frame,
+        AtlasPoint cameraPosition,
+        double solveWidth,
+        PixelRect? knightRect,
+        IReadOnlyList<PixelRect> excluding,
+        GroundEdgeAnalysis? edgeAnalysis,
+        GroundComparisonAnalysis? comparisonAnalysis,
+        GroundTheoryTuning? tuning,
+        GroundTheoryAnalysis? theoryAnalysis)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        ArgumentNullException.ThrowIfNull(excluding);
+        lock (sync)
+        {
+            var presentationWidth = (double)frame.Width;
+            var presentationHeight = (double)frame.Height;
+            if (!double.IsFinite(cameraPosition.X)
+                || !double.IsFinite(cameraPosition.Y)
+                || !double.IsFinite(solveWidth)
+                || solveWidth <= 0
+                || presentationWidth <= 0
+                || presentationHeight <= 0)
+            {
+                return estimate;
+            }
+
+            var scale = presentationWidth / solveWidth;
+            var predictedFrameY = estimate is { } currentEstimate
+                ? (currentEstimate.WorldY - cameraPosition.Y) * scale
+                : (double?)null;
+            var knightFrameY = knightRect is { Width: > 0, Height: > 0 } knight
+                ? presentationHeight - knight.Bottom
+                : (double?)null;
+            var anchorY = knightFrameY ?? predictedFrameY ?? presentationHeight * .24;
+            var lowerRadius = presentationHeight * (knightRect is null ? .12 : .18);
+            var upperRadius = presentationHeight * (knightRect is null ? .12 : .04);
+            var effectiveTuning = tuning ?? GroundTheoryTuning.Default;
+            var detection = theoryAnalysis is not null
+                ? GroundLineDetector.Detect(
+                    theoryAnalysis,
+                    anchorY - lowerRadius,
+                    anchorY + upperRadius)
+                : GroundLineDetector.Detect(
+                    comparisonAnalysis
+                        ?? GroundLineDetector.Compare(
+                            edgeAnalysis ?? GroundLineDetector.Analyze(frame, excluding)),
+                    anchorY - lowerRadius,
+                    anchorY + upperRadius,
+                    effectiveTuning);
+            if (detection is null)
+            {
+                missedObservations++;
+                if (missedObservations > MaximumMissedObservations) estimate = null;
+                return estimate;
+            }
+            missedObservations = 0;
+
+            var detectedWorldY = cameraPosition.Y + detection.FrameY / scale;
+            var detectedNotches = detection.NotchFrameXs
+                .Select(value => cameraPosition.X + value / scale)
+                .ToArray();
+            var detectedSegments = detection.Segments.Select(segment =>
+                new GroundReferenceSegment(
+                    cameraPosition.X + segment.MinimumFrameX / scale,
+                    cameraPosition.X + segment.MaximumFrameX / scale,
+                    cameraPosition.Y + segment.FrameY / scale)).ToArray();
+            if (!double.IsFinite(detectedWorldY)
+                || detectedNotches.Length == 0
+                || detectedNotches.Any(value => !double.IsFinite(value))
+                || detectedSegments.Length == 0)
+            {
+                return estimate;
+            }
+
+            if (estimate is { } current)
+            {
+                var directTrackingTolerance = Math.Max(5, solveWidth * .025);
+                if (Math.Abs(detectedWorldY - current.WorldY) <= directTrackingTolerance)
+                {
+                    switchWorldYs.Clear();
+                    candidateWorldYs.Add(detectedWorldY);
+                    Trim(candidateWorldYs);
+                    return Publish(
+                        Median(candidateWorldYs),
+                        cameraPosition,
+                        solveWidth,
+                        detectedSegments,
+                        detectedNotches,
+                        detectedWorldY,
+                        detection.Confidence);
+                }
+
+                switchWorldYs.Add(detectedWorldY);
+                Trim(switchWorldYs);
+                var recent = switchWorldYs
+                    .Skip(Math.Max(0, switchWorldYs.Count - MinimumStableObservations))
+                    .ToArray();
+                var switchTolerance = Math.Max(5, solveWidth * .018);
+                if (recent.Length != MinimumStableObservations
+                    || recent.Max() - recent.Min() > switchTolerance)
+                {
+                    return current;
+                }
+                candidateWorldYs.Clear();
+                candidateWorldYs.AddRange(recent);
+                switchWorldYs.Clear();
+                return Publish(
+                    Median(recent),
+                    cameraPosition,
+                    solveWidth,
+                    detectedSegments,
+                    detectedNotches,
+                    detectedWorldY,
+                    detection.Confidence);
+            }
+
+            candidateWorldYs.Add(detectedWorldY);
+            Trim(candidateWorldYs);
+            var acquisition = candidateWorldYs
+                .Skip(Math.Max(0, candidateWorldYs.Count - MinimumStableObservations))
+                .ToArray();
+            var acquisitionTolerance = Math.Max(5, solveWidth * .018);
+            if (acquisition.Length != MinimumStableObservations
+                || acquisition.Max() - acquisition.Min() > acquisitionTolerance)
+            {
+                return null;
+            }
+            return Publish(
+                Median(acquisition),
+                cameraPosition,
+                solveWidth,
+                detectedSegments,
+                detectedNotches,
+                detectedWorldY,
+                detection.Confidence);
+        }
+    }
+
+    public GroundReferenceEstimate? ApplyWorldCorrection(CameraVector correction)
+    {
+        lock (sync)
+        {
+            if (!double.IsFinite(correction.X)
+                || !double.IsFinite(correction.Y)
+                || estimate is not { } current)
+            {
+                return estimate;
+            }
+            for (var index = 0; index < candidateWorldYs.Count; index++)
+                candidateWorldYs[index] += correction.Y;
+            for (var index = 0; index < switchWorldYs.Count; index++)
+                switchWorldYs[index] += correction.Y;
+            estimate = new GroundReferenceEstimate(
+                current.WorldY + correction.Y,
+                current.MinimumWorldX + correction.X,
+                current.MaximumWorldX + correction.X,
+                current.Segments.Select(segment => new GroundReferenceSegment(
+                    segment.MinimumWorldX + correction.X,
+                    segment.MaximumWorldX + correction.X,
+                    segment.WorldY is { } worldY ? worldY + correction.Y : null)).ToArray(),
+                current.NotchWorldXs.Select(value => value + correction.X).ToArray(),
+                current.SupportingObservationCount,
+                current.Confidence);
+            return estimate;
+        }
+    }
+
+    public GroundReferenceEstimate? CurrentEstimate()
+    {
+        lock (sync) return estimate;
+    }
+
+    public void Reset()
+    {
+        lock (sync)
+        {
+            candidateWorldYs.Clear();
+            switchWorldYs.Clear();
+            estimate = null;
+            missedObservations = 0;
+        }
+    }
+
+    private GroundReferenceEstimate Publish(
+        double worldY,
+        AtlasPoint cameraPosition,
+        double solveWidth,
+        IReadOnlyList<GroundReferenceSegment> segments,
+        IReadOnlyList<double> notches,
+        double detectedPrimaryWorldY,
+        double confidence)
+    {
+        var margin = solveWidth * .02;
+        var primaryTolerance = Math.Max(3, solveWidth * .01);
+        var stabilizedSegments = segments.Select(segment =>
+            segment.WorldY is { } segmentY
+                && Math.Abs(segmentY - detectedPrimaryWorldY) <= primaryTolerance
+                ? new GroundReferenceSegment(
+                    segment.MinimumWorldX,
+                    segment.MaximumWorldX,
+                    worldY)
+                : segment).ToArray();
+        var next = new GroundReferenceEstimate(
+            worldY,
+            Math.Max(cameraPosition.X, notches.Min() - margin),
+            Math.Min(cameraPosition.X + solveWidth, notches.Max() + margin),
+            stabilizedSegments,
+            notches.ToArray(),
+            notches.Count,
+            confidence);
+        estimate = next;
+        return next;
+    }
+
+    private static void Trim(List<double> values)
+    {
+        if (values.Count > MaximumCandidateObservations)
+            values.RemoveRange(0, values.Count - MaximumCandidateObservations);
+    }
+
+    private static double Median(IEnumerable<double> values)
+    {
+        var sorted = values.Order().ToArray();
+        if (sorted.Length == 0) return 0;
+        var middle = sorted.Length / 2;
+        return sorted.Length % 2 == 0
+            ? (sorted[middle - 1] + sorted[middle]) * .5
+            : sorted[middle];
     }
 }

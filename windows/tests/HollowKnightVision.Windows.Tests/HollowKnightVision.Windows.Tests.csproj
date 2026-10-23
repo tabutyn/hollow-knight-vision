@@ -3,6 +3,13 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.cs" Link="WindowsGameControlForwarder.cs" />
+    <Compile Include="../../src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.Pause.cs" Link="WindowsGameControlForwarder.Pause.cs" />
+    <Compile Include="../../src/HollowKnightVision.Windows.App/GameplayViewportPolicy.cs" Link="GameplayViewportPolicy.cs" />
+    <Compile Include="../../src/HollowKnightVision.Windows.App/StencilPreviewPresentation.cs" Link="StencilPreviewPresentation.cs" />
+    <Compile Include="../../src/HollowKnightVision.Windows.App/LabelBoxBounds.cs" Link="LabelBoxBounds.cs" />
+    <Compile Include="../../src/HollowKnightVision.Windows.App/LabelingViewportTransform.cs" Link="LabelingViewportTransform.cs" />
+    <Compile Include="../../src/HollowKnightVision.Windows.App/NormalGameInputPolicy.cs" Link="NormalGameInputPolicy.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/GameRuntimeModeValue.cs" Link="GameRuntimeModeValue.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/StencilInitialization.cs" Link="StencilInitialization.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/StencilGuidanceText.cs" Link="StencilGuidanceText.cs" />
@@ -12,6 +19,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <ProjectReference Include="../../src/HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
+    <ProjectReference Include="../../src/HollowKnightVision.Windows.App/HollowKnightVision.Windows.App.csproj"
+                      ReferenceOutputAssembly="false"
+                      SkipGetTargetFrameworkProperties="true" />
+    <ProjectReference Include="../../src/HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj"
+                      ReferenceOutputAssembly="false" />
     <Compile Include="../../src/HollowKnightVision.Windows.Host/BmpWriter.cs" Link="BmpWriter.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.Host/HollowKnightGameLauncher.cs" Link="HollowKnightGameLauncher.cs" />
   </ItemGroup>

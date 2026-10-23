@@ -207,8 +207,8 @@
           "rightRect" : {
             "height" : 10,
             "width" : 12,
-            "x" : 465,
-            "y" : 102.5
+            "x" : 459,
+            "y" : 101
           },
           "selectedIdentifier" : "audio.master-volume"
         },
@@ -1213,7 +1213,7 @@
           "leftRect" : {
             "height" : 8,
             "width" : 11,
-            "x" : 238,
+            "x" : 240,
             "y" : 297
           },
           "localizedPlacements" : {
@@ -1238,7 +1238,7 @@
           "rightRect" : {
             "height" : 8,
             "width" : 11,
-            "x" : 391,
+            "x" : 387,
             "y" : 297
           },
           "selectedIdentifier" : "shared.advanced-settings"
@@ -1638,7 +1638,7 @@
             "height" : 10,
             "width" : 11,
             "x" : 252,
-            "y" : 285
+            "y" : 282
           },
           "localizedPlacements" : {
             "ko" : {
@@ -1662,8 +1662,8 @@
           "rightRect" : {
             "height" : 10,
             "width" : 12,
-            "x" : 377,
-            "y" : 285
+            "x" : 373,
+            "y" : 282
           },
           "selectedIdentifier" : "shared.reset-defaults"
         }
@@ -15403,14 +15403,14 @@
             "height" : 14,
             "width" : 16,
             "x" : 282,
-            "y" : 299
+            "y" : 294
           },
           "measured" : true,
           "rightRect" : {
             "height" : 14,
             "width" : 15,
-            "x" : 346,
-            "y" : 299
+            "x" : 345,
+            "y" : 293
           },
           "selectedIdentifier" : "shared.back"
         }

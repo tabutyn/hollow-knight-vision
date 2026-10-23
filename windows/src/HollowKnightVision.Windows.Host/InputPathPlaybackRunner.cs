@@ -10,7 +10,10 @@ public static class InputPathPlaybackRunner
     public static async Task<int> RunAsync(
         string pathFile,
         int repeatCount,
-        bool restoreCheckpoint)
+        bool restoreCheckpoint,
+        PlaybackDivergenceMonitor? divergenceMonitor = null,
+        Action<PlaybackDivergenceDecision>? onDivergence = null,
+        CancellationToken cancellationToken = default)
     {
         if (repeatCount is <= 0 or > 100) throw new ArgumentOutOfRangeException(nameof(repeatCount));
         var path = new RecordedInputPathStore().Load(pathFile);
@@ -18,17 +21,32 @@ public static class InputPathPlaybackRunner
         {
             throw new ArgumentException("Total input-path replay duration exceeds 24 hours.");
         }
-        if (HollowKnightWindowLocator.FindBest() is null)
+        var gameWindow = HollowKnightWindowLocator.FindBest();
+        if (gameWindow is null)
         {
             Console.Error.WriteLine(
                 "Hollow Knight window not found; input-path replay does not launch it.");
             return 3;
         }
 
-        using var cancellation = new CancellationTokenSource(
+        using var timeoutCancellation = new CancellationTokenSource(
             TimeSpan.FromSeconds(path.Duration * repeatCount + 30));
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            timeoutCancellation.Token,
+            cancellationToken);
+        divergenceMonitor?.Prepare();
+        PlaybackDivergenceDecision? divergence = null;
+        void Diverged(PlaybackDivergenceDecision decision)
+        {
+            if (Interlocked.CompareExchange(ref divergence, decision, null) is not null) return;
+            onDivergence?.Invoke(decision);
+            cancellation.Cancel();
+        }
         var negotiated = await ReceiverConnection
-            .ConnectNegotiatedWithRetryAsync(cancellation.Token).ConfigureAwait(false);
+            .ConnectNegotiatedWithRetryAsync(
+                cancellation.Token,
+                renderFrameMarker: divergenceMonitor is not null)
+            .ConfigureAwait(false);
         await using var receiver = negotiated.Client;
         if (restoreCheckpoint && path.StartCheckpoint is not null
             && !negotiated.Capabilities.Capabilities.Contains(
@@ -41,7 +59,13 @@ public static class InputPathPlaybackRunner
 
         var acknowledgements = Channel.CreateUnbounded<ReceiverCheckpointAcknowledgement>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
-        var drainTask = DrainAsync(receiver, acknowledgements.Writer, cancellation.Token);
+        var drainTask = DrainAsync(
+            receiver,
+            acknowledgements.Writer,
+            divergenceMonitor,
+            new PlaybackFrameSize(gameWindow.ClientWidth, gameWindow.ClientHeight),
+            Diverged,
+            cancellation.Token);
         var changes = path.StateChanges();
         var completedIterations = 0;
         var stopwatch = Stopwatch.StartNew();
@@ -69,6 +93,8 @@ public static class InputPathPlaybackRunner
                     await Task.Delay(500, cancellation.Token).ConfigureAwait(false);
                 }
 
+                divergenceMonitor?.BeginEvaluation(MonotonicSeconds());
+
                 var iterationStart = stopwatch.Elapsed;
                 foreach (var change in changes)
                 {
@@ -90,6 +116,11 @@ public static class InputPathPlaybackRunner
                 completedIterations++;
             }
         }
+        catch (OperationCanceledException) when (
+            divergence is not null || divergenceMonitor?.LastDecision is not null)
+        {
+            divergence ??= divergenceMonitor?.LastDecision;
+        }
         finally
         {
             try
@@ -109,11 +140,13 @@ public static class InputPathPlaybackRunner
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
             {
             }
+            divergence ??= divergenceMonitor?.LastDecision;
+            divergenceMonitor?.Stop();
         }
 
         Console.WriteLine(JsonSerializer.Serialize(new
         {
-            ok = true,
+            ok = divergence is null,
             mode = "replay-input-path",
             path = Path.GetFullPath(pathFile),
             path.Id,
@@ -122,14 +155,18 @@ public static class InputPathPlaybackRunner
             repeatCount,
             completedIterations,
             checkpointRestored = restoreCheckpoint && path.StartCheckpoint is not null,
-            elapsedSeconds = stopwatch.Elapsed.TotalSeconds
+            elapsedSeconds = stopwatch.Elapsed.TotalSeconds,
+            divergence
         }, new JsonSerializerOptions { WriteIndented = true }));
-        return 0;
+        return divergence is null ? 0 : 4;
     }
 
     private static async Task DrainAsync(
         ReceiverClient receiver,
         ChannelWriter<ReceiverCheckpointAcknowledgement> acknowledgements,
+        PlaybackDivergenceMonitor? divergenceMonitor,
+        PlaybackFrameSize frameSize,
+        Action<PlaybackDivergenceDecision> onDivergence,
         CancellationToken cancellationToken)
     {
         Exception? failure = null;
@@ -140,6 +177,18 @@ public static class InputPathPlaybackRunner
                 var line = await receiver.ReceiveLineAsync(cancellationToken).ConfigureAwait(false)
                     ?? throw new IOException("Receiver closed during input-path replay.");
                 var type = ReceiverWireCodec.MessageType(line);
+                if (type == "groundTruth" && divergenceMonitor is not null)
+                {
+                    var sample = ReceiverWireCodec.DecodeLine<ReceiverGroundTruthSample>(line);
+                    if (divergenceMonitor.AppendGroundTruth(
+                            sample,
+                            MonotonicSeconds(),
+                            frameSize) is { } decision)
+                    {
+                        onDivergence(decision);
+                    }
+                    continue;
+                }
                 if (type is not ("captureCheckpointAck" or "restoreCheckpointAck")) continue;
                 var acknowledgement = ReceiverWireCodec
                     .DecodeLine<ReceiverCheckpointAcknowledgement>(line);
@@ -200,4 +249,7 @@ public static class InputPathPlaybackRunner
             await Task.Delay(remaining, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    private static double MonotonicSeconds() =>
+        Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
 }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace HollowKnightVision.Windows.Core;
 
@@ -41,6 +42,7 @@ public readonly record struct WorldRect(AtlasPoint Origin, WorldSize Size)
     public double Height => Size.Height;
 }
 
+[JsonConverter(typeof(LiveWorldObservationJsonConverter))]
 public sealed record LiveWorldObservation(
     int Id,
     int SourceObservationId,
@@ -89,6 +91,77 @@ public sealed record LiveWorldObservation(
             roomId,
             rawPose,
             optimizedPose);
+}
+
+internal sealed class LiveWorldObservationJsonConverter
+    : JsonConverter<LiveWorldObservation>
+{
+    public override LiveWorldObservation Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options)
+    {
+        var payload = JsonSerializer.Deserialize<Payload>(ref reader, options)
+            ?? throw new JsonException("Live-world observation is missing.");
+        return new LiveWorldObservation(
+            payload.Id,
+            payload.SourceObservationId,
+            payload.Timestamp,
+            payload.SourceWidth,
+            payload.SourceHeight,
+            payload.SolveWidth,
+            payload.SampleWidth,
+            payload.ExcludedRects,
+            payload.LocalPose ?? payload.RawPose,
+            payload.CaptureGeneration,
+            payload.LocalEpoch,
+            payload.BasisRevision,
+            payload.RoomId,
+            payload.RawPose,
+            payload.OptimizedPose);
+    }
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        LiveWorldObservation value,
+        JsonSerializerOptions options) =>
+        JsonSerializer.Serialize(writer, new Payload
+        {
+            Id = value.Id,
+            SourceObservationId = value.SourceObservationId,
+            Timestamp = value.Timestamp,
+            SourceWidth = value.SourceWidth,
+            SourceHeight = value.SourceHeight,
+            SolveWidth = value.SolveWidth,
+            SampleWidth = value.SampleWidth,
+            ExcludedRects = value.ExcludedRects,
+            LocalPose = value.LocalPose,
+            CaptureGeneration = value.CaptureGeneration,
+            LocalEpoch = value.LocalEpoch,
+            BasisRevision = value.BasisRevision,
+            RoomId = value.RoomId,
+            RawPose = value.RawPose,
+            OptimizedPose = value.OptimizedPose
+        }, options);
+
+    private sealed class Payload
+    {
+        [JsonRequired] public int Id { get; init; }
+        [JsonRequired] public int SourceObservationId { get; init; }
+        [JsonRequired] public double Timestamp { get; init; }
+        [JsonRequired] public int SourceWidth { get; init; }
+        [JsonRequired] public int SourceHeight { get; init; }
+        [JsonRequired] public double SolveWidth { get; init; }
+        [JsonRequired] public int SampleWidth { get; init; }
+        [JsonRequired] public required IReadOnlyList<WorldRect> ExcludedRects { get; init; }
+        public AtlasPoint? LocalPose { get; init; }
+        public ulong CaptureGeneration { get; init; }
+        public ulong LocalEpoch { get; init; }
+        public ulong BasisRevision { get; init; }
+        public int RoomId { get; init; }
+        [JsonRequired] public AtlasPoint RawPose { get; init; }
+        [JsonRequired] public AtlasPoint OptimizedPose { get; init; }
+    }
 }
 
 public sealed record LiveWorldKeyframe(int Id, int ObservationId, int SourceObservationId);

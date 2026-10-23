@@ -72,6 +72,7 @@ public static partial class HollowKnightGameLauncher
         foreach (var candidate in candidates
             .Where(File.Exists)
             .Select(Path.GetFullPath)
+            .Where(candidate => !IsDisabledBackup(candidate))
             .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             try
@@ -86,6 +87,15 @@ public static partial class HollowKnightGameLauncher
         }
         return null;
     }
+
+    private static bool IsDisabledBackup(string candidate) =>
+        Path.GetFullPath(candidate)
+            .Split(
+                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries)
+            .Any(component => component.EndsWith(
+                ".hkv-disabled",
+                StringComparison.OrdinalIgnoreCase));
 
     public static Process Start(string? explicitPath = null)
     {

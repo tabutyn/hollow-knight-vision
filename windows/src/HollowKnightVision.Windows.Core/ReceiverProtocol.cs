@@ -51,6 +51,25 @@ public sealed record ReceiverCapabilitiesAcknowledgement(
     IReadOnlyList<string> Capabilities,
     int PauseLeaseMilliseconds);
 
+public sealed record ReceiverPauseCommand(
+    int Version, string Type,
+    [property: JsonPropertyName("sessionID")] Guid SessionId,
+    [property: JsonPropertyName("commandID")] Guid CommandId,
+    int? LeaseMilliseconds)
+{
+    public static ReceiverPauseCommand Pause(Guid sessionId, int leaseMilliseconds) =>
+        leaseMilliseconds > 0 ? new(ReceiverProtocol.ControlVersion, "pause", sessionId, Guid.NewGuid(), leaseMilliseconds)
+            : throw new ArgumentOutOfRangeException(nameof(leaseMilliseconds));
+    public static ReceiverPauseCommand Resume(Guid sessionId) =>
+        new(ReceiverProtocol.ControlVersion, "resume", sessionId, Guid.NewGuid(), null);
+}
+
+public sealed record ReceiverPauseAcknowledgement(
+    int Version, string Type,
+    [property: JsonPropertyName("sessionID")] Guid SessionId,
+    [property: JsonPropertyName("commandID")] Guid CommandId,
+    bool Paused);
+
 public sealed record ReceiverInputSnapshot(
     int Version,
     string Type,
@@ -281,7 +300,7 @@ public sealed record PlayerTestState(
     int Mana,
     int ExtraManaSlots,
     int Geo,
-    bool Invincible)
+    bool Invincible = true)
 {
     public static PlayerTestState Default { get; } = new(5, 5, 0, 99, 0, 0, true);
 
@@ -298,6 +317,62 @@ public sealed record PlayerTestState(
             ExtraManaSlots = slots,
             Geo = Math.Clamp(Geo, 0, 9_999_999)
         };
+    }
+
+    public static PlayerTestState Randomized(
+        bool invincible = true,
+        Random? random = null)
+    {
+        random ??= Random.Shared;
+        var maxHealth = random.Next(1, 10);
+        var slots = random.Next(0, 4);
+        var geoDigits = random.Next(1, 5);
+        var geoMinimum = geoDigits == 1 ? 0 : (int)Math.Pow(10, geoDigits - 1);
+        var geoMaximumExclusive = (int)Math.Pow(10, geoDigits);
+        return new PlayerTestState(
+            maxHealth,
+            random.Next(1, maxHealth + 1),
+            random.Next(0, 10),
+            random.Next(0, 100 + slots * 33),
+            slots,
+            random.Next(geoMinimum, geoMaximumExclusive),
+            invincible);
+    }
+}
+
+public sealed record ReceiverPlayerPoseCommand(
+    int Version,
+    string Type,
+    [property: JsonPropertyName("sessionID")] Guid SessionId,
+    ulong Sequence,
+    string SceneName,
+    double HeroX,
+    double HeroY,
+    double HeroZ,
+    double VelocityX,
+    double VelocityY,
+    bool FacingRight,
+    bool Grounded)
+{
+    public static ReceiverPlayerPoseCommand Create(
+        Guid sessionId,
+        ulong sequence,
+        ReceiverGroundTruthSample sample)
+    {
+        ArgumentNullException.ThrowIfNull(sample);
+        return new ReceiverPlayerPoseCommand(
+            ReceiverProtocol.ControlVersion,
+            "playerPose",
+            sessionId,
+            sequence,
+            sample.SceneName,
+            sample.HeroX,
+            sample.HeroY,
+            sample.HeroZ,
+            sample.VelocityX,
+            sample.VelocityY,
+            sample.FacingRight,
+            sample.Grounded);
     }
 }
 

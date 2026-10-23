@@ -193,6 +193,9 @@ public sealed class CameraAccumulator
         nextId = 1;
     }
 
+    /// <summary>Ends a measurement span without changing its accepted pose.</summary>
+    public void ResetMotion() => LastStep = CameraVector.Zero;
+
     public void ApplyGlobalCorrection(AtlasPoint correctedPosition)
     {
         if (!double.IsFinite(correctedPosition.X) || !double.IsFinite(correctedPosition.Y)) return;

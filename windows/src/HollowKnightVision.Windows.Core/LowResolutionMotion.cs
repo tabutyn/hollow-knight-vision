@@ -29,11 +29,13 @@ public sealed record LowResolutionMotionGrid
     public static LowResolutionMotionGrid FromFrame(
         BgraFrame frame,
         int width = 64,
-        int height = 36)
+        int height = 36,
+        IReadOnlyList<PixelRect>? excludedRectangles = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         if (width <= 0 || height <= 0) throw new ArgumentOutOfRangeException(nameof(width));
         var output = new byte[checked(width * height)];
+        var excluded = HudAtlasMask.Rasterize(frame.Width, frame.Height, excludedRectangles);
         for (var outputY = 0; outputY < height; outputY++)
         {
             var sourceY0 = outputY * frame.Height / height;
@@ -49,12 +51,13 @@ public sealed record LowResolutionMotionGrid
                     var row = frame.Row(sourceY);
                     for (var sourceX = sourceX0; sourceX < sourceX1; sourceX++)
                     {
+                        if (excluded?[sourceY * frame.Width + sourceX] == true) continue;
                         var index = sourceX * BgraFrame.BytesPerPixel;
                         sum += (29 * row[index] + 150 * row[index + 1] + 77 * row[index + 2]) >> 8;
                         count++;
                     }
                 }
-                output[outputY * width + outputX] = checked((byte)(sum / count));
+                output[outputY * width + outputX] = count == 0 ? (byte)0 : checked((byte)(sum / count));
             }
         }
         return new LowResolutionMotionGrid(width, height, output);
@@ -83,7 +86,8 @@ public enum LowResolutionTranslationRejection
 public sealed record LowResolutionTranslationDiagnostic(
     LowResolutionMotionVector? Motion,
     LowResolutionTranslationRejection? NarrowRejection,
-    LowResolutionTranslationRejection? WideRejection)
+    LowResolutionTranslationRejection? WideRejection,
+    bool ExactIdentity = false)
 {
     public LowResolutionTranslationRejection? FinalRejection => Motion is null
         ? WideRejection ?? NarrowRejection
@@ -178,7 +182,8 @@ public sealed class LowResolutionRoomMotionTracker
         if (fallback is null)
         {
             return new LowResolutionTranslationDiagnostic(
-                null, narrow.Rejection, wide?.Rejection);
+                null, narrow.Rejection, wide?.Rejection,
+                narrow.ExactIdentity || wide?.ExactIdentity == true);
         }
         var vertical = wide?.Motion is { } wideMotion && Math.Abs(wideMotion.ScreenShiftY) > 3
             ? wideMotion
@@ -307,7 +312,10 @@ public sealed class LowResolutionRoomMotionTracker
         if (!scores.TryGetValue(zeroKey, out var zero) || !double.IsFinite(zero)
             || zero <= 0 || !double.IsFinite(best.Value))
         {
-            return TranslationAttempt.Rejected(LowResolutionTranslationRejection.InsufficientOverlap);
+            return TranslationAttempt.Rejected(
+                LowResolutionTranslationRejection.InsufficientOverlap,
+                exactIdentity: double.IsFinite(zero) && zero == 0
+                    && double.IsFinite(best.Value) && best.Value == 0);
         }
         var improvement = (zero - best.Value) / zero;
         var second = scores.Where(pair => pair.Key != best.Key)
@@ -441,10 +449,13 @@ public sealed class LowResolutionRoomMotionTracker
     private readonly record struct TranslationKey(int X, int Y);
     private sealed record TranslationAttempt(
         LowResolutionMotionVector? Motion,
-        LowResolutionTranslationRejection? Rejection)
+        LowResolutionTranslationRejection? Rejection,
+        bool ExactIdentity = false)
     {
-        internal static TranslationAttempt Rejected(LowResolutionTranslationRejection rejection) =>
-            new(null, rejection);
+        internal static TranslationAttempt Rejected(
+            LowResolutionTranslationRejection rejection,
+            bool exactIdentity = false) =>
+            new(null, rejection, exactIdentity);
     }
     private sealed record NormalizedGrid(double[] Values, double Deviation, bool[]? Visible);
 }

@@ -20,7 +20,12 @@ public readonly record struct NormalizedBox(double X, double Y, double Width, do
 public sealed record ObjectDetection(
     string ClassIdentifier,
     NormalizedBox Box,
-    float Confidence);
+    float Confidence)
+{
+    public long SourceFrameIdentifier { get; init; }
+    // A manually selected run need not have a registry version. Do not invent one.
+    public LabelingModelSemanticVersion? ModelVersion { get; init; }
+}
 
 public static class DetectionDecoder
 {
@@ -38,7 +43,8 @@ public static class DetectionDecoder
         float confidenceFloor = DefaultConfidenceFloor,
         double nmsOverlap = DefaultNmsOverlap,
         int maximumPerClass = DefaultMaximumPerClass,
-        int maximumDetections = DefaultMaximumDetections)
+        int maximumDetections = DefaultMaximumDetections,
+        bool useLivePolicy = false)
     {
         ArgumentNullException.ThrowIfNull(scoreShape);
         ArgumentNullException.ThrowIfNull(boxShape);
@@ -84,28 +90,17 @@ public static class DetectionDecoder
                         boxes[plane + cell],
                         boxes[2 * plane + cell],
                         boxes[3 * plane + cell]);
-                    if (!Valid(box)) continue;
-                    candidates.Add(new ObjectDetection(
-                        classIdentifiers[classIndex], box, confidence));
+                    var candidate = new ObjectDetection(classIdentifiers[classIndex], box, confidence);
+                    if (useLivePolicy)
+                    {
+                        if (LiveObjectDetectionPostprocessor.Prepare(candidate) is { } prepared) candidates.Add(prepared);
+                    }
+                    else if (Valid(box)) candidates.Add(candidate);
                 }
             }
         }
 
-        candidates.Sort((left, right) => right.Confidence.CompareTo(left.Confidence));
-        var selected = new List<ObjectDetection>(Math.Min(candidates.Count, maximumDetections));
-        foreach (var candidate in candidates)
-        {
-            var sameClass = selected.Where(value =>
-                value.ClassIdentifier.Equals(candidate.ClassIdentifier, StringComparison.Ordinal));
-            if (sameClass.Count() >= maximumPerClass) continue;
-            if (sameClass.Any(value => candidate.Box.IntersectionOverUnion(value.Box) >= nmsOverlap))
-            {
-                continue;
-            }
-            selected.Add(candidate);
-            if (selected.Count == maximumDetections) break;
-        }
-        return selected;
+        return LiveObjectDetectionPostprocessor.Suppress(candidates, nmsOverlap, maximumPerClass, maximumDetections);
     }
 
     public static IReadOnlyList<ObjectDetection> DecodeRaw(
@@ -190,10 +185,11 @@ public sealed class OnnxObjectDetector : IDisposable
     private const int InputHeight = FrameGeometry.ReferenceHeight;
     private readonly InferenceSession session;
 
-    public OnnxObjectDetector(string runDirectory)
+    public OnnxObjectDetector(string runDirectory, LabelingModelSemanticVersion? modelVersion = null)
     {
         if (string.IsNullOrWhiteSpace(runDirectory)) throw new ArgumentException("Run directory is required.", nameof(runDirectory));
         RunDirectory = Path.GetFullPath(runDirectory);
+        ModelVersion = modelVersion;
         var manifestPath = Path.Combine(RunDirectory, "training.json");
         using var manifest = JsonDocument.Parse(File.ReadAllBytes(manifestPath));
         var root = manifest.RootElement;
@@ -233,6 +229,7 @@ public sealed class OnnxObjectDetector : IDisposable
 
     public string RunDirectory { get; }
     public string ModelPath { get; }
+    public LabelingModelSemanticVersion? ModelVersion { get; }
     public IReadOnlyList<string> ClassIdentifiers { get; }
 
     public IReadOnlyList<ObjectDetection> Detect(BgraFrame source, bool raw = false)
@@ -250,7 +247,7 @@ public sealed class OnnxObjectDetector : IDisposable
         using var outputs = session.Run(runOptions, inputs, ["scores", "boxes"]);
         var scoreShape = outputs[0].GetTensorTypeAndShape().Shape;
         var boxShape = outputs[1].GetTensorTypeAndShape().Shape;
-        return raw
+        var detections = raw
             ? DetectionDecoder.DecodeRaw(
                 outputs[0].GetTensorDataAsSpan<float>(), scoreShape,
                 outputs[1].GetTensorDataAsSpan<float>(), boxShape,
@@ -258,7 +255,11 @@ public sealed class OnnxObjectDetector : IDisposable
             : DetectionDecoder.Decode(
                 outputs[0].GetTensorDataAsSpan<float>(), scoreShape,
                 outputs[1].GetTensorDataAsSpan<float>(), boxShape,
-                ClassIdentifiers);
+                ClassIdentifiers, useLivePolicy: true);
+        return detections.Select(item => item with
+        {
+            SourceFrameIdentifier = source.CaptureId, ModelVersion = ModelVersion
+        }).ToArray();
     }
 
     public void Dispose() => session.Dispose();

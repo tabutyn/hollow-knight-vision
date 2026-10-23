@@ -6,8 +6,6 @@ namespace HollowKnightVision.Windows.Host;
 
 public sealed class GdiWindowCapture
 {
-    private const uint SourceCopy = 0x00CC0020;
-    private const uint CaptureLayeredWindows = 0x40000000;
     private const uint DibRgbColors = 0;
     private const uint PrintWindowClientOnly = 0x00000001;
     private const uint PrintWindowRenderFullContent = 0x00000002;
@@ -32,12 +30,6 @@ public sealed class GdiWindowCapture
         if (width <= 0 || height <= 0)
         {
             throw new InvalidOperationException("Hollow Knight has an empty client area.");
-        }
-
-        var clientOrigin = new NativePoint { X = 0, Y = 0 };
-        if (!ClientToScreen(window.Handle, ref clientOrigin))
-        {
-            throw LastWin32("ClientToScreen");
         }
 
         var screen = GetDC(nint.Zero);
@@ -78,24 +70,11 @@ public sealed class GdiWindowCapture
                 window.Handle,
                 memory,
                 PrintWindowClientOnly | PrintWindowRenderFullContent);
+            // Black and low-contrast frames are legitimate fades/cutscenes.
+            // Never substitute the desktop: Vision may cover the game, so a
+            // screen copy feeds our own scaled output back into the capture.
+            if (!printed) throw LastWin32("PrintWindow");
             Marshal.Copy(pixels, managedPixels, 0, managedPixels.Length);
-            if (!printed || !HasUsefulPixels(managedPixels))
-            {
-                if (!BitBlt(
-                        memory,
-                        0,
-                        0,
-                        width,
-                        height,
-                        screen,
-                        clientOrigin.X,
-                        clientOrigin.Y,
-                        SourceCopy | CaptureLayeredWindows))
-                {
-                    throw LastWin32("PrintWindow and BitBlt");
-                }
-                Marshal.Copy(pixels, managedPixels, 0, managedPixels.Length);
-            }
             return new BgraFrame(
                 width,
                 height,
@@ -119,25 +98,6 @@ public sealed class GdiWindowCapture
     private static Win32Exception LastWin32(string operation) =>
         new(Marshal.GetLastWin32Error(), $"{operation} failed");
 
-    private static bool HasUsefulPixels(ReadOnlySpan<byte> pixels)
-    {
-        var minimum = byte.MaxValue;
-        var maximum = byte.MinValue;
-        var samples = 0;
-        var nonBlack = 0;
-        for (var offset = 0; offset + 2 < pixels.Length; offset += 4096)
-        {
-            var blue = pixels[offset];
-            var green = pixels[offset + 1];
-            var red = pixels[offset + 2];
-            minimum = Math.Min(minimum, Math.Min(red, Math.Min(green, blue)));
-            maximum = Math.Max(maximum, Math.Max(red, Math.Max(green, blue)));
-            if (red > 8 || green > 8 || blue > 8) nonBlack++;
-            samples++;
-        }
-        return samples > 0 && nonBlack >= Math.Max(2, samples / 100) && maximum - minimum >= 8;
-    }
-
     [DllImport("user32.dll", SetLastError = true)]
     private static extern nint GetDC(nint window);
 
@@ -151,10 +111,6 @@ public sealed class GdiWindowCapture
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetClientRect(nint window, out NativeRect rect);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ClientToScreen(nint window, ref NativePoint point);
 
     [DllImport("gdi32.dll", SetLastError = true)]
     private static extern nint CreateCompatibleDC(nint deviceContext);
@@ -173,31 +129,11 @@ public sealed class GdiWindowCapture
 
     [DllImport("gdi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool BitBlt(
-        nint destination,
-        int x,
-        int y,
-        int width,
-        int height,
-        nint source,
-        int sourceX,
-        int sourceY,
-        uint rasterOperation);
-
-    [DllImport("gdi32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DeleteObject(nint graphicsObject);
 
     [DllImport("gdi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DeleteDC(nint deviceContext);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativePoint
-    {
-        internal int X;
-        internal int Y;
-    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeRect

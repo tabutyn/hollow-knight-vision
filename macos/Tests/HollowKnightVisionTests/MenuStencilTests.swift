@@ -16,23 +16,51 @@ final class MenuStencilTests: XCTestCase {
 
     func testBundledFullScreenCalibrationCoversEveryMenuOption() throws {
         let calibration = try bundledCalibration()
-        XCTAssertEqual(calibration.scenes.count, 23)
+        XCTAssertEqual(calibration.scenes.count, 24)
         XCTAssertEqual(calibration.referenceWidth, 640)
         XCTAssertEqual(calibration.referenceHeight, 360)
         let states = calibration.scenes.flatMap(\.states)
         let selectors = calibration.scenes.flatMap(\.selectors)
-        XCTAssertEqual(states.count, selectors.count)
         XCTAssertEqual(states.count, 104)
+        XCTAssertEqual(selectors.count, 106)
         XCTAssertEqual(states.count { $0.measured }, 104)
         XCTAssertEqual(states.count { !$0.measured }, 0)
-        XCTAssertEqual(selectors.count { $0.measured }, 104)
+        XCTAssertEqual(selectors.count { $0.measured }, 106)
         XCTAssertEqual(selectors.count { !$0.measured }, 0)
+        XCTAssertTrue(selectors.allSatisfy { $0.evidenceCount > 0 })
+
+        let measuredSelectorKeys = Set(calibration.scenes.flatMap { scene in
+            scene.selectors.filter(\.measured).map {
+                "\(scene.contextIdentifier):\($0.selectedIdentifier)"
+            }
+        })
+        let generatedStateKeys = calibration.scenes.flatMap { scene in
+            scene.states.map {
+                "\(scene.contextIdentifier):\($0.selectedIdentifier)"
+            }
+        }
+        XCTAssertTrue(generatedStateKeys.allSatisfy(measuredSelectorKeys.contains))
+
         XCTAssertFalse(selectors.contains {
             $0.selectedIdentifier == "brightness.pointer"
                 || $0.selectedIdentifier == "controller-advanced.mfi"
         })
         XCTAssertTrue(selectors.allSatisfy {
-            $0.leftRect.cgRect.width > 0 && $0.rightRect.cgRect.width > 0
+            $0.leftRect.cgRect.width > 0
+                && $0.leftRect.cgRect.height > 0
+                && $0.rightRect.cgRect.width > 0
+                && $0.rightRect.cgRect.height > 0
+        })
+
+        let clearSave = try XCTUnwrap(calibration.scene(.clearSave))
+        XCTAssertEqual(clearSave.states.count, 0)
+        XCTAssertEqual(clearSave.selectors.count, 2)
+        XCTAssertEqual(
+            clearSave.selectors.map(\.selectedIdentifier).sorted(),
+            [LabelingClassIdentity.no, LabelingClassIdentity.yes]
+        )
+        XCTAssertTrue(clearSave.selectors.allSatisfy {
+            $0.measured && $0.evidenceCount > 0
         })
     }
 

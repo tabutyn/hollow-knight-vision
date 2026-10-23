@@ -3,9 +3,9 @@ name: Windows
 on:
   push:
     branches: [main]
-    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/HollowKnightVision/Resources/**", "macos/hollow-knight-input-receiver/**", "models/**", ".github/workflows/windows.yml"]
+    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", ".github/workflows/windows.yml"]
   pull_request:
-    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/HollowKnightVision/Resources/**", "macos/hollow-knight-input-receiver/**", "models/**", ".github/workflows/windows.yml"]
+    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", ".github/workflows/windows.yml"]
 
 jobs:
   build-test:
@@ -21,8 +21,12 @@ jobs:
           dotnet-version: 8.0.x
       - name: Build and test Windows app
         run: .\build-windows.ps1 -Configuration Release
+      - name: Report remaining Mac parity obligations
+        run: .\Test-MacParity.ps1
       - name: Install training dependencies
         run: .\setup-training-windows.ps1
+      - name: Verify shared trainer and Windows dataset interchange
+        run: .\Test-TrainingInterop.ps1
       - name: Publish
         run: dotnet publish src/HollowKnightVision.Windows.App/HollowKnightVision.Windows.App.csproj -c Release -r win-x64 --self-contained false -o artifacts/publish
       - uses: actions/upload-artifact@v4
