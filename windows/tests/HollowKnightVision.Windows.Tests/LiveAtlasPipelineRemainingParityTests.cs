@@ -584,7 +584,7 @@ internal static class LiveAtlasPipelineRemainingParityTests
         }
     }
 
-    public static void TestGameplayAtlasUsesTemporalAgreementInsteadOfBrightestPixel()
+    public static void TestGameplayAtlasUsesNewestPixelImmediately()
     {
         var atlas = new GroundTruthAtlasMosaic(
             pixelsPerWorldUnit: 1,
@@ -595,7 +595,7 @@ internal static class LiveAtlasPipelineRemainingParityTests
 
         Check(atlas.AddFrame(bright, Telemetry(bright, timestamp: 1)),
             "Initial white atlas observation was rejected.");
-        foreach (var timestamp in new[] { 2d, 2.1, 2.2 })
+        foreach (var timestamp in new[] { 1.1 })
         {
             Check(atlas.AddFrame(dark, Telemetry(dark, timestamp)),
                 $"Dark atlas observation at {timestamp} was rejected.");
@@ -604,15 +604,16 @@ internal static class LiveAtlasPipelineRemainingParityTests
         Check(atlas.TryReadPixel(
                 0, 0, out var blue, out var green, out var red, out var observations),
             "The production gameplay atlas did not publish the sampled world pixel.");
-        Check(observations == 4,
+        Check(observations == 2,
             $"The gameplay atlas lost lifetime observations: {observations}.");
         Check(red < 40 && green < 40 && blue < 40,
-            $"The initial white outlier contaminated temporal consensus: ({red}, {green}, {blue}).");
+            $"The previous white pixel survived the latest dark observation: ({red}, {green}, {blue}).");
         Check(red == 26 && green == 26 && blue == 26,
-            $"Temporal consensus did not select an observed dark sample: ({red}, {green}, {blue}).");
-        Check(atlas.RetainedObservationCount == 3
-              && atlas.RetainedObservationBytes == 3L * 40 * 30 * 4,
-            "The one-second temporal window did not release the initial white observation.");
+            $"Newest-pixel composition changed the observed color: ({red}, {green}, {blue}).");
+        Check(atlas.RetainedObservationCount == 0
+              && atlas.RetainedObservationBytes == 0
+              && atlas.OutstandingObservationBufferCount == 0,
+            "Newest-pixel composition retained temporal pixel history.");
     }
 
     public static void TestTransitionBridgeRectangularEdgeMaskPreservesMappedRoom()
@@ -872,6 +873,7 @@ internal static class LiveAtlasPipelineRemainingParityTests
             pixelsPerWorldUnit: 1,
             tileSize: 64,
             sourceTopInsetFraction: 0,
+            pixelPolicy: LiveTiledAtlasPixelPolicy.TemporalAgreement,
             temporalCommitCheckpoint: () =>
             {
                 if (failAtCommit) throw new ApplicationException("Injected temporal commit failure.");
@@ -941,6 +943,7 @@ internal static class LiveAtlasPipelineRemainingParityTests
             pixelsPerWorldUnit: 1,
             tileSize: 64,
             sourceTopInsetFraction: 0,
+            pixelPolicy: LiveTiledAtlasPixelPolicy.TemporalAgreement,
             temporalCommitCheckpoint: () =>
             {
                 if (!resetAtCheckpoint) return;
@@ -970,6 +973,7 @@ internal static class LiveAtlasPipelineRemainingParityTests
             pixelsPerWorldUnit: 1,
             tileSize: 64,
             sourceTopInsetFraction: 0,
+            pixelPolicy: LiveTiledAtlasPixelPolicy.TemporalAgreement,
             temporalCommitCheckpoint: () =>
             {
                 if (!importAtCheckpoint) return;
@@ -1439,7 +1443,8 @@ internal static class LiveAtlasPipelineRemainingParityTests
     private static GroundTruthAtlasMosaic Mosaic() => new(
         pixelsPerWorldUnit: 1,
         tileSize: 64,
-        sourceTopInsetFraction: 0);
+        sourceTopInsetFraction: 0,
+        pixelPolicy: LiveTiledAtlasPixelPolicy.TemporalAgreement);
 
     private static void AssertInjectedCommitFailure(Action action)
     {

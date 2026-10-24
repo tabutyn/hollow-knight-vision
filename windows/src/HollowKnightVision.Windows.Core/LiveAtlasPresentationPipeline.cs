@@ -159,7 +159,7 @@ public sealed class LiveAtlasPresentationPipeline
 
     public LiveAtlasPresentationPipeline(
         LiveTiledAtlasPixelPolicy pixelPolicy =
-            LiveTiledAtlasPixelPolicy.TemporalAgreement,
+            LiveTiledAtlasPixelPolicy.NewestOpaque,
         double presentationFramesPerSecond = 60,
         double atlasFramesPerSecond = 7.5,
         bool runsIntegrationSynchronously = true,

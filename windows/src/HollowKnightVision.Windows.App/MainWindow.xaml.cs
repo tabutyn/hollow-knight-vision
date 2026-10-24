@@ -563,6 +563,7 @@ public partial class MainWindow : Window
     private readonly HackerFramePreparer hackerFramePreparer = new();
     private readonly HackerAtlasPipeline hackerAtlasPipeline = new();
     private readonly VisualGameplayTracker visualGameplayTracker = new();
+    private readonly GameplayPresentationState gameplayPresentation = new();
     private WindowsLiveWorldPipeline? liveWorldPipeline;
     private readonly PlaybackDivergenceMonitor inputPathDivergenceMonitor = new();
     private CancellationTokenSource? inputPathReplayCancellation;
@@ -2608,6 +2609,7 @@ public partial class MainWindow : Window
             var hackerFrames = Channel.CreateUnbounded<HackerPipelineWork>(new UnboundedChannelOptions
             { SingleReader = true, SingleWriter = false, AllowSynchronousContinuations = false });
             var captureGeneration = Interlocked.Increment(ref recentCaptureGeneration);
+            gameplayPresentation.Reset();
             BeginReceiverFrameJoin(
                 captureGeneration,
                 analysisFrames.Writer,
@@ -2650,6 +2652,7 @@ public partial class MainWindow : Window
                     var captureTimestamp = Stopwatch.GetTimestamp()
                         / (double)Stopwatch.Frequency;
                     if (!labelCapture.Accept(frame, labelRevision)) continue;
+                    gameplayPresentation.Capture(frame);
                     var bitmap = FrameBitmap(frame);
                     var firstFreshGameFrame = !hasFreshGameFrame;
                     hasFreshGameFrame = true;
@@ -3399,7 +3402,9 @@ public partial class MainWindow : Window
                 gameplayAdmitted = liveWorldResult.State
                         == WindowsLiveWorldPipelineState.Committed
                     && liveWorldResult.CaptureGeneration == liveWorldGeneration;
-                if (gameplayAdmitted)
+                if (liveWorldResult.CaptureGeneration == liveWorldGeneration
+                    && liveWorldResult.State is WindowsLiveWorldPipelineState.Committed
+                        or WindowsLiveWorldPipelineState.Throttled)
                 {
                     visualTelemetry = visualTelemetry with
                     {
@@ -3706,7 +3711,9 @@ public partial class MainWindow : Window
             PersistActiveAtlas(force: false);
             return;
         }
-        if (presentsLatestFrame)
+        // The capture loop has usually displayed a newer bitmap while tracking
+        // runs. Accept ordered positions without replacing it with older pixels.
+        if (gameplayPresentation.TryAcceptAnalysis(result.Frame))
         {
             Volatile.Write(ref recognizedMenuContext, result.MenuContext);
             Volatile.Write(ref recognizedMenuSelection, result.Status?.SelectedMenuOption);
@@ -3714,10 +3721,13 @@ public partial class MainWindow : Window
             PresentObjectInferenceDiagnostics(ObjectInferenceIssueOverlay, ObjectInferenceIssueOverlayText,
                 ObjectInferenceIssueText, ObjectDetectionOptions, result.ObjectDiagnostics);
             PresentGameplayFrame(
-                result.Frame,
+                gameplayPresentation.LatestFrame!,
                 result.GameplayTelemetry,
-                FrameBitmap(result.Frame),
+                (BitmapSource)GameplayImage.Source,
                 result.MenuContext);
+        }
+        if (presentsLatestFrame)
+        {
             DrawDetections(
                 result.Objects,
                 result.Ground,
@@ -6167,6 +6177,7 @@ public partial class MainWindow : Window
     {
         Interlocked.Increment(ref groundHypothesisResetGeneration);
         visualGameplayTracker.Reset();
+        gameplayPresentation.Reset();
         frameMotionTracker.Reset();
         inputPathMotionTracker.Reset();
         latestMotion = null;

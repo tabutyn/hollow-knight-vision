@@ -916,7 +916,11 @@ var tests = new List<(string Name, Action Run)>
     ("detection decoder exposes raw candidates", TestDetectionDecoderRaw),
     ("bundled ONNX model loads", TestBundledOnnxModel),
     ("ground truth atlas projects negative world pixels", TestGroundTruthAtlasProjection),
-    ("ground truth atlas reaches temporal agreement", TestGroundTruthAtlasBlend),
+    ("ground truth atlas overwrites with newest pixels", TestGroundTruthAtlasBlend),
+    ("gameplay presentation advances while analysis trails capture", GameplayPresentationTests.TestDelayedAnalysis),
+    ("newest atlas honors masks, black, restore and capture identity", GameplayPresentationTests.TestNewestPixels),
+    ("newest atlas rollback preserves committed pixels", GameplayPresentationTests.TestNewestRollback),
+    ("live atlas default overwrites on the next observation", GameplayPresentationTests.TestLiveAtlasDefault),
     ("ground truth atlas emits dirty tiles and resets", TestGroundTruthAtlasDirtyReset),
     ("ground truth atlas imports restored tile", TestGroundTruthAtlasImport),
     ("live tiled atlas keeps large-world endpoints and stable tile identities", LiveTiledAtlasProductionParityTests.TestLargeWorldKeepsBothEndsAndStableTileIDs),
@@ -954,7 +958,7 @@ var tests = new List<(string Name, Action Run)>
     ("LiveAtlasPipelineTests.testSlowAtlasWorkerDoesNotDelayLatestLivePresentation", LiveAtlasPipelineRemainingParityTests.TestSlowAtlasWorkerDoesNotDelayLatestLivePresentation),
     ("LiveAtlasPipelineTests.testResetInvalidatesActiveTicketBeforeItCanPersistOrPublish", LiveAtlasPipelineRemainingParityTests.TestResetInvalidatesActiveTicketBeforeItCanPersistOrPublish),
     ("LiveAtlasPipelineTests.testResetCancelsPersistedAtlasRestoration", LiveAtlasPipelineRemainingParityTests.TestResetCancelsPersistedAtlasRestoration),
-    ("live atlas gameplay uses temporal agreement instead of brightest pixel", LiveAtlasPipelineRemainingParityTests.TestGameplayAtlasUsesTemporalAgreementInsteadOfBrightestPixel),
+    ("live atlas gameplay uses newest pixel immediately", LiveAtlasPipelineRemainingParityTests.TestGameplayAtlasUsesNewestPixelImmediately),
     ("LiveAtlasPipelineTests.testTransitionBridgeRectangularEdgeMaskPreservesMappedRoom", LiveAtlasPipelineRemainingParityTests.TestTransitionBridgeRectangularEdgeMaskPreservesMappedRoom),
     ("robustness: ground truth temporal agreement deduplicates capture identity", LiveAtlasPipelineRemainingParityTests.TestGroundTruthTemporalAgreementDeduplicatesCaptureIdentity),
     ("robustness: ground truth temporal agreement clears across context discontinuities", LiveAtlasPipelineRemainingParityTests.TestGroundTruthTemporalAgreementClearsAcrossContextDiscontinuities),
@@ -8527,9 +8531,9 @@ static void TestGroundTruthAtlasBlend()
         AtlasTelemetry(cameraX: 0, cameraY: 0),
         captureIdentity: "blue-1"));
     True(mosaic.TryReadPixel(0, 0, out var blue, out var green, out var red, out var observations));
-    Equal((byte)0, blue);
+    Equal((byte)200, blue);
     Equal((byte)0, green);
-    Equal((byte)200, red);
+    Equal((byte)0, red);
     Equal((ushort)2, observations);
     Equal(initialRevision + 2, mosaic.Revision);
 

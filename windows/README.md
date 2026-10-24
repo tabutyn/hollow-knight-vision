@@ -14,6 +14,10 @@ Implemented now:
 - Deterministic center crop and bilinear normalization to the existing 640×360
   vision contract.
 - A one-frame latest-only slot so capture cannot create an unbounded queue.
+- Ordered tracking positions advance the live view even when analysis trails
+  capture; position updates never replace the newest displayed pixels.
+- Gameplay atlas overlaps use the newest unmasked pixel, including black, without
+  temporal voting or blending. Restored atlases use the same overwrite rule.
 - A portable protocol v1/v2 TCP client for complete input state, capability
   negotiation, acknowledgements, and Hacker camera ground truth.
 - Persistent semantic-ground approval, including stable-line evidence and

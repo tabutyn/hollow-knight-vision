@@ -27,6 +27,7 @@ internal static class ObjectDetectionIntegrationTests
         TestCaptureSourceRectExcludesTitleBarBeforeRendering();
         TestCaptureSourceRectDoesNotCropGenuinelyTallSource();
         TestCaptureConfigurationExcludesCursor();
+        TestDelayedTrackingMovesLiveImageWithoutRewindingPixels();
         Console.WriteLine("PASS Live objects keep raw debug output separate, render pixel edges, and survive delayed/failed inference without blocking capture");
     }
     private static BgraFrame Frame(double time = 10)
@@ -36,6 +37,45 @@ internal static class ObjectDetectionIntegrationTests
         for (var y = 60; y <= 80; y++) for (var x = 20; x <= 40; x++)
         { var index = (y * 100 + x) * 4; bytes[index] = bytes[index + 1] = bytes[index + 2] = 255; }
         return new(100, 100, 400, bytes, (long)(time * 10), DateTimeOffset.UnixEpoch.AddSeconds(time));
+    }
+
+    private static void TestDelayedTrackingMovesLiveImageWithoutRewindingPixels()
+    {
+        var state = new GameplayPresentationState();
+        var atlas = new Canvas();
+        var fixedTile = new Image();
+        var live = new Image();
+        var overlay = new Canvas();
+        atlas.Children.Add(fixedTile);
+        atlas.Children.Add(live);
+        Canvas.SetLeft(fixedTile, 0);
+        Canvas.SetTop(fixedTile, 0);
+        var position = typeof(MainWindow).GetMethod("PositionLiveFrame",
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+        for (var index = 1; index <= 30; index++)
+        {
+            var analyzed = Frame(index);
+            var current = Frame(index + .3);
+            state.Capture(current);
+            var bitmap = BitmapSource.Create(current.Width, current.Height, 96, 96,
+                PixelFormats.Bgra32, null, current.Pixels, current.Stride);
+            live.Source = bitmap;
+            Check(state.TryAcceptAnalysis(analyzed), "Delayed tracking froze the live image.");
+            var telemetry = new VisualGameplayTracker().Observe(analyzed, null) with
+            {
+                CameraX = index * 2,
+                CameraY = index
+            };
+            position.Invoke(null, [atlas, live, overlay, 1d, 256, 0, 0,
+                state.LatestFrame!, telemetry, 0d, 0d]);
+            Near(index * 2 - 50, Canvas.GetLeft(live));
+            Near(-index - 50, Canvas.GetTop(live));
+            Near(Canvas.GetLeft(live), Canvas.GetLeft(overlay));
+            Near(0, Canvas.GetLeft(fixedTile));
+            Near(0, Canvas.GetTop(fixedTile));
+            Check(ReferenceEquals(live.Source, bitmap), "Position update rewound live pixels.");
+        }
+        Console.WriteLine("PASS delayed tracking translates the current live image across fixed atlas tiles");
     }
     private static ObjectDetection Knight(float confidence = .9f) => new("game.playable-knight", new(.22, .62, .16, .16), confidence)
         { SourceFrameIdentifier = 100, ModelVersion = new(3, 0) };
