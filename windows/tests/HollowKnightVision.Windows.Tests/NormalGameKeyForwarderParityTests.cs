@@ -77,26 +77,27 @@ internal static class NormalGameKeyForwarderParityTests
             "Modified game key release was suppressed and could strand state.");
     }
 
-    public static void TestBackgroundMessagesEncodePhysicalArrowTransitions()
+    public static void TestNativeOverlayPassesGameplayAndReservesVisionShortcuts()
     {
-        var down = NormalGameInputPolicy.KeyMessage(
-            virtualKey: 0x27, scanCode: 0x4D, extended: true, down: true, repeat: false);
-        Check(down.Message == 0x0100 && down.WParam == new nint(0x27),
-            "Right press was not encoded as WM_KEYDOWN.");
-        Check(((long)down.LParam & 0x00FF0000) == 0x004D0000
-              && ((long)down.LParam & (1L << 24)) != 0
-              && ((long)down.LParam & (3L << 30)) == 0,
-            "Right press lost its scan code or extended-key transition bits.");
-
-        var repeat = NormalGameInputPolicy.KeyMessage(
-            virtualKey: 0x27, scanCode: 0x4D, extended: true, down: true, repeat: true);
-        Check(repeat.Message == 0x0100 && ((long)repeat.LParam & (1L << 30)) != 0
-              && ((long)repeat.LParam & (1L << 31)) == 0,
-            "Repeated Right press did not set the previous-state bit.");
-
-        var up = NormalGameInputPolicy.KeyMessage(
-            virtualKey: 0x27, scanCode: 0x4D, extended: true, down: false, repeat: false);
-        Check(up.Message == 0x0101 && ((long)up.LParam & (3L << 30)) == (3L << 30),
-            "Right release was not encoded as a completed WM_KEYUP transition.");
+        var shortcuts = new NormalGameShortcutState();
+        Check(!shortcuts.Handle(0x27, down: true, canIntercept: true, modified: false, out _),
+            "The native overlay swallowed the Right gameplay key.");
+        Check(shortcuts.Handle(0x4C, down: true, canIntercept: true, modified: false, out var invoke)
+              && invoke,
+            "The native overlay did not reserve the Vision L shortcut.");
+        Check(shortcuts.Handle(0x4C, down: true, canIntercept: true, modified: false, out invoke)
+              && !invoke,
+            "A repeated Vision shortcut invoked twice.");
+        Check(shortcuts.Handle(0x4C, down: false, canIntercept: false, modified: false, out invoke)
+              && !invoke,
+            "The reserved shortcut key-up leaked after its workspace transition.");
+        foreach (var key in new[] { 0x31, 0x32, 0x33, 0x34, 0x61, 0x62, 0x63, 0x64 })
+        {
+            Check(NormalGameInputPolicy.IsVisionShortcut(key)
+                  && !NormalGameInputPolicy.IsGameKey(key),
+                $"Vision edit shortcut 0x{key:X} leaked into Hollow Knight.");
+        }
+        Check(!shortcuts.Handle(0x47, down: true, canIntercept: true, modified: true, out _),
+            "A modified Vision key was swallowed instead of preserving the OS shortcut.");
     }
 }

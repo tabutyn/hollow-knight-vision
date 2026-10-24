@@ -1208,8 +1208,17 @@ public partial class MainWindow : Window
             {
                 StartVision_Click(this, new RoutedEventArgs());
             }
-            Activate();
-            Focus();
+            if (normalGameInput is null)
+            {
+                Activate();
+                Focus();
+            }
+            else
+            {
+                // Stock Hollow Knight remains the native input foreground;
+                // Vision is a clickable non-activating overlay above it.
+                normalGameInput.UpdateContext();
+            }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {

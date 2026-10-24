@@ -528,12 +528,34 @@ internal static class ObjectDetectionIntegrationTests
             client.Width,
             client.Height,
             false);
+        var capture = new GdiWindowCapture();
+        BgraFrame? frame = null;
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            window.CompleteLayoutAndRender(width, height);
+            frame = capture.Capture(target, attempt + 1);
+            if (HasCaptureBackground(frame, width / 2, 0)
+                && HasCaptureBackground(frame, width / 2, height - 1))
+            {
+                break;
+            }
+            Thread.Sleep(16);
+            Pump();
+        }
         return new(
-            new GdiWindowCapture().Capture(target, 1),
+            frame ?? throw new Exception("Decorated client did not produce a capture."),
             client.Width,
             client.Height,
             outer.Width,
             outer.Height);
+    }
+
+    private static bool HasCaptureBackground(BgraFrame frame, int x, int y)
+    {
+        var offset = checked(y * frame.Stride + x * BgraFrame.BytesPerPixel);
+        return frame.Pixels[offset] == 47
+               && frame.Pixels[offset + 1] == 31
+               && frame.Pixels[offset + 2] == 17;
     }
 
     private static void ResizeClient(nint handle, int width, int height)

@@ -20,7 +20,9 @@ internal readonly record struct NormalGameKeyMessage(
 internal static class NormalGameInputPolicy
 {
     internal static bool IsVisionShortcut(int key) => key is
-        0x47 or 0x4C or 0x53 or 0x4D or 0x48 or 0x4F or 0x4B; // G L S M H O K
+        0x47 or 0x4C or 0x53 or 0x4D or 0x48 or 0x4F or 0x4B // G L S M H O K
+        or >= 0x31 and <= 0x34 // 1 2 3 4
+        or >= 0x61 and <= 0x64; // numpad 1 2 3 4
 
     internal static bool AllowsGameInput(string workspace, bool settings, bool textInput) =>
         workspace == "Gameplay" && !settings && !textInput;

@@ -669,7 +669,7 @@ var tests = new List<(string Name, Action Run)>
     ("normal input focus loss drains keys and requires a fresh down", NormalGameKeyForwarderParityTests.TestFocusLossReleasesAllAndRequiresFreshDown),
     ("normal input replacement game cannot inherit held keys", NormalGameKeyForwarderParityTests.TestReplacementGameCannotInheritHeldKeys),
     ("normal input workspace and settings routing matches platform focus", NormalGameKeyForwarderParityTests.TestWorkspaceAndSettingsRouting),
-    ("normal input background messages preserve arrow transition bits", NormalGameKeyForwarderParityTests.TestBackgroundMessagesEncodePhysicalArrowTransitions),
+    ("normal input overlay passes gameplay and reserves Vision shortcuts", NormalGameKeyForwarderParityTests.TestNativeOverlayPassesGameplayAndReservesVisionShortcuts),
     ("ordinary launch always requires mode choice", TestRuntimeModeLaunchPolicy),
     ("gameplay output waits for fresh game capture", TestGameplayOutputGate),
     ("menu framing ignores atlas coordinates", TestGameplayFrameCoordinatePolicy),
@@ -1381,9 +1381,19 @@ static void TestNormalGameInputPolicy()
         True(NormalGameInputPolicy.IsVisionShortcut(key));
         True(!NormalGameInputPolicy.IsGameKey(key));
     }
-    // 1-4 belong to the label editor, while ordinary gameplay bindings and
-    // menu navigation can use Windows' keyboard path without the receiver.
-    foreach (var key in "1234AZXCDIFQ") True(NormalGameInputPolicy.IsGameKey(key));
+    // 1-4 belong to Vision's editors and stay reserved even while Hollow
+    // Knight owns native focus. All other gameplay bindings pass through.
+    foreach (var key in "1234")
+    {
+        True(NormalGameInputPolicy.IsVisionShortcut(key));
+        True(!NormalGameInputPolicy.IsGameKey(key));
+    }
+    foreach (var key in new[] { 0x61, 0x62, 0x63, 0x64 })
+    {
+        True(NormalGameInputPolicy.IsVisionShortcut(key));
+        True(!NormalGameInputPolicy.IsGameKey(key));
+    }
+    foreach (var key in "AZXCDIFQ") True(NormalGameInputPolicy.IsGameKey(key));
     foreach (var key in new[] { 0x25, 0x26, 0x27, 0x28, 0x1B, 0x0D, 0x20 })
         True(NormalGameInputPolicy.IsGameKey(key));
     foreach (var key in new[] { 0x10, 0x11, 0x12, 0x5B, 0x5C })
@@ -7649,7 +7659,21 @@ static void WithTemporaryDirectory(Action<string> run)
     }
     finally
     {
-        Directory.Delete(path, recursive: true);
+        // Antivirus and offloaded-file providers can retain a just-closed lock
+        // file for a few milliseconds. Cleanup is not the behavior under test,
+        // so retry that transient Windows sharing violation within a tight bound.
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                Directory.Delete(path, recursive: true);
+                break;
+            }
+            catch (IOException) when (attempt < 20)
+            {
+                Thread.Sleep(50);
+            }
+        }
     }
 }
 

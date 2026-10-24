@@ -1831,12 +1831,16 @@ internal static class Program
     {
         var previousFocus = GetForegroundWindow();
         _ = GetCursorPos(out var previousPointer);
+        Check(GetClipCursor(out var previousClip), "Could not save desktop cursor confinement.");
         var owner = Offscreen(new Border(), 128, 72);
         owner.Show(); Pump();
         var messages = new ConcurrentQueue<(int Message, nint WParam, bool IsDown)>();
+        var shortcuts = new ConcurrentQueue<Key>();
         using var gameReady = new ManualResetEventSlim();
         Dispatcher? gameDispatcher = null;
         nint gameHandle = 0;
+        var lockOnFocus = 0;
+        var allowsInput = true;
         Exception? gameError = null;
         var gameThread = new Thread(() =>
         {
@@ -1844,11 +1848,15 @@ internal static class Program
             {
                 SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
                 var game = Offscreen(new Border(), 128, 72);
+                game.Left = 200;
+                game.Top = 200;
                 game.Show();
                 gameHandle = new WindowInteropHelper(game).Handle;
                 var gameSource = HwndSource.FromHwnd(gameHandle)!;
                 HwndSourceHook gameHook = (nint window, int message, nint wParam, nint lParam, ref bool handled) =>
                 {
+                    if (message == 0x0007 && Interlocked.Exchange(ref lockOnFocus, 0) != 0)
+                        ConfineCursorToGameCenter(window);
                     if (message is 0x0100 or 0x0101)
                         messages.Enqueue((message, wParam, (GetKeyState(0x27) & 0x8000) != 0));
                     return 0;
@@ -1872,7 +1880,7 @@ internal static class Program
             $"Could not create the separate-thread test game: {gameError}");
         var type = typeof(MainWindow).Assembly.GetType("HollowKnightVision.Windows.App.WindowsNormalGameInput")!;
         var input = Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.NonPublic, null,
-            [owner, (Func<bool>)(() => true), (Action<Key>)(_ => { }), (Action<string>)(message => Console.WriteLine(message))], null)!;
+            [owner, (Func<bool>)(() => allowsInput), (Action<Key>)(key => shortcuts.Enqueue(key)), (Action<string>)(message => Console.WriteLine(message))], null)!;
         object? Invoke(string name, params object[] values) => type.GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(input, values);
         try
         {
@@ -1883,34 +1891,106 @@ internal static class Program
             try { Check(SetForegroundWindow(ownerHandle), "Could not focus test owner."); }
             finally { if (attached) _ = AttachThreadInput(currentThread, foregroundThread, false); }
             var target = new HollowKnightWindow(gameHandle, Environment.ProcessId, "input-test", "input-test", 128, 72, false);
+            Volatile.Write(ref lockOnFocus, 1);
             Invoke("Start", target);
             var prepare = (Task<bool>)Invoke("PrepareForInputAsync")!;
             var timer = Stopwatch.StartNew();
             while (!prepare.IsCompleted && timer.ElapsedMilliseconds < 3000) { Pump(); Thread.Sleep(5); }
             Check(prepare.IsCompletedSuccessfully && prepare.Result,
-                $"Vision could not prepare background game input. Status={prepare.Status}; error={prepare.Exception}.");
-            Check((bool)Invoke("ForwardFirstKey", Key.Right, false)!, "Right press was not handled.");
-            Check((bool)Invoke("ForwardFirstKey", Key.Right, true)!, "Right repeat was not handled.");
-            Check((bool)Invoke("ForwardKeyUp", Key.Right)!, "Right release was not handled.");
-            for (var index = 0; index < 20 && messages.Count < 3; index++) { Pump(); Thread.Sleep(5); }
-            Check(messages.Select(item => item.Message).SequenceEqual(new[] { 0x0100, 0x0100, 0x0101 }),
+                $"Vision could not establish native game focus. Status={prepare.Status}; error={prepare.Exception}.");
+            Check(GetForegroundWindow() == gameHandle,
+                "Hollow Knight test window was not the foreground input target.");
+            var overlayStyle = GetWindowLongPtr(ownerHandle, -20).ToInt64();
+            Check((overlayStyle & 0x08000000L) != 0 && (overlayStyle & 0x00000008L) != 0,
+                "Vision was not a non-activating topmost overlay.");
+            Check(owner.Topmost,
+                "Vision did not retain WPF's managed topmost state.");
+            Check(GetClipCursor(out var activationClip) && activationClip.Equals(previousClip),
+                "Game activation left the cursor confined to the game's center.");
+            Check(GetCursorPos(out var activationPointer)
+                    && activationPointer.X == previousPointer.X && activationPointer.Y == previousPointer.Y,
+                "Game activation did not preserve the free pointer position.");
+
+            SendNativeKey(0x27, extended: true);
+            for (var index = 0; index < 40 && messages.Count < 2; index++) { Pump(); Thread.Sleep(5); }
+            Check(messages.Select(item => item.Message).SequenceEqual(new[] { 0x0100, 0x0101 }),
                 $"Game received the wrong key sequence: {string.Join(',', messages.Select(item => $"0x{item.Message:X}"))}.");
             Check(messages.All(item => item.WParam == new nint(0x27)),
-                "Background key sequence changed the Right virtual key.");
-            Check(messages.Select(item => item.IsDown).SequenceEqual(new[] { true, true, false }),
-                "The game thread could not observe the injected Right key state.");
-            Check(GetForegroundWindow() == ownerHandle,
-                "Forwarding Right raised Hollow Knight above Vision.");
+                "Native input changed the Right virtual key.");
+            Check(messages.Select(item => item.IsDown).SequenceEqual(new[] { true, false }),
+                "The foreground game could not observe the native Right key state.");
+
+            var gameMessageCount = messages.Count;
+            SendNativeKey(0x4C, extended: false);
+            for (var index = 0; index < 40 && shortcuts.IsEmpty; index++) { Pump(); Thread.Sleep(5); }
+            Check(shortcuts.SequenceEqual([Key.L]),
+                "The overlay did not reserve the Vision L shortcut.");
+            Check(messages.Count == gameMessageCount,
+                "The Vision L shortcut leaked into the foreground game.");
+            Check(GetForegroundWindow() == gameHandle,
+                "Reserving a Vision shortcut unexpectedly deactivated the game.");
             Check(GetCursorPos(out var currentPointer)
                     && currentPointer.X == previousPointer.X
                     && currentPointer.Y == previousPointer.Y,
-                "Forwarding Right moved the real pointer.");
-            Check(!owner.Topmost, "Background input made Vision permanently topmost.");
-            Console.WriteLine("PASS background arrow delivery keeps Vision focused and leaves the pointer untouched");
+                "Native overlay input moved the real pointer.");
+            // Exercise Unity-style re-locking during play while keyboard focus
+            // stays with the game, including movement to Vision's controls.
+            var buttonPointer = new NativePoint { X = previousClip.Right - 30, Y = previousClip.Bottom - 65 };
+            Check(SetCursorPos(buttonPointer.X, buttonPointer.Y), "Could not move to the overlay control area.");
+            Invoke("MaintainOverlay");
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                gameDispatcher!.Invoke(() => ConfineCursorToGameCenter(gameHandle));
+                var releaseWait = Stopwatch.StartNew();
+                NativeRect clip;
+                do { Pump(); Thread.Sleep(5); GetClipCursor(out clip); }
+                while (!clip.Equals(previousClip) && releaseWait.ElapsedMilliseconds < 1000);
+                Check(clip.Equals(previousClip), "Overlay monitor did not release renewed game cursor confinement.");
+                Check(GetCursorPos(out var releasedPointer)
+                        && releasedPointer.X == buttonPointer.X && releasedPointer.Y == buttonPointer.Y,
+                    "Renewed game confinement moved the pointer away from Vision's controls.");
+                Check(GetForegroundWindow() == gameHandle, "Releasing the cursor stole keyboard focus from the game.");
+            }
+            var foreignClip = new NativeRect { Left = 50, Top = 50, Right = 70, Bottom = 70 };
+            gameDispatcher!.Invoke(() => ConfineCursorToGameCenter(gameHandle));
+            var renderPressure = Stopwatch.StartNew();
+            var releasedWhileRendering = false;
+            Action? renderWork = null;
+            renderWork = () =>
+            {
+                if (GetClipCursor(out var busyClip) && busyClip.Equals(previousClip))
+                    releasedWhileRendering = true;
+                if (renderPressure.ElapsedMilliseconds >= 350) return;
+                Thread.Sleep(2);
+                owner.Dispatcher.BeginInvoke(DispatcherPriority.Render, renderWork!);
+            };
+            owner.Dispatcher.BeginInvoke(DispatcherPriority.Render, renderWork);
+            Pump();
+            Check(releasedWhileRendering,
+                "Continuous gameplay rendering starved cursor release and trapped the pointer.");
+            Check(ClipCursor(ref foreignClip), "Could not set unrelated cursor confinement.");
+            Invoke("MaintainOverlay");
+            Check(GetClipCursor(out var preservedClip) && preservedClip.Equals(foreignClip),
+                "Overlay cleared cursor confinement outside the target game.");
+            _ = ClipCursor(ref previousClip);
+            allowsInput = false;
+            Invoke("UpdateContext");
+            Check(ClipCursor(ref foreignClip), "Could not set editor cursor confinement.");
+            Invoke("MaintainOverlay");
+            Check(GetClipCursor(out preservedClip) && preservedClip.Equals(foreignClip),
+                "Inactive overlay cleared another context's cursor confinement.");
+            Console.WriteLine("PASS native game focus receives arrows beneath Vision and reserves Vision shortcuts");
+            Console.WriteLine("PASS activation and repeated game cursor locks preserve GUI access without stealing keyboard focus");
         }
         finally
         {
+            _ = ClipCursor(ref previousClip);
             ((IDisposable)input).Dispose();
+            var restoredStyle = GetWindowLongPtr(new WindowInteropHelper(owner).Handle, -20).ToInt64();
+            Check((restoredStyle & 0x08000008L) == 0,
+                "Disposing native overlay input left Vision topmost or non-activating.");
+            Check(!owner.Topmost,
+                "Disposing native overlay input left WPF's managed topmost state enabled.");
             gameDispatcher?.BeginInvokeShutdown(DispatcherPriority.Send);
             Check(gameThread.Join(3000), "The separate-thread test game did not close.");
             owner.Close();
@@ -1919,8 +1999,31 @@ internal static class Program
         }
     }
 
+    private static void ConfineCursorToGameCenter(nint game)
+    {
+        Check(GetWindowRect(game, out var bounds), "Could not read test game bounds.");
+        var x = (bounds.Left + bounds.Right) / 2;
+        var y = (bounds.Top + bounds.Bottom) / 2;
+        var center = new NativeRect { Left = x, Top = y, Right = x, Bottom = y };
+        Check(ClipCursor(ref center), "Could not simulate the game's center cursor lock.");
+    }
+
+    private static void SendNativeKey(byte virtualKey, bool extended)
+    {
+        var scanCode = (byte)MapVirtualKey(virtualKey, 0);
+        var flags = extended ? 0x0001u : 0;
+        KeybdEvent(virtualKey, scanCode, flags, 0);
+        Thread.Sleep(30);
+        KeybdEvent(virtualKey, scanCode, flags | 0x0002u, 0);
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint { internal int X, Y; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect { internal int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")] private static extern bool GetClipCursor(out NativeRect rect);
+    [DllImport("user32.dll")] private static extern bool ClipCursor(ref NativeRect rect);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(nint window, out NativeRect rect);
     [DllImport("user32.dll")] private static extern nint GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
@@ -1929,5 +2032,8 @@ internal static class Program
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out NativePoint point);
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] private static extern short GetKeyState(int key);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern nint GetWindowLongPtr(nint window, int index);
+    [DllImport("user32.dll", EntryPoint = "keybd_event")] private static extern void KeybdEvent(byte virtualKey, byte scanCode, uint flags, nuint extraInfo);
+    [DllImport("user32.dll")] private static extern uint MapVirtualKey(uint code, uint mapType);
     private static void Check(bool value, string message) { if (!value) throw new Exception(message); }
 }

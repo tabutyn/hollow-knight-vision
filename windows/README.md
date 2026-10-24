@@ -380,17 +380,17 @@ copy before launching the matching executable. Normal requires an unmodified
 installation; Modded requires both the Modding API loader and Vision receiver.
 
 Normal mode supports keyboard play without a receiver or virtual device driver.
-The first gameplay key gives Hollow Knight Windows keyboard focus while Vision
-stays visible above it. Moving the mouse returns focus and the pointer to Vision,
-so the stock game's cursor lock cannot trap navigation. Startup and local
-shortcuts do not automatically hand focus back to the game.
-G/L/S/M/H/O/K remain Vision shortcuts; switching to Label, Stencil, Model,
+In Gameplay, Hollow Knight owns Windows keyboard focus while Vision stays above
+it as a non-activating window. Vision releases the game's cursor confinement and
+preserves the pointer position during activation, so its buttons remain reachable
+while the game receives keyboard holds and chords. Confinement is released only
+while this game's overlay is active; other foreground applications are unaffected.
+G/L/S/M/H/O/K and 1-4 remain Vision shortcuts; switching to Label, Stencil, Model,
 Settings, or a text field gives Vision its own input. The label editor retains
 1-4, R, Ctrl+Z, and X; holding X while leaving an editor does not attack in the
 game. Switching to another application ends the foreground presentation.
-After clicking Vision's game view, the first gameplay key transfers focus and
-replays that press; subsequent keys reach the stock game directly. Run Vision
-and Hollow Knight at the same Windows privilege level for native input.
+Returning to Gameplay restores game focus behind Vision. Run Vision and Hollow
+Knight at the same Windows privilege level for native input.
 
 In Settings, select **Auto Save → Delete** to clear the current atlas after
 confirmation. Auto Save remains available for fresh captures. Capture and pending
