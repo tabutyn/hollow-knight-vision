@@ -70,10 +70,22 @@ failure are not injected. These remain concrete coverage gaps.
 The live capture controller and much of the renderer are not exercised by the
 portable tests. Static review confirms production Mac construction selects the
 automatic Metal solver with a 192px maximum, but this suite does not prove live
-capture-to-atlas execution. On Windows, the installed app initialized CUDA on
-the GTX 1080; it remained at the game menu during verification, so its live
-camera dispatch counter was still zero. Hardware regression dispatches passed;
-live gameplay tracking remains to be checked.
+capture-to-atlas execution.
+
+### Windows live gameplay verification
+
+After the user entered gameplay on 2026-10-25, the installed app (PID 27164)
+reported `CameraBackend: Cuda` on the GTX 1080. Between 12:15:14 and 12:15:31
+America/St_Johns, the shared CUDA dispatch counter advanced from 3,097 to 3,631
+(534 dispatches in approximately 18 seconds). All four distinct diagnostic
+snapshots reported a CUDA camera backend and no fallback reason.
+
+Sampled camera searches took 1.1406ms for 231 candidates, 6.8252ms for 5,775,
+1.0343ms for 287, and 5.7462ms for 3,080. These are individual search samples,
+not frame-time percentiles. The shared counter includes camera and ground-feature
+work; the separate camera backend field confirms that camera tracking itself
+uses CUDA. This proves live GPU execution, not visual tracking accuracy or
+smooth atlas motion. Mac live gameplay remains unverified from this workstation.
 
 ## Windows measurements
 
