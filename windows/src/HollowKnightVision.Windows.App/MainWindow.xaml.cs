@@ -2536,11 +2536,7 @@ public partial class MainWindow : Window
             var directory = IOPath.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
                 "HollowKnightVision", "paths");
-            Directory.CreateDirectory(directory);
-            var output = IOPath.Combine(
-                directory,
-                $"path-{DateTime.Now:yyyyMMdd-HHmmss}.json");
-            new RecordedInputPathStore().Save(path, output);
+            var output = new RecordedInputPathStore(directory).Save(path);
             InputPathText.Text = output;
             PathRecordingButton.ClearValue(BackgroundProperty);
             SetStatus($"Input path saved: {output}");

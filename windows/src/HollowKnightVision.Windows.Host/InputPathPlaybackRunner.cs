@@ -66,7 +66,7 @@ public static class InputPathPlaybackRunner
             new PlaybackFrameSize(gameWindow.ClientWidth, gameWindow.ClientHeight),
             Diverged,
             cancellation.Token);
-        var changes = path.StateChanges();
+        var changes = path.PlaybackStates();
         var completedIterations = 0;
         var stopwatch = Stopwatch.StartNew();
         try

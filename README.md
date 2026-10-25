@@ -34,6 +34,10 @@ cd windows
 
 See [macOS instructions](macos/README.md) and [Windows instructions](windows/README.md) for capture permissions, the optional telemetry receiver, training setup, and readiness checks.
 
+For repeatable modded-game experiments, see the [recording and replay audit](MODDED_REPLAY_AUDIT.md).
+It documents current Windows replay integration gaps, Mac Auto Save reset behavior,
+and how to compare the same recorded route across builds without pooling unrelated runs.
+
 ## Local initialization
 
 On every ordinary launch, choose **Normal Hollow Knight** or **Modded Hollow Knight**. Normal mode keeps menu recognition and the visual Gameplay atlas available without a game mod. Modded mode also connects to the local receiver; Hacker and Ops remain disabled until their advertised receiver capabilities arrive. Automated launches can use `--game-mode normal` or `--game-mode modded` to bypass the chooser. Pass `--game-path PATH` to select a separate stock or modded installation explicitly; explicit paths are checked against the selected mode.
