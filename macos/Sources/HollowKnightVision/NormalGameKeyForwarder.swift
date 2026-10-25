@@ -33,6 +33,43 @@ struct NativeGameKeyState {
     }
 }
 
+struct PendingNativeKeyPress: Equatable {
+    let keyCode: UInt16
+    let flags: CGEventFlags
+    var wasReleased: Bool
+}
+
+struct PendingNativeKeyState {
+    private(set) var presses = [PendingNativeKeyPress]()
+
+    mutating func press(_ keyCode: UInt16, flags: CGEventFlags, isRepeat: Bool) -> Bool {
+        guard !isRepeat, !presses.contains(where: { $0.keyCode == keyCode }) else {
+            return false
+        }
+        presses.append(PendingNativeKeyPress(
+            keyCode: keyCode,
+            flags: flags,
+            wasReleased: false
+        ))
+        return true
+    }
+
+    mutating func release(_ keyCode: UInt16) -> Bool {
+        guard let index = presses.firstIndex(where: { $0.keyCode == keyCode }) else {
+            return false
+        }
+        presses[index].wasReleased = true
+        return true
+    }
+
+    mutating func drain() -> [PendingNativeKeyPress] {
+        defer { presses.removeAll() }
+        return presses
+    }
+
+    mutating func removeAll() { presses.removeAll() }
+}
+
 enum NormalGameKeyPolicy {
     static let arrows: Set<UInt16> = [123, 124, 125, 126]
     // Common stock bindings plus menu keys. L and S stay with Vision for
@@ -42,6 +79,10 @@ enum NormalGameKeyPolicy {
     static func keyCodes(labeling: Bool, reviewing: Bool, settings: Bool) -> Set<UInt16> {
         guard !labeling, !reviewing else { return [] }
         return settings ? arrows : supported
+    }
+
+    static func forwardsPointer(labeling: Bool, reviewing: Bool) -> Bool {
+        !labeling && !reviewing
     }
 }
 
@@ -140,9 +181,12 @@ final class NormalGameKeyForwarder {
     private let activityHandler: () -> Void
     private let statusHandler: (String) -> Void
     private var monitor: Any?
+    private var pointerMonitor: Any?
     private var observers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
     private var keys = NativeGameKeyState()
+    private var pendingKeys = PendingNativeKeyState()
+    private var keysAwaitingFreshPress = Set<UInt16>()
     private var pressFlags: [UInt16: CGEventFlags] = [:]
     private var target: NSRunningApplication?
     private var focusTransferPending = false
@@ -154,6 +198,8 @@ final class NormalGameKeyForwarder {
     private var labeling = false
     private var reviewing = false
     private var settings = false
+    private var visionOwnsPointer = false
+    private var suppressPointerClaimUntil: TimeInterval = 0
 
     init(gameURL: URL?, activityHandler: @escaping () -> Void,
          statusHandler: @escaping (String) -> Void) {
@@ -173,6 +219,14 @@ final class NormalGameKeyForwarder {
             guard let self else { return event }
             return self.handle(event)
         }
+        pointerMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDown, .rightMouseDown, .otherMouseDown,
+                       .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
+                       .scrollWheel]
+        ) { [weak self] event in
+            self?.claimPointerForVision(event)
+            return event
+        }
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: NSWindow.didResignKeyNotification,
             object: nil, queue: .main) { [weak self] note in
@@ -187,7 +241,7 @@ final class NormalGameKeyForwarder {
             })
         observers.append(center.addObserver(forName: NSApplication.didBecomeActiveNotification,
             object: nil, queue: .main) { [weak self] _ in
-                self?.prepareForInput()
+                self?.claimPointerForVision()
             })
         let workspace = NSWorkspace.shared.notificationCenter
         workspaceObservers.append(workspace.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
@@ -226,27 +280,77 @@ final class NormalGameKeyForwarder {
         releaseAll()
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        if let pointerMonitor { NSEvent.removeMonitor(pointerMonitor) }
+        pointerMonitor = nil
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
         workspaceObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
         workspaceObservers.removeAll()
         cachedWindowGeometry = nil
+        keysAwaitingFreshPress.removeAll()
         panel?.level = .normal
     }
 
-    func setLabeling(_ active: Bool) { releaseAll(); labeling = active }
-    func setReviewing(_ active: Bool) { releaseAll(); reviewing = active }
+    func setLabeling(_ active: Bool) {
+        releaseAll()
+        labeling = active
+        updateEditingFocus()
+    }
+
+    func setReviewing(_ active: Bool) {
+        releaseAll()
+        reviewing = active
+        updateEditingFocus()
+    }
+
     func setSettings(_ active: Bool) { releaseAll(); settings = active }
+
+    private func updateEditingFocus() {
+        guard labeling || reviewing else {
+            visionOwnsPointer = false
+            DispatchQueue.main.async { [weak self] in self?.prepareForInput() }
+            return
+        }
+        // The Normal-mode dashboard is deliberately a nonactivating panel so
+        // keyboard events can be relayed while Unity remains active. Label and
+        // review workspaces need the opposite: activating Vision makes Unity
+        // release its gameplay cursor lock before the editor accepts a drag.
+        visionOwnsPointer = true
+        cancelFocusTransfer()
+        NSApp.activate(ignoringOtherApps: true)
+        panel?.level = .floating
+        panel?.makeKeyAndOrderFront(nil)
+    }
+
+    private func claimPointerForVision(_ event: NSEvent? = nil) {
+        guard started, let panel, panel.isVisible,
+              event == nil || event?.window === panel else { return }
+        if event?.type == .mouseMoved,
+           ProcessInfo.processInfo.systemUptime < suppressPointerClaimUntil {
+            return
+        }
+        keysAwaitingFreshPress.formUnion(keys.heldKeyCodes)
+        keysAwaitingFreshPress.formUnion(pendingKeys.presses.map(\.keyCode))
+        visionOwnsPointer = true
+        cancelFocusTransfer()
+        releaseAll()
+        NSApp.activate(ignoringOtherApps: true)
+        panel.level = .floating
+        panel.makeKeyAndOrderFront(nil)
+    }
 
     /// Called when capture is ready or the user returns to Vision. Never raises
     /// Vision in response to arbitrary activation of the game or another app.
     func prepareForInput() {
-        guard started, !focusTransferPending, let panel, panel.isVisible,
+        guard started, !labeling, !reviewing, !visionOwnsPointer,
+              !focusTransferPending,
+              let panel, panel.isVisible,
               panel.attachedSheet == nil, let game = validatedGame() else { return }
         target = game
         if game.isActive {
             panel.level = .floating
             panel.makeKeyAndOrderFront(nil)
+            flushPendingKeys(to: game)
             return
         }
         guard NSApp.isActive || panel.isKeyWindow else { return }
@@ -254,6 +358,7 @@ final class NormalGameKeyForwarder {
         focusTransferPending = true
         focusTransferGeneration &+= 1
         let generation = focusTransferGeneration
+        suppressPointerClaimUntil = ProcessInfo.processInfo.systemUptime + 0.15
         _ = game.activate(options: [])
         finishFocusTransfer(
             to: game,
@@ -278,6 +383,7 @@ final class NormalGameKeyForwarder {
                 self.focusTransferPending = false
                 panel.level = .floating
                 panel.makeKeyAndOrderFront(nil)
+                self.flushPendingKeys(to: game)
             } else if attemptsRemaining > 1 {
                 self.finishFocusTransfer(
                     to: game,
@@ -287,6 +393,7 @@ final class NormalGameKeyForwarder {
                 )
             } else {
                 self.focusTransferPending = false
+                self.pendingKeys.removeAll()
             }
         }
     }
@@ -294,6 +401,7 @@ final class NormalGameKeyForwarder {
     private func cancelFocusTransfer() {
         focusTransferGeneration &+= 1
         focusTransferPending = false
+        pendingKeys.removeAll()
     }
 
     private func validatedGame() -> NSRunningApplication? {
@@ -321,12 +429,20 @@ final class NormalGameKeyForwarder {
     private func handle(_ event: NSEvent) -> NSEvent? {
         // Releases bypass UI filters: a field, sheet or workspace may have
         // gained focus between key-down and key-up.
+        if event.type == .keyUp,
+           keysAwaitingFreshPress.remove(event.keyCode) != nil {
+            return nil
+        }
         if event.type == .keyUp, keys.heldKeyCodes.contains(event.keyCode) {
             release(event.keyCode)
             return nil
         }
+        if event.type == .keyUp, pendingKeys.release(event.keyCode) {
+            return nil
+        }
         guard started, let panel, panel.isKeyWindow, panel.attachedSheet == nil,
               event.window === panel else { return event }
+        guard !keysAwaitingFreshPress.contains(event.keyCode) else { return nil }
         let textInput = panel.firstResponder is NSTextView || panel.firstResponder is NSTextField
         guard !textInput || (settings && NormalGameKeyPolicy.arrows.contains(event.keyCode)) else {
             releaseAll()
@@ -337,28 +453,65 @@ final class NormalGameKeyForwarder {
             supportedKeyCodes: NormalGameKeyPolicy.keyCodes(
                 labeling: labeling, reviewing: reviewing, settings: settings)
         ) == .forward, event.type == .keyDown else { return event }
-        guard let game = validatedGame(), game.isActive else {
-            prepareForInput()
-            return event
-        }
+        visionOwnsPointer = false
+        guard let game = validatedGame() else { return event }
         guard ensureEventPostingAccess(in: panel) else { return nil }
         let flags = event.cgEvent?.flags ?? []
+        guard game.isActive else {
+            _ = pendingKeys.press(
+                event.keyCode,
+                flags: flags,
+                isRepeat: event.isARepeat
+            )
+            prepareForInput()
+            return nil
+        }
+        return forwardKeyDown(
+            event.keyCode,
+            flags: flags,
+            isRepeat: event.isARepeat,
+            to: game
+        ) ? nil : event
+    }
+
+    private func forwardKeyDown(
+        _ keyCode: UInt16,
+        flags: CGEventFlags,
+        isRepeat: Bool,
+        to game: NSRunningApplication
+    ) -> Bool {
         guard let forwardedEvent = NativeGameEventFactory.keyboard(
-            keyCode: event.keyCode,
+            keyCode: keyCode,
             isDown: true,
             flags: flags
-        ) else { return event }
+        ) else { return false }
         target = game
-        guard keys.press(event.keyCode, targetPID: game.processIdentifier,
-                         isRepeat: event.isARepeat) else { return nil }
-        pressFlags[event.keyCode] = flags
+        guard keys.press(keyCode, targetPID: game.processIdentifier,
+                         isRepeat: isRepeat) else { return true }
+        pressFlags[keyCode] = flags
         forwardedEvent.postToPid(game.processIdentifier)
         statusHandler(visionText("nativeInputReady"))
         activityHandler()
-        return nil
+        return true
+    }
+
+    private func flushPendingKeys(to game: NSRunningApplication) {
+        for press in pendingKeys.drain() {
+            guard forwardKeyDown(
+                press.keyCode,
+                flags: press.flags,
+                isRepeat: false,
+                to: game
+            ) else { continue }
+            if press.wasReleased { release(press.keyCode) }
+        }
     }
 
     func forwardPointer(_ pointerEvent: GamePointerEvent) -> Bool {
+        guard NormalGameKeyPolicy.forwardsPointer(
+                labeling: labeling,
+                reviewing: reviewing
+              ), !visionOwnsPointer else { return false }
         guard started, let panel, panel.isVisible, panel.attachedSheet == nil,
               let game = validatedGame(), game.isActive else {
             prepareForInput()

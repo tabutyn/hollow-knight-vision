@@ -37,6 +37,28 @@ final class NormalGameKeyForwarderTests: XCTestCase {
         XCTAssertEqual(state.targetPID, 20)
     }
 
+    func testPendingKeyPreservesFirstPressAcrossFocusTransfer() {
+        var state = PendingNativeKeyState()
+        XCTAssertTrue(state.press(124, flags: [.maskShift], isRepeat: false))
+        XCTAssertFalse(state.press(124, flags: [], isRepeat: true))
+        XCTAssertTrue(state.press(6, flags: [], isRepeat: false))
+        XCTAssertTrue(state.release(124))
+        XCTAssertFalse(state.release(123))
+        XCTAssertEqual(state.drain(), [
+            PendingNativeKeyPress(
+                keyCode: 124,
+                flags: [.maskShift],
+                wasReleased: true
+            ),
+            PendingNativeKeyPress(
+                keyCode: 6,
+                flags: [],
+                wasReleased: false
+            ),
+        ])
+        XCTAssertTrue(state.presses.isEmpty)
+    }
+
     func testWorkspaceAndSettingsRouting() {
         XCTAssertTrue(NormalGameKeyPolicy.keyCodes(labeling: true, reviewing: false, settings: false).isEmpty)
         XCTAssertTrue(NormalGameKeyPolicy.keyCodes(labeling: false, reviewing: true, settings: false).isEmpty)
@@ -50,6 +72,18 @@ final class NormalGameKeyForwarderTests: XCTestCase {
             modifierFlags: .command, supportedKeyCodes: gameplay), .pass)
         XCTAssertEqual(GameKeyRelay.action(type: .keyUp, keyCode: 7,
             modifierFlags: .command, supportedKeyCodes: gameplay), .forward)
+        XCTAssertTrue(NormalGameKeyPolicy.forwardsPointer(
+            labeling: false,
+            reviewing: false
+        ))
+        XCTAssertFalse(NormalGameKeyPolicy.forwardsPointer(
+            labeling: true,
+            reviewing: false
+        ))
+        XCTAssertFalse(NormalGameKeyPolicy.forwardsPointer(
+            labeling: false,
+            reviewing: true
+        ))
     }
 
     func testNativeInputAccessAcceptsEitherMacOSTrustSignal() {

@@ -358,7 +358,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     private var gameplayMenuEvidenceGate = GameplayMenuEvidenceGate()
     private var quitGameExitWatchGeneration: UInt64 = 0
     private var quitGameExitApplication: NSRunningApplication?
-    private var quitGameExitDiscoveryPending = false
+    private var quitGameExitWatchActive = false
+    private var gameProcessLifetime = GameProcessLifetime()
+    private var capturedGameProcessID: pid_t?
     private var expectedGameApplicationURL: URL?
     private var quitGameExitConfirmationObserved = false
     private var quitGameExitDeadline: TimeInterval?
@@ -616,6 +618,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         Task { [weak self] in
             guard let self else { return }
             var startingStreamID: ObjectIdentifier?
+            var startingGameProcessID: pid_t?
             do {
                 let content = try await SCShareableContent.excludingDesktopWindows(
                     false,
@@ -631,6 +634,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                     }
                     throw CaptureFailure.windowNotFound
                 }
+                startingGameProcessID = window.owningApplication?.processID
                 let configuration = HollowKnightCaptureConfiguration.make(
                     windowSize: window.frame.size
                 )
@@ -641,7 +645,10 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                 startingStreamID = streamID
                 await prepareCaptureAttempt(streamID)
                 await installAcceptedSampleStream(streamID)
-                await MainActor.run { self.stream = stream }
+                await MainActor.run {
+                    self.stream = stream
+                    self.capturedGameProcessID = window.owningApplication?.processID
+                }
                 try await stream.startCapture()
                 await MainActor.run {
                     guard self.stream === stream else { return }
@@ -655,6 +662,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                 }
             } catch {
                 let attemptedStreamID = startingStreamID
+                let attemptedGameProcessID = startingGameProcessID
                 let ownsAttempt = if let attemptedStreamID {
                     await invalidateCaptureAttempt(attemptedStreamID)
                 } else {
@@ -666,10 +674,21 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                        let currentStream = self.stream,
                        ObjectIdentifier(currentStream) != attemptedStreamID { return }
                     self.stream = nil
+                    self.capturedGameProcessID = nil
                     self.operationInFlight = false
                     self.isCapturing = false
                     self.status = self.message(for: error)
                     if case CaptureFailure.windowNotFound = error {
+                        self.scheduleCaptureRestart(after: 1)
+                    } else if case CaptureFailure.incompatibleGame = error,
+                              self.gameProcessLifetime.observation == .waitingForGame {
+                        self.scheduleCaptureRestart(after: 1)
+                    } else if self.gameProcessLifetime.observation == .waitingForRelaunch {
+                        self.scheduleCaptureRestart(after: 1)
+                    } else if let attemptedGameProcessID,
+                              NSRunningApplication(processIdentifier: attemptedGameProcessID)?.isTerminated != false {
+                        // The process can exit before the watcher or stream
+                        // delegate observes it, including during startCapture.
                         self.scheduleCaptureRestart(after: 1)
                     }
                 }
@@ -707,6 +726,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             await MainActor.run {
                 guard self.stream === activeStream else { return }
                 self.stream = nil
+                self.capturedGameProcessID = nil
                 self.isCapturing = false
                 self.operationInFlight = false
                 self.status = "Paused."
@@ -921,8 +941,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     func startGame(gamePath: String? = nil) {
         expectedGameApplicationURL = gamePath.map {
             HollowKnightInstallationDiscovery.gameApplicationURL(path: $0)
-                .standardizedFileURL
+                .resolvingSymlinksInPath().standardizedFileURL
         }
+        gameProcessLifetime = GameProcessLifetime()
         if gameMode == .modded {
             gameControlForwarder.start(gamePath: gamePath)
         } else {
@@ -1753,45 +1774,22 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         confirmQuitGameExitWatch()
     }
 
-    /// Watch the exact selected installation from launch onward. Quit-screen
-    /// input still confirms intent, but manual closes follow the same path.
+    /// Track the selected installation across Steam's startup process handoff.
     private func armQuitGameExitWatch() {
-        guard gameLostCountdown == nil,
-              quitGameExitApplication == nil,
-              !quitGameExitDiscoveryPending else { return }
-        quitGameExitDiscoveryPending = true
+        guard gameLostCountdown == nil, !quitGameExitWatchActive else { return }
+        quitGameExitWatchActive = true
         quitGameExitWatchGeneration &+= 1
-        discoverGameApplication(generation: quitGameExitWatchGeneration)
-    }
-
-    private func discoverGameApplication(generation: UInt64) {
-        guard generation == quitGameExitWatchGeneration,
-              gameLostCountdown == nil,
-              quitGameExitApplication == nil else { return }
-        if let application = GameControlForwarder.hollowKnightApplication(),
-           gameApplicationMatchesSelection(application) {
-            quitGameExitDiscoveryPending = false
-            quitGameExitApplication = application
-            quitGameExitConfirmationObserved = false
-            quitGameExitDeadline = nil
-            quitGameExitLog.notice(
-                "armed pid=\(application.processIdentifier, privacy: .public)"
-            )
-            pollForConfirmedGameExit(generation: generation)
-            return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.discoverGameApplication(generation: generation)
-        }
+        pollForConfirmedGameExit(generation: quitGameExitWatchGeneration)
     }
 
     private func gameApplicationMatchesSelection(
         _ application: NSRunningApplication
     ) -> Bool {
         guard !application.isTerminated,
-              let gameURL = application.bundleURL?.standardizedFileURL else { return false }
-        if let expectedGameApplicationURL {
-            return gameURL == expectedGameApplicationURL
+              let gameURL = application.bundleURL?.resolvingSymlinksInPath().standardizedFileURL
+        else { return false }
+        if let expectedGameApplicationURL, gameURL != expectedGameApplicationURL {
+            return false
         }
         return HollowKnightInstallationPolicy.issue(gameURL: gameURL, mode: gameMode) == nil
     }
@@ -1821,39 +1819,78 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
               terminated.processIdentifier == watched.processIdentifier
         else { return }
         quitGameExitLog.notice(
-            "confirmed termination pid=\(terminated.processIdentifier, privacy: .public)"
+            "process terminated pid=\(terminated.processIdentifier, privacy: .public)"
         )
-        beginGameLostCountdown()
+        // Launch Services can still list this PID while delivering its exit.
+        observeGameProcess(excluding: terminated.processIdentifier)
     }
 
     private func pollForConfirmedGameExit(generation: UInt64) {
-        guard generation == quitGameExitWatchGeneration else { return }
-        guard let application = quitGameExitApplication else { return }
-        if application.isTerminated
-            || !NSWorkspace.shared.runningApplications.contains(where: {
-                $0.processIdentifier == application.processIdentifier
-            }) {
-            quitGameExitLog.notice(
-                "confirmed termination by poll pid=\(application.processIdentifier, privacy: .public)"
-            )
-            beginGameLostCountdown()
-            return
+        guard generation == quitGameExitWatchGeneration, quitGameExitWatchActive else { return }
+        observeGameProcess()
+        guard generation == quitGameExitWatchGeneration, quitGameExitWatchActive else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.pollForConfirmedGameExit(generation: generation)
         }
-        if let deadline = quitGameExitDeadline,
-           ProcessInfo.processInfo.systemUptime >= deadline {
+    }
+
+    private func observeGameProcess(excluding terminatedPID: pid_t? = nil) {
+        guard gameLostCountdown == nil, quitGameExitWatchActive else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if let deadline = quitGameExitDeadline, now >= deadline {
             quitGameExitLog.error("confirmation timed out while game remained running")
             quitGameExitConfirmationObserved = false
             quitGameExitDeadline = nil
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.pollForConfirmedGameExit(generation: generation)
+        let application = NSWorkspace.shared.runningApplications.first {
+            $0.processIdentifier != terminatedPID && gameApplicationMatchesSelection($0)
+        }
+        let previousPID = quitGameExitApplication?.processIdentifier
+        let previousObservation = gameProcessLifetime.observation
+        let observation = gameProcessLifetime.observe(
+            processID: application?.processIdentifier,
+            captureReady: isCapturing && capturedGameProcessID == application?.processIdentifier,
+            quitConfirmed: quitGameExitConfirmationObserved,
+            at: now
+        )
+        quitGameExitApplication = application
+        if previousPID != application?.processIdentifier {
+            if let previousPID { restartCaptureAfterGameExit(processID: previousPID) }
+            if let application {
+                quitGameExitLog.notice("watching selected game pid=\(application.processIdentifier, privacy: .public)")
+            }
+        }
+        if observation == .exited {
+            beginGameLostCountdown()
+        } else if observation == .waitingForRelaunch, previousObservation != observation {
+            quitGameExitLog.notice("startup process exited; waiting for Steam replacement")
+        }
+    }
+
+    private func restartCaptureAfterGameExit(processID: pid_t) {
+        guard capturedGameProcessID == processID, let oldStream = stream else { return }
+        // Retire capture of the bootstrap window even if ScreenCaptureKit has
+        // not delivered its stop callback yet. Keep wantsCapture set throughout.
+        let oldStreamID = ObjectIdentifier(oldStream)
+        Task { [weak self] in
+            guard let self,
+                  await self.invalidateCaptureAttempt(oldStreamID) else { return }
+            do { try await oldStream.stopCapture() } catch { }
+            await MainActor.run {
+                guard self.stream === oldStream else { return }
+                self.stream = nil
+                self.capturedGameProcessID = nil
+                self.isCapturing = false
+                self.operationInFlight = false
+                if self.wantsCapture { self.scheduleCaptureRestart() }
+            }
         }
     }
 
     private func beginGameLostCountdown() {
         guard gameLostCountdown == nil else { return }
         quitGameExitWatchGeneration &+= 1
-        quitGameExitDiscoveryPending = false
+        quitGameExitWatchActive = false
         wantsCapture = false
         gameControlForwarder.stop()
         stopCapture()
@@ -2452,6 +2489,10 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
               let application = NSRunningApplication(processIdentifier: processID),
               let gameURL = application.bundleURL else {
             return "Vision could not verify whether the running Hollow Knight installation matches \(gameMode.title). Close it and launch the intended copy with --game-path."
+        }
+        if let expectedGameApplicationURL,
+           gameURL.resolvingSymlinksInPath().standardizedFileURL != expectedGameApplicationURL {
+            return "Waiting for the selected Hollow Knight installation to launch."
         }
         return HollowKnightInstallationPolicy.issue(gameURL: gameURL, mode: gameMode)?
             .runningApplicationMessage
@@ -4278,6 +4319,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             await MainActor.run {
                 guard self.stream === stoppedStream else { return }
                 self.stream = nil
+                self.capturedGameProcessID = nil
                 self.isCapturing = false
                 self.operationInFlight = false
                 if self.wantsCapture {

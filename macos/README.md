@@ -73,6 +73,16 @@ macos/run-live.sh --game-mode modded --game-path '/path/to/hollow_knight.app'
 The chooser disables a mode when Vision cannot find a complete compatible app.
 Selecting an available mode gracefully closes a different running copy before
 launching the matching app. A Steam shortcut is not treated as a stock install.
+For a bundle belonging to Steam's Hollow Knight manifest, Vision requests one
+local Steam launch (`-applaunch 367520`) instead of opening the game executable
+first or a URL that can select Remote Play on another computer. Steam launches
+through macOS Launch Services so its local-network permissions belong to Steam,
+not Vision. An already-running Steam client receives the command through its
+command-line forwarding process. Separate copies still launch directly. During
+startup, Vision follows replacement processes from the selected installation
+and reconnects capture for up to 60 seconds
+after an early process exit. After 15 seconds of stable capture, or a confirmed
+Quit, game termination retains the ordinary five-second shutdown countdown.
 Use `--game-path` when the compatible app is outside the scanned locations. The
 bottom-bar gear opens settings; blue guidance directs menu labeling;
 Reset Stencils and Factory Reset create recoverable backups under
