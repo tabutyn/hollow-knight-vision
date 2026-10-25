@@ -5,6 +5,32 @@ using HollowKnightVision.Windows.Core;
 
 internal static class InputPathRecorderTests
 {
+    public static void TestPlaybackMaintainsLeaseAcrossLongHolds()
+    {
+        var recorder = new InputPathRecorder();
+        recorder.Start(timestamp: 0);
+        recorder.RecordInput(RecordedGameButton.Right, true, .1);
+        recorder.RecordInput(RecordedGameButton.A, true, .8);
+        recorder.RecordInput(RecordedGameButton.A, false, 1);
+        recorder.RecordInput(RecordedGameButton.Right, false, 1.5);
+        var path = recorder.Stop(2)!;
+        var states = path.PlaybackStates().ToArray();
+        // Model Unity ticks and the documented receiver lease, including a
+        // 1.4-second hold that used to expire after its first 250ms.
+        for (var tick = 0; tick <= 120; tick++)
+        {
+            var at = tick / 60d;
+            var latest = states.Last(state => state.Offset <= at + 1e-9);
+            var actual = at - latest.Offset <= .25 ? latest.HeldButtons : InputButtons.None;
+            var expected = at >= .1 && at < 1.5 ? InputButtons.Right : InputButtons.None;
+            if (at >= .8 && at < 1) expected |= InputButtons.ActionA;
+            Check(actual == expected, $"Replay lease changed held input at {at}s.");
+        }
+        Check(states.Where((state, index) => index > 0 && state.HeldButtons != states[index - 1].HeldButtons)
+            .SequenceEqual(path.StateChanges()), "Heartbeat changed input transition timing/order.");
+        Check(states[^1].Offset == 2 && states[^1].HeldButtons == InputButtons.None);
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
     private static void Check(bool value, string message = "Input path recorder assertion failed.")

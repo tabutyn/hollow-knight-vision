@@ -206,6 +206,7 @@ var tests = new List<(string Name, Action Run)>
     ("input acknowledgement measures only state changes", InputAcknowledgementTrackerTests.TestAcknowledgementTrackerMeasuresOnlyMatchedStateChanges),
     ("input acknowledgement rejects mismatch and stale identity", InputAcknowledgementTrackerTests.TestAcknowledgementTrackerRejectsMismatchAndOldOrUnknownAcknowledgements),
     ("input acknowledgement bounds pending state and calculates p95", InputAcknowledgementTrackerTests.TestAcknowledgementTrackerBoundsPendingStatesAndCalculatesRollingP95),
+    ("input replay refreshes receiver lease during long holds", InputPathRecorderTests.TestPlaybackMaintainsLeaseAcrossLongHolds),
     ("input path records deduplicated transitions and closes held buttons", InputPathRecorderTests.TestRecordsDeduplicatedTransitionsAndClosesHeldButtons),
     ("input path reads recordings without capture diagnostics", InputPathRecorderTests.TestPathWithoutCaptureDiagnosticsRemainsReadable),
     ("input path caps low-resolution frame traces at twenty hertz", InputPathRecorderTests.TestLowResolutionFrameTraceIsCappedAtTwentyHertz),

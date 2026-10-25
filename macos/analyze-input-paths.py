@@ -5,9 +5,11 @@ import argparse
 import base64
 import bisect
 import binascii
+import hashlib
 import json
 import math
 import statistics
+import sys
 from pathlib import Path
 
 from camera_diagnostics import low_resolution_motion_demand, summarize_exact
@@ -310,7 +312,8 @@ def summarize(source, run):
             timing_errors.append(actual["offset"] - expected["offset"])
 
     source_verified = pose_samples(source, verified_only=True, published=True)
-    source_start = pose_samples(source, published=True)[0][1:]
+    source_poses = pose_samples(source, published=True)
+    source_start = source_poses[0][1:] if source_poses else (0, 0)
     run_start = poses[0][1:] if poses else (0, 0)
     trajectory_errors = []
     ground_truth = ground_truth_camera_samples(run)
@@ -409,8 +412,9 @@ def summarize(source, run):
         ),
         "groundTrackingP50Milliseconds": rounded(percentile(ground_tracking_times, 50)),
         "groundTrackingP95Milliseconds": rounded(percentile(ground_tracking_times, 95)),
-        "groundTrackingMaxMilliseconds": rounded(max(ground_tracking_times, default=0)),
-        "verifiedPercent": rounded(100 * sum(s["poseVerified"] for s in samples) / len(samples), 2),
+        "groundTrackingMaxMilliseconds": rounded(max(ground_tracking_times) if ground_tracking_times else None),
+        "verifiedPercent": rounded(
+            100 * sum(s["poseVerified"] for s in samples) / len(samples) if samples else None, 2),
         "lossEpisodes": len(loss_intervals),
         "lossSeconds": rounded(sum(loss_intervals)),
         "longestLossSeconds": rounded(max(loss_intervals, default=0)),
@@ -429,15 +433,15 @@ def summarize(source, run):
         "acceptedAtlasClosures": len(run.get("loopClosures") or []),
         "inputSequenceExact": sequence_matches,
         "inputTimingMeanErrorMilliseconds": rounded(
-            1000 * statistics.mean(timing_errors) if timing_errors else None
+            1000 * statistics.mean(timing_errors) if timing_errors and sequence_matches else None
         ),
         "inputTimingP95AbsoluteMilliseconds": rounded(
             1000 * percentile([abs(value) for value in timing_errors], 95)
-            if timing_errors else None
+            if timing_errors and sequence_matches else None
         ),
         "inputTimingMaxAbsoluteMilliseconds": rounded(
             1000 * max([abs(value) for value in timing_errors], default=0)
-            if timing_errors else None
+            if timing_errors and sequence_matches else None
         ),
         "trajectoryComparablePercent": rounded(100 * comparable / total_grid, 2),
         "trajectoryRMSErrorPixels": rounded(
@@ -452,7 +456,7 @@ def summarize(source, run):
             if ground_truth_errors else None
         ),
         "groundTruthP95ErrorPixels": rounded(percentile(ground_truth_errors, 95)),
-        "groundTruthMaxErrorPixels": rounded(max(ground_truth_errors, default=0)),
+        "groundTruthMaxErrorPixels": rounded(max(ground_truth_errors) if ground_truth_errors else None),
         "groundTruthMaxErrorAtSeconds": maximum_error_time,
         "groundTruthFirstErrorOverPixelsAtSeconds": threshold_crossings,
         "groundTruthXErrorSDPixels": rounded(
@@ -466,7 +470,12 @@ def summarize(source, run):
 
 def cross_run_summary(runs):
     verified = [pose_samples(run, verified_only=True, published=True) for run in runs]
-    starts = [pose_samples(run, published=True)[0][1:] for run in runs]
+    pose_traces = [pose_samples(run, published=True) for run in runs]
+    if not runs or any(not trace for trace in pose_traces):
+        return {"allRunsVerifiedAtGridPercent": 0,
+                "meanTrajectorySpreadPixels": None, "p95TrajectorySpreadPixels": None,
+                "maxTrajectorySpreadPixels": None}
+    starts = [trace[0][1:] for trace in pose_traces]
     duration = min(run["duration"] for run in runs)
     spreads = []
     common = 0
@@ -496,50 +505,151 @@ def cross_run_summary(runs):
     }
 
 
+def comparison_issues(source, run, summary, maximum_input_jitter_ms):
+    issues = []
+    if not source.get("id") or str(run.get("sourcePathID", "")).casefold() != str(source["id"]).casefold():
+        issues.append("Replay sourcePathID does not match the source recording")
+    if not summary["inputSequenceExact"]:
+        issues.append("Replay button sequence differs from the source recording")
+    jitter = summary["inputTimingMaxAbsoluteMilliseconds"]
+    if jitter is not None and jitter > maximum_input_jitter_ms:
+        issues.append(f"Input timing error {jitter}ms exceeds {maximum_input_jitter_ms}ms")
+    if run["duration"] + 0.05 < source["duration"]:
+        issues.append("Replay ended before the source timeline completed")
+    if source.get("startCheckpoint") != run.get("startCheckpoint"):
+        issues.append("Replay start checkpoint differs from the source recording")
+    if not pose_samples(run, published=True):
+        issues.append("Replay contains no published camera poses")
+    if summary["exactFrameCamera"]["matchedSamples"] < 2:
+        issues.append("Fewer than two exact-frame camera truth matches; accuracy is unmeasured")
+    return issues
+
+
+def source_window(path, duration):
+    """Compare the same timeline; Mac's two-second settling tail stays diagnostic."""
+    result = dict(path)
+    result["duration"] = min(path["duration"], duration)
+    for field in ("events", "trackingSamples", "groundTruthSamples", "coarseMotionSamples",
+                  "lowResolutionFrames", "loopClosures"):
+        result[field] = [sample for sample in path.get(field) or []
+                         if sample["offset"] <= duration + 0.000001]
+    return result
+
+
+def aggregate(runs, summaries):
+    def values(key):
+        return [item[key] for item in summaries if item.get(key) is not None]
+
+    def mean(key):
+        data = values(key)
+        return rounded(statistics.mean(data) if data else None)
+
+    def deviation(key):
+        data = values(key)
+        return rounded(statistics.pstdev(data) if data else None)
+
+    return {
+        "runCount": len(runs),
+        "verifiedPercentMean": mean("verifiedPercent"),
+        "verifiedPercentSD": deviation("verifiedPercent"),
+        "pathDisplacementMeanPixels": mean("pathDisplacementPixels"),
+        "pathDisplacementSDPixels": deviation("pathDisplacementPixels"),
+        "acceptedAtlasClosures": sum(item["acceptedAtlasClosures"] for item in summaries),
+        "trackingSamplesPerSecondMean": mean("trackingSamplesPerSecond"),
+        "captureIntervalP95MillisecondsMean": mean("captureIntervalP95Milliseconds"),
+        "groundTrackingP50MillisecondsMean": mean("groundTrackingP50Milliseconds"),
+        "groundTrackingP95MillisecondsMean": mean("groundTrackingP95Milliseconds"),
+        "exactFrameCameraP95PixelsMean": rounded(statistics.mean([
+            item["exactFrameCamera"]["errorPixels"]["p95"] for item in summaries
+            if item["exactFrameCamera"]["errorPixels"]["p95"] is not None
+        ])) if any(item["exactFrameCamera"]["errorPixels"]["p95"] is not None
+                  for item in summaries) else None,
+        **cross_run_summary(runs),
+    }
+
+
+def build_report(source, runs, maximum_input_jitter_ms=50):
+    if not math.isfinite(maximum_input_jitter_ms) or maximum_input_jitter_ms < 0:
+        raise ValueError("Input timing tolerance must be finite and nonnegative")
+    if not runs:
+        raise ValueError("At least one replay recording is required")
+    for path in [source, *runs]:
+        duration = path.get("duration")
+        if not isinstance(duration, (int, float)) or not math.isfinite(duration) or not 0 < duration <= 86400:
+            raise ValueError("Recording duration must be finite and positive, at most 24 hours")
+        if path.get("schemaVersion", 1) != 1:
+            raise ValueError("Unsupported input-path schema")
+    summaries, groups = [], {}
+    for run_index, run in enumerate(runs):
+        window = source_window(run, source["duration"])
+        summary = summarize(source, window)
+        # Check the complete event stream too: dropping an unexpected tail event
+        # must not turn a different input sequence into a matching one.
+        full_sequence = [(e["button"], e["transition"]) for e in run["events"]]
+        expected_sequence = [(e["button"], e["transition"]) for e in source["events"]]
+        if full_sequence != expected_sequence:
+            summary["inputSequenceExact"] = False
+            for key in ("inputTimingMeanErrorMilliseconds", "inputTimingP95AbsoluteMilliseconds",
+                        "inputTimingMaxAbsoluteMilliseconds"):
+                summary[key] = None
+        issues = comparison_issues(source, run, summary, maximum_input_jitter_ms)
+        metadata = run.get("runtimeMetadata") or {}
+        summary.update({"id": run.get("id"), "sourcePathID": run.get("sourcePathID"),
+                        "runtimeMetadata": metadata, "recordedDuration": run["duration"],
+                        "evaluatedDuration": window["duration"],
+                        "excludedSettlingSeconds": max(0, run["duration"] - source["duration"]),
+                        "comparisonEligible": not issues, "comparisonIssues": issues,
+                        "buildIdentified": bool(metadata.get("gitRevision"))})
+        summaries.append(summary)
+        key = json.dumps(metadata, sort_keys=True)
+        if not metadata.get("gitRevision"):
+            key += f":unidentified-run-{run_index}"
+        group = groups.setdefault(key, {"runtimeMetadata": metadata, "runs": [], "summaries": []})
+        group["runs"].append(window)
+        group["summaries"].append(summary)
+    build_groups = []
+    for group in groups.values():
+        comparable = all(item["comparisonEligible"] for item in group["summaries"])
+        build_groups.append({"runtimeMetadata": group["runtimeMetadata"],
+                             "buildIdentified": bool(group["runtimeMetadata"].get("gitRevision")),
+                             "runIDs": [item["id"] for item in group["summaries"]],
+                             "comparisonEligible": comparable,
+                             "aggregate": aggregate(group["runs"], group["summaries"]) if comparable else None})
+    samples = source["trackingSamples"]
+    return {
+        "reportVersion": 2,
+        "maximumInputJitterMilliseconds": maximum_input_jitter_ms,
+        "source": {"id": source.get("id"), "duration": rounded(source["duration"]),
+                   "canonicalSHA256": hashlib.sha256(json.dumps(source, sort_keys=True,
+                       separators=(",", ":"), allow_nan=False).encode()).hexdigest(),
+                   "runtimeMetadata": source.get("runtimeMetadata") or {},
+                   "events": len(source["events"]), "samples": len(samples),
+                   "verifiedPercent": rounded(100 * sum(s["poseVerified"] for s in samples)
+                                              / len(samples) if samples else None, 2)},
+        "comparisonEligible": all(item["comparisonEligible"] for item in summaries),
+        "comparisonMeaning": "Matched source, input sequence, checkpoint and timeline with exact-frame truth; not proof of identical game state or deterministic physics",
+        "replays": summaries,
+        "buildGroups": build_groups,
+        # Never pool different code/configurations or silently drop failed runs.
+        "aggregate": build_groups[0]["aggregate"] if len(build_groups) == 1 else None,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
     parser.add_argument("replays", nargs="+", type=Path)
+    parser.add_argument("--max-input-jitter-ms", type=float, default=50,
+                        help="Maximum absolute replay event timing error (default: 50ms)")
     arguments = parser.parse_args()
-    source = load(arguments.source)
-    runs = sorted((load(path) for path in arguments.replays), key=lambda item: item["replayIteration"])
-    summaries = [summarize(source, run) for run in runs]
-    print(json.dumps({
-        "source": {
-            "duration": rounded(source["duration"]),
-            "events": len(source["events"]),
-            "samples": len(source["trackingSamples"]),
-            "verifiedPercent": rounded(
-                100 * sum(s["poseVerified"] for s in source["trackingSamples"])
-                / len(source["trackingSamples"]),
-                2,
-            ),
-        },
-        "replays": summaries,
-        "aggregate": {
-            "verifiedPercentMean": rounded(statistics.mean(item["verifiedPercent"] for item in summaries), 2),
-            "verifiedPercentSD": rounded(statistics.pstdev(item["verifiedPercent"] for item in summaries), 2),
-            "pathDisplacementMeanPixels": rounded(statistics.mean(
-                item["pathDisplacementPixels"] for item in summaries)),
-            "pathDisplacementSDPixels": rounded(statistics.pstdev(
-                item["pathDisplacementPixels"] for item in summaries)),
-            "acceptedAtlasClosures": sum(item["acceptedAtlasClosures"] for item in summaries),
-            "trackingSamplesPerSecondMean": rounded(statistics.mean(
-                item["trackingSamplesPerSecond"] for item in summaries
-            )),
-            "captureIntervalP95MillisecondsMean": rounded(statistics.mean(
-                item["captureIntervalP95Milliseconds"] for item in summaries
-            )),
-            "groundTrackingP50MillisecondsMean": rounded(statistics.mean(
-                item["groundTrackingP50Milliseconds"] for item in summaries
-            )),
-            "groundTrackingP95MillisecondsMean": rounded(statistics.mean(
-                item["groundTrackingP95Milliseconds"] for item in summaries
-            )),
-            **cross_run_summary(runs),
-        },
-    }, indent=2))
+    try:
+        report = build_report(load(arguments.source), [load(path) for path in arguments.replays],
+                              arguments.max_input_jitter_ms)
+    except (ValueError, KeyError, TypeError) as error:
+        parser.error(str(error))
+    print(json.dumps(report, indent=2, allow_nan=False))
+    return 0 if report["comparisonEligible"] else 2
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

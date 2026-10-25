@@ -545,6 +545,33 @@ public static class RecordedInputPathExtensions
         InputButtons.PauseMenu => RecordedGameButton.Pause, _ => null
     };
 
+    /// <summary>Keep the receiver's 250ms input lease alive between recorded transitions.</summary>
+    public static IEnumerable<InputPathStateChange> PlaybackStates(this RecordedInputPath path)
+    {
+        var changes = path.StateChanges();
+        const double heartbeatSeconds = .1;
+        var offset = 0.0;
+        var held = InputButtons.None;
+        yield return new InputPathStateChange(offset, held);
+        foreach (var change in changes)
+        {
+            while (offset + heartbeatSeconds < change.Offset)
+            {
+                offset += heartbeatSeconds;
+                yield return new InputPathStateChange(offset, held);
+            }
+            offset = change.Offset;
+            held = change.HeldButtons;
+            yield return change;
+        }
+        while (offset + heartbeatSeconds < path.Duration)
+        {
+            offset += heartbeatSeconds;
+            yield return new InputPathStateChange(offset, held);
+        }
+        yield return new InputPathStateChange(path.Duration, InputButtons.None);
+    }
+
     public static IReadOnlyList<InputPathStateChange> StateChanges(this RecordedInputPath path)
     {
         ArgumentNullException.ThrowIfNull(path);
