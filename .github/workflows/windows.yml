@@ -3,9 +3,9 @@ name: Windows
 on:
   push:
     branches: [main]
-    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", ".github/workflows/windows.yml"]
+    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", "global.json", ".github/workflows/windows.yml"]
   pull_request:
-    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", ".github/workflows/windows.yml"]
+    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", "global.json", ".github/workflows/windows.yml"]
 
 jobs:
   build-test:
@@ -20,7 +20,9 @@ jobs:
         with:
           dotnet-version: 8.0.x
       - name: Build and test Windows app
-        run: .\build-windows.ps1 -Configuration Release
+        run: |
+          dotnet --version
+          .\build-windows.ps1 -Configuration Release
       - name: Report remaining Mac parity obligations
         run: .\Test-MacParity.ps1
       - name: Install training dependencies
