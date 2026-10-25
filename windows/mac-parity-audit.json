@@ -3,7 +3,7 @@
   "objective": "Highlight active camera and labeling modes, reproduce Mac HUD extrapolation, and verify all Mac functionality is ported to Windows.",
   "completion": "incomplete",
   "coverageMeaning": "Source inventory and explicit functional regression mapping, not measured statement/branch coverage. Unmapped tests and unreviewed sources remain obligations, not assumed ports.",
-  "macRuntimeCoverage": "Pending execution on macOS; no Swift toolchain or Apple frameworks on this workstation. CI is configured to collect coverage. Existing MenuStencilTests exclusion needs a separate run with the user's screenshot/calibration corpus.",
+  "macRuntimeCoverage": "Measured in Mac CI run 40201876662 at f5b348b: GroundMetalProcessing host lines 532/542 (98.15%), GroundCameraSolver 1118/1214 (92.09%), GroundHypothesisTracker 3691/4139 (89.18%). LiveCaptureModel remains 0/5576; embedded Metal shader instructions are not instrumented. See GPU_TRACKING_AUDIT.md and gpu-coverage-macos-2026-10-25.json. Existing MenuStencilTests exclusion still needs the user's screenshot/calibration corpus.",
   "verifiedRequirements": [
     {
       "id": "active-mode-highlights",

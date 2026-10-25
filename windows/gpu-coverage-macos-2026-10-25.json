@@ -1,0 +1,234 @@
+{
+  "scope": "Measured Swift host code; runtime-compiled Metal shader strings are not instrumented",
+  "shader_evidence": "GroundMetalProcessingTests must assert the Metal backend and CPU/GPU parity",
+  "files": [
+    {
+      "file": "GroundCameraSolver.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 165,
+          "covered": 127,
+          "percent": 76.96969696969697
+        },
+        "instantiations": {
+          "count": 165,
+          "covered": 127,
+          "percent": 76.96969696969697
+        },
+        "lines": {
+          "count": 1214,
+          "covered": 1118,
+          "percent": 92.09225700164745
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 349,
+          "covered": 267,
+          "notcovered": 82,
+          "percent": 76.50429799426934
+        }
+      }
+    },
+    {
+      "file": "GroundHypothesisTracker.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 546,
+          "covered": 412,
+          "percent": 75.45787545787546
+        },
+        "instantiations": {
+          "count": 548,
+          "covered": 413,
+          "percent": 75.36496350364963
+        },
+        "lines": {
+          "count": 4139,
+          "covered": 3691,
+          "percent": 89.1761294998792
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 1316,
+          "covered": 999,
+          "notcovered": 317,
+          "percent": 75.91185410334347
+        }
+      }
+    },
+    {
+      "file": "GroundMetalProcessing.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 34,
+          "covered": 32,
+          "percent": 94.11764705882352
+        },
+        "instantiations": {
+          "count": 34,
+          "covered": 32,
+          "percent": 94.11764705882352
+        },
+        "lines": {
+          "count": 542,
+          "covered": 532,
+          "percent": 98.1549815498155
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 144,
+          "covered": 122,
+          "notcovered": 22,
+          "percent": 84.72222222222221
+        }
+      }
+    },
+    {
+      "file": "LayerSceneViewport.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 199,
+          "covered": 91,
+          "percent": 45.7286432160804
+        },
+        "instantiations": {
+          "count": 211,
+          "covered": 91,
+          "percent": 43.127962085308056
+        },
+        "lines": {
+          "count": 1252,
+          "covered": 486,
+          "percent": 38.81789137380191
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 480,
+          "covered": 189,
+          "notcovered": 291,
+          "percent": 39.375
+        }
+      }
+    },
+    {
+      "file": "LiveCaptureModel.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 743,
+          "covered": 0,
+          "percent": 0
+        },
+        "instantiations": {
+          "count": 745,
+          "covered": 0,
+          "percent": 0
+        },
+        "lines": {
+          "count": 5576,
+          "covered": 0,
+          "percent": 0
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 1547,
+          "covered": 0,
+          "notcovered": 1547,
+          "percent": 0
+        }
+      }
+    },
+    {
+      "file": "LiveTrackingTiming.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 44,
+          "covered": 23,
+          "percent": 52.27272727272727
+        },
+        "instantiations": {
+          "count": 44,
+          "covered": 23,
+          "percent": 52.27272727272727
+        },
+        "lines": {
+          "count": 230,
+          "covered": 152,
+          "percent": 66.08695652173913
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 102,
+          "covered": 54,
+          "notcovered": 48,
+          "percent": 52.94117647058824
+        }
+      }
+    }
+  ]
+}

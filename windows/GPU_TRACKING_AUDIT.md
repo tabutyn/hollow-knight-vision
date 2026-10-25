@@ -21,10 +21,59 @@
   that the former 96px search rejects. These are synthetic correctness checks,
   not a claim that all live tracking failures are resolved.
 - Coverage-report unit tests: measured counts retained; missing GPU file rejected.
-- Mac tests now cover explicit GPU and automatic selection, absent-device fallback,
-  malformed requests, row masks, buffer reuse, and existing motion/score parity.
-  Measured Mac coverage will be recorded after CI; do not substitute test counts
-  or Windows results for it.
+- Mac tests passed in [run 40201876662](https://github.com/tabutyn/hollow-knight-vision/actions/runs/40201876662)
+  at `f5b348bf46f0099719e74981f4770d1bda0a3b51`. Tests cover explicit GPU and
+  automatic selection, absent-device fallback, malformed requests, row masks,
+  buffer reuse, and motion/score parity, with explicit Metal backend assertions.
+  The full portable suite reported 811 tests, 10 skipped, zero failures;
+  all nine GPU correctness tests passed (two opt-in GPU benchmarks skipped).
+  Python tests and the canonical Mac release packaging step also passed.
+- Windows CI's pre-existing compiler failure was reproduced before this change:
+  installing .NET 8 did not select it when newer SDKs were installed. Root
+  `global.json` now selects .NET 8; the complete build/test/install step passed
+  in run 40202409979. Its next step exposed an obsolete atlas test mapping,
+  repaired without weakening the parity gate.
+- The complete [Windows CI run 40202807427](https://github.com/tabutyn/hollow-knight-vision/actions/runs/40202807427)
+  then passed build/test/install, parity inventory, training interchange and
+  publication. Hosted CI has no NVIDIA device, so its CUDA hardware tests skip;
+  the local GTX 1080 run required CUDA and logged 13 parity dispatches.
+- Installed Windows app, core and ILGPU hashes match the tested publish output.
+  App assembly SHA-256: `DEFF5188363A3EF86FA030E73350CD6364DA275521DCE11637948E2489ABA3F6`.
+
+## Measured Mac coverage
+
+Swift LLVM coverage from the passing portable suite; `MenuStencilTests` still
+requires the user's local screenshot/calibration corpus and is excluded.
+The [coverage artifact](https://github.com/tabutyn/hollow-knight-vision/actions/runs/40201876662/artifacts/12602108064)
+contains the raw Swift JSON and the generated GPU summary. A compact copy of
+the measured counts is retained in [gpu-coverage-macos-2026-10-25.json](gpu-coverage-macos-2026-10-25.json).
+
+| File | Executed lines | Line coverage | Executed functions | Region coverage |
+| --- | ---: | ---: | ---: | ---: |
+| GroundMetalProcessing.swift | 532 / 542 | 98.15% | 32 / 34 | 84.72% |
+| GroundCameraSolver.swift | 1118 / 1214 | 92.09% | 127 / 165 | 76.50% |
+| GroundHypothesisTracker.swift | 3691 / 4139 | 89.18% | 412 / 546 | 75.91% |
+| LiveTrackingTiming.swift | 152 / 230 | 66.09% | 23 / 44 | 52.94% |
+| LayerSceneViewport.swift | 486 / 1252 | 38.82% | 91 / 199 | 39.38% |
+| LiveCaptureModel.swift | 0 / 5576 | 0% | 0 / 743 | 0% |
+
+The 98.15% figure is **host line coverage**, not shader coverage, branch coverage,
+or end-to-end gameplay coverage. LLVM exports no branch counters here. Covered
+shader-string initialization does not instrument the Metal instructions.
+
+Uncovered GPU host regions include allocation/queue/encoder failure, failed
+command completion, malformed source-patch sizes, out-of-Int32 coordinates,
+and searches whose samples are all invalid. `makeImageContext()` is unexecuted
+by this suite. Device absence is tested, but actual device loss and GPU resource
+failure are not injected. These remain concrete coverage gaps.
+
+The live capture controller and much of the renderer are not exercised by the
+portable tests. Static review confirms production Mac construction selects the
+automatic Metal solver with a 192px maximum, but this suite does not prove live
+capture-to-atlas execution. On Windows, the installed app initialized CUDA on
+the GTX 1080; it remained at the game menu during verification, so its live
+camera dispatch counter was still zero. Hardware regression dispatches passed;
+live gameplay tracking remains to be checked.
 
 ## Windows measurements
 
