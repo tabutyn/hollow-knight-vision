@@ -2,6 +2,113 @@ using HollowKnightVision.Windows.Core;
 
 internal static class GroundComputeProcessingTests
 {
+    internal static void TestCudaPatchParityAndReuse()
+    {
+        var matcher = new GroundPatchMatcher();
+        if (!RequireCuda(matcher)) return;
+        var before = matcher.CudaDispatchCount;
+        foreach (var radius in new[] { 8, 96, 8, 192, 8 })
+        {
+            var fixture = MakeSearchFixture(radius);
+            CompareCuda(matcher, fixture);
+            var mixed = fixture.Candidates.Select(candidate => candidate with
+            {
+                Samples = candidate.Samples.Concat(new GroundPatchSearchSample[]
+                {
+                    new(-1, 0), new(9999, 0), new(0, -2), new(0, 639),
+                    new(0, 640 * 360), new(0, null)
+                }).ToArray()
+            }).ToArray();
+            CompareCuda(matcher, fixture with { Candidates = mixed });
+        }
+        var normal = MakeSearchFixture(96);
+        CompareCuda(matcher, normal with { Pixels = normal.Pixels.Select(value =>
+            (byte)Math.Min(255, value * .7 + 20)).ToArray() });
+        CompareCuda(matcher, normal with { Pixels = new byte[640 * 360] });
+        var automatic = matcher.Search(normal.Sources, normal.Pixels, 640, 360,
+            normal.Candidates, GroundComputeBackend.Automatic);
+        Check(automatic.Backend == GroundComputeBackend.Cuda, "Automatic search did not execute CUDA.");
+        Check(matcher.CudaDispatchCount >= before + 13, "CUDA tests reported success without dispatches.");
+        Console.WriteLine($"CUDA_PARITY device={matcher.CudaDeviceName} dispatches={matcher.CudaDispatchCount - before}");
+    }
+
+    internal static void TestCudaFallbackAndInvalidInputs()
+    {
+        var fixture = MakeSearchFixture(8);
+        var disabled = new GroundPatchMatcher(enableCuda: false);
+        var cpu = disabled.Search(fixture.Sources, fixture.Pixels, 640, 360,
+            fixture.Candidates, GroundComputeBackend.Cpu);
+        var fallback = disabled.Search(fixture.Sources, fixture.Pixels, 640, 360,
+            fixture.Candidates, GroundComputeBackend.Cuda);
+        Check(fallback.Backend != GroundComputeBackend.Cuda && fallback.Results.SequenceEqual(cpu.Results),
+            "Missing GPU did not return the CPU reference results and honest backend.");
+        var matcher = new GroundPatchMatcher();
+        foreach (var backend in new[] { GroundComputeBackend.Cpu, GroundComputeBackend.Cuda })
+        {
+            Check(matcher.Search(fixture.Sources, fixture.Pixels, 0, 360,
+                fixture.Candidates, backend).Results.Count == 0, "Zero width was accepted.");
+            Check(matcher.Search(fixture.Sources, fixture.Pixels, 640, 361,
+                fixture.Candidates, backend).Results.Count == 0, "Short image was accepted.");
+            Check(matcher.Search(fixture.Sources, fixture.Pixels, 640, 360,
+                [], backend).Results.Count == 0, "Empty search produced results.");
+        }
+    }
+
+    internal static void TestCudaConcurrentSearches()
+    {
+        var matcher = new GroundPatchMatcher();
+        if (!RequireCuda(matcher)) return;
+        var fixture = MakeSearchFixture(16);
+        Task.WaitAll(Enumerable.Range(0, 8).Select(_ => Task.Run(() => CompareCuda(matcher, fixture))).ToArray());
+    }
+
+    internal static void TestCudaSolverAcrossMotionSequence()
+    {
+        if (!RequireCuda(new GroundPatchMatcher())) return;
+        const int width = 320, height = 180;
+        var cpu = new GroundCameraSolver(matcherBackend: GroundComputeBackend.Cpu);
+        var gpu = new GroundCameraSolver(matcherBackend: GroundComputeBackend.Cuda);
+        (int X, int Y)[] positions = [(0, 0), (-4, 0), (-11, 2), (-19, 7), (-31, 12),
+            (-46, 8), (-62, 1), (-40, -4), (-17, -1), (0, 0)];
+        for (var i = 0; i < positions.Length; i++)
+        {
+            var (x, y) = positions[i];
+            var lines = new[] { new GroundTextureLine(70 + y, 16, 303) };
+            var pixels = MotionPixels(width, height, x, y);
+            var expected = cpu.Solve(pixels, width, height, lines, i / 30d, []);
+            var actual = gpu.Solve(pixels, width, height, lines, i / 30d, []);
+            Check((expected is null) == (actual is null), "CUDA changed pose admission.");
+            if (expected is null || actual is null) continue;
+            Check(expected.ImageTranslation == actual.ImageTranslation && expected.Support == actual.Support,
+                "CUDA changed accepted motion or support.");
+            Check(Math.Abs(expected.Error - actual.Error) <= .002, "CUDA changed pose error.");
+        }
+        Check(gpu.LastPatchSearchExecution?.Backend == GroundComputeBackend.Cuda,
+            "Motion sequence never ran on the GPU.");
+    }
+
+    private static void CompareCuda(GroundPatchMatcher matcher, SearchFixture fixture)
+    {
+        var cpu = matcher.Search(fixture.Sources, fixture.Pixels, 640, 360, fixture.Candidates, GroundComputeBackend.Cpu);
+        var gpu = matcher.Search(fixture.Sources, fixture.Pixels, 640, 360, fixture.Candidates, GroundComputeBackend.Cuda);
+        Check(gpu.Backend == GroundComputeBackend.Cuda, $"CUDA fell back: {matcher.CudaFailure}");
+        Check(cpu.Results.Count == gpu.Results.Count, "CUDA changed candidate count.");
+        for (var i = 0; i < cpu.Results.Count; i++)
+        {
+            var a = cpu.Results[i]; var b = gpu.Results[i];
+            Check((a.Dx, a.Dy, a.Support) == (b.Dx, b.Dy, b.Support), "CUDA changed accepted candidate/support.");
+            Check(Math.Abs(a.Error - b.Error) <= .002, $"CUDA score differs: {a.Error} vs {b.Error}.");
+        }
+    }
+
+    private static bool RequireCuda(GroundPatchMatcher matcher)
+    {
+        if (matcher.CudaAvailable) return true;
+        if (Environment.GetEnvironmentVariable("HKV_REQUIRE_CUDA") == "1")
+            throw new InvalidOperationException($"Required CUDA device unavailable: {matcher.CudaFailure}");
+        Console.WriteLine($"SKIP CUDA hardware test: {matcher.CudaFailure}");
+        return false;
+    }
     private sealed record SearchFixture(
         GroundPatchSearchSource[] Sources,
         byte[] Pixels,
@@ -87,7 +194,7 @@ internal static class GroundComputeProcessingTests
         Check(recovered.ImageTranslation.X == -140,
             $"Widened search recovered {recovered.ImageTranslation.X}, not -140 pixels.");
         Check(widened.LastPatchSearchExecution?.Backend
-            == (Environment.ProcessorCount > 1
+            == (GroundPatchMatcher.Shared.CudaAvailable ? GroundComputeBackend.Cuda : Environment.ProcessorCount > 1
                 ? GroundComputeBackend.ParallelCpu
                 : GroundComputeBackend.Cpu),
             "Automatic Windows patch-search backend selection was not reported correctly.");
@@ -142,6 +249,28 @@ internal static class GroundComputeProcessingTests
             GroundComputeBackend.ParallelCpu));
         Console.WriteLine(FormattableString.Invariant(
             $"GROUND_WINDOWS_SEARCH_MS radius96 cpuMedian={cpu:F3} parallelMedian={parallel:F3} speedup={cpu / parallel:F2} radius192 parallelMedian={wideParallel:F3}"));
+        if (RequireCuda(matcher))
+        {
+            // Warm both JITs and their caches before comparing steady-state work.
+            for (var warmup = 0; warmup < 20; warmup++)
+            foreach (var backend in new[] { GroundComputeBackend.Cpu,
+                GroundComputeBackend.ParallelCpu, GroundComputeBackend.Cuda })
+                _ = matcher.Search(ordinary.Sources, ordinary.Pixels, 640, 360,
+                    ordinary.Candidates, backend);
+            for (var run = 0; run < 3; run++)
+            {
+                var warmCpu = MedianMilliseconds(9, () => matcher.Search(ordinary.Sources,
+                    ordinary.Pixels, 640, 360, ordinary.Candidates, GroundComputeBackend.Cpu));
+                var warmParallel = MedianMilliseconds(9, () => matcher.Search(ordinary.Sources,
+                    ordinary.Pixels, 640, 360, ordinary.Candidates, GroundComputeBackend.ParallelCpu));
+                var cudaTime = MedianMilliseconds(9, () => matcher.Search(ordinary.Sources,
+                    ordinary.Pixels, 640, 360, ordinary.Candidates, GroundComputeBackend.Cuda));
+                var wideCuda = MedianMilliseconds(9, () => matcher.Search(wide.Sources,
+                    wide.Pixels, 640, 360, wide.Candidates, GroundComputeBackend.Cuda));
+                Console.WriteLine(FormattableString.Invariant(
+                    $"GROUND_CUDA_MS run={run + 1} cpu={warmCpu:F3} parallelCpu={warmParallel:F3} radius96={cudaTime:F3} radius192={wideCuda:F3} cpuSpeedup={warmCpu / cudaTime:F2} parallelSpeedup={warmParallel / cudaTime:F2} device={matcher.CudaDeviceName}"));
+            }
+        }
     }
 
     internal static void TestReleaseParallelGroundImageBenchmark()

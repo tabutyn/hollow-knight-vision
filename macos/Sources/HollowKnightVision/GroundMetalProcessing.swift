@@ -147,6 +147,11 @@ final class GroundPatchMatcher {
         candidates: [GroundPatchSearchCandidate],
         backend requestedBackend: GroundComputeBackend
     ) -> GroundPatchSearchExecution {
+        guard width > 0, height > 0, width <= Int.max / height,
+              pixels.count >= width * height else {
+            return GroundPatchSearchExecution(results: [], backend: .cpu,
+                candidateCount: candidates.count, patchComparisonCount: 0, elapsed: 0)
+        }
         let candidateCount = candidates.count
         let comparisonCount = candidates.reduce(0) { $0 + $1.samples.count }
         let started = ProcessInfo.processInfo.systemUptime
@@ -256,6 +261,8 @@ final class GroundPatchMatcher {
         height: Int
     ) -> (pixels: [UInt8], mean: Float, energy: Float)? {
         guard targetOffset >= 0,
+              targetOffset < pixels.count,
+              targetOffset % width + 16 <= width,
               targetOffset + 11 * width + 15 < pixels.count,
               targetOffset / width + 12 <= height else { return nil }
         var target = [UInt8]()
@@ -330,7 +337,9 @@ private final class GroundMetalPatchMatcher {
         var sourceStatistics = [SIMD2<Float>]()
         var sourcePixels = [UInt8]()
         for source in sources {
-            guard source.pixels.count == 192 else { return nil }
+            guard source.pixels.count == 192,
+                  Int32(exactly: source.x) != nil,
+                  Int32(exactly: source.y) != nil else { return nil }
             let offset = sourcePixels.count
             sourceMetadata.append(SIMD4(Int32(source.x), Int32(source.y), Int32(offset), 0))
             sourceStatistics.append(SIMD2(source.mean, source.energy))
@@ -340,8 +349,18 @@ private final class GroundMetalPatchMatcher {
         var candidateMetadata = [SIMD4<Int32>]()
         var sampleMetadata = [SIMD4<Int32>]()
         for candidate in candidates {
+            guard Int32(exactly: candidate.dx) != nil,
+                  Int32(exactly: candidate.dy) != nil else { return nil }
             let sampleOffset = sampleMetadata.count
             for sample in candidate.samples {
+                // Match CPU rejection before a shader can dereference metadata.
+                guard sources.indices.contains(sample.sourceIndex) else { continue }
+                if let offset = sample.targetOffset {
+                    guard offset >= 0, offset < pixels.count,
+                          offset / width + 12 <= height,
+                          offset % width + 16 <= width,
+                          Int32(exactly: offset) != nil else { continue }
+                }
                 sampleMetadata.append(SIMD4(
                     Int32(sample.sourceIndex),
                     Int32(sample.targetOffset ?? -1),
@@ -353,9 +372,12 @@ private final class GroundMetalPatchMatcher {
                 Int32(candidate.dx),
                 Int32(candidate.dy),
                 Int32(sampleOffset),
-                Int32(candidate.samples.count)
+                Int32(sampleMetadata.count - sampleOffset)
             ))
         }
+
+        // Metal cannot bind an empty buffer, and zero usable samples imply no match.
+        guard !sampleMetadata.isEmpty else { return [] }
 
         guard let lumaBuffer = buffers.sharedBuffer(name: "match-luma", values: pixels),
               let sourcePixelBuffer = buffers.sharedBuffer(
@@ -530,6 +552,11 @@ final class GroundImageProcessor {
         validRows: Range<Int>?,
         backend requestedBackend: GroundComputeBackend = .automatic
     ) -> GroundImageProcessingResult? {
+        guard width > 0, height > 0, width <= Int.max / height,
+              luma.count == width * height, validSourcePixels.count == luma.count else { return nil }
+        if let validRows {
+            guard validRows.lowerBound >= 0, validRows.upperBound <= height else { return nil }
+        }
         let started = ProcessInfo.processInfo.systemUptime
         // Repeated M4 measurements put this small preprocessing workload at
         // parity with Metal once dispatch and synchronization are included.
@@ -634,29 +661,29 @@ private final class GroundMetalImageProcessor {
             UInt32(width),
             UInt32(height),
             UInt32(validRows?.lowerBound ?? 0),
-            UInt32(validRows?.upperBound ?? 0)
+            validRows.map { UInt32($0.upperBound) } ?? UInt32.max
         )
-        encode(
+        guard encode(
             command: command,
             pipeline: edgePipeline,
             buffers: [lumaBuffer, validityBuffer, edgeBuffer],
             parameters: &parameters,
             count: count
-        )
-        encode(
+        ) else { return nil }
+        guard encode(
             command: command,
             pipeline: sumPipeline,
             buffers: [edgeBuffer, sumsBuffer],
             parameters: &parameters,
             count: count
-        )
-        encode(
+        ) else { return nil }
+        guard encode(
             command: command,
             pipeline: responsePipeline,
             buffers: [sumsBuffer, responseBuffer],
             parameters: &parameters,
             count: count
-        )
+        ) else { return nil }
         command.commit()
         command.waitUntilCompleted()
         guard command.status == .completed else { return nil }
@@ -678,8 +705,8 @@ private final class GroundMetalImageProcessor {
         buffers: [MTLBuffer],
         parameters: inout SIMD4<UInt32>,
         count: Int
-    ) {
-        guard let encoder = command.makeComputeCommandEncoder() else { return }
+    ) -> Bool {
+        guard let encoder = command.makeComputeCommandEncoder() else { return false }
         encoder.setComputePipelineState(pipeline)
         for (index, buffer) in buffers.enumerated() {
             encoder.setBuffer(buffer, offset: 0, index: index)
@@ -695,6 +722,7 @@ private final class GroundMetalImageProcessor {
             threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1)
         )
         encoder.endEncoding()
+        return true
     }
 
     private static let source = #"""
@@ -744,7 +772,7 @@ private final class GroundMetalImageProcessor {
         uint x = index % p.x;
         uint row = index / p.x;
         if (x < 16 || x > p.x - 16 || row < 4 || row > p.y - 4
-            || (p.w != 0 && (row - 4 < p.z || row + 4 >= p.w))) {
+            || (p.w != 0xffffffffu && (row - 4 < p.z || row + 4 >= p.w))) {
             output[index] = uchar(0);
             return;
         }

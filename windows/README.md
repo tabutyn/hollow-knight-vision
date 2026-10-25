@@ -1,11 +1,17 @@
 # Hollow Knight Vision Windows lab
 
 This is the native Windows host and desktop lab for Hollow Knight Vision. It
-builds without Apple frameworks and keeps capture, atlas, inference, dataset
-export, and training on CPU.
+builds without Apple frameworks. NVIDIA CUDA accelerates ground-patch matching;
+capture, atlas composition, ONNX inference, dataset export, and training remain
+on CPU. A missing or failed CUDA device falls back to CPU without claiming GPU use.
 
 Implemented now:
 
+- GPU patch scoring shared by the live camera and ground-feature tracker, with
+  CPU pose acceptance and a 192-pixel maximum recovery radius. Small searches
+  stay on CPU to avoid dispatch overhead. No CUDA toolkit is needed at runtime.
+- Actual device, camera backend, completed dispatch count, timing, and fallback
+  reason at `%LOCALAPPDATA%\HollowKnightVision\diagnostics\tracking-gpu.json`.
 - Win32 Hollow Knight process/window discovery.
 - CPU target-window capture via `PrintWindow` into owned BGRA pixels. Failed
   captures never fall back to desktop pixels that could contain Vision itself.

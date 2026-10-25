@@ -4,15 +4,15 @@ using System.Diagnostics;
 namespace HollowKnightVision.Windows.Core;
 
 /// <summary>
-/// Windows ground-compute policy. The parallel backend is the deterministic
-/// multicore fallback for the Metal-only Mac implementation; it does not claim
-/// NVIDIA execution.
+/// Windows ground-compute policy. CUDA scores patches on NVIDIA hardware;
+/// CPU selection, pose validation and atlas admission remain unchanged.
 /// </summary>
 public enum GroundComputeBackend
 {
     Cpu,
     ParallelCpu,
     Automatic,
+    Cuda,
 }
 
 public sealed class GroundPatchSearchSource
@@ -67,6 +67,14 @@ public sealed record GroundPatchSearchExecution(
 public sealed class GroundPatchMatcher
 {
     private sealed record TargetPatch(byte[] Pixels, float Mean, float Energy);
+    private static readonly Lazy<GroundCudaPatchMatcher> cuda = new(() => new());
+    private readonly bool enableCuda;
+    public GroundPatchMatcher(bool enableCuda = true) => this.enableCuda = enableCuda;
+    public bool CudaAvailable => enableCuda && cuda.Value.Available;
+    public string? CudaDeviceName => enableCuda ? cuda.Value.DeviceName : null;
+    public string? CudaFailure => enableCuda ? cuda.Value.Failure : "CUDA disabled for this matcher";
+    public long CudaDispatchCount => enableCuda ? cuda.Value.DispatchCount : 0;
+    public void WarmUp() { if (enableCuda) _ = cuda.Value.Available; }
 
     public static GroundPatchMatcher Shared { get; } = new();
 
@@ -82,11 +90,19 @@ public sealed class GroundPatchMatcher
         ArgumentNullException.ThrowIfNull(pixels);
         ArgumentNullException.ThrowIfNull(candidates);
         var started = Stopwatch.GetTimestamp();
+        if (enableCuda && (requestedBackend == GroundComputeBackend.Cuda
+                || requestedBackend == GroundComputeBackend.Automatic && candidates.Count >= 64)
+            && cuda.Value.TrySearch(sources, pixels, width, height, candidates) is { } gpuResults)
+        {
+            return new GroundPatchSearchExecution(gpuResults, GroundComputeBackend.Cuda,
+                candidates.Count, candidates.Sum(candidate => candidate.Samples.Count),
+                Stopwatch.GetElapsedTime(started));
+        }
         var selected = requestedBackend switch
         {
-            GroundComputeBackend.Automatic when Environment.ProcessorCount > 1
+            GroundComputeBackend.Automatic or GroundComputeBackend.Cuda when Environment.ProcessorCount > 1
                 && candidates.Count >= 64 => GroundComputeBackend.ParallelCpu,
-            GroundComputeBackend.Automatic => GroundComputeBackend.Cpu,
+            GroundComputeBackend.Automatic or GroundComputeBackend.Cuda => GroundComputeBackend.Cpu,
             _ => requestedBackend,
         };
         var results = selected == GroundComputeBackend.ParallelCpu

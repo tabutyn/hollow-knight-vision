@@ -564,6 +564,8 @@ public partial class MainWindow : Window
     private readonly HackerAtlasPipeline hackerAtlasPipeline = new();
     private readonly VisualGameplayTracker visualGameplayTracker = new();
     private readonly GameplayPresentationState gameplayPresentation = new();
+    private DateTimeOffset lastGpuDiagnosticAt;
+    private Task? gpuDiagnosticWrite;
     private WindowsLiveWorldPipeline? liveWorldPipeline;
     private readonly PlaybackDivergenceMonitor inputPathDivergenceMonitor = new();
     private CancellationTokenSource? inputPathReplayCancellation;
@@ -2603,6 +2605,8 @@ public partial class MainWindow : Window
             using var detector = new OnnxObjectDetectorSet(
                 activeModelRuns.Length > 0 && string.Equals(runDirectory, activeModelRuns[0], StringComparison.OrdinalIgnoreCase)
                     ? activeModelRuns : runDirectory.Length > 0 ? [runDirectory] : [], activeModelArtifacts);
+            // Compile CUDA once before capture; device absence keeps the CPU fallback.
+            await Task.Run(() => GroundPatchMatcher.Shared.WarmUp(), cancellation.Token);
             var capture = new GdiWindowCapture();
             var analysisFrames = Channel.CreateBounded<PendingVisionFrame>(new BoundedChannelOptions(1)
             { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
@@ -3634,6 +3638,7 @@ public partial class MainWindow : Window
     {
         if (result.CaptureGeneration != Interlocked.Read(ref recentCaptureGeneration)
             || !labelCapture.CanProcess(result.LabelRevision)) return;
+        PublishGpuDiagnostics();
         var presentsLatestFrame = result.Frame.CaptureId
             == Interlocked.Read(ref latestPresentedCaptureId);
         var presentsLatestMatchedFrame = TryAcceptLatestMatchedResult(result);
@@ -3767,6 +3772,40 @@ public partial class MainWindow : Window
         }
         if (presentsLatestFrame) DrawMotionOverlay(result.Motion);
         PersistActiveAtlas(force: false);
+    }
+
+    private void PublishGpuDiagnostics()
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now - lastGpuDiagnosticAt < TimeSpan.FromSeconds(5)
+            || gpuDiagnosticWrite is { IsCompleted: false }) return;
+        lastGpuDiagnosticAt = now;
+        var matcher = GroundPatchMatcher.Shared;
+        var localSearch = visualGameplayTracker.LastPatchSearchExecution;
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            ObservedAt = now,
+            ProcessId = Environment.ProcessId,
+            Device = matcher.CudaDeviceName,
+            CudaAvailable = matcher.CudaAvailable,
+            CudaDispatches = matcher.CudaDispatchCount,
+            CameraBackend = localSearch?.Backend.ToString(),
+            CameraSearchMilliseconds = localSearch?.Elapsed.TotalMilliseconds,
+            CameraCandidates = localSearch?.CandidateCount,
+            FallbackReason = matcher.CudaFailure
+        });
+        gpuDiagnosticWrite = Task.Run(() =>
+        {
+            try
+            {
+                var directory = IOPath.Combine(Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData), "HollowKnightVision", "diagnostics");
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(IOPath.Combine(directory, "tracking-gpu.json"), json);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        });
     }
 
     private void StopVision_Click(object sender, RoutedEventArgs e) => StopVision();

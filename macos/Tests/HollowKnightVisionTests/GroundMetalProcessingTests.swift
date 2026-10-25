@@ -3,6 +3,96 @@ import XCTest
 @testable import HollowKnightVision
 
 final class GroundMetalProcessingTests: XCTestCase {
+    func testMetalImageRowMasksAndInvalidSizes() throws {
+        let width = 64, height = 40
+        let luma = (0..<(width * height)).map { UInt8(truncatingIfNeeded: $0 * 73) }
+        let mask = [UInt8](repeating: 1, count: luma.count)
+        let processor = GroundImageProcessor()
+        for rows in [0..<0, 0..<height, 8..<32] {
+            let cpu = try XCTUnwrap(processor.process(luma: luma, width: width, height: height,
+                validSourcePixels: mask, validRows: rows, backend: .cpu))
+            let gpu = try XCTUnwrap(processor.process(luma: luma, width: width, height: height,
+                validSourcePixels: mask, validRows: rows, backend: .metal))
+            XCTAssertEqual(gpu.backend, .metal)
+            XCTAssertEqual(gpu.groundPixels, cpu.groundPixels)
+            XCTAssertEqual(gpu.groundEdges, cpu.groundEdges)
+        }
+        for backend: GroundComputeBackend in [.cpu, .metal] {
+            XCTAssertNil(processor.process(luma: luma, width: -width, height: -height,
+                validSourcePixels: mask, validRows: nil, backend: backend))
+            XCTAssertNil(processor.process(luma: luma, width: width, height: height,
+                validSourcePixels: mask, validRows: -1..<height, backend: backend))
+        }
+    }
+
+    func testMissingMetalDeviceFallsBackAndReportsCPU() throws {
+        let fixture = try searchFixture(radius: 8)
+        let matcher = GroundPatchMatcher(device: nil)
+        XCTAssertFalse(matcher.metalAvailable)
+        let cpu = matcher.search(sources: fixture.sources, pixels: fixture.pixels,
+            width: 640, height: 360, candidates: fixture.candidates, backend: .cpu)
+        for backend: GroundComputeBackend in [.automatic, .metal] {
+            let fallback = matcher.search(sources: fixture.sources, pixels: fixture.pixels,
+                width: 640, height: 360, candidates: fixture.candidates, backend: backend)
+            XCTAssertEqual(fallback.backend, .cpu)
+            XCTAssertEqual(fallback.results, cpu.results)
+        }
+    }
+
+    func testMetalRejectsInvalidSourcesAndTargetsLikeCPU() throws {
+        let fixture = try searchFixture(radius: 8)
+        let matcher = GroundPatchMatcher()
+        let mixed = fixture.candidates.map { candidate in
+            GroundPatchSearchCandidate(dx: candidate.dx, dy: candidate.dy, samples:
+                candidate.samples + [
+                    GroundPatchSearchSample(sourceIndex: -1, targetOffset: 0),
+                    GroundPatchSearchSample(sourceIndex: 9999, targetOffset: 0),
+                    GroundPatchSearchSample(sourceIndex: 0, targetOffset: -2),
+                    GroundPatchSearchSample(sourceIndex: 0, targetOffset: 639),
+                    GroundPatchSearchSample(sourceIndex: 0, targetOffset: 640 * 360),
+                    GroundPatchSearchSample(sourceIndex: 0, targetOffset: nil)
+                ])
+        }
+        let cpu = matcher.search(sources: fixture.sources, pixels: fixture.pixels,
+            width: 640, height: 360, candidates: mixed, backend: .cpu)
+        let gpu = matcher.search(sources: fixture.sources, pixels: fixture.pixels,
+            width: 640, height: 360, candidates: mixed, backend: .metal)
+        XCTAssertEqual(gpu.backend, .metal)
+        XCTAssertEqual(gpu.results.map { [$0.dx, $0.dy, $0.support] },
+                       cpu.results.map { [$0.dx, $0.dy, $0.support] })
+        for (actual, expected) in zip(gpu.results, cpu.results) {
+            XCTAssertEqual(actual.error, expected.error, accuracy: 0.002)
+        }
+    }
+
+    func testAutomaticUsesMetalAndReusesBuffersAcrossSearchSizes() throws {
+        let matcher = GroundPatchMatcher()
+        for radius in [8, 96, 8, 192, 8] {
+            let fixture = try searchFixture(radius: radius)
+            let gpu = matcher.search(sources: fixture.sources, pixels: fixture.pixels,
+                width: 640, height: 360, candidates: fixture.candidates, backend: .automatic)
+            let cpu = matcher.search(sources: fixture.sources, pixels: fixture.pixels,
+                width: 640, height: 360, candidates: fixture.candidates, backend: .cpu)
+            XCTAssertEqual(gpu.backend, .metal)
+            XCTAssertEqual(gpu.results.map { [$0.dx, $0.dy, $0.support] },
+                           cpu.results.map { [$0.dx, $0.dy, $0.support] })
+        }
+    }
+
+    func testInvalidImageAndEmptySearchCannotDispatchUnsafeMetalWork() throws {
+        let fixture = try searchFixture(radius: 8)
+        let matcher = GroundPatchMatcher()
+        for backend: GroundComputeBackend in [.cpu, .metal, .automatic] {
+            for size in [(0, 360), (-1, 360), (640, -1), (640, 361)] {
+                let result = matcher.search(sources: fixture.sources, pixels: fixture.pixels,
+                    width: size.0, height: size.1, candidates: fixture.candidates, backend: backend)
+                XCTAssertTrue(result.results.isEmpty)
+            }
+            XCTAssertTrue(matcher.search(sources: fixture.sources, pixels: fixture.pixels,
+                width: 640, height: 360, candidates: [], backend: backend).results.isEmpty)
+        }
+    }
+
     private func searchFixture(radius: Int) throws -> (
         sources: [GroundPatchSearchSource],
         pixels: [UInt8],

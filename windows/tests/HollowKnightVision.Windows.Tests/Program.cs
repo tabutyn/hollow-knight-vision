@@ -9,6 +9,17 @@ using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Host;
 
 if (await TrainingProcessTests.TryRunProbeAsync(args)) return;
+if (args.Contains("--gpu-only"))
+{
+    GroundComputeProcessingTests.TestCudaPatchParityAndReuse();
+    GroundComputeProcessingTests.TestCudaFallbackAndInvalidInputs();
+    GroundComputeProcessingTests.TestCudaConcurrentSearches();
+    GroundComputeProcessingTests.TestCudaSolverAcrossMotionSequence();
+    GroundComputeProcessingTests.TestWiderParallelSearchRecoversMotionOutsideFormerRadius();
+    GroundComputeProcessingTests.TestReleaseParallelSearchCapacityBenchmark();
+    Console.WriteLine("GPU tracking regressions passed: 6");
+    return;
+}
 if (args is ["--export-dataset-probe", var probeRoot])
 {
     Console.WriteLine(DatasetExporterTests.CreateTrainerFixture(probeRoot));
@@ -17,6 +28,10 @@ if (args is ["--export-dataset-probe", var probeRoot])
 
 var tests = new List<(string Name, Action Run)>
 {
+    ("CUDA ground patch scores match CPU and reuse resized buffers", GroundComputeProcessingTests.TestCudaPatchParityAndReuse),
+    ("CUDA unavailable and invalid inputs fall back safely", GroundComputeProcessingTests.TestCudaFallbackAndInvalidInputs),
+    ("CUDA concurrent searches do not share mutable results", GroundComputeProcessingTests.TestCudaConcurrentSearches),
+    ("CUDA solver preserves motion and pose admission", GroundComputeProcessingTests.TestCudaSolverAcrossMotionSequence),
     ("ground parallel image processing matches CPU exactly", GroundComputeProcessingTests.TestParallelGroundImageProcessingMatchesCpuExactly),
     ("ground parallel patch search matches CPU selection", GroundComputeProcessingTests.TestParallelPatchSearchMatchesCpuSelection),
     ("ground widened search recovers motion outside former radius", GroundComputeProcessingTests.TestWiderParallelSearchRecoversMotionOutsideFormerRadius),
