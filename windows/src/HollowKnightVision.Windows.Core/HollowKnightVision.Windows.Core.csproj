@@ -2,7 +2,6 @@
   <ItemGroup>
     <EmbeddedResource Include="../../../macos/Sources/HollowKnightVision/Resources/labeling-contracts.json" LogicalName="labeling-contracts.json" />
     <EmbeddedResource Include="../../../macos/Sources/HollowKnightVision/Resources/labeling-contexts.json" LogicalName="labeling-contexts.json" />
-    <EmbeddedResource Include="../../../macos/Sources/HollowKnightVision/Resources/hud-stencil-template.json" LogicalName="hud-stencil-template.json" />
     <EmbeddedResource Include="../../../macos/Sources/HollowKnightVision/Resources/menu-stencil-positions.json" LogicalName="menu-stencil-positions.json" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.30.0" />
     <PackageReference Include="ILGPU" Version="1.5.3" GeneratePathProperty="true" />

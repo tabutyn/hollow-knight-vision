@@ -31,15 +31,25 @@ internal static class HudStencilTests
     private static int[] Counts(HudStencilResult result) => new[] { "full", "empty", "lifeblood" }
         .Select(kind => result.Health.Count(item => item.Kind == kind)).ToArray();
 
+    // This fixture is copied only to the test output; production embeds no HUD pixels.
+    private static HudStencilTemplate ReferenceTemplate() => JsonSerializer.Deserialize<HudStencilTemplate>(
+        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "hud-stencil-reference.json")),
+        new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+
     internal static void Run()
     {
         var fixtures = JsonSerializer.Deserialize<Fixture[]>(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "hud-stencil-cases.json")),
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
-        var template = HudStencilTemplate.Bundled;
-        Check(template?.IsValid == true, "Bundled Mac HUD template missing or invalid.");
+        var template = ReferenceTemplate();
+        Check(template?.IsValid == true, "Test HUD reference missing or invalid.");
+        Check(!typeof(HudStencilTemplate).Assembly.GetManifestResourceNames().Contains("hud-stencil-template.json"),
+            "Production assembly still ships reference pixels.");
+        foreach (var fixture in fixtures)
+            Check(new HudStencilTracker().Observe(Frame(fixture), true, 1, 1) is null,
+                "An uncaptured HUD was recognized.");
         foreach (var fixture in fixtures)
         {
-            var result = new HudStencilTracker().Observe(Frame(fixture), true, 1, 1)!;
+            var result = new HudStencilTracker(ReferenceTemplate()).Observe(Frame(fixture), true, 1, 1)!;
             Check(result.ManaMain is not null, $"{fixture.Id}: missing Soul container match.");
             if (fixture.Health is { } health)
             {
@@ -51,7 +61,7 @@ internal static class HudStencilTests
         }
         Console.WriteLine($"PASS HUD matcher reproduces all {fixtures.Length} Mac photographic fixture expectations");
         var first = Frame(fixtures[0]);
-        var tracker = new HudStencilTracker();
+        var tracker = new HudStencilTracker(ReferenceTemplate());
         var one = tracker.Observe(first, true, 1, 1)!;
         var two = tracker.Observe(Frame(fixtures[0], 2), true, 2, 2)!;
         Check(Counts(two).SequenceEqual(Counts(one)), "Scaled HUD lost health matches.");
@@ -73,25 +83,28 @@ internal static class HudStencilTests
         var full = template!.Health.First(atom => atom.Kind == "full").Bounds;
         var annotations = Enumerable.Range(0, 2).Select(index => new LabelingExampleAnnotation(Guid.NewGuid(), "game.health",
             (full.X + index * template.HealthPitch) / 640, full.Y / 360, full.Width / 640, full.Height / 360)).ToArray();
-        var captured = HudStencilTemplate.Captured(first, annotations, "fixture-capture");
+        var nineFull = fixtures.Single(item => item.Health?.SequenceEqual(new[] { 9, 0, 0 }) == true);
+        var capturedFrame = Frame(nineFull);
+        var captured = HudStencilTemplate.Captured(capturedFrame, annotations, "fixture-capture");
         Check(captured?.SourceExampleID == "fixture-capture", "Two health labels did not build a captured template.");
-        foreach (var fixture in fixtures.Where(item => item.Health?.Sum() >= 2))
+        Check(captured!.Health.Length == 2 && captured.ManaMain.Length == 0 && captured.ManaReserves.Length == 0,
+            "Captured stencil silently included stock reference pixels.");
+        foreach (var fixture in fixtures.Where(item => (item.Health?.FirstOrDefault() ?? 0) >= 2))
             Check(new HudStencilTracker(captured).Observe(Frame(fixture), true, 1, 1)?.EstablishesGameplay == true,
                 $"{fixture.Id}: captured template cannot establish gameplay after health changes.");
-        var nineFull = fixtures.Single(item => item.Health?.SequenceEqual(new[] { 9, 0, 0 }) == true);
         Check(new HudStencilTracker(captured).Observe(Frame(nineFull), true, 1, 1)!.Health.Count == 9,
             "Captured two-label pitch did not extrapolate all nine masks.");
         Check(HudStencilTemplate.Captured(first, annotations.Take(1), "incomplete") is null, "One label incorrectly unlocks HUD detection.");
         Check(HudStencilTemplate.Captured(blank, annotations, "blank") is null, "Blank patches incorrectly unlock HUD detection.");
         Check(HudStencilTemplate.Captured(first, [annotations[0], annotations[0]], "overlap") is null, "Overlapping labels accepted.");
-        Console.WriteLine("PASS Two captured health labels extrapolate nine icons and preserve damaged/lifeblood gameplay");
-        TestCapturedHUDUnlocksFirstCampaignWithoutModelOrClearSave(fixtures, first, template);
-        TestRecognizer(first, Frame(nineFull), annotations);
+        Console.WriteLine("PASS Two captured health labels extrapolate nine icons without stock reference pixels");
+        TestCapturedHUDUnlocksFirstCampaignWithoutModelOrClearSave(fixtures, capturedFrame, template);
+        TestRecognizer(capturedFrame, Frame(nineFull), annotations);
         TestAtlasMasks(first, one);
         var twoHealth = new HudStencilResult([new(0, "full", default, .9), new(1, "full", default, .9)], null, [], [], [], default, false, 1);
         Check(twoHealth.EstablishesGameplay && !(twoHealth with { Health = [twoHealth.Health[0]] }).EstablishesGameplay,
             "Gameplay requires two verified health icons, not a Soul match or one icon.");
-        var many = new HudStencilTracker().Observe(Frame(fixtures[1]), true, 1, 1)!;
+        var many = new HudStencilTracker(ReferenceTemplate()).Observe(Frame(fixtures[1]), true, 1, 1)!;
         Check(many.Geo == one.Geo && many.Health.Count > one.Health.Count, "Geo bounds changed with health count.");
         Console.WriteLine("PASS Health-only gameplay gate and fixed Geo bounds match Mac");
         TestPipelineConnectsRoomsAndRestoresOriginalSceneAnchor();
@@ -131,11 +144,10 @@ internal static class HudStencilTests
             Refresh();
             Check(!coordinator.IsFirstPhaseComplete,
                 "An empty label store incorrectly completed the first stencil campaign.");
-            var bundledGameplay = recognizer.Observe(Frame(
-                fixtures.First(item => (item.Health?.Sum() ?? 0) >= 2)));
-            Check(bundledGameplay.Context == "game"
-                    && bundledGameplay.HasFreshGameplayEvidence,
-                "Factory Reset removed bundled HUD gameplay recognition.");
+            var uncapturedGameplay = recognizer.Observe(image);
+            Check(uncapturedGameplay.Context is null && uncapturedGameplay.Hud is null
+                    && !uncapturedGameplay.HasFreshGameplayEvidence && !recognizer.HasGameplayReference,
+                "Empty label store bypassed stencil setup.");
             foreach (var contextIdentifier in new[] { "main-title", "select-profile" })
             {
                 var context = StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal)
@@ -170,7 +182,7 @@ internal static class HudStencilTests
                 "Captured HUD did not retain its source example identity.");
             Check(new HudStencilTracker(custom).Observe(image, true, 1, 1)?.EstablishesGameplay == true,
                 "Captured HUD did not recognize its source gameplay frame.");
-            foreach (var fixture in fixtures.Where(item => (item.Health?.Sum() ?? 0) >= 2))
+            foreach (var fixture in fixtures.Where(item => (item.Health?.FirstOrDefault() ?? 0) >= 2))
             {
                 Check(new HudStencilTracker(custom).Observe(Frame(fixture), true, 2, 2)?.EstablishesGameplay == true,
                     $"{fixture.Id}: captured campaign HUD did not establish gameplay.");
@@ -343,7 +355,8 @@ internal static class HudStencilTests
             heroScreenX: 32,
             heroScreenY: 18);
         var prepared = Require(preparer.Process(Match(image, sample)));
-        var stencil = Require(new HudStencilTracker().Observe(
+        pipeline.ConfigureHudTemplate(ReferenceTemplate());
+        var stencil = Require(new HudStencilTracker(ReferenceTemplate()).Observe(
             prepared.LiveImage,
             gameplay: true,
             timestamp: prepared.CapturedAt,
@@ -723,7 +736,17 @@ internal static class HudStencilTests
             Check(detect.Invoke(recognizer, [live]) is null, "Unlabeled language bypassed setup via bundled templates.");
             refresh.Invoke(recognizer, ["en"]);
             Check((string?)detect.Invoke(recognizer, [live]) == "game", "Returning to labeled language did not restore HUD detection.");
-            Console.WriteLine("PASS Live HUD recognition preserves Gameplay through dropout/transport reset, resets for a new game, and relocks language");
+            Directory.Delete(examplesRoot, recursive: true);
+            refresh.Invoke(recognizer, ["en"]);
+            var reset = observe.Invoke(recognizer, [live, false])!;
+            Check(!(bool)reference.GetValue(recognizer)! && result.GetValue(recognizer) is null
+                && reset.GetType().GetProperty("Context")!.GetValue(reset) is null,
+                "Deleting stencils retained the gameplay latch or reference pixels.");
+            new LabelingExampleStore(examplesRoot).Save(source, "gameplay-hud", annotations.Take(1).ToArray(), languageIdentifier: "en");
+            refresh.Invoke(recognizer, ["en"]);
+            Check(!(bool)reference.GetValue(recognizer)! && detect.Invoke(recognizer, [live]) is null,
+                "Incomplete labels bypassed setup.");
+            Console.WriteLine("PASS Live HUD recognition preserves gameplay across dropout, requires captured labels, and relocks on reset/language change");
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
     }

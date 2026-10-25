@@ -82,17 +82,14 @@ and the source revision without depending on those ignored artifacts.
    be copied. Validate holding Right + Jump while moving the pointer and using
    camera controls, then switching to Label/Model and another application.
 
-2. **P1 — Keep basic HUD recognition after a fresh install or Factory Reset.**
-   Windows [recognizer refresh](../../../windows/src/HollowKnightVision.Windows.App/WindowsMenuStencilRecognizer.cs#L69)
-   uses the bundled HUD template only when there are no saved HUD examples,
-   while separately tracking whether the user captured a usable reference.
-   Mac [refreshMenuStencilCatalog](../../Sources/HollowKnightVision/LiveCaptureModel.swift#L1732)
-   uses only `HUDStencilTemplate.captured(...)`; an empty store leaves its
-   tracker with nil. Port the fallback and keep campaign completion tied to
-   captured labels. Preserve language isolation: examples in another language
-   must not silently unlock the selected language. Test empty/reset stores,
-   partial labels, another-language labels, and completed current-language labels
-   through the recognizer/controller, not only the template matcher.
+2. **Resolved — Require user-captured HUD stencils on both platforms.**
+   The proposed Windows fallback port was rejected: reference images must not
+   ship in Vision. Mac's captured-stencil requirement is the intended behavior.
+   Both platforms now require two valid health labels in the selected language;
+   no built-in full/empty/lifeblood patches supplement them. Factory Reset or
+   deletion of the HUD stencil clears recognition until setup is completed.
+   Hacker atlas masking and the Windows automation host also use captured
+   references. Photographic matcher fixtures live only in test targets.
 
 3. **P2 — Support remapped Normal-mode game controls.** Windows allows native
    game keys beyond the stock bindings while reserving Vision shortcuts

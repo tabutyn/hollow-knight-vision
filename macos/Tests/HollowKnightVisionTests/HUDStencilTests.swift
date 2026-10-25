@@ -5,6 +5,14 @@ import ImageIO
 import XCTest
 @testable import HollowKnightVision
 
+// Photographic reference pixels belong to the test target, never the app.
+enum HUDStencilTestReference {
+    static func load() throws -> HUDStencilTemplate {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "hud-stencil-reference", withExtension: "json"))
+        return try JSONDecoder().decode(HUDStencilTemplate.self, from: Data(contentsOf: url))
+    }
+}
+
 final class HUDStencilTests: XCTestCase {
     private struct Fixture: Decodable {
         let id: String
@@ -35,11 +43,19 @@ final class HUDStencilTests: XCTestCase {
         ["full", "empty", "lifeblood"].map { kind in result.health.filter { $0.kind == kind }.count }
     }
 
+    func testNoRecognitionWithoutCapturedStencil() throws {
+        let tracker = HUDStencilTracker()
+        for fixture in try fixtures() {
+            XCTAssertNil(tracker.observe(try frame(fixture), gameplay: true, timestamp: 1, generation: 1))
+        }
+        XCTAssertNil(HUDStencilTemplate.captured(examples: [], languageIdentifier: "en"))
+    }
+
     func testRealGameplayHUDsAcrossCountsBackgroundsAndOffsets() throws {
-        XCTAssertTrue(try XCTUnwrap(HUDStencilTemplate.bundled).isValid)
+        XCTAssertTrue(try XCTUnwrap(HUDStencilTestReference.load()).isValid)
         for fixture in try fixtures() {
             let image = try frame(fixture)
-            let result = try XCTUnwrap(HUDStencilTracker().observe(image, gameplay: true, timestamp: 1, generation: 1))
+            let result = try XCTUnwrap(HUDStencilTracker(template: try HUDStencilTestReference.load()).observe(image, gameplay: true, timestamp: 1, generation: 1))
             XCTAssertNotNil(result.manaMain, fixture.id)
             if let health = fixture.health {
                 XCTAssertEqual(counts(result), health, fixture.id)
@@ -51,8 +67,8 @@ final class HUDStencilTests: XCTestCase {
     }
 
     @MainActor func testCapturedHUDUnlocksFirstCampaignWithoutModelOrClearSave() throws {
-        let image = try frame(XCTUnwrap(fixtures().first))
-        let bundled = try XCTUnwrap(HUDStencilTemplate.bundled)
+        let image = try frame(XCTUnwrap(fixtures().first { $0.health == [9, 0, 0] }))
+        let bundled = try XCTUnwrap(HUDStencilTestReference.load())
         let full = try XCTUnwrap(bundled.health.first { $0.kind == "full" }).bounds
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -83,21 +99,25 @@ final class HUDStencilTests: XCTestCase {
         coordinator.refresh(mode: .normal)
         let custom = try XCTUnwrap(HUDStencilTemplate.captured(examples: try store.loadExamples(), languageIdentifier: "en"))
         XCTAssertEqual(custom.sourceExampleID, saved.id.uuidString)
+        XCTAssertEqual(custom.health.count, 2, "Only the two user-labeled patches may supply recognition pixels.")
+        XCTAssertTrue(custom.manaMain.isEmpty && custom.manaReserves.isEmpty)
         XCTAssertTrue(try XCTUnwrap(HUDStencilTracker(template: custom).observe(image, gameplay: true,
             timestamp: 1, generation: 1)).establishesGameplay)
-        for fixture in try fixtures() where (fixture.health?.reduce(0, +) ?? 0) >= 2 {
+        for fixture in try fixtures() where (fixture.health?.first ?? 0) >= 2 {
             XCTAssertTrue(HUDStencilTracker(template: custom).observe(try frame(fixture), gameplay: true,
                 timestamp: 2, generation: 2)?.establishesGameplay == true, fixture.id)
         }
         XCTAssertTrue(coordinator.isFirstPhaseComplete)
         XCTAssertFalse(coordinator.isComplete, "Later menus must not block Phase 1.")
+        XCTAssertNil(HUDStencilTemplate.captured(examples: [], languageIdentifier: "en"))
+        XCTAssertNil(HUDStencilTemplate.captured(examples: try store.loadExamples(), languageIdentifier: "fr"))
         coordinator.language = .french
         XCTAssertFalse(coordinator.isFirstPhaseComplete, "A language change must relock incomplete references.")
     }
 
     func testScaledCaptureRetainsCountsAndScalesStencil() throws {
         let fixture = try XCTUnwrap(fixtures().first)
-        let tracker = HUDStencilTracker()
+        let tracker = HUDStencilTracker(template: try HUDStencilTestReference.load())
         let one = try XCTUnwrap(tracker.observe(frame(fixture), gameplay: true, timestamp: 1, generation: 1))
         let two = try XCTUnwrap(tracker.observe(frame(fixture, scale: 2), gameplay: true, timestamp: 2, generation: 2))
         XCTAssertEqual(counts(two), fixture.health)
@@ -108,7 +128,7 @@ final class HUDStencilTests: XCTestCase {
     func testGameplayGateAndGenerationResetNeverReuseOldStencil() throws {
         let image = try frame(XCTUnwrap(fixtures().first))
         let blank = try XCTUnwrap(context().makeImage())
-        let tracker = HUDStencilTracker()
+        let tracker = HUDStencilTracker(template: try HUDStencilTestReference.load())
         XCTAssertNotNil(tracker.observe(image, gameplay: true, timestamp: 1, generation: 1))
         XCTAssertNil(tracker.observe(image, gameplay: false, timestamp: 1.1, generation: 1))
         let blankResult = tracker.observe(blank, gameplay: true, timestamp: 1.2, generation: 1)
@@ -149,7 +169,7 @@ final class HUDStencilTests: XCTestCase {
     func testAnimationHoldsMaskBrieflyWithoutInventingHealthCount() throws {
         let image = try frame(XCTUnwrap(fixtures().first))
         let blank = try XCTUnwrap(context().makeImage())
-        let tracker = HUDStencilTracker()
+        let tracker = HUDStencilTracker(template: try HUDStencilTestReference.load())
         let initial = try XCTUnwrap(tracker.observe(image, gameplay: true, timestamp: 1, generation: 1))
         let held = try XCTUnwrap(tracker.observe(blank, gameplay: true, timestamp: 1.2, generation: 1))
         XCTAssertTrue(held.health.isEmpty)
@@ -163,7 +183,7 @@ final class HUDStencilTests: XCTestCase {
     func testStencilAugmentsPersistentHUDShieldAndActuallyClearsAtlasPixels() throws {
         let fixture = try XCTUnwrap(fixtures().first)
         let image = try frame(fixture)
-        let stencil = try XCTUnwrap(HUDStencilTracker().observe(image, gameplay: true, timestamp: 1, generation: 1))
+        let stencil = try XCTUnwrap(HUDStencilTracker(template: try HUDStencilTestReference.load()).observe(image, gameplay: true, timestamp: 1, generation: 1))
         let extent = CGRect(x: 0, y: 0, width: image.width, height: image.height)
         let regions = SceneRegions.atlasGameplay(fromObjectDetections: [], in: extent, hudStencil: stencil)
         XCTAssertEqual(Array(regions.omittedRects.dropFirst()), stencil.omittedRects)
@@ -186,8 +206,8 @@ final class HUDStencilTests: XCTestCase {
 
     func testGeoBoundsStayFixedAsHealthCountChanges() throws {
         let examples = try fixtures()
-        let first = try XCTUnwrap(HUDStencilTracker().observe(frame(examples[0]), gameplay: true, timestamp: 1, generation: 1))
-        let many = try XCTUnwrap(HUDStencilTracker().observe(frame(examples[1]), gameplay: true, timestamp: 1, generation: 1))
+        let first = try XCTUnwrap(HUDStencilTracker(template: try HUDStencilTestReference.load()).observe(frame(examples[0]), gameplay: true, timestamp: 1, generation: 1))
+        let many = try XCTUnwrap(HUDStencilTracker(template: try HUDStencilTestReference.load()).observe(frame(examples[1]), gameplay: true, timestamp: 1, generation: 1))
         XCTAssertEqual(first.geo, many.geo)
         XCTAssertGreaterThan(many.health.count, first.health.count)
     }

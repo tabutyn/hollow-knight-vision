@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace HollowKnightVision.Windows.Core;
 
 // Port of macos/Sources/HollowKnightVision/HUDStencil.swift and the RGB
@@ -41,15 +39,6 @@ public sealed record HudStencilTemplate(int SchemaVersion, string SourceExampleI
         && ManaContainer.All(double.IsFinite) && Geo.All(double.IsFinite)
         && Health.Concat(ManaMain).Concat(ManaReserves).All(atom => atom is not null && atom.IsValid);
 
-    public static HudStencilTemplate? Bundled { get; } = LoadBundled();
-    private static HudStencilTemplate? LoadBundled()
-    {
-        using var stream = typeof(HudStencilTemplate).Assembly.GetManifestResourceStream("hud-stencil-template.json");
-        if (stream is null) return null;
-        var template = JsonSerializer.Deserialize<HudStencilTemplate>(stream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-        return template?.IsValid == true ? template : null;
-    }
-
     public static HudStencilTemplate? Captured(BgraFrame frame,
         IEnumerable<LabelingExampleAnnotation> annotations, string sourceExampleID)
     {
@@ -66,9 +55,7 @@ public sealed record HudStencilTemplate(int SchemaVersion, string SourceExampleI
         var template = new HudStencilTemplate(1, sourceExampleID, 640, 360, boxes[1].MidX - boxes[0].MidX,
             atoms, [], [0, 0, 0, 0], [], [0, 0, 0, 0]);
         if (!template.IsValid || new HudStencilTracker(template).Observe(frame, true, 0, 0)?.EstablishesGameplay != true) return null;
-        // Match Mac: captured full masks set position/pitch, stock variants
-        // keep damage/lifeblood recognizable without object-model training.
-        return template with { Health = [.. atoms, .. Bundled?.Health ?? []] };
+        return template;
     }
 }
 
@@ -89,7 +76,7 @@ public sealed class HudStencilTracker
     private IReadOnlyList<StencilRect> previousHealth = [], previousMana = [];
     private double lastHealthSeen = double.NegativeInfinity, lastManaSeen = double.NegativeInfinity;
 
-    public HudStencilTracker() : this(HudStencilTemplate.Bundled) { }
+    public HudStencilTracker() : this(null) { }
     public HudStencilTracker(HudStencilTemplate? template)
     {
         this.template = template?.IsValid == true ? template : null;

@@ -612,11 +612,12 @@ final class HackerAtlasPipeline: @unchecked Sendable {
         let sceneName: String
         let position: CGPoint
         let composer: LiveTiledAtlas
-        let hudStencilTracker = HUDStencilTracker()
+        var hudStencilTracker: HUDStencilTracker
         var fadeReference: FadeReference?
         var lastIntegratedUnityFrame: Int?
 
-        init(sceneName: String, position: CGPoint, context: CIContext) {
+        init(sceneName: String, position: CGPoint, context: CIContext, hudTemplate: HUDStencilTemplate?) {
+            hudStencilTracker = HUDStencilTracker(template: hudTemplate)
             self.sceneName = sceneName
             self.position = position
             composer = LiveTiledAtlas(
@@ -629,6 +630,7 @@ final class HackerAtlasPipeline: @unchecked Sendable {
     }
 
     private let context: CIContext
+    private var hudTemplate: HUDStencilTemplate?
     private var rooms = [String: RoomState]()
     private var connections = [HackerRoomConnection]()
     private var lastPlayableFrame: HackerPreparedFrame?
@@ -637,6 +639,13 @@ final class HackerAtlasPipeline: @unchecked Sendable {
 
     init(context: CIContext = CIContext(options: [.cacheIntermediates: false])) {
         self.context = context
+    }
+
+    func replaceHUDTemplate(_ template: HUDStencilTemplate?) {
+        hudTemplate = template
+        for room in rooms.values {
+            room.hudStencilTracker = HUDStencilTracker(template: template)
+        }
     }
 
     func reset() {
@@ -666,7 +675,8 @@ final class HackerAtlasPipeline: @unchecked Sendable {
             let created = RoomState(
                 sceneName: prepared.sceneName,
                 position: prepared.liveBounds.origin,
-                context: context
+                context: context,
+                hudTemplate: hudTemplate
             )
             rooms[prepared.sceneName] = created
             state = created

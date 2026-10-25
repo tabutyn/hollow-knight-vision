@@ -7,6 +7,7 @@
   <ItemGroup>
     <Content Include="../../src/HollowKnightVision.Windows.App/MainWindow.xaml" Link="MainWindow.source.xaml" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../../macos/Tests/HollowKnightVisionTests/hud-stencil-cases.json" Link="hud-stencil-cases.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../../macos/Tests/HollowKnightVisionTests/hud-stencil-reference.json" Link="hud-stencil-reference.json" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../../src/HollowKnightVision.Windows.App/HollowKnightVision.Windows.App.csproj" />
   </ItemGroup>
 </Project>

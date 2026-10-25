@@ -1735,13 +1735,20 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         menuStencilReloadQueue.async { [weak self] in
             let examples = (try? LabelingExampleStore().loadExamples()) ?? []
             let hud = HUDStencilTemplate.captured(examples: examples, languageIdentifier: language)
-            guard let catalog = try? MenuStencilCatalog(
+            // An empty/reset store has no scenes. Still replace the old catalog
+            // and HUD tracker so previously captured pixels cannot remain active.
+            let catalog = (try? MenuStencilCatalog(
                 examplesRootURL: examplesRootURL,
                 calibration: .loadDefault()
-            ) else { return }
+            )) ?? MenuStencilCatalog(scenes: [], referenceWidth: 640,
+                                     referenceHeight: 360, pixelBand: 0..<360)
             self?.sampleQueue.async { [weak self] in
                 self?.menuStencilWorker.replaceCatalog(catalog)
                 self?.hudStencilTracker = HUDStencilTracker(template: hud)
+                if hud == nil { self?.gameStatusTracker.reset() }
+            }
+            self?.hackerAtlasQueue.async { [weak self] in
+                self?.hackerAtlasPipeline.replaceHUDTemplate(hud)
             }
         }
     }

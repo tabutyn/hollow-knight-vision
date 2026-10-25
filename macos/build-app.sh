@@ -73,8 +73,8 @@ cp "$scratch_dir/release/HollowKnightVision" "$contents_dir/MacOS/HollowKnightVi
 cp "$scratch_dir/release/HollowKnightVisionTrainer" "$contents_dir/Helpers/HollowKnightVisionTrainer"
 cp "$script_dir/Sources/HollowKnightVision/Resources/labeling-contracts.json" \
   "$contents_dir/Resources/labeling-contracts.json"
-cp "$script_dir/Sources/HollowKnightVision/Resources/hud-stencil-template.json" \
-  "$contents_dir/Resources/hud-stencil-template.json"
+# Remove reference pixels left by older incremental packages.
+rm -f "$contents_dir/Resources/hud-stencil-template.json"
 cp "$script_dir/Sources/HollowKnightVision/Resources/menu-stencil-positions.json" \
   "$contents_dir/Resources/menu-stencil-positions.json"
 cp "$script_dir/Sources/HollowKnightVision/Resources/labeling-contexts.json" \

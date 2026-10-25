@@ -354,13 +354,12 @@ public static class AutoNavigationRunner
 
             var language = LoadLanguage(supportRoot);
             var capturedHud = CapturedHud(examples, language);
-            var hudTemplate = capturedHud ?? HudStencilTemplate.Bundled;
             var allowGeometryFallback = catalog.Scenes.Count == 0;
             var diagnostic = FormattableString.Invariant(
-                $"menu-scenes={catalog.Scenes.Count}; title-fallback={(allowGeometryFallback ? "geometry" : "disabled")}; hud={(capturedHud is not null ? "captured" : hudTemplate is not null ? "bundled" : "unavailable")}; language={language}");
+                $"menu-scenes={catalog.Scenes.Count}; title-fallback={(allowGeometryFallback ? "geometry" : "disabled")}; hud={(capturedHud is not null ? "captured" : "unavailable")}; language={language}");
             return new(
                 new MenuStencilTracker(catalog, minimumSearchInterval: .1, calibration),
-                new HudStencilTracker(hudTemplate),
+                new HudStencilTracker(capturedHud),
                 allowGeometryFallback,
                 diagnostic);
         }

@@ -34,6 +34,7 @@ internal sealed class WindowsMenuStencilRecognizer
     private bool acceptsFrames = true;
     private string language;
     internal bool HasGameplayReference { get { lock (gate) return hasCapturedHudReference; } }
+    internal HudStencilTemplate? CapturedHudTemplate { get { lock (gate) return hudTemplate; } }
     internal HudStencilResult? LatestHud => Volatile.Read(ref latestHud);
     internal bool IsCurrent(long value) => Interlocked.Read(ref generation) == value;
     internal void ConfigureObjectDiagnostics(double extension, bool pixels)
@@ -62,16 +63,8 @@ internal sealed class WindowsMenuStencilRecognizer
         {
             if (language is not null) this.language = language;
             var examples = new LabelingExampleStore(examplesRoot).Load();
-            // Factory Reset removes user examples, not the built-in ability to
-            // recognize Hollow Knight gameplay. Once the user has language-
-            // scoped HUD examples, however, an unlabeled language stays locked
-            // instead of silently borrowing another language's setup.
-            var hasAnyHudExamples = examples.Any(example =>
-                StencilInitializationPolicy.NormalizeContext(
-                    example.Manifest.ContextIdentifier) == "gameplay-hud");
-            HudStencilTemplate? nextHud = hasAnyHudExamples
-                ? null
-                : HudStencilTemplate.Bundled;
+            // Recognition requires a usable stencil captured in the selected language.
+            HudStencilTemplate? nextHud = null;
             var nextHasCapturedHudReference = false;
             var example = StencilInitializationPolicy.RepresentativeExample(examples, "gameplay-hud", this.language, GameRuntimeMode.Normal);
             if (example is not null)
@@ -100,7 +93,7 @@ internal sealed class WindowsMenuStencilRecognizer
             hudTemplate = nextHud;
             hasCapturedHudReference = nextHasCapturedHudReference;
             hud = new(nextHud);
-            statusPipeline.Reset(preservingGameplay: true);
+            statusPipeline.Reset(preservingGameplay: nextHud is not null);
             objects.Reset();
             try
             {

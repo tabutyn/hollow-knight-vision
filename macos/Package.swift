@@ -17,6 +17,7 @@ let package = Package(
         .testTarget(name: "HollowKnightVisionTests", dependencies: ["HollowKnightVision"],
                     resources: [
                         .process("hud-stencil-cases.json"),
+                        .process("hud-stencil-reference.json"),
                     ]),
     ],
     swiftLanguageModes: [.v5]

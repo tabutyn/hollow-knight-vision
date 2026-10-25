@@ -21,15 +21,6 @@ struct HUDStencilTemplate: Decodable {
     let manaReserves: [Atom]
     let geo: [Double]
 
-    static let bundled: HUDStencilTemplate? = {
-        guard let url = Bundle.main.url(forResource: "hud-stencil-template", withExtension: "json")
-                ?? Bundle.module.url(forResource: "hud-stencil-template", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let template = try? JSONDecoder().decode(Self.self, from: data),
-              template.isValid else { return nil }
-        return template
-    }()
-
     static func captured(examples: [SavedLabelingExample], languageIdentifier: String) -> HUDStencilTemplate? {
         guard let example = StencilInitializationPolicy.representativeExample(
             examples: examples, context: .gameplayHUD, languageIdentifier: languageIdentifier, mode: .normal
@@ -56,14 +47,7 @@ struct HUDStencilTemplate: Decodable {
         guard atoms.count == 2 && result.isValid,
               HUDStencilTracker(template: result).observe(image, gameplay: true, timestamp: 0, generation: 0)?.establishesGameplay == true
         else { return nil }
-        // Setup learns the full-health row and its pitch. Retain the stock
-        // empty/lifeblood appearance variants so damage doesn't close the
-        // Gameplay gate before the user has trained an object model.
-        return Self(schemaVersion: result.schemaVersion, sourceExampleID: result.sourceExampleID,
-            referenceWidth: result.referenceWidth, referenceHeight: result.referenceHeight,
-            healthPitch: result.healthPitch, health: result.health + (bundled?.health ?? []),
-            manaMain: result.manaMain, manaContainer: result.manaContainer,
-            manaReserves: result.manaReserves, geo: result.geo)
+        return result
     }
 
     var isValid: Bool {
@@ -138,7 +122,7 @@ final class HUDStencilTracker {
     private var lastHealthSeen: Double = -.infinity
     private var lastManaSeen: Double = -.infinity
 
-    init(template: HUDStencilTemplate? = .bundled) {
+    init(template: HUDStencilTemplate? = nil) {
         self.template = template?.isValid == true ? template : nil
         healthKernels = self.template?.health.map { HUDStencilKernel($0) } ?? []
         manaMainKernels = self.template?.manaMain.map {

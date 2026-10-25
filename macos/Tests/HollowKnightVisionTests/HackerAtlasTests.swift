@@ -290,7 +290,9 @@ final class HackerAtlasTests: XCTestCase {
                 heroScreenX: 32, heroScreenY: 18
             )
         )))
-        let stencil = try XCTUnwrap(HUDStencilTracker().observe(
+        let reference = try HUDStencilTestReference.load()
+        pipeline.replaceHUDTemplate(reference)
+        let stencil = try XCTUnwrap(HUDStencilTracker(template: reference).observe(
             prepared.liveImage, gameplay: true,
             timestamp: prepared.capturedAt, generation: 0
         ))

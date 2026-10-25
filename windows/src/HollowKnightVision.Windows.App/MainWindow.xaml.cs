@@ -2831,6 +2831,7 @@ public partial class MainWindow : Window
             {
                 if (work.WorkGeneration != hackerWorkGeneration) continue;
                 prepared = hackerFramePreparer.Process(work.Match);
+                hackerAtlasPipeline.ConfigureHudTemplate(menuStencilRecognizer.CapturedHudTemplate);
                 output = prepared is null ? null : hackerAtlasPipeline.Process(prepared);
             }
             if (prepared is null) continue;

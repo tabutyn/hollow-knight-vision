@@ -608,6 +608,7 @@
     { "mac": "LabelingModelVersionStoreTests.testRegressedCandidateRemainsReviewableButDoesNotAdvanceTrainingLineage", "windows": "windows/tests/HollowKnightVision.Windows.Tests/ModelVersionTests.cs:TestRegressionLineage" },
     { "mac": "LabelingModelVersionStoreTests.testDetectionRequiresActiveArtifactTrainedOnCurrentLabels", "windows": "windows/tests/HollowKnightVision.Windows.Tests/ModelVersionTests.cs:TestReadiness" },
     { "mac": "LabelingModelReviewStoreTests.testLoadsNewestCandidateAndItsPredictionReview", "windows": "windows/tests/HollowKnightVision.Windows.Tests/ModelVersionTests.cs:TestReviewStore" },
+    { "mac": "HUDStencilTests.testNoRecognitionWithoutCapturedStencil", "windows": "windows/tests/HollowKnightVision.Windows.UiTests/HudStencilTests.cs:Run" },
     { "mac": "HUDStencilTests.testRealGameplayHUDsAcrossCountsBackgroundsAndOffsets", "windows": "windows/tests/HollowKnightVision.Windows.UiTests/HudStencilTests.cs:Run" },
     { "mac": "HUDStencilTests.testCapturedHUDUnlocksFirstCampaignWithoutModelOrClearSave", "windows": "windows/tests/HollowKnightVision.Windows.UiTests/HudStencilTests.cs:TestCapturedHUDUnlocksFirstCampaignWithoutModelOrClearSave" },
     { "mac": "HUDStencilTests.testScaledCaptureRetainsCountsAndScalesStencil", "windows": "windows/tests/HollowKnightVision.Windows.UiTests/HudStencilTests.cs:Run" },

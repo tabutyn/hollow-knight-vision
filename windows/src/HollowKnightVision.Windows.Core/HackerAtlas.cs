@@ -694,10 +694,11 @@ public sealed class HackerAtlasPipeline
 
     private sealed class RoomState
     {
-        internal RoomState(string sceneName, AtlasPoint position)
+        internal RoomState(string sceneName, AtlasPoint position, HudStencilTemplate? hudTemplate)
         {
             SceneName = sceneName;
             Position = position;
+            HudStencilTracker = new(hudTemplate);
             Composer = new LiveTiledAtlas(
                 anchorPosition: new AtlasPoint(0, 0),
                 sourceCacheLimit: 48,
@@ -708,7 +709,7 @@ public sealed class HackerAtlasPipeline
         internal string SceneName { get; }
         internal AtlasPoint Position { get; }
         internal LiveTiledAtlas Composer { get; }
-        internal HudStencilTracker HudStencilTracker { get; } = new();
+        internal HudStencilTracker HudStencilTracker { get; set; }
         internal FadeReference? FadeReference { get; set; }
         internal int? LastIntegratedUnityFrame { get; set; }
     }
@@ -716,9 +717,20 @@ public sealed class HackerAtlasPipeline
     private readonly object gate = new();
     private readonly Dictionary<string, RoomState> rooms = new(StringComparer.Ordinal);
     private readonly List<HackerRoomConnection> connections = [];
+    private HudStencilTemplate? hudTemplate;
     private HackerPreparedFrame? lastPlayableFrame;
     private long nextObservationId;
     private ulong revision;
+
+    public void ConfigureHudTemplate(HudStencilTemplate? template)
+    {
+        lock (gate)
+        {
+            if (ReferenceEquals(hudTemplate, template)) return;
+            hudTemplate = template;
+            foreach (var room in rooms.Values) room.HudStencilTracker = new(template);
+        }
+    }
 
     public void Reset()
     {
@@ -753,7 +765,8 @@ public sealed class HackerAtlasPipeline
                 }
                 state = new RoomState(
                     prepared.SceneName,
-                    new AtlasPoint(prepared.LiveBounds.MinX, prepared.LiveBounds.MinY));
+                    new AtlasPoint(prepared.LiveBounds.MinX, prepared.LiveBounds.MinY),
+                    hudTemplate);
                 rooms[prepared.SceneName] = state;
             }
 
