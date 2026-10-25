@@ -13,6 +13,7 @@ internal sealed class WindowsMenuStencilRecognizer
         MenuStencilResult? Menu, HudStencilResult? Hud, long Generation, IReadOnlyList<ObjectDetection> Detections, string Diagnostic)
     {
         public string? Context => Status?.ContextIdentifier;
+        public bool GameplayEnabled => Status?.IsGameplay == true;
         public bool HasFreshGameplayEvidence => RecognizedStatus?.IsGameplay == true;
         public LiveObjectDetectionSnapshot Objects { get; init; } = LiveObjectDetectionSnapshot.Empty;
         public LiveObjectInferenceDiagnostics ObjectDiagnostics { get; init; } = new();
@@ -26,12 +27,13 @@ internal sealed class WindowsMenuStencilRecognizer
     private bool createsPixelDiagnostic;
     private IReadOnlySet<string> customClassIdentifiers = new HashSet<string>();
     private HudStencilTemplate? hudTemplate;
+    private bool hasCapturedHudReference;
     private HudStencilTracker hud = new(null);
     private HudStencilResult? latestHud;
     private long generation;
     private bool acceptsFrames = true;
     private string language;
-    internal bool HasGameplayReference { get { lock (gate) return hudTemplate is not null; } }
+    internal bool HasGameplayReference { get { lock (gate) return hasCapturedHudReference; } }
     internal HudStencilResult? LatestHud => Volatile.Read(ref latestHud);
     internal bool IsCurrent(long value) => Interlocked.Read(ref generation) == value;
     internal void ConfigureObjectDiagnostics(double extension, bool pixels)
@@ -60,10 +62,29 @@ internal sealed class WindowsMenuStencilRecognizer
         {
             if (language is not null) this.language = language;
             var examples = new LabelingExampleStore(examplesRoot).Load();
-            HudStencilTemplate? nextHud = null;
+            // Factory Reset removes user examples, not the built-in ability to
+            // recognize Hollow Knight gameplay. Once the user has language-
+            // scoped HUD examples, however, an unlabeled language stays locked
+            // instead of silently borrowing another language's setup.
+            var hasAnyHudExamples = examples.Any(example =>
+                StencilInitializationPolicy.NormalizeContext(
+                    example.Manifest.ContextIdentifier) == "gameplay-hud");
+            HudStencilTemplate? nextHud = hasAnyHudExamples
+                ? null
+                : HudStencilTemplate.Bundled;
+            var nextHasCapturedHudReference = false;
             var example = StencilInitializationPolicy.RepresentativeExample(examples, "gameplay-hud", this.language, GameRuntimeMode.Normal);
             if (example is not null)
-                try { nextHud = HudStencilTemplate.Captured(LoadFrame(example.ImagePath), example.Manifest.Annotations, example.Id.ToString()); }
+                try
+                {
+                    var captured = HudStencilTemplate.Captured(
+                        LoadFrame(example.ImagePath), example.Manifest.Annotations, example.Id.ToString());
+                    if (captured is not null)
+                    {
+                        nextHud = captured;
+                        nextHasCapturedHudReference = true;
+                    }
+                }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException or FormatException) { }
             IReadOnlyList<MenuStencilLiveSource> live = [];
             try { live = new MenuStencilLiveCaptureStore(MenuStencilLiveCaptureStore.RootForExamples(examplesRoot)).Load().Select(item => item.Source).ToArray(); }
@@ -76,7 +97,9 @@ internal sealed class WindowsMenuStencilRecognizer
             }
             catch (MenuStencilCatalogUnavailableException) { catalog = new([], 640, 360, 0, 360, []); }
             menuWorker.ReplaceCatalog(catalog);
-            hudTemplate = nextHud; hud = new(nextHud);
+            hudTemplate = nextHud;
+            hasCapturedHudReference = nextHasCapturedHudReference;
+            hud = new(nextHud);
             statusPipeline.Reset(preservingGameplay: true);
             objects.Reset();
             try

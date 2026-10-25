@@ -458,8 +458,19 @@ internal static class DashboardPresentationPolicy
         string workspace,
         bool phaseOneComplete,
         string? recognizedContext) =>
-        IsGameplay(recognizedContext)
-        && (workspace == "Hacker" || workspace == "Gameplay" && phaseOneComplete);
+        ShowsGameplayFraming(workspace, phaseOneComplete, recognizedContext)
+        || ShowsHackerFraming(workspace, recognizedContext);
+
+    internal static bool ShowsGameplayFraming(
+        string workspace,
+        bool phaseOneComplete,
+        string? recognizedContext) =>
+        workspace == "Gameplay" && phaseOneComplete && IsGameplay(recognizedContext);
+
+    internal static bool ShowsHackerFraming(
+        string workspace,
+        string? recognizedContext) =>
+        workspace == "Hacker" && IsGameplay(recognizedContext);
 
     internal static bool ShowsOps(
         string workspace,
@@ -552,6 +563,9 @@ public partial class MainWindow : Window
     private readonly HackerFramePreparer hackerFramePreparer = new();
     private readonly HackerAtlasPipeline hackerAtlasPipeline = new();
     private readonly VisualGameplayTracker visualGameplayTracker = new();
+    private readonly GameplayPresentationState gameplayPresentation = new();
+    private DateTimeOffset lastGpuDiagnosticAt;
+    private Task? gpuDiagnosticWrite;
     private WindowsLiveWorldPipeline? liveWorldPipeline;
     private readonly PlaybackDivergenceMonitor inputPathDivergenceMonitor = new();
     private CancellationTokenSource? inputPathReplayCancellation;
@@ -779,7 +793,8 @@ public partial class MainWindow : Window
     {
         internal GroundHypothesisTracker Tracker { get; } = new(
             minimumObservationSeconds: .2,
-            confirmedLossGraceSeconds: 3);
+            confirmedLossGraceSeconds: 3,
+            productionCameraSolver: true);
         internal GroundSemanticAtlas SemanticAtlas { get; } = new();
         internal GroundReferenceTracker ReferenceTracker { get; } = new();
         internal string? ReceiverSceneName { get; private set; }
@@ -1196,8 +1211,17 @@ public partial class MainWindow : Window
             {
                 StartVision_Click(this, new RoutedEventArgs());
             }
-            Activate();
-            Focus();
+            if (normalGameInput is null)
+            {
+                Activate();
+                Focus();
+            }
+            else
+            {
+                // Stock Hollow Knight remains the native input foreground;
+                // Vision is a clickable non-activating overlay above it.
+                normalGameInput.UpdateContext();
+            }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -1440,6 +1464,11 @@ public partial class MainWindow : Window
         if (locallyConsumedKeys.Remove(key))
         {
             e.Handled = true;
+            return;
+        }
+        if (normalGameInput is not null)
+        {
+            if (normalGameInput.ForwardKeyUp(key)) e.Handled = true;
             return;
         }
         if (!IsActive && !forwardedKeys.Contains(key)) return;
@@ -1981,12 +2010,12 @@ public partial class MainWindow : Window
         if (initialization is null) return;
         PresentLabelPauseControls(LabelPanel, LabelWorkspaceButton, labelCapture, gameControls.IsRecording);
         GameplayControlsPanel.Visibility = visionCancellation is not null
-            && DashboardPresentationPolicy.ShowsFraming(
+            && DashboardPresentationPolicy.ShowsGameplayFraming(
                 workspace, initialization.IsFirstPhaseComplete, recognizedMenuContext)
             ? Visibility.Visible : Visibility.Collapsed;
         HackerCameraControlsPanel.Visibility = visionCancellation is not null
-            && DashboardPresentationPolicy.ShowsFraming(
-                workspace, initialization.IsFirstPhaseComplete, recognizedMenuContext)
+            && DashboardPresentationPolicy.ShowsHackerFraming(
+                workspace, recognizedMenuContext)
             ? Visibility.Visible : Visibility.Collapsed;
         PathRecordingButton.Visibility = DashboardPresentationPolicy.ShowsPathRecording(
                 workspace, gameMode, recognizedMenuContext)
@@ -2576,12 +2605,15 @@ public partial class MainWindow : Window
             using var detector = new OnnxObjectDetectorSet(
                 activeModelRuns.Length > 0 && string.Equals(runDirectory, activeModelRuns[0], StringComparison.OrdinalIgnoreCase)
                     ? activeModelRuns : runDirectory.Length > 0 ? [runDirectory] : [], activeModelArtifacts);
+            // Compile CUDA once before capture; device absence keeps the CPU fallback.
+            await Task.Run(() => GroundPatchMatcher.Shared.WarmUp(), cancellation.Token);
             var capture = new GdiWindowCapture();
             var analysisFrames = Channel.CreateBounded<PendingVisionFrame>(new BoundedChannelOptions(1)
             { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
             var hackerFrames = Channel.CreateUnbounded<HackerPipelineWork>(new UnboundedChannelOptions
             { SingleReader = true, SingleWriter = false, AllowSynchronousContinuations = false });
             var captureGeneration = Interlocked.Increment(ref recentCaptureGeneration);
+            gameplayPresentation.Reset();
             BeginReceiverFrameJoin(
                 captureGeneration,
                 analysisFrames.Writer,
@@ -2624,6 +2656,7 @@ public partial class MainWindow : Window
                     var captureTimestamp = Stopwatch.GetTimestamp()
                         / (double)Stopwatch.Frequency;
                     if (!labelCapture.Accept(frame, labelRevision)) continue;
+                    gameplayPresentation.Capture(frame);
                     var bitmap = FrameBitmap(frame);
                     var firstFreshGameFrame = !hasFreshGameFrame;
                     hasFreshGameFrame = true;
@@ -3183,7 +3216,13 @@ public partial class MainWindow : Window
         var coarseMotion = inputPathMotionTracker.Observe(
             signal.MotionGrid,
             captureTimestamp);
-        var admission = frameAdmission.Observe(signal, recognition.HasFreshGameplayEvidence, recognition.Generation);
+        // Match Mac: once Gameplay is established, ordinary HUD animation and
+        // temporary HUD loss must not stop camera tracking. Positive menu
+        // recognition releases the latch; the signal gate still blocks fades.
+        var admission = frameAdmission.Observe(
+            signal,
+            recognition.GameplayEnabled,
+            recognition.Generation);
         if (admission.ResetMotionReference)
         {
             frameMotionTracker.Reset();
@@ -3296,8 +3335,6 @@ public partial class MainWindow : Window
         var receiverTelemetry = gameMode == GameRuntimeMode.Modded
             ? exactReceiverTelemetry
             : null;
-        // The presentation latch survives fades and cutscenes. It is not fresh
-        // image evidence: never use that latch alone to admit a frame to the atlas.
         var motionBridgeActive = visualObservation.Source is
             "transition-bridge" or "coarse-presentation";
         var receiverScene = receiverTelemetry?.SceneName?.Trim();
@@ -3369,7 +3406,9 @@ public partial class MainWindow : Window
                 gameplayAdmitted = liveWorldResult.State
                         == WindowsLiveWorldPipelineState.Committed
                     && liveWorldResult.CaptureGeneration == liveWorldGeneration;
-                if (gameplayAdmitted)
+                if (liveWorldResult.CaptureGeneration == liveWorldGeneration
+                    && liveWorldResult.State is WindowsLiveWorldPipelineState.Committed
+                        or WindowsLiveWorldPipelineState.Throttled)
                 {
                     visualTelemetry = visualTelemetry with
                     {
@@ -3599,6 +3638,7 @@ public partial class MainWindow : Window
     {
         if (result.CaptureGeneration != Interlocked.Read(ref recentCaptureGeneration)
             || !labelCapture.CanProcess(result.LabelRevision)) return;
+        PublishGpuDiagnostics();
         var presentsLatestFrame = result.Frame.CaptureId
             == Interlocked.Read(ref latestPresentedCaptureId);
         var presentsLatestMatchedFrame = TryAcceptLatestMatchedResult(result);
@@ -3676,7 +3716,9 @@ public partial class MainWindow : Window
             PersistActiveAtlas(force: false);
             return;
         }
-        if (presentsLatestFrame)
+        // The capture loop has usually displayed a newer bitmap while tracking
+        // runs. Accept ordered positions without replacing it with older pixels.
+        if (gameplayPresentation.TryAcceptAnalysis(result.Frame))
         {
             Volatile.Write(ref recognizedMenuContext, result.MenuContext);
             Volatile.Write(ref recognizedMenuSelection, result.Status?.SelectedMenuOption);
@@ -3684,10 +3726,13 @@ public partial class MainWindow : Window
             PresentObjectInferenceDiagnostics(ObjectInferenceIssueOverlay, ObjectInferenceIssueOverlayText,
                 ObjectInferenceIssueText, ObjectDetectionOptions, result.ObjectDiagnostics);
             PresentGameplayFrame(
-                result.Frame,
+                gameplayPresentation.LatestFrame!,
                 result.GameplayTelemetry,
-                FrameBitmap(result.Frame),
+                (BitmapSource)GameplayImage.Source,
                 result.MenuContext);
+        }
+        if (presentsLatestFrame)
+        {
             DrawDetections(
                 result.Objects,
                 result.Ground,
@@ -3729,6 +3774,40 @@ public partial class MainWindow : Window
         PersistActiveAtlas(force: false);
     }
 
+    private void PublishGpuDiagnostics()
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now - lastGpuDiagnosticAt < TimeSpan.FromSeconds(5)
+            || gpuDiagnosticWrite is { IsCompleted: false }) return;
+        lastGpuDiagnosticAt = now;
+        var matcher = GroundPatchMatcher.Shared;
+        var localSearch = visualGameplayTracker.LastPatchSearchExecution;
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            ObservedAt = now,
+            ProcessId = Environment.ProcessId,
+            Device = matcher.CudaDeviceName,
+            CudaAvailable = matcher.CudaAvailable,
+            CudaDispatches = matcher.CudaDispatchCount,
+            CameraBackend = localSearch?.Backend.ToString(),
+            CameraSearchMilliseconds = localSearch?.Elapsed.TotalMilliseconds,
+            CameraCandidates = localSearch?.CandidateCount,
+            FallbackReason = matcher.CudaFailure
+        });
+        gpuDiagnosticWrite = Task.Run(() =>
+        {
+            try
+            {
+                var directory = IOPath.Combine(Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData), "HollowKnightVision", "diagnostics");
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(IOPath.Combine(directory, "tracking-gpu.json"), json);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        });
+    }
+
     private void StopVision_Click(object sender, RoutedEventArgs e) => StopVision();
 
     private void StopVision()
@@ -3765,28 +3844,9 @@ public partial class MainWindow : Window
         }
         if (GroundFeaturesCheck.IsChecked == true)
         {
-            foreach (var feature in groundHypotheses.Features.Where(feature =>
-                         feature.Classification != GroundHypothesisClassification.Candidate))
-            {
-                var marker = new Rectangle
-                {
-                    Width = feature.ImageRect.Width,
-                    Height = feature.ImageRect.Height,
-                    Stroke = feature.Classification switch
-                    {
-                        GroundHypothesisClassification.GroundPlane => Brushes.LimeGreen,
-                        GroundHypothesisClassification.GlobalMatch => Brushes.MediumPurple,
-                        GroundHypothesisClassification.Occluded => Brushes.DarkOrange,
-                        _ => Brushes.Red
-                    },
-                    StrokeThickness = 2,
-                    Fill = Brushes.Transparent,
-                    ToolTip = $"ground feature {feature.Id} • {feature.Classification}"
-                };
-                Canvas.SetLeft(marker, feature.ImageRect.X);
-                Canvas.SetTop(marker, feature.ImageRect.Y);
-                DetectionCanvas.Children.Add(marker);
-            }
+            GroundFeatureOverlayPresentation.DrawLive(
+                DetectionCanvas,
+                groundHypotheses);
 
             if (groundHypotheses.CameraTranslation is { } translation
                 && double.IsFinite(translation.X)
@@ -3814,8 +3874,11 @@ public partial class MainWindow : Window
                     X2 = review.Line.XSpan.EndInclusive + 1,
                     Y1 = review.Line.Row + .5,
                     Y2 = review.Line.Row + .5,
-                    Stroke = Brushes.White,
-                    StrokeThickness = 2,
+                    Stroke = GroundFeatureOverlayPresentation.Brush(
+                        DashboardFeatureReviewLineKind.CurrentGround),
+                    StrokeThickness = DashboardFeatureReviewGeometry.LineWidth,
+                    Opacity = DashboardFeatureReviewPalette.Rgba(
+                        DashboardFeatureReviewLineKind.CurrentGround).Alpha,
                     ToolTip = FormattableString.Invariant(
                         $"confirmed ground {review.Id} • {review.DetectedFraction:P0}")
                 });
@@ -3857,17 +3920,10 @@ public partial class MainWindow : Window
             if (!double.IsFinite(feature.AtlasPosition.X)
                 || !double.IsFinite(feature.AtlasPosition.Y)) continue;
             var center = Project(feature.AtlasPosition);
-            var marker = new Rectangle
-            {
-                Width = GroundHypothesisTracker.FeatureWidth * scaleX,
-                Height = GroundHypothesisTracker.FeatureHeight * scaleY,
-                Stroke = Brushes.MediumPurple,
-                StrokeThickness = 2,
-                Fill = Brushes.Transparent,
-                Opacity = .8,
-                IsHitTestVisible = false,
-                ToolTip = $"persistent ground feature {feature.SegmentId}:{feature.SequenceIndex}"
-            };
+            var marker = GroundFeatureOverlayPresentation.PersistentRectangle(
+                feature,
+                scaleX,
+                scaleY);
             Canvas.SetLeft(marker, center.X - marker.Width * .5);
             Canvas.SetTop(marker, center.Y - marker.Height * .5);
             GameplayGroundCanvas.Children.Add(marker);
@@ -3887,9 +3943,11 @@ public partial class MainWindow : Window
                 Y1 = start.Y,
                 X2 = end.X,
                 Y2 = end.Y,
-                Stroke = Brushes.LimeGreen,
-                StrokeThickness = 2,
-                Opacity = .8,
+                Stroke = GroundFeatureOverlayPresentation.Brush(
+                    DashboardFeatureReviewLineKind.PersistentGround),
+                StrokeThickness = DashboardFeatureReviewGeometry.LineWidth,
+                Opacity = DashboardFeatureReviewPalette.Rgba(
+                    DashboardFeatureReviewLineKind.PersistentGround).Alpha,
                 IsHitTestVisible = false,
                 ToolTip = $"persistent ground {groundLine.SegmentId}"
             });
@@ -6158,6 +6216,7 @@ public partial class MainWindow : Window
     {
         Interlocked.Increment(ref groundHypothesisResetGeneration);
         visualGameplayTracker.Reset();
+        gameplayPresentation.Reset();
         frameMotionTracker.Reset();
         inputPathMotionTracker.Reset();
         latestMotion = null;

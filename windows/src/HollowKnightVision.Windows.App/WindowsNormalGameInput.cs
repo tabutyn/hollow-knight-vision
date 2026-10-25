@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
@@ -9,240 +10,236 @@ using HollowKnightVision.Windows.Host;
 namespace HollowKnightVision.Windows.App;
 
 /// <summary>
-/// Stock Unity must own foreground focus to receive keyboard input. Vision
-/// stays above it during play and intercepts only its reserved shortcuts.
-/// Editing, dialogs, and unrelated applications retain ordinary Windows focus.
-/// All state is confined to the WPF dispatcher; no keystrokes are recorded.
+/// Keeps stock Hollow Knight as the real foreground input target while Vision
+/// remains a visible, clickable, non-activating overlay above it. A low-level
+/// keyboard hook reserves only Vision shortcuts; all gameplay input travels
+/// through Windows to Hollow Knight unchanged, including holds and chords.
 /// </summary>
 internal sealed class WindowsNormalGameInput : IDisposable
 {
-    private const nuint InjectionTag = 0x484B564E;
+    private const int WhKeyboardLl = 13;
+    private const int GwlExStyle = -20;
+    private const long WsExNoActivate = 0x08000000L;
+    private const int SwRestore = 9;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpFrameChanged = 0x0020;
+    private const uint SwpShowWindow = 0x0040;
+    private static readonly nint HwndTop = nint.Zero;
+    private static readonly nint HwndTopmost = new(-1);
+    private static readonly nint HwndNotTopmost = new(-2);
+
     private readonly Window owner;
     private readonly Func<bool> allowsGameInput;
     private readonly Action<Key> shortcut;
     private readonly Action<string> status;
-    private readonly NormalGameShortcutState shortcuts = new();
-    private readonly NormalGameHandoffState handoffState = new();
-    private readonly KeyboardHook callback;
     private readonly DispatcherTimer monitor;
-    private readonly Dictionary<int, HandoffKey> handoffKeys = [];
-    private readonly Dictionary<(nint Handle, int ProcessId, int Generation, int VirtualKey), HandoffKey>
-        pendingReleases = [];
+    private readonly NormalGameShortcutState shortcutState = new();
+    private readonly LowLevelKeyboardProc keyboardProc;
     private HollowKnightWindow? target;
     private nint ownerHandle;
-    private nint hook;
-    private bool presenting;
+    private nint keyboardHook;
+    private bool overlayActive;
+    private NativePoint? freePointer;
     private bool disposed;
-    private int focusGeneration;
-    private HwndSource? mouseSource;
-    private NativePoint? browsingPointer;
-    private bool returningPointer;
-    private FocusTransfer? focusTransfer;
-
-    private sealed class HandoffKey(
-        int virtualKey,
-        ushort scanCode,
-        bool extended,
-        NormalGameInputTarget target)
-    {
-        internal readonly int VirtualKey = virtualKey;
-        internal readonly ushort ScanCode = scanCode;
-        internal readonly bool Extended = extended;
-        internal readonly NormalGameInputTarget Target = target;
-        internal bool Released;
-        internal bool Injected;
-    }
-
-    private sealed class FocusTransfer(NormalGameInputTarget target)
-    {
-        internal readonly NormalGameInputTarget Target = target;
-        internal Task<bool> Ready { get; set; } = Task.FromResult(false);
-    }
 
     internal WindowsNormalGameInput(
-        Window owner, Func<bool> allowsGameInput, Action<Key> shortcut, Action<string> status)
+        Window owner,
+        Func<bool> allowsGameInput,
+        Action<Key> shortcut,
+        Action<string> status)
     {
         this.owner = owner;
         this.allowsGameInput = allowsGameInput;
         this.shortcut = shortcut;
         this.status = status;
-        callback = OnKeyboard;
-        monitor = new DispatcherTimer(DispatcherPriority.Input, owner.Dispatcher)
+        keyboardProc = KeyboardHook;
+        // Cursor confinement must be released even while gameplay continuously
+        // queues Render work. Input priority is lower than Render in WPF.
+        monitor = new DispatcherTimer(DispatcherPriority.Normal, owner.Dispatcher)
         {
             Interval = TimeSpan.FromMilliseconds(100)
         };
-        monitor.Tick += (_, _) => UpdateContext();
+        monitor.Tick += (_, _) => MaintainOverlay();
     }
 
     internal void Start(HollowKnightWindow game)
     {
         if (disposed) return;
-        EndPresentation();
-        target = game; // Caller has validated the executable and chosen mode.
+        target = game;
         ownerHandle = new WindowInteropHelper(owner).Handle;
-        if (mouseSource is null)
-        {
-            RawInputDevice[] devices = [new() { UsagePage = 1, Usage = 2, Flags = 0x100, Target = ownerHandle }];
-            if (!RegisterRawInputDevices(devices, 1, (uint)Marshal.SizeOf<RawInputDevice>()))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows could not enable mouse navigation.");
-            mouseSource = HwndSource.FromHwnd(ownerHandle);
-            mouseSource?.AddHook(OnWindowMessage);
-        }
-        if (hook == 0)
-        {
-            hook = SetWindowsHookEx(13, callback, GetModuleHandle(null), 0); // WH_KEYBOARD_LL
-            if (hook == 0) throw new Win32Exception(Marshal.GetLastWin32Error(),
-                "Windows could not enable Vision keyboard shortcuts.");
-        }
+        EnsureKeyboardHook();
         monitor.Start();
+        UpdateContext();
     }
 
-    internal void ReserveLocalKey(Key key) => shortcuts.Capture(KeyInterop.VirtualKeyFromKey(key));
-
-    internal Task<bool> PrepareForInputAsync() =>
-        EnsureFocusTransfer()?.Ready ?? Task.FromResult(false);
-
-    private FocusTransfer? EnsureFocusTransfer()
-    {
-        if (!CanUseTarget() || !allowsGameInput()) return null;
-        var game = target!;
-        FlushPendingReleasesForForeground();
-        if (focusTransfer is { } current
-            && current.Target.Handle == game.Handle
-            && current.Target.ProcessId == game.ProcessId
-            && current.Target.Generation == focusGeneration
-            && (!current.Ready.IsCompleted
-                || current.Ready.Status == TaskStatus.RanToCompletion && current.Ready.Result
-                && GetForegroundWindow() == game.Handle))
-        {
-            return current;
-        }
-        var foreground = GetForegroundWindow();
-        // Do not take focus away from another program, an owned dialog or a menu.
-        if (foreground != ownerHandle && foreground != game.Handle) return null;
-        var generation = ++focusGeneration;
-        var identity = new NormalGameInputTarget(game.Handle, game.ProcessId, generation);
-        var transfer = new FocusTransfer(identity);
-        focusTransfer = transfer;
-        transfer.Ready = PrepareForInputCoreAsync(game, identity);
-        return transfer;
-    }
-
-    private async Task<bool> PrepareForInputCoreAsync(
-        HollowKnightWindow game,
-        NormalGameInputTarget identity)
-    {
-        if (!CanUseTarget(identity) || !allowsGameInput())
-        {
-            EndPresentation(identity.Generation);
-            return false;
-        }
-        var foreground = GetForegroundWindow();
-        if (foreground != ownerHandle && foreground != game.Handle)
-        {
-            EndPresentation(identity.Generation);
-            return false;
-        }
-        if (foreground == ownerHandle && GetCursorPos(out var pointer)) browsingPointer = pointer;
-        presenting = true;
-        RaisePresentation();
-        if (foreground != game.Handle) _ = SetForegroundWindow(game.Handle);
-        // Activation crosses input queues. SetForegroundWindow returning does
-        // not mean Unity has processed WM_ACTIVATE yet. Keep Vision above it
-        // throughout the handoff, including this asynchronous settling period.
-        for (var attempt = 0; attempt < 25; attempt++)
-        {
-            if (!CanUseTarget(identity) || !allowsGameInput())
-            {
-                EndPresentation(identity.Generation);
-                return false;
-            }
-            foreground = GetForegroundWindow();
-            if (foreground == game.Handle)
-            {
-                RaisePresentation();
-                await Task.Delay(50);
-                if (!CanUseTarget(identity) || !presenting
-                    || GetForegroundWindow() != game.Handle)
-                {
-                    EndPresentation(identity.Generation);
-                    return false;
-                }
-                RaisePresentation();
-                return true;
-            }
-            if (foreground != 0 && foreground != ownerHandle) break;
-            await Task.Delay(10);
-        }
-        EndPresentation(identity.Generation);
-        return false;
-    }
-
-    internal bool ForwardFirstKey(Key key, bool isRepeat)
+    /// <summary>
+    /// WPF consumed this shortcut before switching into Gameplay. Reserve its
+    /// eventual key-up so it cannot leak into the newly focused game.
+    /// </summary>
+    internal void ReserveLocalKey(Key key)
     {
         var virtualKey = KeyInterop.VirtualKeyFromKey(key);
-        if (disposed || !allowsGameInput() || !NormalGameInputPolicy.IsGameKey(virtualKey)) return false;
-        if (isRepeat) return true;
-        var transfer = EnsureFocusTransfer();
-        if (transfer is null)
-        {
-            status("Click the game view to resume keyboard controls.");
-            return true;
-        }
-        if (!handoffState.Press(virtualKey, transfer.Target, isRepeat: false)) return true;
-        var scan = MapVirtualKey((uint)virtualKey, 4); // MAPVK_VK_TO_VSC_EX
-        if (scan == 0)
-        {
-            handoffState.Release(virtualKey);
-            return false;
-        }
-        var held = new HandoffKey(virtualKey, (ushort)(scan & 0xFF),
-            (scan & 0xFF00) == 0xE000 || key is Key.Left or Key.Right or Key.Up or Key.Down,
-            transfer.Target);
-        handoffKeys.Add(virtualKey, held);
-        _ = ForwardFirstKeyAsync(held, transfer.Ready);
+        if (NormalGameInputPolicy.IsVisionShortcut(virtualKey))
+            shortcutState.Capture(virtualKey);
+    }
+
+    internal Task<bool> PrepareForInputAsync()
+    {
+        UpdateContext();
+        return Task.FromResult(overlayActive && IsGameForeground());
+    }
+
+    // These remain on the shared WPF route for the brief transition before
+    // Gameplay overlay mode is established. The first press is intentionally
+    // consumed rather than posted as a fake background message; subsequent
+    // native input goes straight to the foreground game.
+    internal bool ForwardFirstKey(Key key, bool isRepeat)
+    {
+        _ = isRepeat;
+        var virtualKey = KeyInterop.VirtualKeyFromKey(key);
+        if (!NormalGameInputPolicy.IsGameKey(virtualKey)) return false;
+        if (!CanUseTarget() || !allowsGameInput()) return false;
+        EnterOverlay(forceActivation: true);
         return true;
     }
 
-    private async Task ForwardFirstKeyAsync(HandoffKey held, Task<bool> focusReady)
-    {
-        var virtualKey = held.VirtualKey;
-        if (!await focusReady)
-        {
-            var removed = RemoveHandoff(held);
-            if (!disposed && removed) status("Click the game view to resume keyboard controls.");
-            return;
-        }
-        // Re-check immediately before SendInput; never inject into another app.
-        if (!CanUseTarget(held.Target)
-            || GetForegroundWindow() != held.Target.Handle
-            || !SendKey(held, down: true))
-        {
-            var removed = RemoveHandoff(held);
-            if (!disposed && removed)
-                status("Keyboard input was blocked. Run Vision and Hollow Knight at the same privilege level.");
-            return;
-        }
-        held.Injected = true;
-        // A very quick release can arrive while Windows changes focus. Pair
-        // that replayed press with a release after one game frame in that case.
-        if (held.Released) _ = ReleaseQuickTapAsync(held);
-    }
+    internal bool ForwardKeyUp(Key key) =>
+        NormalGameInputPolicy.IsGameKey(KeyInterop.VirtualKeyFromKey(key))
+        && allowsGameInput();
 
+    /// <summary>
+    /// Applies an explicit workspace/settings transition. Gameplay activates
+    /// Hollow Knight behind the overlay; every other context returns focus to
+    /// Vision so its editors retain their normal keyboard behavior.
+    /// </summary>
     internal void UpdateContext()
     {
         if (disposed) return;
-        FlushPendingReleasesForForeground();
-        if (!CanUseTarget() || !allowsGameInput())
+        if (CanUseTarget() && allowsGameInput())
         {
-            if (presenting && target is not null && GetForegroundWindow() == target.Handle
-                && owner.IsVisible && owner.IsEnabled && owner.WindowState != WindowState.Minimized)
-                ActivateVision();
-            EndPresentation();
+            var foreground = GetForegroundWindow();
+            if (foreground == ownerHandle || foreground == target!.Handle || !overlayActive)
+                EnterOverlay(forceActivation: true);
             return;
         }
+        if (overlayActive) ExitOverlay(activateOwner: true);
+    }
+
+    private void MaintainOverlay()
+    {
+        if (disposed) return;
+        if (!CanUseTarget())
+        {
+            if (overlayActive) ExitOverlay(activateOwner: false);
+            return;
+        }
+
         var foreground = GetForegroundWindow();
-        if (foreground != ownerHandle && foreground != target!.Handle) EndPresentation();
+        if (!allowsGameInput())
+        {
+            if (overlayActive)
+                ExitOverlay(activateOwner: foreground == target!.Handle || foreground == ownerHandle);
+            return;
+        }
+
+        if (foreground != target!.Handle && foreground != ownerHandle)
+        {
+            // Do not cover unrelated applications when the user Alt-Tabs.
+            if (overlayActive) ExitOverlay(activateOwner: false);
+            return;
+        }
+
+        if (!overlayActive || foreground == ownerHandle)
+            EnterOverlay(forceActivation: true);
+        else
+            ApplyOverlayStyle(enabled: true);
+        ReleaseGameCursor();
+    }
+
+    private void EnterOverlay(bool forceActivation)
+    {
+        if (!CanUseTarget() || !allowsGameInput()) return;
+        // Unity can confine the desktop cursor to its center when activated.
+        // Remember the free position before that happens, not the clipped one.
+        if (!IsGameCursorConfined() && GetCursorPos(out var pointer))
+            freePointer = pointer;
+        ApplyOverlayStyle(enabled: true);
+        overlayActive = true;
+        if (!forceActivation && IsGameForeground())
+        {
+            ReleaseGameCursor();
+            return;
+        }
+        if (!ActivateWindowBehindOverlay(target!.Handle, ownerHandle))
+        {
+            status("Hollow Knight could not take keyboard focus. Click Hollow Knight once, then return to Vision.");
+            return;
+        }
+        ApplyOverlayStyle(enabled: true);
+        ReleaseGameCursor();
+    }
+
+    private bool IsGameCursorConfined()
+    {
+        if (target is null || !GetClipCursor(out var clip)
+            || !GetWindowRect(target.Handle, out var game)
+            || !GetWindowRect(ownerHandle, out var overlay)) return false;
+        // Only release confinement inside our game's bounds that excludes some
+        // of Vision. Never change another foreground application's cursor clip.
+        return clip.Left >= game.Left && clip.Top >= game.Top
+            && clip.Right <= game.Right && clip.Bottom <= game.Bottom
+            && (clip.Left > overlay.Left || clip.Top > overlay.Top
+                || clip.Right < overlay.Right || clip.Bottom < overlay.Bottom);
+    }
+
+    private void ReleaseGameCursor()
+    {
+        if (!overlayActive || !IsGameForeground()) return;
+        if (IsGameCursorConfined())
+        {
+            if (!ClipCursor(0)) return;
+            if (freePointer is { } pointer)
+                _ = SetCursorPos(pointer.X, pointer.Y);
+        }
+        if (GetCursorPos(out var current)) freePointer = current;
+    }
+
+    private void ExitOverlay(bool activateOwner)
+    {
+        ReleaseGameCursor();
+        overlayActive = false;
+        freePointer = null;
+        ApplyOverlayStyle(enabled: false);
+        if (activateOwner && owner.IsVisible && owner.WindowState != WindowState.Minimized)
+            _ = ActivateWindow(ownerHandle);
+    }
+
+    private void ApplyOverlayStyle(bool enabled)
+    {
+        if (ownerHandle == 0 || !IsWindow(ownerHandle)) return;
+        // Keep WPF's managed z-order state in sync with the native HWND. If
+        // Topmost remains false, WPF can restore the window to the normal band
+        // after a render/layout transition even after SetWindowPos succeeded.
+        if (owner.Topmost != enabled) owner.Topmost = enabled;
+        var current = GetWindowLongPtr(ownerHandle, GwlExStyle).ToInt64();
+        var desired = enabled ? current | WsExNoActivate : current & ~WsExNoActivate;
+        if (desired != current)
+        {
+            SetLastError(0);
+            var previous = SetWindowLongPtr(ownerHandle, GwlExStyle, new nint(desired));
+            if (previous == 0 && Marshal.GetLastWin32Error() != 0)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not update Vision overlay style.");
+        }
+        _ = SetWindowPos(
+            ownerHandle,
+            enabled ? HwndTopmost : HwndNotTopmost,
+            0,
+            0,
+            0,
+            0,
+            SwpNoMove | SwpNoSize | SwpNoActivate | SwpFrameChanged | SwpShowWindow);
     }
 
     private bool CanUseTarget()
@@ -254,338 +251,173 @@ internal sealed class WindowsNormalGameInput : IDisposable
         return processId == target.ProcessId;
     }
 
-    private bool CanUseTarget(NormalGameInputTarget identity) =>
-        identity.Generation == focusGeneration
-        && target is { } game
-        && game.Handle == identity.Handle
-        && game.ProcessId == identity.ProcessId
-        && CanUseTarget();
+    private bool IsGameForeground() => target is { } game
+        && GetForegroundWindow() == game.Handle;
 
-    private nint OnKeyboard(int code, nint message, nint data)
+    private void EnsureKeyboardHook()
     {
-        if (code < 0 || disposed) return CallNextHookEx(hook, code, message, data);
-        var key = Marshal.PtrToStructure<KeyboardData>(data);
-        if (key.ExtraInfo == InjectionTag) return CallNextHookEx(hook, code, message, data);
-        FlushPendingReleasesForForeground();
-        var down = message is 0x100 or 0x104;
-        var up = message is 0x101 or 0x105;
-        if (!down && !up) return CallNextHookEx(hook, code, message, data);
-        var virtualKey = (int)key.VirtualKey;
-        if (up && handoffKeys.TryGetValue(virtualKey, out var held))
-        {
-            held.Released = true;
-            // The physical release reaches only the current foreground. Keep
-            // target-bound ownership if another application owns focus, then
-            // synthesize the release when that validated game returns.
-            if (held.Injected && GetForegroundWindow() == held.Target.Handle)
-                RemoveHandoff(held);
-        }
-        if (up)
-        {
-            var foreground = GetForegroundWindow();
-            foreach (var pending in pendingReleases.Where(item =>
-                         item.Value.VirtualKey == virtualKey).ToArray())
-            {
-                pending.Value.Released = true;
-                // The physical key-up reaches this exact foreground target.
-                if (foreground == pending.Value.Target.Handle
-                    && TargetWindowExists(pending.Value.Target))
-                    pendingReleases.Remove(pending.Key);
-            }
-        }
-        var modified = (key.Flags & 0x20) != 0 || IsDown(0x11) || IsDown(0x5B) || IsDown(0x5C);
-        var canIntercept = presenting && CanUseTarget() && allowsGameInput()
-            && GetForegroundWindow() == target!.Handle;
-        if (NormalGameInputPolicy.RelayAction(
-            virtualKey, down, canIntercept, modified) == NormalGameRelayAction.Suppress)
-        {
-            return 1;
-        }
-        if (shortcuts.Handle(virtualKey, down, canIntercept, modified, out var invoke))
-        {
-            if (invoke)
-            {
-                // Keep the hook fast. UI work and game capture run afterwards.
-                _ = owner.Dispatcher.InvokeAsync(() => InvokeShortcut(virtualKey), DispatcherPriority.Input);
-            }
-            return 1;
-        }
-        return CallNextHookEx(hook, code, message, data);
+        if (keyboardHook != 0) return;
+        keyboardHook = SetWindowsHookEx(
+            WhKeyboardLl,
+            keyboardProc,
+            GetModuleHandle(null),
+            0);
+        if (keyboardHook == 0)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not reserve Vision keyboard shortcuts.");
     }
 
-    private void InvokeShortcut(int virtualKey)
+    private nint KeyboardHook(int code, nint message, nint dataPointer)
     {
-        if (!CanUseTarget() || !presenting) return;
-        var foreground = GetForegroundWindow();
-        if (foreground != target!.Handle && foreground != ownerHandle) return;
-        ActivateVision();
-        if (GetForegroundWindow() != ownerHandle) return;
-        owner.Focus();
-        shortcut(KeyInterop.KeyFromVirtualKey(virtualKey));
-        UpdateContext();
-    }
-
-    private nint OnWindowMessage(nint window, int message, nint wParam, nint lParam, ref bool handled)
-    {
-        // Raw device motion, unlike WM_MOUSEMOVE, is not produced by Unity
-        // recentering its cursor. Do not fight SetCursorPos or globally unclip it.
-        if (message != 0x00FF || !presenting || returningPointer || !CanUseTarget()
-            || GetForegroundWindow() != target!.Handle) return 0;
-        var size = (uint)Marshal.SizeOf<RawMouseInput>();
-        var read = GetRawInputData(lParam, 0x10000003, out var input, ref size,
-            (uint)Marshal.SizeOf<RawInputHeader>());
-        if (read != Marshal.SizeOf<RawMouseInput>() || input.Header.Type != 0
-            || input.Mouse.X == 0 && input.Mouse.Y == 0 && input.Mouse.Buttons == 0) return 0;
-        ReturnPointerAfterDeviceMotion(input.Mouse.X, input.Mouse.Y, (input.Mouse.Flags & 1) == 0);
-        return 0; // WPF/DefWindowProc still owns WM_INPUT cleanup.
-    }
-
-    private void ReturnPointerAfterDeviceMotion(int dx, int dy, bool relative)
-    {
-        if (!presenting || returningPointer || !CanUseTarget() || GetForegroundWindow() != target!.Handle) return;
-        returningPointer = true;
-        _ = owner.Dispatcher.InvokeAsync(() =>
+        if (code >= 0 && !disposed && overlayActive && CanUseTarget() && IsGameForeground())
         {
-            try
+            var messageValue = unchecked((int)message);
+            var down = messageValue is 0x0100 or 0x0104;
+            var up = messageValue is 0x0101 or 0x0105;
+            if (down || up)
             {
-                if (!presenting || !CanUseTarget() || GetForegroundWindow() != target!.Handle) return;
-                ActivateVision();
-                if (GetForegroundWindow() != ownerHandle) return;
-                EndPresentation();
-                if (browsingPointer is { } previous)
+                var data = Marshal.PtrToStructure<LowLevelKeyboardData>(dataPointer);
+                var virtualKey = unchecked((int)data.VirtualKey);
+                var modified = IsModifierDown();
+                if (shortcutState.Handle(
+                        virtualKey,
+                        down,
+                        canIntercept: allowsGameInput(),
+                        modified,
+                        out var invoke))
                 {
-                    // Resume where the user left the pointer before the key
-                    // handoff, rather than at Unity's locked center.
-                    _ = SetCursorPos(previous.X + (relative ? dx : 0),
-                        previous.Y + (relative ? dy : 0));
-                    browsingPointer = null;
+                    if (invoke)
+                    {
+                        var key = KeyInterop.KeyFromVirtualKey(virtualKey);
+                        owner.Dispatcher.BeginInvoke(
+                            DispatcherPriority.Input,
+                            new Action(() =>
+                            {
+                                if (!disposed) shortcut(key);
+                            }));
+                    }
+                    return 1;
                 }
             }
-            finally { returningPointer = false; }
-        }, DispatcherPriority.Input);
-    }
-
-    private async Task ReleaseQuickTapAsync(HandoffKey key)
-    {
-        await Task.Delay(32);
-        if (disposed || !handoffKeys.TryGetValue(key.VirtualKey, out var current)
-            || !ReferenceEquals(key, current)) return;
-        if (!TargetWindowExists(key.Target))
-        {
-            RemoveHandoff(key);
-            return;
         }
-        if (CanUseTarget(key.Target) && GetForegroundWindow() == key.Target.Handle
-            && SendKey(key, down: false))
+        return CallNextHookEx(keyboardHook, code, message, dataPointer);
+    }
+
+    private static bool IsModifierDown() =>
+        IsKeyDown(0x11) || IsKeyDown(0x12) || IsKeyDown(0x5B) || IsKeyDown(0x5C);
+
+    private static bool IsKeyDown(int virtualKey) => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+
+    private static bool ActivateWindowBehindOverlay(nint game, nint overlay)
+    {
+        _ = ShowWindow(game, SwRestore);
+        _ = ShowWindow(overlay, SwRestore);
+        _ = SetWindowPos(overlay, HwndTopmost, 0, 0, 0, 0,
+            SwpNoMove | SwpNoSize | SwpNoActivate | SwpShowWindow);
+        _ = SetWindowPos(game, HwndTop, 0, 0, 0, 0,
+            SwpNoMove | SwpNoSize | SwpShowWindow);
+
+        var currentThread = GetCurrentThreadId();
+        var foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), out _);
+        var gameThread = GetWindowThreadProcessId(game, out _);
+        var attachedForeground = currentThread != foregroundThread
+            && AttachThreadInput(currentThread, foregroundThread, true);
+        var attachedGame = currentThread != gameThread
+            && AttachThreadInput(currentThread, gameThread, true);
+        try
         {
-            RemoveHandoff(key);
-            return;
+            _ = BringWindowToTop(game);
+            _ = SetActiveWindow(game);
+            _ = SetFocus(game);
+            _ = SetForegroundWindow(game);
         }
-        MoveToPendingRelease(key);
-    }
-
-    private void ActivateVision()
-    {
-        RetireActiveHandoffs();
-        // The selected game owns the input queue. Join it only for this
-        // user-requested focus change, then detach immediately.
-        var gameThread = GetWindowThreadProcessId(target!.Handle, out _);
-        var thread = GetCurrentThreadId();
-        var attached = thread != gameThread && AttachThreadInput(thread, gameThread, true);
-        try { _ = SetForegroundWindow(ownerHandle); }
-        finally { if (attached) _ = AttachThreadInput(thread, gameThread, false); }
-    }
-
-    private static bool IsDown(int key) => (GetAsyncKeyState(key) & 0x8000) != 0;
-
-    private static bool SendKey(HandoffKey key, bool down)
-    {
-        NativeInput[] inputs = [new()
+        finally
         {
-            Type = 1,
-            Data = new InputUnion
-            {
-                Keyboard = new KeyboardInput
-                {
-                    ScanCode = key.ScanCode,
-                    Flags = 0x0008u | (key.Extended ? 1u : 0u) | (down ? 0u : 2u),
-                    ExtraInfo = InjectionTag
-                }
-            }
-        }];
-        return SendInput(1, inputs, Marshal.SizeOf<NativeInput>()) == 1;
-    }
-
-    private bool RemoveHandoff(HandoffKey key)
-    {
-        if (!handoffKeys.TryGetValue(key.VirtualKey, out var current)
-            || !ReferenceEquals(key, current)) return false;
-        handoffKeys.Remove(key.VirtualKey);
-        handoffState.Release(key.VirtualKey);
-        return true;
-    }
-
-    private void MoveToPendingRelease(HandoffKey key)
-    {
-        if (!handoffKeys.TryGetValue(key.VirtualKey, out var current)
-            || !ReferenceEquals(key, current)) return;
-        handoffKeys.Remove(key.VirtualKey);
-        handoffState.Release(key.VirtualKey);
-        key.Released = true;
-        pendingReleases[(key.Target.Handle, key.Target.ProcessId,
-            key.Target.Generation, key.VirtualKey)] = key;
-    }
-
-    private void FlushPendingReleasesForForeground()
-    {
-        var foreground = GetForegroundWindow();
-        foreach (var item in pendingReleases.ToArray())
-        {
-            var key = item.Value;
-            if (!TargetWindowExists(key.Target))
-            {
-                pendingReleases.Remove(item.Key);
-                continue;
-            }
-            if (!key.Injected || !key.Released || foreground != key.Target.Handle) continue;
-            if (SendKey(key, down: false)) pendingReleases.Remove(item.Key);
+            if (attachedGame) _ = AttachThreadInput(currentThread, gameThread, false);
+            if (attachedForeground) _ = AttachThreadInput(currentThread, foregroundThread, false);
         }
+        _ = SetWindowPos(overlay, HwndTopmost, 0, 0, 0, 0,
+            SwpNoMove | SwpNoSize | SwpNoActivate | SwpShowWindow);
+        return GetForegroundWindow() == game;
     }
 
-    private static bool TargetWindowExists(NormalGameInputTarget identity)
+    private static bool ActivateWindow(nint window)
     {
-        if (!IsWindow(identity.Handle)) return false;
-        _ = GetWindowThreadProcessId(identity.Handle, out var processId);
-        return processId == identity.ProcessId;
-    }
-
-    private void RetireActiveHandoffs()
-    {
-        var foreground = GetForegroundWindow();
-        foreach (var key in handoffKeys.Values.ToArray())
+        _ = ShowWindow(window, SwRestore);
+        var currentThread = GetCurrentThreadId();
+        var foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), out _);
+        var attached = currentThread != foregroundThread
+            && AttachThreadInput(currentThread, foregroundThread, true);
+        try
         {
-            if (!key.Injected || !TargetWindowExists(key.Target))
-            {
-                handoffKeys.Remove(key.VirtualKey);
-                continue;
-            }
-            key.Released = true;
-            if (foreground == key.Target.Handle && SendKey(key, down: false))
-            {
-                handoffKeys.Remove(key.VirtualKey);
-                continue;
-            }
-            pendingReleases[(key.Target.Handle, key.Target.ProcessId,
-                key.Target.Generation, key.VirtualKey)] = key;
-            handoffKeys.Remove(key.VirtualKey);
+            _ = BringWindowToTop(window);
+            _ = SetActiveWindow(window);
+            _ = SetFocus(window);
+            _ = SetForegroundWindow(window);
         }
-        handoffState.ReleaseAll();
-    }
-
-    private void EndPresentation(int? expectedGeneration = null)
-    {
-        if (expectedGeneration is { } expected && expected != focusGeneration) return;
-        RetireActiveHandoffs();
-        focusGeneration++;
-        focusTransfer = null;
-        presenting = false;
-        owner.Topmost = false;
-        // A foreign foreground cannot safely receive synthetic releases meant
-        // for Unity. Retired injected keys remain target-bound until that exact
-        // window returns or disappears.
-        FlushPendingReleasesForForeground();
-    }
-
-    private void RaisePresentation()
-    {
-        owner.Topmost = true;
-        _ = SetWindowPos(ownerHandle, new nint(-1), 0, 0, 0, 0, 0x0013);
+        finally
+        {
+            if (attached) _ = AttachThreadInput(currentThread, foregroundThread, false);
+        }
+        return GetForegroundWindow() == window;
     }
 
     public void Dispose()
     {
         if (disposed) return;
         monitor.Stop();
-        RetireActiveHandoffs();
-        disposed = true;
-        if (mouseSource is not null)
+        shortcutState.Clear();
+        if (overlayActive) ExitOverlay(activateOwner: false);
+        if (keyboardHook != 0)
         {
-            mouseSource.RemoveHook(OnWindowMessage);
-            RawInputDevice[] devices = [new() { UsagePage = 1, Usage = 2, Flags = 1 }]; // RIDEV_REMOVE
-            _ = RegisterRawInputDevices(devices, 1, (uint)Marshal.SizeOf<RawInputDevice>());
-            mouseSource = null;
+            _ = UnhookWindowsHookEx(keyboardHook);
+            keyboardHook = 0;
         }
-        if (hook != 0) _ = UnhookWindowsHookEx(hook);
-        hook = 0;
-        shortcuts.Clear();
-        EndPresentation();
+        target = null;
+        disposed = true;
     }
 
-    private delegate nint KeyboardHook(int code, nint message, nint data);
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly struct LowLevelKeyboardData
+    {
+        internal readonly uint VirtualKey;
+        internal readonly uint ScanCode;
+        internal readonly uint Flags;
+        internal readonly uint Time;
+        internal readonly nuint ExtraInfo;
+    }
+
+    private delegate nint LowLevelKeyboardProc(int code, nint message, nint data);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint { internal int X, Y; }
     [StructLayout(LayoutKind.Sequential)]
-    private struct RawInputDevice { internal ushort UsagePage, Usage; internal uint Flags; internal nint Target; }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RawInputHeader { internal uint Type, Size; internal nint Device; internal nuint WParam; }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RawMouse
-    {
-        internal ushort Flags;
-        internal uint Buttons, RawButtons;
-        internal int X, Y;
-        internal uint Extra;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RawMouseInput { internal RawInputHeader Header; internal RawMouse Mouse; }
-    [DllImport("user32.dll", SetLastError = true)]
+    private struct NativeRect { internal int Left, Top, Right, Bottom; }
+
+    [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool RegisterRawInputDevices([In] RawInputDevice[] devices, uint count, uint size);
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern uint GetRawInputData(nint handle, uint command, out RawMouseInput data, ref uint size, uint headerSize);
+    private static extern bool GetClipCursor(out NativeRect rect);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ClipCursor(nint rect);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(nint window, out NativeRect rect);
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetCursorPos(out NativePoint point);
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetCursorPos(int x, int y);
-    [StructLayout(LayoutKind.Sequential)]
-    private struct KeyboardData
-    {
-        internal uint VirtualKey, ScanCode, Flags, Time;
-        internal nuint ExtraInfo;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativeInput { internal uint Type; internal InputUnion Data; }
-    [StructLayout(LayoutKind.Explicit)]
-    private struct InputUnion
-    {
-        [FieldOffset(0)] internal MouseInput Mouse;
-        [FieldOffset(0)] internal KeyboardInput Keyboard;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MouseInput
-    {
-        internal int X, Y;
-        internal uint MouseData, Flags, Time;
-        internal nuint ExtraInfo;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct KeyboardInput
-    {
-        internal ushort VirtualKey, ScanCode;
-        internal uint Flags, Time;
-        internal nuint ExtraInfo;
-    }
+
     [DllImport("user32.dll", SetLastError = true)]
-    private static extern nint SetWindowsHookEx(int id, KeyboardHook callback, nint module, uint thread);
-    [DllImport("user32.dll")]
+    private static extern nint SetWindowsHookEx(int hook, LowLevelKeyboardProc callback, nint module, uint threadId);
+    [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool UnhookWindowsHookEx(nint hook);
     [DllImport("user32.dll")]
     private static extern nint CallNextHookEx(nint hook, int code, nint message, nint data);
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
-    private static extern nint GetModuleHandle(string? name);
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
     [DllImport("user32.dll")]
@@ -593,7 +425,24 @@ internal sealed class WindowsNormalGameInput : IDisposable
     private static extern bool SetForegroundWindow(nint window);
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetWindowPos(nint window, nint after, int x, int y, int width, int height, uint flags);
+    private static extern bool BringWindowToTop(nint window);
+    [DllImport("user32.dll")]
+    private static extern nint SetActiveWindow(nint window);
+    [DllImport("user32.dll")]
+    private static extern nint SetFocus(nint window);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(nint window, int command);
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(nint window, nint insertAfter, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    private static extern nint GetWindowLongPtr(nint window, int index);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+    private static extern nint SetWindowLongPtr(nint window, int index, nint value);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AttachThreadInput(uint attach, uint attachTo, [MarshalAs(UnmanagedType.Bool)] bool value);
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindow(nint window);
@@ -601,16 +450,11 @@ internal sealed class WindowsNormalGameInput : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsIconic(nint window);
     [DllImport("user32.dll")]
-    private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
+    private static extern uint GetWindowThreadProcessId(nint window, out int processId);
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool AttachThreadInput(uint thread, uint otherThread, [MarshalAs(UnmanagedType.Bool)] bool attach);
-    [DllImport("user32.dll")]
-    private static extern short GetAsyncKeyState(int key);
-    [DllImport("user32.dll")]
-    private static extern uint MapVirtualKey(uint code, uint mapType);
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern uint SendInput(uint count, [In] NativeInput[] inputs, int size);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern nint GetModuleHandle(string? moduleName);
+    [DllImport("kernel32.dll")]
+    private static extern void SetLastError(uint error);
 }

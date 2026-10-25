@@ -34,5 +34,11 @@ Invoke-Dotnet publish "$root/src/HollowKnightVision.Windows.Host/HollowKnightVis
 Invoke-Dotnet publish "$root/src/HollowKnightVision.Windows.App/HollowKnightVision.Windows.App.csproj" `
   -c $configuration -r win-x64 --self-contained true -o "$root/artifacts/app-win-x64"
 
+& "$root/install-app-windows.ps1" -SourceDirectory "$root/artifacts/app-win-x64"
+if ($LASTEXITCODE -ne 0) {
+  throw "Hollow Knight Vision installation failed with exit code $LASTEXITCODE"
+}
+
 Write-Host "Windows host: $root/artifacts/win-x64/HollowKnightVision.Windows.Host.exe"
 Write-Host "Windows lab:  $root/artifacts/app-win-x64/HollowKnightVision.Windows.exe"
+Write-Host "Start Menu installation updated and verified."

@@ -1,11 +1,17 @@
 # Hollow Knight Vision Windows lab
 
 This is the native Windows host and desktop lab for Hollow Knight Vision. It
-builds without Apple frameworks and keeps capture, atlas, inference, dataset
-export, and training on CPU.
+builds without Apple frameworks. NVIDIA CUDA accelerates ground-patch matching;
+capture, atlas composition, ONNX inference, dataset export, and training remain
+on CPU. A missing or failed CUDA device falls back to CPU without claiming GPU use.
 
 Implemented now:
 
+- GPU patch scoring shared by the live camera and ground-feature tracker, with
+  CPU pose acceptance and a 192-pixel maximum recovery radius. Small searches
+  stay on CPU to avoid dispatch overhead. No CUDA toolkit is needed at runtime.
+- Actual device, camera backend, completed dispatch count, timing, and fallback
+  reason at `%LOCALAPPDATA%\HollowKnightVision\diagnostics\tracking-gpu.json`.
 - Win32 Hollow Knight process/window discovery.
 - CPU target-window capture via `PrintWindow` into owned BGRA pixels. Failed
   captures never fall back to desktop pixels that could contain Vision itself.
@@ -14,6 +20,10 @@ Implemented now:
 - Deterministic center crop and bilinear normalization to the existing 640×360
   vision contract.
 - A one-frame latest-only slot so capture cannot create an unbounded queue.
+- Ordered tracking positions advance the live view even when analysis trails
+  capture; position updates never replace the newest displayed pixels.
+- Gameplay atlas overlaps use the newest unmasked pixel, including black, without
+  temporal voting or blending. Restored atlases use the same overwrite rule.
 - A portable protocol v1/v2 TCP client for complete input state, capability
   negotiation, acknowledgements, and Hacker camera ground truth.
 - Persistent semantic-ground approval, including stable-line evidence and
@@ -53,7 +63,11 @@ Build on Windows with .NET 8 or newer:
 The resulting CLI host is
 `artifacts/win-x64/HollowKnightVision.Windows.Host.exe`. The desktop lab is
 `artifacts/app-win-x64/HollowKnightVision.Windows.exe`. Both are self-contained;
-the published executables do not require a separate .NET installation.
+the published executables do not require a separate .NET installation. A
+successful `build-windows.ps1` also installs and hash-verifies the desktop app
+at `%LOCALAPPDATA%\Programs\Hollow Knight Vision` and refreshes its Start Menu
+shortcut. The build fails instead of leaving that installed copy stale; close
+the installed app before building.
 
 Parity verification is tracked in `mac-parity-audit.json`. Run
 `./Test-MacParity.ps1` for the complete Mac source/test inventory and remaining
@@ -376,17 +390,17 @@ copy before launching the matching executable. Normal requires an unmodified
 installation; Modded requires both the Modding API loader and Vision receiver.
 
 Normal mode supports keyboard play without a receiver or virtual device driver.
-The first gameplay key gives Hollow Knight Windows keyboard focus while Vision
-stays visible above it. Moving the mouse returns focus and the pointer to Vision,
-so the stock game's cursor lock cannot trap navigation. Startup and local
-shortcuts do not automatically hand focus back to the game.
-G/L/S/M/H/O/K remain Vision shortcuts; switching to Label, Stencil, Model,
+In Gameplay, Hollow Knight owns Windows keyboard focus while Vision stays above
+it as a non-activating window. Vision releases the game's cursor confinement and
+preserves the pointer position during activation, so its buttons remain reachable
+while the game receives keyboard holds and chords. Confinement is released only
+while this game's overlay is active; other foreground applications are unaffected.
+G/L/S/M/H/O/K and 1-4 remain Vision shortcuts; switching to Label, Stencil, Model,
 Settings, or a text field gives Vision its own input. The label editor retains
 1-4, R, Ctrl+Z, and X; holding X while leaving an editor does not attack in the
 game. Switching to another application ends the foreground presentation.
-After clicking Vision's game view, the first gameplay key transfers focus and
-replays that press; subsequent keys reach the stock game directly. Run Vision
-and Hollow Knight at the same Windows privilege level for native input.
+Returning to Gameplay restores game focus behind Vision. Run Vision and Hollow
+Knight at the same Windows privilege level for native input.
 
 In Settings, select **Auto Save → Delete** to clear the current atlas after
 confirmation. Auto Save remains available for fresh captures. Capture and pending
@@ -521,9 +535,20 @@ view's center rather than the mouse. Clicking Current restores its default zoom.
 Gameplay Fit is applied on request or window resize, not when atlas bounds grow;
 unrecognized cutscene frames retain the last live placement. Free Fly uses plain
 left-drag to pan and the wheel to zoom.
-Capture, normalization, diagnostics, and CI need no GPU. Windows Graphics Capture remains
-the planned high-frame-rate backend; that backend will normally use a GPU copy
-path, while the current analysis, inference, and training code is CPU-only.
+Ground Features is enabled when the dashboard opens. Confirmed persistent and
+global-match cells use the same purple review rectangles as Mac; live ground,
+occlusion, and depth-error cells retain the shared green, orange, and red
+palette. Candidate cells remain hidden.
+
+The widened 192-pixel production ground-patch search uses deterministic
+multicore CPU evaluation on Windows and retains a scalar fallback. The smaller
+edge/kernel preprocessing remains scalar automatically because dispatch overhead
+usually costs more than it saves. This ports the latest Mac tracking behavior
+and measurement seams, but it does not claim Apple Metal or NVIDIA execution.
+Set `HKV_WINDOWS_COMPUTE_BENCHMARK=1` while running the core tests to print
+scalar/parallel medians. Capture, normalization, ONNX inference, and training
+remain CPU-only. Windows Graphics Capture is still the planned high-frame-rate
+capture backend and would normally use a GPU copy path.
 
 Diagnose visual camera motion without receiver telemetry or launching the game:
 

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:local="clr-namespace:HollowKnightVision.Windows.App"
-        Title="" Height="760" Width="1100" MinHeight="560" MinWidth="720" WindowStartupLocation="Manual"
+        Title="Hollow Knight Vision" Height="760" Width="1100" MinHeight="560" MinWidth="720" WindowStartupLocation="Manual"
         WindowStyle="None" ResizeMode="CanResize" Background="#03070A" Foreground="#ECECEC" FontFamily="Segoe UI">
     <shell:WindowChrome.WindowChrome>
         <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" UseAeroCaptionButtons="False"/>
@@ -98,7 +98,7 @@
                     </Canvas>
                     <StackPanel x:Name="GameplayPlaceholder" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <TextBlock Text="⌖" FontSize="34" Foreground="#CC00FFFF" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Starting live atlas…" FontSize="13" Foreground="#999999" Margin="0,7,0,0"/>
+                        <TextBlock Text="Waiting for Hollow Knight…" FontSize="13" Foreground="#999999" Margin="0,7,0,0"/>
                     </StackPanel>
                     <Border x:Name="VisionStatusOverlay" Visibility="Collapsed" VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="10" Padding="10,6"
                             CornerRadius="0" Background="#A0000000">
@@ -404,7 +404,7 @@
                     <CheckBox x:Name="StencilDetectionCheck" Content="Stencil Detection" Margin="0,0,0,10"/>
                     <TextBlock x:Name="StencilLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
                     <Separator Margin="0,0,0,10"/>
-                    <CheckBox x:Name="GroundFeaturesCheck" Content="Ground Features" Margin="0,0,0,10"/>
+                    <CheckBox x:Name="GroundFeaturesCheck" Content="Ground Features" Margin="0,0,0,10" IsChecked="True"/>
                     <CheckBox x:Name="TransitionsCheck" Content="Transitions" Margin="0,0,0,10"/>
                     <CheckBox x:Name="CoarseMotionCheck" Content="Coarse Motion Overlay"/>
 

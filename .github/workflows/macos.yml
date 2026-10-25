@@ -18,12 +18,25 @@ jobs:
         run: swift test --package-path macos --enable-code-coverage --skip MenuStencilTests
       - name: Upload measured Swift coverage
         if: always()
+        run: |
+          mkdir -p coverage
+          coverage_json="$(swift test --package-path macos --enable-code-coverage --show-codecov-path)"
+          test -s "$coverage_json"
+          cp "$coverage_json" coverage/swift-coverage.json
+          python3 macos/report-gpu-coverage.py coverage/swift-coverage.json coverage/gpu-coverage.json
+      - name: Publish measured Swift coverage
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: HollowKnightVision-macOS-coverage
-          path: macos/.build/**/codecov/**
-          if-no-files-found: warn
+          path: coverage/
+          if-no-files-found: error
       - name: Python unit tests
         run: |
           python3 macos/test-analyze-input-paths.py
           python3 macos/test-camera-diagnostics.py
+          python3 macos/test-report-gpu-coverage.py
+      - name: Build macOS app bundle
+        env:
+          HKV_CODE_SIGN_IDENTITY: "-"
+        run: macos/build-app.sh --package-only

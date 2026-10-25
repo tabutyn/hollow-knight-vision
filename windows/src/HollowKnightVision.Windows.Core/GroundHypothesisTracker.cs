@@ -282,7 +282,7 @@ public sealed class GroundHypothesisTracker
         public bool Verified { get; set; }
     }
 
-    private readonly GroundCameraSolver cameraSolver = new();
+    private readonly GroundCameraSolver cameraSolver;
     private readonly GroundLinePresence linePresence;
     private readonly bool backgroundGlobalSearch;
     private readonly Action? beforeBackgroundGlobalSearch;
@@ -319,10 +319,12 @@ public sealed class GroundHypothesisTracker
     public GroundHypothesisTracker(
         double minimumObservationSeconds = 2,
         bool backgroundGlobalSearch = false,
-        double confirmedLossGraceSeconds = 0)
+        double confirmedLossGraceSeconds = 0,
+        bool productionCameraSolver = false)
         : this(minimumObservationSeconds, backgroundGlobalSearch,
             confirmedLossGraceSeconds, beforeBackgroundGlobalSearch: null,
-            backgroundGlobalSearchCompleted: null)
+            backgroundGlobalSearchCompleted: null,
+            productionCameraSolver: productionCameraSolver)
     {
     }
 
@@ -332,14 +334,41 @@ public sealed class GroundHypothesisTracker
         double confirmedLossGraceSeconds,
         Action? beforeBackgroundGlobalSearch,
         Action<AtlasPoint?>? backgroundGlobalSearchCompleted)
+        : this(
+            minimumObservationSeconds,
+            backgroundGlobalSearch,
+            confirmedLossGraceSeconds,
+            beforeBackgroundGlobalSearch,
+            backgroundGlobalSearchCompleted,
+            productionCameraSolver: false)
+    {
+    }
+
+    internal GroundHypothesisTracker(
+        double minimumObservationSeconds,
+        bool backgroundGlobalSearch,
+        double confirmedLossGraceSeconds,
+        Action? beforeBackgroundGlobalSearch,
+        Action<AtlasPoint?>? backgroundGlobalSearchCompleted,
+        bool productionCameraSolver)
     {
         this.backgroundGlobalSearch = backgroundGlobalSearch;
         this.beforeBackgroundGlobalSearch = beforeBackgroundGlobalSearch;
         this.backgroundGlobalSearchCompleted = backgroundGlobalSearchCompleted;
+        cameraSolver = productionCameraSolver
+            ? new GroundCameraSolver(
+                keyframeSubpixelEnabled: true,
+                calibratedMotionEnabled: true,
+                matcherBackend: GroundComputeBackend.Automatic,
+                maximumLocalSearchRadius: 192)
+            : new GroundCameraSolver();
         linePresence = new GroundLinePresence(
             minimumObservationSeconds,
             confirmedLossGraceSeconds);
     }
+
+    public GroundPatchSearchExecution? LatestPatchSearchExecution =>
+        cameraSolver.LastPatchSearchExecution;
 
     public IReadOnlyList<CleanFloorLine> LatestStabilizedFloorLines =>
         latestStabilizedFloorLines;

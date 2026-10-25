@@ -278,7 +278,7 @@ final class LiveAtlasPipeline {
             anchorPosition: anchor,
             sourceProvider: { [weak sourceProviderBox] in sourceProviderBox?.source(for: $0) },
             sourceCacheLimit: loadedSession == nil ? 512 : 12,
-            pixelPolicy: .temporalAgreement
+            pixelPolicy: .newestOpaque
         )
         self.sourceProviderBox = sourceProviderBox
         activeWorldRootURL = worldRootURL?.standardizedFileURL

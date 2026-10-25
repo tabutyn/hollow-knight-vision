@@ -207,7 +207,7 @@ final class LiveAtlasPipelineTests: XCTestCase {
         XCTAssertLessThan(pixel.blue, 80)
     }
 
-    func testGameplayAtlasUsesTemporalAgreementInsteadOfBrightestPixel() throws {
+    func testGameplayAtlasUsesNewestPixelImmediately() throws {
         let context = CIContext(options: [.useSoftwareRenderer: true])
         let pipeline = LiveAtlasPipeline(
             context: context,
@@ -229,7 +229,7 @@ final class LiveAtlasPipelineTests: XCTestCase {
             timestamp: 1, observationPoseTimestamp: 1, hasGameplaySignal: true,
             submittedAt: 1
         ))
-        for timestamp in [2.0, 2.1, 2.2] {
+        for timestamp in [1.1] {
             XCTAssertTrue(pipeline.submitAtlasObservation(
                 frame: dark, regions: regions, cameraPosition: .zero, solveWidth: 40,
                 timestamp: timestamp, observationPoseTimestamp: timestamp,

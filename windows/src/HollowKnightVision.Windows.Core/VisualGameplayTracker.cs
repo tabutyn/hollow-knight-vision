@@ -23,7 +23,10 @@ public sealed class VisualGameplayTracker
     };
     private readonly GroundCameraSolver ground = new(
         keyframeSubpixelEnabled: true,
-        calibratedMotionEnabled: true);
+        calibratedMotionEnabled: true,
+        matcherBackend: GroundComputeBackend.Automatic,
+        maximumLocalSearchRadius: 192);
+    public GroundPatchSearchExecution? LastPatchSearchExecution => ground.LastPatchSearchExecution;
     private readonly FreshAtlasBootstrapGate bootstrap = new();
     private readonly TransitionMotionBridge transition = new();
     private readonly GroundPlacementRecovery placement = new();

@@ -766,7 +766,7 @@ struct DashboardView: View {
                     Image(systemName: "viewfinder")
                         .font(.system(size: 34, weight: .light))
                         .foregroundStyle(.cyan.opacity(0.8))
-                    Text(visionText("Starting live atlas…"))
+                    Text(visionText("Waiting for Hollow Knight…"))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }

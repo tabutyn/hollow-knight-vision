@@ -76,4 +76,28 @@ internal static class NormalGameKeyForwarderParityTests
               == NormalGameRelayAction.Pass,
             "Modified game key release was suppressed and could strand state.");
     }
+
+    public static void TestNativeOverlayPassesGameplayAndReservesVisionShortcuts()
+    {
+        var shortcuts = new NormalGameShortcutState();
+        Check(!shortcuts.Handle(0x27, down: true, canIntercept: true, modified: false, out _),
+            "The native overlay swallowed the Right gameplay key.");
+        Check(shortcuts.Handle(0x4C, down: true, canIntercept: true, modified: false, out var invoke)
+              && invoke,
+            "The native overlay did not reserve the Vision L shortcut.");
+        Check(shortcuts.Handle(0x4C, down: true, canIntercept: true, modified: false, out invoke)
+              && !invoke,
+            "A repeated Vision shortcut invoked twice.");
+        Check(shortcuts.Handle(0x4C, down: false, canIntercept: false, modified: false, out invoke)
+              && !invoke,
+            "The reserved shortcut key-up leaked after its workspace transition.");
+        foreach (var key in new[] { 0x31, 0x32, 0x33, 0x34, 0x61, 0x62, 0x63, 0x64 })
+        {
+            Check(NormalGameInputPolicy.IsVisionShortcut(key)
+                  && !NormalGameInputPolicy.IsGameKey(key),
+                $"Vision edit shortcut 0x{key:X} leaked into Hollow Knight.");
+        }
+        Check(!shortcuts.Handle(0x47, down: true, canIntercept: true, modified: true, out _),
+            "A modified Vision key was swallowed instead of preserving the OS shortcut.");
+    }
 }

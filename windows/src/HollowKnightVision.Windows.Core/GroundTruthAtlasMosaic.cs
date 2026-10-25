@@ -16,8 +16,8 @@ public sealed record AtlasMosaicDelta(
 
 /// <summary>
 /// CPU tiled mosaic positioned by receiver camera telemetry. The live frame is
-/// resampled into fixed world pixels. Existing pixels change only after a bounded
-/// window of world-aligned observations reaches temporal color agreement.
+/// resampled into fixed world pixels. The newest unmasked pixel replaces existing
+/// scenery immediately. Temporal agreement is opt-in for diagnostic comparisons.
 /// </summary>
 public sealed class GroundTruthAtlasMosaic
 {
@@ -120,6 +120,8 @@ public sealed class GroundTruthAtlasMosaic
     private readonly object gate = new();
     private readonly Dictionary<AtlasTileCoordinate, Tile> tiles = [];
     private readonly List<TemporalObservation> temporalWindow = [];
+    private readonly Queue<(TemporalContext Context, string Identity)> recentCaptures = new();
+    private readonly LiveTiledAtlasPixelPolicy pixelPolicy;
     private readonly Action? temporalCommitCheckpoint;
     private TemporalContext? temporalContext;
     private int outstandingObservationBufferCount;
@@ -141,7 +143,8 @@ public sealed class GroundTruthAtlasMosaic
         double pixelsPerWorldUnit = 64,
         int tileSize = 256,
         double sourceTopInsetFraction = 0.20,
-        Action? temporalCommitCheckpoint = null)
+        Action? temporalCommitCheckpoint = null,
+        LiveTiledAtlasPixelPolicy pixelPolicy = LiveTiledAtlasPixelPolicy.NewestOpaque)
     {
         if (!double.IsFinite(pixelsPerWorldUnit) || pixelsPerWorldUnit <= 0
             || pixelsPerWorldUnit > 1024)
@@ -158,6 +161,10 @@ public sealed class GroundTruthAtlasMosaic
         TileSize = tileSize;
         SourceTopInsetFraction = sourceTopInsetFraction;
         this.temporalCommitCheckpoint = temporalCommitCheckpoint;
+        if (pixelPolicy is not (LiveTiledAtlasPixelPolicy.NewestOpaque
+            or LiveTiledAtlasPixelPolicy.TemporalAgreement))
+            throw new ArgumentOutOfRangeException(nameof(pixelPolicy));
+        this.pixelPolicy = pixelPolicy;
     }
 
     public double PixelsPerWorldUnit { get; }
@@ -205,6 +212,9 @@ public sealed class GroundTruthAtlasMosaic
             resolvedRoomId,
             captureGeneration,
             telemetry.SessionId);
+        var usesTemporalAgreement = pixelPolicy == LiveTiledAtlasPixelPolicy.TemporalAgreement;
+        if (!usesTemporalAgreement
+            && recentCaptures.Contains((nextContext, resolvedCaptureIdentity))) return true;
         var discontinuity = temporalContext is { } previous && previous != nextContext;
         if (temporalWindow.Count > 0)
         {
@@ -302,7 +312,8 @@ public sealed class GroundTruthAtlasMosaic
         {
             for (var x = 0; x < observation.Width; x++)
             {
-                if (observation.Read(x, y) == 0) continue;
+                var sample = observation.Read(x, y);
+                if (sample == 0) continue;
                 var globalX = observation.GlobalLeft + x;
                 var globalY = observation.GlobalTop + y;
                 var tileX = FloorDivide(globalX, TileSize);
@@ -315,13 +326,16 @@ public sealed class GroundTruthAtlasMosaic
                 staged.Weights[pixelIndex] = weight == ushort.MaxValue
                     ? ushort.MaxValue
                     : checked((ushort)(weight + 1));
+                if (!usesTemporalAgreement)
+                    WriteSample(staged.Pixels, pixelIndex * BgraFrame.BytesPerPixel, sample);
             }
         }
-        ApplyTemporalObservation(observation, nextWindow, stagedTiles);
+        if (usesTemporalAgreement) ApplyTemporalObservation(observation, nextWindow, stagedTiles);
 
         var newTileCount = touched.Count(coordinate => !tiles.ContainsKey(coordinate));
         tiles.EnsureCapacity(checked(tiles.Count + newTileCount));
         temporalWindow.EnsureCapacity(TemporalWindowCapacity);
+        recentCaptures.EnsureCapacity(65);
         var stagedEpoch = mutationEpoch;
         temporalCommitCheckpoint?.Invoke();
         if (mutationEpoch != stagedEpoch) return false;
@@ -331,8 +345,16 @@ public sealed class GroundTruthAtlasMosaic
         acceptedFrameCount = nextAcceptedFrameCount;
         temporalContext = nextContext;
         temporalWindow.Clear();
-        temporalWindow.AddRange(nextWindow);
-        retainedObservation = true;
+        if (usesTemporalAgreement)
+        {
+            temporalWindow.AddRange(nextWindow);
+            retainedObservation = true;
+        }
+        else
+        {
+            recentCaptures.Enqueue((nextContext, resolvedCaptureIdentity));
+            while (recentCaptures.Count > 64) recentCaptures.Dequeue();
+        }
         foreach (var discarded in discardedHistory) ReturnObservation(discarded);
         return true;
         }
@@ -677,6 +699,7 @@ public sealed class GroundTruthAtlasMosaic
 
     private void ClearTemporalWindow()
     {
+        recentCaptures.Clear();
         foreach (var observation in temporalWindow) ReturnObservation(observation);
         temporalWindow.Clear();
     }

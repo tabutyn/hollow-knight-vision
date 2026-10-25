@@ -9,6 +9,17 @@ using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Host;
 
 if (await TrainingProcessTests.TryRunProbeAsync(args)) return;
+if (args.Contains("--gpu-only"))
+{
+    GroundComputeProcessingTests.TestCudaPatchParityAndReuse();
+    GroundComputeProcessingTests.TestCudaFallbackAndInvalidInputs();
+    GroundComputeProcessingTests.TestCudaConcurrentSearches();
+    GroundComputeProcessingTests.TestCudaSolverAcrossMotionSequence();
+    GroundComputeProcessingTests.TestWiderParallelSearchRecoversMotionOutsideFormerRadius();
+    GroundComputeProcessingTests.TestReleaseParallelSearchCapacityBenchmark();
+    Console.WriteLine("GPU tracking regressions passed: 6");
+    return;
+}
 if (args is ["--export-dataset-probe", var probeRoot])
 {
     Console.WriteLine(DatasetExporterTests.CreateTrainerFixture(probeRoot));
@@ -17,6 +28,16 @@ if (args is ["--export-dataset-probe", var probeRoot])
 
 var tests = new List<(string Name, Action Run)>
 {
+    ("CUDA ground patch scores match CPU and reuse resized buffers", GroundComputeProcessingTests.TestCudaPatchParityAndReuse),
+    ("CUDA unavailable and invalid inputs fall back safely", GroundComputeProcessingTests.TestCudaFallbackAndInvalidInputs),
+    ("CUDA concurrent searches do not share mutable results", GroundComputeProcessingTests.TestCudaConcurrentSearches),
+    ("CUDA solver preserves motion and pose admission", GroundComputeProcessingTests.TestCudaSolverAcrossMotionSequence),
+    ("ground parallel image processing matches CPU exactly", GroundComputeProcessingTests.TestParallelGroundImageProcessingMatchesCpuExactly),
+    ("ground parallel patch search matches CPU selection", GroundComputeProcessingTests.TestParallelPatchSearchMatchesCpuSelection),
+    ("ground widened search recovers motion outside former radius", GroundComputeProcessingTests.TestWiderParallelSearchRecoversMotionOutsideFormerRadius),
+    ("ground parallel solver matches CPU across motion sequence", GroundComputeProcessingTests.TestParallelSolverMatchesCpuAcrossMotionSequence),
+    ("ground release parallel search capacity benchmark", GroundComputeProcessingTests.TestReleaseParallelSearchCapacityBenchmark),
+    ("ground release parallel image benchmark", GroundComputeProcessingTests.TestReleaseParallelGroundImageBenchmark),
     ("ground hypothesis overlay omits a duplicate live ground line", GroundHypothesisLocalParityTests.TestFeatureOverlayDoesNotDrawASecondLiveGroundLine),
     ("ground hypothesis overlay omits persistent atlas lines", GroundHypothesisLocalParityTests.TestFeatureOverlayDoesNotPaintPersistentAtlasLineIntoLiveRaster),
     ("ground hypothesis overlay draws an exact rectangular cell", GroundHypothesisLocalParityTests.TestFeatureOverlayDrawsRectangularGroundCell),
@@ -663,6 +684,7 @@ var tests = new List<(string Name, Action Run)>
     ("normal input focus loss drains keys and requires a fresh down", NormalGameKeyForwarderParityTests.TestFocusLossReleasesAllAndRequiresFreshDown),
     ("normal input replacement game cannot inherit held keys", NormalGameKeyForwarderParityTests.TestReplacementGameCannotInheritHeldKeys),
     ("normal input workspace and settings routing matches platform focus", NormalGameKeyForwarderParityTests.TestWorkspaceAndSettingsRouting),
+    ("normal input overlay passes gameplay and reserves Vision shortcuts", NormalGameKeyForwarderParityTests.TestNativeOverlayPassesGameplayAndReservesVisionShortcuts),
     ("ordinary launch always requires mode choice", TestRuntimeModeLaunchPolicy),
     ("gameplay output waits for fresh game capture", TestGameplayOutputGate),
     ("menu framing ignores atlas coordinates", TestGameplayFrameCoordinatePolicy),
@@ -909,7 +931,11 @@ var tests = new List<(string Name, Action Run)>
     ("detection decoder exposes raw candidates", TestDetectionDecoderRaw),
     ("bundled ONNX model loads", TestBundledOnnxModel),
     ("ground truth atlas projects negative world pixels", TestGroundTruthAtlasProjection),
-    ("ground truth atlas reaches temporal agreement", TestGroundTruthAtlasBlend),
+    ("ground truth atlas overwrites with newest pixels", TestGroundTruthAtlasBlend),
+    ("gameplay presentation advances while analysis trails capture", GameplayPresentationTests.TestDelayedAnalysis),
+    ("newest atlas honors masks, black, restore and capture identity", GameplayPresentationTests.TestNewestPixels),
+    ("newest atlas rollback preserves committed pixels", GameplayPresentationTests.TestNewestRollback),
+    ("live atlas default overwrites on the next observation", GameplayPresentationTests.TestLiveAtlasDefault),
     ("ground truth atlas emits dirty tiles and resets", TestGroundTruthAtlasDirtyReset),
     ("ground truth atlas imports restored tile", TestGroundTruthAtlasImport),
     ("live tiled atlas keeps large-world endpoints and stable tile identities", LiveTiledAtlasProductionParityTests.TestLargeWorldKeepsBothEndsAndStableTileIDs),
@@ -947,7 +973,7 @@ var tests = new List<(string Name, Action Run)>
     ("LiveAtlasPipelineTests.testSlowAtlasWorkerDoesNotDelayLatestLivePresentation", LiveAtlasPipelineRemainingParityTests.TestSlowAtlasWorkerDoesNotDelayLatestLivePresentation),
     ("LiveAtlasPipelineTests.testResetInvalidatesActiveTicketBeforeItCanPersistOrPublish", LiveAtlasPipelineRemainingParityTests.TestResetInvalidatesActiveTicketBeforeItCanPersistOrPublish),
     ("LiveAtlasPipelineTests.testResetCancelsPersistedAtlasRestoration", LiveAtlasPipelineRemainingParityTests.TestResetCancelsPersistedAtlasRestoration),
-    ("live atlas gameplay uses temporal agreement instead of brightest pixel", LiveAtlasPipelineRemainingParityTests.TestGameplayAtlasUsesTemporalAgreementInsteadOfBrightestPixel),
+    ("live atlas gameplay uses newest pixel immediately", LiveAtlasPipelineRemainingParityTests.TestGameplayAtlasUsesNewestPixelImmediately),
     ("LiveAtlasPipelineTests.testTransitionBridgeRectangularEdgeMaskPreservesMappedRoom", LiveAtlasPipelineRemainingParityTests.TestTransitionBridgeRectangularEdgeMaskPreservesMappedRoom),
     ("robustness: ground truth temporal agreement deduplicates capture identity", LiveAtlasPipelineRemainingParityTests.TestGroundTruthTemporalAgreementDeduplicatesCaptureIdentity),
     ("robustness: ground truth temporal agreement clears across context discontinuities", LiveAtlasPipelineRemainingParityTests.TestGroundTruthTemporalAgreementClearsAcrossContextDiscontinuities),
@@ -1374,9 +1400,19 @@ static void TestNormalGameInputPolicy()
         True(NormalGameInputPolicy.IsVisionShortcut(key));
         True(!NormalGameInputPolicy.IsGameKey(key));
     }
-    // 1-4 belong to the label editor, while ordinary gameplay bindings and
-    // menu navigation can use Windows' keyboard path without the receiver.
-    foreach (var key in "1234AZXCDIFQ") True(NormalGameInputPolicy.IsGameKey(key));
+    // 1-4 belong to Vision's editors and stay reserved even while Hollow
+    // Knight owns native focus. All other gameplay bindings pass through.
+    foreach (var key in "1234")
+    {
+        True(NormalGameInputPolicy.IsVisionShortcut(key));
+        True(!NormalGameInputPolicy.IsGameKey(key));
+    }
+    foreach (var key in new[] { 0x61, 0x62, 0x63, 0x64 })
+    {
+        True(NormalGameInputPolicy.IsVisionShortcut(key));
+        True(!NormalGameInputPolicy.IsGameKey(key));
+    }
+    foreach (var key in "AZXCDIFQ") True(NormalGameInputPolicy.IsGameKey(key));
     foreach (var key in new[] { 0x25, 0x26, 0x27, 0x28, 0x1B, 0x0D, 0x20 })
         True(NormalGameInputPolicy.IsGameKey(key));
     foreach (var key in new[] { 0x10, 0x11, 0x12, 0x5B, 0x5C })
@@ -7642,7 +7678,21 @@ static void WithTemporaryDirectory(Action<string> run)
     }
     finally
     {
-        Directory.Delete(path, recursive: true);
+        // Antivirus and offloaded-file providers can retain a just-closed lock
+        // file for a few milliseconds. Cleanup is not the behavior under test,
+        // so retry that transient Windows sharing violation within a tight bound.
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                Directory.Delete(path, recursive: true);
+                break;
+            }
+            catch (IOException) when (attempt < 20)
+            {
+                Thread.Sleep(50);
+            }
+        }
     }
 }
 
@@ -8496,9 +8546,9 @@ static void TestGroundTruthAtlasBlend()
         AtlasTelemetry(cameraX: 0, cameraY: 0),
         captureIdentity: "blue-1"));
     True(mosaic.TryReadPixel(0, 0, out var blue, out var green, out var red, out var observations));
-    Equal((byte)0, blue);
+    Equal((byte)200, blue);
     Equal((byte)0, green);
-    Equal((byte)200, red);
+    Equal((byte)0, red);
     Equal((ushort)2, observations);
     Equal(initialRevision + 2, mosaic.Revision);
 
