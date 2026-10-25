@@ -1,0 +1,3993 @@
+{
+  "date": "2026-10-25",
+  "source_revision": "799d853cf430a3ac87b084ea1a8d88ee5bb2d743",
+  "incoming_revision": "f1946e518819161dd8bac5ebc5644c628f4f392e",
+  "toolchain": "Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0",
+  "command": "swift test --package-path macos --enable-code-coverage --skip MenuStencilTests",
+  "scope": "104 instrumented macos/Sources/HollowKnightVision Swift files; test/generated sources and trainer excluded; Metal shader instructions not instrumented",
+  "tests": {
+    "xctest_cases": 822,
+    "xctest_passed": 812,
+    "xctest_skipped": 10,
+    "swift_testing_passed": 1,
+    "failures": 0,
+    "excluded_menu_stencil_tests": 60,
+    "python_passed": 48
+  },
+  "totals": {
+    "lines": {
+      "count": 60048,
+      "covered": 29490,
+      "percent": 49.11071143085532
+    },
+    "functions": {
+      "count": 7349,
+      "covered": 3592,
+      "percent": 48.877398285481014
+    },
+    "regions": {
+      "count": 17849,
+      "covered": 8963,
+      "percent": 50.215698358451455
+    },
+    "branches": {
+      "count": 0,
+      "covered": 0,
+      "percent": null
+    }
+  },
+  "files": [
+    {
+      "file": "macos/Sources/HollowKnightVision/App.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 52,
+          "covered": 4,
+          "percent": 7.6923076923076925
+        },
+        "instantiations": {
+          "count": 52,
+          "covered": 4,
+          "percent": 7.6923076923076925
+        },
+        "lines": {
+          "count": 570,
+          "covered": 33,
+          "percent": 5.7894736842105265
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 152,
+          "covered": 11,
+          "notcovered": 141,
+          "percent": 7.236842105263158
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/AtlasManagerView.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 43,
+          "covered": 0,
+          "percent": 0
+        },
+        "instantiations": {
+          "count": 44,
+          "covered": 0,
+          "percent": 0
+        },
+        "lines": {
+          "count": 371,
+          "covered": 0,
+          "percent": 0
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 57,
+          "covered": 0,
+          "notcovered": 57,
+          "percent": 0
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/AtlasStateStore.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 17,
+          "covered": 12,
+          "percent": 70.58823529411765
+        },
+        "instantiations": {
+          "count": 17,
+          "covered": 12,
+          "percent": 70.58823529411765
+        },
+        "lines": {
+          "count": 145,
+          "covered": 114,
+          "percent": 78.62068965517241
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 79,
+          "covered": 49,
+          "notcovered": 30,
+          "percent": 62.0253164556962
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/BoundedBackgroundSearch.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 13,
+          "covered": 13,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 13,
+          "covered": 13,
+          "percent": 100
+        },
+        "lines": {
+          "count": 63,
+          "covered": 61,
+          "percent": 96.82539682539682
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 24,
+          "covered": 23,
+          "notcovered": 1,
+          "percent": 95.83333333333334
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/CameraSolver.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 29,
+          "covered": 26,
+          "percent": 89.65517241379311
+        },
+        "instantiations": {
+          "count": 29,
+          "covered": 26,
+          "percent": 89.65517241379311
+        },
+        "lines": {
+          "count": 159,
+          "covered": 136,
+          "percent": 85.53459119496856
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 70,
+          "covered": 58,
+          "notcovered": 12,
+          "percent": 82.85714285714286
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/CaptureConfiguration.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 3,
+          "covered": 3,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 3,
+          "covered": 3,
+          "percent": 100
+        },
+        "lines": {
+          "count": 42,
+          "covered": 42,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 8,
+          "covered": 7,
+          "notcovered": 1,
+          "percent": 87.5
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/CaptureFrameConverter.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 1,
+          "covered": 0,
+          "percent": 0
+        },
+        "instantiations": {
+          "count": 1,
+          "covered": 0,
+          "percent": 0
+        },
+        "lines": {
+          "count": 6,
+          "covered": 0,
+          "percent": 0
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 3,
+          "covered": 0,
+          "notcovered": 3,
+          "percent": 0
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/FeatureCorrectionPolicy.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 11,
+          "covered": 11,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 11,
+          "covered": 11,
+          "percent": 100
+        },
+        "lines": {
+          "count": 49,
+          "covered": 49,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 21,
+          "covered": 18,
+          "notcovered": 3,
+          "percent": 85.71428571428571
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/FeatureRefinementCoordinator.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 20,
+          "covered": 15,
+          "percent": 75
+        },
+        "instantiations": {
+          "count": 20,
+          "covered": 15,
+          "percent": 75
+        },
+        "lines": {
+          "count": 130,
+          "covered": 79,
+          "percent": 60.76923076923077
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 53,
+          "covered": 36,
+          "notcovered": 17,
+          "percent": 67.9245283018868
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/FramePipelineTelemetry.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 11,
+          "covered": 11,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 11,
+          "covered": 11,
+          "percent": 100
+        },
+        "lines": {
+          "count": 35,
+          "covered": 35,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 18,
+          "covered": 18,
+          "notcovered": 0,
+          "percent": 100
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/FramePresentation.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 4,
+          "covered": 2,
+          "percent": 50
+        },
+        "instantiations": {
+          "count": 4,
+          "covered": 2,
+          "percent": 50
+        },
+        "lines": {
+          "count": 34,
+          "covered": 24,
+          "percent": 70.58823529411765
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 11,
+          "covered": 8,
+          "notcovered": 3,
+          "percent": 72.72727272727273
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GameControlForwarder.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 246,
+          "covered": 10,
+          "percent": 4.0650406504065035
+        },
+        "instantiations": {
+          "count": 248,
+          "covered": 10,
+          "percent": 4.032258064516129
+        },
+        "lines": {
+          "count": 2013,
+          "covered": 96,
+          "percent": 4.769001490312966
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 660,
+          "covered": 50,
+          "notcovered": 610,
+          "percent": 7.575757575757576
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GameStartupDetector.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 34,
+          "covered": 30,
+          "percent": 88.23529411764706
+        },
+        "instantiations": {
+          "count": 34,
+          "covered": 30,
+          "percent": 88.23529411764706
+        },
+        "lines": {
+          "count": 336,
+          "covered": 304,
+          "percent": 90.47619047619048
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 147,
+          "covered": 121,
+          "notcovered": 26,
+          "percent": 82.31292517006803
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GameWindowSelection.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 3,
+          "covered": 3,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 3,
+          "covered": 3,
+          "percent": 100
+        },
+        "lines": {
+          "count": 13,
+          "covered": 13,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 5,
+          "covered": 5,
+          "notcovered": 0,
+          "percent": 100
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GlobalFeatureMatcher.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 140,
+          "covered": 135,
+          "percent": 96.42857142857143
+        },
+        "instantiations": {
+          "count": 142,
+          "covered": 137,
+          "percent": 96.47887323943662
+        },
+        "lines": {
+          "count": 604,
+          "covered": 592,
+          "percent": 98.01324503311258
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 298,
+          "covered": 271,
+          "notcovered": 27,
+          "percent": 90.93959731543623
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundAtlasFootprint.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 1,
+          "covered": 1,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 1,
+          "covered": 1,
+          "percent": 100
+        },
+        "lines": {
+          "count": 28,
+          "covered": 28,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 19,
+          "covered": 16,
+          "notcovered": 3,
+          "percent": 84.21052631578947
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundCameraSolver.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 165,
+          "covered": 127,
+          "percent": 76.96969696969697
+        },
+        "instantiations": {
+          "count": 165,
+          "covered": 127,
+          "percent": 76.96969696969697
+        },
+        "lines": {
+          "count": 1214,
+          "covered": 1118,
+          "percent": 92.09225700164745
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 349,
+          "covered": 267,
+          "notcovered": 82,
+          "percent": 76.50429799426934
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundFeatureEligibility.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 18,
+          "covered": 18,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 18,
+          "covered": 18,
+          "percent": 100
+        },
+        "lines": {
+          "count": 130,
+          "covered": 126,
+          "percent": 96.92307692307692
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 48,
+          "covered": 40,
+          "notcovered": 8,
+          "percent": 83.33333333333334
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundFeatureWindow.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 91,
+          "covered": 14,
+          "percent": 15.384615384615385
+        },
+        "instantiations": {
+          "count": 91,
+          "covered": 14,
+          "percent": 15.384615384615385
+        },
+        "lines": {
+          "count": 621,
+          "covered": 85,
+          "percent": 13.687600644122384
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 160,
+          "covered": 32,
+          "notcovered": 128,
+          "percent": 20
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundFrameAudit.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 21,
+          "covered": 0,
+          "percent": 0
+        },
+        "instantiations": {
+          "count": 21,
+          "covered": 0,
+          "percent": 0
+        },
+        "lines": {
+          "count": 125,
+          "covered": 0,
+          "percent": 0
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 35,
+          "covered": 0,
+          "notcovered": 35,
+          "percent": 0
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundGlobalCorrectionPolicy.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 5,
+          "covered": 5,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 5,
+          "covered": 5,
+          "percent": 100
+        },
+        "lines": {
+          "count": 47,
+          "covered": 47,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 22,
+          "covered": 22,
+          "notcovered": 0,
+          "percent": 100
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundHypothesisTracker.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 546,
+          "covered": 412,
+          "percent": 75.45787545787546
+        },
+        "instantiations": {
+          "count": 548,
+          "covered": 413,
+          "percent": 75.36496350364963
+        },
+        "lines": {
+          "count": 4139,
+          "covered": 3691,
+          "percent": 89.1761294998792
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 1316,
+          "covered": 999,
+          "notcovered": 317,
+          "percent": 75.91185410334347
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundLabelDataset.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 41,
+          "covered": 38,
+          "percent": 92.6829268292683
+        },
+        "instantiations": {
+          "count": 41,
+          "covered": 38,
+          "percent": 92.6829268292683
+        },
+        "lines": {
+          "count": 154,
+          "covered": 143,
+          "percent": 92.85714285714286
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 92,
+          "covered": 79,
+          "notcovered": 13,
+          "percent": 85.86956521739131
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundLabelEvaluator.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 65,
+          "covered": 49,
+          "percent": 75.38461538461539
+        },
+        "instantiations": {
+          "count": 65,
+          "covered": 49,
+          "percent": 75.38461538461539
+        },
+        "lines": {
+          "count": 324,
+          "covered": 255,
+          "percent": 78.70370370370371
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 161,
+          "covered": 117,
+          "notcovered": 44,
+          "percent": 72.67080745341616
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundLineDetector.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 117,
+          "covered": 107,
+          "percent": 91.45299145299145
+        },
+        "instantiations": {
+          "count": 117,
+          "covered": 107,
+          "percent": 91.45299145299145
+        },
+        "lines": {
+          "count": 1043,
+          "covered": 999,
+          "percent": 95.78139980824545
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 310,
+          "covered": 256,
+          "notcovered": 54,
+          "percent": 82.58064516129032
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundLinePresence.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 31,
+          "covered": 31,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 31,
+          "covered": 31,
+          "percent": 100
+        },
+        "lines": {
+          "count": 177,
+          "covered": 177,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 88,
+          "covered": 87,
+          "notcovered": 1,
+          "percent": 98.86363636363636
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundMetalProcessing.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 34,
+          "covered": 32,
+          "percent": 94.11764705882352
+        },
+        "instantiations": {
+          "count": 34,
+          "covered": 32,
+          "percent": 94.11764705882352
+        },
+        "lines": {
+          "count": 542,
+          "covered": 532,
+          "percent": 98.1549815498155
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 144,
+          "covered": 122,
+          "notcovered": 22,
+          "percent": 84.72222222222221
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundPixels.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 3,
+          "covered": 3,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 3,
+          "covered": 3,
+          "percent": 100
+        },
+        "lines": {
+          "count": 31,
+          "covered": 31,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 11,
+          "covered": 9,
+          "notcovered": 2,
+          "percent": 81.81818181818183
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundPlacementRecovery.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 18,
+          "covered": 16,
+          "percent": 88.88888888888889
+        },
+        "instantiations": {
+          "count": 18,
+          "covered": 16,
+          "percent": 88.88888888888889
+        },
+        "lines": {
+          "count": 103,
+          "covered": 99,
+          "percent": 96.11650485436894
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 45,
+          "covered": 36,
+          "notcovered": 9,
+          "percent": 80
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundPoseRefinementSearch.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 4,
+          "covered": 4,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 4,
+          "covered": 4,
+          "percent": 100
+        },
+        "lines": {
+          "count": 46,
+          "covered": 45,
+          "percent": 97.82608695652173
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 20,
+          "covered": 19,
+          "notcovered": 1,
+          "percent": 95
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundReferenceTracker.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 30,
+          "covered": 19,
+          "percent": 63.33333333333333
+        },
+        "instantiations": {
+          "count": 30,
+          "covered": 19,
+          "percent": 63.33333333333333
+        },
+        "lines": {
+          "count": 247,
+          "covered": 206,
+          "percent": 83.40080971659918
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 66,
+          "covered": 41,
+          "notcovered": 25,
+          "percent": 62.121212121212125
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundSemanticAtlas.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 17,
+          "covered": 16,
+          "percent": 94.11764705882352
+        },
+        "instantiations": {
+          "count": 17,
+          "covered": 16,
+          "percent": 94.11764705882352
+        },
+        "lines": {
+          "count": 109,
+          "covered": 106,
+          "percent": 97.24770642201835
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 31,
+          "covered": 29,
+          "notcovered": 2,
+          "percent": 93.54838709677419
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundSubpixelRegistration.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 20,
+          "covered": 20,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 20,
+          "covered": 20,
+          "percent": 100
+        },
+        "lines": {
+          "count": 163,
+          "covered": 163,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 66,
+          "covered": 59,
+          "notcovered": 7,
+          "percent": 89.39393939393939
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundSurfaceEvidence.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 6,
+          "covered": 6,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 6,
+          "covered": 6,
+          "percent": 100
+        },
+        "lines": {
+          "count": 43,
+          "covered": 43,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 24,
+          "covered": 22,
+          "notcovered": 2,
+          "percent": 91.66666666666666
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/GroundTruthLabeling.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 71,
+          "covered": 45,
+          "percent": 63.38028169014085
+        },
+        "instantiations": {
+          "count": 73,
+          "covered": 45,
+          "percent": 61.64383561643836
+        },
+        "lines": {
+          "count": 554,
+          "covered": 361,
+          "percent": 65.16245487364621
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 185,
+          "covered": 117,
+          "notcovered": 68,
+          "percent": 63.24324324324324
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/HUDStencil.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 79,
+          "covered": 72,
+          "percent": 91.13924050632912
+        },
+        "instantiations": {
+          "count": 79,
+          "covered": 72,
+          "percent": 91.13924050632912
+        },
+        "lines": {
+          "count": 444,
+          "covered": 437,
+          "percent": 98.42342342342343
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 213,
+          "covered": 196,
+          "notcovered": 17,
+          "percent": 92.01877934272301
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/HackerAtlas.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 88,
+          "covered": 75,
+          "percent": 85.22727272727273
+        },
+        "instantiations": {
+          "count": 88,
+          "covered": 75,
+          "percent": 85.22727272727273
+        },
+        "lines": {
+          "count": 924,
+          "covered": 846,
+          "percent": 91.55844155844156
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 273,
+          "covered": 202,
+          "notcovered": 71,
+          "percent": 73.992673992674
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/HollowKnightLaunchPolicy.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 2,
+          "covered": 2,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 2,
+          "covered": 2,
+          "percent": 100
+        },
+        "lines": {
+          "count": 27,
+          "covered": 27,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 6,
+          "covered": 6,
+          "notcovered": 0,
+          "percent": 100
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/ImageFileIO.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 3,
+          "covered": 3,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 3,
+          "covered": 3,
+          "percent": 100
+        },
+        "lines": {
+          "count": 14,
+          "covered": 14,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 9,
+          "covered": 6,
+          "notcovered": 3,
+          "percent": 66.66666666666666
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/ImageStencil.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 35,
+          "covered": 11,
+          "percent": 31.428571428571427
+        },
+        "instantiations": {
+          "count": 35,
+          "covered": 11,
+          "percent": 31.428571428571427
+        },
+        "lines": {
+          "count": 349,
+          "covered": 177,
+          "percent": 50.71633237822349
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 119,
+          "covered": 38,
+          "notcovered": 81,
+          "percent": 31.932773109243694
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/InputBridge.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 78,
+          "covered": 69,
+          "percent": 88.46153846153845
+        },
+        "instantiations": {
+          "count": 78,
+          "covered": 69,
+          "percent": 88.46153846153845
+        },
+        "lines": {
+          "count": 389,
+          "covered": 349,
+          "percent": 89.7172236503856
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 146,
+          "covered": 118,
+          "notcovered": 28,
+          "percent": 80.82191780821918
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/InputPathRecorder.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 101,
+          "covered": 75,
+          "percent": 74.25742574257426
+        },
+        "instantiations": {
+          "count": 102,
+          "covered": 76,
+          "percent": 74.50980392156863
+        },
+        "lines": {
+          "count": 605,
+          "covered": 527,
+          "percent": 87.10743801652893
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 162,
+          "covered": 126,
+          "notcovered": 36,
+          "percent": 77.77777777777779
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingClassIdentity.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 5,
+          "covered": 4,
+          "percent": 80
+        },
+        "instantiations": {
+          "count": 5,
+          "covered": 4,
+          "percent": 80
+        },
+        "lines": {
+          "count": 11,
+          "covered": 10,
+          "percent": 90.9090909090909
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 5,
+          "covered": 4,
+          "notcovered": 1,
+          "percent": 80
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingContracts.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 57,
+          "covered": 43,
+          "percent": 75.43859649122807
+        },
+        "instantiations": {
+          "count": 57,
+          "covered": 43,
+          "percent": 75.43859649122807
+        },
+        "lines": {
+          "count": 283,
+          "covered": 235,
+          "percent": 83.03886925795054
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 106,
+          "covered": 80,
+          "notcovered": 26,
+          "percent": 75.47169811320755
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingDatasetExporter.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 86,
+          "covered": 69,
+          "percent": 80.23255813953489
+        },
+        "instantiations": {
+          "count": 86,
+          "covered": 69,
+          "percent": 80.23255813953489
+        },
+        "lines": {
+          "count": 621,
+          "covered": 583,
+          "percent": 93.88083735909822
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 190,
+          "covered": 159,
+          "notcovered": 31,
+          "percent": 83.6842105263158
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingEditorView.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 201,
+          "covered": 72,
+          "percent": 35.82089552238806
+        },
+        "instantiations": {
+          "count": 202,
+          "covered": 72,
+          "percent": 35.64356435643564
+        },
+        "lines": {
+          "count": 2053,
+          "covered": 663,
+          "percent": 32.29420360448125
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 503,
+          "covered": 205,
+          "notcovered": 298,
+          "percent": 40.75546719681908
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingExampleStore.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 71,
+          "covered": 64,
+          "percent": 90.14084507042254
+        },
+        "instantiations": {
+          "count": 71,
+          "covered": 64,
+          "percent": 90.14084507042254
+        },
+        "lines": {
+          "count": 518,
+          "covered": 490,
+          "percent": 94.5945945945946
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 163,
+          "covered": 145,
+          "notcovered": 18,
+          "percent": 88.95705521472392
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingExamplesView.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 57,
+          "covered": 14,
+          "percent": 24.561403508771928
+        },
+        "instantiations": {
+          "count": 57,
+          "covered": 14,
+          "percent": 24.561403508771928
+        },
+        "lines": {
+          "count": 673,
+          "covered": 130,
+          "percent": 19.316493313521548
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 99,
+          "covered": 30,
+          "notcovered": 69,
+          "percent": 30.303030303030305
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingModelReviewStore.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 13,
+          "covered": 13,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 14,
+          "covered": 14,
+          "percent": 100
+        },
+        "lines": {
+          "count": 61,
+          "covered": 61,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 28,
+          "covered": 26,
+          "notcovered": 2,
+          "percent": 92.85714285714286
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingModelVersionStore.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 72,
+          "covered": 53,
+          "percent": 73.61111111111111
+        },
+        "instantiations": {
+          "count": 72,
+          "covered": 53,
+          "percent": 73.61111111111111
+        },
+        "lines": {
+          "count": 433,
+          "covered": 357,
+          "percent": 82.44803695150115
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 201,
+          "covered": 149,
+          "notcovered": 52,
+          "percent": 74.12935323383084
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingModelWorkspaceView.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 266,
+          "covered": 0,
+          "percent": 0
+        },
+        "instantiations": {
+          "count": 268,
+          "covered": 0,
+          "percent": 0
+        },
+        "lines": {
+          "count": 2536,
+          "covered": 0,
+          "percent": 0
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 454,
+          "covered": 0,
+          "notcovered": 454,
+          "percent": 0
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingObjectAtlas.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 18,
+          "covered": 15,
+          "percent": 83.33333333333334
+        },
+        "instantiations": {
+          "count": 18,
+          "covered": 15,
+          "percent": 83.33333333333334
+        },
+        "lines": {
+          "count": 211,
+          "covered": 201,
+          "percent": 95.260663507109
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 54,
+          "covered": 46,
+          "notcovered": 8,
+          "percent": 85.18518518518519
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingReviewAnalysis.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 51,
+          "covered": 41,
+          "percent": 80.3921568627451
+        },
+        "instantiations": {
+          "count": 51,
+          "covered": 41,
+          "percent": 80.3921568627451
+        },
+        "lines": {
+          "count": 295,
+          "covered": 277,
+          "percent": 93.89830508474576
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 88,
+          "covered": 68,
+          "notcovered": 20,
+          "percent": 77.27272727272727
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingSelectionPreferences.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 15,
+          "covered": 13,
+          "percent": 86.66666666666667
+        },
+        "instantiations": {
+          "count": 15,
+          "covered": 13,
+          "percent": 86.66666666666667
+        },
+        "lines": {
+          "count": 50,
+          "covered": 48,
+          "percent": 96
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 20,
+          "covered": 17,
+          "notcovered": 3,
+          "percent": 85
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingSharedModelPolicy.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 5,
+          "covered": 5,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 5,
+          "covered": 5,
+          "percent": 100
+        },
+        "lines": {
+          "count": 12,
+          "covered": 12,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 5,
+          "covered": 5,
+          "notcovered": 0,
+          "percent": 100
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingTrainingController.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 44,
+          "covered": 18,
+          "percent": 40.909090909090914
+        },
+        "instantiations": {
+          "count": 44,
+          "covered": 18,
+          "percent": 40.909090909090914
+        },
+        "lines": {
+          "count": 271,
+          "covered": 23,
+          "percent": 8.487084870848708
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 102,
+          "covered": 21,
+          "notcovered": 81,
+          "percent": 20.588235294117645
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LabelingVisualIdentity.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 24,
+          "covered": 4,
+          "percent": 16.666666666666664
+        },
+        "instantiations": {
+          "count": 24,
+          "covered": 4,
+          "percent": 16.666666666666664
+        },
+        "lines": {
+          "count": 205,
+          "covered": 26,
+          "percent": 12.682926829268293
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 42,
+          "covered": 7,
+          "notcovered": 35,
+          "percent": 16.666666666666664
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LatestFramePump.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 20,
+          "covered": 19,
+          "percent": 95
+        },
+        "instantiations": {
+          "count": 20,
+          "covered": 19,
+          "percent": 95
+        },
+        "lines": {
+          "count": 91,
+          "covered": 88,
+          "percent": 96.7032967032967
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 38,
+          "covered": 35,
+          "notcovered": 3,
+          "percent": 92.10526315789474
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LayerSceneViewport.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 199,
+          "covered": 91,
+          "percent": 45.7286432160804
+        },
+        "instantiations": {
+          "count": 211,
+          "covered": 91,
+          "percent": 43.127962085308056
+        },
+        "lines": {
+          "count": 1252,
+          "covered": 486,
+          "percent": 38.81789137380191
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 480,
+          "covered": 189,
+          "notcovered": 291,
+          "percent": 39.375
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveAtlasPipeline.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 162,
+          "covered": 96,
+          "percent": 59.25925925925925
+        },
+        "instantiations": {
+          "count": 162,
+          "covered": 96,
+          "percent": 59.25925925925925
+        },
+        "lines": {
+          "count": 1367,
+          "covered": 918,
+          "percent": 67.15435259692758
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 396,
+          "covered": 236,
+          "notcovered": 160,
+          "percent": 59.59595959595959
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveCaptureModel.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 746,
+          "covered": 0,
+          "percent": 0
+        },
+        "instantiations": {
+          "count": 748,
+          "covered": 0,
+          "percent": 0
+        },
+        "lines": {
+          "count": 5668,
+          "covered": 0,
+          "percent": 0
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 1571,
+          "covered": 0,
+          "notcovered": 1571,
+          "percent": 0
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveCaptureRestartPolicy.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 12,
+          "covered": 10,
+          "percent": 83.33333333333334
+        },
+        "instantiations": {
+          "count": 12,
+          "covered": 10,
+          "percent": 83.33333333333334
+        },
+        "lines": {
+          "count": 50,
+          "covered": 48,
+          "percent": 96
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 34,
+          "covered": 32,
+          "notcovered": 2,
+          "percent": 94.11764705882352
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveDashboardView.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 360,
+          "covered": 54,
+          "percent": 15
+        },
+        "instantiations": {
+          "count": 382,
+          "covered": 54,
+          "percent": 14.136125654450263
+        },
+        "lines": {
+          "count": 3182,
+          "covered": 329,
+          "percent": 10.33940917661848
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 783,
+          "covered": 98,
+          "notcovered": 685,
+          "percent": 12.51596424010217
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveGameStatusResolver.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 60,
+          "covered": 45,
+          "percent": 75
+        },
+        "instantiations": {
+          "count": 60,
+          "covered": 45,
+          "percent": 75
+        },
+        "lines": {
+          "count": 451,
+          "covered": 375,
+          "percent": 83.14855875831486
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 152,
+          "covered": 118,
+          "notcovered": 34,
+          "percent": 77.63157894736842
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveMenuStencilWorker.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 28,
+          "covered": 20,
+          "percent": 71.42857142857143
+        },
+        "instantiations": {
+          "count": 28,
+          "covered": 20,
+          "percent": 71.42857142857143
+        },
+        "lines": {
+          "count": 119,
+          "covered": 96,
+          "percent": 80.67226890756302
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 47,
+          "covered": 36,
+          "notcovered": 11,
+          "percent": 76.59574468085107
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveObjectDetector.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 29,
+          "covered": 15,
+          "percent": 51.724137931034484
+        },
+        "instantiations": {
+          "count": 29,
+          "covered": 15,
+          "percent": 51.724137931034484
+        },
+        "lines": {
+          "count": 317,
+          "covered": 146,
+          "percent": 46.05678233438486
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 93,
+          "covered": 33,
+          "notcovered": 60,
+          "percent": 35.483870967741936
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveObjectTracking.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 17,
+          "covered": 13,
+          "percent": 76.47058823529412
+        },
+        "instantiations": {
+          "count": 17,
+          "covered": 13,
+          "percent": 76.47058823529412
+        },
+        "lines": {
+          "count": 275,
+          "covered": 257,
+          "percent": 93.45454545454545
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 59,
+          "covered": 44,
+          "notcovered": 15,
+          "percent": 74.57627118644068
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveTiledAtlas.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 174,
+          "covered": 157,
+          "percent": 90.22988505747126
+        },
+        "instantiations": {
+          "count": 177,
+          "covered": 159,
+          "percent": 89.83050847457628
+        },
+        "lines": {
+          "count": 1934,
+          "covered": 1858,
+          "percent": 96.07032057911064
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 715,
+          "covered": 613,
+          "notcovered": 102,
+          "percent": 85.73426573426573
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveTrackingTiming.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 44,
+          "covered": 23,
+          "percent": 52.27272727272727
+        },
+        "instantiations": {
+          "count": 44,
+          "covered": 23,
+          "percent": 52.27272727272727
+        },
+        "lines": {
+          "count": 230,
+          "covered": 152,
+          "percent": 66.08695652173913
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 102,
+          "covered": 54,
+          "notcovered": 48,
+          "percent": 52.94117647058824
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveWorldModel.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 65,
+          "covered": 62,
+          "percent": 95.38461538461539
+        },
+        "instantiations": {
+          "count": 71,
+          "covered": 64,
+          "percent": 90.14084507042254
+        },
+        "lines": {
+          "count": 358,
+          "covered": 345,
+          "percent": 96.36871508379889
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 158,
+          "covered": 141,
+          "notcovered": 17,
+          "percent": 89.24050632911393
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveWorldReplayEvaluator.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 24,
+          "covered": 23,
+          "percent": 95.83333333333334
+        },
+        "instantiations": {
+          "count": 25,
+          "covered": 24,
+          "percent": 96
+        },
+        "lines": {
+          "count": 356,
+          "covered": 340,
+          "percent": 95.50561797752809
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 116,
+          "covered": 98,
+          "notcovered": 18,
+          "percent": 84.48275862068965
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveWorldSessionStore.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 12,
+          "covered": 10,
+          "percent": 83.33333333333334
+        },
+        "instantiations": {
+          "count": 12,
+          "covered": 10,
+          "percent": 83.33333333333334
+        },
+        "lines": {
+          "count": 130,
+          "covered": 97,
+          "percent": 74.61538461538461
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 57,
+          "covered": 44,
+          "notcovered": 13,
+          "percent": 77.19298245614034
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LiveWorldTracker.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 116,
+          "covered": 114,
+          "percent": 98.27586206896551
+        },
+        "instantiations": {
+          "count": 116,
+          "covered": 114,
+          "percent": 98.27586206896551
+        },
+        "lines": {
+          "count": 679,
+          "covered": 652,
+          "percent": 96.02356406480118
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 252,
+          "covered": 221,
+          "notcovered": 31,
+          "percent": 87.6984126984127
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/LowResolutionTraceEvaluator.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 111,
+          "covered": 95,
+          "percent": 85.58558558558559
+        },
+        "instantiations": {
+          "count": 111,
+          "covered": 95,
+          "percent": 85.58558558558559
+        },
+        "lines": {
+          "count": 1003,
+          "covered": 900,
+          "percent": 89.7308075772682
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 293,
+          "covered": 221,
+          "notcovered": 72,
+          "percent": 75.42662116040955
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/MenuStencil.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 560,
+          "covered": 0,
+          "percent": 0
+        },
+        "instantiations": {
+          "count": 560,
+          "covered": 0,
+          "percent": 0
+        },
+        "lines": {
+          "count": 6013,
+          "covered": 0,
+          "percent": 0
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 1255,
+          "covered": 0,
+          "notcovered": 1255,
+          "percent": 0
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/MenuStencilCalibration.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 123,
+          "covered": 0,
+          "percent": 0
+        },
+        "instantiations": {
+          "count": 123,
+          "covered": 0,
+          "percent": 0
+        },
+        "lines": {
+          "count": 1118,
+          "covered": 0,
+          "percent": 0
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 302,
+          "covered": 0,
+          "notcovered": 302,
+          "percent": 0
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/MenuStencilConsensus.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 73,
+          "covered": 0,
+          "percent": 0
+        },
+        "instantiations": {
+          "count": 73,
+          "covered": 0,
+          "percent": 0
+        },
+        "lines": {
+          "count": 667,
+          "covered": 0,
+          "percent": 0
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 218,
+          "covered": 0,
+          "notcovered": 218,
+          "percent": 0
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/MenuStencilLiveCapture.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 10,
+          "covered": 0,
+          "percent": 0
+        },
+        "instantiations": {
+          "count": 10,
+          "covered": 0,
+          "percent": 0
+        },
+        "lines": {
+          "count": 102,
+          "covered": 0,
+          "percent": 0
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 37,
+          "covered": 0,
+          "notcovered": 37,
+          "percent": 0
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/MovingObjectMask.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 6,
+          "covered": 5,
+          "percent": 83.33333333333334
+        },
+        "instantiations": {
+          "count": 6,
+          "covered": 5,
+          "percent": 83.33333333333334
+        },
+        "lines": {
+          "count": 75,
+          "covered": 69,
+          "percent": 92
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 15,
+          "covered": 13,
+          "notcovered": 2,
+          "percent": 86.66666666666667
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/NormalGameKeyForwarder.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 97,
+          "covered": 19,
+          "percent": 19.587628865979383
+        },
+        "instantiations": {
+          "count": 99,
+          "covered": 19,
+          "percent": 19.19191919191919
+        },
+        "lines": {
+          "count": 675,
+          "covered": 111,
+          "percent": 16.444444444444446
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 251,
+          "covered": 42,
+          "notcovered": 209,
+          "percent": 16.733067729083665
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/PersistentFeatureTracker.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 96,
+          "covered": 86,
+          "percent": 89.58333333333334
+        },
+        "instantiations": {
+          "count": 98,
+          "covered": 87,
+          "percent": 88.77551020408163
+        },
+        "lines": {
+          "count": 842,
+          "covered": 775,
+          "percent": 92.04275534441805
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 257,
+          "covered": 221,
+          "notcovered": 36,
+          "percent": 85.99221789883269
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/PlaybackDivergenceMonitor.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 46,
+          "covered": 38,
+          "percent": 82.6086956521739
+        },
+        "instantiations": {
+          "count": 46,
+          "covered": 38,
+          "percent": 82.6086956521739
+        },
+        "lines": {
+          "count": 376,
+          "covered": 333,
+          "percent": 88.56382978723404
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 112,
+          "covered": 91,
+          "notcovered": 21,
+          "percent": 81.25
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/PlayerOpsView.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 35,
+          "covered": 0,
+          "percent": 0
+        },
+        "instantiations": {
+          "count": 35,
+          "covered": 0,
+          "percent": 0
+        },
+        "lines": {
+          "count": 270,
+          "covered": 0,
+          "percent": 0
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 43,
+          "covered": 0,
+          "notcovered": 43,
+          "percent": 0
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/PoseCorrectionInterpolation.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 9,
+          "covered": 9,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 9,
+          "covered": 9,
+          "percent": 100
+        },
+        "lines": {
+          "count": 44,
+          "covered": 42,
+          "percent": 95.45454545454545
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 33,
+          "covered": 29,
+          "notcovered": 4,
+          "percent": 87.87878787878788
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/RawGroundFrameAudit.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 21,
+          "covered": 0,
+          "percent": 0
+        },
+        "instantiations": {
+          "count": 21,
+          "covered": 0,
+          "percent": 0
+        },
+        "lines": {
+          "count": 104,
+          "covered": 0,
+          "percent": 0
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 44,
+          "covered": 0,
+          "notcovered": 44,
+          "percent": 0
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/RecentCapturedFrameBuffer.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 9,
+          "covered": 8,
+          "percent": 88.88888888888889
+        },
+        "instantiations": {
+          "count": 9,
+          "covered": 8,
+          "percent": 88.88888888888889
+        },
+        "lines": {
+          "count": 48,
+          "covered": 44,
+          "percent": 91.66666666666666
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 20,
+          "covered": 18,
+          "notcovered": 2,
+          "percent": 90
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/RectangleOverlap.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 1,
+          "covered": 1,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 1,
+          "covered": 1,
+          "percent": 100
+        },
+        "lines": {
+          "count": 7,
+          "covered": 7,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 5,
+          "covered": 4,
+          "notcovered": 1,
+          "percent": 80
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/RegistrationFrameMask.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 13,
+          "covered": 13,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 13,
+          "covered": 13,
+          "percent": 100
+        },
+        "lines": {
+          "count": 73,
+          "covered": 72,
+          "percent": 98.63013698630137
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 21,
+          "covered": 18,
+          "notcovered": 3,
+          "percent": 85.71428571428571
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/RenderedFrameMarker.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 12,
+          "covered": 11,
+          "percent": 91.66666666666666
+        },
+        "instantiations": {
+          "count": 12,
+          "covered": 11,
+          "percent": 91.66666666666666
+        },
+        "lines": {
+          "count": 82,
+          "covered": 78,
+          "percent": 95.1219512195122
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 42,
+          "covered": 30,
+          "notcovered": 12,
+          "percent": 71.42857142857143
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/RuntimeMode.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 22,
+          "covered": 10,
+          "percent": 45.45454545454545
+        },
+        "instantiations": {
+          "count": 22,
+          "covered": 10,
+          "percent": 45.45454545454545
+        },
+        "lines": {
+          "count": 227,
+          "covered": 112,
+          "percent": 49.33920704845815
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 110,
+          "covered": 58,
+          "notcovered": 52,
+          "percent": 52.72727272727272
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/SceneRegionDetector.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 114,
+          "covered": 93,
+          "percent": 81.57894736842105
+        },
+        "instantiations": {
+          "count": 115,
+          "covered": 94,
+          "percent": 81.73913043478261
+        },
+        "lines": {
+          "count": 1358,
+          "covered": 1204,
+          "percent": 88.65979381443299
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 413,
+          "covered": 337,
+          "notcovered": 76,
+          "percent": 81.59806295399515
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/SceneSessionStore.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 32,
+          "covered": 30,
+          "percent": 93.75
+        },
+        "instantiations": {
+          "count": 32,
+          "covered": 30,
+          "percent": 93.75
+        },
+        "lines": {
+          "count": 200,
+          "covered": 185,
+          "percent": 92.5
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 95,
+          "covered": 83,
+          "notcovered": 12,
+          "percent": 87.36842105263159
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/SourceWindowIdentity.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 11,
+          "covered": 11,
+          "percent": 100
+        },
+        "instantiations": {
+          "count": 11,
+          "covered": 11,
+          "percent": 100
+        },
+        "lines": {
+          "count": 39,
+          "covered": 39,
+          "percent": 100
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 13,
+          "covered": 12,
+          "notcovered": 1,
+          "percent": 92.3076923076923
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/SparseGroundRecoveryGate.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 8,
+          "covered": 3,
+          "percent": 37.5
+        },
+        "instantiations": {
+          "count": 8,
+          "covered": 3,
+          "percent": 37.5
+        },
+        "lines": {
+          "count": 63,
+          "covered": 56,
+          "percent": 88.88888888888889
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 27,
+          "covered": 21,
+          "notcovered": 6,
+          "percent": 77.77777777777779
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/StableSegmentedPicker.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 9,
+          "covered": 0,
+          "percent": 0
+        },
+        "instantiations": {
+          "count": 9,
+          "covered": 0,
+          "percent": 0
+        },
+        "lines": {
+          "count": 38,
+          "covered": 0,
+          "percent": 0
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 19,
+          "covered": 0,
+          "notcovered": 19,
+          "percent": 0
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/StencilGuidanceText.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 14,
+          "covered": 5,
+          "percent": 35.714285714285715
+        },
+        "instantiations": {
+          "count": 14,
+          "covered": 5,
+          "percent": 35.714285714285715
+        },
+        "lines": {
+          "count": 43,
+          "covered": 28,
+          "percent": 65.11627906976744
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 30,
+          "covered": 13,
+          "notcovered": 17,
+          "percent": 43.333333333333336
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/StencilInitialization.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 91,
+          "covered": 71,
+          "percent": 78.02197802197803
+        },
+        "instantiations": {
+          "count": 93,
+          "covered": 73,
+          "percent": 78.49462365591397
+        },
+        "lines": {
+          "count": 367,
+          "covered": 306,
+          "percent": 83.37874659400545
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 164,
+          "covered": 116,
+          "notcovered": 48,
+          "percent": 70.73170731707317
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/StencilWorkspaceView.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 37,
+          "covered": 8,
+          "percent": 21.62162162162162
+        },
+        "instantiations": {
+          "count": 37,
+          "covered": 8,
+          "percent": 21.62162162162162
+        },
+        "lines": {
+          "count": 450,
+          "covered": 45,
+          "percent": 10
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 68,
+          "covered": 21,
+          "notcovered": 47,
+          "percent": 30.88235294117647
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/TransitionMotionBridge.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 36,
+          "covered": 32,
+          "percent": 88.88888888888889
+        },
+        "instantiations": {
+          "count": 36,
+          "covered": 32,
+          "percent": 88.88888888888889
+        },
+        "lines": {
+          "count": 255,
+          "covered": 231,
+          "percent": 90.58823529411765
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 93,
+          "covered": 80,
+          "notcovered": 13,
+          "percent": 86.02150537634408
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/TranslationPoseGraph.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 29,
+          "covered": 20,
+          "percent": 68.96551724137932
+        },
+        "instantiations": {
+          "count": 29,
+          "covered": 20,
+          "percent": 68.96551724137932
+        },
+        "lines": {
+          "count": 216,
+          "covered": 193,
+          "percent": 89.35185185185185
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 104,
+          "covered": 84,
+          "notcovered": 20,
+          "percent": 80.76923076923077
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/UserObjectCatalog.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 23,
+          "covered": 15,
+          "percent": 65.21739130434783
+        },
+        "instantiations": {
+          "count": 23,
+          "covered": 15,
+          "percent": 65.21739130434783
+        },
+        "lines": {
+          "count": 116,
+          "covered": 81,
+          "percent": 69.82758620689656
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 52,
+          "covered": 31,
+          "notcovered": 21,
+          "percent": 59.61538461538461
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/VisionResetController.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 13,
+          "covered": 7,
+          "percent": 53.84615384615385
+        },
+        "instantiations": {
+          "count": 13,
+          "covered": 7,
+          "percent": 53.84615384615385
+        },
+        "lines": {
+          "count": 85,
+          "covered": 43,
+          "percent": 50.588235294117645
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 32,
+          "covered": 16,
+          "notcovered": 16,
+          "percent": 50
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/VisualRoomTransitionTracker.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 294,
+          "covered": 255,
+          "percent": 86.73469387755102
+        },
+        "instantiations": {
+          "count": 294,
+          "covered": 255,
+          "percent": 86.73469387755102
+        },
+        "lines": {
+          "count": 3119,
+          "covered": 2916,
+          "percent": 93.49150368707919
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 804,
+          "covered": 683,
+          "notcovered": 121,
+          "percent": 84.95024875621891
+        }
+      }
+    },
+    {
+      "file": "macos/Sources/HollowKnightVision/WorldBasisController.swift",
+      "summary": {
+        "branches": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "functions": {
+          "count": 24,
+          "covered": 22,
+          "percent": 91.66666666666666
+        },
+        "instantiations": {
+          "count": 24,
+          "covered": 22,
+          "percent": 91.66666666666666
+        },
+        "lines": {
+          "count": 119,
+          "covered": 107,
+          "percent": 89.91596638655463
+        },
+        "mcdc": {
+          "count": 0,
+          "covered": 0,
+          "notcovered": 0,
+          "percent": 0
+        },
+        "regions": {
+          "count": 38,
+          "covered": 31,
+          "notcovered": 7,
+          "percent": 81.57894736842105
+        }
+      }
+    }
+  ]
+}
