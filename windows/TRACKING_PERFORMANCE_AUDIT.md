@@ -339,3 +339,38 @@ the largest analysis-start gap was 108.15ms (including startup settling). GPU
 capture and CUDA remained active without fallback. Camera coordinates stayed
 at (0,0); this establishes that saves no longer block analysis, not movement
 accuracy. [Measured reports, hashes and limits](audits/2026-10-26-autosave-tracking.json).
+
+## 2026-10-26: GPU utilization during fast falls
+
+The user confirmed smoother movement after the autosave fix but reported tracking
+loss during fast falls, then repeated falls for GPU diagnosis. The installed
+51a3d8c build was measured for 60.34 seconds (109 NVIDIA samples, 13 five-second
+tracking reports) plus 40 seconds of Windows per-process GPU-engine counters.
+Video encoding and decoding stayed at zero. GPU utilization was 41% median,
+56% maximum; memory usage peaked at 2496 MiB of 8192 MiB, temperature stayed at
+38 C, and sampled board power peaked at 36.89 W against a 200 W limit. Windows
+reported Vision's busiest engine at 35.10% maximum and the game's at 6.80%.
+These measurements show no sustained encoding or GPU-capacity bottleneck.
+
+CUDA camera-search wall time was 1.81ms median and 8.89ms maximum at reporting
+time, including packing/transfers/readback. Full analysis was 17.06ms median,
+58.53ms maximum. Later analysis rates fell to 15.83 FPS while GPU use decreased;
+camera coordinates stopped changing then, so that interval cannot be assigned
+to a fall versus focus/idle behavior. All snapshots were ground-verified; five-
+second diagnostics can miss the brief loss and recovery described by the user.
+
+A concrete recovery parity gap remains: Windows searches +/-16 horizontal and
++/-24 vertical pixels after the primary solver fails; Mac expands these radii
+with consecutive misses to +/-64 and +/-48. The primary solver's vertical
+32-to-64 search and the recovery acceleration acceptance bound match. This is
+a candidate explanation requiring a fast-fall replay regression, not a proven
+cause from coarse telemetry. Both platforms default to CPU edge preprocessing;
+Mac's explicit Metal preprocessing is not its automatic production path.
+Windows also copies captured pixels back to CPU and uploads patch-search inputs
+to CUDA. Faster GPU hardware alone does not remove these pipeline constraints.
+
+[Diagnosis and limits](audits/2026-10-26-fast-fall-gpu.json) and
+[raw NVIDIA samples](audits/2026-10-26-fast-fall-gpu.csv) preserve the measurements.
+[NVIDIA's NVENC documentation](https://docs.nvidia.com/video-technologies/video-codec-sdk/13.1/nvenc-application-note/index.html)
+describes the dedicated encoder hardware; its measured utilization here was zero.
+No runtime code, GPU settings or installed binaries changed during this diagnosis.
