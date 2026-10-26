@@ -2618,7 +2618,7 @@ public partial class MainWindow : Window
                     ? activeModelRuns : runDirectory.Length > 0 ? [runDirectory] : [], activeModelArtifacts);
             // Compile CUDA once before capture; device absence keeps the CPU fallback.
             await Task.Run(() => GroundPatchMatcher.Shared.WarmUp(), cancellation.Token);
-            var capture = new GdiWindowCapture();
+            using var capture = new WindowsGameCapture();
             var analysisFrames = Channel.CreateBounded<PendingVisionFrame>(new BoundedChannelOptions(1)
             { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
             var hackerFrames = Channel.CreateUnbounded<HackerPipelineWork>(new UnboundedChannelOptions
@@ -2653,7 +2653,7 @@ public partial class MainWindow : Window
                     }
                     var labelRevision = labelCapture.Revision;
                     var iteration = Stopwatch.StartNew();
-                    var frame = await Task.Run(() =>
+                    var frame = await Task.Run(async () =>
                     {
                         var window = HollowKnightWindowLocator.FindBest()
                             ?? throw new GameWindowLostException();
@@ -2662,10 +2662,14 @@ public partial class MainWindow : Window
                             ValidateGameWindowMode(window);
                             validatedProcessId = window.ProcessId;
                         }
-                        return CpuBgraNormalizer.Normalize(capture.Capture(window, ++frameId));
+                        return await capture.CaptureAsync(window, frameId + 1, cancellation.Token).ConfigureAwait(false);
                     }, cancellation.Token);
-                    var captureTimestamp = Stopwatch.GetTimestamp()
-                        / (double)Stopwatch.Frequency;
+                    if (frame is null) continue;
+                    frameId++;
+                    captureBackend = capture.Backend;
+                    captureFallbackReason = capture.FallbackReason;
+                    captureReadbackMilliseconds = capture.ReadbackMilliseconds;
+                    var captureTimestamp = capture.CaptureTimestamp;
                     if (!labelCapture.Accept(frame, labelRevision)) continue;
                     gameplayPresentation.Capture(frame);
                     var bitmap = FrameBitmap(frame);
@@ -2709,7 +2713,8 @@ public partial class MainWindow : Window
                         VisionStatusText.Text += $" - {initialization.Text(selection)}";
                     UpdateModeAvailability();
 
-                    var remaining = TimeSpan.FromMilliseconds(33) - iteration.Elapsed;
+                    // The GPU stream supplies its own cadence. Only pace the legacy fallback.
+                    var remaining = TimeSpan.FromMilliseconds(capture.Backend == "GDI" ? 33 : 0) - iteration.Elapsed;
                     if (remaining > TimeSpan.Zero)
                     {
                         await Task.Delay(remaining, cancellation.Token);
@@ -3793,6 +3798,9 @@ public partial class MainWindow : Window
         PersistActiveAtlas(force: false);
     }
 
+    private string captureBackend = "Starting";
+    private string? captureFallbackReason;
+    private double captureReadbackMilliseconds;
     private long diagnosticAnalysisFrames;
     private long lastDiagnosticAnalysisFrames;
     private long lastDiagnosticCaptureId;
@@ -3812,6 +3820,9 @@ public partial class MainWindow : Window
             ProcessId = Environment.ProcessId,
             Device = matcher.CudaDeviceName,
             CudaAvailable = matcher.CudaAvailable,
+            CaptureBackend = captureBackend,
+            CaptureFallbackReason = captureFallbackReason,
+            CaptureReadbackMilliseconds = captureReadbackMilliseconds,
             CudaDispatches = matcher.CudaDispatchCount,
             CameraBackend = localSearch?.Backend.ToString(),
             CameraSearchMilliseconds = localSearch?.Elapsed.TotalMilliseconds,

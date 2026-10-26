@@ -2,8 +2,9 @@
 
 This is the native Windows host and desktop lab for Hollow Knight Vision. It
 builds without Apple frameworks. NVIDIA CUDA accelerates ground-patch matching;
-capture, atlas composition, ONNX inference, dataset export, and training remain
-on CPU. A missing or failed CUDA device falls back to CPU without claiming GPU use.
+the desktop capture stream uses Windows Graphics Capture and Direct3D 11.
+Normalization, atlas composition, ONNX inference, dataset export, and training
+remain on CPU. A missing or failed CUDA device falls back to CPU without claiming GPU use.
 
 Implemented now:
 
@@ -13,8 +14,11 @@ Implemented now:
 - Actual device, camera backend, completed dispatch count, timing, and fallback
   reason at `%LOCALAPPDATA%\HollowKnightVision\diagnostics\tracking-gpu.json`.
 - Win32 Hollow Knight process/window discovery.
-- CPU target-window capture via `PrintWindow` into owned BGRA pixels. Failed
-  captures never fall back to desktop pixels that could contain Vision itself.
+- Continuous GPU target-window capture with a two-frame pool, newest-frame
+  draining, client-area cropping, and reusable Direct3D readback storage. The
+  desktop app targets Windows 10 version 2004 or later. If graphics capture
+  initialization is unavailable, diagnostics report the legacy `PrintWindow`
+  fallback; the CLI still uses that path. Neither path captures desktop pixels.
 - Per-monitor DPI awareness so capture geometry remains physical pixels when
   Windows display scaling is enabled.
 - Deterministic center crop and bilinear normalization to the existing 640×360
@@ -220,8 +224,8 @@ filled rectangle. Both live ground and atlas masks use the unsmoothed Knight
 body, including weak observations, with age-bounded motion sweep and padding.
 The live model runs separately from capture/analysis, retaining only one active
 and the newest pending frame. Admission preserves Mac's nominal 15 Hz rate in
-wall time (Mac captures at 60 Hz and samples every fourth frame; Windows currently
-captures near 30 Hz). Menus schedule no new inference; labeling suspends it and
+wall time (Mac samples every fourth 60 Hz capture; Windows uses the same
+wall-time inference budget independently of capture cadence). Menus schedule no new inference; labeling suspends it and
 invalidates results. Results retain capture timestamps for freshness and motion
 prediction, even when the model finishes later. Reset rejects late results and
 errors; shutdown drains model work before disposing ONNX, and capture restarts
@@ -542,15 +546,18 @@ global-match cells use the same purple review rectangles as Mac; live ground,
 occlusion, and depth-error cells retain the shared green, orange, and red
 palette. Candidate cells remain hidden.
 
-The widened 192-pixel production ground-patch search uses deterministic
-multicore CPU evaluation on Windows and retains a scalar fallback. The smaller
-edge/kernel preprocessing remains scalar automatically because dispatch overhead
-usually costs more than it saves. This ports the latest Mac tracking behavior
-and measurement seams, but it does not claim Apple Metal or NVIDIA execution.
-Set `HKV_WINDOWS_COMPUTE_BENCHMARK=1` while running the core tests to print
-scalar/parallel medians. Capture, normalization, ONNX inference, and training
-remain CPU-only. Windows Graphics Capture is still the planned high-frame-rate
-capture backend and would normally use a GPU copy path.
+The widened 192-pixel production ground-patch search uses CUDA when available,
+with deterministic multicore/scalar CPU fallback. Small edge/kernel preprocessing
+remains scalar when dispatch overhead exceeds the work. Set
+`HKV_WINDOWS_COMPUTE_BENCHMARK=1` during core tests to print scalar/parallel medians;
+`HKV_REQUIRE_CUDA=1` requires real CUDA coverage. Set `HKV_REQUIRE_GPU_CAPTURE=1`
+on an interactive Windows desktop when running `build-windows.ps1` to additionally
+exercise GPU capture through fades, window resize, occlusion, cancellation and
+source closure. This capture test creates temporary colored windows and does not
+launch or modify the game. `tracking-gpu.json` reports the capture backend,
+fallback reason, readback duration and measured capture/analysis rates.
+The stream uses Microsoft's [free-threaded capture pool](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.direct3d11captureframepool.createfreethreaded)
+and follows source frame cadence without the old 33 ms capture throttle.
 
 Diagnose visual camera motion without receiver telemetry or launching the game:
 

@@ -28,6 +28,7 @@ if (args is ["--export-dataset-probe", var probeRoot])
 
 var tests = new List<(string Name, Action Run)>
 {
+    ("capture normalization preserves bilinear pixels and frame ownership", CaptureNormalizationTests.TestPixelsMatchBilinearReference),
     ("CUDA ground patch scores match CPU and reuse resized buffers", GroundComputeProcessingTests.TestCudaPatchParityAndReuse),
     ("CUDA unavailable and invalid inputs fall back safely", GroundComputeProcessingTests.TestCudaFallbackAndInvalidInputs),
     ("CUDA concurrent searches do not share mutable results", GroundComputeProcessingTests.TestCudaConcurrentSearches),
@@ -9847,7 +9848,7 @@ internal sealed class LiveWorldPipelineReflection
             "HollowKnightVision.Windows.App",
             "bin",
             configuration,
-            "net8.0-windows",
+            "net8.0-windows10.0.19041.0",
             "HollowKnightVision.Windows.dll");
         if (!File.Exists(path))
         {

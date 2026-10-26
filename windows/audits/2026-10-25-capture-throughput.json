@@ -1,0 +1,84 @@
+{
+  "baselineCommit": "5137a8e",
+  "machine": {
+    "cpu": "Ryzen 5 5500",
+    "gpu": "GTX 1080"
+  },
+  "comparisonLimit": "Baseline includes user traversal; final sample is stationary. This demonstrates capture/analysis throughput, not movement accuracy or full Mac parity.",
+  "baseline": {
+    "metrics": {
+      "CapturedFramesPerSecond": {
+        "median": 24.98095159388165,
+        "minimum": 23.902068445166464,
+        "maximum": 26.714201464871245
+      },
+      "AnalyzedFramesPerSecond": {
+        "median": 22.994544898514135,
+        "minimum": 21.686834195537532,
+        "maximum": 24.99423033187019
+      },
+      "AnalysisMilliseconds": {
+        "median": 20.902099999999997,
+        "minimum": 12.0753,
+        "maximum": 23.5819
+      }
+    },
+    "sampleCount": 6,
+    "cameraXRange": [
+      32.980065539993795,
+      1621.435370067624
+    ]
+  },
+  "final": {
+    "metrics": {
+      "CapturedFramesPerSecond": {
+        "median": 50.8718213241189,
+        "minimum": 48.796906323745816,
+        "maximum": 51.61508482939192
+      },
+      "AnalyzedFramesPerSecond": {
+        "median": 38.65921550806858,
+        "minimum": 17.65416529598934,
+        "maximum": 49.62222441126868
+      },
+      "AnalysisMilliseconds": {
+        "median": 19.6413,
+        "minimum": 16.0424,
+        "maximum": 45.1409
+      },
+      "CaptureReadbackMilliseconds": {
+        "median": 2.6464,
+        "minimum": 2.405,
+        "maximum": 3.5457
+      }
+    },
+    "cpuCores": 5.343567257002365,
+    "sampleCount": 7,
+    "cameraXRange": [
+      0,
+      0
+    ],
+    "cudaAndGpuCapture": true,
+    "verifiedFrames": 7,
+    "invalidFrameAges": 0
+  },
+  "normalization": {
+    "harness": "PowerShell 7.6.5 / .NET 10; application uses .NET 8",
+    "warmup": 1000,
+    "measured": 100,
+    "beforeMedianMs": 5.2165,
+    "afterMedianMs": 1.1228,
+    "samePixels": true,
+    "outputSha256": "729845157E2E5A1AACDB7472311C1848A18CDAC1AE16D677DCBA0573C667BDF7"
+  },
+  "validation": {
+    "core": 975,
+    "ui": 67,
+    "gpuCaptureHardware": true,
+    "cudaHardware": true,
+    "receiverTests": true,
+    "macParityInventory": "passes; overall parity remains incomplete"
+  },
+  "installedAppSha256": "D6C036A5E444DCBF0FF605C27F2C2E7C92B98916A6214C1969C67CBAD27EEBBC",
+  "installedCoreSha256": "3BE48467062CCF2A41E328B7F9750F83AEB4196BEDC5FF46CC7F1085AFF7E3D4"
+}

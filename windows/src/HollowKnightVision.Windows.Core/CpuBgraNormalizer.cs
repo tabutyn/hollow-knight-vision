@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace HollowKnightVision.Windows.Core;
 
 public static class CpuBgraNormalizer
@@ -15,6 +17,42 @@ public static class CpuBgraNormalizer
             outputHeight);
         var outputStride = checked(outputWidth * BgraFrame.BytesPerPixel);
         var output = new byte[checked(outputStride * outputHeight)];
+
+        // Integer-sized captures are common (1280x720 into 640x360). Preserve
+        // bilinear center sampling and banker's rounding without floating-point
+        // interpolation for every channel. Always return owned pixel storage.
+        if (crop.Width == outputWidth && crop.Height == outputHeight)
+        {
+            for (var y = 0; y < outputHeight; y++)
+                source.Pixels.AsSpan((crop.Y + y) * source.Stride + crop.X * 4, outputStride)
+                    .CopyTo(output.AsSpan(y * outputStride, outputStride));
+            return new(outputWidth, outputHeight, outputStride, output, source.CaptureId, source.ObservedAt);
+        }
+        if (BitConverter.IsLittleEndian && (long)crop.Width == outputWidth * 2L && (long)crop.Height == outputHeight * 2L)
+        {
+            const uint channels = 0x00ff00ff;
+            const uint rounding = 0x00010001;
+            for (var y = 0; y < outputHeight; y++)
+            {
+                var offset = (crop.Y + y * 2) * source.Stride + crop.X * 4;
+                var row0 = MemoryMarshal.Cast<byte, uint>(source.Pixels.AsSpan(offset, outputStride * 2));
+                var row1 = MemoryMarshal.Cast<byte, uint>(source.Pixels.AsSpan(offset + source.Stride, outputStride * 2));
+                var destination = MemoryMarshal.Cast<byte, uint>(output.AsSpan(y * outputStride, outputStride));
+                for (var x = 0; x < outputWidth; x++)
+                {
+                    var a = row0[x * 2]; var b = row0[x * 2 + 1];
+                    var c = row1[x * 2]; var d = row1[x * 2 + 1];
+                    // Two independent 16-bit lanes hold four 8-bit channel sums.
+                    // Adding 1 plus the quotient's low bit rounds ties to even.
+                    var br = (a & channels) + (b & channels) + (c & channels) + (d & channels);
+                    var ga = ((a >> 8) & channels) + ((b >> 8) & channels) + ((c >> 8) & channels) + ((d >> 8) & channels);
+                    br = ((br + rounding + ((br >> 2) & rounding)) >> 2) & channels;
+                    ga = ((ga + rounding + ((ga >> 2) & rounding)) >> 2) & channels;
+                    destination[x] = br | (ga << 8);
+                }
+            }
+            return new(outputWidth, outputHeight, outputStride, output, source.CaptureId, source.ObservedAt);
+        }
 
         var x0 = new int[outputWidth];
         var x1 = new int[outputWidth];

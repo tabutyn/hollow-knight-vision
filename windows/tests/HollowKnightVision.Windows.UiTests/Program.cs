@@ -113,6 +113,7 @@ internal static class Program
         TrainingIntegrationTests.Run();
         ExampleStoreIntegrationTests.Run();
         TestSolidCapture();
+        GpuCaptureTests.RunIfRequested();
         if (args.Contains("--input")) TestBackgroundKeyDelivery();
         Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 68 : 67)}");
         Application.Current.Shutdown();

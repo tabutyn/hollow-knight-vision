@@ -1144,6 +1144,7 @@ public sealed class GroundHypothesisTracker
         var observationsByPhase = Enumerable.Range(0, FeatureSize)
             .Select(_ => new List<GlobalObservation>()).ToArray();
         var seenPositions = new HashSet<int>();
+        var nearest = new (GlobalFeature Feature, double Error)[3];
         for (var lineIndex = 0; lineIndex < floorLines.Count; lineIndex++)
         {
             var line = floorLines[lineIndex];
@@ -1166,14 +1167,23 @@ public sealed class GroundHypothesisTracker
                 var patch = ReadPatch(luma, width, x, line.Row);
                 var descriptor = NormalizedDescriptor(patch);
                 if (DescriptorEnergy(descriptor) < 6) continue;
-                var ranked = candidates.Select(feature =>
-                        (Feature: feature, Error: DescriptorDistance(descriptor, feature.Descriptor)))
-                    .Where(candidate => candidate.Error <= DescriptorMatchThreshold + 4)
-                    .OrderBy(candidate => candidate.Error)
-                    .Take(3);
-                var featureId = -(positionKey + 1);
-                foreach (var candidate in ranked)
+                var nearestCount = 0;
+                foreach (var feature in candidates)
                 {
+                    var error = DescriptorDistance(descriptor, feature.Descriptor);
+                    if (error > DescriptorMatchThreshold + 4) continue;
+                    var insertion = nearestCount;
+                    while (insertion > 0 && error < nearest[insertion - 1].Error) insertion--;
+                    if (insertion == nearest.Length) continue;
+                    for (var shift = Math.Min(nearestCount, nearest.Length - 1); shift > insertion; shift--)
+                        nearest[shift] = nearest[shift - 1];
+                    nearest[insertion] = (feature, error);
+                    nearestCount = Math.Min(nearest.Length, nearestCount + 1);
+                }
+                var featureId = -(positionKey + 1);
+                for (var candidateIndex = 0; candidateIndex < nearestCount; candidateIndex++)
+                {
+                    var candidate = nearest[candidateIndex];
                     observationsByPhase[x % FeatureSize].Add(new GlobalObservation(
                         featureId,
                         -(lineIndex + 1),
@@ -1436,13 +1446,13 @@ public sealed class GroundHypothesisTracker
             .ToArray();
     }
 
-    private static double DescriptorDistance(IReadOnlyList<short> left, IReadOnlyList<short> right)
+    private static double DescriptorDistance(short[] left, short[] right)
     {
-        if (left.Count == 0 || left.Count != right.Count) return double.PositiveInfinity;
+        if (left.Length == 0 || left.Length != right.Length) return double.PositiveInfinity;
         long total = 0;
-        for (var index = 0; index < left.Count; index++)
+        for (var index = 0; index < left.Length; index++)
             total += Math.Abs((int)left[index] - right[index]);
-        return (double)total / left.Count;
+        return (double)total / left.Length;
     }
 
     private static double DescriptorEnergy(IReadOnlyList<short> descriptor) =>
