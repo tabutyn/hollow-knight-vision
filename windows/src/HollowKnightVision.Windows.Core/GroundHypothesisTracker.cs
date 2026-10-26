@@ -242,7 +242,8 @@ public sealed class GroundHypothesisTracker
         AtlasPoint CameraPosition,
         IReadOnlySet<int> FeatureIds,
         IReadOnlySet<int> GlobalIds,
-        IReadOnlyList<GlobalObservation> Inliers);
+        IReadOnlyList<GlobalObservation> Inliers,
+        IReadOnlySet<int>? VerificationFeatureIds = null);
 
     private sealed record BackgroundSearchResult(
         GlobalFit? Fit,
@@ -309,7 +310,11 @@ public sealed class GroundHypothesisTracker
     private double? globalTilePhaseX;
     private double? lastTimestamp;
     private double? lastProvisionalTextureTimestamp;
+    private double? provisionalPromotionStartedAt;
+    private bool provisionalPromotionAllowed;
+    private int consecutiveStrongProvisionalMatches;
     private double? lastGlobalSearchTimestamp;
+    private double? lastCanonicalPhaseSearchTimestamp;
     private double? bootstrapFailureStartedAt;
     private double lastLocalFailureTimestamp = double.NegativeInfinity;
     private bool globalAnchorValid = true;
@@ -381,6 +386,7 @@ public sealed class GroundHypothesisTracker
         bootstrapFailureStartedAt = null;
         lastLocalFailureTimestamp = double.NegativeInfinity;
         lastGlobalSearchTimestamp = null;
+        lastCanonicalPhaseSearchTimestamp = null;
         if (!keepingGlobalFeatures) linePresence.Reset();
         if (!keepingGlobalFeatures) segments.Clear();
         active = [];
@@ -390,6 +396,9 @@ public sealed class GroundHypothesisTracker
         frameHeight = 0;
         lastTimestamp = null;
         lastProvisionalTextureTimestamp = null;
+        provisionalPromotionStartedAt = null;
+        provisionalPromotionAllowed = false;
+        consecutiveStrongProvisionalMatches = 0;
         lastImageTranslation = default;
         if (!keepingGlobalFeatures)
         {
@@ -431,7 +440,8 @@ public sealed class GroundHypothesisTracker
         int height = 0,
         IReadOnlyList<DetectedFloorLine>? floorLines = null,
         double? timestamp = null,
-        IReadOnlyList<PixelRect>? protectedOcclusions = null)
+        IReadOnlyList<PixelRect>? protectedOcclusions = null,
+        bool allowsProvisionalPromotion = false)
     {
         if (!double.IsFinite(position.X) || !double.IsFinite(position.Y)) return;
         var correction = new CameraVector(position.X - cameraX, position.Y - cameraY);
@@ -440,6 +450,7 @@ public sealed class GroundHypothesisTracker
         bootstrapFailureStartedAt = null;
         lastImageTranslation = default;
         active = [];
+        lineMotionCandidates.Clear();
         globalAnchorValid = true;
         if (luma is not null
             && width >= FeatureWidth
@@ -459,7 +470,22 @@ public sealed class GroundHypothesisTracker
                     new StencilRect(rect.X, rect.Y, rect.Width, rect.Height)).ToArray(),
                 preservesTrustedHistory: segments.Count > 0 || RelocalizationFeatures().Length > 0);
             if (cameraSolver.HasProvisionalReference)
+            {
                 lastProvisionalTextureTimestamp = now;
+                provisionalPromotionStartedAt = now;
+                provisionalPromotionAllowed = allowsProvisionalPromotion;
+                consecutiveStrongProvisionalMatches = 0;
+            }
+        }
+        else
+        {
+            lastGlobalSearchTimestamp = null;
+            lastCanonicalPhaseSearchTimestamp = null;
+            cameraSolver.Reset();
+            lastProvisionalTextureTimestamp = null;
+            provisionalPromotionStartedAt = null;
+            provisionalPromotionAllowed = false;
+            consecutiveStrongProvisionalMatches = 0;
         }
     }
 
@@ -527,7 +553,13 @@ public sealed class GroundHypothesisTracker
         {
             lastImageTranslation = solution.ImageTranslation;
             if (!solution.ReferenceTrusted)
+            {
                 lastProvisionalTextureTimestamp = now;
+                consecutiveStrongProvisionalMatches = provisionalPromotionAllowed
+                    && solution.MatchSource == "provisional"
+                    && GroundReferencePromotionPolicy.Permits(solution.Support, solution.Error)
+                    ? consecutiveStrongProvisionalMatches + 1 : 0;
+            }
         }
         var previousActive = active;
         var recoveryAttempt = solution is null
@@ -593,6 +625,18 @@ public sealed class GroundHypothesisTracker
                 cameraX -= cameraFit.ImageTranslation.X;
                 cameraY += cameraFit.ImageTranslation.Y;
             }
+        }
+
+        var stabilized = StabilizeFloorLines(floorLines, matches, cameraFit);
+        if (solution is { ReferenceTrusted: false }
+            && provisionalPromotionStartedAt is { } started
+            && provisionalPromotionAllowed
+            && GroundProvisionalPromotionPolicy.Permits(now - started,
+                consecutiveStrongProvisionalMatches, solution.Support, solution.Error))
+        {
+            cameraSolver.PromoteProvisionalReference(luma, width, height,
+                stabilized.Select(GroundTextureLine.FromDetected).ToArray(), now, stencilExclusions);
+            solution = solution with { ReferenceTrusted = true };
         }
 
         GlobalFit? globalFit = null;
@@ -661,7 +705,9 @@ public sealed class GroundHypothesisTracker
                 deferredReviews, false, solution);
         }
 
-        var stabilized = StabilizeFloorLines(floorLines, matches, cameraFit);
+        provisionalPromotionStartedAt = null;
+        provisionalPromotionAllowed = false;
+        consecutiveStrongProvisionalMatches = 0;
         var tracked = matches.Select(match => UpdatedFeature(match, cameraFit, luma, width))
             .Where(feature => feature is not null)
             .Cast<ActiveFeature>()
@@ -946,9 +992,8 @@ public sealed class GroundHypothesisTracker
     {
         if (lastGlobalSearchTimestamp is { } prior && timestamp - prior < .25) return null;
         lastGlobalSearchTimestamp = timestamp;
-        var candidate = PhaseIndependentGlobalFit(
-            RelocalizationFeatures(), luma, width, height, floorLines, exclusions, cameraY);
-        return VerifyGlobalFit(candidate, luma, width, height, floorLines, exclusions);
+        return SearchGlobalFit(luma, width, height, floorLines, exclusions,
+            ShouldScanCanonical(timestamp));
     }
 
     private GlobalFit? BackgroundFit(
@@ -970,11 +1015,19 @@ public sealed class GroundHypothesisTracker
             var features = RelocalizationFeatures()
                 .Select(feature => feature.Copy()).ToArray();
             var localPose = new AtlasPoint(cameraX, cameraY);
+            var snapshot = new GroundHypothesisTracker
+            {
+                cameraX = cameraX, cameraY = cameraY, globalAnchorValid = globalAnchorValid
+            };
+            foreach (var feature in features) snapshot.globalFeatures[feature.Id] = feature;
+            snapshot.canonicalFirstViewIds.UnionWith(canonicalFirstViewIds);
+            var priorCanonicalTimestamp = lastCanonicalPhaseSearchTimestamp;
+            var scanCanonical = ShouldScanCanonical(timestamp);
             if (globalSearchWorker.Submit(() =>
                 {
                     beforeBackgroundGlobalSearch?.Invoke();
-                    var fit = PhaseIndependentGlobalFit(
-                        features, pixels, width, height, lines, masks, localPose.Y);
+                    var fit = snapshot.SearchGlobalFit(
+                        pixels, width, height, lines, masks, scanCanonical);
                     backgroundGlobalSearchCompleted?.Invoke(fit?.CameraPosition);
                     return new BackgroundSearchResult(
                         fit,
@@ -982,6 +1035,7 @@ public sealed class GroundHypothesisTracker
                         localPose);
                 }))
                 lastGlobalSearchTimestamp = timestamp;
+            else lastCanonicalPhaseSearchTimestamp = priorCanonicalTimestamp;
         }
         if (completed is null
             || timestamp < completed.Timestamp
@@ -1008,16 +1062,85 @@ public sealed class GroundHypothesisTracker
             : null;
     }
 
+    private bool ShouldScanCanonical(double timestamp)
+    {
+        var cadence = lastLocalFailureTimestamp >= timestamp ? .75 : 2;
+        if (!correctionConfirmation.NeedsConfirmation
+            && lastCanonicalPhaseSearchTimestamp is { } prior && timestamp - prior < cadence)
+            return false;
+        lastCanonicalPhaseSearchTimestamp = timestamp;
+        return true;
+    }
+
+    // Mac challenges drifted duplicates with the oldest persistent strips,
+    // scanning every X phase without the local predicted-Y bound. Both the
+    // worker snapshot and current frame must verify the same frozen population.
+    private GlobalFit? SearchGlobalFit(byte[] luma, int width, int height,
+        IReadOnlyList<DetectedFloorLine> floorLines,
+        IReadOnlyList<PixelRect> exclusions, bool scanCanonical)
+    {
+        var stored = RelocalizationFeatures();
+        var fits = new List<GlobalFit>();
+        var ordinary = VerifyGlobalFit(PhaseIndependentGlobalFit(stored, luma,
+            width, height, floorLines, exclusions, cameraY),
+            luma, width, height, floorLines, exclusions);
+        if (ordinary is not null) fits.Add(ordinary);
+        if (scanCanonical)
+        {
+            var oldestLines = stored.Select(feature => feature.SegmentId).Distinct()
+                .Order().Take(4).ToHashSet();
+            var canonical = stored.Where(feature => oldestLines.Contains(feature.SegmentId)).ToArray();
+            var firstView = canonical.Where(feature => canonicalFirstViewIds.Contains(feature.Id)).ToArray();
+            foreach (var population in new[] { firstView, canonical })
+            {
+                if (population.Length < 6) continue;
+                var ids = population.Select(feature => feature.Id).ToHashSet();
+                foreach (var candidate in PhaseIndependentGlobalCandidates(population,
+                    luma, width, height, floorLines, exclusions, cameraY,
+                    maximumPredictedRowDistance: null).Take(6))
+                {
+                    var verified = VerifyGlobalFit(candidate with { VerificationFeatureIds = ids },
+                        luma, width, height, floorLines, exclusions);
+                    if (verified is null) continue;
+                    fits.Add(verified);
+                    break;
+                }
+                if (fits.Any(fit => fit.VerificationFeatureIds is not null)) break;
+            }
+        }
+        return fits.OrderBy(fit => fit.Inliers.Min(item => item.GlobalSegmentId))
+            .ThenByDescending(fit => fit.Inliers.Count).ThenBy(MeanDescriptorError).FirstOrDefault();
+    }
+
     private static GlobalFit? PhaseIndependentGlobalFit(
+        IReadOnlyList<GlobalFeature> storedFeatures, byte[] luma, int width, int height,
+        IReadOnlyList<DetectedFloorLine> floorLines,
+        IReadOnlyList<PixelRect> exclusions, double localCameraY)
+    {
+        var fits = PhaseIndependentGlobalCandidates(storedFeatures, luma, width, height,
+            floorLines, exclusions, localCameraY);
+        if (fits.Length == 0) return null;
+        var best = fits[0];
+        var bestError = MeanDescriptorError(best);
+        var ambiguous = fits.Skip(1).Any(rival =>
+            Length(rival.CameraPosition.X - best.CameraPosition.X,
+                rival.CameraPosition.Y - best.CameraPosition.Y) > 4
+            && rival.Inliers.Count >= best.Inliers.Count - 1
+            && MeanDescriptorError(rival) <= bestError * 1.15 + 1);
+        return ambiguous ? null : best;
+    }
+
+    private static GlobalFit[] PhaseIndependentGlobalCandidates(
         IReadOnlyList<GlobalFeature> storedFeatures,
         byte[] luma,
         int width,
         int height,
         IReadOnlyList<DetectedFloorLine> floorLines,
         IReadOnlyList<PixelRect> exclusions,
-        double localCameraY)
+        double localCameraY,
+        double? maximumPredictedRowDistance = 64)
     {
-        if (storedFeatures.Count < 6 || floorLines.Count == 0) return null;
+        if (storedFeatures.Count < 6 || floorLines.Count == 0) return [];
         var observationsByPhase = Enumerable.Range(0, FeatureSize)
             .Select(_ => new List<GlobalObservation>()).ToArray();
         var seenPositions = new HashSet<int>();
@@ -1026,7 +1149,8 @@ public sealed class GroundHypothesisTracker
             var line = floorLines[lineIndex];
             if (line.Row < 0 || line.Row + FeatureHeight > height) continue;
             var candidates = storedFeatures.Where(feature =>
-                    Math.Abs(feature.WorldTopY + localCameraY - line.Row) <= 64)
+                    (maximumPredictedRowDistance is null
+                        || Math.Abs(feature.WorldTopY + localCameraY - line.Row) <= maximumPredictedRowDistance.Value))
                 .ToArray();
             if (candidates.Length < 6) continue;
             var lower = Math.Max(0, line.XSpan.Start);
@@ -1071,15 +1195,7 @@ public sealed class GroundHypothesisTracker
             .OrderByDescending(fit => fit.Inliers.Count)
             .ThenBy(MeanDescriptorError)
             .ToArray();
-        if (fits.Length == 0) return null;
-        var best = fits[0];
-        var bestError = MeanDescriptorError(best);
-        var ambiguous = fits.Skip(1).Any(rival =>
-            Length(rival.CameraPosition.X - best.CameraPosition.X,
-                rival.CameraPosition.Y - best.CameraPosition.Y) > 4
-            && rival.Inliers.Count >= best.Inliers.Count - 1
-            && MeanDescriptorError(rival) <= bestError * 1.15 + 1);
-        return ambiguous ? null : best;
+        return fits;
     }
 
     private static GlobalFit? FitGlobalObservations(
@@ -1199,7 +1315,8 @@ public sealed class GroundHypothesisTracker
         if (fit is null) return null;
         var segmentIds = fit.Inliers.Select(item => item.GlobalSegmentId).ToHashSet();
         var stored = RelocalizationFeatures()
-            .Where(feature => segmentIds.Contains(feature.SegmentId))
+            .Where(feature => segmentIds.Contains(feature.SegmentId)
+                && (fit.VerificationFeatureIds is null || fit.VerificationFeatureIds.Contains(feature.Id)))
             .ToArray();
         if (stored.Length == 0) return null;
         GroundGlobalCorrectionPolicy.Quality? QualityAt(

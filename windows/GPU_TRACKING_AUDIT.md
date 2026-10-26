@@ -11,6 +11,16 @@
 | Failure to create one of the image compute encoders could still publish output buffers. | Failed encoding now returns nil, preserving the CPU fallback. |
 | Mac CI claimed success without publishing coverage. | Run 40141752240 logged `No files were found` for the hidden `.build` artifact path. CI now copies the exact Swift coverage JSON into a visible directory, validates it, and fails on a missing artifact. |
 
+## Live tracking integration follow-up — 2026-10-25
+
+After merging Mac `ad08a4b`, the separate atlas-driving texture solver was removed.
+The generation-scoped production `GroundHypothesisTracker` now supplies camera,
+atlas, purple feature overlays, recorded recovery metrics and GPU diagnostics.
+Its production patch matcher still uses automatic CUDA and the 192px limit.
+Persistent/global corrections and transactional placement rejection now reach
+live camera/atlas admission. See [tracking parity](MAC_TRACKING_PARITY.md) for
+regressions and remaining platform differences.
+
 ## Verification
 
 - Windows full suite: 969 core tests, 67 UI checks, receiver protocol tests passed.

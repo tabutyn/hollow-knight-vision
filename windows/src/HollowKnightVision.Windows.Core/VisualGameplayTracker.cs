@@ -7,7 +7,10 @@ public sealed record VisualGameplayObservation(
     bool AllowsAtlasWrite,
     int GroundSupport,
     double? GroundError,
-    string Source);
+    string Source)
+{
+    public GroundHypothesisTrackingResult GroundTracking { get; init; } = GroundHypothesisTrackingResult.Empty;
+}
 
 /// <summary>
 /// Converts image translation into the camera-shaped sample consumed by the tiled
@@ -21,19 +24,14 @@ public sealed class VisualGameplayTracker
         Smoothing = 0.65,
         MinimumConfidence = 0.10f
     };
-    private readonly GroundCameraSolver ground = new(
-        keyframeSubpixelEnabled: true,
-        calibratedMotionEnabled: true,
-        matcherBackend: GroundComputeBackend.Automatic,
-        maximumLocalSearchRadius: 192);
-    public GroundPatchSearchExecution? LastPatchSearchExecution => ground.LastPatchSearchExecution;
+    private readonly Lazy<GroundHypothesisTracker> defaultGroundTracker = new(() => new(
+        minimumObservationSeconds: .2, backgroundGlobalSearch: true,
+        confirmedLossGraceSeconds: 3, productionCameraSolver: true));
+    public GroundPatchSearchExecution? LastPatchSearchExecution { get; private set; }
+    public AtlasPoint Position => new(camera.Position.X, -camera.Position.Y);
     private readonly FreshAtlasBootstrapGate bootstrap = new();
     private readonly TransitionMotionBridge transition = new();
     private readonly GroundPlacementRecovery placement = new();
-    private readonly GroundLinePresence linePresence = new(
-        minimumObservationSeconds: 0.2,
-        confirmedLossGraceSeconds: 3);
-    private bool hasEstablishedGround;
     private double? previousTimestamp;
     private ulong sequence;
     private DateTimeOffset? startedAt;
@@ -61,62 +59,42 @@ public sealed class VisualGameplayTracker
         IReadOnlyList<DetectedFloorLine> lines,
         IReadOnlyList<PixelRect> exclusions,
         bool hasCommittedEvidence,
-        PixelRect? movingForeground = null)
+        PixelRect? movingForeground = null,
+        GroundHypothesisTracker? groundTracker = null,
+        double? captureTimestamp = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(sourceLuma);
         ArgumentNullException.ThrowIfNull(lines);
         ArgumentNullException.ThrowIfNull(exclusions);
-        var timestamp = Elapsed(frame);
-        var textureLines = lines.Select(GroundTextureLine.FromDetected).ToArray();
-        var protectedPixels = exclusions.Select(rect =>
-            new StencilRect(rect.X, rect.Y, rect.Width, rect.Height)).ToArray();
-        var solution = ground.Solve(sourceLuma, frame.Width, frame.Height,
-            textureLines, timestamp, protectedPixels);
-        var textureVerified = solution is not null && !ground.Seeded && solution.ReferenceTrusted;
-        var placementAccepted = false;
-        var presenceCamera = new AtlasPoint(camera.Position.X, -camera.Position.Y);
-        if (textureVerified)
-        {
-            var candidate = new AtlasPoint(-ground.ImagePosition.X, ground.ImagePosition.Y);
-            var current = new AtlasPoint(camera.Position.X, -camera.Position.Y);
-            placementAccepted = placement.Accepts(new GroundPlacementProposal(
-                    candidate, solution!.Support, solution.Error, 0, 0, false,
-                    ground.DistinctFrame, hasEstablishedGround),
-                current, frame.Width, timestamp,
-                previousTimestamp is { } previous ? timestamp - previous : null);
-            presenceCamera = candidate;
-            if (!placementAccepted) ground.DeferReferenceUpdates(timestamp);
-        }
-        else placement.MissingObservation();
-        linePresence.Update(
-            placementAccepted
-                ? lines.Select(line => line.ToSemanticLine()).ToArray()
-                : [],
-            presenceCamera,
-            frame.Width,
-            frame.Height,
-            timestamp,
-            placementAccepted,
-            exclusions);
-        var verified = placementAccepted
-            && linePresence.Reviews(presenceCamera, frame.Width, frame.Height)
-                .Any(review => review.State == GroundLinePresenceState.Confirmed);
-        if (verified) hasEstablishedGround = true;
+        var tracker = groundTracker ?? defaultGroundTracker.Value;
+        var timestamp = captureTimestamp ?? Elapsed(frame);
+        var evaluatedPlacement = false;
+        // One transaction owns local texture, persistent recovery, placement
+        // validation and line admission, exactly as in Mac's LiveCaptureModel.
+        var tracking = tracker.Update(sourceLuma, frame.Width, frame.Height, lines,
+            lineSeparation: 36, occlusionMergeGap: 180, timestamp: timestamp,
+            protectedOcclusions: exclusions,
+            placementValidator: proposal =>
+            {
+                evaluatedPlacement = true;
+                return placement.Accepts(proposal,
+                    new AtlasPoint(camera.Position.X, -camera.Position.Y),
+                    frame.Width, timestamp,
+                    previousTimestamp is { } previous ? timestamp - previous : null);
+            });
+        LastPatchSearchExecution = tracker.LatestPatchSearchExecution;
+        if (!evaluatedPlacement) placement.MissingObservation();
+        var firstFrame = previousTimestamp is null;
         previousTimestamp = timestamp;
+        var verified = tracking.PoseVerified && tracking.HasConfirmedGround
+            && tracking.CameraPosition is not null;
         CameraUpdate? update;
         TransitionMotionBridgeResult? bridged = null;
         if (verified)
         {
-            // Mac image coordinates are top-origin: camera.x -= image.dx and
-            // camera.y += image.dy. CameraAccumulator stores both image axes,
-            // while telemetry negates its Y below.
-            var target = new AtlasPoint(-ground.ImagePosition.X, -ground.ImagePosition.Y);
-            var step = new CameraVector(target.X - camera.Position.X, target.Y - camera.Position.Y);
-            camera.ApplyGlobalCorrection(target);
-            camera.ResetMotion();
-            update = new CameraUpdate(CameraUpdateState.Accepted, step, step, camera.Position);
-            transition.Anchor(new AtlasPoint(camera.Position.X, -camera.Position.Y), movingForeground);
+            update = ApplyPose(tracking.CameraPosition!.Value);
+            transition.Anchor(tracking.CameraPosition.Value, movingForeground);
         }
         else
         {
@@ -125,13 +103,14 @@ public sealed class VisualGameplayTracker
                 movingForeground: movingForeground);
             if (bridged is not null)
             {
-                var target = new AtlasPoint(bridged.CameraPosition.X, -bridged.CameraPosition.Y);
-                camera.ApplyGlobalCorrection(target);
-                camera.ResetMotion();
-                update = new CameraUpdate(CameraUpdateState.Accepted,
-                    bridged.CameraStep, bridged.CameraStep, camera.Position);
-                ground.FollowMeasuredCamera(bridged.CameraStep, sourceLuma,
-                    frame.Width, frame.Height, textureLines, timestamp, protectedPixels);
+                update = ApplyPose(bridged.CameraPosition);
+                // Preserve independent provisional motion and pending placement
+                // votes; repeatedly replacing them can prevent reacquisition.
+                if (!tracking.PoseVerified && !tracking.ProvisionalContinuityActive
+                    && !placement.RetainsCandidate(timestamp))
+                    tracker.ReanchorLocalCamera(bridged.CameraPosition, sourceLuma,
+                        frame.Width, frame.Height, lines, timestamp, exclusions,
+                        allowsProvisionalPromotion: bridged.Confidence >= .8f);
             }
             else update = resumedAfterTransition ? null : ApplyCoarseMotion(frame, diagnostic);
         }
@@ -141,15 +120,25 @@ public sealed class VisualGameplayTracker
             registrationAccepted: verified || bridged is not null,
             groundVerified: verified,
             hasCommittedEvidence: hasCommittedEvidence);
-        return new(BuildSample(frame, timestamp), update, verified,
-            (verified || bridged is not null) && bootstrapReady,
-            solution?.Support ?? 0,
-            solution?.Error,
+        return new(BuildSample(frame), update, verified,
+            (verified || bridged is not null) && bootstrapReady && placement.AllowsAtlasWrite,
+            tracking.LocalTextureSupport, tracking.LocalTextureError,
             verified ? "ground" : bridged is not null ? "transition-bridge"
-                : placementAccepted ? "ground-observing"
-                : ground.Seeded ? "ground-seed"
-                : solution is { ReferenceTrusted: false } ? "ground-provisional"
-                : update is null ? "held" : "coarse-presentation");
+                : firstFrame ? "ground-seed"
+                : tracking.PoseVerified ? "ground-observing"
+                : tracking.ProvisionalContinuityActive ? "ground-provisional"
+                : update is null ? "held" : "coarse-presentation")
+        { GroundTracking = tracking };
+    }
+
+    private CameraUpdate ApplyPose(AtlasPoint pose)
+    {
+        // Tracker/telemetry use world Y-up; CameraAccumulator uses image Y-down.
+        var target = new AtlasPoint(pose.X, -pose.Y);
+        var step = new CameraVector(target.X - camera.Position.X, target.Y - camera.Position.Y);
+        camera.ApplyGlobalCorrection(target);
+        camera.ResetMotion();
+        return new(CameraUpdateState.Accepted, step, step, camera.Position);
     }
 
     /// <summary>
@@ -218,12 +207,11 @@ public sealed class VisualGameplayTracker
     public void Reset()
     {
         camera.Reset();
-        ground.Reset();
+        if (defaultGroundTracker.IsValueCreated) defaultGroundTracker.Value.Reset();
+        LastPatchSearchExecution = null;
         bootstrap.Reset();
         transition.Reset();
         placement.Reset();
-        linePresence.Reset();
-        hasEstablishedGround = false;
         previousTimestamp = null;
         sequence = 0;
         startedAt = null;

@@ -793,8 +793,10 @@ public partial class MainWindow : Window
     {
         internal GroundHypothesisTracker Tracker { get; } = new(
             minimumObservationSeconds: .2,
+            backgroundGlobalSearch: true,
             confirmedLossGraceSeconds: 3,
             productionCameraSolver: true);
+        internal bool NeedsCameraAnchor { get; set; } = true;
         internal GroundSemanticAtlas SemanticAtlas { get; } = new();
         internal GroundReferenceTracker ReferenceTracker { get; } = new();
         internal string? ReceiverSceneName { get; private set; }
@@ -827,8 +829,15 @@ public partial class MainWindow : Window
             ReceiverSceneName = receiverSceneName;
         }
 
+        internal void SuspendTracking()
+        {
+            Tracker.Reset(keepingGlobalFeatures: true);
+            ReferenceTracker.Reset();
+        }
+
         internal void Reset()
         {
+            NeedsCameraAnchor = true;
             Tracker.Reset();
             SemanticAtlas.Reset();
             ReferenceTracker.Reset();
@@ -3223,7 +3232,7 @@ public partial class MainWindow : Window
         if (admission.ResetMotionReference)
         {
             frameMotionTracker.Reset();
-            groundHypothesisState.Reset();
+            groundHypothesisState.SuspendTracking();
         }
         var hudStencil = recognition.Hud;
         var detections = recognition.Detections;
@@ -3232,12 +3241,20 @@ public partial class MainWindow : Window
         var groundExclusions = masks.GroundExclusions;
         IReadOnlyList<DetectedFloorLine> ground = [];
         var groundHypotheses = GroundHypothesisTrackingResult.Empty;
+        IReadOnlyList<DetectedFloorLine> hypothesisFloorLines = [];
+        var hypothesisExclusions = groundExclusions.ToList();
+        if (masks.GroundKnight is { } groundKnight) hypothesisExclusions.Add(groundKnight);
         GroundEdgeAnalysis? groundAnalysis = null;
         GroundTheoryAnalysis? groundTheory = null;
         groundHypothesisState.PrepareFrame(
             frame.Width,
             frame.Height,
             exactReceiverTelemetry?.SceneName);
+        if (groundHypothesisState.NeedsCameraAnchor)
+        {
+            groundHypothesisState.Tracker.ReanchorLocalCamera(visualGameplayTracker.Position);
+            groundHypothesisState.NeedsCameraAnchor = false;
+        }
         if (admission.AdmitsTracking)
         {
             groundAnalysis = GroundLineDetector.Analyze(frame, groundExclusions);
@@ -3251,40 +3268,11 @@ public partial class MainWindow : Window
             ground = GroundLineDetector.RejectKnownForegroundLines(
                 ground, frame.Height, groundExclusions, masks.GroundKnight);
 
-            if (groundComparison.SourceLuma is { } hypothesisLuma)
-            {
-                var hypothesisExclusions = groundExclusions.ToList();
-                if (masks.GroundKnight is { } groundKnight)
-                    hypothesisExclusions.Add(groundKnight);
-                var hypothesisFloorLines = GroundLineDetector.RejectKnownForegroundLines(
-                    GroundLineDetector.CleanFloorLines(
-                        groundTheory),
-                    frame.Height,
-                    groundExclusions,
-                    masks.GroundKnight);
-                groundHypotheses = groundHypothesisState.Tracker.Update(
-                    hypothesisLuma,
-                    frame.Width,
-                    frame.Height,
-                    hypothesisFloorLines,
-                    lineSeparation: 36,
-                    occlusionMergeGap: 180,
-                    timestamp: captureTimestamp,
-                    protectedOcclusions: hypothesisExclusions);
-                var semanticAtlasLines = groundHypothesisState.SemanticAtlas.Update(
-                    groundHypotheses.AtlasLines,
-                    ground.Select(line => line.ToSemanticLine()).ToArray(),
-                    groundHypotheses.CameraPosition,
-                    frame.Width,
-                    frame.Height,
-                    groundHypotheses.PoseVerified);
-                groundHypotheses = groundHypotheses with
-                {
-                    AtlasLines = semanticAtlasLines
-                };
-            }
+            hypothesisFloorLines = GroundLineDetector.RejectKnownForegroundLines(
+                GroundLineDetector.CleanFloorLines(groundTheory),
+                frame.Height, groundExclusions, masks.GroundKnight);
         }
-        else groundHypothesisState.Reset();
+        else groundHypothesisState.SuspendTracking();
 
         LowResolutionTranslationDiagnostic? motion = null;
         if (admission.AdmitsTracking)
@@ -3308,11 +3296,19 @@ public partial class MainWindow : Window
         var visualObservation = admission.AdmitsTracking
             && groundAnalysis?.SourceLuma is { } sourceLuma
             ? visualGameplayTracker.ObserveGroundAnchored(
-                frame, motion, sourceLuma, ground, groundExclusions,
-                gameplayAtlas.TileCount > 0, masks.GroundKnight)
+                frame, motion, sourceLuma, hypothesisFloorLines, hypothesisExclusions,
+                gameplayAtlas.TileCount > 0, masks.GroundKnight,
+                groundHypothesisState.Tracker, captureTimestamp)
             : visualGameplayTracker.ObserveUnverified(frame, motion);
         if (!admission.AdmitsTracking) visualGameplayTracker.PauseGroundVerification();
         var visualTelemetry = visualObservation.Telemetry;
+        groundHypotheses = visualObservation.GroundTracking;
+        var semanticAtlasLines = groundHypothesisState.SemanticAtlas.Update(
+            groundHypotheses.AtlasLines,
+            ground.Select(line => line.ToSemanticLine()).ToArray(),
+            groundHypotheses.CameraPosition, frame.Width, frame.Height,
+            groundHypotheses.PoseVerified);
+        groundHypotheses = groundHypotheses with { AtlasLines = semanticAtlasLines };
         var groundReference = groundHypothesisState.ReferenceTracker.CurrentEstimate();
         if (visualObservation.Registration?.State == CameraUpdateState.Accepted
             && groundTheory is not null)
@@ -3463,14 +3459,19 @@ public partial class MainWindow : Window
             captureTimestamp,
             new InputPathTrackingObservation
             {
-                CameraPosition = visualObservation.GroundVerified
-                    ? new AtlasPoint(visualTelemetry.CameraX, visualTelemetry.CameraY)
-                    : null,
-                PoseVerified = visualObservation.GroundVerified,
-                HasConfirmedGround = visualObservation.GroundVerified,
-                GroundSegmentCount = ground.Count,
-                LocalTextureSupport = visualObservation.GroundSupport,
-                LocalTextureError = visualObservation.GroundError
+                CameraPosition = groundHypotheses.CameraPosition,
+                PoseVerified = groundHypotheses.PoseVerified,
+                HasConfirmedGround = groundHypotheses.HasConfirmedGround,
+                GlobalCorrection = groundHypotheses.GlobalCorrection,
+                GlobalMatchCount = groundHypotheses.GlobalMatchCount,
+                GroundSegmentCount = groundHypotheses.GroundSegmentCount,
+                InlierCount = groundHypotheses.InlierCount,
+                ResidualRms = groundHypotheses.ResidualRms,
+                VisibleLineIds = groundHypotheses.LineReviews.Select(line => line.Id).ToArray(),
+                AtlasLineIds = groundHypotheses.AtlasLines.Select(line => line.SegmentId).Distinct().ToArray(),
+                LocalTextureSupport = groundHypotheses.LocalTextureSupport,
+                LocalTextureError = groundHypotheses.LocalTextureError,
+                ProvisionalContinuityActive = groundHypotheses.ProvisionalContinuityActive
             },
             publishedCameraPosition,
             visualObservation.Source,

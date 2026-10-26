@@ -299,8 +299,10 @@ cannot establish a state. Current knight/enemy/world evidence can establish
 Gameplay. Credits requires prior Extras navigation and keeps object inference
 running so gameplay can disprove it. Transport resets preserve established
 Gameplay; switching game processes clears it. A presentation latch alone does
-not admit frames to the atlas. Full visual transition/ground-recovery/room
-tracking integration remains an audit obligation, not implied by these tests.
+not admit frames to the atlas. Persistent ground recovery now drives the camera
+and atlas through one validated tracker; see [live tracking alignment](MAC_TRACKING_PARITY.md).
+Full visual transition/room integration and native recorded-run differential
+validation remain audit obligations, not implied by status-policy tests.
 
 Scene exclusions now use the Mac live policy: only the highest-confidence
 `game.playable-knight` detection supplies the moving region, with a 0.5 atlas
