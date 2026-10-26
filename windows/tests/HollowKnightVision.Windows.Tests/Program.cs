@@ -947,6 +947,8 @@ var tests = new List<(string Name, Action Run)>
     ("ground truth atlas projects negative world pixels", TestGroundTruthAtlasProjection),
     ("ground truth atlas overwrites with newest pixels", TestGroundTruthAtlasBlend),
     ("gameplay presentation advances while analysis trails capture", GameplayPresentationTests.TestDelayedAnalysis),
+    ("normal tracking advances during an unfinished autosave", GameplayPresentationTests.TestNormalTrackingDuringAutosave),
+    ("modded world writes wait for autosave publication", GameplayPresentationTests.TestModdedTrackingWaitsForAutosave),
     ("newest atlas honors masks, black, restore and capture identity", GameplayPresentationTests.TestNewestPixels),
     ("newest atlas rollback preserves committed pixels", GameplayPresentationTests.TestNewestRollback),
     ("newest atlas preserves projection and coordinate bounds", GameplayPresentationTests.TestNewestProjectionBounds),
@@ -4936,7 +4938,9 @@ static void TestConcurrentAppendsAllocateUniqueDurableEvidence()
         using var wave = new Barrier(writerCount);
         var observations = new StoredFrameObservation?[writerCount * appendsPerWriter];
         var errors = new Exception?[writerCount];
-        var tasks = Enumerable.Range(0, writerCount).Select(index => Task.Run(() =>
+        // Blocking synchronization needs dedicated writers. Thread-pool ramp-up
+        // can exceed the readiness timeout before the append code even runs.
+        var tasks = Enumerable.Range(0, writerCount).Select(index => Task.Factory.StartNew(() =>
         {
             ready.Signal();
             start.Wait();
@@ -4956,10 +4960,10 @@ static void TestConcurrentAppendsAllocateUniqueDurableEvidence()
             {
                 errors[index] = exception;
             }
-        })).ToArray();
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default)).ToArray();
 
-        True(ready.Wait(TimeSpan.FromSeconds(1)));
-        start.Set();
+        try { True(ready.Wait(TimeSpan.FromSeconds(5))); }
+        finally { start.Set(); }
         True(Task.WaitAll(tasks, TimeSpan.FromSeconds(5)));
         if (errors.Any(error => error is not null))
         {

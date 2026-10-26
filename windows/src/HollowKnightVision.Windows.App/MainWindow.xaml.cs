@@ -877,7 +877,8 @@ public partial class MainWindow : Window
         GroundTruthAtlasMosaic Atlas,
         long Revision,
         bool FullReplacement,
-        DateTimeOffset CompletedAt);
+        DateTimeOffset CompletedAt,
+        double DurationMilliseconds);
     private string? recognizedMenuContext;
     private string? recognizedMenuSelection;
 
@@ -896,6 +897,7 @@ public partial class MainWindow : Window
         bool AdmitsTracking,
         string StencilDiagnostic)
     {
+        public long AnalysisStartedTimestamp { get; init; }
         public double AnalysisMilliseconds { get; init; }
         public double QueueMilliseconds { get; init; }
         public double GroundMilliseconds { get; init; }
@@ -2625,6 +2627,8 @@ public partial class MainWindow : Window
             { SingleReader = true, SingleWriter = false, AllowSynchronousContinuations = false });
             var captureGeneration = Interlocked.Increment(ref recentCaptureGeneration);
             gameplayPresentation.Reset();
+            previousAnalysisStartedTimestamp = 0;
+            maxAnalysisGapMilliseconds = 0;
             BeginReceiverFrameJoin(
                 captureGeneration,
                 analysisFrames.Writer,
@@ -2819,6 +2823,7 @@ public partial class MainWindow : Window
                 if (result is null) continue;
                 result = result with
                 {
+                    AnalysisStartedTimestamp = analysisStarted,
                     AnalysisMilliseconds = Stopwatch.GetElapsedTime(analysisStarted).TotalMilliseconds,
                     QueueMilliseconds = queueMilliseconds
                 };
@@ -2827,7 +2832,7 @@ public partial class MainWindow : Window
                     () => ApplyVisionAnalysis(result),
                     DispatcherPriority.Render,
                     cancellationToken);
-                await AwaitAtlasPersistenceBarrierAsync().ConfigureAwait(false);
+                await AtlasPersistenceBarrier.WaitForWorldWritesAsync(gameMode, atlasPersistTask).ConfigureAwait(false);
             }
         }
         finally
@@ -3643,21 +3648,6 @@ public partial class MainWindow : Window
         Interlocked.Exchange(ref gameplayAtlasPresentationPending, replacement);
     }
 
-    private async Task AwaitAtlasPersistenceBarrierAsync()
-    {
-        var pending = atlasPersistTask;
-        if (pending is null) return;
-        try
-        {
-            await pending.ConfigureAwait(false);
-        }
-        catch
-        {
-            // The UI observes and reports the same task on the next frame or
-            // during the mandatory shutdown/atlas-operation drain.
-        }
-    }
-
     private void ApplyVisionAnalysis(VisionAnalysisResult result)
     {
         if (result.CaptureGeneration != Interlocked.Read(ref recentCaptureGeneration)
@@ -3801,12 +3791,22 @@ public partial class MainWindow : Window
     private string captureBackend = "Starting";
     private string? captureFallbackReason;
     private double captureReadbackMilliseconds;
+    private long previousAnalysisStartedTimestamp;
+    private double maxAnalysisGapMilliseconds;
+    private double lastAtlasSaveMilliseconds;
     private long diagnosticAnalysisFrames;
     private long lastDiagnosticAnalysisFrames;
     private long lastDiagnosticCaptureId;
     private void PublishGpuDiagnostics(VisionAnalysisResult result)
     {
         diagnosticAnalysisFrames++;
+        if (previousAnalysisStartedTimestamp != 0)
+        {
+            maxAnalysisGapMilliseconds = Math.Max(maxAnalysisGapMilliseconds,
+                Stopwatch.GetElapsedTime(previousAnalysisStartedTimestamp,
+                    result.AnalysisStartedTimestamp).TotalMilliseconds);
+        }
+        previousAnalysisStartedTimestamp = result.AnalysisStartedTimestamp;
         var now = DateTimeOffset.UtcNow;
         var diagnosticElapsed = (now - lastGpuDiagnosticAt).TotalSeconds;
         if (now - lastGpuDiagnosticAt < TimeSpan.FromSeconds(5)
@@ -3835,6 +3835,9 @@ public partial class MainWindow : Window
             FrameAgeMilliseconds = Math.Max(0, (Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency
                 - result.CaptureTimestamp) * 1000),
             result.AnalysisMilliseconds,
+            MaxAnalysisGapMilliseconds = maxAnalysisGapMilliseconds,
+            LastAtlasSaveMilliseconds = lastAtlasSaveMilliseconds,
+            AtlasSaveInProgress = atlasPersistTask is { IsCompleted: false },
             result.QueueMilliseconds,
             result.GroundMilliseconds,
             result.AtlasAndWorldMilliseconds,
@@ -3854,6 +3857,7 @@ public partial class MainWindow : Window
             result.GameplayTelemetry.CameraX,
             result.GameplayTelemetry.CameraY
         });
+        maxAnalysisGapMilliseconds = 0;
         lastDiagnosticAnalysisFrames = diagnosticAnalysisFrames;
         lastDiagnosticCaptureId = Interlocked.Read(ref latestPresentedCaptureId);
         gpuDiagnosticWrite = Task.Run(() =>
@@ -5760,6 +5764,7 @@ public partial class MainWindow : Window
             atlasAtWrite.PixelsPerWorldUnit);
         atlasPersistTask = Task.Run(() =>
         {
+            var saveStarted = Stopwatch.GetTimestamp();
             _ = WriteAtlasGeneration(
                 snapshot,
                 metadata,
@@ -5769,7 +5774,8 @@ public partial class MainWindow : Window
                 atlasAtWrite,
                 snapshot.Revision,
                 FullReplacement: true,
-                DateTimeOffset.UtcNow);
+                DateTimeOffset.UtcNow,
+                Stopwatch.GetElapsedTime(saveStarted).TotalMilliseconds);
         });
         return true;
     }
@@ -5823,6 +5829,7 @@ public partial class MainWindow : Window
         if (!ReferenceEquals(gameplayAtlas, publication.Atlas)) return;
         Interlocked.Exchange(ref gameplayPersistedRevision, publication.Revision);
         lastAtlasPersistedAt = publication.CompletedAt;
+        lastAtlasSaveMilliseconds = publication.DurationMilliseconds;
         if (publication.FullReplacement
             && publication.Atlas.Revision == publication.Revision)
         {

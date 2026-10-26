@@ -41,6 +41,9 @@ internal sealed class WindowsGameCapture : IDisposable
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         cancellation.ThrowIfCancellationRequested();
+        // The WinRT Closed event can trail HWND destruction. Do not start or
+        // read a dead window while waiting for that asynchronous notification.
+        if (!IsWindow(window.Handle)) { closed = true; return null; }
         if (window.Handle != windowHandle)
         {
             DisposeSession();
@@ -107,6 +110,11 @@ internal sealed class WindowsGameCapture : IDisposable
             Marshal.ThrowExceptionForHR(access.GetInterface(ref textureId, out var texturePointer));
             using var texture = new ID3D11Texture2D(texturePointer);
             var description = texture.Description;
+            if (size.Width > description.Width || size.Height > description.Height)
+            {
+                LastFrameIssue = $"Content {size.Width}x{size.Height} exceeds texture {description.Width}x{description.Height}.";
+                return null;
+            }
             if (staging is null || staging.Description.Width != description.Width || staging.Description.Height != description.Height)
             {
                 staging?.Dispose();
@@ -121,12 +129,16 @@ internal sealed class WindowsGameCapture : IDisposable
             context!.CopyResource(staging, texture);
             var mapped = context.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
             var stride = checked(crop.Value.Width * BgraFrame.BytesPerPixel);
-            var pixels = new byte[checked(stride * crop.Value.Height)];
+            byte[]? pixels;
             try
             {
-                for (var row = 0; row < crop.Value.Height; row++)
-                    Marshal.Copy(mapped.DataPointer + checked((int)mapped.RowPitch * (crop.Value.Y + row) + crop.Value.X * 4),
-                        pixels, row * stride, stride);
+                pixels = CopyMappedClient(mapped.DataPointer, mapped.RowPitch,
+                    description.Width, description.Height, crop.Value);
+                if (pixels is null)
+                {
+                    LastFrameIssue = $"Invalid readback: texture {description.Width}x{description.Height}, pitch {mapped.RowPitch}, crop {crop.Value}.";
+                    return null;
+                }
             }
             finally { context.Unmap(staging, 0); }
             var age = Math.Max(0, Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency - timestamp);
@@ -137,6 +149,27 @@ internal sealed class WindowsGameCapture : IDisposable
             ReadbackMilliseconds = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             return normalized;
         }
+    }
+
+    internal static byte[]? CopyMappedClient(nint data, uint rowPitch,
+        uint textureWidth, uint textureHeight, PixelRect crop)
+    {
+        // Window/content geometry can change before the capture texture catches
+        // up. Validate against the actual mapped allocation, not the window or
+        // cached pool size, before any native pointer arithmetic or memory copy.
+        var right = (long)crop.X + crop.Width;
+        var bottom = (long)crop.Y + crop.Height;
+        if (data == 0 || crop.X < 0 || crop.Y < 0 || crop.Width <= 0 || crop.Height <= 0
+            || right > textureWidth || bottom > textureHeight
+            || rowPitch < (long)textureWidth * BgraFrame.BytesPerPixel
+            || (bottom - 1) * rowPitch + right * BgraFrame.BytesPerPixel > int.MaxValue)
+            return null;
+        var stride = checked(crop.Width * BgraFrame.BytesPerPixel);
+        var pixels = new byte[checked(stride * crop.Height)];
+        for (var row = 0; row < crop.Height; row++)
+            Marshal.Copy(data + checked((int)((long)rowPitch * (crop.Y + row) + (long)crop.X * 4)),
+                pixels, row * stride, stride);
+        return pixels;
     }
 
     private void Start(HollowKnightWindow window)
@@ -177,10 +210,16 @@ internal sealed class WindowsGameCapture : IDisposable
 
     private PixelRect? ClientCrop(nint handle, int width, int height)
     {
-        if (!GetClientRect(handle, out var client)) throw new Win32Exception(Marshal.GetLastWin32Error());
         var origin = new NativePoint();
-        if (!ClientToScreen(handle, ref origin)) throw new Win32Exception(Marshal.GetLastWin32Error());
-        Marshal.ThrowExceptionForHR(DwmGetWindowAttribute(handle, 9, out var bounds, Marshal.SizeOf<NativeRect>()));
+        if (!GetClientRect(handle, out var client) || !ClientToScreen(handle, ref origin))
+        {
+            var error = Marshal.GetLastWin32Error();
+            if (error == 1400 || !IsWindow(handle)) { closed = true; return null; }
+            throw new Win32Exception(error);
+        }
+        var boundsResult = DwmGetWindowAttribute(handle, 9, out var bounds, Marshal.SizeOf<NativeRect>());
+        if (boundsResult < 0 && !IsWindow(handle)) { closed = true; return null; }
+        Marshal.ThrowExceptionForHR(boundsResult);
         var x = origin.X - bounds.Left;
         var y = origin.Y - bounds.Top;
         var clientWidth = client.Right - client.Left;
@@ -230,6 +269,7 @@ internal sealed class WindowsGameCapture : IDisposable
     [StructLayout(LayoutKind.Sequential)] private struct NativeRect { internal int Left, Top, Right, Bottom; }
     [DllImport("d3d11.dll")] private static extern int CreateDirect3D11DeviceFromDXGIDevice(nint device, out nint graphicsDevice);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(nint window, int attribute, out NativeRect rect, int size);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindow(nint window);
     [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetClientRect(nint window, out NativeRect rect);
     [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ClientToScreen(nint window, ref NativePoint point);
 }

@@ -271,3 +271,71 @@ the Start Menu copy. The installed settings were visually checked. GPU capture
 and CUDA remained active after launch. [Verification details and limits](audits/2026-10-26-atlas-settings-recovery.json)
 record the final hashes and stationary diagnostic report. Live tracking improvement
 still needs a repeat of the user's route.
+
+## 2026-10-26: normal tracking blocked by autosave
+
+The user clarified the remaining symptom: the game view freezes in place, then
+jumps. Normal and modded analysis both awaited the pending atlas publication
+at the end of every analyzed frame. A directory-event observation of the
+installed baseline measured two complete generation writes at 1.36 and 1.40
+seconds, separated by the ten-second save interval. Capture can keep showing new
+pixels during this wait, but camera analysis cannot advance.
+
+Normal tracking only updates the in-memory mosaic; publication already owns
+copied tile pixels. It now continues while that snapshot is written. Modded
+tracking retains the barrier because its live-world pipeline writes into the
+active directory being swapped by publication. Explicit reset/load/shutdown
+drains, atomic directory replacement, error reporting, and save cadence are
+unchanged. The initial suspicion of a separate presentation-context gate was
+ruled out: admitted tracking uses the same latched gameplay status.
+
+Regression coverage holds an autosave task open while sixty moving observations
+advance presentation and the real mosaic, checking that the persisted snapshot
+stays immutable. A second test ensures modded processing waits and the original
+failed save remains observable. Diagnostics now include maximum analysis-start
+gap over each reporting interval, last completed save duration, and whether a
+save is in progress. These distinguish tracking stalls from average FPS and
+from visual registration accuracy.
+
+The required GPU capture fixture exposed two additional failures during validation:
+one run received no initial frame (an unchanged retry passed), and another crashed
+inside native readback. The copy validated client coordinates against reported
+content size, but not against the actual texture allocation or mapped row pitch.
+Readback now rejects mismatched texture/content, invalid crops, null pointers,
+short pitches, and offsets beyond the supported copy range before native reads.
+Allocation and copying also occur inside the mapping's unmap guard. A deterministic
+padded-buffer test checks last-row copies and rejects out-of-bounds resize crops;
+the hardware fixture now alternates twelve window grows/shrinks before occlusion
+and close checks. The crash stack establishes the readback failure; it does not
+by itself prove which mismatched geometry caused that occurrence.
+
+Microsoft documents that content can exceed the underlying capture surface during
+resize and that clipped/undefined regions must not be treated as complete pixels:
+[Windows capture frame processing](https://learn.microsoft.com/en-us/windows/apps/develop/media-authoring-processing/screen-capture).
+
+Validation also exposed existing fixture timing assumptions: six blocking append
+workers were required to start on the thread pool in one second, and GDI capture
+sampled immediately after a WPF layout update. Append workers now use dedicated
+threads with unchanged simultaneous-write/durability assertions. The GDI fixture
+waits up to two seconds for the requested color rather than asserting before
+compositor presentation. The GPU fixture starts visible without activation, then
+explicitly tests capture under another window. No pixel or occlusion assertions
+were removed.
+
+The live-content fixture changes a one-pixel marker outside sampled locations,
+so a static-source optimization after pool recreation does not prevent the
+resize test from obtaining a new frame. Two further full UI passes succeeded;
+a third exposed a separate real close race: GetClientRect reported invalid HWND
+before the asynchronous WinRT Closed event arrived. Capture now checks HWND
+liveness before starting/reading and treats destruction during client-geometry
+queries as a closed source. The existing close/cancellation assertions remain.
+
+Final validation passed 986 core tests, 68 UI checks, required CUDA and GPU
+capture, receiver tests, and three additional consecutive complete UI runs.
+The canonical build installed and hash-verified the Start Menu copy. Its
+50.54-second live sample averaged 2.02 CPU cores and 51.27 median analyzed FPS.
+Six observed completed-save durations ranged from 1.56 to 1.76 seconds, while
+the largest analysis-start gap was 108.15ms (including startup settling). GPU
+capture and CUDA remained active without fallback. Camera coordinates stayed
+at (0,0); this establishes that saves no longer block analysis, not movement
+accuracy. [Measured reports, hashes and limits](audits/2026-10-26-autosave-tracking.json).

@@ -11,6 +11,7 @@
     <Compile Include="../../src/HollowKnightVision.Windows.App/LabelingViewportTransform.cs" Link="LabelingViewportTransform.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/NormalGameInputPolicy.cs" Link="NormalGameInputPolicy.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/GameRuntimeModeValue.cs" Link="GameRuntimeModeValue.cs" />
+    <Compile Include="../../src/HollowKnightVision.Windows.App/AtlasPersistenceBarrier.cs" Link="AtlasPersistenceBarrier.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/StencilInitialization.cs" Link="StencilInitialization.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/StencilGuidanceText.cs" Link="StencilGuidanceText.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/VisionResetController.cs" Link="VisionResetController.cs" />

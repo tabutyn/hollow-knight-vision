@@ -1,3 +1,4 @@
+using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 
 internal static class GameplayPresentationTests
@@ -42,6 +43,64 @@ internal static class GameplayPresentationTests
             "Reset retained an old capture or pose.");
         state.Capture(Frame(1, 8));
         Check(state.TryAcceptAnalysis(Frame(1, 8)), "New capture epoch cannot restart IDs.");
+    }
+
+    public static void TestNormalTrackingDuringAutosave()
+    {
+        var pendingSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var atlas = new GroundTruthAtlasMosaic(pixelsPerWorldUnit: 1, tileSize: 64,
+            sourceTopInsetFraction: 0);
+        var initial = Frame(1, 100);
+        atlas.AddFrame(initial, Sample(initial));
+        var savedSnapshot = atlas.SnapshotSince(-1);
+        var savedBytes = savedSnapshot.Tiles.Select(tile => tile.Frame.Pixels.ToArray()).ToArray();
+        var presentation = new GameplayPresentationState();
+        var analysis = Task.Run(async () =>
+        {
+            for (long id = 2; id <= 61; id++)
+            {
+                await AtlasPersistenceBarrier.WaitForWorldWritesAsync(GameRuntimeMode.Normal, pendingSave.Task);
+                var frame = Frame(id, (byte)id);
+                presentation.Capture(frame);
+                Check(presentation.TryAcceptAnalysis(frame), "Camera stopped accepting analyzed frames.");
+                Check(atlas.AddFrame(frame, Sample(frame) with { CameraX = id }),
+                    "Atlas stopped accepting moving observations.");
+            }
+        });
+        try
+        {
+            Check(analysis.Wait(TimeSpan.FromSeconds(5)),
+                "Normal tracking waited for the pending disk publication.");
+            Check(!pendingSave.Task.IsCompleted && presentation.LatestFrame?.CaptureId == 61
+                && atlas.AcceptedFrameCount == 61 && atlas.Revision > savedSnapshot.Revision,
+                "Camera and atlas did not advance while autosave remained pending.");
+            for (var i = 0; i < savedBytes.Length; i++)
+                Check(savedSnapshot.Tiles[i].Frame.Pixels.SequenceEqual(savedBytes[i]),
+                    "Live atlas writes mutated the snapshot being persisted.");
+            Check(Pixel(atlas, 61, 0) == 61, "Moving view did not submit newest pixels.");
+        }
+        finally
+        {
+            pendingSave.TrySetResult();
+            analysis.GetAwaiter().GetResult();
+        }
+    }
+
+    public static void TestModdedTrackingWaitsForAutosave()
+    {
+        var pendingSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var barrier = AtlasPersistenceBarrier.WaitForWorldWritesAsync(GameRuntimeMode.Modded, pendingSave.Task);
+        try
+        {
+            Check(!barrier.IsCompleted, "Modded world writes could race the directory publication.");
+        }
+        finally { pendingSave.TrySetResult(); }
+        barrier.GetAwaiter().GetResult();
+        var error = new IOException("simulated autosave failure");
+        var failedSave = Task.FromException(error);
+        AtlasPersistenceBarrier.WaitForWorldWritesAsync(GameRuntimeMode.Modded, failedSave).GetAwaiter().GetResult();
+        Check(failedSave.IsFaulted && ReferenceEquals(failedSave.Exception!.InnerException, error),
+            "Autosave failure was lost before UI/shutdown could report it.");
     }
 
     public static void TestNewestPixels()

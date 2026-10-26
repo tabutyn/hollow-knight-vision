@@ -113,9 +113,10 @@ internal static class Program
         TrainingIntegrationTests.Run();
         ExampleStoreIntegrationTests.Run();
         TestSolidCapture();
+        GpuCaptureTests.TestMappedBounds();
         GpuCaptureTests.RunIfRequested();
         if (args.Contains("--input")) TestBackgroundKeyDelivery();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 68 : 67)}");
+        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 69 : 68)}");
         Application.Current.Shutdown();
     }
 
@@ -1724,10 +1725,19 @@ internal static class Program
             {
                 surface.Background = new SolidColorBrush(Color.FromRgb(value, value, value));
                 window.UpdateLayout(); Pump();
-                var captured = new GdiWindowCapture().Capture(target, value);
-                var offset = captured.Height / 2 * captured.Stride + captured.Width / 2 * 4;
-                for (var channel = 0; channel < 3; channel++)
-                    Check(captured.Pixels[offset + channel] == value, $"Uniform {value} frame replaced by desktop pixels.");
+                // UpdateLayout does not wait for the compositor. Keep the
+                // pixel assertion, but allow the new brush to reach the surface.
+                var deadline = Stopwatch.StartNew();
+                var matched = false;
+                do
+                {
+                    var captured = new GdiWindowCapture().Capture(target, value);
+                    var offset = captured.Height / 2 * captured.Stride + captured.Width / 2 * 4;
+                    matched = Enumerable.Range(0, 3).All(channel => captured.Pixels[offset + channel] == value);
+                    if (matched) break;
+                    Thread.Sleep(16); Pump();
+                } while (deadline.Elapsed < TimeSpan.FromSeconds(2));
+                Check(matched, $"Uniform {value} frame replaced by desktop pixels.");
             }
             Console.WriteLine("PASS black, fade, grey and white captures stay window-owned");
         }

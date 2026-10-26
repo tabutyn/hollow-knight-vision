@@ -11,18 +11,53 @@ using HollowKnightVision.Windows.Host;
 
 internal static class GpuCaptureTests
 {
+    internal static void TestMappedBounds()
+    {
+        const int width = 7, height = 5, pitch = 32;
+        var source = Enumerable.Range(0, pitch * height).Select(i => (byte)i).ToArray();
+        var data = Marshal.AllocHGlobal(source.Length);
+        try
+        {
+            Marshal.Copy(source, 0, data, source.Length);
+            var result = WindowsGameCapture.CopyMappedClient(data, pitch, width, height, new(2, 1, 5, 4));
+            var expected = Enumerable.Range(1, 4).SelectMany(y => source.Skip(y * pitch + 8).Take(20));
+            if (result is null || !result.SequenceEqual(expected))
+                throw new Exception("Mapped crop did not preserve padded row data through the final pixel.");
+            // A resized client can fit ContentSize while exceeding an older texture.
+            foreach (var crop in new PixelRect[] { new(0, 0, 8, 5), new(0, 0, 7, 6),
+                new(-1, 0, 1, 1), new(0, -1, 1, 1), new(0, 0, 0, 1), new(int.MaxValue, 0, 2, 1) })
+                if (WindowsGameCapture.CopyMappedClient(data, pitch, width, height, crop) is not null)
+                    throw new Exception($"Out-of-texture crop accepted: {crop}");
+            if (WindowsGameCapture.CopyMappedClient(data, 16, width, height, new(0, 0, 1, 1)) is not null
+                || WindowsGameCapture.CopyMappedClient(0, pitch, width, height, new(0, 0, 1, 1)) is not null
+                || WindowsGameCapture.CopyMappedClient(data, uint.MaxValue, width, height, new(0, 0, 1, 2)) is not null)
+                throw new Exception("Invalid mapped pointer/pitch accepted.");
+        }
+        finally { Marshal.FreeHGlobal(data); }
+        Console.WriteLine("PASS GPU readback rejects stale texture bounds and preserves padded client pixels");
+    }
+
     internal static void RunIfRequested()
     {
         // Real compositor coverage is opt-in on interactive Windows hosts.
         // CI's offscreen WPF tests do not have an interactive capture session.
         if (Environment.GetEnvironmentVariable("HKV_REQUIRE_GPU_CAPTURE") != "1") return;
         var surface = new Border { Background = Brushes.Black };
-        var window = new Window { Title = "Vision capture regression", Content = surface,
+        // WGC may suppress unchanged frames after pool recreation. Keep a small
+        // marker moving through colors outside all sampled pixels, as a live
+        // game does, so resize tests do not depend on static-frame publication.
+        var marker = new Border { Width = 1, Height = 1, Margin = new Thickness(16, 16, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+        var content = new Grid(); content.Children.Add(surface); content.Children.Add(marker);
+        var markerLight = false;
+        var window = new Window { Title = "Vision capture regression", Content = content,
             Width = 250, Height = 180, Left = 30, Top = 30, ShowActivated = false,
-            ShowInTaskbar = false, ResizeMode = ResizeMode.NoResize };
+            // Ensure WPF presents the initial surface even if the game covers
+            // the desktop. Occluded capture is tested after initial rendering.
+            Topmost = true, ShowInTaskbar = false, ResizeMode = ResizeMode.NoResize };
         Window? cover = null;
         using var capture = new WindowsGameCapture();
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         long id = 0;
         window.Show(); Pump();
         var target = new HollowKnightWindow(new WindowInteropHelper(window).Handle,
@@ -40,8 +75,13 @@ internal static class GpuCaptureTests
                 window.UpdateLayout(); Pump();
                 AwaitColor(value);
             }
-            window.Width = 320; window.Height = 240; window.UpdateLayout(); Pump();
-            surface.Background = Brushes.Black; Pump(); AwaitColor(0);
+            for (var resize = 0; resize < 12; resize++)
+            {
+                window.Width = resize % 2 == 0 ? 321 : 247;
+                window.Height = resize % 2 == 0 ? 243 : 177;
+                surface.Background = resize % 2 == 0 ? Brushes.Black : Brushes.White;
+                window.UpdateLayout(); Pump(); AwaitColor(resize % 2 == 0 ? (byte)0 : (byte)255);
+            }
             // A red covering window must never enter capture. The game's pixels
             // remain available while Vision itself covers the game in production.
             cover = new Window { Background = Brushes.Red, Width = 360, Height = 280,
@@ -72,6 +112,9 @@ internal static class GpuCaptureTests
             string lastPixels = "none";
             while (deadline.Elapsed < TimeSpan.FromSeconds(5))
             {
+                markerLight = !markerLight;
+                marker.Background = markerLight ? Brushes.White : Brushes.Black;
+                Pump();
                 var task = Task.Run(() => capture.CaptureAsync(target, ++id, cancellation.Token));
                 while (!task.IsCompleted) Pump();
                 var frame = task.GetAwaiter().GetResult();
