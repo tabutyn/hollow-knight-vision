@@ -251,6 +251,11 @@ public sealed class GroundTruthAtlasMosaic
         var projectedWidth = checked(globalRight - globalLeft);
         var projectedHeight = checked(globalBottom - globalTop);
         if (projectedWidth <= 0 || projectedHeight <= 0) return false;
+        _ = checked(projectedWidth * projectedHeight); // Preserve the original projection-size bound.
+        if (!usesTemporalAgreement)
+            return AddNewestFrame(frame, telemetry, excluded, sourceScale.Value,
+                globalLeft, globalTop, globalRight, globalBottom,
+                nextContext, resolvedCaptureIdentity);
         var retainedObservation = false;
         var observation = new TemporalObservation(
             telemetry.UnityRealtime,
@@ -363,6 +368,87 @@ public sealed class GroundTruthAtlasMosaic
             if (!retainedObservation) ReturnObservation(observation);
         }
         }
+    }
+
+    // Latest-pixel composition needs neither a temporal image nor per-pixel tile
+    // hashing. Stage each touched tile once; commit remains atomic with reset.
+    private bool AddNewestFrame(BgraFrame frame, ReceiverGroundTruthSample telemetry,
+        bool[]? excluded, double sourceScale, int left, int top, int right, int bottom,
+        TemporalContext context, string captureIdentity)
+    {
+        var sourceXs = new int[checked(right - left)];
+        for (var x = left; x < right; x++)
+        {
+            var worldX = (x + .5) / PixelsPerWorldUnit;
+            sourceXs[x - left] = checked((int)Math.Round(
+                (worldX - telemetry.CameraX) * sourceScale + frame.Width / 2.0 - .5));
+        }
+        var sourceYs = new int[checked(bottom - top)];
+        for (var y = top; y < bottom; y++)
+        {
+            var worldY = -(y + .5) / PixelsPerWorldUnit;
+            sourceYs[y - top] = checked((int)Math.Round(
+                (telemetry.CameraY - worldY) * sourceScale + frame.Height / 2.0 - .5));
+        }
+        var inset = checked((int)Math.Round(frame.Height * SourceTopInsetFraction));
+        var nextRevision = checked(revision + 1);
+        var nextAcceptedCount = checked(acceptedFrameCount + 1);
+        var stagedTiles = new Dictionary<AtlasTileCoordinate, Tile>();
+        for (var tileY = FloorDivide(top, TileSize); tileY <= FloorDivide(bottom - 1, TileSize); tileY++)
+        for (var tileX = FloorDivide(left, TileSize); tileX <= FloorDivide(right - 1, TileSize); tileX++)
+        {
+            var tileLeft = (long)tileX * TileSize;
+            var tileTop = (long)tileY * TileSize;
+            var coordinate = new AtlasTileCoordinate(tileX, tileY);
+            Tile? staged = null;
+            var firstX = (int)Math.Max(left, tileLeft);
+            var lastX = (int)Math.Min(right, tileLeft + TileSize);
+            var firstY = (int)Math.Max(top, tileTop);
+            var lastY = (int)Math.Min(bottom, tileTop + TileSize);
+            for (var y = firstY; y < lastY; y++)
+            {
+                var sourceY = sourceYs[y - top];
+                if (sourceY < inset || sourceY >= frame.Height) continue;
+                var sourceRow = frame.Row(sourceY);
+                var maskRow = sourceY * frame.Width;
+                var tileRow = (int)(y - tileTop) * TileSize;
+                for (var x = firstX; x < lastX; x++)
+                {
+                    var sourceX = sourceXs[x - left];
+                    if ((uint)sourceX >= (uint)frame.Width
+                        || excluded?[maskRow + sourceX] == true) continue;
+                    var source = sourceX * BgraFrame.BytesPerPixel;
+                    if (sourceRow[source + 3] == 0) continue;
+                    if (staged is null)
+                    {
+                        staged = tiles.TryGetValue(coordinate, out var existing)
+                            ? CloneTile(existing) : new Tile(TileSize);
+                        staged.ObservationCount = checked(staged.ObservationCount + 1);
+                        staged.Revision = nextRevision;
+                        stagedTiles.Add(coordinate, staged);
+                    }
+                    var pixelIndex = tileRow + (int)(x - tileLeft);
+                    var weight = staged.Weights[pixelIndex];
+                    staged.Weights[pixelIndex] = weight == ushort.MaxValue
+                        ? ushort.MaxValue : (ushort)(weight + 1);
+                    WriteSample(staged.Pixels, pixelIndex * BgraFrame.BytesPerPixel,
+                        PackSample(sourceRow, source));
+                }
+            }
+        }
+        tiles.EnsureCapacity(checked(tiles.Count
+            + stagedTiles.Keys.Count(coordinate => !tiles.ContainsKey(coordinate))));
+        recentCaptures.EnsureCapacity(65);
+        var stagedEpoch = mutationEpoch;
+        temporalCommitCheckpoint?.Invoke();
+        if (mutationEpoch != stagedEpoch) return false;
+        foreach (var pair in stagedTiles) tiles[pair.Key] = pair.Value;
+        revision = nextRevision;
+        acceptedFrameCount = nextAcceptedCount;
+        temporalContext = context;
+        recentCaptures.Enqueue((context, captureIdentity));
+        while (recentCaptures.Count > 64) recentCaptures.Dequeue();
+        return true;
     }
 
     public IReadOnlyList<AtlasTileSnapshot> Snapshot()

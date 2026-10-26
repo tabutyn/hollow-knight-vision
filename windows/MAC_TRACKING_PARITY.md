@@ -53,3 +53,7 @@ Windows uses its union-masked 64x36 estimator. Native capture pixels and backend
 numerics also need recorded-run differential validation. The parity inventory
 therefore remains partial. Atlas composition retains the user's newest-pixel
 policy; this change does not restore temporal or median blending.
+
+Follow-up: [measured Windows latency fixes](TRACKING_PERFORMANCE_AUDIT.md) remove
+CPU atlas overhead and candidate-patch allocations without changing replay poses
+or newest-pixel results. Live movement accuracy remains a separate check.

@@ -100,6 +100,28 @@ internal static class GameplayPresentationTests
         Check(Pixel(atlas, 0, 0) == 20, "Failed capture could not be retried.");
     }
 
+    public static void TestNewestProjectionBounds()
+    {
+        var frame = Frame(1, 180);
+        var atlas = new GroundTruthAtlasMosaic(pixelsPerWorldUnit: 1, tileSize: 63,
+            sourceTopInsetFraction: 0);
+        try
+        {
+            atlas.AddFrame(frame, Sample(frame) with { OrthographicSize = 50_000, PixelsPerWorldUnitY = null });
+            throw new InvalidOperationException("Oversized projection was not rejected.");
+        }
+        catch (OverflowException) { }
+        Check(atlas.TileCount == 0 && atlas.AcceptedFrameCount == 0,
+            "Oversized projection mutated the atlas.");
+        foreach (var x in new[] { -999_999, 999_999 })
+        {
+            atlas.Reset();
+            Check(atlas.AddFrame(frame, Sample(frame) with { CameraX = x }),
+                "Valid edge coordinate was rejected.");
+            Check(Pixel(atlas, x, 0) == 180, "Edge tile arithmetic lost valid pixels.");
+        }
+    }
+
     public static void TestLiveAtlasDefault()
     {
         var pipeline = new LiveAtlasPresentationPipeline();

@@ -896,6 +896,12 @@ public partial class MainWindow : Window
         bool AdmitsTracking,
         string StencilDiagnostic)
     {
+        public double AnalysisMilliseconds { get; init; }
+        public double QueueMilliseconds { get; init; }
+        public double GroundMilliseconds { get; init; }
+        public double AtlasAndWorldMilliseconds { get; init; }
+        public string PoseSource { get; init; } = "held";
+        public bool AllowsAtlasWrite { get; init; }
         public string? MenuContext => Status?.ContextIdentifier;
         public LiveObjectDetectionSnapshot Objects { get; init; } = LiveObjectDetectionSnapshot.Empty;
         public LiveObjectInferenceDiagnostics ObjectDiagnostics { get; init; } = new();
@@ -2786,6 +2792,9 @@ public partial class MainWindow : Window
                     frameAdmission = new();
                     lastLabelRevision = pending.LabelRevision;
                 }
+                var analysisStarted = Stopwatch.GetTimestamp();
+                var queueMilliseconds = Math.Max(0,
+                    (analysisStarted / (double)Stopwatch.Frequency - pending.CaptureTimestamp) * 1000);
                 var result = AnalyzeVisionFrame(
                     pending.Frame,
                     detector,
@@ -2803,6 +2812,11 @@ public partial class MainWindow : Window
                     groundHypothesisState,
                     normalAtlasRoomIdentity);
                 if (result is null) continue;
+                result = result with
+                {
+                    AnalysisMilliseconds = Stopwatch.GetElapsedTime(analysisStarted).TotalMilliseconds,
+                    QueueMilliseconds = queueMilliseconds
+                };
                 PublishAuthoritativeVisionState(result);
                 await Dispatcher.InvokeAsync(
                     () => ApplyVisionAnalysis(result),
@@ -3293,6 +3307,7 @@ public partial class MainWindow : Window
         if (!labelCapture.CanProcess(labelRevision)) return null;
 
         AtlasMosaicDelta? gameplayTiles = null;
+        var groundStarted = Stopwatch.GetTimestamp();
         var visualObservation = admission.AdmitsTracking
             && groundAnalysis?.SourceLuma is { } sourceLuma
             ? visualGameplayTracker.ObserveGroundAnchored(
@@ -3301,6 +3316,8 @@ public partial class MainWindow : Window
                 groundHypothesisState.Tracker, captureTimestamp)
             : visualGameplayTracker.ObserveUnverified(frame, motion);
         if (!admission.AdmitsTracking) visualGameplayTracker.PauseGroundVerification();
+        var groundMilliseconds = Stopwatch.GetElapsedTime(groundStarted).TotalMilliseconds;
+        var atlasStarted = Stopwatch.GetTimestamp();
         var visualTelemetry = visualObservation.Telemetry;
         groundHypotheses = visualObservation.GroundTracking;
         var semanticAtlasLines = groundHypothesisState.SemanticAtlas.Update(
@@ -3497,6 +3514,10 @@ public partial class MainWindow : Window
                 $"; signal={signal.SignaledFraction:F3} mean={signal.MeanPeak:F2} tracking={admission.AdmitsTracking} resumed={admission.Transition.ResumedAfterTransition} pose={visualObservation.Source} support={visualObservation.GroundSupport}")
                 + (liveWorldResult is null ? "" : $"; {liveWorldResult.Diagnostic}"))
             {
+                GroundMilliseconds = groundMilliseconds,
+                AtlasAndWorldMilliseconds = Stopwatch.GetElapsedTime(atlasStarted).TotalMilliseconds,
+                PoseSource = visualObservation.Source,
+                AllowsAtlasWrite = gameplayAdmitted,
                 Objects = recognition.Objects,
                 ObjectDiagnostics = recognition.ObjectDiagnostics,
                 LabelRevision = labelRevision,
@@ -3636,7 +3657,7 @@ public partial class MainWindow : Window
     {
         if (result.CaptureGeneration != Interlocked.Read(ref recentCaptureGeneration)
             || !labelCapture.CanProcess(result.LabelRevision)) return;
-        PublishGpuDiagnostics();
+        PublishGpuDiagnostics(result);
         var presentsLatestFrame = result.Frame.CaptureId
             == Interlocked.Read(ref latestPresentedCaptureId);
         var presentsLatestMatchedFrame = TryAcceptLatestMatchedResult(result);
@@ -3772,9 +3793,14 @@ public partial class MainWindow : Window
         PersistActiveAtlas(force: false);
     }
 
-    private void PublishGpuDiagnostics()
+    private long diagnosticAnalysisFrames;
+    private long lastDiagnosticAnalysisFrames;
+    private long lastDiagnosticCaptureId;
+    private void PublishGpuDiagnostics(VisionAnalysisResult result)
     {
+        diagnosticAnalysisFrames++;
         var now = DateTimeOffset.UtcNow;
+        var diagnosticElapsed = (now - lastGpuDiagnosticAt).TotalSeconds;
         if (now - lastGpuDiagnosticAt < TimeSpan.FromSeconds(5)
             || gpuDiagnosticWrite is { IsCompleted: false }) return;
         lastGpuDiagnosticAt = now;
@@ -3790,8 +3816,33 @@ public partial class MainWindow : Window
             CameraBackend = localSearch?.Backend.ToString(),
             CameraSearchMilliseconds = localSearch?.Elapsed.TotalMilliseconds,
             CameraCandidates = localSearch?.CandidateCount,
-            FallbackReason = matcher.CudaFailure
+            FallbackReason = matcher.CudaFailure,
+            AnalyzedFramesPerSecond = lastDiagnosticAnalysisFrames == 0 ? (double?)null
+                : (diagnosticAnalysisFrames - lastDiagnosticAnalysisFrames) / diagnosticElapsed,
+            CapturedFramesPerSecond = lastDiagnosticCaptureId == 0 ? (double?)null
+                : (Interlocked.Read(ref latestPresentedCaptureId) - lastDiagnosticCaptureId) / diagnosticElapsed,
+            FrameAgeMilliseconds = Math.Max(0, (Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency
+                - result.CaptureTimestamp) * 1000),
+            result.AnalysisMilliseconds,
+            result.QueueMilliseconds,
+            result.GroundMilliseconds,
+            result.AtlasAndWorldMilliseconds,
+            result.PoseSource,
+            result.AdmitsTracking,
+            result.AllowsAtlasWrite,
+            result.StencilDiagnostic,
+            GroundVerified = result.GroundHypotheses.PoseVerified,
+            result.GroundHypotheses.HasConfirmedGround,
+            result.GroundHypotheses.LocalTextureSupport,
+            result.GroundHypotheses.LocalTextureError,
+            result.GroundHypotheses.InlierCount,
+            result.GroundHypotheses.GlobalMatchCount,
+            GroundFeatureCount = result.GroundHypotheses.Features.Count,
+            result.GameplayTelemetry.CameraX,
+            result.GameplayTelemetry.CameraY
         });
+        lastDiagnosticAnalysisFrames = diagnosticAnalysisFrames;
+        lastDiagnosticCaptureId = Interlocked.Read(ref latestPresentedCaptureId);
         gpuDiagnosticWrite = Task.Run(() =>
         {
             try

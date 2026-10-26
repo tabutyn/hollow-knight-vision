@@ -1,0 +1,292 @@
+{
+  "baselineCommit": "3ceda38",
+  "inputFrameBgraSha256": "9c8fa94e34c1f9fa10dad53f32d0aea0ce8134b2d0e6c90fd67b797283a28f02",
+  "dimensions": [
+    640,
+    360
+  ],
+  "device": "NVIDIA GeForce GTX 1080",
+  "profiledManagedCpuMilliseconds": {
+    "analysis": 7757.2,
+    "atlasAddFrame": 3590.9,
+    "groundTrackerUpdate": 669.5,
+    "captureNormalization": 1849.7
+  },
+  "atlas": [
+    {
+      "scale": 1.0,
+      "beforeMedianMilliseconds": 5.1384,
+      "afterMedianMilliseconds": 2.0806,
+      "beforeP95Milliseconds": 6.8211,
+      "afterP95Milliseconds": 3.3072,
+      "tileCount": 8,
+      "acceptedFrames": 200,
+      "tilesAndCountsEqual": true,
+      "tileDigests": [
+        {
+          "X": -2,
+          "Y": -1,
+          "Written": 14420,
+          "Observations": 200,
+          "Sha": "5C558A42DA565B18CE035D5507B7230742B0FC3F567CD54952865B70242EB228"
+        },
+        {
+          "X": -2,
+          "Y": 0,
+          "Written": 31738,
+          "Observations": 200,
+          "Sha": "68D3D95EE5B8DF32A64D6F89417BF4BFA47379E5B4B622F99A270F3A4534CE65"
+        },
+        {
+          "X": -1,
+          "Y": -1,
+          "Written": 26368,
+          "Observations": 200,
+          "Sha": "E22C95417B7153FA1C38859E46CFB1E1A9E4563E7460C74268EC2FABE7DA18E7"
+        },
+        {
+          "X": -1,
+          "Y": 0,
+          "Written": 57600,
+          "Observations": 200,
+          "Sha": "D5D1D826137BBD54600779B14EA57527A17DF0F4AA09272D3E561486746E0063"
+        },
+        {
+          "X": 0,
+          "Y": -1,
+          "Written": 26368,
+          "Observations": 200,
+          "Sha": "AA2CCF537875E2F9572460F2CED21912267B31480EACAD56D87F68A37CCB9A41"
+        },
+        {
+          "X": 0,
+          "Y": 0,
+          "Written": 57600,
+          "Observations": 200,
+          "Sha": "C07BBB0A271775190A53B089ECDFB2EFF355E345811F56F37F4147F9CA2D0E57"
+        },
+        {
+          "X": 1,
+          "Y": -1,
+          "Written": 5139,
+          "Observations": 135,
+          "Sha": "7F38B369524B4170624C0DE030A6FC78576D7BDD43E1E309B509767B08E6C53B"
+        },
+        {
+          "X": 1,
+          "Y": 0,
+          "Written": 11474,
+          "Observations": 135,
+          "Sha": "9C155D1987FE08A2446F175054F68A590EB61BDE4554FCA4E7D33AB74265E66E"
+        }
+      ]
+    },
+    {
+      "scale": 0.75,
+      "beforeMedianMilliseconds": 4.1474,
+      "afterMedianMilliseconds": 1.3382,
+      "beforeP95Milliseconds": 5.1734,
+      "afterP95Milliseconds": 2.3833,
+      "tileCount": 6,
+      "acceptedFrames": 200,
+      "tilesAndCountsEqual": true,
+      "tileDigests": [
+        {
+          "X": -2,
+          "Y": -1,
+          "Written": 3194,
+          "Observations": 146,
+          "Sha": "B96B59602F957DD3CACC7D63E044EF21F52235FA963D12BA4060D70D29B82C95"
+        },
+        {
+          "X": -2,
+          "Y": 0,
+          "Written": 7130,
+          "Observations": 146,
+          "Sha": "5E69DB19884C7D3D5011F388FC56FAA8BA4F1B35A0CCD4E7549A818FC3DC0DA4"
+        },
+        {
+          "X": -1,
+          "Y": -1,
+          "Written": 19712,
+          "Observations": 200,
+          "Sha": "DC1D6187A8C006078A6161838ED91BA6A07F1E2B7FC6FA8E96BB537D64A41CC5"
+        },
+        {
+          "X": -1,
+          "Y": 0,
+          "Written": 43264,
+          "Observations": 200,
+          "Sha": "EAAFFF57376F46B35CB193A3819E712EDB0F95B53F27561F8CB8BE91CBA6B310"
+        },
+        {
+          "X": 0,
+          "Y": -1,
+          "Written": 17673,
+          "Observations": 200,
+          "Sha": "773EC7951E5ED112120160E19CADC4F105E36F4F8E4138F0DFEF6F3E884BF44E"
+        },
+        {
+          "X": 0,
+          "Y": 0,
+          "Written": 38905,
+          "Observations": 200,
+          "Sha": "99A61C3C01EA7F83B7ADD5912D9111E3125BB301375B61C74CE204434EB886D2"
+        }
+      ]
+    },
+    {
+      "scale": 1.4,
+      "beforeMedianMilliseconds": 10.1657,
+      "afterMedianMilliseconds": 3.7547,
+      "beforeP95Milliseconds": 14.2044,
+      "afterP95Milliseconds": 5.6821,
+      "tileCount": 15,
+      "acceptedFrames": 200,
+      "tilesAndCountsEqual": true,
+      "tileDigests": [
+        {
+          "X": -3,
+          "Y": -1,
+          "Written": 6202,
+          "Observations": 98,
+          "Sha": "31CA18BCCB1AE9975B6277736FDFF4159953F943090AACBABD43F0B5096A6462"
+        },
+        {
+          "X": -3,
+          "Y": 0,
+          "Written": 11776,
+          "Observations": 98,
+          "Sha": "F93B6E4E0FD5D02117504DAC1B7678B03B9287C11B902B942980CB1308B9ED32"
+        },
+        {
+          "X": -3,
+          "Y": 1,
+          "Written": 2263,
+          "Observations": 76,
+          "Sha": "C78CAED656DD9DF83F2C6CE075AFD62448376A133F04B4F2314CD652FDB01152"
+        },
+        {
+          "X": -2,
+          "Y": -1,
+          "Written": 37112,
+          "Observations": 200,
+          "Sha": "A7F6365651310AC7E41B8E4871A65315E80C6E12D6B22301D1CF62CD826D4D88"
+        },
+        {
+          "X": -2,
+          "Y": 0,
+          "Written": 65536,
+          "Observations": 200,
+          "Sha": "CAF6CF9CF0C2BA1FEB6A52F7B8414ACEACE9F5B733470539971F35E861D35BE1"
+        },
+        {
+          "X": -2,
+          "Y": 1,
+          "Written": 15104,
+          "Observations": 155,
+          "Sha": "8DAB04261923C46593CC4C88CE669B74A28F2FCB500587CB5DEDAF10AE034121"
+        },
+        {
+          "X": -1,
+          "Y": -1,
+          "Written": 37111,
+          "Observations": 200,
+          "Sha": "7F1F62E9BD77EB11369AD33652E67073AD9D69373EB280F6E1DC0A0D1C20FDE6"
+        },
+        {
+          "X": -1,
+          "Y": 0,
+          "Written": 65536,
+          "Observations": 200,
+          "Sha": "80327952EBC938E1D5EDE761CCCA7A4B3194D1DA6AF5310109CF02B25547920B"
+        },
+        {
+          "X": -1,
+          "Y": 1,
+          "Written": 15104,
+          "Observations": 155,
+          "Sha": "8DAB04261923C46593CC4C88CE669B74A28F2FCB500587CB5DEDAF10AE034121"
+        },
+        {
+          "X": 0,
+          "Y": -1,
+          "Written": 37112,
+          "Observations": 200,
+          "Sha": "3308CB8D63E743057C759BFA2758EEED4BEE0EB0FA8F2692E76381EBF5FBE2E6"
+        },
+        {
+          "X": 0,
+          "Y": 0,
+          "Written": 65536,
+          "Observations": 200,
+          "Sha": "A9A2C0099EB97032603E09BE62F35C67DB640D8BF236317B4344B058E47EEA8E"
+        },
+        {
+          "X": 0,
+          "Y": 1,
+          "Written": 15104,
+          "Observations": 155,
+          "Sha": "8DAB04261923C46593CC4C88CE669B74A28F2FCB500587CB5DEDAF10AE034121"
+        },
+        {
+          "X": 1,
+          "Y": -1,
+          "Written": 24922,
+          "Observations": 200,
+          "Sha": "EAAF771C089963BCD4FA1BCE17FFEA87F11FA820B18214471406F0F56D032EBD"
+        },
+        {
+          "X": 1,
+          "Y": 0,
+          "Written": 44800,
+          "Observations": 200,
+          "Sha": "E1D2F69D11525A357C39360BFC0B3FDAFE1F30CD38892EA612D5110D02E1D3BD"
+        },
+        {
+          "X": 1,
+          "Y": 1,
+          "Written": 9890,
+          "Observations": 155,
+          "Sha": "8976EB4281DAD3A7C78001EB8E35BA39D79E86C431ACCFC0CBDFDC3CB95C3B4E"
+        }
+      ]
+    }
+  ],
+  "ground": {
+    "before": {
+      "frames": 90,
+      "medianMilliseconds": 14.99535,
+      "p95Milliseconds": 19.6822,
+      "meanAllocatedBytes": 1642890.2222222222,
+      "maxPoseErrorPixels": 0.6389999999999958,
+      "verified": 90
+    },
+    "after": {
+      "frames": 90,
+      "medianMilliseconds": 7.74355,
+      "p95Milliseconds": 10.445,
+      "meanAllocatedBytes": 1295573.2444444445,
+      "maxPoseErrorPixels": 0.6389999999999958,
+      "verified": 90
+    },
+    "all120PublishedPosesTrustAndSupportEqual": true
+  },
+  "live": {
+    "samples": 11,
+    "allGroundVerified": true,
+    "allCuda": true,
+    "medianAnalysisFramesPerSecond": 24.022814665773016,
+    "medianFrameAgeMilliseconds": 17.496699932962656,
+    "maximumFrameAgeMilliseconds": 60.01740007195622,
+    "cameraMoved": false
+  },
+  "validation": {
+    "windowsCoreTestsPassed": 974,
+    "windowsUiChecksPassed": 67,
+    "receiverProtocolTestsPassed": true,
+    "hardwareCudaRequired": true,
+    "finalAtlasDigestsEqual": true,
+    "publishedCoreSha256": "dadf19d1c863b6bc283be83353d1970dfcbaf3983ab28b40ba28db9373014a0b"
+  }
+}

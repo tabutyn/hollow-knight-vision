@@ -939,6 +939,7 @@ var tests = new List<(string Name, Action Run)>
     ("gameplay presentation advances while analysis trails capture", GameplayPresentationTests.TestDelayedAnalysis),
     ("newest atlas honors masks, black, restore and capture identity", GameplayPresentationTests.TestNewestPixels),
     ("newest atlas rollback preserves committed pixels", GameplayPresentationTests.TestNewestRollback),
+    ("newest atlas preserves projection and coordinate bounds", GameplayPresentationTests.TestNewestProjectionBounds),
     ("live atlas default overwrites on the next observation", GameplayPresentationTests.TestLiveAtlasDefault),
     ("ground truth atlas emits dirty tiles and resets", TestGroundTruthAtlasDirtyReset),
     ("ground truth atlas imports restored tile", TestGroundTruthAtlasImport),

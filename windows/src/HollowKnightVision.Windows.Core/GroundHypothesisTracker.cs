@@ -1564,9 +1564,7 @@ public sealed class GroundHypothesisTracker
                         && (long)x + FeatureWidth - 1 <= item.XSpan.EndInclusive)
                     .MinBy(item => Math.Abs((long)item.Row - y));
                 if (line is null) continue;
-                var patch = GroundCameraSolver.ReadPatch(luma, width, height, x, y);
-                if (patch is null) continue;
-                var error = AbsolutePatchError(feature.Patch, patch);
+                var error = AbsolutePatchError(feature.Patch, luma, width, x, y);
                 if (error > PromotionPhotometricError) continue;
                 totalError += error;
                 candidateMatches.Add(new Match(
@@ -1648,9 +1646,7 @@ public sealed class GroundHypothesisTracker
             {
                 for (var x = lowerX; x <= upperX; x++)
                 {
-                    var patch = GroundCameraSolver.ReadPatch(luma, width, height, x, y);
-                    if (patch is null) continue;
-                    var error = AbsolutePatchError(feature.Patch, patch);
+                    var error = AbsolutePatchError(feature.Patch, luma, width, x, y);
                     if (error >= bestError) continue;
                     bestError = error;
                     best = new Match(feature, x, y, error,
@@ -2296,13 +2292,20 @@ public sealed class GroundHypothesisTracker
         return patch;
     }
 
-    private static double AbsolutePatchError(IReadOnlyList<byte> left, IReadOnlyList<byte> right)
+    // Candidate bounds are already checked by both search loops. Compare the
+    // image rows directly instead of allocating a 192-byte patch per candidate.
+    private static double AbsolutePatchError(byte[] reference, byte[] pixels,
+        int stride, int x, int y)
     {
-        if (left.Count != FeaturePixelCount || right.Count != FeaturePixelCount)
-            return double.PositiveInfinity;
-        long error = 0;
-        for (var index = 0; index < FeaturePixelCount; index++)
-            error += Math.Abs(left[index] - right[index]);
+        if (reference.Length != FeaturePixelCount) return double.PositiveInfinity;
+        var error = 0;
+        for (var row = 0; row < FeatureHeight; row++)
+        {
+            var source = (y + row) * stride + x;
+            var target = row * FeatureWidth;
+            for (var column = 0; column < FeatureWidth; column++)
+                error += Math.Abs(reference[target + column] - pixels[source + column]);
+        }
         return (double)error / FeaturePixelCount;
     }
 
