@@ -390,6 +390,18 @@ launches, bypass the chooser and select a dedicated installation:
 ./HollowKnightVision.Windows.exe --game-mode modded --game-path 'D:\Modded\Hollow Knight\hollow_knight.exe'
 ```
 
+A separate copy of the Steam installation also needs `steam_appid.txt` beside
+`hollow_knight.exe`, containing `367520`. Keep the Steam client running. Without
+that file, Steam can restart the game from its registered normal installation,
+causing the selected modded process to exit and Vision to close. For the dedicated
+copy above:
+
+```powershell
+Set-Content -LiteralPath 'D:\Modded\Hollow Knight\steam_appid.txt' -Value '367520' -Encoding ascii
+```
+
+This is Steam's documented [standalone development launch setup](https://partner.steamgames.com/doc/api/steam_api#SteamAPI_RestartAppIfNecessary).
+
 The chooser disables a mode when Vision cannot find a complete compatible
 installation. Selecting an available mode gracefully closes a different running
 copy before launching the matching executable. Normal requires an unmodified
