@@ -1,0 +1,70 @@
+{
+  "date": "2026-10-26",
+  "baselineCommit": "7ef78b8",
+  "changes": [
+    "Atlas list uses explicit dark item, selected, hover, title and detail colors.",
+    "Delete resets Auto Save without retaining/importing its previous generation; New retains its previous-generation restore point. Failed activation still rolls back.",
+    "Remove the standalone ground-camera vector from Ground Features; horizontal ground lines and feature rectangles remain.",
+    "Port Mac direct and alternative feature-bank recovery before canonical challenge and all-phase fallback. Use current-frame projected pixels and independent whole-strip verification."
+  ],
+  "macReference": "macos/Sources/HollowKnightVision/GroundHypothesisTracker.swift:searchSnapshot/globalMatchObservations",
+  "validation": {
+    "coreTests": 984,
+    "uiRegressions": 67,
+    "requiredCudaTests": "passed",
+    "requiredGpuCaptureTest": "passed",
+    "receiverTests": "passed",
+    "newCases": [
+      "Four visible cells recover a 64-pixel displacement in foreground and asynchronous background search.",
+      "Occluded and unrelated current pixels cannot nominate an accepted place.",
+      "New retains the previous autosave; Delete removes it without a named or recoverable sibling copy; saved states and labels remain.",
+      "Failed delete activation restores the original autosave without a named copy."
+    ],
+    "installedSettingsVisualInspection": "passed; actual installed window shows light text on dark atlas rows",
+    "installedSha256": {
+      "HollowKnightVision.Windows.dll": "86676CA0AE2772D133AA28DAFD6C8E1D76970F8B6B7FD2799DF1C8599531C3D4",
+      "HollowKnightVision.Windows.Core.dll": "BBDC8EFF380C8DA5765BBC0A1B4F6EDAE36B0324CEEADB6674A736BDE7368A25"
+    }
+  },
+  "liveInstalledReport": {
+    "ObservedAt": "2026-10-26T11:39:36.8736738+00:00",
+    "ProcessId": 29620,
+    "Device": "NVIDIA GeForce GTX 1080",
+    "CudaAvailable": true,
+    "CaptureBackend": "Windows Graphics Capture",
+    "CaptureFallbackReason": null,
+    "CaptureReadbackMilliseconds": 4.8068,
+    "CudaDispatches": 9400,
+    "CameraBackend": "Cuda",
+    "CameraSearchMilliseconds": 2.1604,
+    "CameraCandidates": 462,
+    "FallbackReason": null,
+    "AnalyzedFramesPerSecond": 53.60985121871234,
+    "CapturedFramesPerSecond": 55.20419623636922,
+    "FrameAgeMilliseconds": 41.491399984806776,
+    "AnalysisMilliseconds": 36.2835,
+    "QueueMilliseconds": 5.139600019901991,
+    "GroundMilliseconds": 22.6655,
+    "AtlasAndWorldMilliseconds": 2.8553,
+    "PoseSource": "ground",
+    "AdmitsTracking": true,
+    "AllowsAtlasWrite": true,
+    "StencilDiagnostic": "raw=main-title/none phase=Searching confidence=0.220 evidence=0.000 language=en comparisons=294 admitted=false; calibration=idle; signal=0.613 mean=54.71 tracking=True resumed=False pose=ground support=24",
+    "GroundVerified": true,
+    "HasConfirmedGround": true,
+    "LocalTextureSupport": 24,
+    "LocalTextureError": 0.055682554841041565,
+    "InlierCount": 12,
+    "GlobalMatchCount": 0,
+    "GroundFeatureCount": 22,
+    "GlobalFeatureCount": 18,
+    "GroundSegmentCount": 1,
+    "CameraX": 0,
+    "CameraY": 0
+  },
+  "limits": [
+    "Live report is a stationary startup check; no claim of Mac-equivalent tracking accuracy.",
+    "Other tracking differences, including the floorless registration path, remain outside this focused recovery port.",
+    "User atlas data was not deleted during validation; transaction deletion tests use isolated temporary stores."
+  ]
+}

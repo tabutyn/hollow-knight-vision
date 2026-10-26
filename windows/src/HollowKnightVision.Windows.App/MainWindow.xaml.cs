@@ -3910,23 +3910,6 @@ public partial class MainWindow : Window
                 DetectionCanvas,
                 groundHypotheses);
 
-            if (groundHypotheses.CameraTranslation is { } translation
-                && double.IsFinite(translation.X)
-                && double.IsFinite(translation.Y))
-            {
-                DetectionCanvas.Children.Add(new Line
-                {
-                    X1 = CanvasWidth / 2,
-                    Y1 = CanvasHeight / 2,
-                    X2 = CanvasWidth / 2 + translation.X * 12,
-                    Y2 = CanvasHeight / 2 + translation.Y * 12,
-                    Stroke = Brushes.DeepSkyBlue,
-                    StrokeThickness = 3,
-                    ToolTip = FormattableString.Invariant(
-                        $"ground camera {translation.X:+0.0;-0.0;0},{translation.Y:+0.0;-0.0;0}")
-                });
-            }
-
             foreach (var review in GroundLineDetector.FeatureHypothesisPresenceReviews(
                          groundHypotheses.LineReviews))
             {
@@ -6018,7 +6001,7 @@ public partial class MainWindow : Window
         var saved = selected?.State is not null;
         AtlasDeleteStateButton.IsEnabled = selected is not null;
         AtlasDeleteStateButton.Content = initialization.Text("Delete");
-        AtlasDeleteStateButton.ToolTip = saved ? null : "Delete the active atlas and start fresh; keep a recoverable backup and all stencil labels.";
+        AtlasDeleteStateButton.ToolTip = saved ? null : "Delete the active atlas without saving a copy. Stencil labels and named saved states are kept.";
         AtlasLoadStateButton.IsEnabled = saved;
     }
 
@@ -6037,9 +6020,9 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void AtlasNew_Click(object sender, RoutedEventArgs e) => await ResetActiveAtlasAsync();
+    private async void AtlasNew_Click(object sender, RoutedEventArgs e) => await ResetActiveAtlasAsync(retainPrevious: true);
 
-    private async Task ResetActiveAtlasAsync()
+    private async Task ResetActiveAtlasAsync(bool retainPrevious)
     {
         await RunAtlasOperationAsync(async () =>
         {
@@ -6059,7 +6042,7 @@ public partial class MainWindow : Window
                         new AtlasMosaicDelta(gameplayAtlas.Revision, []),
                         metadata,
                         copyActiveWorld: false,
-                        retainPrevious: true,
+                        retainPrevious: retainPrevious,
                         activateWorld: _ => ReopenActiveLiveWorld());
                 }
                 catch (Exception replacementError)
@@ -6124,10 +6107,10 @@ public partial class MainWindow : Window
         {
             if (MessageBox.Show(this,
                     "Delete the current Auto Save atlas?\n\nThis clears its captured world, including old menu images. "
-                    + "Auto Save will start fresh. A recoverable backup will appear in this list. "
+                    + "Auto Save will start fresh without saving a copy. This cannot be undone. "
                     + "Stencil labels, training data, saved states, and game saves are kept.",
                     "Delete Active Atlas", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
-            await ResetActiveAtlasAsync();
+            await ResetActiveAtlasAsync(retainPrevious: false);
             return;
         }
         await RunAtlasOperationAsync(async () =>

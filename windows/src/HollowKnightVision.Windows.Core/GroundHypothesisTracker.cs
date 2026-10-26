@@ -181,6 +181,10 @@ public sealed class GroundHypothesisTracker
         public int ConsecutiveGroundFrames { get; set; }
         public int? GlobalFeatureId { get; set; }
         public bool ReferenceValid { get; set; }
+
+        // Pixel patches are replaced, never mutated in place. Projection changes
+        // metadata, so pre-commit search must own its feature objects.
+        public ActiveFeature Copy() => (ActiveFeature)MemberwiseClone();
     }
 
     private sealed class CellEvidence
@@ -308,6 +312,7 @@ public sealed class GroundHypothesisTracker
     private int consecutiveStrongProvisionalMatches;
     private double? lastGlobalSearchTimestamp;
     private double? lastCanonicalPhaseSearchTimestamp;
+    private double? lastAlternativeGlobalSearchTimestamp;
     private double? bootstrapFailureStartedAt;
     private double lastLocalFailureTimestamp = double.NegativeInfinity;
     private bool globalAnchorValid = true;
@@ -380,6 +385,7 @@ public sealed class GroundHypothesisTracker
         lastLocalFailureTimestamp = double.NegativeInfinity;
         lastGlobalSearchTimestamp = null;
         lastCanonicalPhaseSearchTimestamp = null;
+        lastAlternativeGlobalSearchTimestamp = null;
         if (!keepingGlobalFeatures) linePresence.Reset();
         if (!keepingGlobalFeatures) segments.Clear();
         active = [];
@@ -475,6 +481,7 @@ public sealed class GroundHypothesisTracker
         {
             lastGlobalSearchTimestamp = null;
             lastCanonicalPhaseSearchTimestamp = null;
+            lastAlternativeGlobalSearchTimestamp = null;
             cameraSolver.Reset();
             lastProvisionalTextureTimestamp = null;
             provisionalPromotionStartedAt = null;
@@ -633,16 +640,29 @@ public sealed class GroundHypothesisTracker
             solution = solution with { ReferenceTrusted = true };
         }
 
+        // Mac matches current projected pixels before committing line votes or
+        // patches. Build this only for admitted searches, and clone previous
+        // metadata because projection updates hidden features in place.
+        List<ActiveFeature> CurrentSearchFeatures()
+        {
+            var currentTracked = matches.Select(match => UpdatedFeature(match, cameraFit, luma, width))
+                .Where(feature => feature is not null).Cast<ActiveFeature>().ToArray();
+            var previous = previousActive.Select(feature => feature.Copy()).ToArray();
+            return ProjectSegments(stabilized.Select(line => new ObservedLine(
+                    line.Row, line.XSpan, line.EvidenceSpans)).ToArray(),
+                currentTracked, previous, luma, width, height, exclusions);
+        }
+
         GlobalFit? globalFit = null;
         CameraVector? globalCorrection = null;
         // Foreground search owns a cadence even before descriptors mature, as
         // on macOS. Otherwise the first mature frame can immediately consume
         // its own just-created bank and bypass outer placement validation.
-        if (!backgroundGlobalSearch || RelocalizationFeatures().Length >= 6)
+        if (!backgroundGlobalSearch || RelocalizationFeatures().Length >= 4)
         {
             globalFit = backgroundGlobalSearch
-                ? BackgroundFit(luma, width, height, floorLines, exclusions, now)
-                : ForegroundFit(luma, width, height, floorLines, exclusions, now);
+                ? BackgroundFit(luma, width, height, floorLines, exclusions, now, CurrentSearchFeatures)
+                : ForegroundFit(luma, width, height, floorLines, exclusions, now, CurrentSearchFeatures);
             if (globalFit is not null)
             {
                 var position = new AtlasPoint(
@@ -984,12 +1004,13 @@ public sealed class GroundHypothesisTracker
         int height,
         IReadOnlyList<DetectedFloorLine> floorLines,
         IReadOnlyList<PixelRect> exclusions,
-        double timestamp)
+        double timestamp,
+        Func<List<ActiveFeature>> currentFeatures)
     {
         if (lastGlobalSearchTimestamp is { } prior && timestamp - prior < .25) return null;
         lastGlobalSearchTimestamp = timestamp;
         return SearchGlobalFit(luma, width, height, floorLines, exclusions,
-            ShouldScanCanonical(timestamp));
+            currentFeatures(), ShouldScanCanonical(timestamp), ShouldScanAlternatives(timestamp));
     }
 
     private GlobalFit? BackgroundFit(
@@ -998,12 +1019,13 @@ public sealed class GroundHypothesisTracker
         int height,
         IReadOnlyList<DetectedFloorLine> floorLines,
         IReadOnlyList<PixelRect> exclusions,
-        double timestamp)
+        double timestamp,
+        Func<List<ActiveFeature>> currentFeatures)
     {
         BackgroundSearchResult? completed = null;
         if (globalSearchWorker.TryTake(out var result)) completed = result;
         if ((lastGlobalSearchTimestamp is null || timestamp - lastGlobalSearchTimestamp >= .25)
-            && RelocalizationFeatures().Length >= 6)
+            && RelocalizationFeatures().Length >= 4)
         {
             // Do not copy accumulated history on every frame while a slow
             // search is still running. Snapshot on the foreground owner only
@@ -1015,6 +1037,7 @@ public sealed class GroundHypothesisTracker
                     var masks = exclusions.ToArray();
                     var features = RelocalizationFeatures()
                         .Select(feature => feature.Copy()).ToArray();
+                    var projected = currentFeatures();
                     var localPose = new AtlasPoint(cameraX, cameraY);
                     var snapshot = new GroundHypothesisTracker
                     {
@@ -1024,11 +1047,12 @@ public sealed class GroundHypothesisTracker
                     };
                     snapshot.canonicalFirstViewIds.UnionWith(canonicalFirstViewIds);
                     var scanCanonical = ShouldScanCanonical(timestamp);
+                    var scanAlternatives = ShouldScanAlternatives(timestamp);
                     return () =>
                     {
                         beforeBackgroundGlobalSearch?.Invoke();
                         var fit = snapshot.SearchGlobalFit(
-                            pixels, width, height, lines, masks, scanCanonical);
+                            pixels, width, height, lines, masks, projected, scanCanonical, scanAlternatives);
                         backgroundGlobalSearchCompleted?.Invoke(fit?.CameraPosition);
                         return new BackgroundSearchResult(fit, timestamp, localPose);
                     };
@@ -1070,19 +1094,38 @@ public sealed class GroundHypothesisTracker
         return true;
     }
 
+    private bool ShouldScanAlternatives(double timestamp)
+    {
+        if (lastAlternativeGlobalSearchTimestamp is { } prior && timestamp - prior < 1) return false;
+        lastAlternativeGlobalSearchTimestamp = timestamp;
+        return true;
+    }
+
     // Mac challenges drifted duplicates with the oldest persistent strips,
     // scanning every X phase without the local predicted-Y bound. Both the
     // worker snapshot and current frame must verify the same frozen population.
     private GlobalFit? SearchGlobalFit(byte[] luma, int width, int height,
         IReadOnlyList<DetectedFloorLine> floorLines,
-        IReadOnlyList<PixelRect> exclusions, bool scanCanonical)
+        IReadOnlyList<PixelRect> exclusions, IReadOnlyList<ActiveFeature> currentFeatures,
+        bool scanCanonical, bool scanAlternatives)
     {
         var stored = RelocalizationFeatures();
+        var observations = GlobalMatchObservations(currentFeatures);
         var fits = new List<GlobalFit>();
-        var ordinary = VerifyGlobalFit(PhaseIndependentGlobalFit(stored, luma,
-            width, height, floorLines, exclusions, cameraY),
+        var direct = VerifyGlobalFit(FitGlobalObservations(observations, 4, 48),
             luma, width, height, floorLines, exclusions);
-        if (ordinary is not null) fits.Add(ordinary);
+        if (direct is not null) fits.Add(direct);
+        if (scanAlternatives)
+        {
+            var represented = fits.SelectMany(fit => fit.Inliers.Select(item => item.GlobalSegmentId)).ToHashSet();
+            foreach (var segment in observations.Where(item => !represented.Contains(item.GlobalSegmentId))
+                         .GroupBy(item => item.GlobalSegmentId).OrderBy(group => group.Key).Take(4))
+            {
+                var alternative = VerifyGlobalFit(FitGlobalObservations(segment.ToArray(), 4, 48),
+                    luma, width, height, floorLines, exclusions);
+                if (alternative is not null) fits.Add(alternative);
+            }
+        }
         if (scanCanonical)
         {
             var oldestLines = stored.Select(feature => feature.SegmentId).Distinct()
@@ -1106,8 +1149,70 @@ public sealed class GroundHypothesisTracker
                 if (fits.Any(fit => fit.VerificationFeatureIds is not null)) break;
             }
         }
+        // An unverified direct proposal must not suppress independent recovery.
+        if (fits.Count == 0)
+        {
+            var scanned = VerifyGlobalFit(PhaseIndependentGlobalFit(stored, luma,
+                width, height, floorLines, exclusions, cameraY),
+                luma, width, height, floorLines, exclusions);
+            if (scanned is not null) fits.Add(scanned);
+        }
         return fits.OrderBy(fit => fit.Inliers.Min(item => item.GlobalSegmentId))
             .ThenByDescending(fit => fit.Inliers.Count).ThenBy(MeanDescriptorError).FirstOrDefault();
+    }
+
+    private GlobalObservation[] GlobalMatchObservations(IReadOnlyList<ActiveFeature> currentFeatures)
+    {
+        var stored = RelocalizationFeatures();
+        if (stored.Length < 4) return [];
+        var canonicalSegments = stored.Select(feature => feature.SegmentId).Distinct().Order().Take(4).ToArray();
+        var observations = new List<GlobalObservation>();
+        foreach (var feature in currentFeatures)
+        {
+            if (!feature.ReferenceValid || feature.Classification == GroundHypothesisClassification.Occluded
+                || feature.Patch.Length != FeaturePixelCount) continue;
+            var descriptor = NormalizedDescriptor(feature.Patch);
+            if (DescriptorEnergy(descriptor) < 6) continue;
+            // Same candidates as Mac's full ranking: six nearest, then up to
+            // four unrepresented lines, then any missing oldest four lines.
+            // Keep bounded nearest storage and one best entry per line instead
+            // of sorting the complete accumulated bank for every visible cell.
+            var nearest = new (GlobalFeature Feature, double Error)[6];
+            var count = 0;
+            var bestBySegment = new Dictionary<int, (GlobalFeature Feature, double Error)>();
+            foreach (var global in stored)
+            {
+                var error = DescriptorDistance(descriptor, global.Descriptor);
+                if (error > DescriptorMatchThreshold) continue;
+                if (!bestBySegment.TryGetValue(global.SegmentId, out var best) || error < best.Error)
+                    bestBySegment[global.SegmentId] = (global, error);
+                var insertion = count;
+                while (insertion > 0 && error < nearest[insertion - 1].Error) insertion--;
+                if (insertion == nearest.Length) continue;
+                for (var shift = Math.Min(count, nearest.Length - 1); shift > insertion; shift--)
+                    nearest[shift] = nearest[shift - 1];
+                nearest[insertion] = (global, error);
+                count = Math.Min(count + 1, nearest.Length);
+            }
+            var represented = new HashSet<int>();
+            void Append((GlobalFeature Feature, double Error) candidate)
+            {
+                var global = candidate.Feature;
+                represented.Add(global.SegmentId);
+                observations.Add(new GlobalObservation(feature.Id, feature.SegmentId, global.Id,
+                    global.SegmentId, global.WorldX, feature.X,
+                    new AtlasPoint(global.WorldX - feature.X, feature.Y - global.WorldTopY), candidate.Error));
+            }
+            for (var index = 0; index < count; index++) Append(nearest[index]);
+            foreach (var candidate in bestBySegment.Values
+                         .Where(item => !represented.Contains(item.Feature.SegmentId))
+                         .OrderBy(item => item.Error).ThenBy(item => item.Feature.Id).Take(4).ToArray())
+                Append(candidate);
+            foreach (var segment in canonicalSegments)
+                if (!represented.Contains(segment) && bestBySegment.TryGetValue(segment, out var candidate))
+                    Append(candidate);
+        }
+        return observations.ToArray();
     }
 
     private static GlobalFit? PhaseIndependentGlobalFit(

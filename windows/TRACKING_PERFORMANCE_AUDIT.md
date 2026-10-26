@@ -223,3 +223,51 @@ verify reduced app CPU, not smooth movement or eight-hour session behavior.
 The separate accumulated-history fixture covers the original history-copy cost.
 The final canonical build installed successfully, and both installed app/Core
 assembly hashes match the publication. Game process and saved atlases were kept.
+
+Follow-up: the user reported smoother movement. A 30.63-second sample of the same
+installed process averaged 1.82 CPU cores and 37.85–56.09 analyzed frames/s with
+CUDA and GPU capture throughout. Stored features had grown to 107. Camera
+coordinates stayed fixed within this sample, so it does not establish tracking
+accuracy. The user subsequently reported inconsistent tracking relative to Mac;
+responsiveness and tracking accuracy remain separate findings.
+
+## 2026-10-26: sparse ground recovery and atlas controls
+
+The next user report separated improved responsiveness from inconsistent camera
+tracking. Windows was missing Mac's direct current-feature-to-bank recovery and
+bounded alternative-line challenges. It always ran a pixel-phase search first,
+requiring at least six inliers over 96 pixels. Mac first considers four ordered
+current features over 48 pixels, verifies the complete visible strip, challenges
+other/canonical lines on their existing cadence, and scans all phases only when
+no earlier proposal passes verification.
+
+Windows now follows that search order. Search preparation projects current-frame
+pixels against existing geometry before committing votes/evidence, clones mutable
+feature metadata, and runs only after worker admission. Six nearest candidates,
+up to four other unrepresented lines, and missing oldest-line candidates match Mac's
+selection without sorting the full persistent bank for every visible feature.
+Alternative-line challenges retain the one-second cadence; canonical searches,
+current-pixel re-verification, epoch invalidation, pose transport, and independent
+correction confirmation remain in force. Four-cell recovery of a 64-pixel camera
+offset now passes both foreground and production background tests; occluded and
+unrelated pixels fail closed. This is a focused recovery port, not full platform
+parity or proof of live drift accuracy.
+
+The angled blue line was an extra ground-camera translation vector drawn whenever
+Ground Features was enabled, even with Coarse Motion Overlay disabled. That vector
+is removed from the feature layer; ground lines stay horizontal and feature boxes
+remain. The separate optional motion diagnostic is unchanged.
+
+Atlas settings now use explicit dark list/selection/hover backgrounds with light
+name/detail text. Delete and New no longer share backup behavior: Delete publishes
+an empty autosave without retaining/importing the previous generation, while New
+keeps a named restore point. Both retain transaction rollback on failed activation.
+Tests verify saved states/labels survive and deletion creates no recoverable copy.
+Only temporary test stores were deleted; the user's atlas remains untouched.
+
+The canonical Windows build passed 984 core tests, 67 UI regressions, required
+CUDA/capture hardware checks, and receiver tests, then installed and hash-verified
+the Start Menu copy. The installed settings were visually checked. GPU capture
+and CUDA remained active after launch. [Verification details and limits](audits/2026-10-26-atlas-settings-recovery.json)
+record the final hashes and stationary diagnostic report. Live tracking improvement
+still needs a repeat of the user's route.

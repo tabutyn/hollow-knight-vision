@@ -637,7 +637,7 @@
     ],
     "limitation": "Fresh session with 16 stored features; camera remained at (0,0). Do not attribute the entire pre/post FPS difference to these fixes or claim movement smoothness verified. Large-history benchmark is separate."
   },
-  "movementFeedback": "Requested after installation; no new reply yet.",
+  "movementFeedback": "User reported Moving now; smoother. Later reported inconsistent tracking relative to Mac; responsiveness feedback does not establish tracking accuracy.",
   "liveAfterHistoryFixBeforeSpinningFix": {
     "processId": 22268,
     "elapsedSeconds": 36.4188626,
@@ -936,5 +936,18 @@
         "CameraY": 0
       }
     ]
+  },
+  "followUpGameplaySample": {
+    "processId": 29100,
+    "seconds": 30.6259936,
+    "averageCpuCores": 1.8238069889536983,
+    "medianAnalysisFps": 45.275932295829364,
+    "minAnalysisFps": 37.84858305445156,
+    "maxAnalysisFps": 56.09183251018735,
+    "allGpuCapture": true,
+    "allCuda": true,
+    "storedFeatures": 107,
+    "cameraMovedWithinSample": false,
+    "note": "Camera position stayed (-1390.0633,31.6755) during these reports; user-reported movement can occur without camera translation. No independent accuracy claim."
   }
 }

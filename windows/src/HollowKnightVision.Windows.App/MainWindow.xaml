@@ -358,9 +358,47 @@
                         <StackPanel Margin="20,0,20,20">
                             <StackPanel x:Name="GameplayAtlasManager">
                     <DockPanel><TextBlock Text="Manage Atlas" FontSize="18" FontWeight="SemiBold"/></DockPanel>
-                    <TextBlock Text="Select Auto Save and Delete to clear the active atlas and start fresh. A recoverable backup is kept; stencil labels are not changed. Save State creates a named restore point." FontSize="12" Foreground="#999999" TextWrapping="Wrap" Margin="0,12"/>
+                    <TextBlock Text="New saves a copy of Auto Save and starts fresh. Delete clears the selected atlas without saving a copy. Stencil labels are kept. Save State creates a named restore point." FontSize="12" Foreground="#999999" TextWrapping="Wrap" Margin="0,12"/>
                     <DockPanel><Button DockPanel.Dock="Right" Content="Save State" Click="AtlasSaveState_Click"/><TextBox x:Name="AtlasStateNameText"/></DockPanel>
-                    <ListBox x:Name="AtlasStatesList" Height="180" Margin="0,12" SelectionChanged="AtlasStatesList_SelectionChanged"/>
+                    <ListBox x:Name="AtlasStatesList" Height="180" Margin="0,12"
+                             Background="#17181A" Foreground="#ECECEC" BorderBrush="#55585E" Padding="4"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             SelectionChanged="AtlasStatesList_SelectionChanged">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="Padding" Value="10,8"/>
+                                <Setter Property="Margin" Value="0,1"/>
+                                <Setter Property="Background" Value="Transparent"/>
+                                <Setter Property="BorderBrush" Value="Transparent"/>
+                                <Setter Property="BorderThickness" Value="1"/>
+                                <Setter Property="Template"><Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border x:Name="Row" Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                                Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="#303236"/></Trigger>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="Row" Property="Background" Value="#193D5A"/>
+                                                <Setter TargetName="Row" Property="BorderBrush" Value="#75BEF5"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value></Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Name}" Foreground="#F0F0F0" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                    <TextBlock Text="{Binding Detail}" Foreground="#C0C6D0" FontSize="12" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
                     <DockPanel><Button Content="New" Click="AtlasNew_Click"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="AtlasDeleteStateButton" Content="Delete" Click="AtlasDeleteState_Click" IsEnabled="False"/><Button x:Name="AtlasLoadStateButton" Content="Load" Click="AtlasLoadState_Click" IsEnabled="False"/></StackPanel></DockPanel>
                 </StackPanel>
                             <StackPanel x:Name="HackerAtlasManager" Visibility="Collapsed" Margin="0,20,0,0">

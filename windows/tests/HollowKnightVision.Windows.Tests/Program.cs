@@ -28,6 +28,10 @@ if (args is ["--export-dataset-probe", var probeRoot])
 
 var tests = new List<(string Name, Action Run)>
 {
+    ("direct ground recovery uses four current visible cells", VisualGroundIntegrationTests.TestDirectRecoveryUsesFourCurrentVisibleCells),
+    ("direct ground recovery rejects occluded and unrelated pixels", VisualGroundIntegrationTests.TestDirectRecoveryRejectsOccludedAndUnrelatedCells),
+    ("atlas New retains previous autosave while Delete discards it", AtlasResetTransactionTests.TestNewRetainsPreviousButDeleteDiscardsIt),
+    ("failed autosave Delete rolls back without creating a named copy", AtlasResetTransactionTests.TestFailedDeleteRestoresPreviousAutosave),
     ("capture normalization preserves bilinear pixels and frame ownership", CaptureNormalizationTests.TestPixelsMatchBilinearReference),
     ("CUDA ground patch scores match CPU and reuse resized buffers", GroundComputeProcessingTests.TestCudaPatchParityAndReuse),
     ("CUDA unavailable and invalid inputs fall back safely", GroundComputeProcessingTests.TestCudaFallbackAndInvalidInputs),

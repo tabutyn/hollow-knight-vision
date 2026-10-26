@@ -83,6 +83,45 @@ internal static class VisualGroundIntegrationTests
         Near(20, observed.CameraPosition.Value.Y);
     }
 
+    public static void TestDirectRecoveryUsesFourCurrentVisibleCells()
+    {
+        foreach (var background in new[] { false, true })
+        {
+            var tracker = new GroundHypothesisTracker(minimumObservationSeconds: 0, backgroundGlobalSearch: background);
+            for (var frame = 0; frame < 8; frame++)
+                tracker.Update(Texture(), Width, Height, Lines(), timestamp: frame / 60d);
+            tracker.Reset(keepingGlobalFeatures: true);
+            DetectedFloorLine[] visible = [new(40, new PixelSpan(80, 143))];
+            var recovered = GroundHypothesisTrackingResult.Empty;
+            for (var frame = 0; frame < (background ? 100 : 1); frame++)
+            {
+                recovered = tracker.Update(Texture(-64), Width, Height, visible, timestamp: 1 + frame * .025);
+                if (recovered.GlobalMatchCount >= 4) break;
+                if (background) Thread.Sleep(10);
+            }
+            Check(recovered.GlobalMatchCount == 4, $"Expected four-cell direct recovery (background={background}), got {recovered.GlobalMatchCount} matches.");
+            Near(64, recovered.CameraPosition!.Value.X);
+            Near(0, recovered.CameraPosition.Value.Y);
+            Check(recovered.PoseVerified, "Direct match bypassed or failed current-strip verification.");
+        }
+    }
+
+    public static void TestDirectRecoveryRejectsOccludedAndUnrelatedCells()
+    {
+        foreach (var unrelated in new[] { false, true })
+        {
+            var tracker = new GroundHypothesisTracker(minimumObservationSeconds: 0);
+            for (var frame = 0; frame < 8; frame++)
+                tracker.Update(Texture(), Width, Height, Lines(), timestamp: frame / 60d);
+            tracker.Reset(keepingGlobalFeatures: true);
+            DetectedFloorLine[] visible = [new(40, new PixelSpan(80, 143))];
+            var observed = tracker.Update(Texture(-64, seed: unrelated ? 739u : 0), Width, Height,
+                visible, timestamp: 1, protectedOcclusions: unrelated ? [] : [new PixelRect(96, 40, 16, 12)]);
+            Check(observed.GlobalMatchCount == 0 && observed.GlobalCameraPosition is null,
+                "Occluded or unrelated current pixels were accepted as a global place.");
+        }
+    }
+
     private static byte[] Texture(int dx = 0, int dy = 0, uint seed = 0)
     {
         var pixels = new byte[Width * Height];
