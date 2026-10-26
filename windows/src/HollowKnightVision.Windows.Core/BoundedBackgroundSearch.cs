@@ -15,6 +15,17 @@ public sealed class BoundedBackgroundSearch<T>
     public bool Submit(Func<T> operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
+        return SubmitPrepared(() => operation);
+    }
+
+    /// <summary>
+    /// Reserve the sole worker slot before copying caller-owned state. Preparation
+    /// runs synchronously on the submitting thread, only for accepted work; its
+    /// returned operation runs on the worker against the immutable snapshot.
+    /// </summary>
+    public bool SubmitPrepared(Func<Func<T>> prepare)
+    {
+        ArgumentNullException.ThrowIfNull(prepare);
         ulong submittedEpoch;
         lock (sync)
         {
@@ -24,6 +35,17 @@ public sealed class BoundedBackgroundSearch<T>
             }
             busy = true;
             submittedEpoch = epoch;
+        }
+
+        Func<T> operation;
+        try
+        {
+            operation = prepare() ?? throw new InvalidOperationException("Search preparation returned no operation.");
+        }
+        catch
+        {
+            lock (sync) busy = false;
+            throw;
         }
 
         _ = Task.Run(() =>

@@ -143,3 +143,83 @@ this verification point.
 records the final measurements, comparison limits, validation and installed
 assembly hashes. The final canonical build completed installation verification;
 its captured diagnostics use the guard against future compositor timestamps.
+
+## 2026-10-26: persistent-history stalls and inference spinning
+
+The user confirmed movement was still choppy. Process 10632 had remained open
+overnight: GPU capture stayed near 43–59 FPS while analysis fell to 8–12 FPS.
+A reported frame spent 95ms in ground tracking, compared with 0.87ms in CUDA
+camera search. A 15-second CPU trace identified repeated persistent-bank merges,
+deep snapshot copies, and exhaustive descriptor comparisons. Inclusive profile
+times overlap and are not additive frame durations.
+
+Windows rebuilt and sorted the merged live/retired/canonical feature population
+several times per update. It also copied all four arrays on every stored feature
+before asking an occupied background worker to accept the snapshot. Mac already
+caches the merged bank and uses value snapshots with copy-on-write arrays.
+
+Windows now caches membership with invalidation on promotion, retirement,
+collision removal, and reset. Worker admission precedes synchronous snapshot
+preparation on the foreground owner. Snapshots copy mutable metadata but share
+immutable bank-owned arrays; evidence refresh replaces arrays rather than
+mutating them. A view contained within one unchanged ground strip skips rebuilding
+its cells. Descriptor comparisons use exact widened integer vectors, preserving
+scalar scores, thresholds, tie ordering, and verification. No history cap or
+atlas reset is used. Diagnostics now distinguish active features, total stored
+features, and persistent segments.
+
+A deterministic occupied-worker workload retained 20,020 features throughout
+100 updates. Sequential old/new runs after the test suite finished reduced
+median update time from 33.52ms to 13.07ms, p95 from 58.60ms to 17.01ms, and
+allocated bytes per frame from 25,574,179 to 949,815 (96.3% less). All 100 poses
+remained verified at (0,0). The 262,144-comparison descriptor workload fell from
+40.56ms to 4.06ms median with exactly the same score checksum. These paired
+benchmarks run in PowerShell 7.6.5/.NET 10.0.11; the installed app runs .NET 8.
+They isolate implementation cost and do not establish live movement smoothness.
+
+The freshly installed app still used about five CPU cores. The installed object
+detector creates six inference threads on this 12-logical-processor machine.
+ONNX Runtime enables idle thread spinning by default; see its
+[threading guidance](https://onnxruntime.ai/docs/performance/tune-performance/threading.html#thread-spinning-behavior).
+A controlled comparison using the exact installed model/runtime at approximately
+30 inferences/s reduced detector process CPU from 4.64 cores to 0.61 when spinning
+was disabled. Median inference was 10.63ms versus 10.58ms, p95 16.58ms versus
+14.09ms; SHA-256 of every scores/boxes output matched. Windows now disables
+intra-op and inter-op spinning while retaining thread counts, graph optimization,
+and the same model. This reduces competition with capture, tracking, rendering,
+and Hollow Knight. The comparison ran in the same PowerShell/.NET 10 harness,
+with the app open during both variants; final app timings are recorded separately.
+
+Five new regressions cover rejected-snapshot admission, failed preparation,
+20,000-feature foreground allocations without dropping history, frozen metadata
+and evidence, and exact vector/scalar scores including signed-short extremes and
+vector tails. Existing recovery, merge, collision, and canonical-search tests also
+pass. The full suite passes 980 core tests, 67 UI regressions, required CUDA and
+GPU-capture hardware tests, and receiver tests. Missing reported-menu captures
+remain an existing fixture skip, not a claimed tested case.
+
+Reproduce implementation benchmarks in separate PowerShell processes (a process
+cannot reload different builds with the same assembly identity):
+
+```powershell
+pwsh -File windows/benchmarks/Measure-GroundHistory.ps1 -AssemblyDirectory <build-directory> -Output history.json
+pwsh -File windows/benchmarks/Measure-GroundDescriptors.ps1 -AssemblyDirectory <build-directory> -Output descriptors.json
+pwsh -File windows/benchmarks/Measure-DetectorSpinning.ps1 -Output detector.json
+```
+
+The first two require published Core/ILGPU assemblies; preserve the old directory
+before building. The detector comparison uses the installed model/runtime without
+changing app settings. [Measured results](audits/2026-10-26-ground-history.json)
+include fixture limits and final installation/live verification.
+
+Final installed verification (process 29100): 40.36 seconds
+averaged 1.87 CPU cores, compared with 5.23 in the fresh-session
+sample before the detector-thread fix (64.3% less). Median analysis was
+47.48 FPS, capture 53.71 FPS, and ground tracking 4.62ms.
+Every report used Windows Graphics Capture and CUDA with no fallback. This
+sample includes startup settling, retains 16 stored features, and stayed at
+camera (0,0); the user's movement confirmation has not arrived. These readings
+verify reduced app CPU, not smooth movement or eight-hour session behavior.
+The separate accumulated-history fixture covers the original history-copy cost.
+The final canonical build installed successfully, and both installed app/Core
+assembly hashes match the publication. Game process and saved atlases were kept.

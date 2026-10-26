@@ -49,6 +49,54 @@ internal static class BoundedBackgroundSearchTests
         Check(!worker.TryTake(out _));
     }
 
+    public static void TestBusySearchNeverPreparesRejectedSnapshots()
+    {
+        var worker = new BoundedBackgroundSearch<int>();
+        using var started = new ManualResetEventSlim();
+        using var gate = new ManualResetEventSlim();
+        var submittingThread = Environment.CurrentManagedThreadId;
+        var prepared = 0;
+        Check(worker.SubmitPrepared(() =>
+        {
+            Check(Environment.CurrentManagedThreadId == submittingThread,
+                "Snapshot must be prepared on its foreground owner.");
+            prepared++;
+            return () =>
+            {
+                started.Set();
+                if (!gate.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException();
+                return 17;
+            };
+        }));
+        try
+        {
+            Check(started.Wait(TimeSpan.FromSeconds(2)));
+            for (var frame = 0; frame < 100; frame++)
+                Check(!worker.SubmitPrepared(() => { prepared++; return () => 99; }));
+            worker.Invalidate();
+            Check(!worker.SubmitPrepared(() => { prepared++; return () => 99; }));
+            Check(prepared == 1, "Busy or invalidated worker copied rejected history.");
+        }
+        finally { gate.Set(); }
+        Check(SpinWait.SpinUntil(() => worker.Submit(() => 42), TimeSpan.FromSeconds(2)));
+        var value = 0;
+        Check(SpinWait.SpinUntil(() => worker.TryTake(out value), TimeSpan.FromSeconds(2)));
+        Check(value == 42, "Obsolete prepared search escaped invalidation.");
+    }
+
+    public static void TestSnapshotFailureReleasesWorkerSlot()
+    {
+        var worker = new BoundedBackgroundSearch<int>();
+        var failed = false;
+        try { worker.SubmitPrepared(() => throw new InvalidOperationException("fixture")); }
+        catch (InvalidOperationException ex) when (ex.Message == "fixture") { failed = true; }
+        Check(failed);
+        Check(worker.SubmitPrepared(() => () => 19));
+        var value = 0;
+        Check(SpinWait.SpinUntil(() => worker.TryTake(out value), TimeSpan.FromSeconds(2)));
+        Check(value == 19);
+    }
+
     public static void TestMaterialCorrectionRequiresIndependentConsistentObservations()
     {
         var gate = new GroundCorrectionConfirmation();

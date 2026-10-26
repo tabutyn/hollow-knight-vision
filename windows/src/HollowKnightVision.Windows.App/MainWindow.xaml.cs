@@ -3849,6 +3849,8 @@ public partial class MainWindow : Window
             result.GroundHypotheses.InlierCount,
             result.GroundHypotheses.GlobalMatchCount,
             GroundFeatureCount = result.GroundHypotheses.Features.Count,
+            result.GroundHypotheses.GlobalFeatureCount,
+            result.GroundHypotheses.GroundSegmentCount,
             result.GameplayTelemetry.CameraX,
             result.GameplayTelemetry.CameraY
         });

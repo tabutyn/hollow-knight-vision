@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace HollowKnightVision.Windows.Core;
 
 public enum GroundHypothesisClassification
@@ -212,20 +214,10 @@ public sealed class GroundHypothesisTracker
         public int ObservationCount { get; set; }
         public int LastSeenFrame { get; set; }
 
-        public GlobalFeature Copy() => new()
-        {
-            Id = Id,
-            SegmentId = SegmentId,
-            SequenceIndex = SequenceIndex,
-            WorldX = WorldX,
-            WorldTopY = WorldTopY,
-            Descriptor = Descriptor.ToArray(),
-            MatchingPatch = MatchingPatch.ToArray(),
-            ReferencePatch = ReferencePatch.ToArray(),
-            ReferenceOpacity = ReferenceOpacity.ToArray(),
-            ObservationCount = ObservationCount,
-            LastSeenFrame = LastSeenFrame,
-        };
+        // These arrays are owned by this bank and never mutated in place.
+        // Evidence refresh replaces both arrays; metadata still needs its own
+        // object so foreground segment merges cannot alter a worker snapshot.
+        public GlobalFeature Copy() => (GlobalFeature)MemberwiseClone();
     }
 
     private sealed record GlobalObservation(
@@ -293,6 +285,7 @@ public sealed class GroundHypothesisTracker
     private readonly Dictionary<int, GlobalFeature> globalFeatures = [];
     private readonly Dictionary<int, GlobalFeature> retiredGlobalFeatures = [];
     private readonly Dictionary<int, GlobalFeature> canonicalAnchorFeatures = [];
+    private GlobalFeature[]? cachedRelocalizationFeatures;
     private readonly HashSet<int> canonicalFirstViewIds = [];
     private readonly Dictionary<int, AtlasPoint> canonicalViewOrigins = [];
     private readonly HashSet<int> closedCanonicalViews = [];
@@ -405,6 +398,7 @@ public sealed class GroundHypothesisTracker
             globalFeatures.Clear();
             retiredGlobalFeatures.Clear();
             canonicalAnchorFeatures.Clear();
+            cachedRelocalizationFeatures = null;
             canonicalFirstViewIds.Clear();
             canonicalViewOrigins.Clear();
             closedCanonicalViews.Clear();
@@ -882,6 +876,7 @@ public sealed class GroundHypothesisTracker
             .ToHashSet();
         if (rejected.Count == 0) return rejected;
         segments.RemoveAll(segment => rejected.Contains(segment.Id));
+        cachedRelocalizationFeatures = null;
         foreach (var id in globalFeatures.Where(pair => rejected.Contains(pair.Value.SegmentId))
                      .Select(pair => pair.Key).ToArray())
         {
@@ -950,6 +945,7 @@ public sealed class GroundHypothesisTracker
                 LastSeenFrame = frameIndex,
             };
             globalFeatures[id] = promoted;
+            cachedRelocalizationFeatures = null;
             if (canonicalAnchorFeatures.Values.Count(item =>
                     item.SegmentId == promoted.SegmentId) < 64)
             {
@@ -1009,33 +1005,35 @@ public sealed class GroundHypothesisTracker
         if ((lastGlobalSearchTimestamp is null || timestamp - lastGlobalSearchTimestamp >= .25)
             && RelocalizationFeatures().Length >= 6)
         {
-            var pixels = luma.ToArray();
-            var lines = floorLines.ToArray();
-            var masks = exclusions.ToArray();
-            var features = RelocalizationFeatures()
-                .Select(feature => feature.Copy()).ToArray();
-            var localPose = new AtlasPoint(cameraX, cameraY);
-            var snapshot = new GroundHypothesisTracker
-            {
-                cameraX = cameraX, cameraY = cameraY, globalAnchorValid = globalAnchorValid
-            };
-            foreach (var feature in features) snapshot.globalFeatures[feature.Id] = feature;
-            snapshot.canonicalFirstViewIds.UnionWith(canonicalFirstViewIds);
-            var priorCanonicalTimestamp = lastCanonicalPhaseSearchTimestamp;
-            var scanCanonical = ShouldScanCanonical(timestamp);
-            if (globalSearchWorker.Submit(() =>
+            // Do not copy accumulated history on every frame while a slow
+            // search is still running. Snapshot on the foreground owner only
+            // after reserving the worker, before its task can inspect state.
+            if (globalSearchWorker.SubmitPrepared(() =>
                 {
-                    beforeBackgroundGlobalSearch?.Invoke();
-                    var fit = snapshot.SearchGlobalFit(
-                        pixels, width, height, lines, masks, scanCanonical);
-                    backgroundGlobalSearchCompleted?.Invoke(fit?.CameraPosition);
-                    return new BackgroundSearchResult(
-                        fit,
-                        timestamp,
-                        localPose);
+                    var pixels = luma.ToArray();
+                    var lines = floorLines.ToArray();
+                    var masks = exclusions.ToArray();
+                    var features = RelocalizationFeatures()
+                        .Select(feature => feature.Copy()).ToArray();
+                    var localPose = new AtlasPoint(cameraX, cameraY);
+                    var snapshot = new GroundHypothesisTracker
+                    {
+                        cameraX = cameraX, cameraY = cameraY,
+                        globalAnchorValid = globalAnchorValid,
+                        cachedRelocalizationFeatures = features,
+                    };
+                    snapshot.canonicalFirstViewIds.UnionWith(canonicalFirstViewIds);
+                    var scanCanonical = ShouldScanCanonical(timestamp);
+                    return () =>
+                    {
+                        beforeBackgroundGlobalSearch?.Invoke();
+                        var fit = snapshot.SearchGlobalFit(
+                            pixels, width, height, lines, masks, scanCanonical);
+                        backgroundGlobalSearchCompleted?.Invoke(fit?.CameraPosition);
+                        return new BackgroundSearchResult(fit, timestamp, localPose);
+                    };
                 }))
                 lastGlobalSearchTimestamp = timestamp;
-            else lastCanonicalPhaseSearchTimestamp = priorCanonicalTimestamp;
         }
         if (completed is null
             || timestamp < completed.Timestamp
@@ -1305,12 +1303,13 @@ public sealed class GroundHypothesisTracker
 
     private GlobalFeature[] RelocalizationFeatures()
     {
+        if (cachedRelocalizationFeatures is { } cached) return cached;
         var byId = retiredGlobalFeatures.ToDictionary(pair => pair.Key, pair => pair.Value);
         foreach (var pair in globalFeatures)
             byId[pair.Key] = pair.Value;
         foreach (var pair in canonicalAnchorFeatures)
             byId[pair.Key] = pair.Value;
-        return byId.Values.OrderBy(feature => feature.Id).ToArray();
+        return cachedRelocalizationFeatures = byId.Values.OrderBy(feature => feature.Id).ToArray();
     }
 
     private GlobalFit? VerifyGlobalFit(
@@ -1446,11 +1445,24 @@ public sealed class GroundHypothesisTracker
             .ToArray();
     }
 
-    private static double DescriptorDistance(short[] left, short[] right)
+    internal static double DescriptorDistance(short[] left, short[] right)
     {
         if (left.Length == 0 || left.Length != right.Length) return double.PositiveInfinity;
         long total = 0;
-        for (var index = 0; index < left.Length; index++)
+        var index = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            for (; index <= left.Length - Vector<short>.Count; index += Vector<short>.Count)
+            {
+                // Widen before subtraction, including for the full signed-short
+                // range. Integer sums preserve exact scalar scores and ties.
+                Vector.Widen(new Vector<short>(left, index), out Vector<int> aLow, out Vector<int> aHigh);
+                Vector.Widen(new Vector<short>(right, index), out Vector<int> bLow, out Vector<int> bHigh);
+                total += Vector.Sum(Vector.Abs(aLow - bLow));
+                total += Vector.Sum(Vector.Abs(aHigh - bHigh));
+            }
+        }
+        for (; index < left.Length; index++)
             total += Math.Abs((int)left[index] - right[index]);
         return (double)total / left.Length;
     }
@@ -2051,6 +2063,13 @@ public sealed class GroundHypothesisTracker
             var unionMaximum = Math.Max(maximum, candidates.Max(segment => segment.MaximumWorldX));
             var mergedBounds = RectifiedCellBounds(unionMinimum, unionMaximum);
             if (mergedBounds is null) continue;
+            // A view contained in one existing strip changes no cell identity.
+            // Avoid rebuilding every cell and visiting the full global bank.
+            if (candidates.Length == 1
+                && target.OriginWorldX == mergedBounds.Value.Start
+                && target.MinimumWorldX == mergedBounds.Value.Start
+                && target.MaximumWorldX == mergedBounds.Value.End)
+                continue;
             var mergedSegmentIds = candidates.Select(segment => segment.Id).ToHashSet();
             var oldCells = candidates.SelectMany(segment => segment.CellIds.Select(pair =>
                     (SegmentId: segment.Id,
@@ -2093,6 +2112,7 @@ public sealed class GroundHypothesisTracker
                         (feature.SegmentId, feature.SequenceIndex), out var newIndex))
                 {
                     globalFeatures.Remove(id);
+                    cachedRelocalizationFeatures = null;
                     retiredGlobalFeatures.Remove(id);
                     canonicalAnchorFeatures.Remove(id);
                     canonicalFirstViewIds.Remove(id);

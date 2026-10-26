@@ -217,6 +217,11 @@ public sealed class OnnxObjectDetector : IDisposable
             IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2),
             InterOpNumThreads = 1
         };
+        // Capture, tracking, rendering and the game share this CPU. Sleeping
+        // between inference jobs avoids spending five extra cores waiting for
+        // the next frame; the installed-model benchmark preserves exact output.
+        options.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
+        options.AddSessionConfigEntry("session.inter_op.allow_spinning", "0");
         session = new InferenceSession(ModelPath, options);
         if (!session.InputNames.Contains("image")
             || !session.OutputNames.Contains("scores")
