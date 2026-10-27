@@ -1,0 +1,279 @@
+{
+  "date": "2026-10-27",
+  "auditedCommit": "661b5e337c3d4908123bce3954cc09bce2491335",
+  "scope": "Modded recording/replay, checkpoint preparation, related persistence/diagnostics and test wiring; not a whole-app or whole-tracker parity certification.",
+  "method": [
+    "Read Mac/Windows production callers, shared receiver implementation and tests.",
+    "Reexamined original and completed replay evidence from 2026-10-26.",
+    "Inspected restored mod binary strings and hash without loading/executing game code."
+  ],
+  "summary": "Windows records player and camera truth but does not consume the recorded player poses during replay. The main deficiency is desktop orchestration; shared mod source already implements pose playback.",
+  "alreadyImplemented": [
+    "Shared receiver source includes playerPose, full checkpoint capture/restore, scene validation, latest-pose coalescing, telemetry and render-frame markers.",
+    "Windows recording contains player/camera truth, input events, exact rendered frame IDs, low-resolution frames and tracking samples.",
+    "Windows replay now shares the live receiver session, restores a checkpoint, refreshes held-input leases, records its result, and neutralizes input on completion/cancellation/rejection."
+  ],
+  "originalEvidence": {
+    "id": "9756db31-bd5d-4195-8754-403ce13fb45e",
+    "duration": 76.06088180001825,
+    "inputEvents": 128,
+    "trackingSamples": 4036,
+    "groundTruthSamples": 4548,
+    "samplesWithHero": 4548,
+    "samplesWithCamera": 4548,
+    "missingCheckpointFields": [
+      "entryGateName",
+      "enemies",
+      "isFirstGame",
+      "enteredTutorialFirstTime",
+      "visitedDirtmouth",
+      "visitedCrossroads",
+      "openedTown",
+      "openedCrossroads",
+      "scenesVisited"
+    ],
+    "nonnullDiagnosticCounts": {
+      "groundTrackingMilliseconds": 0,
+      "roomID": 0,
+      "roomRevision": 0,
+      "localMatchSource": 0,
+      "localReferenceCaptureTimestamp": 0,
+      "localMatchImageDX": 0,
+      "localMatchImageDY": 0,
+      "placementRecoveryState": 0,
+      "floorlessCoarseX": 0,
+      "floorlessMaskedX": 0,
+      "floorlessSelectionSource": 0
+    }
+  },
+  "installedReceiver": {
+    "sha256": "52a93669f59a87ebfa9d6eabf4b08578a7290e18232bca4e1de263d05d946c87",
+    "modVersionString091": true,
+    "poseCapabilityLiteralPresent": true,
+    "applyPlayerPoseMetadataNamePresent": true,
+    "limit": "Static binary evidence only; runtime negotiation/application was not retested in this audit."
+  },
+  "findings": [
+    {
+      "id": "R1",
+      "priority": "P1",
+      "title": "Windows does not replay recorded player poses",
+      "mac": "playInputPath schedules both button events and filtered groundTruthTrace poses. applyPlaybackPoseLocked sends playerPose commands with scene, position, velocity, facing and grounded state.",
+      "windows": "Desktop ReplayPathAsync iterates PlaybackStates only. Host InputPathPlaybackRunner also sends states only. ReceiverPlayerPoseCommand exists in Core, but ReceiverClient has no pose send method and production callers do not create/send pose commands.",
+      "impact": "Buttons alone do not reproduce the recorded trajectory. This explains a concrete replay-parity gap behind the observed route divergence.",
+      "references": [
+        {
+          "file": "macos/Sources/HollowKnightVision/GameControlForwarder.swift",
+          "line": 587
+        },
+        {
+          "file": "macos/Sources/HollowKnightVision/GameControlForwarder.swift",
+          "line": 1259
+        },
+        {
+          "file": "windows/src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.Replay.cs",
+          "line": 67
+        },
+        {
+          "file": "windows/src/HollowKnightVision.Windows.Core/ReceiverProtocol.cs",
+          "line": 343
+        },
+        {
+          "file": "windows/src/HollowKnightVision.Windows.Core/ReceiverClient.cs",
+          "line": 107
+        }
+      ],
+      "acceptance": "Use one live session to negotiate pose capability and schedule input plus recorded poses; test actual outgoing poses, sequence/order, scene boundaries, cancellation and receiver application. Compare actual hero trajectory against the source recording."
+    },
+    {
+      "id": "R2",
+      "priority": "P1",
+      "title": "Windows records an incomplete, unvalidated start checkpoint",
+      "mac": "K recording requests captureCheckpoint, waits for accepted acknowledgement, and records the returned full checkpoint. The receiver requires the Knight to be grounded and still and includes entry gate, enemies, first-region flags and visited scenes.",
+      "windows": "StartRecording constructs ToCheckpoint from latestGroundTruth without a freshness/standing-still/full-capture acknowledgement gate. EntryGateName, Enemies and story/visited-scene fields are null. It can start with a null checkpoint.",
+      "impact": "Starting state is less reproducible; physics, enemy state, first-entry events and cross-room restore can differ.",
+      "references": [
+        {
+          "file": "macos/Sources/HollowKnightVision/LiveCaptureModel.swift",
+          "line": 1237
+        },
+        {
+          "file": "macos/Sources/HollowKnightVision/GameControlForwarder.swift",
+          "line": 386
+        },
+        {
+          "file": "macos/hollow-knight-input-receiver/src/Mod.cs",
+          "line": 741
+        },
+        {
+          "file": "windows/src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.cs",
+          "line": 70
+        },
+        {
+          "file": "windows/src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.cs",
+          "line": 578
+        }
+      ],
+      "acceptance": "Capture through the receiver before starting the recorder; reject moving/unavailable/stale state, handle timeout/rejection, and round-trip all checkpoint fields. Existing recordings retain their missing-state limitation."
+    },
+    {
+      "id": "R3",
+      "priority": "P1",
+      "title": "Windows omits Mac replay reset and stable-start procedure",
+      "mac": "Pauses capture, purges active atlas, restores checkpoint once, verifies fresh pose/ground/committed evidence, purges the settling epoch, and verifies again. Four ready checks at 100ms intervals, 30s timeout per phase, pose tolerance 0.05.",
+      "windows": "Restores checkpoint, waits a fixed 500ms, then records and plays. Neither desktop replay method resets the visual/atlas epoch nor proves fresh ground, committed evidence or stable start pose.",
+      "impact": "A pass can inherit a prior endpoint, drift, stale atlas and camera easing. Repeats are not controlled algorithm comparisons.",
+      "references": [
+        {
+          "file": "macos/Sources/HollowKnightVision/LiveCaptureModel.swift",
+          "line": 1269
+        },
+        {
+          "file": "macos/Sources/HollowKnightVision/LiveCaptureModel.swift",
+          "line": 1375
+        },
+        {
+          "file": "macos/Sources/HollowKnightVision/LiveCaptureModel.swift",
+          "line": 1445
+        },
+        {
+          "file": "macos/Sources/HollowKnightVision/LiveCaptureModel.swift",
+          "line": 1493
+        },
+        {
+          "file": "windows/src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.Replay.cs",
+          "line": 57
+        }
+      ],
+      "acceptance": "Port preparation as an explicit benchmark lifecycle using an isolated test atlas, preserving user atlases. Prove one restore, fresh generations, stable recorded pose, readiness timeouts, and identical reset state per iteration."
+    },
+    {
+      "id": "R4",
+      "priority": "P1",
+      "title": "Windows modded persistence blocks camera analysis",
+      "mac": "Atlas integration and recovery normally enqueue on a dedicated atlasQueue with bounded pumps; synchronous integration defaults to false.",
+      "windows": "MainWindow awaits AtlasPersistenceBarrier before processing the next analysis frame in Modded mode because live-world writes share the directory replaced by snapshot publication.",
+      "impact": "Observed 3.318s replay analysis gap and saves up to 3.284s despite unsaturated sampled GPU. Camera motion during gaps exceeds the tracking search range.",
+      "references": [
+        {
+          "file": "macos/Sources/HollowKnightVision/LiveAtlasPipeline.swift",
+          "line": 232
+        },
+        {
+          "file": "macos/Sources/HollowKnightVision/LiveAtlasPipeline.swift",
+          "line": 909
+        },
+        {
+          "file": "windows/src/HollowKnightVision.Windows.App/MainWindow.xaml.cs",
+          "line": 2836
+        },
+        {
+          "file": "windows/src/HollowKnightVision.Windows.App/AtlasPersistenceBarrier.cs",
+          "line": 5
+        }
+      ],
+      "acceptance": "Separate camera analysis from world persistence ownership. Keep generation and directory-swap safety; test artificial slow saves while camera analysis and pose publication continue. Do not simply delete the current barrier."
+    },
+    {
+      "id": "R5",
+      "priority": "P2",
+      "title": "Windows desktop divergence monitoring is disconnected",
+      "mac": "Prepares/begins evaluation, supplies exact-frame ground truth and vision samples, and aborts playback on sustained error or vision silence.",
+      "windows": "MainWindow retains an AppendVision branch but the current desktop replay never calls Prepare/BeginEvaluation or supplies ground truth to that monitor. The standalone host monitor is optional and its CLI call supplies none.",
+      "impact": "Replay completion reports input delivery rather than a measured tracking pass/fail. The previous connection fix did not preserve an active evaluation lifecycle.",
+      "references": [
+        {
+          "file": "macos/Sources/HollowKnightVision/LiveCaptureModel.swift",
+          "line": 1280
+        },
+        {
+          "file": "macos/Sources/HollowKnightVision/LiveCaptureModel.swift",
+          "line": 1534
+        },
+        {
+          "file": "macos/Sources/HollowKnightVision/LiveCaptureModel.swift",
+          "line": 1957
+        },
+        {
+          "file": "windows/src/HollowKnightVision.Windows.App/MainWindow.xaml.cs",
+          "line": 3444
+        },
+        {
+          "file": "windows/src/HollowKnightVision.Windows.App/MainWindow.xaml.cs",
+          "line": 6936
+        }
+      ],
+      "acceptance": "Wire both streams to one monitor; offer explicit full-trace versus fail-fast evaluation and persist the decision/report rather than equating replay completion with success."
+    },
+    {
+      "id": "R6",
+      "priority": "P2",
+      "title": "Windows omits tracking diagnostics and overstates preparation metadata",
+      "mac": "Populates ground timing, room identity/revision, local reference/displacement, recovery state and floorless alternatives. The preparation metadata corresponds to its implemented lifecycle.",
+      "windows": "Core schema contains these fields, but the app omits many values when recording. All 4036 original tracking samples have null values for the audited diagnostic fields. Every Windows path nevertheless claims pathPlaybackPreparation=purge-single-restore-settle-repurge-v2.",
+      "impact": "A schema-compatible file is not equivalent diagnostic coverage. The metadata falsely implies comparable experiment preparation.",
+      "references": [
+        {
+          "file": "macos/Sources/HollowKnightVision/LiveCaptureModel.swift",
+          "line": 3751
+        },
+        {
+          "file": "macos/Sources/HollowKnightVision/InputPathRecorder.swift",
+          "line": 382
+        },
+        {
+          "file": "windows/src/HollowKnightVision.Windows.App/MainWindow.xaml.cs",
+          "line": 3486
+        },
+        {
+          "file": "windows/src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.cs",
+          "line": 127
+        },
+        {
+          "file": "windows/src/HollowKnightVision.Windows.Core/RecordedInputPath.cs",
+          "line": 317
+        }
+      ],
+      "acceptance": "Populate available production diagnostics and report only procedures actually executed, including explicit input-only/pose-driven and evaluation modes. Test production recorder wiring, not just DTO fields."
+    },
+    {
+      "id": "R7",
+      "priority": "P2",
+      "title": "Passing tests do not establish functional replay parity",
+      "mac": "Source contains a complete pose-driven playback and preparation flow; this audit did not execute it on macOS or establish runtime coverage.",
+      "windows": "TestPlayerPosePlaybackEncodesRecordedGroundTruth only checks JSON encode/decode. Desktop loopback integration uses an input-only path with no recorded pose trace. It proves connection, checkpoint, telemetry and lease handling, not pose playback or deterministic route fidelity. Shared receiver tests compile protocol/server/device with stubs and exclude Unity Mod.cs.",
+      "impact": "The prior 986 core and 69 UI passes do not validate missing runtime features.",
+      "references": [
+        {
+          "file": "windows/tests/HollowKnightVision.Windows.Tests/InputBridgeParityTests.cs",
+          "line": 119
+        },
+        {
+          "file": "windows/tests/HollowKnightVision.Windows.UiTests/InputPathReplayIntegrationTests.cs",
+          "line": 77
+        },
+        {
+          "file": "macos/hollow-knight-input-receiver/tests/HollowKnightVisionInputReceiver.ProtocolTests.csproj",
+          "line": 1
+        }
+      ],
+      "acceptance": "Add nonempty pose-trace integration tests and live mod replay evidence; validate checkpoint fidelity, fresh startup, cross-room transitions, cancellation and bounded camera stalls. Measure route equality before comparing tracker scores."
+    }
+  ],
+  "additionalPolicyDifference": {
+    "mac": "isValidPlaybackPath limits duration to 0.05..900s, events to 10000, truth samples to 100000 and checks timing/coordinates.",
+    "windows": "Equivalent IsValidPlaybackPath exists, but desktop/host use Validate, which permits up to 86400s and does not apply the same pose-trace/count constraints."
+  },
+  "recommendedOrder": [
+    "Full acknowledged checkpoint capture and player-pose playback on the existing connection.",
+    "Controlled replay preparation using an isolated benchmark atlas and explicit readiness gates.",
+    "Remove camera-analysis stalls while preserving persistence transaction safety.",
+    "Wire evaluation and missing diagnostics; correct metadata; add production-level coverage and repeated-route acceptance evidence."
+  ],
+  "limits": [
+    "Continuous playerPose commands set the Knight state, not camera coordinates. Camera/target are restored by the initial checkpoint; camera follows the forced Knight route normally.",
+    "Mac pose playback uses wall-clock scheduling and the receiver coalesces late poses. This is route control, not proof of frame-perfect rendering or fully deterministic physics/story state.",
+    "No Mac runtime test or new live game run was performed. Existing replay metrics establish Windows failure but do not quantify Mac performance here.",
+    "This audit changed documentation only. Missing behavior remains to be ported."
+  ]
+}
