@@ -71,7 +71,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
     {
         lock (stateLock)
         {
-            if (receiver is null || inputPathRecorder.IsRecording || pause.BlocksInput) return false;
+            if (receiver is null || replayCancellation is not null || inputPathRecorder.IsRecording || pause.BlocksInput) return false;
             var checkpoint = Volatile.Read(ref latestGroundTruth) is { } truth
                 ? ToCheckpoint(truth.Value)
                 : null;
@@ -185,7 +185,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         {
             active = receiver;
             fault = connectionFault;
-            if (active is null || fault is null || pause.BlocksInput) return;
+            if (active is null || fault is null || replayCancellation is not null || pause.BlocksInput) return;
             if (awaitingFreshPress)
             {
                 awaitingFreshPress = false;
@@ -213,7 +213,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         {
             active = receiver;
             fault = connectionFault;
-            if (active is null || fault is null || awaitingFreshPress || !isEnabled || pause.BlocksInput) return;
+            if (active is null || fault is null || replayCancellation is not null || awaitingFreshPress || !isEnabled || pause.BlocksInput) return;
             snapshot = heldButtons & ~button;
             if (snapshot == heldButtons) return;
             heldButtons = snapshot;
@@ -231,7 +231,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         {
             active = receiver;
             fault = connectionFault;
-            if (active is null || fault is null || awaitingFreshPress || !isEnabled || pause.BlocksInput) return;
+            if (active is null || fault is null || replayCancellation is not null || awaitingFreshPress || !isEnabled || pause.BlocksInput) return;
             snapshot = heldButtons;
         }
         QueueState(active, fault, true, snapshot);
@@ -239,6 +239,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
 
     internal void ReleaseAll()
     {
+        CancelReplay();
         ReceiverClient? active;
         TaskCompletionSource? fault;
         lock (stateLock)
@@ -396,6 +397,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                         ReceiverProtocol.MenuShortcutsCapability);
                     pointerAvailable = capabilities.Capabilities.Contains(
                         ReceiverProtocol.PointerCapability);
+                    checkpointAvailable = capabilities.Capabilities.Contains(ReceiverProtocol.PlayerCheckpointCapability);
                     playerOpsAvailable = capabilities.Capabilities.Contains(
                         ReceiverProtocol.PlayerOpsCapability);
                     pause.Negotiate(pending.SessionId, capabilities);
@@ -446,6 +448,10 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                             menuShortcutsAvailable = false;
                             pointerAvailable = false;
                             playerOpsAvailable = false;
+                            checkpointAvailable = false;
+                            replayCancellation?.Cancel();
+                            foreach (var command in pendingCheckpoints.Values) command.TrySetCanceled();
+                            pendingCheckpoints.Clear();
                             pause.Disconnect();
                             foreach (var pendingCommand in pendingPlayerOps.Values)
                             {
@@ -518,6 +524,15 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                     fault?.TrySetException(new InvalidDataException(
                         "Receiver acknowledged an input state different from the state sent."));
                 }
+                continue;
+            }
+            if (type is "captureCheckpointAck" or "restoreCheckpointAck")
+            {
+                var acknowledgement = ReceiverWireCodec.DecodeLine<ReceiverCheckpointAcknowledgement>(line);
+                lock (stateLock)
+                    if (ReferenceEquals(receiver, client) && acknowledgement.SessionId == client.SessionId
+                        && pendingCheckpoints.TryGetValue(acknowledgement.CommandId, out var pending))
+                        pending.TrySetResult(acknowledgement);
                 continue;
             }
             if (type == "playerOpsAck")

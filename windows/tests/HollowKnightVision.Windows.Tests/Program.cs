@@ -4964,7 +4964,9 @@ static void TestConcurrentAppendsAllocateUniqueDurableEvidence()
 
         try { True(ready.Wait(TimeSpan.FromSeconds(5))); }
         finally { start.Set(); }
-        True(Task.WaitAll(tasks, TimeSpan.FromSeconds(5)));
+        // Forty-eight durable writes may exceed five seconds on a busy Windows disk.
+        // The barriers still enforce concurrent waves; this is not a disk-speed test.
+        True(Task.WaitAll(tasks, TimeSpan.FromSeconds(30)));
         if (errors.Any(error => error is not null))
         {
             throw new AggregateException(errors.Where(error => error is not null)!);

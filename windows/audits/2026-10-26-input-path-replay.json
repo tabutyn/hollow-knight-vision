@@ -1,0 +1,282 @@
+{
+  "date": "2026-10-26",
+  "purpose": "Reproduce the user Gameplay K recording tracking failure through the mod receiver",
+  "baseCommit": "7d601d8",
+  "installedAppSha256": "A10F7090381B40F76110A93819BEF63002487FEFB0B29723CBDD2CE780819408",
+  "trackingAlgorithmChanged": false,
+  "replayFix": "Desktop replay shares the existing receiver connection; restores start checkpoint, refreshes input lease, saves full per-frame recording and ground truth with sourcePathID, releases input on completion/cancel/error",
+  "validation": {
+    "coreTests": 986,
+    "uiRegressions": 69,
+    "receiverProtocolTests": "passed",
+    "requiredCuda": "passed",
+    "requiredGpuCapture": "passed",
+    "installedStartMenuHashes": "verified"
+  },
+  "comparison": {
+    "runs": [
+      {
+        "file": "original.json",
+        "sha256": "dcb5020de4a91baaa1700176de45c04173b743a0f8b2d61e2eeede24471e5730",
+        "id": "9756db31-bd5d-4195-8754-403ce13fb45e",
+        "sourcePathID": null,
+        "createdAt": "2026-10-26T15:10:52.9914686+00:00",
+        "duration": 76.06088180001825,
+        "events": 128,
+        "trackingSamples": 4036,
+        "groundTruthSamples": 4548,
+        "matchedFrames": 4034,
+        "scoreUnits": "pixels in 640x360 tracking frame; one fixed starting offset; exact rendered frame joins",
+        "poseSources": {
+          "ground": 1813,
+          "coarse-presentation": 4,
+          "transition-bridge": 2193,
+          "ground-provisional": 26
+        },
+        "scenes": {
+          "Tutorial_01": 4548
+        },
+        "verifiedSamples": 1813,
+        "atlasWrites": 0,
+        "cameraError": {
+          "median": 685.7738720884364,
+          "p95": 996.0909118761292,
+          "max": 1051.3463446541325
+        },
+        "endCameraError": {
+          "offset": 76.05098709999584,
+          "error": 994.247444521656,
+          "errorX": -914.1144106817211,
+          "errorY": 391.053481152966,
+          "source": "ground",
+          "verified": true,
+          "truthX": 752.1312979026698,
+          "truthY": 313.58432278296095,
+          "publishedX": -972.2801956436143,
+          "publishedY": 391.05352521958497
+        },
+        "firstOverPixels": {
+          "8": 4.445656499941833,
+          "16": 4.445656499941833,
+          "32": 4.445656499941833,
+          "64": 4.445656499941833,
+          "128": 4.445656499941833,
+          "256": 5.782018200028688,
+          "640": 12.183086600038223
+        },
+        "errorOver32Fraction": 0.9578582052553297,
+        "verifiedButOver32": 1641,
+        "sampleGapsSeconds": {
+          "median": 0.016522199963219464,
+          "p95": 0.029823550023138502,
+          "max": 1.0302792999427766
+        },
+        "startHero": {
+          "heroX": 35.459999084472656,
+          "heroY": 11.408123016357422,
+          "cameraX": 36.46000289916992,
+          "cameraY": 14.109999656677246
+        },
+        "endHero": {
+          "heroX": 34.84278869628906,
+          "heroY": 11.408124923706055,
+          "cameraX": 33.84282302856445,
+          "cameraY": 14.109996795654297
+        }
+      },
+      {
+        "file": "replay.json",
+        "sha256": "68197799a2702736460be2845ad0e73c07d6b24677e9de1eeff2d3f0ab36e413",
+        "id": "4e90e863-eb8c-4102-b685-2127d20ff3c3",
+        "sourcePathID": "9756db31-bd5d-4195-8754-403ce13fb45e",
+        "createdAt": "2026-10-26T15:45:37.5442099+00:00",
+        "duration": 76.07089119998273,
+        "events": 128,
+        "trackingSamples": 2292,
+        "groundTruthSamples": 4339,
+        "matchedFrames": 2291,
+        "scoreUnits": "pixels in 640x360 tracking frame; one fixed starting offset; exact rendered frame joins",
+        "poseSources": {
+          "ground": 1633,
+          "transition-bridge": 633,
+          "held": 2,
+          "ground-provisional": 22,
+          "coarse-presentation": 2
+        },
+        "scenes": {
+          "Tutorial_01": 4339
+        },
+        "verifiedSamples": 1633,
+        "atlasWrites": 4,
+        "cameraError": {
+          "median": 1407.8245143441682,
+          "p95": 1954.9205805795218,
+          "max": 1996.0873911092235
+        },
+        "endCameraError": {
+          "offset": 76.06510469992645,
+          "error": 551.0768380017053,
+          "errorX": -531.1620916196864,
+          "errorY": 146.8077443739179,
+          "source": "ground",
+          "verified": true,
+          "truthX": 666.7279307625722,
+          "truthY": 313.58432278296095,
+          "publishedX": -617.1414223781325,
+          "publishedY": 146.80765959507096
+        },
+        "firstOverPixels": {
+          "8": 3.0975009999237955,
+          "16": 3.0975009999237955,
+          "32": 3.0975009999237955,
+          "64": 3.0975009999237955,
+          "128": 3.0975009999237955,
+          "256": 4.4888510999735445,
+          "640": 4.508597300038673
+        },
+        "errorOver32Fraction": 0.9995635093845482,
+        "verifiedButOver32": 1631,
+        "sampleGapsSeconds": {
+          "median": 0.018262100056745112,
+          "p95": 0.04653814999619499,
+          "max": 3.3300426999339834
+        },
+        "startHero": {
+          "heroX": 35.46000289916992,
+          "heroY": 11.408123016357422,
+          "cameraX": 36.4525260925293,
+          "cameraY": 14.110000610351562
+        },
+        "endHero": {
+          "heroX": 30.899337768554688,
+          "heroY": 11.408123016357422,
+          "cameraX": 30.000022888183594,
+          "cameraY": 14.109996795654297
+        }
+      }
+    ],
+    "replayFidelity": {
+      "sameInputSequence": true,
+      "eventTimingMaxSeconds": 0.015916400006972253,
+      "heroDistanceAtSameOffsetWorldUnits": {
+        "median": 22.115515005430897,
+        "p95": 56.98188914740697,
+        "max": 61.720847061271726
+      }
+    }
+  },
+  "liveGpu": {
+    "samples": 12,
+    "tracking": {
+      "CameraSearchMilliseconds": {
+        "median": 1.3915,
+        "max": 3.8635
+      },
+      "AnalysisMilliseconds": {
+        "median": 29.65285,
+        "max": 1322.684
+      },
+      "MaxAnalysisGapMilliseconds": {
+        "median": 1916.73235,
+        "max": 3317.5327
+      },
+      "LastAtlasSaveMilliseconds": {
+        "median": 2880.4123,
+        "max": 3283.67
+      },
+      "AnalyzedFramesPerSecond": {
+        "median": 27.476075619444806,
+        "max": 50.25565971462044
+      }
+    },
+    "gpu": {
+      "utilizationPercent": {
+        "median": 19.0,
+        "max": 52.0
+      },
+      "encoderPercent": {
+        "median": 0.0,
+        "max": 0.0
+      },
+      "decoderPercent": {
+        "median": 0.0,
+        "max": 0.0
+      },
+      "memoryMB": {
+        "median": 2416.5,
+        "max": 3574.0
+      },
+      "powerWatts": {
+        "median": 53.925,
+        "max": 97.69
+      }
+    },
+    "cudaAllSamples": true,
+    "longGaps": [
+      {
+        "at": "2026-10-26T13:15:40.6434777-02:30",
+        "gapMs": 1443.4135,
+        "saveMs": 3099.9269
+      },
+      {
+        "at": "2026-10-26T13:15:46.7590616-02:30",
+        "gapMs": 3317.5327,
+        "saveMs": 3099.9269
+      },
+      {
+        "at": "2026-10-26T13:15:51.7743078-02:30",
+        "gapMs": 1175.6676,
+        "saveMs": 3283.67
+      },
+      {
+        "at": "2026-10-26T13:15:59.1768294-02:30",
+        "gapMs": 2441.4768,
+        "saveMs": 3283.67
+      },
+      {
+        "at": "2026-10-26T13:16:12.2963795-02:30",
+        "gapMs": 3090.9465,
+        "saveMs": 2418.5244
+      },
+      {
+        "at": "2026-10-26T13:16:24.6458384-02:30",
+        "gapMs": 2390.0512,
+        "saveMs": 3068.4978
+      },
+      {
+        "at": "2026-10-26T13:16:29.6695645-02:30",
+        "gapMs": 582.0079,
+        "saveMs": 2368.9915
+      },
+      {
+        "at": "2026-10-26T13:16:37.3610187-02:30",
+        "gapMs": 2716.6225,
+        "saveMs": 2368.9915
+      },
+      {
+        "at": "2026-10-26T13:16:50.5951385-02:30",
+        "gapMs": 3195.4564,
+        "saveMs": 2692.3268
+      }
+    ]
+  },
+  "conclusions": [
+    "Severe camera tracking failure reproduced on a complete 76-second replay with all 128 original transitions.",
+    "The first original error over 128 pixels follows a 1030ms analysis gap during which game camera travels about 181 pixels. Seven original gaps of 729-1030ms recur at approximately the autosave cadence.",
+    "Modded analysis awaits AtlasPersistenceBarrier.WaitForWorldWritesAsync. Replay observed 3318ms maximum analysis gap alongside saves up to 3284ms; GPU was not saturated in collected samples and encode/decode were zero.",
+    "After tracking loss, WindowsLiveWorldPipeline can enter AwaitNewWorldBoundary with no searchable reference. Original trace admitted zero atlas writes; replay admitted four.",
+    "Many incorrect poses remain marked verified. Local match confidence does not establish correct global placement."
+  ],
+  "limits": [
+    "Input playback is not deterministic world-state replay: event timing differed by at most 15.9ms, but median hero position difference at the same offset was 22.1 world units. Do not compare the error magnitudes as an identical-route algorithm benchmark.",
+    "Recorded start checkpoint has no enemy/story snapshots. Timing/physics and incomplete world restoration remain replay confounds.",
+    "Camera scores join exact rendered game frame IDs, normalize game camera projection to 640x360, and remove one fixed initial translation. Each run is scored against its own actual game camera; these scores establish tracking failure even when physical routes diverge.",
+    "GPU data is sampled, not continuous. CameraSearchMilliseconds is the last CUDA call wall time, not total GPU time per analysis."
+  ],
+  "localEvidenceDirectory": ".tmp/hkv-path-replay-20261026",
+  "remainingWork": [
+    "Remove the modded camera-analysis wait on autosave while preserving live-world directory transaction safety.",
+    "Repair recovery from tracking loss without a searchable world reference; do not admit misplaced atlas pixels.",
+    "Use complete checkpoint state and frame-synchronous replay or a fixed visual capture before asserting deterministic algorithm A/B results."
+  ]
+}

@@ -5,6 +5,7 @@
   <ItemGroup>
     <Compile Include="../../src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.cs" Link="WindowsGameControlForwarder.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.Pause.cs" Link="WindowsGameControlForwarder.Pause.cs" />
+    <Compile Include="../../src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.Replay.cs" Link="WindowsGameControlForwarder.Replay.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/GameplayViewportPolicy.cs" Link="GameplayViewportPolicy.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/StencilPreviewPresentation.cs" Link="StencilPreviewPresentation.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/LabelBoxBounds.cs" Link="LabelBoxBounds.cs" />

@@ -333,6 +333,8 @@
                        ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
             <StackPanel Grid.Column="2" Orientation="Horizontal">
                 <Button x:Name="PathRecordingButton" Content="K" Click="PathRecording_Click"/>
+                <Button x:Name="ReplayInputPathButton" Content="Replay" ToolTip="Replay a recorded input path"
+                        Visibility="{Binding Visibility, ElementName=PathRecordingButton}" Click="ReplayInputPath_Click"/>
                 <StackPanel x:Name="GameplayControlsPanel" Orientation="Horizontal">
                     <RadioButton Content="Free Fly" Tag="Free Fly" GroupName="GameplayFraming" Style="{StaticResource Segment}" Checked="CameraMode_Checked" Click="GameplayFraming_Click"/>
                     <RadioButton Content="Fit" Tag="Fit" GroupName="GameplayFraming" Style="{StaticResource Segment}" Checked="CameraMode_Checked" Click="GameplayFraming_Click"/>
@@ -485,7 +487,7 @@
             <TextBox x:Name="ModelExamplesRootText"/><TextBox x:Name="DatasetRootText"/><TextBox x:Name="ModelIdentifierText"/><TextBox x:Name="ExportClassesText"/><TextBox x:Name="LatestDatasetText"/><TextBox x:Name="TrainingOutputText"/><TextBox x:Name="IterationsText" Text="100"/><TextBox x:Name="BaseCheckpointText"/><TextBox x:Name="TrainingLogText"/>
             <TextBox x:Name="OpsText"/><TextBox x:Name="AtlasOutputText"/><TextBox x:Name="AtlasSecondsText" Text="30"/><TextBox x:Name="AtlasPpuText" Text="64"/><Button x:Name="RecordAtlasButton" Click="RecordAtlas_Click"/>
             <TextBox x:Name="VisualRouteText"/><Button x:Name="RecordRouteButton" Click="RecordRoute_Click"/><Button x:Name="ReplayRouteButton" Click="ReplayRoute_Click"/><Button x:Name="BuildWorldButton" Click="BuildWorld_Click"/><Button x:Name="OptimizeWorldButton" Click="OptimizeWorld_Click"/><TextBlock x:Name="RouteStatusText"/>
-            <TextBox x:Name="InputPathText"/><TextBox x:Name="InputPathRepeatsText" Text="1"/><CheckBox x:Name="RestorePathCheckpointCheck" IsChecked="True"/><Button x:Name="ReplayInputPathButton" Click="ReplayInputPath_Click"/>
+            <TextBox x:Name="InputPathText"/><TextBox x:Name="InputPathRepeatsText" Text="1"/><CheckBox x:Name="RestorePathCheckpointCheck" IsChecked="True"/>
         </Grid>
     </Grid>
 </Window>

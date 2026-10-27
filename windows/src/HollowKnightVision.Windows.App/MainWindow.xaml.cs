@@ -2537,6 +2537,7 @@ public partial class MainWindow : Window
     {
         try
         {
+            if (gameControls.IsReplaying) return;
             if (!gameControls.IsRecording)
             {
                 if (!gameControls.StartRecording())
@@ -6934,52 +6935,47 @@ public partial class MainWindow : Window
 
     private async void ReplayInputPath_Click(object sender, RoutedEventArgs e)
     {
+        if (inputPathReplayCancellation is not null)
+        {
+            inputPathReplayCancellation.Cancel();
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(InputPathText.Text)) BrowseInputPath_Click(sender, e);
         var path = InputPathText.Text.Trim();
-        if (!File.Exists(path))
+        if (string.IsNullOrEmpty(path)) return;
+        if (!int.TryParse(InputPathRepeatsText.Text, out var repeats) || repeats is <= 0 or > 100)
         {
-            ShowError(new FileNotFoundException("Choose a recorded input-path JSON file.", path));
+            ShowError(new InvalidOperationException("Path repeats must be between 1 and 100."));
             return;
         }
-        if (!int.TryParse(InputPathRepeatsText.Text, out var repeats) || repeats <= 0)
-        {
-            ShowError(new InvalidOperationException("Path repeats must be a positive integer."));
-            return;
-        }
-        ReplayInputPathButton.IsEnabled = false;
-        SetStatus("Replaying saved input path through receiver…");
-        inputPathReplayCancellation?.Dispose();
         inputPathReplayCancellation = new CancellationTokenSource();
-        inputPathReplayDivergence = null;
+        ReplayInputPathButton.Content = "Stop Replay";
+        PathRecordingButton.IsEnabled = false;
+        string? output = null;
         try
         {
-            var result = await InputPathPlaybackRunner.RunAsync(
-                path,
-                repeats,
-                RestorePathCheckpointCheck.IsChecked == true,
-                inputPathDivergenceMonitor,
-                decision =>
-                {
-                    inputPathReplayDivergence = decision;
-                    inputPathReplayCancellation?.Cancel();
-                },
-                inputPathReplayCancellation.Token);
-            var divergence = inputPathReplayDivergence;
-            SetStatus(result == 0
-                ? $"Input path replay completed ×{repeats}."
-                : divergence is not null
-                    ? $"Input path replay stopped: {divergence.Cause} in {divergence.SceneName}."
-                    : $"Input path replay exited {result}.");
+            var recording = new RecordedInputPathStore().Load(path);
+            if (recording.Duration * repeats > 86400)
+                throw new InvalidOperationException("Total replay duration exceeds 24 hours.");
+            var store = new RecordedInputPathStore(IOPath.GetDirectoryName(path)!);
+            for (var iteration = 1; iteration <= repeats; iteration++)
+                await gameControls.ReplayPathAsync(recording, iteration,
+                    RestorePathCheckpointCheck.IsChecked == true,
+                    result => output = store.Save(result), inputPathReplayCancellation.Token);
+            SetStatus($"Replay complete. Diagnostics saved: {output}");
         }
-        catch (Exception error)
+        catch (OperationCanceledException)
         {
-            ShowError(error);
+            SetStatus($"Replay stopped. Diagnostics saved: {output}");
         }
+        catch (Exception error) { ShowError(error); }
         finally
         {
-            inputPathDivergenceMonitor.Stop();
-            inputPathReplayCancellation?.Dispose();
+            inputPathReplayCancellation.Dispose();
             inputPathReplayCancellation = null;
-            ReplayInputPathButton.IsEnabled = true;
+            ReplayInputPathButton.Content = "Replay";
+            ReplayInputPathButton.ToolTip = output is null ? "Replay a recorded input path" : $"Replay diagnostics: {output}";
+            PathRecordingButton.IsEnabled = true;
         }
     }
 

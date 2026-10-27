@@ -623,8 +623,20 @@ The solver keeps raw capture poses immutable, holds each connected component's
 anchor exact, distributes loop drift deterministically, and commits exactly one
 new map revision.
 
-Replay a schema-v1 input path recorded by the macOS app while gameplay is
-already running:
+In modded Gameplay, **K** records an input path. **Replay** selects a saved path,
+restores its start checkpoint, and replays it through the existing live receiver
+connection. **Stop Replay** cancels and releases held controls. Each pass saves a
+new path beside the source, including tracking samples, game ground truth and
+`sourcePathID`; the original file is preserved. A canceled pass retains its
+partial diagnostic recording. Physical key presses cannot contaminate replay.
+
+Input timing alone does not guarantee identical physics, enemy or story state.
+Compare each replay against its own ground truth and verify route fidelity before
+using it for algorithm A/B measurements.
+
+The standalone host command below owns the receiver connection, so close the
+Vision desktop app before using it. With modded gameplay already running, replay
+a schema-v1 path recorded by either desktop app:
 
 ```powershell
 ./artifacts/win-x64/HollowKnightVision.Windows.Host.exe `

@@ -374,3 +374,52 @@ to CUDA. Faster GPU hardware alone does not remove these pipeline constraints.
 [NVIDIA's NVENC documentation](https://docs.nvidia.com/video-technologies/video-codec-sdk/13.1/nvenc-application-note/index.html)
 describes the dedicated encoder hardware; its measured utilization here was zero.
 No runtime code, GPU settings or installed binaries changed during this diagnosis.
+
+
+## 2026-10-26: modded input-path failure reproduced
+
+The user's 76.061-second K recording contains 128 input transitions, 4,036
+tracking observations and 4,548 game-truth observations. Its first error above
+128 pixels follows a 1.030-second tracking gap at 4.446 seconds: the game camera
+moves about 181 pixels while the visual estimate moves about one. Seven such
+gaps recur at roughly the autosave cadence. Median camera error is 685.8 pixels
+and final error is 994.2 pixels, measured at the 640x360 solve resolution using
+exact rendered-frame joins and one fixed initial translation.
+
+The desktop replay previously opened a second receiver connection even though
+the mod serves one at a time. Replay now uses the forwarder's existing session,
+including checkpoint acknowledgements, input leases and telemetry. The installed
+Start Menu app replayed all 128 transitions over 76.071 seconds, with maximum
+input timing difference 15.9ms, and saved the resulting trace. Tracking failure
+reproduced: median error 1407.8 pixels, final error 551.1 pixels. The physical
+route diverged (median hero position difference 22.1 world units), so these are
+**not** comparable scores from identical routes. Each independently demonstrates
+failure against that run's actual camera. The recorded checkpoint contains no
+enemy/story snapshots; deterministic replay remains separate work.
+
+During replay, the maximum reported analysis gap was 3317.5ms and saves reached
+3283.7ms. Modded analysis still awaits `AtlasPersistenceBarrier` because its world
+writer shares the directory atomically replaced by autosave publication. This
+wait must be removed by separating camera work from safe persistence ownership,
+not by deleting the directory barrier indiscriminately. Twelve live GPU samples
+show CUDA active, median GPU utilization 19%, maximum 52%, and zero encode/decode.
+The last CUDA search call was median 1.39ms, maximum 3.86ms. GPU saturation does
+not explain the measured multi-second waits.
+
+The world pipeline also reports `recovery pending: no searchable reference or
+new-world boundary`. The original route writes zero atlas frames; the replay
+writes four. Recovery and global placement need attention in addition to stalls:
+incorrect camera poses can still be marked locally verified.
+
+Validation: 986 core tests, 69 UI regressions, receiver protocol tests and required
+CUDA/GPU capture checks passed; canonical build installed and hash-verified the
+Start Menu app. Replay tests use a private loopback receiver and cover one live
+connection, checkpoint rejection, held-key renewal, competing input suppression,
+telemetry retention, cancellation and neutral release. The existing 48-durable-
+write concurrency test needed a 30-second aggregate completion allowance on this
+busy disk; concurrent barriers and all correctness assertions remain intact.
+No tracking algorithm or GPU settings changed for this reproduction.
+
+[Measured replay audit](audits/2026-10-26-input-path-replay.json). Full recordings,
+screenshots, score CSVs and live diagnostics remain in the workstation evidence
+directory `.tmp/hkv-path-replay-20261026` in the parent workspace.

@@ -17,7 +17,7 @@ internal sealed partial class WindowsGameControlForwarder
         lock (stateLock)
         {
             if (receiver is null || connectionFault is null || pause.State == GamePauseState.Unavailable
-                || active && inputPathRecorder.IsRecording) return false;
+                || active && (inputPathRecorder.IsRecording || replayCancellation is not null)) return false;
             var command = pause.Request(active);
             if (command is null) return true;
             if (active)
