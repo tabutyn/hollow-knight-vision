@@ -290,7 +290,7 @@
     "nativeInputReady": "Keyboard controls ready",
     "nativeInputPermission": "Enable Hollow Knight Vision in System Settings → Privacy & Security → Accessibility. If already enabled, remove it from the list and add /Applications/Hollow Knight Vision.app again.",
     "nativeInputPermissionTitle": "Keyboard controls need Accessibility access",
-    "profileClearSave": "Highlight an occupied slot in Select Profile. If Clear Save is missing from the saved screenshot, delete that screenshot in Stencil, then press L.",
+    "profileClearSave": "Return to Select Profile and highlight an occupied save slot. If Clear Save is missing from the saved screenshot, delete that screenshot in Stencil, then press L.",
     "modelLabelGameplay": "Stencils complete. Enter gameplay, press L, and label Hollow Knight and the visible gameplay objects.",
     "modelOpen": "Stencils complete. Open Model to train your labeled gameplay screenshots.",
     "modelReview": "Open Model, then Screenshots. Fix or exempt the {count} screenshots with labeling errors before training.",
