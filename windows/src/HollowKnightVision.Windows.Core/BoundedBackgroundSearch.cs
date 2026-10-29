@@ -11,6 +11,7 @@ public sealed class BoundedBackgroundSearch<T>
     private bool busy;
     private bool hasCompleted;
     private T? completed;
+    private Task? pending;
 
     public bool Submit(Func<T> operation)
     {
@@ -48,7 +49,7 @@ public sealed class BoundedBackgroundSearch<T>
             throw;
         }
 
-        _ = Task.Run(() =>
+        lock (sync) pending = Task.Run(() =>
         {
             T value;
             try
@@ -75,6 +76,14 @@ public sealed class BoundedBackgroundSearch<T>
             }
         });
         return true;
+    }
+
+    // Deterministic consumers choose a fixed future frame for completion.
+    // Waiting here observes failures and never changes result ordering.
+    public void WaitForCompletion()
+    {
+        Task? task; lock (sync) task = pending;
+        task?.GetAwaiter().GetResult();
     }
 
     public bool TryTake(out T? value)

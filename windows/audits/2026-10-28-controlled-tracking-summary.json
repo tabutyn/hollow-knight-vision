@@ -1,0 +1,27 @@
+{
+  "error_pixels": {
+    "median": 1.9861699102124906,
+    "p95": 3.4351165629117157,
+    "max": 3.966471996034678
+  },
+  "tracking_ms": {
+    "median": 8.27745,
+    "p95": 12.862689999999997,
+    "max": 31.2125
+  },
+  "frames": 1818,
+  "backend": [
+    "Cuda"
+  ],
+  "algorithm": "B909CF543DFC470166A22481F5C44E494D00B3361AA42B0F2428A86C4195916B",
+  "status": "complete-strict-controlled-run",
+  "durationSeconds": 60.57706430007238,
+  "trackingPixelDimensions": [
+    640,
+    360
+  ],
+  "conditionsSession": "ecf641a197914b5f982dd09af63bcaec",
+  "recordingSha256": "1E98BDBA928AEEF1D66F2CBB6336178223E983A13D5B46C4938B73DC41C37DC6",
+  "independentRecordingValidation": false,
+  "gameAndCaptureWaitsIncluded": false
+}

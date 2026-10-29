@@ -309,7 +309,7 @@
                                    SnapsToDevicePixels="True" IsHitTestVisible="False" Panel.ZIndex="10"/>
                             <Canvas x:Name="HackerOverlayCanvas" Width="640" Height="360" Background="Transparent" Panel.ZIndex="20"/>
                         </Canvas>
-                        <StackPanel x:Name="AtlasEmptyPanel" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="🔨" FontSize="34" Foreground="#80FF80"/></StackPanel>
+                        <StackPanel x:Name="AtlasEmptyPanel" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="Waiting for a matched game frame…" FontSize="14" Foreground="#9AA3AD"/></StackPanel>
                         <TextBlock x:Name="AtlasPreviewText" Visibility="Collapsed"/>
                     </Grid>
                 </Grid>
@@ -334,7 +334,20 @@
             <StackPanel Grid.Column="2" Orientation="Horizontal">
                 <Button x:Name="PathRecordingButton" Content="K" Click="PathRecording_Click"/>
                 <Button x:Name="ReplayInputPathButton" Content="Replay" ToolTip="Replay a recorded input path"
-                        Visibility="{Binding Visibility, ElementName=PathRecordingButton}" Click="ReplayInputPath_Click"/>
+                        Visibility="{Binding Visibility, ElementName=PathRecordingButton}" Click="ReplayInputPath_Click">
+                    <Button.ContextMenu><ContextMenu>
+                        <MenuItem x:Name="ReplayFullTraceItem" Header="Record full replay" Tag="full-trace" IsCheckable="True" IsChecked="True" Click="ReplayEvaluation_Click"/>
+                        <MenuItem x:Name="ReplayFailFastItem" Header="Stop when tracking diverges" Tag="fail-fast" IsCheckable="True" Click="ReplayEvaluation_Click"/>
+                    </ContextMenu></Button.ContextMenu>
+                </Button>
+                <Button x:Name="StepReplayButton" Content="Step 1s" Click="TrackingStep_Click"
+                        ToolTip="Replay one second; stop on any frame over 5 pixels or a missed 30 fps frame."
+                        Visibility="{Binding Visibility, ElementName=PathRecordingButton}">
+                    <Button.ContextMenu><ContextMenu>
+                        <MenuItem Header="Restart step replay from beginning" Click="RestartTrackingSteps_Click"/>
+                        <MenuItem Header="Leave step replay and resume game" Click="LeaveTrackingSteps_Click"/>
+                    </ContextMenu></Button.ContextMenu>
+                </Button>
                 <StackPanel x:Name="GameplayControlsPanel" Orientation="Horizontal">
                     <RadioButton Content="Free Fly" Tag="Free Fly" GroupName="GameplayFraming" Style="{StaticResource Segment}" Checked="CameraMode_Checked" Click="GameplayFraming_Click"/>
                     <RadioButton Content="Fit" Tag="Fit" GroupName="GameplayFraming" Style="{StaticResource Segment}" Checked="CameraMode_Checked" Click="GameplayFraming_Click"/>

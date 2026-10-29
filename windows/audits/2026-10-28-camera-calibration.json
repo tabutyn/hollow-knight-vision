@@ -1,0 +1,2390 @@
+{
+  "recordingSha256": "1E98BDBA928AEEF1D66F2CBB6336178223E983A13D5B46C4938B73DC41C37DC6",
+  "conditionsSession": "ecf641a197914b5f982dd09af63bcaec",
+  "experiment": 60,
+  "diagnosticSha256": "39CF9E94520036777908AA63B8F80D3B89CAB93DEF77EBBEF0ADD9F04EEEDD35",
+  "trainingWindowSeconds": [
+    0,
+    30
+  ],
+  "pixelDimensions": [
+    640,
+    360
+  ],
+  "median": 0.9950992086787074,
+  "selectedHorizontalFactor": 0.9956,
+  "method": "least squares through origin after removing ratios farther than 0.005 from median",
+  "inlierPairs": 216,
+  "robustFit": 0.995615440068298,
+  "runtimeTruthInput": false,
+  "limits": "Derived from this recording; later frames were inspected during development and are not blind validation. Other recordings and rooms require independent validation.",
+  "pairs": [
+    {
+      "timestamp": 1.2666666666666666,
+      "referenceTimestamp": 1.0333333333333334,
+      "support": 19,
+      "textureError": 2.6625784335761358,
+      "imageDisplacementX": -26.0,
+      "truthDisplacementX": -25.943268637056462,
+      "ratio": 0.9978180245021716
+    },
+    {
+      "timestamp": 1.3,
+      "referenceTimestamp": 1.0333333333333334,
+      "support": 18,
+      "textureError": 3.336892914094884,
+      "imageDisplacementX": -31.670798421224244,
+      "truthDisplacementX": -31.568082847748883,
+      "ratio": 0.9967567734760193
+    },
+    {
+      "timestamp": 1.3333333333333333,
+      "referenceTimestamp": 1.0333333333333334,
+      "support": 18,
+      "textureError": 4.195192843170446,
+      "imageDisplacementX": -37.55758312840966,
+      "truthDisplacementX": -37.408255159971304,
+      "ratio": 0.9960240261486528
+    },
+    {
+      "timestamp": 1.3666666666666667,
+      "referenceTimestamp": 1.0333333333333334,
+      "support": 18,
+      "textureError": 4.56718544990058,
+      "imageDisplacementX": -43.4196237176752,
+      "truthDisplacementX": -43.230672916048206,
+      "ratio": 0.995648262572343
+    },
+    {
+      "timestamp": 1.4,
+      "referenceTimestamp": 1.0333333333333334,
+      "support": 18,
+      "textureError": 4.827538822086186,
+      "imageDisplacementX": -49.41764936074125,
+      "truthDisplacementX": -49.19853823026642,
+      "ratio": 0.9955661361212196
+    },
+    {
+      "timestamp": 1.4333333333333333,
+      "referenceTimestamp": 1.0333333333333334,
+      "support": 18,
+      "textureError": 5.492414228231143,
+      "imageDisplacementX": -55.505952793957206,
+      "truthDisplacementX": -55.263958137948066,
+      "ratio": 0.9956402035488437
+    },
+    {
+      "timestamp": 1.4666666666666668,
+      "referenceTimestamp": 1.0333333333333334,
+      "support": 16,
+      "textureError": 6.234986495894961,
+      "imageDisplacementX": -61.519204151325084,
+      "truthDisplacementX": -61.26511565758847,
+      "ratio": 0.9958697694932527
+    },
+    {
+      "timestamp": 1.5,
+      "referenceTimestamp": 1.0333333333333334,
+      "support": 16,
+      "textureError": 5.707577400694796,
+      "imageDisplacementX": -67.74107518888746,
+      "truthDisplacementX": -67.43481358280405,
+      "ratio": 0.9954789379231221
+    },
+    {
+      "timestamp": 1.5333333333333332,
+      "referenceTimestamp": 1.0333333333333334,
+      "support": 14,
+      "textureError": 5.703131838642927,
+      "imageDisplacementX": -73.9005689653961,
+      "truthDisplacementX": -73.70946775656193,
+      "ratio": 0.997414076623366
+    },
+    {
+      "timestamp": 1.5666666666666667,
+      "referenceTimestamp": 1.0333333333333334,
+      "support": 12,
+      "textureError": 5.175176609273087,
+      "imageDisplacementX": -80.0,
+      "truthDisplacementX": -79.82753534626681,
+      "ratio": 0.9978441918283352
+    },
+    {
+      "timestamp": 1.6,
+      "referenceTimestamp": 1.0333333333333334,
+      "support": 12,
+      "textureError": 6.125429142854995,
+      "imageDisplacementX": -86.2976533337891,
+      "truthDisplacementX": -86.03902925737202,
+      "ratio": 0.9970031157693622
+    },
+    {
+      "timestamp": 1.9333333333333333,
+      "referenceTimestamp": 1.7666666666666666,
+      "support": 13,
+      "textureError": 5.200976208146002,
+      "imageDisplacementX": -31.231950863590757,
+      "truthDisplacementX": -31.019700370612554,
+      "ratio": 0.9932040590770256
+    },
+    {
+      "timestamp": 1.9666666666666668,
+      "referenceTimestamp": 1.7666666666666666,
+      "support": 12,
+      "textureError": 6.706099712688748,
+      "imageDisplacementX": -37.384382164102604,
+      "truthDisplacementX": -37.145211349474266,
+      "ratio": 0.9936023868582748
+    },
+    {
+      "timestamp": 2.3333333333333335,
+      "referenceTimestamp": 2.1333333333333333,
+      "support": 14,
+      "textureError": 5.879903056398683,
+      "imageDisplacementX": -30.269499908427374,
+      "truthDisplacementX": -30.077065385412425,
+      "ratio": 0.9936426262872823
+    },
+    {
+      "timestamp": 2.466666666666667,
+      "referenceTimestamp": 2.3333333333333335,
+      "support": 15,
+      "textureError": 5.386674104093373,
+      "imageDisplacementX": -24.16911488103151,
+      "truthDisplacementX": -23.99962990358472,
+      "ratio": 0.992987538919772
+    },
+    {
+      "timestamp": 2.5,
+      "referenceTimestamp": 2.3333333333333335,
+      "support": 15,
+      "textureError": 6.8421161034376645,
+      "imageDisplacementX": -30.370961702693315,
+      "truthDisplacementX": -30.182849985780194,
+      "ratio": 0.9938061982114831
+    },
+    {
+      "timestamp": 2.533333333333333,
+      "referenceTimestamp": 2.3333333333333335,
+      "support": 14,
+      "textureError": 7.591615500010309,
+      "imageDisplacementX": -36.465590976552896,
+      "truthDisplacementX": -36.21270595281385,
+      "ratio": 0.9930651055702991
+    },
+    {
+      "timestamp": 2.5666666666666664,
+      "referenceTimestamp": 2.3333333333333335,
+      "support": 13,
+      "textureError": 7.5747349649639855,
+      "imageDisplacementX": -42.680145142929845,
+      "truthDisplacementX": -42.34003890026361,
+      "ratio": 0.9920312772712635
+    },
+    {
+      "timestamp": 2.7,
+      "referenceTimestamp": 2.5666666666666664,
+      "support": 19,
+      "textureError": 6.196301929579608,
+      "imageDisplacementX": -25.0,
+      "truthDisplacementX": -24.63619136053603,
+      "ratio": 0.9854476544214412
+    },
+    {
+      "timestamp": 2.7333333333333334,
+      "referenceTimestamp": 2.5666666666666664,
+      "support": 17,
+      "textureError": 6.134711831763139,
+      "imageDisplacementX": -31.0,
+      "truthDisplacementX": -30.679721720633097,
+      "ratio": 0.9896684426010677
+    },
+    {
+      "timestamp": 2.7666666666666666,
+      "referenceTimestamp": 2.5666666666666664,
+      "support": 17,
+      "textureError": 7.436513177540079,
+      "imageDisplacementX": -37.0,
+      "truthDisplacementX": -36.8103602938354,
+      "ratio": 0.994874602536092
+    },
+    {
+      "timestamp": 2.9,
+      "referenceTimestamp": 2.7666666666666666,
+      "support": 16,
+      "textureError": 5.565131730289286,
+      "imageDisplacementX": -24.627068139622246,
+      "truthDisplacementX": -24.474235062720254,
+      "ratio": 0.9937941018380463
+    },
+    {
+      "timestamp": 2.9333333333333336,
+      "referenceTimestamp": 2.7666666666666666,
+      "support": 14,
+      "textureError": 4.1764700227599425,
+      "imageDisplacementX": -31.0,
+      "truthDisplacementX": -30.58877314440906,
+      "ratio": 0.9867346175615826
+    },
+    {
+      "timestamp": 2.966666666666667,
+      "referenceTimestamp": 2.7666666666666666,
+      "support": 14,
+      "textureError": 4.32140739849429,
+      "imageDisplacementX": -37.0,
+      "truthDisplacementX": -36.79702741780784,
+      "ratio": 0.994514254535347
+    },
+    {
+      "timestamp": 3.1,
+      "referenceTimestamp": 2.966666666666667,
+      "support": 16,
+      "textureError": 5.5156538028562,
+      "imageDisplacementX": -24.57573270443532,
+      "truthDisplacementX": -24.41654729738366,
+      "ratio": 0.9935226587558493
+    },
+    {
+      "timestamp": 3.1333333333333333,
+      "referenceTimestamp": 2.966666666666667,
+      "support": 15,
+      "textureError": 5.443751135160329,
+      "imageDisplacementX": -30.707849090744357,
+      "truthDisplacementX": -30.561973147909157,
+      "ratio": 0.9952495551738539
+    },
+    {
+      "timestamp": 3.1666666666666665,
+      "referenceTimestamp": 2.966666666666667,
+      "support": 13,
+      "textureError": 3.9009048019518806,
+      "imageDisplacementX": -37.0,
+      "truthDisplacementX": -36.79902248305734,
+      "ratio": 0.994568175217766
+    },
+    {
+      "timestamp": 3.2,
+      "referenceTimestamp": 2.966666666666667,
+      "support": 13,
+      "textureError": 5.1726361100645,
+      "imageDisplacementX": -43.42015119330758,
+      "truthDisplacementX": -43.10106888751034,
+      "ratio": 0.9926512852436491
+    },
+    {
+      "timestamp": 3.2333333333333334,
+      "referenceTimestamp": 2.966666666666667,
+      "support": 12,
+      "textureError": 4.860830849107871,
+      "imageDisplacementX": -49.59005125035562,
+      "truthDisplacementX": -49.2540738232201,
+      "ratio": 0.9932249026031584
+    },
+    {
+      "timestamp": 3.7,
+      "referenceTimestamp": 3.5666666666666664,
+      "support": 17,
+      "textureError": 7.913635349407912,
+      "imageDisplacementX": -25.0,
+      "truthDisplacementX": -24.695999219082296,
+      "ratio": 0.9878399687632918
+    },
+    {
+      "timestamp": 3.7333333333333334,
+      "referenceTimestamp": 3.5666666666666664,
+      "support": 14,
+      "textureError": 3.4082712950683933,
+      "imageDisplacementX": -31.0,
+      "truthDisplacementX": -30.76820109412074,
+      "ratio": 0.9925226159393787
+    },
+    {
+      "timestamp": 3.7666666666666666,
+      "referenceTimestamp": 3.5666666666666664,
+      "support": 15,
+      "textureError": 4.757213726913441,
+      "imageDisplacementX": -37.20121215400906,
+      "truthDisplacementX": -36.92879363615066,
+      "ratio": 0.9926771601761087
+    },
+    {
+      "timestamp": 3.9,
+      "referenceTimestamp": 3.7666666666666666,
+      "support": 15,
+      "textureError": 4.252148715256707,
+      "imageDisplacementX": -24.714917824390763,
+      "truthDisplacementX": -24.59379516961053,
+      "ratio": 0.9950992086787074
+    },
+    {
+      "timestamp": 3.9333333333333336,
+      "referenceTimestamp": 3.7666666666666666,
+      "support": 15,
+      "textureError": 4.952581418415534,
+      "imageDisplacementX": -31.0,
+      "truthDisplacementX": -30.691785271745175,
+      "ratio": 0.9900575894111346
+    },
+    {
+      "timestamp": 3.966666666666667,
+      "referenceTimestamp": 3.7666666666666666,
+      "support": 14,
+      "textureError": 5.544313307512092,
+      "imageDisplacementX": -37.0,
+      "truthDisplacementX": -36.716153983725235,
+      "ratio": 0.9923284860466279
+    },
+    {
+      "timestamp": 4.1,
+      "referenceTimestamp": 3.966666666666667,
+      "support": 17,
+      "textureError": 5.199381900186092,
+      "imageDisplacementX": -24.206736314755013,
+      "truthDisplacementX": -24.100533578079194,
+      "ratio": 0.9956126784174915
+    },
+    {
+      "timestamp": 4.133333333333334,
+      "referenceTimestamp": 3.966666666666667,
+      "support": 15,
+      "textureError": 6.318984240520474,
+      "imageDisplacementX": -30.43890364206092,
+      "truthDisplacementX": -30.30216272477992,
+      "ratio": 0.9955076924291041
+    },
+    {
+      "timestamp": 4.166666666666667,
+      "referenceTimestamp": 3.966666666666667,
+      "support": 15,
+      "textureError": 5.234247395061073,
+      "imageDisplacementX": -36.678139795665864,
+      "truthDisplacementX": -36.582042256137356,
+      "ratio": 0.9973799778270145
+    },
+    {
+      "timestamp": 4.3,
+      "referenceTimestamp": 4.166666666666667,
+      "support": 12,
+      "textureError": 2.8678955083605717,
+      "imageDisplacementX": -25.0,
+      "truthDisplacementX": -24.86052258918062,
+      "ratio": 0.9944209035672248
+    },
+    {
+      "timestamp": 4.333333333333333,
+      "referenceTimestamp": 4.166666666666667,
+      "support": 14,
+      "textureError": 4.374143891904249,
+      "imageDisplacementX": -31.0,
+      "truthDisplacementX": -30.90154682705179,
+      "ratio": 0.996824091195219
+    },
+    {
+      "timestamp": 4.366666666666666,
+      "referenceTimestamp": 4.166666666666667,
+      "support": 12,
+      "textureError": 4.846623645220867,
+      "imageDisplacementX": -37.31052450845159,
+      "truthDisplacementX": -37.07432119664736,
+      "ratio": 0.9936692578055093
+    },
+    {
+      "timestamp": 4.666666666666667,
+      "referenceTimestamp": 4.166666666666667,
+      "support": 12,
+      "textureError": 7.527696504203575,
+      "imageDisplacementX": -93.2908570903514,
+      "truthDisplacementX": -92.66136174299754,
+      "ratio": 0.9932523361132357
+    },
+    {
+      "timestamp": 4.933333333333334,
+      "referenceTimestamp": 4.8,
+      "support": 16,
+      "textureError": 4.918459939698601,
+      "imageDisplacementX": -24.690734818316546,
+      "truthDisplacementX": -24.561975439544767,
+      "ratio": 0.9947851135367481
+    },
+    {
+      "timestamp": 4.966666666666667,
+      "referenceTimestamp": 4.8,
+      "support": 15,
+      "textureError": 4.703546713242432,
+      "imageDisplacementX": -31.0,
+      "truthDisplacementX": -30.73845272883773,
+      "ratio": 0.99156299125283
+    },
+    {
+      "timestamp": 5.0,
+      "referenceTimestamp": 4.8,
+      "support": 14,
+      "textureError": 5.629135045788602,
+      "imageDisplacementX": -37.0,
+      "truthDisplacementX": -36.96235858020373,
+      "ratio": 0.9989826643298304
+    },
+    {
+      "timestamp": 5.033333333333333,
+      "referenceTimestamp": 4.8,
+      "support": 13,
+      "textureError": 5.606395971744088,
+      "imageDisplacementX": -43.0,
+      "truthDisplacementX": -42.82574422704056,
+      "ratio": 0.9959475401637339
+    },
+    {
+      "timestamp": 5.1,
+      "referenceTimestamp": 4.8,
+      "support": 12,
+      "textureError": 7.309743173428026,
+      "imageDisplacementX": -55.29176466442163,
+      "truthDisplacementX": -54.97449585888535,
+      "ratio": 0.9942619157217741
+    },
+    {
+      "timestamp": 5.566666666666666,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 21,
+      "textureError": 3.0792817381560798,
+      "imageDisplacementX": -25.0,
+      "truthDisplacementX": -24.690592934843153,
+      "ratio": 0.9876237173937261
+    },
+    {
+      "timestamp": 5.6,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 20,
+      "textureError": 3.2929620432707134,
+      "imageDisplacementX": -31.178917947519608,
+      "truthDisplacementX": -30.93206460773945,
+      "ratio": 0.9920826841971981
+    },
+    {
+      "timestamp": 5.633333333333333,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 20,
+      "textureError": 4.21469672199556,
+      "imageDisplacementX": -37.27138174892982,
+      "truthDisplacementX": -37.031929867342114,
+      "ratio": 0.9935754493031486
+    },
+    {
+      "timestamp": 5.666666666666667,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 17,
+      "textureError": 4.824480080379921,
+      "imageDisplacementX": -43.48543957370624,
+      "truthDisplacementX": -43.19149712868966,
+      "ratio": 0.993240439836917
+    },
+    {
+      "timestamp": 5.7,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 18,
+      "textureError": 4.431259424404275,
+      "imageDisplacementX": -49.718458668020894,
+      "truthDisplacementX": -49.43339088000357,
+      "ratio": 0.9942663591017419
+    },
+    {
+      "timestamp": 5.733333333333333,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 17,
+      "textureError": 4.290537607922339,
+      "imageDisplacementX": -56.0,
+      "truthDisplacementX": -55.52339857048355,
+      "ratio": 0.9914892601872063
+    },
+    {
+      "timestamp": 5.766666666666667,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 15,
+      "textureError": 4.424803111025449,
+      "imageDisplacementX": -62.0,
+      "truthDisplacementX": -61.666674533393234,
+      "ratio": 0.9946237827966651
+    },
+    {
+      "timestamp": 5.8,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 15,
+      "textureError": 5.234550877522726,
+      "imageDisplacementX": -68.25048403552404,
+      "truthDisplacementX": -67.78760913480073,
+      "ratio": 0.9932179982711569
+    },
+    {
+      "timestamp": 5.833333333333333,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 15,
+      "textureError": 5.610339728827209,
+      "imageDisplacementX": -74.27302837543013,
+      "truthDisplacementX": -73.7794850692153,
+      "ratio": 0.9933550130241074
+    },
+    {
+      "timestamp": 5.866666666666667,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 13,
+      "textureError": 5.519573370951216,
+      "imageDisplacementX": -80.44807229654127,
+      "truthDisplacementX": -79.9044867916964,
+      "ratio": 0.9932430263482119
+    },
+    {
+      "timestamp": 5.9,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 13,
+      "textureError": 5.175142361702977,
+      "imageDisplacementX": -86.73820100082028,
+      "truthDisplacementX": -86.13782673655078,
+      "ratio": 0.993078317772998
+    },
+    {
+      "timestamp": 5.933333333333334,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 13,
+      "textureError": 5.450537238381591,
+      "imageDisplacementX": -93.0,
+      "truthDisplacementX": -92.27322919922881,
+      "ratio": 0.9921852602067613
+    },
+    {
+      "timestamp": 5.966666666666667,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 12,
+      "textureError": 5.171741687522183,
+      "imageDisplacementX": -99.17783696971085,
+      "truthDisplacementX": -98.46464293682948,
+      "ratio": 0.9928089374131119
+    },
+    {
+      "timestamp": 6.0,
+      "referenceTimestamp": 5.433333333333334,
+      "support": 13,
+      "textureError": 6.433611781125323,
+      "imageDisplacementX": -105.48071490810035,
+      "truthDisplacementX": -104.71316744852811,
+      "ratio": 0.9927233384771712
+    },
+    {
+      "timestamp": 6.266666666666667,
+      "referenceTimestamp": 6.033333333333333,
+      "support": 21,
+      "textureError": 5.515195840169385,
+      "imageDisplacementX": -26.0,
+      "truthDisplacementX": -25.71582257631235,
+      "ratio": 0.9890700990889365
+    },
+    {
+      "timestamp": 6.3,
+      "referenceTimestamp": 6.033333333333333,
+      "support": 21,
+      "textureError": 6.8142825570429935,
+      "imageDisplacementX": -31.363912848808855,
+      "truthDisplacementX": -31.187712982762605,
+      "ratio": 0.994382082781073
+    },
+    {
+      "timestamp": 6.333333333333333,
+      "referenceTimestamp": 6.033333333333333,
+      "support": 21,
+      "textureError": 6.60172266180123,
+      "imageDisplacementX": -37.0,
+      "truthDisplacementX": -36.86836680327542,
+      "ratio": 0.9964423460344708
+    },
+    {
+      "timestamp": 6.366666666666666,
+      "referenceTimestamp": 6.033333333333333,
+      "support": 21,
+      "textureError": 6.548104278862913,
+      "imageDisplacementX": -43.0,
+      "truthDisplacementX": -42.81162598752417,
+      "ratio": 0.9956192090121899
+    },
+    {
+      "timestamp": 6.4,
+      "referenceTimestamp": 6.033333333333333,
+      "support": 20,
+      "textureError": 6.787662748286053,
+      "imageDisplacementX": -49.0,
+      "truthDisplacementX": -48.707704328000546,
+      "ratio": 0.9940347822040928
+    },
+    {
+      "timestamp": 6.433333333333334,
+      "referenceTimestamp": 6.033333333333333,
+      "support": 18,
+      "textureError": 6.6035527252630635,
+      "imageDisplacementX": -55.0,
+      "truthDisplacementX": -54.7557965752203,
+      "ratio": 0.9955599377312783
+    },
+    {
+      "timestamp": 6.466666666666667,
+      "referenceTimestamp": 6.033333333333333,
+      "support": 19,
+      "textureError": 7.329068149671822,
+      "imageDisplacementX": -61.0,
+      "truthDisplacementX": -60.90721949306317,
+      "ratio": 0.9984790080830027
+    },
+    {
+      "timestamp": 6.5,
+      "referenceTimestamp": 6.033333333333333,
+      "support": 16,
+      "textureError": 7.132255934814134,
+      "imageDisplacementX": -67.41923154833579,
+      "truthDisplacementX": -66.96648071683012,
+      "ratio": 0.99328454476404
+    },
+    {
+      "timestamp": 6.533333333333333,
+      "referenceTimestamp": 6.033333333333333,
+      "support": 15,
+      "textureError": 7.336880418301495,
+      "imageDisplacementX": -73.45491365997692,
+      "truthDisplacementX": -73.09175892150961,
+      "ratio": 0.9950560865111303
+    },
+    {
+      "timestamp": 6.566666666666666,
+      "referenceTimestamp": 6.033333333333333,
+      "support": 16,
+      "textureError": 7.170737670607181,
+      "imageDisplacementX": -80.0,
+      "truthDisplacementX": -79.30884385458194,
+      "ratio": 0.9913605481822743
+    },
+    {
+      "timestamp": 6.6,
+      "referenceTimestamp": 6.033333333333333,
+      "support": 14,
+      "textureError": 6.281040132232837,
+      "imageDisplacementX": -86.0,
+      "truthDisplacementX": -85.36463757487945,
+      "ratio": 0.9926120648241796
+    },
+    {
+      "timestamp": 6.633333333333333,
+      "referenceTimestamp": 6.033333333333333,
+      "support": 14,
+      "textureError": 6.499102176298071,
+      "imageDisplacementX": -92.33375687533382,
+      "truthDisplacementX": -91.50260291504674,
+      "ratio": 0.9909983738514043
+    },
+    {
+      "timestamp": 6.666666666666667,
+      "referenceTimestamp": 6.033333333333333,
+      "support": 12,
+      "textureError": 6.655169608270856,
+      "imageDisplacementX": -98.0,
+      "truthDisplacementX": -97.734044568846,
+      "ratio": 0.9972861690698571
+    },
+    {
+      "timestamp": 6.9,
+      "referenceTimestamp": 6.766666666666667,
+      "support": 25,
+      "textureError": 5.2599674373306105,
+      "imageDisplacementX": -24.519441772843233,
+      "truthDisplacementX": -24.387279534246773,
+      "ratio": 0.9946099001836641
+    },
+    {
+      "timestamp": 6.933333333333334,
+      "referenceTimestamp": 6.766666666666667,
+      "support": 23,
+      "textureError": 4.867167114720348,
+      "imageDisplacementX": -30.700538750624457,
+      "truthDisplacementX": -30.56511497683823,
+      "ratio": 0.9955888795670248
+    },
+    {
+      "timestamp": 6.966666666666667,
+      "referenceTimestamp": 6.766666666666667,
+      "support": 21,
+      "textureError": 5.3906965491994345,
+      "imageDisplacementX": -37.0,
+      "truthDisplacementX": -36.79637325461954,
+      "ratio": 0.9944965744491767
+    },
+    {
+      "timestamp": 7.0,
+      "referenceTimestamp": 6.766666666666667,
+      "support": 19,
+      "textureError": 5.072614818796073,
+      "imageDisplacementX": -43.0,
+      "truthDisplacementX": -42.873629732988775,
+      "ratio": 0.9970611565811343
+    },
+    {
+      "timestamp": 7.033333333333333,
+      "referenceTimestamp": 6.766666666666667,
+      "support": 21,
+      "textureError": 5.6275582061238225,
+      "imageDisplacementX": -49.0,
+      "truthDisplacementX": -48.646134837996215,
+      "ratio": 0.9927782619999227
+    },
+    {
+      "timestamp": 7.066666666666666,
+      "referenceTimestamp": 6.766666666666667,
+      "support": 15,
+      "textureError": 5.105745474630571,
+      "imageDisplacementX": -55.0,
+      "truthDisplacementX": -54.50190778658725,
+      "ratio": 0.9909437779379501
+    },
+    {
+      "timestamp": 7.1,
+      "referenceTimestamp": 6.766666666666667,
+      "support": 15,
+      "textureError": 5.0941809710206964,
+      "imageDisplacementX": -61.0,
+      "truthDisplacementX": -60.530235486337915,
+      "ratio": 0.9922989423989822
+    },
+    {
+      "timestamp": 7.133333333333334,
+      "referenceTimestamp": 6.766666666666667,
+      "support": 12,
+      "textureError": 4.30779351418581,
+      "imageDisplacementX": -67.0,
+      "truthDisplacementX": -66.7745615649037,
+      "ratio": 0.9966352472373687
+    },
+    {
+      "timestamp": 7.166666666666667,
+      "referenceTimestamp": 6.766666666666667,
+      "support": 13,
+      "textureError": 5.928176840761877,
+      "imageDisplacementX": -73.56618410617666,
+      "truthDisplacementX": -73.11342082661577,
+      "ratio": 0.9938454972884357
+    },
+    {
+      "timestamp": 7.2,
+      "referenceTimestamp": 6.766666666666667,
+      "support": 12,
+      "textureError": 5.362756385486235,
+      "imageDisplacementX": -80.0,
+      "truthDisplacementX": -79.31813211832196,
+      "ratio": 0.9914766514790244
+    },
+    {
+      "timestamp": 7.266666666666667,
+      "referenceTimestamp": 6.766666666666667,
+      "support": 12,
+      "textureError": 6.802298100361049,
+      "imageDisplacementX": -92.47605284998104,
+      "truthDisplacementX": -91.9201794359833,
+      "ratio": 0.9939890015104829
+    },
+    {
+      "timestamp": 7.3,
+      "referenceTimestamp": 6.766666666666667,
+      "support": 12,
+      "textureError": 6.801974059123179,
+      "imageDisplacementX": -98.60297923778649,
+      "truthDisplacementX": -98.00392180215567,
+      "ratio": 0.9939245503506933
+    },
+    {
+      "timestamp": 7.533333333333333,
+      "referenceTimestamp": 7.4,
+      "support": 25,
+      "textureError": 3.8385530237119463,
+      "imageDisplacementX": -25.0,
+      "truthDisplacementX": -24.853752757888287,
+      "ratio": 0.9941501103155315
+    },
+    {
+      "timestamp": 7.566666666666666,
+      "referenceTimestamp": 7.4,
+      "support": 24,
+      "textureError": 5.402635958247902,
+      "imageDisplacementX": -31.32094042004829,
+      "truthDisplacementX": -31.113127612974495,
+      "ratio": 0.9933650521252939
+    },
+    {
+      "timestamp": 7.6,
+      "referenceTimestamp": 7.4,
+      "support": 22,
+      "textureError": 5.506400160848501,
+      "imageDisplacementX": -37.46775575919867,
+      "truthDisplacementX": -37.214529858436435,
+      "ratio": 0.9932414980392824
+    },
+    {
+      "timestamp": 7.633333333333333,
+      "referenceTimestamp": 7.4,
+      "support": 20,
+      "textureError": 5.54727506936838,
+      "imageDisplacementX": -43.69225104577974,
+      "truthDisplacementX": -43.35920549184084,
+      "ratio": 0.9923774686364879
+    },
+    {
+      "timestamp": 7.666666666666667,
+      "referenceTimestamp": 7.4,
+      "support": 18,
+      "textureError": 5.365685094109571,
+      "imageDisplacementX": -50.0,
+      "truthDisplacementX": -49.58335337927565,
+      "ratio": 0.991667067585513
+    },
+    {
+      "timestamp": 7.7,
+      "referenceTimestamp": 7.4,
+      "support": 18,
+      "textureError": 5.928538882535103,
+      "imageDisplacementX": -56.0,
+      "truthDisplacementX": -55.67052287957631,
+      "ratio": 0.9941164799924341
+    },
+    {
+      "timestamp": 7.733333333333333,
+      "referenceTimestamp": 7.4,
+      "support": 18,
+      "textureError": 6.640441592269302,
+      "imageDisplacementX": -62.3544416791826,
+      "truthDisplacementX": -61.8221410936676,
+      "ratio": 0.9914633092498251
+    },
+    {
+      "timestamp": 7.766666666666667,
+      "referenceTimestamp": 7.4,
+      "support": 16,
+      "textureError": 5.9685635411140785,
+      "imageDisplacementX": -68.47551359598317,
+      "truthDisplacementX": -68.03329331753775,
+      "ratio": 0.9935419209696682
+    },
+    {
+      "timestamp": 7.8,
+      "referenceTimestamp": 7.4,
+      "support": 15,
+      "textureError": 5.664171481891633,
+      "imageDisplacementX": -75.0,
+      "truthDisplacementX": -74.02249461924657,
+      "ratio": 0.9869665949232876
+    },
+    {
+      "timestamp": 7.833333333333333,
+      "referenceTimestamp": 7.4,
+      "support": 15,
+      "textureError": 5.863953479171858,
+      "imageDisplacementX": -81.0,
+      "truthDisplacementX": -80.14095359807834,
+      "ratio": 0.9893944888651647
+    },
+    {
+      "timestamp": 7.866666666666667,
+      "referenceTimestamp": 7.4,
+      "support": 14,
+      "textureError": 6.346209116671204,
+      "imageDisplacementX": -87.0,
+      "truthDisplacementX": -86.32614232599735,
+      "ratio": 0.9922545094942224
+    },
+    {
+      "timestamp": 7.9,
+      "referenceTimestamp": 7.4,
+      "support": 14,
+      "textureError": 6.630479703877747,
+      "imageDisplacementX": -93.66858461464227,
+      "truthDisplacementX": -92.44090759009123,
+      "ratio": 0.9868933962266883
+    },
+    {
+      "timestamp": 7.933333333333334,
+      "referenceTimestamp": 7.4,
+      "support": 14,
+      "textureError": 6.71065714461614,
+      "imageDisplacementX": -99.35433468224636,
+      "truthDisplacementX": -98.58947526523843,
+      "ratio": 0.9923017005805123
+    },
+    {
+      "timestamp": 8.0,
+      "referenceTimestamp": 7.4,
+      "support": 13,
+      "textureError": 6.935128586299476,
+      "imageDisplacementX": -112.0,
+      "truthDisplacementX": -110.9423229075037,
+      "ratio": 0.9905564545312829
+    },
+    {
+      "timestamp": 8.033333333333333,
+      "referenceTimestamp": 7.4,
+      "support": 12,
+      "textureError": 7.232559890971342,
+      "imageDisplacementX": -118.0,
+      "truthDisplacementX": -116.76929023093544,
+      "ratio": 0.9895702561943681
+    },
+    {
+      "timestamp": 8.166666666666666,
+      "referenceTimestamp": 8.033333333333333,
+      "support": 16,
+      "textureError": 4.179335346956738,
+      "imageDisplacementX": -24.641495844309325,
+      "truthDisplacementX": -24.475676136324182,
+      "ratio": 0.9932707125804038
+    },
+    {
+      "timestamp": 8.2,
+      "referenceTimestamp": 8.033333333333333,
+      "support": 14,
+      "textureError": 3.5285170003212403,
+      "imageDisplacementX": -30.668666332507062,
+      "truthDisplacementX": -30.413001730805263,
+      "ratio": 0.9916636543979479
+    },
+    {
+      "timestamp": 8.233333333333333,
+      "referenceTimestamp": 8.033333333333333,
+      "support": 14,
+      "textureError": 4.443275091208925,
+      "imageDisplacementX": -36.0,
+      "truthDisplacementX": -35.62085827603005,
+      "ratio": 0.9894682854452791
+    },
+    {
+      "timestamp": 8.266666666666667,
+      "referenceTimestamp": 8.033333333333333,
+      "support": 13,
+      "textureError": 3.868724253399381,
+      "imageDisplacementX": -42.0,
+      "truthDisplacementX": -41.37755518895574,
+      "ratio": 0.9851798854513272
+    },
+    {
+      "timestamp": 8.3,
+      "referenceTimestamp": 8.033333333333333,
+      "support": 12,
+      "textureError": 3.511509469337246,
+      "imageDisplacementX": -48.0,
+      "truthDisplacementX": -47.74963037110865,
+      "ratio": 0.9947839660647636
+    },
+    {
+      "timestamp": 8.333333333333334,
+      "referenceTimestamp": 8.033333333333333,
+      "support": 12,
+      "textureError": 3.8260646014137563,
+      "imageDisplacementX": -55.0,
+      "truthDisplacementX": -54.2765268010553,
+      "ratio": 0.9868459418373691
+    },
+    {
+      "timestamp": 8.8,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 12,
+      "textureError": 2.0007699340621747,
+      "imageDisplacementX": -24.7012369470808,
+      "truthDisplacementX": -24.575883088167757,
+      "ratio": 0.9949251991233637
+    },
+    {
+      "timestamp": 8.833333333333334,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 12,
+      "textureError": 2.085117300581207,
+      "imageDisplacementX": -31.0,
+      "truthDisplacementX": -30.67064485605806,
+      "ratio": 0.989375640518002
+    },
+    {
+      "timestamp": 8.866666666666667,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 12,
+      "textureError": 2.5726993315396385,
+      "imageDisplacementX": -37.0,
+      "truthDisplacementX": -36.885114561300725,
+      "ratio": 0.9968949881432628
+    },
+    {
+      "timestamp": 8.9,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 12,
+      "textureError": 3.304587821123301,
+      "imageDisplacementX": -43.313861159243785,
+      "truthDisplacementX": -42.96413003630005,
+      "ratio": 0.9919256535071314
+    },
+    {
+      "timestamp": 8.933333333333334,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 12,
+      "textureError": 3.522071094067815,
+      "imageDisplacementX": -49.411723134073135,
+      "truthDisplacementX": -49.10700095281936,
+      "ratio": 0.9938329982861164
+    },
+    {
+      "timestamp": 8.966666666666667,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 13,
+      "textureError": 3.485031691614019,
+      "imageDisplacementX": -56.0,
+      "truthDisplacementX": -55.358968971297145,
+      "ratio": 0.9885530173445919
+    },
+    {
+      "timestamp": 9.0,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 13,
+      "textureError": 3.6375131598162733,
+      "imageDisplacementX": -62.0,
+      "truthDisplacementX": -61.446266908664256,
+      "ratio": 0.991068821107488
+    },
+    {
+      "timestamp": 9.033333333333333,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 13,
+      "textureError": 3.8064830446464977,
+      "imageDisplacementX": -68.0,
+      "truthDisplacementX": -67.24498043488711,
+      "ratio": 0.988896771101281
+    },
+    {
+      "timestamp": 9.066666666666666,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 13,
+      "textureError": 4.081783805176594,
+      "imageDisplacementX": -73.46770805242765,
+      "truthDisplacementX": -73.08027988765389,
+      "ratio": 0.9947265516368458
+    },
+    {
+      "timestamp": 9.1,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 13,
+      "textureError": 4.229773618258646,
+      "imageDisplacementX": -80.0,
+      "truthDisplacementX": -79.14778141817078,
+      "ratio": 0.9893472677271348
+    },
+    {
+      "timestamp": 9.133333333333333,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 13,
+      "textureError": 4.403514094655462,
+      "imageDisplacementX": -86.0,
+      "truthDisplacementX": -85.36729198973626,
+      "ratio": 0.9926429301132124
+    },
+    {
+      "timestamp": 9.166666666666666,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 13,
+      "textureError": 5.0488963355940495,
+      "imageDisplacementX": -92.40124696753425,
+      "truthDisplacementX": -91.75146877765656,
+      "ratio": 0.9929678634087482
+    },
+    {
+      "timestamp": 9.2,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 12,
+      "textureError": 4.5533011450367145,
+      "imageDisplacementX": -98.39619564586934,
+      "truthDisplacementX": -97.94173336261883,
+      "ratio": 0.9953813022925588
+    },
+    {
+      "timestamp": 9.233333333333333,
+      "referenceTimestamp": 8.666666666666666,
+      "support": 13,
+      "textureError": 5.281934131712835,
+      "imageDisplacementX": -105.0,
+      "truthDisplacementX": -104.17759203584865,
+      "ratio": 0.9921675431985586
+    },
+    {
+      "timestamp": 9.433333333333334,
+      "referenceTimestamp": 9.3,
+      "support": 21,
+      "textureError": 1.5000522876591154,
+      "imageDisplacementX": -25.0,
+      "truthDisplacementX": -24.73939269548282,
+      "ratio": 0.9895757078193128
+    },
+    {
+      "timestamp": 9.466666666666667,
+      "referenceTimestamp": 9.3,
+      "support": 21,
+      "textureError": 2.0376773324421142,
+      "imageDisplacementX": -31.175342871857236,
+      "truthDisplacementX": -31.00427322415635,
+      "ratio": 0.9945126618685783
+    },
+    {
+      "timestamp": 9.5,
+      "referenceTimestamp": 9.3,
+      "support": 20,
+      "textureError": 2.7303132897581044,
+      "imageDisplacementX": -37.310367244580476,
+      "truthDisplacementX": -37.11515978304669,
+      "ratio": 0.9947680101818848
+    },
+    {
+      "timestamp": 9.533333333333333,
+      "referenceTimestamp": 9.3,
+      "support": 20,
+      "textureError": 2.8232243717838945,
+      "imageDisplacementX": -43.52692582156183,
+      "truthDisplacementX": -43.27295368653722,
+      "ratio": 0.9941651717820421
+    },
+    {
+      "timestamp": 9.566666666666666,
+      "referenceTimestamp": 9.3,
+      "support": 20,
+      "textureError": 2.4856058077968664,
+      "imageDisplacementX": -50.0,
+      "truthDisplacementX": -49.49991032714024,
+      "ratio": 0.9899982065428048
+    },
+    {
+      "timestamp": 9.6,
+      "referenceTimestamp": 9.3,
+      "support": 20,
+      "textureError": 2.686051429074772,
+      "imageDisplacementX": -56.0,
+      "truthDisplacementX": -55.569375679129735,
+      "ratio": 0.9923102799844595
+    },
+    {
+      "timestamp": 9.633333333333333,
+      "referenceTimestamp": 9.3,
+      "support": 20,
+      "textureError": 3.082592547288267,
+      "imageDisplacementX": -62.0,
+      "truthDisplacementX": -61.760055725928396,
+      "ratio": 0.9961299310633612
+    },
+    {
+      "timestamp": 9.666666666666666,
+      "referenceTimestamp": 9.3,
+      "support": 19,
+      "textureError": 4.037078384230031,
+      "imageDisplacementX": -68.38537621684434,
+      "truthDisplacementX": -67.98962464602664,
+      "ratio": 0.9942129210554783
+    },
+    {
+      "timestamp": 9.7,
+      "referenceTimestamp": 9.3,
+      "support": 19,
+      "textureError": 4.128352544708148,
+      "imageDisplacementX": -74.51438413638776,
+      "truthDisplacementX": -74.08025847701356,
+      "ratio": 0.994173934812645
+    },
+    {
+      "timestamp": 9.733333333333333,
+      "referenceTimestamp": 9.3,
+      "support": 17,
+      "textureError": 3.9010147238428385,
+      "imageDisplacementX": -81.0,
+      "truthDisplacementX": -80.2257934298832,
+      "ratio": 0.9904418941960889
+    },
+    {
+      "timestamp": 9.766666666666667,
+      "referenceTimestamp": 9.3,
+      "support": 17,
+      "textureError": 4.306249852682552,
+      "imageDisplacementX": -87.0,
+      "truthDisplacementX": -86.41811981401406,
+      "ratio": 0.9933117220001616
+    },
+    {
+      "timestamp": 9.8,
+      "referenceTimestamp": 9.3,
+      "support": 17,
+      "textureError": 4.8791683628087625,
+      "imageDisplacementX": -93.0,
+      "truthDisplacementX": -92.47565478039905,
+      "ratio": 0.9943618793591296
+    },
+    {
+      "timestamp": 9.833333333333334,
+      "referenceTimestamp": 9.3,
+      "support": 16,
+      "textureError": 5.011038157129525,
+      "imageDisplacementX": -99.62521277622008,
+      "truthDisplacementX": -98.55947856744751,
+      "ratio": 0.989302565293723
+    },
+    {
+      "timestamp": 9.866666666666667,
+      "referenceTimestamp": 9.3,
+      "support": 16,
+      "textureError": 5.267116543869284,
+      "imageDisplacementX": -105.43078827693195,
+      "truthDisplacementX": -104.73224084149115,
+      "ratio": 0.9933743506345988
+    },
+    {
+      "timestamp": 9.9,
+      "referenceTimestamp": 9.3,
+      "support": 16,
+      "textureError": 5.6163462863948705,
+      "imageDisplacementX": -112.0,
+      "truthDisplacementX": -110.80271386215463,
+      "ratio": 0.9893099451978092
+    },
+    {
+      "timestamp": 9.933333333333334,
+      "referenceTimestamp": 9.3,
+      "support": 14,
+      "textureError": 5.853214834137655,
+      "imageDisplacementX": -118.0,
+      "truthDisplacementX": -116.97805379517376,
+      "ratio": 0.9913394389421506
+    },
+    {
+      "timestamp": 10.033333333333333,
+      "referenceTimestamp": 9.933333333333334,
+      "support": 16,
+      "textureError": 3.047781346861989,
+      "imageDisplacementX": -38.0,
+      "truthDisplacementX": -37.661574163939804,
+      "ratio": 0.9910940569457843
+    },
+    {
+      "timestamp": 10.066666666666666,
+      "referenceTimestamp": 9.933333333333334,
+      "support": 16,
+      "textureError": 3.547300904227105,
+      "imageDisplacementX": -39.0,
+      "truthDisplacementX": -38.86765270284377,
+      "ratio": 0.9966064795600966
+    },
+    {
+      "timestamp": 10.1,
+      "referenceTimestamp": 9.933333333333334,
+      "support": 15,
+      "textureError": 4.806565951980766,
+      "imageDisplacementX": -41.51876908889109,
+      "truthDisplacementX": -41.17245755670592,
+      "ratio": 0.9916589162013999
+    },
+    {
+      "timestamp": 10.133333333333333,
+      "referenceTimestamp": 9.933333333333334,
+      "support": 14,
+      "textureError": 4.542492505519563,
+      "imageDisplacementX": -45.0,
+      "truthDisplacementX": -44.491951876785606,
+      "ratio": 0.9887100417063468
+    },
+    {
+      "timestamp": 10.166666666666666,
+      "referenceTimestamp": 9.933333333333334,
+      "support": 13,
+      "textureError": 4.57635556720847,
+      "imageDisplacementX": -49.0,
+      "truthDisplacementX": -48.39901091856882,
+      "ratio": 0.9877349167054861
+    },
+    {
+      "timestamp": 10.2,
+      "referenceTimestamp": 9.933333333333334,
+      "support": 12,
+      "textureError": 4.932459431612302,
+      "imageDisplacementX": -53.34926613500347,
+      "truthDisplacementX": -52.99923807196319,
+      "ratio": 0.9934389338710956
+    },
+    {
+      "timestamp": 10.233333333333333,
+      "referenceTimestamp": 9.933333333333334,
+      "support": 12,
+      "textureError": 5.0096901011221435,
+      "imageDisplacementX": -58.4521516081134,
+      "truthDisplacementX": -58.13041175948456,
+      "ratio": 0.9944956714205165
+    },
+    {
+      "timestamp": 10.7,
+      "referenceTimestamp": 10.566666666666666,
+      "support": 14,
+      "textureError": 6.108607099909486,
+      "imageDisplacementX": -24.644292184824803,
+      "truthDisplacementX": -24.526053844485432,
+      "ratio": 0.9952022018140095
+    },
+    {
+      "timestamp": 10.733333333333333,
+      "referenceTimestamp": 10.566666666666666,
+      "support": 13,
+      "textureError": 6.408788723323094,
+      "imageDisplacementX": -31.0,
+      "truthDisplacementX": -30.73359695659019,
+      "ratio": 0.9914063534383932
+    },
+    {
+      "timestamp": 10.766666666666667,
+      "referenceTimestamp": 10.566666666666666,
+      "support": 13,
+      "textureError": 7.095997211315114,
+      "imageDisplacementX": -37.0,
+      "truthDisplacementX": -36.75312003865838,
+      "ratio": 0.9933275686123887
+    },
+    {
+      "timestamp": 11.466666666666667,
+      "referenceTimestamp": 11.2,
+      "support": 15,
+      "textureError": 5.885149957861515,
+      "imageDisplacementX": -49.44173642385551,
+      "truthDisplacementX": -49.233159898081794,
+      "ratio": 0.9957813673050311
+    },
+    {
+      "timestamp": 11.533333333333333,
+      "referenceTimestamp": 11.2,
+      "support": 12,
+      "textureError": 7.086430142621478,
+      "imageDisplacementX": -62.255309130989424,
+      "truthDisplacementX": -61.99196488712914,
+      "ratio": 0.995769931150672
+    },
+    {
+      "timestamp": 11.566666666666666,
+      "referenceTimestamp": 11.2,
+      "support": 13,
+      "textureError": 6.361495022847562,
+      "imageDisplacementX": -68.44609727651529,
+      "truthDisplacementX": -68.19428040855564,
+      "ratio": 0.9963209462923455
+    },
+    {
+      "timestamp": 12.0,
+      "referenceTimestamp": 11.866666666666667,
+      "support": 16,
+      "textureError": 4.994612146437823,
+      "imageDisplacementX": -24.671947762366123,
+      "truthDisplacementX": -24.641183716244996,
+      "ratio": 0.9987530759055816
+    },
+    {
+      "timestamp": 12.066666666666666,
+      "referenceTimestamp": 11.866666666666667,
+      "support": 15,
+      "textureError": 6.52381425045617,
+      "imageDisplacementX": -51.69327511049266,
+      "truthDisplacementX": -51.60500734066591,
+      "ratio": 0.9982924709328616
+    },
+    {
+      "timestamp": 12.133333333333333,
+      "referenceTimestamp": 11.866666666666667,
+      "support": 15,
+      "textureError": 7.611763957338657,
+      "imageDisplacementX": -57.3483230035541,
+      "truthDisplacementX": -57.22717637382448,
+      "ratio": 0.9978875296890178
+    },
+    {
+      "timestamp": 12.166666666666666,
+      "referenceTimestamp": 11.866666666666667,
+      "support": 15,
+      "textureError": 6.038723359855775,
+      "imageDisplacementX": -61.35586980929556,
+      "truthDisplacementX": -61.213541246019304,
+      "ratio": 0.9976802779633206
+    },
+    {
+      "timestamp": 12.2,
+      "referenceTimestamp": 11.866666666666667,
+      "support": 15,
+      "textureError": 4.948455460816865,
+      "imageDisplacementX": -66.0,
+      "truthDisplacementX": -65.812749507837,
+      "ratio": 0.9971628713308636
+    },
+    {
+      "timestamp": 12.233333333333333,
+      "referenceTimestamp": 11.866666666666667,
+      "support": 14,
+      "textureError": 7.063235477585585,
+      "imageDisplacementX": -70.93975428340855,
+      "truthDisplacementX": -70.75809321319684,
+      "ratio": 0.9974392204759273
+    },
+    {
+      "timestamp": 12.7,
+      "referenceTimestamp": 12.566666666666666,
+      "support": 15,
+      "textureError": 3.945983009835943,
+      "imageDisplacementX": -24.709131490214588,
+      "truthDisplacementX": -24.704481722787023,
+      "ratio": 0.9998118198760079
+    },
+    {
+      "timestamp": 12.733333333333333,
+      "referenceTimestamp": 12.566666666666666,
+      "support": 15,
+      "textureError": 3.7670221178068783,
+      "imageDisplacementX": -30.796089630386632,
+      "truthDisplacementX": -30.847045680508018,
+      "ratio": 1.0016546272832998
+    },
+    {
+      "timestamp": 12.766666666666667,
+      "referenceTimestamp": 12.566666666666666,
+      "support": 15,
+      "textureError": 3.559906734803277,
+      "imageDisplacementX": -37.0,
+      "truthDisplacementX": -36.989260505884886,
+      "ratio": 0.9997097434022942
+    },
+    {
+      "timestamp": 12.8,
+      "referenceTimestamp": 12.566666666666666,
+      "support": 14,
+      "textureError": 7.334510541180131,
+      "imageDisplacementX": -43.14506382096894,
+      "truthDisplacementX": -43.11100053694099,
+      "ratio": 0.9992104940632538
+    },
+    {
+      "timestamp": 12.833333333333334,
+      "referenceTimestamp": 12.566666666666666,
+      "support": 14,
+      "textureError": 7.404018153820842,
+      "imageDisplacementX": -49.1496608713755,
+      "truthDisplacementX": -49.1718805055134,
+      "ratio": 1.0004520811282105
+    },
+    {
+      "timestamp": 12.866666666666667,
+      "referenceTimestamp": 12.566666666666666,
+      "support": 15,
+      "textureError": 7.188063202062342,
+      "imageDisplacementX": -55.30690266667878,
+      "truthDisplacementX": -55.31486194115132,
+      "ratio": 1.0001439110506787
+    },
+    {
+      "timestamp": 12.9,
+      "referenceTimestamp": 12.566666666666666,
+      "support": 14,
+      "textureError": 6.497735210091698,
+      "imageDisplacementX": -61.50650703659853,
+      "truthDisplacementX": -61.53583086654544,
+      "ratio": 1.000476759799243
+    },
+    {
+      "timestamp": 12.933333333333334,
+      "referenceTimestamp": 12.566666666666666,
+      "support": 14,
+      "textureError": 6.680743130973722,
+      "imageDisplacementX": -67.6094429510033,
+      "truthDisplacementX": -67.594808769878,
+      "ratio": 0.9997835482665357
+    },
+    {
+      "timestamp": 12.966666666666667,
+      "referenceTimestamp": 12.566666666666666,
+      "support": 14,
+      "textureError": 6.4792688567368995,
+      "imageDisplacementX": -73.75737181810484,
+      "truthDisplacementX": -73.74606159701943,
+      "ratio": 0.9998466563977727
+    },
+    {
+      "timestamp": 13.0,
+      "referenceTimestamp": 12.566666666666666,
+      "support": 14,
+      "textureError": 6.330492164491055,
+      "imageDisplacementX": -80.0,
+      "truthDisplacementX": -80.0173121066764,
+      "ratio": 1.000216401333455
+    },
+    {
+      "timestamp": 13.033333333333333,
+      "referenceTimestamp": 12.566666666666666,
+      "support": 13,
+      "textureError": 4.872553469762933,
+      "imageDisplacementX": -85.8986647706645,
+      "truthDisplacementX": -85.92979904077947,
+      "ratio": 1.0003624534816473
+    },
+    {
+      "timestamp": 13.066666666666666,
+      "referenceTimestamp": 12.566666666666666,
+      "support": 12,
+      "textureError": 4.980766275696706,
+      "imageDisplacementX": -91.85723968020402,
+      "truthDisplacementX": -91.86996830161661,
+      "ratio": 1.0001385696049316
+    },
+    {
+      "timestamp": 13.333333333333334,
+      "referenceTimestamp": 13.2,
+      "support": 28,
+      "textureError": 4.862219793730925,
+      "imageDisplacementX": -24.63254010840651,
+      "truthDisplacementX": -24.62152542732656,
+      "ratio": 0.9995528402255117
+    },
+    {
+      "timestamp": 13.366666666666667,
+      "referenceTimestamp": 13.2,
+      "support": 27,
+      "textureError": 3.3816636841540575,
+      "imageDisplacementX": -30.768876557661734,
+      "truthDisplacementX": -30.77714807447046,
+      "ratio": 1.0002688273909912
+    },
+    {
+      "timestamp": 13.4,
+      "referenceTimestamp": 13.2,
+      "support": 25,
+      "textureError": 3.424718688626563,
+      "imageDisplacementX": -37.0,
+      "truthDisplacementX": -36.98955222219229,
+      "ratio": 0.9997176276268186
+    },
+    {
+      "timestamp": 13.433333333333334,
+      "referenceTimestamp": 13.2,
+      "support": 25,
+      "textureError": 4.822584930936046,
+      "imageDisplacementX": -43.255744475802054,
+      "truthDisplacementX": -43.14470749441534,
+      "ratio": 0.997433011898597
+    },
+    {
+      "timestamp": 13.466666666666667,
+      "referenceTimestamp": 13.2,
+      "support": 25,
+      "textureError": 6.917911991417064,
+      "imageDisplacementX": -49.36787465872445,
+      "truthDisplacementX": -49.33704341761768,
+      "ratio": 0.9993754796753981
+    },
+    {
+      "timestamp": 13.5,
+      "referenceTimestamp": 13.2,
+      "support": 24,
+      "textureError": 5.558174970240418,
+      "imageDisplacementX": -55.59986438848523,
+      "truthDisplacementX": -55.579459611326456,
+      "ratio": 0.9996330067099408
+    },
+    {
+      "timestamp": 13.533333333333333,
+      "referenceTimestamp": 13.2,
+      "support": 25,
+      "textureError": 5.316684754235274,
+      "imageDisplacementX": -61.675545526550565,
+      "truthDisplacementX": -61.68050340237096,
+      "ratio": 1.0000803864121195
+    },
+    {
+      "timestamp": 13.566666666666666,
+      "referenceTimestamp": 13.2,
+      "support": 22,
+      "textureError": 4.306192818895979,
+      "imageDisplacementX": -67.87251344473198,
+      "truthDisplacementX": -67.84835313120857,
+      "ratio": 0.9996440339056681
+    },
+    {
+      "timestamp": 13.6,
+      "referenceTimestamp": 13.2,
+      "support": 21,
+      "textureError": 4.5833221857202044,
+      "imageDisplacementX": -74.08214730195023,
+      "truthDisplacementX": -74.07276217546314,
+      "ratio": 0.9998733145996858
+    },
+    {
+      "timestamp": 13.633333333333333,
+      "referenceTimestamp": 13.2,
+      "support": 23,
+      "textureError": 5.86973705889332,
+      "imageDisplacementX": -80.17081150380815,
+      "truthDisplacementX": -80.15107681881636,
+      "ratio": 0.9997538420202863
+    },
+    {
+      "timestamp": 13.666666666666666,
+      "referenceTimestamp": 13.2,
+      "support": 21,
+      "textureError": 7.347479056182666,
+      "imageDisplacementX": -86.30483922842711,
+      "truthDisplacementX": -86.2839891333133,
+      "ratio": 0.9997584133717157
+    },
+    {
+      "timestamp": 13.7,
+      "referenceTimestamp": 13.2,
+      "support": 17,
+      "textureError": 6.418224240577279,
+      "imageDisplacementX": -92.52899076592612,
+      "truthDisplacementX": -92.50686562201008,
+      "ratio": 0.9997608841971268
+    },
+    {
+      "timestamp": 13.733333333333333,
+      "referenceTimestamp": 13.2,
+      "support": 17,
+      "textureError": 6.146108264171524,
+      "imageDisplacementX": -98.61810966634351,
+      "truthDisplacementX": -98.57043034210801,
+      "ratio": 0.9995165256726496
+    },
+    {
+      "timestamp": 13.766666666666667,
+      "referenceTimestamp": 13.2,
+      "support": 18,
+      "textureError": 5.5838168825886765,
+      "imageDisplacementX": -104.77506843092982,
+      "truthDisplacementX": -104.78265675716102,
+      "ratio": 1.0000724249226924
+    },
+    {
+      "timestamp": 13.8,
+      "referenceTimestamp": 13.2,
+      "support": 18,
+      "textureError": 5.199368393128534,
+      "imageDisplacementX": -111.0,
+      "truthDisplacementX": -110.96293850755319,
+      "ratio": 0.9996661126806594
+    },
+    {
+      "timestamp": 13.833333333333334,
+      "referenceTimestamp": 13.2,
+      "support": 16,
+      "textureError": 4.5451863027850035,
+      "imageDisplacementX": -117.0,
+      "truthDisplacementX": -116.9885663902387,
+      "ratio": 0.999902276839647
+    },
+    {
+      "timestamp": 13.966666666666667,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 21,
+      "textureError": 4.001781270077678,
+      "imageDisplacementX": -24.691297749904237,
+      "truthDisplacementX": -24.59458100190386,
+      "ratio": 0.9960829621439906
+    },
+    {
+      "timestamp": 14.0,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 20,
+      "textureError": 2.7352909934734604,
+      "imageDisplacementX": -31.0,
+      "truthDisplacementX": -30.857857675291598,
+      "ratio": 0.9954147637190838
+    },
+    {
+      "timestamp": 14.033333333333333,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 21,
+      "textureError": 4.1245939913205145,
+      "imageDisplacementX": -36.78884108928149,
+      "truthDisplacementX": -36.77561390725896,
+      "ratio": 0.9996404566811324
+    },
+    {
+      "timestamp": 14.066666666666666,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 20,
+      "textureError": 3.879695863762008,
+      "imageDisplacementX": -42.72757325546739,
+      "truthDisplacementX": -42.74760269373655,
+      "ratio": 1.0004687707899862
+    },
+    {
+      "timestamp": 14.1,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 19,
+      "textureError": 3.406703411462129,
+      "imageDisplacementX": -49.0,
+      "truthDisplacementX": -48.924900621175766,
+      "ratio": 0.998467359615832
+    },
+    {
+      "timestamp": 14.133333333333333,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 18,
+      "textureError": 4.4833394369519635,
+      "imageDisplacementX": -55.199369105402575,
+      "truthDisplacementX": -55.093458691611886,
+      "ratio": 0.9980813111543276
+    },
+    {
+      "timestamp": 14.166666666666666,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 18,
+      "textureError": 7.04636599705351,
+      "imageDisplacementX": -61.35398343476585,
+      "truthDisplacementX": -61.28420245740563,
+      "ratio": 0.9988626496039263
+    },
+    {
+      "timestamp": 14.2,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 18,
+      "textureError": 5.830661165528986,
+      "imageDisplacementX": -67.59975596894351,
+      "truthDisplacementX": -67.6145234350115,
+      "ratio": 1.0002184544286636
+    },
+    {
+      "timestamp": 14.233333333333333,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 18,
+      "textureError": 5.286207516397449,
+      "imageDisplacementX": -73.73319336138705,
+      "truthDisplacementX": -73.76406087633222,
+      "ratio": 1.0004186379775237
+    },
+    {
+      "timestamp": 14.266666666666667,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 18,
+      "textureError": 5.0701604784950876,
+      "imageDisplacementX": -80.46095458927698,
+      "truthDisplacementX": -79.92125599365681,
+      "ratio": 0.9932924161989486
+    },
+    {
+      "timestamp": 14.3,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 17,
+      "textureError": 6.320050154337415,
+      "imageDisplacementX": -86.20878422625418,
+      "truthDisplacementX": -86.1705469256267,
+      "ratio": 0.9995564570249926
+    },
+    {
+      "timestamp": 14.333333333333334,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 16,
+      "textureError": 6.981611808146781,
+      "imageDisplacementX": -92.24336007149286,
+      "truthDisplacementX": -92.22123153321445,
+      "ratio": 0.9997601069793939
+    },
+    {
+      "timestamp": 14.366666666666667,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 14,
+      "textureError": 7.714747343601485,
+      "imageDisplacementX": -98.37495585393086,
+      "truthDisplacementX": -98.37943360116333,
+      "ratio": 1.0000455171460418
+    },
+    {
+      "timestamp": 14.4,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 13,
+      "textureError": 6.670579567216768,
+      "imageDisplacementX": -104.59268918747397,
+      "truthDisplacementX": -104.5948950406164,
+      "ratio": 1.0000210899362045
+    },
+    {
+      "timestamp": 14.433333333333334,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 13,
+      "textureError": 6.4613005719591206,
+      "imageDisplacementX": -110.67210278065798,
+      "truthDisplacementX": -110.64657591516152,
+      "ratio": 0.9997693468827727
+    },
+    {
+      "timestamp": 14.466666666666667,
+      "referenceTimestamp": 13.833333333333334,
+      "support": 13,
+      "textureError": 6.165195581818394,
+      "imageDisplacementX": -116.8647316753131,
+      "truthDisplacementX": -116.8599482467398,
+      "ratio": 0.9999590686727747
+    },
+    {
+      "timestamp": 14.6,
+      "referenceTimestamp": 14.466666666666667,
+      "support": 16,
+      "textureError": 4.219849626341748,
+      "imageDisplacementX": -24.750776608689268,
+      "truthDisplacementX": -24.67315380834043,
+      "ratio": 0.9968638236457765
+    },
+    {
+      "timestamp": 14.633333333333333,
+      "referenceTimestamp": 14.466666666666667,
+      "support": 16,
+      "textureError": 3.97900396348915,
+      "imageDisplacementX": -30.8233379121135,
+      "truthDisplacementX": -30.716570013668388,
+      "ratio": 0.9965361344462582
+    },
+    {
+      "timestamp": 14.666666666666666,
+      "referenceTimestamp": 14.466666666666667,
+      "support": 13,
+      "textureError": 3.100709301203233,
+      "imageDisplacementX": -37.0,
+      "truthDisplacementX": -36.9230440990068,
+      "ratio": 0.9979201107839676
+    },
+    {
+      "timestamp": 14.7,
+      "referenceTimestamp": 14.466666666666667,
+      "support": 13,
+      "textureError": 4.769664925704385,
+      "imageDisplacementX": -43.424582848211465,
+      "truthDisplacementX": -43.107409331947565,
+      "ratio": 0.9926959916374427
+    },
+    {
+      "timestamp": 14.733333333333333,
+      "referenceTimestamp": 14.466666666666667,
+      "support": 12,
+      "textureError": 4.443183327726912,
+      "imageDisplacementX": -49.0,
+      "truthDisplacementX": -48.706160177476704,
+      "ratio": 0.994003268928096
+    },
+    {
+      "timestamp": 15.233333333333333,
+      "referenceTimestamp": 15.1,
+      "support": 21,
+      "textureError": 7.9472676481580065,
+      "imageDisplacementX": 31.261312526698706,
+      "truthDisplacementX": 31.201764113735408,
+      "ratio": 0.9980951403459967
+    },
+    {
+      "timestamp": 15.3,
+      "referenceTimestamp": 15.1,
+      "support": 17,
+      "textureError": 7.341755278744903,
+      "imageDisplacementX": 38.95892910382129,
+      "truthDisplacementX": 38.90411571320146,
+      "ratio": 0.9985930467833508
+    },
+    {
+      "timestamp": 15.366666666666667,
+      "referenceTimestamp": 15.1,
+      "support": 16,
+      "textureError": 6.992096491169423,
+      "imageDisplacementX": 43.004927885480946,
+      "truthDisplacementX": 42.970917720813304,
+      "ratio": 0.999209156570191
+    },
+    {
+      "timestamp": 15.433333333333334,
+      "referenceTimestamp": 15.1,
+      "support": 20,
+      "textureError": 3.526511019926275,
+      "imageDisplacementX": 45.36806293329146,
+      "truthDisplacementX": 45.03737556561828,
+      "ratio": 0.9927110097656269
+    },
+    {
+      "timestamp": 15.5,
+      "referenceTimestamp": 15.1,
+      "support": 22,
+      "textureError": 5.143474229711703,
+      "imageDisplacementX": 49.30616948846283,
+      "truthDisplacementX": 48.9513315516524,
+      "ratio": 0.9928033765248494
+    },
+    {
+      "timestamp": 15.566666666666666,
+      "referenceTimestamp": 15.1,
+      "support": 18,
+      "textureError": 6.311831504845258,
+      "imageDisplacementX": 56.0,
+      "truthDisplacementX": 56.15618944680318,
+      "ratio": 1.0027890972643425
+    },
+    {
+      "timestamp": 15.6,
+      "referenceTimestamp": 15.1,
+      "support": 12,
+      "textureError": 6.796739392637815,
+      "imageDisplacementX": 60.81272880054489,
+      "truthDisplacementX": 60.85689473943785,
+      "ratio": 1.0007262614219765
+    },
+    {
+      "timestamp": 15.633333333333333,
+      "referenceTimestamp": 15.1,
+      "support": 12,
+      "textureError": 7.447545257769551,
+      "imageDisplacementX": 65.79031308606439,
+      "truthDisplacementX": 65.78078880859539,
+      "ratio": 0.9998552328295423
+    },
+    {
+      "timestamp": 16.8,
+      "referenceTimestamp": 16.666666666666668,
+      "support": 13,
+      "textureError": 7.411568696285662,
+      "imageDisplacementX": -26.85485689905635,
+      "truthDisplacementX": -26.79972094995901,
+      "ratio": 0.9979468909737784
+    },
+    {
+      "timestamp": 18.3,
+      "referenceTimestamp": 18.133333333333333,
+      "support": 14,
+      "textureError": 7.541497024824799,
+      "imageDisplacementX": 24.397317612770813,
+      "truthDisplacementX": 24.437685943208635,
+      "ratio": 1.00165462167106
+    },
+    {
+      "timestamp": 18.466666666666665,
+      "referenceTimestamp": 18.133333333333333,
+      "support": 13,
+      "textureError": 7.446464576664851,
+      "imageDisplacementX": 54.13237072105034,
+      "truthDisplacementX": 54.10204248689115,
+      "ratio": 0.9994397394062884
+    },
+    {
+      "timestamp": 18.5,
+      "referenceTimestamp": 18.133333333333333,
+      "support": 12,
+      "textureError": 5.986695985432139,
+      "imageDisplacementX": 60.324660701107774,
+      "truthDisplacementX": 60.19375541526824,
+      "ratio": 0.9978299872006221
+    },
+    {
+      "timestamp": 19.0,
+      "referenceTimestamp": 18.633333333333333,
+      "support": 17,
+      "textureError": 7.707206398229083,
+      "imageDisplacementX": 27.986653215669072,
+      "truthDisplacementX": 27.708327948581427,
+      "ratio": 0.9900550714319847
+    },
+    {
+      "timestamp": 19.066666666666666,
+      "referenceTimestamp": 18.633333333333333,
+      "support": 14,
+      "textureError": 7.8094517201243985,
+      "imageDisplacementX": 38.22395133519022,
+      "truthDisplacementX": 38.16190449753776,
+      "ratio": 0.998376755006086
+    },
+    {
+      "timestamp": 20.466666666666665,
+      "referenceTimestamp": 20.2,
+      "support": 20,
+      "textureError": 6.315345793189101,
+      "imageDisplacementX": 35.692149150438055,
+      "truthDisplacementX": 35.453886550385505,
+      "ratio": 0.9933245095707658
+    },
+    {
+      "timestamp": 20.5,
+      "referenceTimestamp": 20.2,
+      "support": 19,
+      "textureError": 6.188928433536781,
+      "imageDisplacementX": 37.48082907775224,
+      "truthDisplacementX": 37.20321628078818,
+      "ratio": 0.992593205545476
+    },
+    {
+      "timestamp": 20.6,
+      "referenceTimestamp": 20.2,
+      "support": 15,
+      "textureError": 6.082786927356825,
+      "imageDisplacementX": 40.376861843423725,
+      "truthDisplacementX": 40.02974788937718,
+      "ratio": 0.991403146797475
+    },
+    {
+      "timestamp": 20.633333333333333,
+      "referenceTimestamp": 20.2,
+      "support": 17,
+      "textureError": 6.5191649524835995,
+      "imageDisplacementX": 41.0,
+      "truthDisplacementX": 40.47881302703172,
+      "ratio": 0.9872881226105298
+    },
+    {
+      "timestamp": 21.7,
+      "referenceTimestamp": 21.5,
+      "support": 12,
+      "textureError": 4.7420438193266445,
+      "imageDisplacementX": 50.80025867083738,
+      "truthDisplacementX": 50.54188473755494,
+      "ratio": 0.9949139248491511
+    },
+    {
+      "timestamp": 21.8,
+      "referenceTimestamp": 21.7,
+      "support": 12,
+      "textureError": 7.863012171336895,
+      "imageDisplacementX": 27.89313600183583,
+      "truthDisplacementX": 27.766644480172545,
+      "ratio": 0.9954651380305548
+    },
+    {
+      "timestamp": 21.833333333333332,
+      "referenceTimestamp": 21.7,
+      "support": 12,
+      "textureError": 6.566314392966667,
+      "imageDisplacementX": 35.74165630696407,
+      "truthDisplacementX": 35.535694720223546,
+      "ratio": 0.994237491822661
+    },
+    {
+      "timestamp": 21.866666666666667,
+      "referenceTimestamp": 21.7,
+      "support": 12,
+      "textureError": 6.338984394323103,
+      "imageDisplacementX": 43.21862859273085,
+      "truthDisplacementX": 43.009570316411555,
+      "ratio": 0.9951627739443251
+    },
+    {
+      "timestamp": 22.0,
+      "referenceTimestamp": 21.866666666666667,
+      "support": 15,
+      "textureError": 6.7870036097138815,
+      "imageDisplacementX": 27.381078757919322,
+      "truthDisplacementX": 26.84516710182652,
+      "ratio": 0.9804276646354627
+    },
+    {
+      "timestamp": 22.033333333333335,
+      "referenceTimestamp": 21.866666666666667,
+      "support": 14,
+      "textureError": 7.4617766653387445,
+      "imageDisplacementX": 33.36973795887754,
+      "truthDisplacementX": 32.8363638559822,
+      "ratio": 0.9840162334042708
+    },
+    {
+      "timestamp": 22.066666666666666,
+      "referenceTimestamp": 21.866666666666667,
+      "support": 12,
+      "textureError": 7.347131930060276,
+      "imageDisplacementX": 39.364095280680516,
+      "truthDisplacementX": 38.77887071343139,
+      "ratio": 0.9851330365126835
+    },
+    {
+      "timestamp": 23.566666666666666,
+      "referenceTimestamp": 23.433333333333334,
+      "support": 24,
+      "textureError": 4.262001780563619,
+      "imageDisplacementX": 24.738600774990253,
+      "truthDisplacementX": 24.631296852370724,
+      "ratio": 0.9956624902274986
+    },
+    {
+      "timestamp": 23.6,
+      "referenceTimestamp": 23.433333333333334,
+      "support": 22,
+      "textureError": 3.94764417883123,
+      "imageDisplacementX": 30.73217735189337,
+      "truthDisplacementX": 30.649289996363223,
+      "ratio": 0.9973029130158576
+    },
+    {
+      "timestamp": 23.633333333333333,
+      "referenceTimestamp": 23.433333333333334,
+      "support": 21,
+      "textureError": 4.58395204704272,
+      "imageDisplacementX": 37.0,
+      "truthDisplacementX": 36.74913063994609,
+      "ratio": 0.9932197470255699
+    },
+    {
+      "timestamp": 23.666666666666668,
+      "referenceTimestamp": 23.433333333333334,
+      "support": 19,
+      "textureError": 4.631088928153603,
+      "imageDisplacementX": 43.0,
+      "truthDisplacementX": 42.98589068907313,
+      "ratio": 0.9996718764900728
+    },
+    {
+      "timestamp": 25.066666666666666,
+      "referenceTimestamp": 24.9,
+      "support": 13,
+      "textureError": 7.700205266573643,
+      "imageDisplacementX": 30.216817741932466,
+      "truthDisplacementX": 30.157309021800756,
+      "ratio": 0.9980306092904969
+    },
+    {
+      "timestamp": 25.1,
+      "referenceTimestamp": 24.9,
+      "support": 12,
+      "textureError": 6.180274180593334,
+      "imageDisplacementX": 36.24767271165498,
+      "truthDisplacementX": 36.21648025326431,
+      "ratio": 0.9991394631418463
+    },
+    {
+      "timestamp": 25.133333333333333,
+      "referenceTimestamp": 24.9,
+      "support": 15,
+      "textureError": 5.306816061277863,
+      "imageDisplacementX": 42.593564254925276,
+      "truthDisplacementX": 42.47138078464195,
+      "ratio": 0.9971314100517147
+    },
+    {
+      "timestamp": 25.166666666666668,
+      "referenceTimestamp": 24.9,
+      "support": 16,
+      "textureError": 6.000674201082666,
+      "imageDisplacementX": 48.64683930445015,
+      "truthDisplacementX": 48.62885803449899,
+      "ratio": 0.9996303712592997
+    },
+    {
+      "timestamp": 25.2,
+      "referenceTimestamp": 24.9,
+      "support": 14,
+      "textureError": 6.721138867186018,
+      "imageDisplacementX": 55.0,
+      "truthDisplacementX": 54.89335594745353,
+      "ratio": 0.9980610172264278
+    },
+    {
+      "timestamp": 25.233333333333334,
+      "referenceTimestamp": 24.9,
+      "support": 12,
+      "textureError": 7.064436596045691,
+      "imageDisplacementX": 61.33186321023586,
+      "truthDisplacementX": 61.20380413741805,
+      "ratio": 0.9979120302871144
+    },
+    {
+      "timestamp": 25.266666666666666,
+      "referenceTimestamp": 24.9,
+      "support": 12,
+      "textureError": 7.7978486466500065,
+      "imageDisplacementX": 67.49274567794116,
+      "truthDisplacementX": 67.36452766647562,
+      "ratio": 0.9981002697374713
+    },
+    {
+      "timestamp": 25.633333333333333,
+      "referenceTimestamp": 25.5,
+      "support": 21,
+      "textureError": 5.050766380761395,
+      "imageDisplacementX": 24.580904353806275,
+      "truthDisplacementX": 24.54641665914096,
+      "ratio": 0.9985969720979784
+    },
+    {
+      "timestamp": 25.666666666666668,
+      "referenceTimestamp": 25.5,
+      "support": 21,
+      "textureError": 5.389240059428723,
+      "imageDisplacementX": 30.667176916862626,
+      "truthDisplacementX": 30.64264961425215,
+      "ratio": 0.9992002099613875
+    },
+    {
+      "timestamp": 25.7,
+      "referenceTimestamp": 25.5,
+      "support": 20,
+      "textureError": 5.125198549440521,
+      "imageDisplacementX": 37.0,
+      "truthDisplacementX": 36.827403532806784,
+      "ratio": 0.9953352306163996
+    },
+    {
+      "timestamp": 25.733333333333334,
+      "referenceTimestamp": 25.5,
+      "support": 18,
+      "textureError": 5.452526059780793,
+      "imageDisplacementX": 43.19384151596953,
+      "truthDisplacementX": 43.08558806311339,
+      "ratio": 0.9974937757546729
+    },
+    {
+      "timestamp": 25.9,
+      "referenceTimestamp": 25.733333333333334,
+      "support": 23,
+      "textureError": 7.886956997519258,
+      "imageDisplacementX": 30.65577830186652,
+      "truthDisplacementX": 30.646466250065714,
+      "ratio": 0.9996962382847009
+    },
+    {
+      "timestamp": 25.933333333333334,
+      "referenceTimestamp": 25.733333333333334,
+      "support": 22,
+      "textureError": 6.725146234257065,
+      "imageDisplacementX": 37.0,
+      "truthDisplacementX": 36.84617263264954,
+      "ratio": 0.9958425035851227
+    },
+    {
+      "timestamp": 25.966666666666665,
+      "referenceTimestamp": 25.733333333333334,
+      "support": 19,
+      "textureError": 6.075213729802445,
+      "imageDisplacementX": 43.0,
+      "truthDisplacementX": 42.92668706085533,
+      "ratio": 0.9982950479268681
+    },
+    {
+      "timestamp": 26.1,
+      "referenceTimestamp": 25.966666666666665,
+      "support": 21,
+      "textureError": 4.644496148022662,
+      "imageDisplacementX": 24.0,
+      "truthDisplacementX": 23.938059284118935,
+      "ratio": 0.997419136838289
+    },
+    {
+      "timestamp": 26.266666666666666,
+      "referenceTimestamp": 26.133333333333333,
+      "support": 20,
+      "textureError": 7.895890701855518,
+      "imageDisplacementX": 24.94430694450101,
+      "truthDisplacementX": 24.910408354829997,
+      "ratio": 0.9986410290032737
+    },
+    {
+      "timestamp": 26.3,
+      "referenceTimestamp": 26.133333333333333,
+      "support": 19,
+      "textureError": 7.821572572878976,
+      "imageDisplacementX": 31.0891954907803,
+      "truthDisplacementX": 31.11754659935832,
+      "ratio": 1.0009119280229182
+    },
+    {
+      "timestamp": 26.333333333333332,
+      "referenceTimestamp": 26.133333333333333,
+      "support": 17,
+      "textureError": 7.028338291182306,
+      "imageDisplacementX": 37.39400855888768,
+      "truthDisplacementX": 37.355917589273304,
+      "ratio": 0.9989813616918233
+    },
+    {
+      "timestamp": 26.4,
+      "referenceTimestamp": 26.133333333333333,
+      "support": 15,
+      "textureError": 6.9121038616643045,
+      "imageDisplacementX": 49.5688502607889,
+      "truthDisplacementX": 49.58909827354364,
+      "ratio": 1.0004084825984103
+    },
+    {
+      "timestamp": 27.133333333333333,
+      "referenceTimestamp": 27.033333333333335,
+      "support": 22,
+      "textureError": 5.513723400491362,
+      "imageDisplacementX": -29.230512036504734,
+      "truthDisplacementX": -29.16392505960539,
+      "ratio": 0.9977220044309799
+    },
+    {
+      "timestamp": 27.366666666666667,
+      "referenceTimestamp": 27.233333333333334,
+      "support": 13,
+      "textureError": 7.183942548153822,
+      "imageDisplacementX": -28.53126690998866,
+      "truthDisplacementX": -28.52880919445306,
+      "ratio": 0.9999138588712744
+    },
+    {
+      "timestamp": 27.433333333333334,
+      "referenceTimestamp": 27.233333333333334,
+      "support": 17,
+      "textureError": 6.666882053446641,
+      "imageDisplacementX": -39.836689253994265,
+      "truthDisplacementX": -39.835020972415805,
+      "ratio": 0.9999581219822806
+    },
+    {
+      "timestamp": 27.466666666666665,
+      "referenceTimestamp": 27.233333333333334,
+      "support": 14,
+      "textureError": 6.589689859937586,
+      "imageDisplacementX": -44.66160147416655,
+      "truthDisplacementX": -44.67431163019501,
+      "ratio": 1.0002845880042122
+    },
+    {
+      "timestamp": 28.466666666666665,
+      "referenceTimestamp": 28.0,
+      "support": 13,
+      "textureError": 6.469599523400493,
+      "imageDisplacementX": -25.218492748324444,
+      "truthDisplacementX": -25.210220313630998,
+      "ratio": 0.9996719695036494
+    },
+    {
+      "timestamp": 28.6,
+      "referenceTimestamp": 28.0,
+      "support": 13,
+      "textureError": 7.818362680952177,
+      "imageDisplacementX": -41.653510040312746,
+      "truthDisplacementX": -41.62024899898097,
+      "ratio": 0.9992014828690406
+    },
+    {
+      "timestamp": 28.666666666666668,
+      "referenceTimestamp": 28.0,
+      "support": 13,
+      "textureError": 4.420304670648076,
+      "imageDisplacementX": -41.88359650887651,
+      "truthDisplacementX": -41.868510976899415,
+      "ratio": 0.9996398224308676
+    },
+    {
+      "timestamp": 28.866666666666667,
+      "referenceTimestamp": 28.766666666666666,
+      "support": 15,
+      "textureError": 7.649687453790827,
+      "imageDisplacementX": 25.4960895075181,
+      "truthDisplacementX": 25.412522163474932,
+      "ratio": 0.9967223466163889
+    },
+    {
+      "timestamp": 28.9,
+      "referenceTimestamp": 28.766666666666666,
+      "support": 20,
+      "textureError": 5.365489921056485,
+      "imageDisplacementX": 34.977576825783935,
+      "truthDisplacementX": 34.99369574757293,
+      "ratio": 1.0004608358626237
+    },
+    {
+      "timestamp": 29.733333333333334,
+      "referenceTimestamp": 29.6,
+      "support": 22,
+      "textureError": 6.587048215951905,
+      "imageDisplacementX": 24.760726646876115,
+      "truthDisplacementX": 24.64256317098625,
+      "ratio": 0.9952277864226261
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 Audited source: `661b5e3`. Scope: recording/replay, preparation, persistence,
 diagnostics and test wiring. This is not a whole-app parity certification.
 
-**Windows recording/replay is incomplete relative to Mac.** Both record player
+**Historical finding at `661b5e3`: Windows recording/replay was incomplete relative to Mac.** Both record player
 and camera positions. Mac also drives the Knight through its recorded pose trace
 during replay; Windows currently plays only button events. The shared receiver
 already implements pose playback, so this is primarily missing Windows app wiring.
@@ -17,7 +17,135 @@ position, velocity, facing and grounded state. They do not force camera
 coordinates. The initial checkpoint restores camera/target state; thereafter the
 camera follows the Knight. Vision must still estimate movement from pixels.
 
-## Confirmed gaps
+## Non-returning route: live Hacker and Gameplay replay — 2026-10-27
+
+Both installed-app replays completed the new 60.58-second route with all 146
+input transitions and exactly the recorded final hero position. The end is
+157.27 world units from the start. Continuous hero poses prevent cumulative
+input drift, but wall-clock scheduling still produces transient differences:
+Gameplay median hero error 0.103 world units, maximum 3.836. Camera transforms
+are not forced during playback. This is not frame-identical simulation.
+
+The audit enumerates all 3,633 Hacker and 3,634 Gameplay Unity telemetry frames
+with no missing Unity sequence numbers. Capture, analysis and display omissions
+remain explicit. It samples actual WPF image placement and matches the image's
+rendered frame ID to receiver telemetry. WPF publication is not monitor scanout.
+
+- **Hacker display:** median 0.82, maximum 1.42 tracking-pixel camera error;
+  consistent with integer image-placement rounding. All 1,816 scored 30 Hz
+  deadlines were within 2 pixels; two startup deadlines were unscored. The
+  background visual solver nevertheless drifted to 263.62 pixels, so the
+  aggregate replay divergence flag does not describe Hacker's displayed camera.
+- **Gameplay display:** median 33.03, maximum 190.99 pixels, final 20.80 pixels.
+  Only 28 of 1,818 fixed 30 Hz deadlines were within 2 pixels. There were 2,791
+  analyzed samples marked verified despite greater than 8 pixels absolute error.
+- **Timing:** 156 Hacker and 95 Gameplay 30 Hz deadlines reused an image.
+  Image-age p95 at those deadlines was 66.6 ms and 52.3 ms respectively. These
+  results do not establish steady, fresh, correct 30 fps output.
+- **GPU:** 12 point samples per run; CUDA and Windows Graphics Capture throughout.
+  Gameplay GPU load 12–39%, CUDA search median 0.71 ms, encoder/decoder both zero.
+  Sparse utilization samples cannot exclude brief spikes, but do not support GPU
+  saturation or video encoding as the main explanation for this run's drift.
+
+Errors use 640x360 tracking pixels (half the 1280x720 game capture dimensions).
+Gameplay removes one initial translation only; Hacker uses absolute coordinates
+reconstructed from its displayed image bounds. No endpoint fitting or tracker
+interpolation hides drift. A 2-pixel threshold is an explicit audit target.
+
+The first preparation attempt also exposed a real lifecycle bug: capture resumed
+at the previous endpoint before checkpoint restoration. Capture now stays stopped
+until the restore acknowledgment, then seeds and validates fresh references.
+Both subsequent replays passed preparation. The transient hammer was the empty
+Hacker-atlas placeholder; it now says “Waiting for a matched game frame…”.
+
+Priority work: independent keyframe/atlas relocalization and stronger confidence;
+GPU coarse-to-fine recovery for unexpected camera jumps; publish pixels, camera
+and overlays under one capture ID; decouple Hacker live frames from atlas staging.
+Use fixed-tick playback with applied-pose acknowledgments for stricter benchmark
+repeatability. Do not feed telemetry into the Gameplay solver to hide errors.
+
+Installed assembly SHA-256:
+`4B67021430ED3745C298C833DCB59CF306C60958A5BFBA2FD81B4444B4734BE2`.
+Canonical build passed 986 core tests, 69 UI regression groups and shared receiver
+protocol/state tests. Evaluator tests cover missing frames, retained drift and
+absolute Hacker scoring. One route/run per mode; no Mac runtime claim.
+
+[Measured report](audits/2026-10-27-dual-mode-replay.json) ·
+[Comparison chart](audits/2026-10-27-dual-mode-replay.png) ·
+[Evaluator](benchmarks/evaluate-replay-frames.py).
+Raw `frames.json` and `evaluation.json` remain in the app's benchmark directories
+listed in the report; original and replay path files remain in the user's paths
+folder. Per-frame CSVs are under the workstation's
+`ballroller-2026/.tmp/hkv-new-route-audit/{hacker-valid,gameplay-valid}`.
+
+## Windows integration update — 2026-10-27
+
+The seven orchestration gaps below now have Windows implementation and regression
+coverage. This update does not certify the entire tracker or Mac runtime.
+
+- Desktop and standalone host schedule recorded player poses and inputs on one
+  receiver session. Missing pose capability fails explicitly. Input leases,
+  monotonic pose sequence, scene identity, cancellation and neutral release are tested.
+- Recording requests an acknowledged full checkpoint. A live K recording retained
+  entry gate `top2`, seven enemies, story flags and visited scenes.
+- Desktop replay creates isolated `atlas-v1/benchmarks/<id>/settling` and `run`
+  stores. It restores once, requires four fresh stable pose/ground/world checks,
+  resets the visual epoch, and checks again. User Auto Save is restored afterward,
+  including failure/cancellation. Each stage has a 30-second readiness deadline.
+- World integration, tile mutations and disk snapshot replacement share one
+  bounded worker. Camera analysis uses the current visual pose plus the committed
+  world offset; it never substitutes an old integrated frame's camera position.
+  Slow-save tests verify serialization and that queued frames remain bounded.
+- Replay's right-click menu selects full trace (default) or stop on divergence.
+  Both exact-frame streams feed evaluation. Each benchmark saves `evaluation.json`
+  alongside the recorded replay path; completion is separate from tracking success.
+- Traces now include ground timing, stable room identity/revision, recovery state,
+  local reference/displacement and the masked floorless estimate when used. Windows
+  does not manufacture a second coarse candidate where its current bridge computes
+  only the masked estimate. Recording metadata no longer claims replay preparation.
+- Integration tests exercise actual pose messages, full checkpoint fields, missing
+  capability, preparation order, scene boundaries, cancellation, and slow persistence.
+  Shared receiver protocol tests still do not execute Unity `Mod.cs`; the installed
+  receiver was exercised in the live replay below.
+
+Live route: original `9756db31-bd5d-4195-8754-403ce13fb45e`, replay
+`cc178cc7-308d-4144-a02f-430c912e75bb`. All 128 input transitions preserved.
+Hero distance from the source at equal elapsed time: median **0.197**, p95 **0.445**,
+maximum **0.971 world units** (previous input-only median: 22.115). This establishes
+substantially closer trajectory fidelity, not frame-identical simulation.
+
+Exact rendered-frame camera comparison (640×360 solve, one initial translation,
+3,309 matched frames): median **35.55 px**, p95 **40.81 px**, max **59.25 px**;
+endpoint **0.84 px**. Previous input-only replay median: 1,407.82 px. The longest
+recorded analysis interval fell from **3.330 s to 0.109 s**. Sampled camera/world
+submission work was at most 0.502 ms while sampled save durations reached 10.73 s.
+The watchdog found no sustained error above its 160 px threshold; that is not a
+zero-error verdict. Atlas admission still pauses when persistent recovery lacks
+searchable reference evidence, although local camera tracking continues.
+
+Existing old recordings still lack enemy/story checkpoint state. Pose replay
+cannot reconstruct that missing state. Cross-room command order has regression
+coverage; this live route remained in `Tutorial_01`. No Mac runtime test was run
+on this Windows workstation. The standalone host has no desktop visual/atlas
+lifecycle and explicitly reports `restore-ack-only` preparation.
+
+Live-tested build (`2D256F8C…5554879`) passed 986 core tests, the UI suite
+(reporting 69 regressions plus the replay integration checks), and shared receiver
+protocol tests with CUDA/GPU capture required. A second independent live replay
+(`506721d3-66aa-42aa-b018-685946e2f8bf`) preserved all 128 transitions. Hero route
+distance: median 0.224, p95 0.527, max 1.057 world units. Camera error: median
+**2.55 px**, p95 **14.90 px**, max **57.74 px**, endpoint **0.26 px**; longest
+tracking interval **70.4 ms**. Its report contains 3,406 evaluated samples and
+`completed=true`. Variation between runs remains visible; the original trace
+has incomplete world state and playback does not control animation/RNG timing.
+
+Final release (`03A86A52…9A9A1404`) also blocks live pointer input during replay
+and checkpoint capture. The full build, tests and installed-file verification
+were repeated after adding the pointer-isolation regression.
+
+Machine-readable results: [Windows integration evidence](audits/2026-10-27-windows-replay-integration.json).
+
+## Findings at the audited commit (before integration)
 
 ### P1 R1: Windows does not replay recorded player poses
 

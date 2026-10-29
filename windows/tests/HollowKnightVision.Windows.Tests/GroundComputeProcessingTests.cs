@@ -32,6 +32,98 @@ internal static class GroundComputeProcessingTests
         Console.WriteLine($"CUDA_PARITY device={matcher.CudaDeviceName} dispatches={matcher.CudaDispatchCount - before}");
     }
 
+    internal static void TestCudaPrecomputedMoments()
+    {
+        var matcher = new GroundPatchMatcher();
+        if (!RequireCuda(matcher)) return;
+        var fixture = MakeSearchFixture(0);
+        var candidate = fixture.Candidates.Single(value => value.Dx == 0 && value.Dy == 0);
+        var repetitions = 640 * 360 / 8 / candidate.Samples.Count + 1;
+        var batch = Enumerable.Repeat(candidate, repetitions).ToArray();
+        var original = fixture.Pixels.ToArray();
+        foreach (var mode in new[] { 0, 1, 2, 3, 0 })
+        {
+            for (var i = 0; i < fixture.Pixels.Length; i++)
+                fixture.Pixels[i] = mode == 0 ? original[i] : mode == 1 ? (byte)(original[i] * .7 + 20)
+                    : mode == 2 ? (byte)(250 + original[i] % 6) : (byte)255;
+            var scalar = matcher.Search(fixture.Sources, fixture.Pixels, 640, 360, [candidate], GroundComputeBackend.Cuda);
+            var precomputed = matcher.Search(fixture.Sources, fixture.Pixels, 640, 360, batch, GroundComputeBackend.Cuda);
+            Check(scalar.Backend == GroundComputeBackend.Cuda && precomputed.Backend == GroundComputeBackend.Cuda,
+                "Target-moment test fell back from CUDA.");
+            Check(mode >= 2 || scalar.Results.Count == 1, "Moment fixture did not exercise an accepted textured patch.");
+            Check(precomputed.Results.Count == scalar.Results.Count * repetitions, "Precomputed moments changed admission.");
+            foreach (var result in precomputed.Results)
+                Check(result == scalar.Results[0], "Separable moments changed the exact GPU patch score.");
+        }
+    }
+
+    internal static void TestCudaMajorityBoundaries()
+    {
+        var matcher = new GroundPatchMatcher();
+        if (!RequireCuda(matcher)) return;
+        var fixture = MakeSearchFixture(0);
+        Array.Clear(fixture.Pixels, 0, 640 * 12); // Flat mismatches, away from source patches.
+        var candidates = new List<GroundPatchSearchCandidate>();
+        for (var good = 0; good <= fixture.Sources.Length; good++)
+        foreach (var masked in new[] { false, true })
+        foreach (var reverse in new[] { false, true })
+        {
+            var samples = fixture.Sources.Select((source, index) => new GroundPatchSearchSample(index,
+                index < good ? source.Y * 640 + source.X : masked ? null : 0)).ToArray();
+            if (reverse) Array.Reverse(samples);
+            candidates.Add(new(candidates.Count, 0, samples));
+        }
+        CompareCuda(matcher, fixture with { Candidates = candidates.ToArray() });
+        var result = matcher.Search(fixture.Sources, fixture.Pixels, 640, 360,
+            candidates, GroundComputeBackend.Cuda);
+        Check(result.Results.Count == (fixture.Sources.Length - fixture.Sources.Length / 2) * 4,
+            "CUDA changed strict-majority admission at the early rejection boundary.");
+    }
+
+    internal static void TestCudaBoundedCandidateLayouts()
+    {
+        var matcher = new GroundPatchMatcher();
+        if (!RequireCuda(matcher)) return;
+        const int width = 320, height = 160;
+        var pixels = GroundCameraSolverTests.Pixels(width, height);
+        var patches = Enumerable.Range(0, 16).Select(i => new GroundCameraSolver.Patch(
+            16 + i * 16, 100, GroundCameraSolver.ReadPatch(pixels, width, height, 16 + i * 16, 100)!)).ToArray();
+        var sources = patches.Select(p => new GroundPatchSearchSource(p.X, p.Y, p.Pixels)).ToArray();
+        var candidates = new GroundCameraSolver().BuildSearchCandidates(patches, [new(100, 0, 319)], [],
+            width, height, [-3, 0, 3], 0, 96);
+        foreach (var shape in new (int Width, int Height, int Count, bool Relabel)[] { (320, 160, 16, false), (160, 320, 16, false), (320, 160, 15, false), (320, 160, 16, true) })
+        {
+            var selected = sources.Take(shape.Count).Select(p => shape.Relabel
+                ? new GroundPatchSearchSource(p.X + 1, p.Y, p.Pixels) : p).ToArray();
+            var cpu = matcher.Search(selected, pixels, shape.Width, shape.Height, candidates, GroundComputeBackend.Cpu);
+            var gpu = matcher.Search(selected, pixels, shape.Width, shape.Height, candidates, GroundComputeBackend.Cuda);
+            Check(gpu.Backend == GroundComputeBackend.Cuda && cpu.Results.Count == gpu.Results.Count,
+                "Bounded sample layout changed CPU/GPU admission after shape or source-count changes.");
+            for (var i = 0; i < cpu.Results.Count; i++)
+            {
+                var a = cpu.Results[i]; var b = gpu.Results[i];
+                Check((a.Dx, a.Dy, a.Support) == (b.Dx, b.Dy, b.Support) && Math.Abs(a.Error - b.Error) <= .002,
+                    "Validated GPU upload changed a candidate score.");
+            }
+        }
+    }
+
+    internal static void TestCudaHostStagingAllocation()
+    {
+        var matcher = new GroundPatchMatcher();
+        if (!RequireCuda(matcher)) return;
+        var fixture = MakeSearchFixture(192);
+        matcher.PrepareBroadSearch(640, 360);
+        _ = matcher.Search(fixture.Sources, fixture.Pixels, 640, 360, fixture.Candidates, GroundComputeBackend.Cuda);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var result = matcher.Search(fixture.Sources, fixture.Pixels, 640, 360, fixture.Candidates, GroundComputeBackend.Cuda);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        var oldSampleArrayBytes = fixture.Candidates.Sum(c => (long)c.Samples.Count) * 8;
+        Check(result.Backend == GroundComputeBackend.Cuda && result.Results.Count > 0, "Allocation test did not execute a useful CUDA search.");
+        Check(allocated < oldSampleArrayBytes, $"Warmed CUDA search still allocates its flattened staging array: {allocated} bytes vs {oldSampleArrayBytes}.");
+        Console.WriteLine($"CUDA_HOST_STAGING allocatedBytes={allocated} oldSampleArrayBytes={oldSampleArrayBytes}");
+    }
+
     internal static void TestCudaFallbackAndInvalidInputs()
     {
         var fixture = MakeSearchFixture(8);

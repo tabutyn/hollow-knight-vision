@@ -28,6 +28,7 @@ public sealed class VisualGameplayTracker
         minimumObservationSeconds: .2, backgroundGlobalSearch: true,
         confirmedLossGraceSeconds: 3, productionCameraSolver: true));
     public GroundPatchSearchExecution? LastPatchSearchExecution { get; private set; }
+    public string PlacementRecoveryState => placement.State;
     public AtlasPoint Position => new(camera.Position.X, -camera.Position.Y);
     private readonly FreshAtlasBootstrapGate bootstrap = new();
     private readonly TransitionMotionBridge transition = new();

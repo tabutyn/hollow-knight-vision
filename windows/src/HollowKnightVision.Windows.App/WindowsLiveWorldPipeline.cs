@@ -591,6 +591,7 @@ internal sealed class WindowsLiveWorldPipeline
             recoveryDisposition = roomId is { } activeRoom
                                   && HasSearchableReference(tracker.Snapshot, activeRoom)
                 ? RecoveryDisposition.SearchReference
+                : tracker.Snapshot.Observations.Count == 0 ? RecoveryDisposition.AwaitSafeNewWorld
                 : RecoveryDisposition.AwaitNewWorldBoundary;
             lastGlobalSearchAt = double.NegativeInfinity;
         }
@@ -727,10 +728,11 @@ internal sealed class WindowsLiveWorldPipeline
         }
     }
 
+    internal static int RoomIdentifier(string roomName) => BinaryPrimitives.ReadInt32LittleEndian(SHA256.HashData(Encoding.UTF8.GetBytes(roomName))) & int.MaxValue;
+
     private int RoomId(string roomName)
     {
-        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(roomName));
-        var identifier = BinaryPrimitives.ReadInt32LittleEndian(digest) & int.MaxValue;
+        var identifier = RoomIdentifier(roomName);
         if (roomNames.TryGetValue(identifier, out var existing)
             && !string.Equals(existing, roomName, StringComparison.Ordinal))
         {

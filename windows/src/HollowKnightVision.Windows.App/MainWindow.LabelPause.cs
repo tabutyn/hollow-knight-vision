@@ -24,7 +24,10 @@ public partial class MainWindow
     private void SyncLabelPauseState()
     {
         if (gameMode != GameRuntimeMode.Modded) return;
-        ApplyLabelPauseState(visionCancellation is null ? GamePauseState.Unavailable : gameControls.PauseState);
+        // Replay owns the game pause, but still needs live rendered frames for
+        // preparation and scoring. Only a labeling pause freezes capture.
+        ApplyLabelPauseState(visionCancellation is null ? GamePauseState.Unavailable
+            : Volatile.Read(ref stepCapture) is not null ? GamePauseState.Ready : gameControls.PauseState);
     }
 
     private void BeginLabelSession(bool capture)

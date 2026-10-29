@@ -11,6 +11,18 @@ namespace HollowKnightVisionInputReceiver
         internal const int PauseLeaseMilliseconds = 2000;
     }
 
+    internal static class CheckpointCapturePolicy
+    {
+        // Ordinary recording still requires a stationary grounded Knight. Only
+        // the session holding Vision's acknowledged pause may stash a moving pose.
+        internal static bool OwnsPausedBoundary(bool ownsPause, float timeScale,
+            string pauseSession, string requestSession)
+        {
+            return ownsPause && timeScale == 0f && !String.IsNullOrEmpty(pauseSession)
+                && String.Equals(pauseSession, requestSession, StringComparison.Ordinal);
+        }
+    }
+
     [Flags]
     internal enum VisionButtons
     {
@@ -152,7 +164,7 @@ namespace HollowKnightVisionInputReceiver
                 ["version"] = ReceiverControlProtocol.Version,
                 ["type"] = "capabilitiesAck",
                 ["sessionID"] = session,
-                ["capabilities"] = new JArray("input-state-v1", "pause-lease-v1", "menu-shortcuts-v1", "pointer-events-v1", "player-checkpoint-v1", "player-pose-playback-v1", "ground-truth-telemetry-v1", "player-ops-v1", "render-frame-marker-v1"),
+                ["capabilities"] = new JArray("input-state-v1", "pause-lease-v1", "menu-shortcuts-v1", "pointer-events-v1", "player-checkpoint-v1", "player-pose-playback-v1", "ground-truth-telemetry-v1", "player-ops-v1", "render-frame-marker-v1", "controlled-frame-replay-v1", "scene-mask-checkpoint-v1"),
                 ["pauseLeaseMilliseconds"] = ReceiverControlProtocol.PauseLeaseMilliseconds
             }.ToString(Formatting.None);
         }
@@ -304,6 +316,7 @@ namespace HollowKnightVisionInputReceiver
         internal bool? OpenedTown;
         internal bool? OpenedCrossroads;
         internal List<string> ScenesVisited;
+        internal JArray SceneMasks;
 
         internal static bool TryParse(JObject value, out PlayerCheckpoint checkpoint)
         {
@@ -335,6 +348,11 @@ namespace HollowKnightVisionInputReceiver
                     OpenedTown = value.Value<bool?>("openedTown"),
                     OpenedCrossroads = value.Value<bool?>("openedCrossroads")
                 };
+                var masks = value["sceneMasks"];
+                if (masks != null && masks.Type != JTokenType.Null) {
+                    if (!SceneMaskCheckpoint.Validate(masks)) return false;
+                    parsed.SceneMasks = (JArray)masks.DeepClone();
+                }
                 var enemies = value["enemies"] as JArray;
                 if (enemies != null) {
                     foreach (var enemyValue in enemies) {
@@ -400,6 +418,7 @@ namespace HollowKnightVisionInputReceiver
             if (VisitedCrossroads.HasValue) value["visitedCrossroads"] = VisitedCrossroads.Value;
             if (OpenedTown.HasValue) value["openedTown"] = OpenedTown.Value;
             if (OpenedCrossroads.HasValue) value["openedCrossroads"] = OpenedCrossroads.Value;
+            if (SceneMasks != null) value["sceneMasks"] = SceneMasks.DeepClone();
             if (ScenesVisited != null) {
                 var scenesVisited = new JArray();
                 foreach (var visitedScene in ScenesVisited) scenesVisited.Add(visitedScene);
@@ -577,6 +596,7 @@ namespace HollowKnightVisionInputReceiver
     {
         internal long Sequence;
         internal long UnityFrame;
+        internal string ControlledFrameID;
         internal double UnityRealtime;
         internal string SceneName;
         internal bool HeroAvailable;
@@ -612,6 +632,7 @@ namespace HollowKnightVisionInputReceiver
                 ["sessionID"] = session,
                 ["sequence"] = Sequence,
                 ["unityFrame"] = UnityFrame,
+                ["controlledFrameID"] = ControlledFrameID,
                 ["unityRealtime"] = UnityRealtime,
                 ["sceneName"] = SceneName ?? "",
                 ["heroAvailable"] = HeroAvailable,

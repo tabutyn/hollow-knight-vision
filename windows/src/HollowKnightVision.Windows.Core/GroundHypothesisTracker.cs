@@ -1,3 +1,6 @@
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
+using System.Runtime.InteropServices;
 using System.Numerics;
 
 namespace HollowKnightVision.Windows.Core;
@@ -48,6 +51,10 @@ public sealed record GroundHypothesisTrackingResult(
     double? LocalTextureError,
     bool ProvisionalContinuityActive)
 {
+    public string? LocalMatchSource { get; init; }
+    public double? LocalReferenceTimestamp { get; init; }
+    public CameraVector? LocalReferencePosition { get; init; }
+    public CameraVector? LocalMatchedImageDisplacement { get; init; }
     public static GroundHypothesisTrackingResult Empty { get; } = new(
         [], null, 0, null, 0, 0, null, null, null, 0, [], [], [], null, false, false,
         0, null, false);
@@ -239,7 +246,11 @@ public sealed class GroundHypothesisTracker
         IReadOnlySet<int> FeatureIds,
         IReadOnlySet<int> GlobalIds,
         IReadOnlyList<GlobalObservation> Inliers,
-        IReadOnlySet<int>? VerificationFeatureIds = null);
+        IReadOnlySet<int>? VerificationFeatureIds = null)
+    {
+        public GroundGlobalCorrectionPolicy.Quality? ProposedQuality { get; init; }
+        public GroundGlobalCorrectionPolicy.Quality? CurrentQuality { get; init; }
+    }
 
     private sealed record BackgroundSearchResult(
         GlobalFit? Fit,
@@ -282,6 +293,9 @@ public sealed class GroundHypothesisTracker
     private readonly GroundCameraSolver cameraSolver;
     private readonly GroundLinePresence linePresence;
     private readonly bool backgroundGlobalSearch;
+    private readonly bool deterministicGlobalSearch;
+    private bool requireStrongGlobalCorrection;
+    private int? deterministicGlobalRequestFrame;
     private readonly Action? beforeBackgroundGlobalSearch;
     private readonly Action<AtlasPoint?>? backgroundGlobalSearchCompleted;
     private readonly BoundedBackgroundSearch<BackgroundSearchResult> globalSearchWorker = new();
@@ -317,17 +331,18 @@ public sealed class GroundHypothesisTracker
     private double lastLocalFailureTimestamp = double.NegativeInfinity;
     private bool globalAnchorValid = true;
     private GroundCorrectionConfirmation correctionConfirmation;
+    private GlobalFit? lastGlobalCorrection;
     private CameraVector lastImageTranslation;
 
     public GroundHypothesisTracker(
         double minimumObservationSeconds = 2,
         bool backgroundGlobalSearch = false,
         double confirmedLossGraceSeconds = 0,
-        bool productionCameraSolver = false)
+        bool productionCameraSolver = false, bool broadSearchEveryFrame = false, bool deterministicGlobalSearch = false)
         : this(minimumObservationSeconds, backgroundGlobalSearch,
             confirmedLossGraceSeconds, beforeBackgroundGlobalSearch: null,
             backgroundGlobalSearchCompleted: null,
-            productionCameraSolver: productionCameraSolver)
+            productionCameraSolver: productionCameraSolver, broadSearchEveryFrame: broadSearchEveryFrame, deterministicGlobalSearch: deterministicGlobalSearch)
     {
     }
 
@@ -353,9 +368,11 @@ public sealed class GroundHypothesisTracker
         double confirmedLossGraceSeconds,
         Action? beforeBackgroundGlobalSearch,
         Action<AtlasPoint?>? backgroundGlobalSearchCompleted,
-        bool productionCameraSolver)
+        bool productionCameraSolver, bool broadSearchEveryFrame = false, bool deterministicGlobalSearch = false)
     {
         this.backgroundGlobalSearch = backgroundGlobalSearch;
+        this.deterministicGlobalSearch = deterministicGlobalSearch;
+        requireStrongGlobalCorrection = broadSearchEveryFrame;
         this.beforeBackgroundGlobalSearch = beforeBackgroundGlobalSearch;
         this.backgroundGlobalSearchCompleted = backgroundGlobalSearchCompleted;
         cameraSolver = productionCameraSolver
@@ -363,7 +380,7 @@ public sealed class GroundHypothesisTracker
                 keyframeSubpixelEnabled: true,
                 calibratedMotionEnabled: true,
                 matcherBackend: GroundComputeBackend.Automatic,
-                maximumLocalSearchRadius: 192)
+                maximumLocalSearchRadius: 192, broadSearchEveryFrame: broadSearchEveryFrame)
             : new GroundCameraSolver();
         linePresence = new GroundLinePresence(
             minimumObservationSeconds,
@@ -379,7 +396,9 @@ public sealed class GroundHypothesisTracker
     public void Reset(bool keepingGlobalFeatures = false)
     {
         cameraSolver.Reset();
+        if (deterministicGlobalSearch) globalSearchWorker.WaitForCompletion();
         globalSearchWorker.Invalidate();
+        deterministicGlobalRequestFrame = null;
         correctionConfirmation.Reset();
         bootstrapFailureStartedAt = null;
         lastLocalFailureTimestamp = double.NegativeInfinity;
@@ -490,6 +509,12 @@ public sealed class GroundHypothesisTracker
         }
     }
 
+    public GroundCameraSolveProfile LastCameraProfile => cameraSolver.LastProfile;
+    public double LastCameraSolveMilliseconds { get; private set; }
+    public double LastFeatureMatchingMilliseconds { get; private set; }
+    public double LastMaintenanceMilliseconds { get; private set; }
+    public double LastOutputMilliseconds { get; private set; }
+
     public GroundHypothesisTrackingResult Update(
         byte[] luma,
         int width,
@@ -501,6 +526,7 @@ public sealed class GroundHypothesisTracker
         IReadOnlyList<PixelRect>? protectedOcclusions = null,
         Func<GroundPlacementProposal, bool>? placementValidator = null)
     {
+        LastCameraSolveMilliseconds = LastFeatureMatchingMilliseconds = LastMaintenanceMilliseconds = LastOutputMilliseconds = 0;
         ArgumentNullException.ThrowIfNull(luma);
         ArgumentNullException.ThrowIfNull(floorLines);
         if (width < FeatureWidth || height < FeatureHeight
@@ -516,10 +542,12 @@ public sealed class GroundHypothesisTracker
         var exclusions = (protectedOcclusions ?? []).ToArray();
         var now = timestamp ?? ((lastTimestamp ?? (-1d / 60)) + 1d / 60);
         lastTimestamp = now;
+        cameraSolver.BeginObservation();
 
         var textureLines = floorLines.Select(GroundTextureLine.FromDetected).ToArray();
         var stencilExclusions = exclusions.Select(rect =>
             new StencilRect(rect.X, rect.Y, rect.Width, rect.Height)).ToArray();
+        var solveStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         var solution = cameraSolver.Solve(
             luma, width, height, textureLines, now, stencilExclusions);
         if (solution is null
@@ -549,6 +577,7 @@ public sealed class GroundHypothesisTracker
         {
             bootstrapFailureStartedAt = null;
         }
+        LastCameraSolveMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(solveStarted).TotalMilliseconds;
         if (solution is null) lastLocalFailureTimestamp = now;
         if (solution is not null)
         {
@@ -562,6 +591,7 @@ public sealed class GroundHypothesisTracker
                     ? consecutiveStrongProvisionalMatches + 1 : 0;
             }
         }
+        var matchingStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         var previousActive = active;
         var recoveryAttempt = solution is null
             ? RecoveryConsensus(
@@ -579,6 +609,8 @@ public sealed class GroundHypothesisTracker
                     match.X, match.Y, FeatureWidth, FeatureHeight, rect)))
             .Cast<Match>()
             .ToArray();
+        LastFeatureMatchingMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(matchingStarted).TotalMilliseconds;
+        var maintenanceStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         GroundTranslationFit? cameraFit = null;
         if (solution is not null && !cameraSolver.Seeded)
         {
@@ -653,6 +685,8 @@ public sealed class GroundHypothesisTracker
                 currentTracked, previous, luma, width, height, exclusions);
         }
 
+        LastGlobalSearchMilliseconds = 0;
+        lastGlobalCorrection = null;
         GlobalFit? globalFit = null;
         CameraVector? globalCorrection = null;
         // Foreground search owns a cadence even before descriptors mature, as
@@ -660,17 +694,22 @@ public sealed class GroundHypothesisTracker
         // its own just-created bank and bypass outer placement validation.
         if (!backgroundGlobalSearch || RelocalizationFeatures().Length >= 4)
         {
+            var searchStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             globalFit = backgroundGlobalSearch
                 ? BackgroundFit(luma, width, height, floorLines, exclusions, now, CurrentSearchFeatures)
                 : ForegroundFit(luma, width, height, floorLines, exclusions, now, CurrentSearchFeatures);
+            LastGlobalSearchMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(searchStarted).TotalMilliseconds;
             if (globalFit is not null)
             {
                 var position = new AtlasPoint(
                     SnapInteger(globalFit.CameraPosition.X),
                     SnapInteger(globalFit.CameraPosition.Y));
                 globalFit = globalFit with { CameraPosition = position };
+                lastGlobalCorrection = globalFit;
                 globalCorrection = new CameraVector(position.X - cameraX, position.Y - cameraY);
+                if (deterministicGlobalSearch) globalSearchWorker.WaitForCompletion();
                 globalSearchWorker.Invalidate();
+                deterministicGlobalRequestFrame = null;
                 correctionConfirmation.Reset();
                 cameraSolver.ApplyGlobalCorrection(
                     globalCorrection.Value, luma, textureLines, now, stencilExclusions);
@@ -696,6 +735,7 @@ public sealed class GroundHypothesisTracker
             RemoveRejectedSegments(ref previousActive, ref matches);
             active = previousActive;
             latestStabilizedFloorLines = [];
+            LastMaintenanceMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(maintenanceStarted).TotalMilliseconds;
             return Result(null, globalFit, globalCorrection, failedReviews, false, solution);
         }
 
@@ -707,7 +747,8 @@ public sealed class GroundHypothesisTracker
                 globalFit?.FeatureIds.Count ?? 0,
                 globalCorrection is not null,
                 cameraSolver.DistinctFrame,
-                segments.Count > 0 || RelocalizationFeatures().Length > 0)) == false)
+                segments.Count > 0 || RelocalizationFeatures().Length > 0)
+                { IndependentTextureConsensus = solution.IndependentTextureConsensus, UniqueLocalTextureMatch = solution.UniqueLocalTextureMatch }) == false)
         {
             cameraSolver.DeferReferenceUpdates(now);
             active = previousActive;
@@ -715,6 +756,7 @@ public sealed class GroundHypothesisTracker
                 width, height, now, false, exclusions);
             var deferredReviews = linePresence.Reviews(
                 new AtlasPoint(cameraX, cameraY), width, height);
+            LastMaintenanceMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(maintenanceStarted).TotalMilliseconds;
             return Result(cameraFit, globalFit, globalCorrection,
                 deferredReviews, false, solution);
         }
@@ -755,7 +797,8 @@ public sealed class GroundHypothesisTracker
         if (globalFit is not null) AttachGlobalMatches(globalFit);
         RecordReferencePatches();
         PromoteVerifiedFeatures();
-        return Result(cameraFit, globalFit, globalCorrection, reviews, true, solution);
+        LastMaintenanceMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(maintenanceStarted).TotalMilliseconds;
+            return Result(cameraFit, globalFit, globalCorrection, reviews, true, solution);
     }
 
     public static GroundHypothesisOverlay? OverlayImage(
@@ -802,6 +845,8 @@ public sealed class GroundHypothesisTracker
         bool poseVerified,
         GroundCameraSolver.Solution? localSolution)
     {
+        cameraSolver.EndObservation(localSolution?.MatchSource);
+        var outputStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         var outputs = active.Select(feature => new GroundHypothesisFeature(
                 feature.Id,
                 feature.SegmentId,
@@ -841,7 +886,7 @@ public sealed class GroundHypothesisTracker
             }
         }
 
-        return new GroundHypothesisTrackingResult(
+        var result = new GroundHypothesisTrackingResult(
             outputs,
             cameraFit is null ? null : new CameraVector(
                 -cameraFit.ImageTranslation.X,
@@ -864,7 +909,15 @@ public sealed class GroundHypothesisTracker
             localSolution?.Error,
             cameraSolver.HasProvisionalReference
                 && lastProvisionalTextureTimestamp is { } provisionalTimestamp
-                && (lastTimestamp ?? provisionalTimestamp) - provisionalTimestamp <= .35);
+                && (lastTimestamp ?? provisionalTimestamp) - provisionalTimestamp <= .35)
+        {
+            LocalMatchSource = localSolution?.MatchSource,
+            LocalReferenceTimestamp = localSolution?.ReferenceTimestamp,
+            LocalReferencePosition = localSolution?.ReferencePosition,
+            LocalMatchedImageDisplacement = localSolution?.MatchedImageDisplacement
+        };
+        LastOutputMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(outputStarted).TotalMilliseconds;
+        return result;
     }
 
     private void RemoveRejectedSegments(
@@ -998,6 +1051,8 @@ public sealed class GroundHypothesisTracker
         }
     }
 
+    public double LastGlobalSearchMilliseconds { get; private set; }
+
     private GlobalFit? ForegroundFit(
         byte[] luma,
         int width,
@@ -1023,7 +1078,18 @@ public sealed class GroundHypothesisTracker
         Func<List<ActiveFeature>> currentFeatures)
     {
         BackgroundSearchResult? completed = null;
-        if (globalSearchWorker.TryTake(out var result)) completed = result;
+        if (deterministicGlobalSearch)
+        {
+            // Always consume the same frozen search two observations later.
+            // Offline restoration may wait; live 30 Hz gives the worker 66 ms.
+            if (deterministicGlobalRequestFrame is { } submitted && frameIndex >= submitted + 2)
+            {
+                globalSearchWorker.WaitForCompletion();
+                if (globalSearchWorker.TryTake(out var result)) completed = result;
+                deterministicGlobalRequestFrame = null;
+            }
+        }
+        else if (globalSearchWorker.TryTake(out var result)) completed = result;
         if ((lastGlobalSearchTimestamp is null || timestamp - lastGlobalSearchTimestamp >= .25)
             && RelocalizationFeatures().Length >= 4)
         {
@@ -1043,6 +1109,7 @@ public sealed class GroundHypothesisTracker
                     {
                         cameraX = cameraX, cameraY = cameraY,
                         globalAnchorValid = globalAnchorValid,
+                        requireStrongGlobalCorrection = requireStrongGlobalCorrection,
                         cachedRelocalizationFeatures = features,
                     };
                     snapshot.canonicalFirstViewIds.UnionWith(canonicalFirstViewIds);
@@ -1057,7 +1124,10 @@ public sealed class GroundHypothesisTracker
                         return new BackgroundSearchResult(fit, timestamp, localPose);
                     };
                 }))
+            {
                 lastGlobalSearchTimestamp = timestamp;
+                if (deterministicGlobalSearch) deterministicGlobalRequestFrame = frameIndex;
+            }
         }
         if (completed is null
             || timestamp < completed.Timestamp
@@ -1319,8 +1389,13 @@ public sealed class GroundHypothesisTracker
         if (observations.Count < minimumInliers) return null;
         GlobalObservation[] best = [];
         var bestError = double.PositiveInfinity;
+        // Identical camera proposals produce exactly the same inliers and
+        // error. Phase scanning often proposes them hundreds of times.
+        // Preserve first-seen ordering while avoiding repeated consensus work.
+        var testedPositions = new HashSet<AtlasPoint>();
         foreach (var seed in observations)
         {
+            if (!testedPositions.Add(seed.CameraPosition)) continue;
             var inliers = UniqueOrderedInliers(observations, seed.CameraPosition);
             if (HorizontalSpread(inliers) < minimumHorizontalSpread
                 || !HasLineSequenceAnchor(inliers))
@@ -1433,6 +1508,8 @@ public sealed class GroundHypothesisTracker
                 && (fit.VerificationFeatureIds is null || fit.VerificationFeatureIds.Contains(feature.Id)))
             .ToArray();
         if (stored.Length == 0) return null;
+        var referencePatches = stored.ToDictionary(feature => feature.Id,
+            feature => new GroundCameraSolver.Patch(0, 0, feature.MatchingPatch));
         GroundGlobalCorrectionPolicy.Quality? QualityAt(
             AtlasPoint pose,
             IReadOnlyList<GlobalFeature> population)
@@ -1451,7 +1528,7 @@ public sealed class GroundHypothesisTracker
                         x, y, FeatureWidth, FeatureHeight, rect)))
                     continue;
                 var error = GroundCameraSolver.PatchError(
-                    feature.MatchingPatch, ReadPatch(luma, width, x, y));
+                    referencePatches[feature.Id], luma, width, x, y);
                 var key = ((long)Math.Round(feature.WorldX * 1024),
                     (long)Math.Round(feature.WorldTopY * 1024));
                 if (!errors.TryGetValue(key, out var prior) || error < prior.Error)
@@ -1469,20 +1546,24 @@ public sealed class GroundHypothesisTracker
         GlobalFit? VerifyPopulation(IReadOnlyList<GlobalFeature> population)
         {
             var seed = fit.CameraPosition;
-            var offset = refinementRadius == 0
+            var foundOffset = refinementRadius == 0
                 ? new GroundPoseRefinementSearch.Offset(0, 0)
                 : GroundPoseRefinementSearch.Find((dx, dy) =>
                     QualityAt(new AtlasPoint(seed.X + dx, seed.Y + dy), population),
-                    refinementRadius)
-                    ?? new GroundPoseRefinementSearch.Offset(0, 0);
+                    refinementRadius);
+            // Null means no sufficient unique peak, not a verified zero
+            // offset. Strict tracking must retain that rejection.
+            if (requireStrongGlobalCorrection && foundOffset is null) return null;
+            var offset = foundOffset ?? new GroundPoseRefinementSearch.Offset(0, 0);
             var refined = new AtlasPoint(seed.X + offset.Dx, seed.Y + offset.Dy);
             var displacement = Length(refined.X - cameraX, refined.Y - cameraY);
+            var proposedQuality = QualityAt(refined, population);
+            var currentQuality = QualityAt(new AtlasPoint(cameraX, cameraY), population);
             return GroundGlobalCorrectionPolicy.Accepts(
-                    QualityAt(refined, population),
-                    QualityAt(new AtlasPoint(cameraX, cameraY), population),
+                    proposedQuality, currentQuality,
                     displacement,
-                    globalAnchorValid)
-                ? fit with { CameraPosition = refined }
+                    globalAnchorValid, requireStrongEvidence: requireStrongGlobalCorrection)
+                ? fit with { CameraPosition = refined, ProposedQuality = proposedQuality, CurrentQuality = currentQuality }
                 : null;
         }
 
@@ -1637,6 +1718,14 @@ public sealed class GroundHypothesisTracker
         return selected.Take(RecoveryFeatureLimit).ToArray();
     }
 
+    internal void WarmFeatureRecovery(byte[] luma, int width, int height,
+        IReadOnlyList<DetectedFloorLine> lines, IReadOnlyList<PixelRect> exclusions)
+    {
+        // Pure matching probe on a throwaway tracker. Exercise the rare recovery
+        // branch and its tiered JIT before measured frames need it.
+        _ = RecoveryConsensus(RecoveryFeatureCandidates(active), luma, width, height, lines, exclusions);
+    }
+
     private RecoveryAttempt RecoveryConsensus(
         IReadOnlyList<ActiveFeature> features,
         byte[] luma,
@@ -1670,41 +1759,47 @@ public sealed class GroundHypothesisTracker
         if (verticalTranslations.Count == 0) return new([], null);
 
         var candidates = new List<(int Dx, int Dy, Match[] Matches, double MeanError)>();
+        var matchScratch = new Match[features.Count];
+        var rejectError = Math.BitIncrement(PromotionPhotometricError);
+        var rows = new Dictionary<int, (DetectedFloorLine[] Lines, PixelRect[] Exclusions)>();
         (int Dx, int Dy, Match[] Matches, double MeanError)? Evaluate(int dx, int dy)
         {
-            var candidateMatches = new List<Match>();
+            var count = 0; var minimumX = int.MaxValue; var maximumX = int.MinValue;
             var totalError = 0d;
             foreach (var feature in features)
             {
                 var x = feature.X + dx;
                 var y = feature.Y + dy;
                 if (x < 0 || (long)x + FeatureWidth > width
-                    || y < 0 || (long)y + FeatureHeight > height
-                    || exclusions.Any(rect => Intersects(
-                        x, y, FeatureWidth, FeatureHeight, rect)))
+                    || y < 0 || (long)y + FeatureHeight > height) continue;
+                if (!rows.TryGetValue(y, out var row))
                 {
-                    continue;
+                    row = (floorLines.Where(item => Math.Abs((long)item.Row - y) <= VerticalRefinementRadius)
+                            .OrderBy(item => Math.Abs((long)item.Row - y)).ToArray(),
+                        exclusions.Where(rect => rect.Width > 0 && rect.Height > 0
+                            && (long)rect.Y < (long)y + FeatureHeight && (long)rect.Y + rect.Height > y).ToArray());
+                    rows.Add(y, row);
                 }
-                var line = floorLines
-                    .Where(item => Math.Abs((long)item.Row - y) <= VerticalRefinementRadius
-                        && x >= item.XSpan.Start
-                        && (long)x + FeatureWidth - 1 <= item.XSpan.EndInclusive)
-                    .MinBy(item => Math.Abs((long)item.Row - y));
+                var excluded = false;
+                for (var i = 0; i < row.Exclusions.Length; i++)
+                    if (Intersects(x, y, FeatureWidth, FeatureHeight, row.Exclusions[i]))
+                    { excluded = true; break; }
+                if (excluded) continue;
+                DetectedFloorLine? line = null;
+                foreach (var item in row.Lines)
+                    if (x >= item.XSpan.Start && (long)x + FeatureWidth - 1 <= item.XSpan.EndInclusive)
+                    { line = item; break; }
                 if (line is null) continue;
-                var error = AbsolutePatchError(feature.Patch, luma, width, x, y);
+                var error = AbsolutePatchError(feature.Patch, luma, width, x, y, rejectError);
                 if (error > PromotionPhotometricError) continue;
                 totalError += error;
-                candidateMatches.Add(new Match(
-                    feature, x, y, error, new CameraVector(dx, dy), line.Row));
+                matchScratch[count++] = new Match(feature, x, y, error, new CameraVector(dx, dy), line.Row);
+                minimumX = Math.Min(minimumX, x); maximumX = Math.Max(maximumX, x);
             }
-            if (candidateMatches.Count < 4
-                || candidateMatches.Max(match => match.X)
-                    - candidateMatches.Min(match => match.X) < 48)
-            {
-                return null;
-            }
-            return (dx, dy, candidateMatches.ToArray(),
-                totalError / candidateMatches.Count);
+            // Most candidates fail; retain an owned array only for survivors.
+            // Strict comparison above preserves the first floor line on ties.
+            if (count < 4 || maximumX - minimumX < 48) return null;
+            return (dx, dy, matchScratch.AsSpan(0, count).ToArray(), totalError / count);
         }
 
         var lowerX = predictedX - RecoveryHorizontalSearchRadius;
@@ -1773,7 +1868,7 @@ public sealed class GroundHypothesisTracker
             {
                 for (var x = lowerX; x <= upperX; x++)
                 {
-                    var error = AbsolutePatchError(feature.Patch, luma, width, x, y);
+                    var error = AbsolutePatchError(feature.Patch, luma, width, x, y, bestError);
                     if (error >= bestError) continue;
                     bestError = error;
                     best = new Match(feature, x, y, error,
@@ -2430,16 +2525,28 @@ public sealed class GroundHypothesisTracker
     // Candidate bounds are already checked by both search loops. Compare the
     // image rows directly instead of allocating a 192-byte patch per candidate.
     private static double AbsolutePatchError(byte[] reference, byte[] pixels,
-        int stride, int x, int y)
+        int stride, int x, int y, double stopAt = double.PositiveInfinity)
     {
         if (reference.Length != FeaturePixelCount) return double.PositiveInfinity;
+        var maximumSum = stopAt * FeaturePixelCount;
         var error = 0;
         for (var row = 0; row < FeatureHeight; row++)
         {
             var source = (y + row) * stride + x;
             var target = row * FeatureWidth;
-            for (var column = 0; column < FeatureWidth; column++)
-                error += Math.Abs(reference[target + column] - pixels[source + column]);
+            if (Sse2.IsSupported && FeatureWidth == 16)
+            {
+                var a = Vector128.LoadUnsafe(ref MemoryMarshal.GetReference(reference.AsSpan(target, 16)));
+                var b = Vector128.LoadUnsafe(ref MemoryMarshal.GetReference(pixels.AsSpan(source, 16)));
+                var sums = Sse2.SumAbsoluteDifferences(a, b).AsUInt64();
+                error += (int)(sums.GetElement(0) + sums.GetElement(1));
+            }
+            else
+                for (var column = 0; column < FeatureWidth; column++)
+                    error += Math.Abs(reference[target + column] - pixels[source + column]);
+            // All remaining terms are nonnegative. This candidate cannot beat
+            // the incumbent; keep the same tie rule and exact winning scores.
+            if (error >= maximumSum) return stopAt;
         }
         return (double)error / FeaturePixelCount;
     }

@@ -14,6 +14,33 @@ internal static class GroundPlacementRecoveryTests
         return gate;
     }
 
+    public static void TestIndependentlyVerifiedCameraShake()
+    {
+        var current = new AtlasPoint(1454, 508);
+        var verified = Proposal(1558, 490, 10, 8.2) with { IndependentTextureConsensus = true };
+        var gate = Trusted();
+        Check(gate.Accepts(verified, current, 640, 52, 1d / 30),
+            "Independent broad texture agreement was replaced by a limited fallback after camera shake.");
+        Check(gate.AllowsAtlasWrite);
+        var uniqueSparse = verified with { TextureSupport = 4, UniqueLocalTextureMatch = true };
+        Check(Trusted().Accepts(uniqueSparse, current, 640, 52, 1d / 30),
+            "Broad uniqueness verification could not admit a sparse abrupt match.");
+        Check(!Trusted().Accepts(uniqueSparse with { TextureSupport = 3 }, current, 640, 52, 1d / 30));
+        Check(!Trusted().Accepts(uniqueSparse with { IndependentTextureConsensus = false }, current, 640, 52, 1d / 30));
+        foreach (var rejected in new[] {
+            verified with { IndependentTextureConsensus = false },
+            verified with { DistinctFrame = false },
+            verified with { TextureSupport = 9 },
+            verified with { TextureError = 10.01 },
+            verified with { TextureError = double.NaN },
+            verified with { Position = new(current.X + 193, current.Y) },
+            verified with { Position = new(current.X, current.Y + 193) } })
+            Check(!Trusted().Accepts(rejected, current, 640, 52, 1d / 30),
+                "Unverified, weak, repeated or out-of-range evidence bypassed placement verification.");
+        Check(Trusted().Accepts(verified with { Position = new(current.X, current.Y + 150) },
+            current, 640, 52, 1d / 30), "Vertical shake did not receive the same independent verification policy.");
+    }
+
     public static void TestLandingCorrection()
     {
         var gate = Trusted(); gate.MissingObservation();

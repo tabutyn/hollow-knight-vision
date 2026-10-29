@@ -6,14 +6,24 @@ public static class GroundGlobalCorrectionPolicy
     public readonly record struct Quality(int Tested, int Inliers, double HorizontalSpread, double Error);
 
     public static bool Accepts(Quality? candidate, Quality? current,
-        double displacement, bool hasTrustedPose)
+        double displacement, bool hasTrustedPose, bool requireStrongEvidence = false)
     {
         if (candidate is not { } proposed) return false;
+        // A transported global hypothesis may lose most of its original
+        // support. Recheck the same strong strip needed for recovery even
+        // when the current map projection has some (poor) support.
+        if (requireStrongEvidence && displacement > 0.01
+            && (proposed.Tested < 8 || proposed.Inliers < 8
+                || proposed.Inliers * 100 < proposed.Tested * 75
+                || proposed.HorizontalSpread < 128 || proposed.Error > 10))
+            return false;
         // Returning ground is frequently covered by vegetation, enemies, and
         // the Knight. For a correction smaller than one tile, accept a sparse
         // but wide ordered strip only when it decisively beats the current
         // pose in both independent inliers and bounded whole-strip error.
-        if (hasTrustedPose && displacement > 0.01 && displacement <= 12
+        // Strict per-frame tracking must not replace a verified local pose with
+        // a minority of matching map patches, even when spread is wide.
+        if (!requireStrongEvidence && hasTrustedPose && displacement > 0.01 && displacement <= 12
             && current is { } local
             && proposed.Tested >= 8 && proposed.Inliers >= 8
             && proposed.Inliers * 100 >= proposed.Tested * 30

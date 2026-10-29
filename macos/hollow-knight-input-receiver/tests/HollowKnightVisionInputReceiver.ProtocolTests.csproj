@@ -12,6 +12,8 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <Compile Include="ApiStubs.cs" />
     <Compile Include="ProtocolTests.cs" />
+    <Compile Include="../src/SceneMaskCheckpoint.cs" />
+    <Compile Include="../src/ControlledFrame.cs" Link="ControlledFrame.cs" />
     <Compile Include="../src/Protocol.cs" />
     <Compile Include="../src/LocalInputServer.cs" />
     <Compile Include="../src/VisionInputDevice.cs" />

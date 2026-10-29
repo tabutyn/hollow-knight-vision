@@ -67,19 +67,27 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         get => inputPathRecorder.IsRecording;
     }
 
-    internal bool StartRecording()
+    internal async Task<bool> StartRecordingAsync(CancellationToken cancellationToken = default)
     {
+        ReceiverClient active;
         lock (stateLock)
         {
-            if (receiver is null || replayCancellation is not null || inputPathRecorder.IsRecording || pause.BlocksInput) return false;
-            var checkpoint = Volatile.Read(ref latestGroundTruth) is { } truth
-                ? ToCheckpoint(truth.Value)
-                : null;
-            return inputPathRecorder.Start(
-                timestamp: MonotonicSeconds(),
-                createdAt: DateTimeOffset.UtcNow,
-                startCheckpoint: checkpoint);
+            if (receiver is null || !checkpointAvailable || replayCancellation is not null || capturingCheckpoint
+                || inputPathRecorder.IsRecording || pause.BlocksInput || heldButtons != InputButtons.None) return false;
+            active = receiver;
+            capturingCheckpoint = true;
         }
+        try
+        {
+            var checkpoint = await CheckpointAsync(active, ReceiverCheckpointCommand.Capture(active.SessionId), cancellationToken).ConfigureAwait(false);
+            lock (stateLock)
+            {
+                if (!ReferenceEquals(active, receiver) || lifetime.IsCancellationRequested) return false;
+                return inputPathRecorder.Start(MonotonicSeconds(), DateTimeOffset.UtcNow, startCheckpoint: checkpoint,
+                    metadata: new Dictionary<string, string> { ["checkpointCapture"] = "receiver-acknowledged-v1", ["playbackMode"] = "recording" });
+            }
+        }
+        finally { lock (stateLock) capturingCheckpoint = false; }
     }
 
     internal RecordedInputPath? StopRecording()
@@ -103,7 +111,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         bool isControlling,
         bool isTransitioning,
         double signalMeanPeak,
-        double signalVisibleFraction)
+        double signalVisibleFraction, int roomId = 0, ulong roomRevision = 0)
     {
         lock (stateLock)
         {
@@ -115,8 +123,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                 estimate,
                 isControlling,
                 isTransitioning,
-                roomId: 0,
-                roomRevision: 0,
+                roomId: roomId,
+                roomRevision: roomRevision,
                 signalMeanPeak,
                 signalVisibleFraction,
                 motionGrid: motionGrid,
@@ -134,13 +142,18 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         double signalMeanPeak,
         double signalVisibleFraction,
         int? renderedGameFrame,
-        bool atlasWriteAllowed)
+        bool atlasWriteAllowed, double groundMilliseconds, int roomId, ulong roomRevision,
+        string recoveryState, AtlasPoint? floorlessMaskedPosition, VisualRoomDirection? expectedDirection)
     {
         lock (stateLock)
         {
             inputPathRecorder.RecordTracking(
                 observation,
                 captureTimestamp,
+                groundTrackingMilliseconds: groundMilliseconds,
+                roomId: roomId, roomRevision: roomRevision, placementRecoveryState: recoveryState,
+                floorlessMaskedPosition: floorlessMaskedPosition, floorlessExpectedDirection: expectedDirection,
+                floorlessSelectionSource: floorlessMaskedPosition is null ? null : "masked-registration",
                 publishedCameraPosition: publishedCameraPosition,
                 poseSource: poseSource,
                 motionBridgeConfidence: motionBridgeConfidence,
@@ -185,7 +198,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         {
             active = receiver;
             fault = connectionFault;
-            if (active is null || fault is null || replayCancellation is not null || pause.BlocksInput) return;
+            if (active is null || fault is null || (replayCancellation is not null || capturingCheckpoint) || pause.BlocksInput) return;
             if (awaitingFreshPress)
             {
                 awaitingFreshPress = false;
@@ -213,7 +226,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         {
             active = receiver;
             fault = connectionFault;
-            if (active is null || fault is null || replayCancellation is not null || awaitingFreshPress || !isEnabled || pause.BlocksInput) return;
+            if (active is null || fault is null || (replayCancellation is not null || capturingCheckpoint) || awaitingFreshPress || !isEnabled || pause.BlocksInput) return;
             snapshot = heldButtons & ~button;
             if (snapshot == heldButtons) return;
             heldButtons = snapshot;
@@ -231,7 +244,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         {
             active = receiver;
             fault = connectionFault;
-            if (active is null || fault is null || replayCancellation is not null || awaitingFreshPress || !isEnabled || pause.BlocksInput) return;
+            if (active is null || fault is null || (replayCancellation is not null || capturingCheckpoint) || awaitingFreshPress || !isEnabled || pause.BlocksInput) return;
             snapshot = heldButtons;
         }
         QueueState(active, fault, true, snapshot);
@@ -268,7 +281,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         {
             active = receiver;
             fault = connectionFault;
-            if (active is null || fault is null || !pointerAvailable || pause.BlocksInput && kind != "exited") return false;
+            if (active is null || fault is null || !pointerAvailable || replayCancellation is not null || capturingCheckpoint
+                || pause.BlocksInput && kind != "exited") return false;
         }
         _ = SendPointerOrderedAsync(
             active, fault, kind, normalizedX, normalizedY, clickCount, lifetime.Token);
@@ -286,7 +300,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         TaskCompletionSource<ReceiverPlayerOpsAcknowledgement> pending;
         lock (stateLock)
         {
-            if (receiver is null || connectionFault is null || !playerOpsAvailable) return null;
+            if (receiver is null || connectionFault is null || !playerOpsAvailable || replayCancellation is not null || capturingCheckpoint) return null;
             active = receiver;
             fault = connectionFault;
             command = createCommand(active.SessionId);
@@ -326,6 +340,9 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        Task? replayDrain;
+        lock (stateLock) { replayCancellation?.Cancel(); replayDrain = replayFinished?.Task; }
+        if (replayDrain is not null) await replayDrain.ConfigureAwait(false);
         ReceiverClient? active;
         TaskCompletionSource? fault;
         Task? loop;
@@ -398,6 +415,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                     pointerAvailable = capabilities.Capabilities.Contains(
                         ReceiverProtocol.PointerCapability);
                     checkpointAvailable = capabilities.Capabilities.Contains(ReceiverProtocol.PlayerCheckpointCapability);
+                    posePlaybackAvailable = capabilities.Capabilities.Contains(ReceiverProtocol.PlayerPosePlaybackCapability);
+                    controlledFramesAvailable = capabilities.Capabilities.Contains(ControlledFrameReplay.Capability);
                     playerOpsAvailable = capabilities.Capabilities.Contains(
                         ReceiverProtocol.PlayerOpsCapability);
                     pause.Negotiate(pending.SessionId, capabilities);
@@ -449,6 +468,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                             pointerAvailable = false;
                             playerOpsAvailable = false;
                             checkpointAvailable = false;
+                            posePlaybackAvailable = false;
                             replayCancellation?.Cancel();
                             foreach (var command in pendingCheckpoints.Values) command.TrySetCanceled();
                             pendingCheckpoints.Clear();
@@ -526,6 +546,15 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                 }
                 continue;
             }
+            if (type == "controlledFrameAck")
+            {
+                var acknowledgement = ReceiverWireCodec.DecodeLine<ReceiverControlledFrameAcknowledgement>(line);
+                lock (stateLock)
+                    if (ReferenceEquals(receiver, client) && acknowledgement.SessionId == client.SessionId
+                        && pendingControlledFrames.TryGetValue(acknowledgement.CommandId, out var pending))
+                        pending.TrySetResult(acknowledgement);
+                continue;
+            }
             if (type is "captureCheckpointAck" or "restoreCheckpointAck")
             {
                 var acknowledgement = ReceiverWireCodec.DecodeLine<ReceiverCheckpointAcknowledgement>(line);
@@ -574,31 +603,6 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
             transition == RecordedInputTransition.Pressed,
             MonotonicSeconds());
     }
-
-    private static RecordedGameCheckpoint ToCheckpoint(ReceiverGroundTruthSample sample) => new(
-        sample.SceneName,
-        null,
-        sample.HeroX,
-        sample.HeroY,
-        sample.HeroZ,
-        sample.VelocityX,
-        sample.VelocityY,
-        sample.FacingRight,
-        sample.Grounded,
-        sample.CameraX,
-        sample.CameraY,
-        sample.CameraZ,
-        sample.CameraTargetX,
-        sample.CameraTargetY,
-        sample.CameraTargetZ,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null);
 
     private void QueueState(
         ReceiverClient active,

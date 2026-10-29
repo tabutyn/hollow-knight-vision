@@ -275,5 +275,10 @@
     "Mac pose playback uses wall-clock scheduling and the receiver coalesces late poses. This is route control, not proof of frame-perfect rendering or fully deterministic physics/story state.",
     "No Mac runtime test or new live game run was performed. Existing replay metrics establish Windows failure but do not quantify Mac performance here.",
     "This audit changed documentation only. Missing behavior remains to be ported."
-  ]
+  ],
+  "followUp": {
+    "date": "2026-10-27",
+    "report": "2026-10-27-windows-replay-integration.json",
+    "note": "Findings describe the audited pre-integration commit. See follow-up for Windows fixes, tests, measured live replay and remaining runtime limits."
+  }
 }

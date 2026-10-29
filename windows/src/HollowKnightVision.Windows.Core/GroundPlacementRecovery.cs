@@ -67,7 +67,11 @@ public sealed record GroundPlacementProposal(
     int GlobalMatchCount,
     bool HasGlobalCorrection,
     bool DistinctFrame,
-    bool HasEstablishedGround);
+    bool HasEstablishedGround)
+{
+    public bool IndependentTextureConsensus { get; init; }
+    public bool UniqueLocalTextureMatch { get; init; }
+}
 
 public sealed class GroundPlacementRecovery
 {
@@ -102,6 +106,20 @@ public sealed class GroundPlacementRecovery
         if (!proposal.HasEstablishedGround)
         {
             NeedsVerification = false; pending = null; sparse.Reset(); return true;
+        }
+        // Sudden camera shake can exceed the normal continuity envelope.
+        // A broad search with independent, spatially spread texture agreement
+        // supplies direct evidence for that same frame; speed alone must not
+        // replace it with a smaller coarse-motion estimate.
+        var maximumVerifiedStep = 192 * solveWidth / 640;
+        if (proposal.IndependentTextureConsensus && proposal.DistinctFrame
+            && !proposal.HasGlobalCorrection
+            && (proposal.TextureSupport >= 10 || (proposal.TextureSupport >= 4 && proposal.UniqueLocalTextureMatch))
+            && proposal.TextureError is >= 0 and <= 10
+            && Math.Abs(position.X - current.X) <= maximumVerifiedStep
+            && Math.Abs(position.Y - current.Y) <= maximumVerifiedStep)
+        {
+            Confirm(); return true;
         }
         var continuous = GroundPoseContinuityGate.Accepts(position, current, solveWidth,
             proposal.GlobalMatchCount, proposal.HasGlobalCorrection, proposal.InlierCount,

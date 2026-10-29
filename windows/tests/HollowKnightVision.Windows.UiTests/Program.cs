@@ -51,6 +51,8 @@ internal static class Program
             return;
         }
         InputPathReplayIntegrationTests.Run();
+        ControlledStepCaptureTests.Run();
+        ReplayLifecycleTests.Run();
         TestWorldReplayRequiresExplicitReturningIntent();
         TestWorldReplayCreatesRequestedReport();
         TestWorldReplayBadArgumentsAndFailureExitCodes();
@@ -117,7 +119,7 @@ internal static class Program
         GpuCaptureTests.TestMappedBounds();
         GpuCaptureTests.RunIfRequested();
         if (args.Contains("--input")) TestBackgroundKeyDelivery();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 70 : 69)}");
+        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 71 : 70)}");
         Application.Current.Shutdown();
     }
 

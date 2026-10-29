@@ -605,11 +605,11 @@ public partial class MainWindow : Window
     private readonly List<TrackedGroundLine> trackedGround = [];
     private readonly Dictionary<string, RoomEdit> rooms = new(StringComparer.Ordinal);
     private readonly List<RoomConnectionEdit> roomConnections = [];
-    private readonly AtlasStateStore atlasStateStore;
+    private AtlasStateStore atlasStateStore;
     private readonly UserObjectCatalog objectCatalog;
     private readonly StencilInitializationCoordinator initialization;
     private readonly List<ClassChoice> customObjectChoices = [];
-    private readonly string activeAtlasDirectory;
+    private string activeAtlasDirectory;
     private readonly string hackerEditPath;
     private DateTimeOffset activeAtlasCreatedAt = DateTimeOffset.UtcNow;
     private DateTimeOffset lastAtlasPersistedAt = DateTimeOffset.MinValue;
@@ -911,6 +911,7 @@ public partial class MainWindow : Window
         public long CaptureGeneration { get; init; }
         public AtlasPoint? WorldBasisOffset { get; init; }
         public double? WorldBasisTimestamp { get; init; }
+        public GroundTruthAtlasMosaic? AtlasSource { get; init; }
         public bool ReplacesGameplayAtlas { get; init; }
         public GroundTruthAtlasMosaic? GameplayAtlasReplacement { get; init; }
         public LiveWorldLoopClosureEdge? AcceptedClosure { get; init; }
@@ -1122,6 +1123,8 @@ public partial class MainWindow : Window
         {
             if (visionRunCompletion is { } captureFinished)
                 await captureFinished;
+            if (replayUiFinished is { } replayUi) await replayUi.Task;
+            await worldWorker.DrainAsync();
             if (persistentWorldInitialization is { } worldInitialization)
                 await worldInitialization;
             if (atlasOperationCompletion is { } atlasOperation)
@@ -2533,14 +2536,14 @@ public partial class MainWindow : Window
             explicitRequest: true);
     }
 
-    private void PathRecording_Click(object sender, RoutedEventArgs e)
+    private async void PathRecording_Click(object sender, RoutedEventArgs e)
     {
         try
         {
             if (gameControls.IsReplaying) return;
             if (!gameControls.IsRecording)
             {
-                if (!gameControls.StartRecording())
+                if (!await gameControls.StartRecordingAsync())
                 {
                     SetStatus("Updated game receiver is not ready.");
                     return;
@@ -2610,7 +2613,8 @@ public partial class MainWindow : Window
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         visionRunCompletion = completion.Task;
         menuStencilRecognizer.ResetTracking();
-        labelCapture.Reset(gameMode == GameRuntimeMode.Normal ? GamePauseState.Ready : gameControls.PauseState);
+        labelCapture.Reset(gameMode == GameRuntimeMode.Normal || Volatile.Read(ref stepCapture) is not null
+            ? GamePauseState.Ready : gameControls.PauseState);
         menuStencilRecognizer.SetObjectInferenceSuspended(labelCapture.SuspendsInference);
         StartVisionButton.IsEnabled = false;
         StopVisionButton.IsEnabled = true;
@@ -2621,9 +2625,13 @@ public partial class MainWindow : Window
                     ? activeModelRuns : runDirectory.Length > 0 ? [runDirectory] : [], activeModelArtifacts);
             // Compile CUDA once before capture; device absence keeps the CPU fallback.
             await Task.Run(() => GroundPatchMatcher.Shared.WarmUp(), cancellation.Token);
+            var preservesStepEvidence = Volatile.Read(ref stepCapture) is not null;
+            // Controlled replay freezes simulation until a matching frame is
+            // scored, so latest presentation safely discards paused backlog.
             using var capture = new WindowsGameCapture();
-            var analysisFrames = Channel.CreateBounded<PendingVisionFrame>(new BoundedChannelOptions(1)
-            { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
+            var analysisFrames = Channel.CreateBounded<PendingVisionFrame>(new BoundedChannelOptions(preservesStepEvidence ? 16 : 1)
+            { FullMode = preservesStepEvidence ? BoundedChannelFullMode.Wait : BoundedChannelFullMode.DropOldest,
+                SingleReader = true, SingleWriter = false });
             var hackerFrames = Channel.CreateUnbounded<HackerPipelineWork>(new UnboundedChannelOptions
             { SingleReader = true, SingleWriter = false, AllowSynchronousContinuations = false });
             var captureGeneration = Interlocked.Increment(ref recentCaptureGeneration);
@@ -2646,7 +2654,9 @@ public partial class MainWindow : Window
             var validatedProcessId = 0;
             try
             {
-                while (!cancellation.IsCancellationRequested)
+                if (Volatile.Read(ref stepCapture) is not null)
+                    await RunStepCaptureAsync(capture, captureGeneration, analysisTask, hackerTask, cancellation.Token);
+                else while (!cancellation.IsCancellationRequested)
                 {
                     if (analysisTask.IsCompleted) await analysisTask;
                     if (hackerTask.IsCompleted) await hackerTask;
@@ -2705,6 +2715,7 @@ public partial class MainWindow : Window
                     else
                     {
                         var renderedGameFrame = RenderedFrameMarker.Decode(frame);
+                        CaptureReplayAudit(frame, renderedGameFrame, captureTimestamp);
                         BufferReceiverCapture(
                             captureGeneration,
                             pending,
@@ -2803,6 +2814,7 @@ public partial class MainWindow : Window
                     lastLabelRevision = pending.LabelRevision;
                 }
                 var analysisStarted = Stopwatch.GetTimestamp();
+                Volatile.Read(ref stepCapture)?.Trace("analysis", pending.Frame.CaptureId, pending.RenderedGameFrame, pending.CaptureTimestamp);
                 var queueMilliseconds = Math.Max(0,
                     (analysisStarted / (double)Stopwatch.Frequency - pending.CaptureTimestamp) * 1000);
                 var result = AnalyzeVisionFrame(
@@ -2833,7 +2845,7 @@ public partial class MainWindow : Window
                     () => ApplyVisionAnalysis(result),
                     DispatcherPriority.Render,
                     cancellationToken);
-                await AtlasPersistenceBarrier.WaitForWorldWritesAsync(gameMode, atlasPersistTask).ConfigureAwait(false);
+                // World integration and snapshot swaps share worldWorker; camera analysis never waits on disk.
             }
         }
         finally
@@ -3090,6 +3102,9 @@ public partial class MainWindow : Window
         ReceiverGroundTruthSample sample,
         double observedAt)
     {
+        Volatile.Read(ref stepCapture)?.Trace("truth", -1, sample.UnityFrame, observedAt);
+        if (Volatile.Read(ref replayVision) is { } replayFrame)
+            ObserveReplayDecision(inputPathDivergenceMonitor.AppendGroundTruth(sample, observedAt, new PlaybackFrameSize(replayFrame.Width, replayFrame.Height)));
         lock (receiverFrameJoinGate)
         {
             if (gameMode != GameRuntimeMode.Modded
@@ -3170,6 +3185,7 @@ public partial class MainWindow : Window
             ownsHackerWork,
             matched.Capture.IntegratesAtlas,
             hackerGeneration);
+        Volatile.Read(ref stepCapture)?.Trace("joined", pending.Frame.CaptureId, pending.RenderedGameFrame, pending.CaptureTimestamp);
         if (!writer.TryWrite(pending)) return;
         latestMatchedCaptureId = pending.Frame.CaptureId;
     }
@@ -3239,7 +3255,8 @@ public partial class MainWindow : Window
         NormalAtlasRoomIdentity normalAtlasRoomIdentity)
     {
         menuStencilRecognizer.ConfigureObjectDiagnostics(Volatile.Read(ref objectDetectionExtension), createsObjectPixelDiagnostic);
-        var recognition = menuStencilRecognizer.AnalyzeLiveWithPublication(frame, asynchronously: workspace == "Hacker",
+        var recognition = menuStencilRecognizer.AnalyzeLiveWithPublication(frame,
+            asynchronously: workspace == "Hacker" || Volatile.Read(ref stepCapture) is not null,
             detector is { HasModels: true } ? () => detector.Detect(frame) : null,
             publication => recentCapturedFrames.ReplaceDetections(publication.Detections, captureGeneration, publication.Frame.CaptureId));
         if (!labelCapture.CanProcess(labelRevision)) return null;
@@ -3262,6 +3279,12 @@ public partial class MainWindow : Window
         var hudStencil = recognition.Hud;
         var detections = recognition.Detections;
         var masks = GameplaySceneMasks.Create(frame.Width, frame.Height, detections, hudStencil, recognition.Objects.Masks);
+        if (Volatile.Read(ref stepCapture) is not null)
+        {
+            if (exactReceiverTelemetry is { } stepTruth && exactRenderedGameFrame is { } stepFrame)
+                ObserveTrackingStep(frame, masks, admission.AdmitsTracking, captureTimestamp, stepTruth, stepFrame);
+            return null;
+        }
         var atlasExclusions = masks.AtlasExclusions;
         var groundExclusions = masks.GroundExclusions;
         IReadOnlyList<DetectedFloorLine> ground = [];
@@ -3382,7 +3405,7 @@ public partial class MainWindow : Window
             && liveWorldPipeline is not null
             && !visualObservation.AllowsAtlasWrite)
         {
-            liveWorldPipeline.NotifyTrackingLoss(liveWorldGeneration);
+            Interlocked.Exchange(ref pendingWorldTrackingLoss, (long)liveWorldGeneration);
         }
         if (gameplayAdmitted && gameMode == GameRuntimeMode.Modded)
         {
@@ -3411,7 +3434,7 @@ public partial class MainWindow : Window
                     visualObservation,
                     motionBridgeActive,
                     groundReference);
-                liveWorldResult = liveWorldPipeline.Process(new WindowsLiveWorldFrame(
+                QueueWorldFrame(new WindowsLiveWorldFrame(
                     Frame: frame,
                     MaskedFrame: FrameRegionRenderer.MapFrame(frame, masks.AtlasRegions),
                     Timestamp: captureTimestamp,
@@ -3423,20 +3446,19 @@ public partial class MainWindow : Window
                     CaptureGeneration: liveWorldGeneration,
                     RoomName: roomName,
                     AtlasPixelsPerWorldUnit: gameplayAtlas.PixelsPerWorldUnit,
-                    AtlasTileSize: gameplayAtlas.TileSize));
-                gameplayAdmitted = liveWorldResult.State
-                        == WindowsLiveWorldPipelineState.Committed
-                    && liveWorldResult.CaptureGeneration == liveWorldGeneration;
-                if (liveWorldResult.CaptureGeneration == liveWorldGeneration
+                    AtlasTileSize: gameplayAtlas.TileSize, StableTrackingVerified: visualObservation.GroundVerified), visualTelemetry, atlasCompositionExclusions, atlasRoomId, atlasCaptureIdentity);
+                liveWorldResult = CurrentWorldResult(liveWorldGeneration, roomName);
+                gameplayAdmitted = liveWorldResult?.State is WindowsLiveWorldPipelineState.Committed or WindowsLiveWorldPipelineState.Throttled;
+                if (liveWorldResult?.CaptureGeneration == liveWorldGeneration
                     && liveWorldResult.State is WindowsLiveWorldPipelineState.Committed
                         or WindowsLiveWorldPipelineState.Throttled)
                 {
                     visualTelemetry = visualTelemetry with
                     {
-                        CameraX = liveWorldResult.CameraPose.X,
-                        CameraY = liveWorldResult.CameraPose.Y,
-                        CameraTargetX = liveWorldResult.CameraPose.X,
-                        CameraTargetY = liveWorldResult.CameraPose.Y
+                        CameraX = localPose.X + liveWorldResult.WorldBasisOffset.X,
+                        CameraY = localPose.Y + liveWorldResult.WorldBasisOffset.Y,
+                        CameraTargetX = localPose.X + liveWorldResult.WorldBasisOffset.X,
+                        CameraTargetY = localPose.Y + liveWorldResult.WorldBasisOffset.Y
                     };
                 }
             }
@@ -3451,16 +3473,14 @@ public partial class MainWindow : Window
                 isTransitioning: !admission.AdmitsTracking);
             if (decision is not null)
             {
-                inputPathReplayDivergence = decision;
-                inputPathReplayCancellation?.Cancel();
+                ObserveReplayDecision(decision);
             }
         }
-        var replacesGameplayAtlas = gameplayAdmitted
-            && liveWorldResult?.RebuiltAtlas is not null;
+        var replacesGameplayAtlas = false; // Background world owner publishes closure replacements.
         var resultGameplayAtlas = replacesGameplayAtlas
             ? liveWorldResult!.RebuiltAtlas!
             : gameplayAtlas;
-        var gameplayAccepted = gameplayAdmitted
+        var gameplayAccepted = gameplayAdmitted && gameMode != GameRuntimeMode.Modded
             && (replacesGameplayAtlas
                 || resultGameplayAtlas.AddFrame(
                     frame,
@@ -3469,6 +3489,8 @@ public partial class MainWindow : Window
                     roomId: atlasRoomId,
                     captureGeneration: liveWorldGeneration,
                     captureIdentity: atlasCaptureIdentity));
+        Volatile.Write(ref replayVision, new(captureTimestamp, captureGeneration,
+            groundHypotheses.PoseVerified && groundHypotheses.HasConfirmedGround && groundHypotheses.GroundSegmentCount > 0, frame.Width, frame.Height));
         var publishedCameraPosition = new AtlasPoint(
             visualTelemetry.CameraX,
             visualTelemetry.CameraY);
@@ -3482,7 +3504,7 @@ public partial class MainWindow : Window
             motionBridgeActive,
             !admission.AdmitsTracking,
             signal.MeanPeak,
-            signal.VisibleFraction);
+            signal.VisibleFraction, WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0));
         gameControls.RecordVisualTracking(
             captureTimestamp,
             new InputPathTrackingObservation
@@ -3499,6 +3521,10 @@ public partial class MainWindow : Window
                 AtlasLineIds = groundHypotheses.AtlasLines.Select(line => line.SegmentId).Distinct().ToArray(),
                 LocalTextureSupport = groundHypotheses.LocalTextureSupport,
                 LocalTextureError = groundHypotheses.LocalTextureError,
+                LocalMatchSource = groundHypotheses.LocalMatchSource,
+                LocalReferenceTimestamp = groundHypotheses.LocalReferenceTimestamp,
+                LocalReferencePosition = groundHypotheses.LocalReferencePosition,
+                LocalMatchedImageDisplacement = groundHypotheses.LocalMatchedImageDisplacement,
                 ProvisionalContinuityActive = groundHypotheses.ProvisionalContinuityActive
             },
             publishedCameraPosition,
@@ -3508,8 +3534,12 @@ public partial class MainWindow : Window
             signal.MeanPeak,
             signal.VisibleFraction,
             renderedGameFrame,
-            gameplayAdmitted);
-        if (gameplayAccepted && (replacesGameplayAtlas
+            gameplayAdmitted, groundMilliseconds, WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId),
+            (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0), visualGameplayTracker.PlacementRecoveryState,
+            motionBridgeActive ? new AtlasPoint(visualObservation.Telemetry.CameraX, visualObservation.Telemetry.CameraY) : null,
+            motionBridgeActive ? coarseMotion?.Direction : null);
+        if ((gameMode == GameRuntimeMode.Modded && resultGameplayAtlas.Revision != Interlocked.Read(ref gameplayRenderedRevision))
+            || gameplayAccepted && (replacesGameplayAtlas
             || resultGameplayAtlas.AcceptedFrameCount == 1
             || resultGameplayAtlas.AcceptedFrameCount % 3 == 0))
         {
@@ -3539,6 +3569,7 @@ public partial class MainWindow : Window
                 WorldBasisTimestamp = gameplayAdmitted
                     ? captureTimestamp
                     : null,
+                AtlasSource = resultGameplayAtlas,
                 ReplacesGameplayAtlas = replacesGameplayAtlas,
                 GameplayAtlasReplacement = replacesGameplayAtlas
                     ? resultGameplayAtlas
@@ -3653,6 +3684,8 @@ public partial class MainWindow : Window
     {
         if (result.CaptureGeneration != Interlocked.Read(ref recentCaptureGeneration)
             || !labelCapture.CanProcess(result.LabelRevision)) return;
+        if (result.AtlasSource is not null && !ReferenceEquals(result.AtlasSource, gameplayAtlas))
+            result = result with { GameplayTiles = null };
         PublishGpuDiagnostics(result);
         var presentsLatestFrame = result.Frame.CaptureId
             == Interlocked.Read(ref latestPresentedCaptureId);
@@ -3842,6 +3875,7 @@ public partial class MainWindow : Window
             result.QueueMilliseconds,
             result.GroundMilliseconds,
             result.AtlasAndWorldMilliseconds,
+            WorldWorkerError = worldWorker.LastError?.Message,
             result.PoseSource,
             result.AdmitsTracking,
             result.AllowsAtlasWrite,
@@ -5752,19 +5786,12 @@ public partial class MainWindow : Window
         var fullReplacement = Volatile.Read(ref gameplayAtlasRequiresFullRewrite);
         if (!force && !fullReplacement
             && now - lastAtlasPersistedAt < TimeSpan.FromSeconds(10)) return false;
-        var atlasAtWrite = gameplayAtlas;
-        // Every disk publication is a complete immutable generation. The
-        // revision checkpoint remains an admission/throttling concern only;
-        // it never permits a mixed old/new tile tree on disk.
-        var snapshot = atlasAtWrite.SnapshotSince(-1);
-        if (snapshot.Tiles.Count == 0 && !force) return false;
-        var metadata = new VisionResetController.PersistedAtlasMetadata(
-            atlasAtWrite.AcceptedFrameCount,
-            activeAtlasCreatedAt,
-            atlasAtWrite.TileSize,
-            atlasAtWrite.PixelsPerWorldUnit);
-        atlasPersistTask = Task.Run(() =>
+        atlasPersistTask = worldWorker.Exclusive(() =>
         {
+            var atlasAtWrite = gameplayAtlas;
+            var snapshot = atlasAtWrite.SnapshotSince(-1);
+            var metadata = new VisionResetController.PersistedAtlasMetadata(
+                atlasAtWrite.AcceptedFrameCount, activeAtlasCreatedAt, atlasAtWrite.TileSize, atlasAtWrite.PixelsPerWorldUnit);
             var saveStarted = Stopwatch.GetTimestamp();
             _ = WriteAtlasGeneration(
                 snapshot,
@@ -6211,20 +6238,22 @@ public partial class MainWindow : Window
         bool canReplaceFaultedActive = false,
         bool invalidateLiveWorld = false)
     {
-        if (atlasOperationInProgress || isClosing || gameLostCountdownStarted) return;
+        if (atlasOperationInProgress || inputPathReplayCancellation is not null || isClosing || gameLostCountdownStarted) return;
         var resume = visionCancellation is not null;
         var completion = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         atlasOperationCompletion = completion.Task;
         atlasOperationInProgress = true;
         GameplayAtlasManager.IsEnabled = false;
-        if (invalidateLiveWorld) liveWorldPipeline?.InvalidatePendingWork();
+
         StopVision();
         try
         {
             // Drain capture/analysis and disk writes before moving the active
             // directory. No pre-reset result may resurrect tiles afterwards.
             if (visionRunCompletion is { } captureFinished) await captureFinished;
+            await worldWorker.DrainAsync();
+            if (invalidateLiveWorld) liveWorldPipeline?.InvalidatePendingWork();
             try
             {
                 await FlushActiveAtlasAsync();
@@ -6267,6 +6296,8 @@ public partial class MainWindow : Window
 
     private void ClearGameplayAtlasRuntime(bool reopenLiveWorld = true)
     {
+        Volatile.Write(ref completedWorld, null);
+        Interlocked.Exchange(ref pendingWorldTrackingLoss, -1);
         Interlocked.Increment(ref groundHypothesisResetGeneration);
         visualGameplayTracker.Reset();
         gameplayPresentation.Reset();
@@ -6935,47 +6966,118 @@ public partial class MainWindow : Window
 
     private async void ReplayInputPath_Click(object sender, RoutedEventArgs e)
     {
-        if (inputPathReplayCancellation is not null)
-        {
-            inputPathReplayCancellation.Cancel();
-            return;
-        }
+        if (stepMode) { TrackingStep_Click(sender, e); return; }
+        if (inputPathReplayCancellation is not null) { inputPathReplayCancellation.Cancel(); return; }
         if (string.IsNullOrWhiteSpace(InputPathText.Text)) BrowseInputPath_Click(sender, e);
         var path = InputPathText.Text.Trim();
         if (string.IsNullOrEmpty(path)) return;
         if (!int.TryParse(InputPathRepeatsText.Text, out var repeats) || repeats is <= 0 or > 100)
-        {
-            ShowError(new InvalidOperationException("Path repeats must be between 1 and 100."));
-            return;
-        }
-        inputPathReplayCancellation = new CancellationTokenSource();
+        { ShowError(new InvalidOperationException("Path repeats must be between 1 and 100.")); return; }
+        using var cancellation = new CancellationTokenSource();
+        inputPathReplayCancellation = cancellation;
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        replayUiFinished = finished;
         ReplayInputPathButton.Content = "Stop Replay";
         PathRecordingButton.IsEnabled = false;
+        ReplayFullTraceItem.IsEnabled = ReplayFailFastItem.IsEnabled = false;
+        var originalDirectory = activeAtlasDirectory;
+        var originalStore = atlasStateStore;
+        GroundTruthAtlasMosaic? originalAtlas = null;
+        var originalCreatedAt = activeAtlasCreatedAt;
         string? output = null;
         try
         {
             var recording = new RecordedInputPathStore().Load(path);
-            if (recording.Duration * repeats > 86400)
-                throw new InvalidOperationException("Total replay duration exceeds 24 hours.");
-            var store = new RecordedInputPathStore(IOPath.GetDirectoryName(path)!);
+            _ = InputPathPlayback.Poses(recording);
+            if (recording.StartCheckpoint is null) throw new InvalidOperationException("Controlled replay needs a saved start checkpoint.");
+            if (recording.Duration * repeats > 86400) throw new InvalidOperationException("Total replay duration exceeds 24 hours.");
+            await StopReplayCaptureAsync();
+            await FlushActiveAtlasAsync();
+            originalAtlas = gameplayAtlas;
+            var store = new RecordedInputPathStore(System.IO.Path.GetDirectoryName(path)!);
             for (var iteration = 1; iteration <= repeats; iteration++)
-                await gameControls.ReplayPathAsync(recording, iteration,
-                    RestorePathCheckpointCheck.IsChecked == true,
-                    result => output = store.Save(result), inputPathReplayCancellation.Token);
-            SetStatus($"Replay complete. Diagnostics saved: {output}");
+            {
+                output = null;
+                var benchmark = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(originalDirectory)!, "benchmarks", Guid.NewGuid().ToString("N"));
+                inputPathReplayDivergence = null;
+                inputPathDivergenceMonitor.Prepare();
+                var completed = false;
+                try
+                {
+                    await gameControls.ReplayPathAsync(recording, iteration, true,
+                        result => output = store.Save(result), cancellation.Token,
+                        prepare: (restored, ct) => Dispatcher.InvokeAsync(async () => {
+                            if (!restored) await ResetReplayAtlasAsync(System.IO.Path.Combine(benchmark, "settling"), ct, startCapture: false);
+                            else
+                            {
+                                // Never seed visual references from the pre-restore endpoint.
+                                StartVision_Click(this, new RoutedEventArgs());
+                                await WaitForReplayReadyAsync(recording.StartCheckpoint, ct);
+                                await ResetReplayAtlasAsync(System.IO.Path.Combine(benchmark, "run"), ct);
+                                await WaitForReplayReadyAsync(recording.StartCheckpoint, ct);
+                                SetStatus("Replaying recorded path…");
+                            }
+                        }).Task.Unwrap(),
+                        beginEvaluation: BeginReplayEvaluation,
+                        evaluationMode: replayFailFast ? "fail-fast" : "full-trace");
+                    completed = true;
+                }
+                finally
+                {
+                    EndReplayFrameAudit(benchmark);
+                    Directory.CreateDirectory(benchmark);
+                    File.WriteAllText(System.IO.Path.Combine(benchmark, "evaluation.json"), JsonSerializer.Serialize(new {
+                        sourcePath = path, output, iteration, workspace, mode = replayFailFast ? "fail-fast" : "full-trace",
+                        decision = inputPathReplayDivergence ?? inputPathDivergenceMonitor.LastDecision,
+                        completed,
+                        matchedSamples = inputPathDivergenceMonitor.MatchedSampleCount,
+                        evaluatedSamples = inputPathDivergenceMonitor.EvaluatedSampleCount,
+                        maximumErrorPixels = inputPathDivergenceMonitor.MaximumErrorPixels,
+                        cancelled = cancellation.IsCancellationRequested,
+                        status = inputPathReplayDivergence is not null ? "diverged" : !completed ? "incomplete" : inputPathDivergenceMonitor.EvaluatedSampleCount < 12 ? "insufficient-evidence" : "no-sustained-divergence"
+                    }, new JsonSerializerOptions { WriteIndented = true }));
+                    inputPathDivergenceMonitor.Stop();
+                }
+            }
+            SetStatus(inputPathReplayDivergence is null ? $"Replay finished. Evaluation and trace saved: {output}"
+                : $"Replay finished; tracking diverged ({inputPathReplayDivergence.Cause}). Trace: {output}");
         }
-        catch (OperationCanceledException)
-        {
-            SetStatus($"Replay stopped. Diagnostics saved: {output}");
-        }
+        catch (OperationCanceledException) { SetStatus($"Replay stopped. Trace saved: {output}"); }
         catch (Exception error) { ShowError(error); }
         finally
         {
-            inputPathReplayCancellation.Dispose();
-            inputPathReplayCancellation = null;
-            ReplayInputPathButton.Content = "Replay";
-            ReplayInputPathButton.ToolTip = output is null ? "Replay a recorded input path" : $"Replay diagnostics: {output}";
-            PathRecordingButton.IsEnabled = true;
+            try
+            {
+                try
+                {
+                    await StopReplayCaptureAsync();
+                    if (originalAtlas is not null) await FlushActiveAtlasAsync();
+                }
+                finally
+                {
+                    activeAtlasDirectory = originalDirectory;
+                    atlasStateStore = originalStore;
+                    if (originalAtlas is not null)
+                    {
+                        gameplayAtlas = originalAtlas;
+                        activeAtlasCreatedAt = originalCreatedAt;
+                        activeAtlasPersistenceBlocked = false;
+                        liveWorldPipeline = await Task.Run(() => new WindowsLiveWorldPipeline(System.IO.Path.Combine(originalDirectory, "live-world")));
+                        ClearGameplayAtlasRuntime(reopenLiveWorld: false);
+                    }
+                }
+                if (!isClosing && !gameLostCountdownStarted) StartVision_Click(this, new RoutedEventArgs());
+            }
+            catch (Exception error) { ShowError(error); }
+            finally
+            {
+                inputPathReplayCancellation = null;
+                ReplayInputPathButton.Content = "Replay";
+                ReplayInputPathButton.ToolTip = output is null ? "Replay a recorded input path" : $"Replay trace: {output}";
+                PathRecordingButton.IsEnabled = true;
+                ReplayFullTraceItem.IsEnabled = ReplayFailFastItem.IsEnabled = true;
+                finished.TrySetResult();
+            }
         }
     }
 

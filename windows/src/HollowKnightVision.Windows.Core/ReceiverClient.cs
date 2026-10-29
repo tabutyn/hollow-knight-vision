@@ -14,6 +14,8 @@ public sealed class ReceiverClient : IAsyncDisposable
     private StreamWriter? writer;
     private long nextSequence = -1;
     private long nextPointerSequence = -1;
+    private long nextPoseSequence = -1;
+    private long nextControlledSequence = -1;
 
     public ReceiverClient(
         Guid? sessionId = null,
@@ -101,6 +103,24 @@ public sealed class ReceiverClient : IAsyncDisposable
             throw new ArgumentException("Checkpoint command session does not match client.",
                 nameof(command));
         }
+        return SendLineAsync(ReceiverWireCodec.EncodeLine(command), cancellationToken);
+    }
+
+    public Task SendPlayerPoseAsync(ReceiverGroundTruthSample sample, CancellationToken cancellationToken = default)
+    {
+        if (!sample.HeroAvailable || !sample.HasFiniteCoordinates() || string.IsNullOrWhiteSpace(sample.SceneName))
+            throw new ArgumentException("Replay pose must identify a finite player position and scene.", nameof(sample));
+        var sequence = checked((ulong)Interlocked.Increment(ref nextPoseSequence));
+        return SendLineAsync(ReceiverWireCodec.EncodeLine(
+            ReceiverPlayerPoseCommand.Create(SessionId, sequence, sample)), cancellationToken);
+    }
+
+    public Task SendControlledFrameAsync(Guid commandId, ControlledReplayFrame? frame, CancellationToken cancellationToken)
+    {
+        var sequence = checked((ulong)Interlocked.Increment(ref nextControlledSequence));
+        var command = new ReceiverControlledFrameCommand(2, "controlledFrame", SessionId, commandId, sequence,
+            frame is null ? "end" : "advance", frame?.DeltaSeconds ?? 0, frame?.Buttons ?? InputButtons.None,
+            frame is null ? null : ReceiverPlayerPoseCommand.Create(SessionId, sequence, frame.Pose));
         return SendLineAsync(ReceiverWireCodec.EncodeLine(command), cancellationToken);
     }
 

@@ -287,6 +287,7 @@ public sealed class InputPathRecorder
         public required Guid Id { get; init; }
         public required DateTimeOffset CreatedAt { get; init; }
         public required double StartedAt { get; init; }
+        public IReadOnlyDictionary<string, string>? Metadata { get; init; }
         public Guid? SourcePathId { get; init; }
         public int? ReplayIteration { get; init; }
         public RecordedGameCheckpoint? StartCheckpoint { get; init; }
@@ -314,7 +315,7 @@ public sealed class InputPathRecorder
         metadata["groundRelocalization"] = "floorless-background-search-continuity-v1";
         metadata["lowResolutionMotionBridge"] = "tentative-transition-handoff-v14";
         metadata["lowResolutionFrameTrace"] = "64x36-20hz-measured-ground-reliability-v3";
-        metadata["pathPlaybackPreparation"] = "purge-single-restore-settle-repurge-v2";
+        metadata["pathPlaybackPreparation"] = "none";
         this.runtimeMetadata = metadata;
     }
 
@@ -322,7 +323,7 @@ public sealed class InputPathRecorder
 
     public bool Start(double? timestamp = null, DateTimeOffset? createdAt = null,
         Guid? id = null, Guid? sourcePathId = null, int? replayIteration = null,
-        RecordedGameCheckpoint? startCheckpoint = null)
+        RecordedGameCheckpoint? startCheckpoint = null, IReadOnlyDictionary<string, string>? metadata = null)
     {
         lock (gate)
         {
@@ -331,7 +332,7 @@ public sealed class InputPathRecorder
             {
                 Id = id ?? Guid.NewGuid(), CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
                 StartedAt = timestamp ?? MonotonicSeconds(), SourcePathId = sourcePathId,
-                ReplayIteration = replayIteration, StartCheckpoint = startCheckpoint
+                ReplayIteration = replayIteration, StartCheckpoint = startCheckpoint, Metadata = metadata
             };
             return true;
         }
@@ -504,7 +505,8 @@ public sealed class InputPathRecorder
                 coarseMotionSamples: current.CoarseMotionSamples.ToArray(),
                 lowResolutionFrames: current.LowResolutionFrames.ToArray(),
                 loopClosures: current.LoopClosures.ToArray(),
-                runtimeMetadata: new Dictionary<string, string>(runtimeMetadata));
+                runtimeMetadata: runtimeMetadata.Concat(current.Metadata ?? new Dictionary<string, string>())
+                    .GroupBy(pair => pair.Key).ToDictionary(group => group.Key, group => group.Last().Value));
         }
     }
 

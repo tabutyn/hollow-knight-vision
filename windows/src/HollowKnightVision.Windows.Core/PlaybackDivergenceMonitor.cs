@@ -225,6 +225,12 @@ public sealed class PlaybackDivergenceMonitor
     private bool triggered;
     private PlaybackDivergenceDecision? lastDecision;
 
+    private int matchedSampleCount, evaluatedSampleCount;
+    private double maximumErrorPixels;
+    public int MatchedSampleCount { get { lock (sync) return matchedSampleCount; } }
+    public int EvaluatedSampleCount { get { lock (sync) return evaluatedSampleCount; } }
+    public double MaximumErrorPixels { get { lock (sync) return maximumErrorPixels; } }
+
     public bool IsAcceptingSamples
     {
         get
@@ -249,6 +255,7 @@ public sealed class PlaybackDivergenceMonitor
             ClearPairs();
             accepting = true;
             evaluating = false;
+            matchedSampleCount = evaluatedSampleCount = 0; maximumErrorPixels = 0;
             startedAt = 0;
             baselineOffset = null;
             lastSceneName = null;
@@ -268,6 +275,7 @@ public sealed class PlaybackDivergenceMonitor
             connector.Reset();
             ClearPairs();
             evaluating = true;
+            matchedSampleCount = evaluatedSampleCount = 0; maximumErrorPixels = 0;
             startedAt = timestamp;
             baselineOffset = null;
             lastSceneName = null;
@@ -287,6 +295,7 @@ public sealed class PlaybackDivergenceMonitor
             ClearPairs();
             accepting = false;
             evaluating = false;
+            matchedSampleCount = evaluatedSampleCount = 0; maximumErrorPixels = 0;
             baselineOffset = null;
             lastSceneName = null;
             consecutiveDivergentSamples = 0;
@@ -345,7 +354,8 @@ public sealed class PlaybackDivergenceMonitor
         ConnectedGroundTruthCameraSample groundTruth,
         VisionSample visual)
     {
-        if (!evaluating || triggered) return null;
+        if (!evaluating) return null;
+        matchedSampleCount++;
         watchdogTruthPosition = groundTruth.CameraPosition;
         watchdogObservedAt = Math.Max(groundTruth.ObservedAt, visual.ObservedAt);
         watchdogSceneName = groundTruth.SceneName;
@@ -377,6 +387,9 @@ public sealed class PlaybackDivergenceMonitor
         var error = Math.Sqrt(
             Math.Pow(visual.CameraPosition.X - offset.X - groundTruth.CameraPosition.X, 2)
             + Math.Pow(visual.CameraPosition.Y - offset.Y - groundTruth.CameraPosition.Y, 2));
+        evaluatedSampleCount++;
+        maximumErrorPixels = Math.Max(maximumErrorPixels, error);
+        if (triggered) return null;
         consecutiveDivergentSamples = error > ThresholdPixels
             ? consecutiveDivergentSamples + 1
             : 0;

@@ -128,6 +128,26 @@ internal static class Program
         TextWriter? standardError = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
+        if (arguments is ["--tracking-step-verify-prefix", var prefixDirectory, var prefixSource])
+        {
+            try
+            {
+                var passed = new TrackingStepStore(prefixDirectory).VerifyAccepted(prefixSource,
+                    message => (standardOutput ?? Console.Out).WriteLine(message));
+                return Task.FromResult(passed ? 0 : 1);
+            }
+            catch (Exception error) { (standardError ?? Console.Error).WriteLine(error.Message); return Task.FromResult(1); }
+        }
+        if (arguments is ["--tracking-step-retry", var stepDirectory, var sourcePath])
+        {
+            try
+            {
+                var result = new TrackingStepStore(stepDirectory).RetryFailed(sourcePath);
+                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(result, WorldReplayJsonOptions));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) { (standardError ?? Console.Error).WriteLine(error.Message); return Task.FromResult(1); }
+        }
         if (!arguments.Any(argument =>
                 argument.StartsWith("--world-replay-", StringComparison.Ordinal)))
         {

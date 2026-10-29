@@ -92,6 +92,7 @@ internal static class BoundedBackgroundSearchTests
         catch (InvalidOperationException ex) when (ex.Message == "fixture") { failed = true; }
         Check(failed);
         Check(worker.SubmitPrepared(() => () => 19));
+        worker.WaitForCompletion();
         var value = 0;
         Check(SpinWait.SpinUntil(() => worker.TryTake(out value), TimeSpan.FromSeconds(2)));
         Check(value == 19);
