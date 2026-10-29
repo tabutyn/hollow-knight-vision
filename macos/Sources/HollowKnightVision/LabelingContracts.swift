@@ -82,7 +82,10 @@ enum LabelingContractEvaluator {
         catalog: LabelingContractCatalog = .bundled,
         exemptions: Set<String> = []
     ) -> [LabelingContractEvaluation] {
-        let counts = positiveCounts(example.manifest.annotations)
+        let counts = positiveCounts(example.manifest.annotations.filter {
+            LabelingHUDStencilPolicy.isLabelable($0.classIdentifier,
+                in: LabelingContext(storageIdentifier: example.manifest.contextIdentifier))
+        })
         var result = [LabelingContractEvaluation]()
         let context = LabelingContext(storageIdentifier: example.manifest.contextIdentifier)
         let setContract = catalog.setContract(for: example.manifest.contextIdentifier)
@@ -100,7 +103,7 @@ enum LabelingContractEvaluator {
         }
 
         if let setContract, setContract.requiresAllContextObjects, let context {
-            for definition in context.labels {
+            for definition in context.labels where LabelingHUDStencilPolicy.isLabelable(definition.id, in: context) {
                 let classIdentifier = LabelingClassIdentity.canonicalIdentifier(definition.id)
                 let override = setContract.occurrenceOverrides?[classIdentifier]
                 let minimum = override?.minimum ?? 1

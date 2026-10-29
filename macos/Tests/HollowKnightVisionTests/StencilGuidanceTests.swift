@@ -42,7 +42,7 @@ final class StencilGuidanceTests: XCTestCase {
         let boxes = LabelingContext.game.labels.map { box($0.id) }
         XCTAssertEqual(StencilLabelSelectionPolicy.availableLabels(
             context: .game, rectangles: boxes, mode: .normal, hidesCompleted: true
-        ), LabelingContext.game.labels)
+        ), LabelingContext.game.labels.filter { !LabelingHUDStencilPolicy.classIdentifiers.contains($0.id) })
         XCTAssertFalse(StencilLabelSelectionPolicy.availableLabels(
             context: .options, rectangles: [], mode: .normal, hidesCompleted: true
         ).contains { $0.id == LabelingClassIdentity.mods })
@@ -59,6 +59,19 @@ final class StencilGuidanceTests: XCTestCase {
             .contains { $0.id == "select-profile.clear-save" })
         XCTAssertEqual(StencilInitializationPolicy.requiredContexts.prefix(3), [.mainTitle, .selectProfile, .gameplayHUD])
         XCTAssertEqual(StencilInitializationPolicy.requiredContexts.last, .clearSave)
+    }
+
+    @MainActor func testGameplayInstructionsRemainVisibleAndIgnoreRetiredHudSelection() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = StencilInitializationCoordinator(store: LabelingExampleStore(rootURL: root))
+        coordinator.refresh(mode: .normal)
+        let actual = coordinator.guidance(labelingContext: .game, selectedClassIdentifier: "game.health")
+        XCTAssertEqual(actual, coordinator.text("gameplayLabel", ["object": coordinator.text("Hollow Knight")]))
+        XCTAssertFalse(StencilLabelSelectionPolicy.availableLabels(context: .game, rectangles: [], mode: .normal,
+            hidesCompleted: false).contains { LabelingHUDStencilPolicy.classIdentifiers.contains($0.id) })
+        XCTAssertTrue(StencilLabelSelectionPolicy.availableLabels(context: .gameplayHUD, rectangles: [], mode: .normal,
+            hidesCompleted: false).contains { $0.id == "game.health" })
     }
 
     func testDeferredClearSaveDisappearsAfterOnePositiveBox() {
@@ -85,7 +98,7 @@ final class StencilGuidanceTests: XCTestCase {
         let keys = ["Gameplay", "Label", "Model", "Add", "Modify", "Negative", "Save State", "New", "Delete", "Load",
             "Free Fly", "Current", "Fit", "Object Detection", "Stencil Detection", "Left Select Decoration",
             "Right Select Decoration", "Summary", "Objects", "Screenshots", "Train", "Stop Training", "Recent Frames",
-            "profileClearSave", "modelLabelGameplay", "modelOpen", "modelReview", "modelTrain", "modelTraining", "modelReady",
+            "gameplayLabel", "profileClearSave", "modelLabelGameplay", "modelOpen", "modelReview", "modelTrain", "modelTraining", "modelReady",
             "profilePhaseDone", "navigateHUD", "drawHealthFirst", "drawHealthSecond", "phase1", "phase2", "phase3",
             "stencilLocked", "modelLocked", "resumeStencil", "deleteScreenshot", "runtimeHelp", "Max Health"]
         for language in HollowKnightMenuLanguage.allCases {

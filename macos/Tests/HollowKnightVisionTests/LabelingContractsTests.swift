@@ -3,6 +3,18 @@ import XCTest
 @testable import HollowKnightVision
 
 final class LabelingContractsTests: XCTestCase {
+    func testGameplayContractsIgnoreRetiredHUDWithoutWeakeningHUDStencilRules() {
+        for labels in [["game.playable-knight"], ["game.playable-knight", "game.health", "game.health", "game.mana", "game.mana", "game.geo", "game.geo"]] {
+            let rules = LabelingContractEvaluator.evaluate(savedExample(context: .game, classes: labels))
+            XCTAssertFalse(rules.contains(where: \.isBreach))
+            XCTAssertFalse(rules.contains { rule in LabelingHUDStencilPolicy.classIdentifiers.contains { rule.id.hasSuffix($0) } })
+        }
+        XCTAssertTrue(LabelingContractEvaluator.evaluate(savedExample(context: .gameplayHUD,
+            classes: ["game.health"])).contains(where: \.isBreach))
+        XCTAssertFalse(LabelingContractEvaluator.evaluate(savedExample(context: .gameplayHUD,
+            classes: ["game.health", "game.health"])).contains(where: \.isBreach))
+    }
+
     func testBundledCatalogDefinesOccurrencePairsAndMultipleSetMemberships() {
         let catalog = LabelingContractCatalog.bundled
 

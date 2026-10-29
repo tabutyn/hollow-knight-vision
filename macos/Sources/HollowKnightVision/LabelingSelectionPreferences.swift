@@ -15,19 +15,27 @@ struct LabelingSelectionPreferences {
             .flatMap(LabelingContext.init(storageIdentifier:)) ?? .game
         let savedClassIdentifier = defaults.string(forKey: Self.classIdentifierKey).map(
             LabelingClassIdentity.canonicalIdentifier
-        )
+        ).flatMap { LabelingHUDStencilPolicy.isLabelable($0, in: persistedContext) ? $0 : nil }
+        func labels(_ context: LabelingContext) -> [LabelingClassDefinition] {
+            (context.labels + UserObjectCatalogStore.definitions(for: context)).filter {
+                LabelingHUDStencilPolicy.isLabelable($0.id, in: context)
+            }
+        }
+        func containing(_ identifier: String) -> LabelingContext? {
+            LabelingContext.selectableCases.first { context in labels(context).contains { $0.id == identifier } }
+        }
         let savedContext = !LabelingContext.selectableCases.contains(persistedContext)
-            ? savedClassIdentifier.flatMap(LabelingContext.containing(classIdentifier:)) ?? .game
+            ? savedClassIdentifier.flatMap(containing) ?? .game
             : persistedContext
         let context = savedClassIdentifier.flatMap { identifier -> LabelingContext? in
-            if savedContext.labels.contains(where: { $0.id == identifier }) {
+            if labels(savedContext).contains(where: { $0.id == identifier }) {
                 return savedContext
             }
-            return LabelingContext.containing(classIdentifier: identifier)
+            return containing(identifier)
         } ?? savedContext
         let classIdentifier = savedClassIdentifier.flatMap { savedIdentifier in
-            context.labels.first(where: { $0.id == savedIdentifier })?.id
-        } ?? context.labels[0].id
+            labels(context).first(where: { $0.id == savedIdentifier })?.id
+        } ?? labels(context).first?.id ?? ""
         return (context, classIdentifier)
     }
 

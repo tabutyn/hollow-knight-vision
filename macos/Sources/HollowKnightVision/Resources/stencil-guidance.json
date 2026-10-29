@@ -296,7 +296,8 @@
     "modelReview": "Open Model, then Screenshots. Fix or exempt the {count} screenshots with labeling errors before training.",
     "modelTrain": "Click Train to build your model from the labeled gameplay screenshots.",
     "modelTraining": "Training your model. Wait for training to finish; progress appears above.",
-    "modelReady": "Model trained. Open Settings and enable Object Detection to test it during gameplay."
+    "modelReady": "Model trained. Open Settings and enable Object Detection to test it during gameplay.",
+    "gameplayLabel": "Draw a box around {object}. Label the other visible gameplay objects, then press L to return."
   },
   "es": {
     "nativeName": "Español",
@@ -595,7 +596,8 @@
     "modelReview": "Abre Modelo y luego Capturas. Corrige o exime las {count} capturas con errores de etiquetado antes de entrenar.",
     "modelTrain": "Haz clic en Entrenar para crear tu modelo con las capturas de juego etiquetadas.",
     "modelTraining": "Entrenando tu modelo. Espera a que termine; el progreso aparece arriba.",
-    "modelReady": "Modelo entrenado. Abre Ajustes y activa Detección de objetos para probarlo durante la partida."
+    "modelReady": "Modelo entrenado. Abre Ajustes y activa Detección de objetos para probarlo durante la partida.",
+    "gameplayLabel": "Dibuja un cuadro alrededor de {object}. Etiqueta los demás objetos visibles del juego y pulsa L para volver."
   },
   "fr": {
     "nativeName": "Français",
@@ -894,7 +896,8 @@
     "modelReview": "Ouvrez Modèle, puis Captures. Corrigez ou exemptez les {count} captures comportant des erreurs avant l’entraînement.",
     "modelTrain": "Cliquez sur Entraîner pour créer votre modèle à partir des captures de jeu étiquetées.",
     "modelTraining": "Entraînement du modèle en cours. Attendez la fin ; la progression apparaît au-dessus.",
-    "modelReady": "Modèle entraîné. Ouvrez Paramètres et activez Détection d’objets pour le tester en jeu."
+    "modelReady": "Modèle entraîné. Ouvrez Paramètres et activez Détection d’objets pour le tester en jeu.",
+    "gameplayLabel": "Tracez un cadre autour de {object}. Étiquetez les autres objets visibles du jeu, puis appuyez sur L pour revenir."
   },
   "it": {
     "nativeName": "Italiano",
@@ -1193,7 +1196,8 @@
     "modelReview": "Apri Modello, poi Schermate. Correggi o esenta le {count} schermate con errori di etichettatura prima dell’addestramento.",
     "modelTrain": "Fai clic su Addestra per creare il modello dalle schermate di gioco etichettate.",
     "modelTraining": "Addestramento del modello in corso. Attendi il completamento; l’avanzamento appare sopra.",
-    "modelReady": "Modello addestrato. Apri Impostazioni e attiva Rilevamento oggetti per provarlo durante il gioco."
+    "modelReady": "Modello addestrato. Apri Impostazioni e attiva Rilevamento oggetti per provarlo durante il gioco.",
+    "gameplayLabel": "Disegna un riquadro attorno a {object}. Etichetta gli altri oggetti di gioco visibili, poi premi L per tornare."
   },
   "de": {
     "nativeName": "Deutsch",
@@ -1492,7 +1496,8 @@
     "modelReview": "Öffne Modell und dann Bildschirmaufnahmen. Korrigiere die {count} Aufnahmen mit Markierungsfehlern oder erteile Ausnahmen, bevor du trainierst.",
     "modelTrain": "Klicke auf Trainieren, um dein Modell aus den markierten Spielaufnahmen zu erstellen.",
     "modelTraining": "Dein Modell wird trainiert. Warte auf den Abschluss; der Fortschritt wird oben angezeigt.",
-    "modelReady": "Modell trainiert. Öffne Einstellungen und aktiviere Objekterkennung, um es im Spiel zu testen."
+    "modelReady": "Modell trainiert. Öffne Einstellungen und aktiviere Objekterkennung, um es im Spiel zu testen.",
+    "gameplayLabel": "Zeichne einen Rahmen um {object}. Markiere die anderen sichtbaren Spielobjekte und drücke dann L, um zurückzukehren."
   },
   "pt-BR": {
     "nativeName": "Português (Brasil)",
@@ -1791,7 +1796,8 @@
     "modelReview": "Abra Modelo e depois Capturas. Corrija ou isente as {count} capturas com erros de rotulagem antes de treinar.",
     "modelTrain": "Clique em Treinar para criar seu modelo com as capturas de jogo rotuladas.",
     "modelTraining": "Treinando seu modelo. Aguarde a conclusão; o progresso aparece acima.",
-    "modelReady": "Modelo treinado. Abra Configurações e ative Detecção de objetos para testá-lo durante o jogo."
+    "modelReady": "Modelo treinado. Abra Configurações e ative Detecção de objetos para testá-lo durante o jogo.",
+    "gameplayLabel": "Desenhe uma caixa ao redor de {object}. Rotule os outros objetos visíveis do jogo e pressione L para voltar."
   },
   "ru": {
     "nativeName": "Русский",
@@ -2090,7 +2096,8 @@
     "modelReview": "Откройте «Модель», затем «Снимки экрана». До обучения исправьте ошибки разметки на {count} снимках или добавьте исключения.",
     "modelTrain": "Нажмите «Обучить», чтобы создать модель по размеченным игровым снимкам.",
     "modelTraining": "Модель обучается. Дождитесь завершения; ход обучения показан выше.",
-    "modelReady": "Модель обучена. Откройте настройки и включите обнаружение объектов для проверки во время игры."
+    "modelReady": "Модель обучена. Откройте настройки и включите обнаружение объектов для проверки во время игры.",
+    "gameplayLabel": "Обведите рамкой {object}. Разметьте остальные видимые игровые объекты и нажмите L, чтобы вернуться."
   },
   "ja": {
     "nativeName": "日本語",
@@ -2389,7 +2396,8 @@
     "modelReview": "「モデル」から「スクリーンショット」を開き、学習前にラベルの誤りがある{count}枚を修正するか、例外に指定してください。",
     "modelTrain": "「学習」をクリックして、ラベル付けしたゲーム画像からモデルを作成してください。",
     "modelTraining": "モデルを学習中です。完了までお待ちください。進行状況は上に表示されます。",
-    "modelReady": "モデルの学習が完了しました。「設定」を開き、「オブジェクト検出」を有効にしてゲーム中に試してください。"
+    "modelReady": "モデルの学習が完了しました。「設定」を開き、「オブジェクト検出」を有効にしてゲーム中に試してください。",
+    "gameplayLabel": "{object}を枠で囲んでください。他の見えているゲームオブジェクトもラベル付けし、Lを押して戻ってください。"
   },
   "ko": {
     "nativeName": "한국어",
@@ -2688,7 +2696,8 @@
     "modelReview": "모델에서 스크린샷을 여세요. 학습 전에 라벨 오류가 있는 스크린샷 {count}개를 수정하거나 예외로 지정하세요.",
     "modelTrain": "학습을 클릭해 라벨을 지정한 게임 화면으로 모델을 만드세요.",
     "modelTraining": "모델을 학습하는 중입니다. 완료될 때까지 기다리세요. 진행 상황은 위에 표시됩니다.",
-    "modelReady": "모델 학습이 완료되었습니다. 설정에서 오브젝트 감지를 켜고 게임 중에 테스트하세요."
+    "modelReady": "모델 학습이 완료되었습니다. 설정에서 오브젝트 감지를 켜고 게임 중에 테스트하세요.",
+    "gameplayLabel": "{object} 주위에 상자를 그리세요. 다른 보이는 게임 오브젝트에도 라벨을 지정한 뒤 L을 눌러 돌아가세요."
   },
   "zh-Hans": {
     "nativeName": "简体中文",
@@ -2987,7 +2996,8 @@
     "modelReview": "打开模型，然后打开截图。在训练前修正{count}张有标注错误的截图，或将相关错误设为例外。",
     "modelTrain": "点击训练，使用已标注的游戏截图构建模型。",
     "modelTraining": "正在训练模型。请等待训练完成；进度显示在上方。",
-    "modelReady": "模型训练完成。打开设置并启用对象检测，在游戏中测试。"
+    "modelReady": "模型训练完成。打开设置并启用对象检测，在游戏中测试。",
+    "gameplayLabel": "在{object}周围画一个框。标注其他可见的游戏对象，然后按L返回。"
   },
   "zh-Hant": {
     "nativeName": "繁體中文",
@@ -3286,6 +3296,7 @@
     "modelReview": "開啟模型，然後開啟截圖。在訓練前修正{count}張有標註錯誤的截圖，或將相關錯誤設為例外。",
     "modelTrain": "點擊訓練，使用已標註的遊戲截圖建立模型。",
     "modelTraining": "正在訓練模型。請等待訓練完成；進度顯示在上方。",
-    "modelReady": "模型訓練完成。開啟設定並啟用物件偵測，在遊戲中測試。"
+    "modelReady": "模型訓練完成。開啟設定並啟用物件偵測，在遊戲中測試。",
+    "gameplayLabel": "在{object}周圍畫一個框。標註其他可見的遊戲物件，然後按L返回。"
   }
 }

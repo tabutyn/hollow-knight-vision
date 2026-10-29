@@ -8,7 +8,10 @@ enum LabelingFrameOpeningPolicy {
         annotationClassIdentifiers: [String],
         preferredClassIdentifier: String? = nil
     ) -> String {
-        let validClassIdentifiers = Set(context.labels.map(\.id))
+        let definitions = (context.labels + UserObjectCatalogStore.definitions(for: context)).filter {
+            LabelingHUDStencilPolicy.isLabelable($0.id, in: context)
+        }
+        let validClassIdentifiers = Set(definitions.map(\.id))
         if let preferredClassIdentifier,
            validClassIdentifiers.contains(preferredClassIdentifier) {
             return preferredClassIdentifier
@@ -18,7 +21,7 @@ enum LabelingFrameOpeningPolicy {
         }) {
             return annotatedClassIdentifier
         }
-        return context.labels[0].id
+        return definitions.first?.id ?? ""
     }
 
     static func stateForOpening(

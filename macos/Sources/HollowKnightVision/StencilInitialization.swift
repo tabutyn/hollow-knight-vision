@@ -238,6 +238,11 @@ final class StencilInitializationCoordinator: ObservableObject {
     func guidance(labelingContext: LabelingContext?, selectedClassIdentifier: String?,
                   navigationContext: LabelingContext? = nil) -> String? {
         if let issue { return issue }
+        if labelingContext == .game {
+            let identifier = LabelingFrameOpeningPolicy.classIdentifierForOpening(
+                context: .game, annotationClassIdentifiers: [], preferredClassIdentifier: selectedClassIdentifier)
+            return text("gameplayLabel", ["object": text(LabelingVisualIdentity.displayName(for: identifier))])
+        }
         let words = StencilGuidanceText(language: language)
         if let context = labelingContext,
            contexts.contains(context) {

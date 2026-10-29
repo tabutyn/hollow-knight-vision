@@ -11,7 +11,8 @@ enum StencilLabelSelectionPolicy {
         var seen = Set<String>()
         return (context.labels + custom).filter { definition in
             let identifier = LabelingClassIdentity.canonicalIdentifier(definition.id)
-            guard seen.insert(identifier).inserted else { return false }
+            guard seen.insert(identifier).inserted,
+                  LabelingHUDStencilPolicy.isLabelable(identifier, in: context) else { return false }
             if mode == .normal && identifier == LabelingClassIdentity.mods { return false }
             // Clear Save is absent on fresh profiles and never blocks the first campaign.
             if hidesCompleted && identifier == StencilInitializationPolicy.deferredProfileClass {

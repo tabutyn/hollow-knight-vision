@@ -91,11 +91,11 @@ enum WorkspaceExitShortcutPolicy {
         eventType: NSEvent.EventType,
         keyCode: UInt16,
         modifierFlags: NSEvent.ModifierFlags,
-        isRepeat: Bool
+        isRepeat: Bool, isEditingText: Bool = false
     ) -> Bool {
         workspace.supportsGameplayExitShortcut
             && eventType == .keyDown
-            && keyCode == 7 // X
+            && (keyCode == 7 || (workspace == .label && keyCode == 37 && !isEditingText)) // X / L
             && !isRepeat
             && modifierFlags.intersection([.command, .control, .option]).isEmpty
     }
@@ -138,7 +138,8 @@ private struct WorkspaceExitKeyMonitor: NSViewRepresentable {
                     eventType: event.type,
                     keyCode: event.keyCode,
                     modifierFlags: event.modifierFlags,
-                    isRepeat: event.isARepeat
+                    isRepeat: event.isARepeat,
+                    isEditingText: NSApp.keyWindow?.firstResponder is NSTextView
                 ) else { return event }
                 onExit()
                 return nil
@@ -462,7 +463,7 @@ struct DashboardView: View {
         .frame(minWidth: 720, minHeight: 560)
         .background {
             WorkspaceExitKeyMonitor(
-                workspace: workspace,
+                workspace: showingSettings ? .gameplay : workspace,
                 onExit: {
                     recentFramesPresentation = nil
                     selectWorkspace(.gameplay)
