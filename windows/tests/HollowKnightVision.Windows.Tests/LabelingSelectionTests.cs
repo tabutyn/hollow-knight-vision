@@ -37,15 +37,15 @@ internal static class LabelingSelectionTests
             [LabelingSelectionPreferences.ClassIdentifierKey] = "main-title.select-decoration" }));
         Check(fixture.Preferences.Load() == new LabelingSelection("main-title", "shared.select-decoration"));
         Check(LabelingSelectionPreferences.Resolve("options", "main-title.select-decoration") == new LabelingSelection("options", "shared.select-decoration"));
-        Check(LabelingSelectionPreferences.Resolve("game", "game.health") == new LabelingSelection("game", "game.health"));
+        Check(LabelingSelectionPreferences.Resolve("game", "game.health") == new LabelingSelection("game", "game.playable-knight"));
         Check(LabelingSelectionPreferences.Resolve("gameplay-hud", "game.health") == new LabelingSelection("gameplay-hud", "game.health"));
     }
 
     public static void TestSelectionMovesToContainingSet()
     {
         using var fixture = new Fixture(); var preferences = fixture.Preferences;
-        preferences.SaveContext("main-title"); preferences.SaveClassIdentifier("game.mana");
-        Check(fixture.Preferences.Load() == new LabelingSelection("game", "game.mana"));
+        preferences.SaveContext("main-title"); preferences.SaveClassIdentifier("game.playable-knight");
+        Check(fixture.Preferences.Load() == new LabelingSelection("game", "game.playable-knight"));
         Check(LabelingSelectionPreferences.Resolve("main-title", "game.health") == new LabelingSelection("gameplay-hud", "game.health"));
         Check(LabelingSelectionPreferences.Resolve("world", "enemies.crawlid") == new LabelingSelection("game", "enemies.crawlid"));
         Check(LabelingSelectionPreferences.Resolve("shared", "main-title.options") == new LabelingSelection("main-title", "shared.options"));
@@ -59,7 +59,7 @@ internal static class LabelingSelectionTests
         Check(LabelingSelectionPreferences.Resolve("options", "unknown").ClassIdentifier == LabelingFrameOpeningPolicy.ContextClasses("options").First());
         preferences.Save("main-title", ""); Check(preferences.Load().ContextIdentifier == "main-title");
         File.WriteAllText(fixture.PreferencesPath, "not-json"); Check(preferences.Load().ContextIdentifier == "game");
-        preferences.Save("game", "game.mana"); Check(preferences.Load().ClassIdentifier == "game.mana");
+        preferences.Save("game", "game.playable-knight"); Check(preferences.Load().ClassIdentifier == "game.playable-knight");
         var blocked = Path.Combine(fixture.Root, "blocked.json"); Directory.CreateDirectory(blocked);
         File.WriteAllText(Path.Combine(blocked, "sentinel.txt"), "preserve");
         try { new LabelingSelectionPreferences(blocked).Save("game", "game.mana"); throw new Exception("Expected blocked atomic commit."); }

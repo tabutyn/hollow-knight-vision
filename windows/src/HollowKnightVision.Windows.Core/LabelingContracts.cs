@@ -65,7 +65,8 @@ public static class LabelingContractEvaluator
         LabelingContractCatalog? catalog = null, IReadOnlySet<string>? exemptions = null)
     {
         catalog ??= LabelingContractCatalog.Bundled;
-        var counts = PositiveCounts(example.Manifest.Annotations);
+        var counts = PositiveCounts(example.Manifest.Annotations.Where(annotation =>
+            LabelingHudStencilPolicy.IsLabelable(example.Manifest.ContextIdentifier, annotation.ClassIdentifier)));
         var result = new List<LabelingContractEvaluation>();
         var context = LabelingContractCatalog.Contexts.FirstOrDefault(item => item.Identifier == example.Manifest.ContextIdentifier);
         var set = catalog.SetContract(example.Manifest.ContextIdentifier);
@@ -73,7 +74,7 @@ public static class LabelingContractEvaluator
         void Add(string id, string title, bool satisfied) => result.Add(new(id, title, satisfied, exemptions?.Contains(id) == true));
         if (example.Manifest.Annotations.Count == 0) Add("screenshot.has-label", "Screenshot has at least one label", false);
         if (set?.RequiresAllContextObjects == true && context is not null)
-            foreach (var label in context.Labels)
+            foreach (var label in context.Labels.Where(label => LabelingHudStencilPolicy.IsLabelable(context.Identifier, label.Identifier)))
             {
                 var id = Canonical(label.Identifier); var bounds = set.OccurrenceOverrides?.GetValueOrDefault(id);
                 var minimum = bounds?.Minimum ?? 1; var maximum = bounds?.Maximum ?? RequiredMaximum(id, catalog);

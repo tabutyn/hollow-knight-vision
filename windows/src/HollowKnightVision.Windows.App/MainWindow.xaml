@@ -126,10 +126,10 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <ComboBox x:Name="ContextCombo" Grid.Column="0" Height="30" VerticalContentAlignment="Center"
-                                  AutomationProperties.Name="Context" SelectionChanged="ContextCombo_SelectionChanged"/>
+                                  AutomationProperties.Name="Context" PreviewKeyDown="LabelSelector_PreviewKeyDown" SelectionChanged="ContextCombo_SelectionChanged"/>
                         <ComboBox x:Name="ClassCombo" Grid.Column="1" Margin="4,0,0,0" Height="30" IsEditable="False"
                                   VerticalContentAlignment="Center" AutomationProperties.Name="Object"
-                                  SelectionChanged="ClassCombo_SelectionChanged">
+                                  PreviewKeyDown="LabelSelector_PreviewKeyDown" SelectionChanged="ClassCombo_SelectionChanged">
                             <ComboBox.ItemTemplate><DataTemplate>
                                 <TextBlock Text="{Binding Name}" Foreground="#202020" TextTrimming="CharacterEllipsis"/>
                             </DataTemplate></ComboBox.ItemTemplate>

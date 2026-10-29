@@ -37,7 +37,7 @@ internal static class ScreenshotReviewTests
 
     public static void TestExemptionsAndTraining()
     {
-        using var fixture = new Fixture(); var good = fixture.Save(ValidBoxes); var bad = fixture.Save(Box("game.playable-knight"));
+        using var fixture = new Fixture(); var good = fixture.Save(ValidBoxes); var bad = fixture.Save(Box("game.playable-knight"), Box("game.playable-knight"), Box("world.sign"), Box("world.sign"));
         var session = new LabelingScreenshotReviewSession(fixture.Store); session.Reload();
         Check(session.BreachCount == 1 && !session.CanTrainModel() && !session.CanTrainSelectedClass("game.playable-knight"));
         Check(session.Outline(good.Id) == LabelingScreenshotOutline.Selected && session.Outline(bad.Id) == LabelingScreenshotOutline.Breach);
@@ -64,7 +64,7 @@ internal static class ScreenshotReviewTests
 
     public static void TestFailedAndStaleExemptionWrites()
     {
-        using var fixture = new Fixture(); var example = fixture.Save(Box("game.playable-knight"));
+        using var fixture = new Fixture(); var example = fixture.Save(Box("game.playable-knight"), Box("game.playable-knight"), Box("world.sign"), Box("world.sign"));
         var session = new LabelingScreenshotReviewSession(fixture.Store); session.Reload();
         var rule = session.Evaluations(example.Id).First(evaluation => evaluation.IsBreach).Id;
         var blocked = Path.Combine(example.DirectoryPath, LabelingContractExemptionStore.Filename); Directory.CreateDirectory(blocked);

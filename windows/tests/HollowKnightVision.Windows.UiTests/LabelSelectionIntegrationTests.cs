@@ -5,6 +5,8 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 using HollowKnightVision.Windows.Core;
+using HollowKnightVision.Windows.App;
+using System.Windows.Input;
 
 internal static class LabelSelectionIntegrationTests
 {
@@ -13,6 +15,7 @@ internal static class LabelSelectionIntegrationTests
         TestProgrammaticSelectors();
         TestAutosaveRefresh();
         TestFailedContextRead();
+        TestExitShortcutBeforeTypeAhead();
         Console.WriteLine("PASS WPF label selector transactions, autosave selection and failed-load recovery");
     }
 
@@ -72,6 +75,32 @@ internal static class LabelSelectionIntegrationTests
         context.SelectedItem = "game"; objects.SelectedItem = "shared.video"; Pump();
         Check(resets == 1 && selectedContext == "game" && reclassifications == 1 && selectedObject == "shared.video",
             "Programmatic loading suppressed a subsequent user selection.");
+    });
+
+    private static void TestExitShortcutBeforeTypeAhead() => WithControls((context, objects, _, _) =>
+    {
+        foreach (var selector in new[] { context, objects })
+        {
+            selector.ItemsSource = new[] { "Knight", "Lifeblood Cocoon" }; selector.SelectedIndex = 0;
+            var exits = 0;
+            selector.PreviewKeyDown += (_, e) =>
+            {
+                if (LabelSelectorShortcut.TryExit(selector, e.Key, e.IsRepeat, Keyboard.Modifiers, () => exits++)) e.Handled = true;
+            };
+            selector.IsDropDownOpen = true; Pump();
+            var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(selector), 0, Key.L)
+                { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+            selector.RaiseEvent(key); Pump();
+            Check(key.Handled && exits == 1 && selector.SelectedIndex == 0 && !selector.IsDropDownOpen,
+                "Label exit was lost to dropdown type-ahead or left its popup open.");
+            Check(LabelSelectorShortcut.TryExit(selector, Key.L, true, ModifierKeys.None, () => exits++) && exits == 1,
+                "Held L repeated the exit action.");
+            Check(!LabelSelectorShortcut.TryExit(selector, Key.L, false, ModifierKeys.Control, () => exits++) && exits == 1,
+                "Modified key was consumed.");
+            selector.IsEditable = true;
+            Check(!LabelSelectorShortcut.TryExit(selector, Key.L, false, ModifierKeys.None, () => exits++) && exits == 1,
+                "Editable text input lost its L key.");
+        }
     });
 
     private sealed record Example(Guid Id, int Revision);

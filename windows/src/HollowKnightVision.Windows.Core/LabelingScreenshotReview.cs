@@ -50,7 +50,8 @@ public sealed class LabelingScreenshotReviewSession(LabelingExampleStore store)
         : exemptions.GetValueOrDefault(identifier)?.Count > 0 ? LabelingScreenshotOutline.Exempt
         : SelectedIdentifier == identifier ? LabelingScreenshotOutline.Selected : LabelingScreenshotOutline.None;
 
-    public bool HasGameplayLabels => Examples.Any(example => example.Manifest.Annotations.Any(annotation => !annotation.IsHardNegative));
+    public bool HasGameplayLabels => Examples.Any(example => example.Manifest.Annotations.Any(annotation => !annotation.IsHardNegative
+        && LabelingHudStencilPolicy.IsLabelable("game", annotation.ClassIdentifier)));
     public bool CanTrainModel(bool training = false) => !training && BreachCount == 0 && HasGameplayLabels;
 
     public bool CanTrainSelectedClass(string identifier, bool training = false)

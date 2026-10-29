@@ -73,6 +73,20 @@ public partial class MainWindow
             OpsRandomize_Click(this, new RoutedEventArgs());
     }
 
+    private void LabelSelector_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (workspace != "Label" || SettingsOverlay.Visibility == Visibility.Visible) return;
+        if (sender is System.Windows.Controls.ComboBox selector
+            && LabelSelectorShortcut.TryExit(selector, e.Key, e.IsRepeat, System.Windows.Input.Keyboard.Modifiers,
+                () => SelectWorkspace("Gameplay")))
+        {
+            locallyConsumedKeys.Add(System.Windows.Input.Key.L);
+            normalGameInput?.ReserveLocalKey(System.Windows.Input.Key.L);
+            normalGameInput?.UpdateContext();
+            e.Handled = true;
+        }
+    }
+
     private void PreparePausedLabelEditor()
     {
         ApplyLabelSelection(() =>

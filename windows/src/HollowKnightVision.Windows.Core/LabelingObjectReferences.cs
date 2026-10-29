@@ -26,6 +26,8 @@ public static class LabelingCatalogPolicy
 /// </summary>
 public static class LabelingHudStencilPolicy
 {
+    public static bool IsLabelable(string context, string identifier) => context != "game"
+        || !ClassIdentifiers.Contains(LabelingClassIdentity.CanonicalIdentifier(identifier));
     public static IReadOnlySet<string> ClassIdentifiers { get; } =
         new HashSet<string>(StringComparer.Ordinal)
         {

@@ -12,6 +12,7 @@ internal static class StencilGuidanceText
 
     private static readonly Dictionary<string, string> WindowsGuidance = new()
     {
+        ["gameplayLabel"] = "Draw a box around {object}. Label the other visible gameplay objects, then press L to return.",
         ["profileClearSave"] = "Return to Select Profile, highlight an occupied save slot, and press L to label Clear Save.",
         ["modelLabelGameplay"] = "Stencils complete. Enter gameplay, press L, and label Hollow Knight and the visible gameplay objects.",
         ["modelOpen"] = "Stencils complete. Open Model to train your labeled gameplay screenshots.",

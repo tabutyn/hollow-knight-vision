@@ -37,6 +37,23 @@ internal static class LabelingContractTests
         Check(LabelingContractEvaluator.Evaluate(Example("unknown", "enemies.crawlid", "enemies.crawlid")).All(item => !item.IsBreach));
         Check(LabelingContractEvaluator.Evaluate(Example("unknown", "shared.select-decoration")).Single().IsBreach);
     }
+    public static void TestGameplayDoesNotRequireHud()
+    {
+        var knight = Example("game", "game.playable-knight");
+        Check(LabelingContractEvaluator.Evaluate(knight).All(item => !item.IsBreach));
+        var legacy = Example("game", "game.playable-knight", "game.health", "game.health", "game.mana", "game.mana", "game.geo", "game.geo");
+        var rules = LabelingContractEvaluator.Evaluate(legacy);
+        Check(rules.All(item => !item.IsBreach));
+        Check(!rules.Any(item => LabelingHudStencilPolicy.ClassIdentifiers.Any(id => item.Id.EndsWith(id, StringComparison.Ordinal))));
+        Check(LabelingContractEvaluator.Evaluate(Example("gameplay-hud", "game.health")).Any(item => item.IsBreach));
+        Check(LabelingContractEvaluator.Evaluate(Example("gameplay-hud", "game.health", "game.health")).All(item => !item.IsBreach));
+        var review = new LabelingScreenshotReviewSession(new LabelingExampleStore(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())));
+        review.SetExamples([Example("game", "game.health", "game.mana", "game.geo")]);
+        Check(!review.HasGameplayLabels && !review.CanTrainModel());
+        review.SetExamples([knight]);
+        Check(review.HasGameplayLabels && review.CanTrainModel());
+    }
+
     public static void TestAdvanceAndExemptions()
     {
         Check(!LabelingContractEvaluator.ShouldAdvance("shared.select-decoration", "main-title", [Annotation("main-title.select-decoration")]));
