@@ -81,7 +81,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     @Published private(set) var groundStageImage: CGImage?
     @Published var cleanedEnabled = false
     @Published private(set) var cleanedImage: CGImage?
-    @Published var groundHypothesesEnabled = ProcessInfo.processInfo.arguments.contains("--show-ground-features")
+    @Published var groundHypothesesEnabled = true
     @Published private(set) var groundHypothesisImage: CGImage?
     @Published private(set) var groundHypothesisTracking = GroundHypothesisTrackingResult.empty
     /// Debug/evaluation camera truth. The lock-backed getter avoids publishing

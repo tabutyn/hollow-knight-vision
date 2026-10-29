@@ -398,7 +398,7 @@ struct DashboardView: View {
     @State private var hackerViewportTransformStore = LayerSceneViewportTransformStore()
     @State private var hackerInteractionMode = HackerInteractionMode.fit
     @State private var hackerRoomDrag: (id: UUID, point: CGPoint)?
-    @State private var showsGameState = false
+    @State private var showsGameState = true
     @State private var showingSettings = false
     @State private var confirmsStencilReset = false
     @State private var confirmsFactoryReset = false
@@ -485,9 +485,10 @@ struct DashboardView: View {
             )
         }
         .onChange(of: initialization.isFirstPhaseComplete) { _, ready in
+            // Match the default Windows debug view once captured stencils are usable.
+            model.stencilDetectionEnabled = ready
             if !ready {
                 model.objectDetectionEnabled = false
-                model.stencilDetectionEnabled = false
                 if workspace == .model { selectWorkspace(.gameplay) }
             }
         }
@@ -572,6 +573,7 @@ struct DashboardView: View {
             autoPromoteLatestModelCandidate()
             rebuildLabelingObjectAtlas()
             initialization.refresh(mode: model.gameMode)
+            model.stencilDetectionEnabled = initialization.isFirstPhaseComplete
         }
         .onDisappear {
             model.setModelReviewActive(false)
@@ -629,7 +631,7 @@ struct DashboardView: View {
                 selectWorkspace(.gameplay)
                 showingSettings = wasShowingSettings
             }
-            model.stencilDetectionEnabled = false
+            model.stencilDetectionEnabled = initialization.isFirstPhaseComplete
             model.objectDetectionEnabled = false
             model.refreshMenuStencilCatalog()
         }
