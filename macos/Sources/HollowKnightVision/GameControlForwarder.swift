@@ -1435,24 +1435,117 @@ final class GameControlForwarder {
         case .application(let applicationURL):
             launchGeneration &+= 1
             let generation = launchGeneration
-            launchLog.notice("launching selected app directly: \(applicationURL.path, privacy: .public)")
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = false
-            configuration.addsToRecentItems = false
-            NSWorkspace.shared.openApplication(
-                at: applicationURL,
-                configuration: configuration
-            ) { [weak self] application, error in
-                DispatchQueue.main.async {
-                    guard let self, self.launchGeneration == generation else { return }
+            let environment = HollowKnightLaunchPolicy.directLaunchEnvironment(for: applicationURL)
+            if environment.isEmpty {
+                openSelectedApplication(at: applicationURL, environment: environment, generation: generation)
+            } else if runningSteamClient == nil {
+                startSteamClient(for: applicationURL, environment: environment, generation: generation)
+            } else {
+                waitForSteamClient(
+                    gameURL: applicationURL, environment: environment, generation: generation,
+                    deadline: ProcessInfo.processInfo.systemUptime + 90
+                )
+            }
+        }
+    }
+
+    private var runningSteamClient: NSRunningApplication? {
+        NSRunningApplication.runningApplications(
+            withBundleIdentifier: HollowKnightLaunchPolicy.steamClientBundleIdentifier
+        ).first {
+            !$0.isTerminated && $0.executableURL?.lastPathComponent == "steam_osx"
+        }
+    }
+
+    private func startSteamClient(
+        for gameURL: URL,
+        environment: [String: String],
+        generation: UInt64
+    ) {
+        guard let steamURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: HollowKnightLaunchPolicy.steamClientBundleIdentifier
+        ) else {
+            launchInFlight = false
+            publishConnectionState("Hollow Knight launch failed: Steam could not be found")
+            return
+        }
+        launchLog.notice("starting Steam client for separate game copy; no library game requested")
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.addsToRecentItems = false
+        // Only start the client. -applaunch here would launch the Normal copy.
+        NSWorkspace.shared.openApplication(at: steamURL, configuration: configuration) { [weak self] _, error in
+            DispatchQueue.main.async {
+                guard let self, self.launchGeneration == generation, self.launchInFlight else { return }
+                if let error {
                     self.launchInFlight = false
-                    self.managedApplication = application
-                    if let error {
-                        self.publishConnectionState(
-                            "Hollow Knight launch failed: \(error.localizedDescription)"
-                        )
-                    }
+                    self.publishConnectionState("Hollow Knight launch failed: \(error.localizedDescription)")
+                    return
                 }
+                self.waitForSteamClient(
+                    gameURL: gameURL, environment: environment, generation: generation,
+                    deadline: ProcessInfo.processInfo.systemUptime + 90
+                )
+            }
+        }
+    }
+
+    private func waitForSteamClient(
+        gameURL: URL,
+        environment: [String: String],
+        generation: UInt64,
+        deadline: TimeInterval
+    ) {
+        guard launchGeneration == generation, launchInFlight else { return }
+        if runningSteamClient?.isFinishedLaunching == true {
+            openSelectedApplication(at: gameURL, environment: environment, generation: generation)
+            return
+        }
+        guard ProcessInfo.processInfo.systemUptime < deadline else {
+            launchInFlight = false
+            publishConnectionState("Hollow Knight launch timed out. Check Steam and the selected installation.")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.waitForSteamClient(
+                gameURL: gameURL, environment: environment, generation: generation, deadline: deadline
+            )
+        }
+    }
+
+    private func openSelectedApplication(
+        at applicationURL: URL,
+        environment: [String: String],
+        generation: UInt64
+    ) {
+        guard launchGeneration == generation, launchInFlight else { return }
+        launchLog.notice("launching selected app directly: \(applicationURL.path, privacy: .public) steamIdentity=\(!environment.isEmpty, privacy: .public)")
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.addsToRecentItems = false
+        configuration.allowsRunningApplicationSubstitution = false
+        configuration.environment = environment
+        NSWorkspace.shared.openApplication(
+            at: applicationURL,
+            configuration: configuration
+        ) { [weak self] application, error in
+            DispatchQueue.main.async {
+                guard let self, self.launchGeneration == generation else { return }
+                self.launchInFlight = false
+                if let error {
+                    self.publishConnectionState(
+                        "Hollow Knight launch failed: \(error.localizedDescription)"
+                    )
+                    return
+                }
+                guard let application,
+                      application.bundleURL?.resolvingSymlinksInPath().standardizedFileURL
+                        == applicationURL.resolvingSymlinksInPath().standardizedFileURL,
+                      self.runningApplicationIssue(application) == nil else {
+                    self.publishConnectionState("Hollow Knight launch failed: macOS opened a different installation")
+                    return
+                }
+                self.managedApplication = application
             }
         }
     }
@@ -1460,11 +1553,8 @@ final class GameControlForwarder {
     private func launchThroughSteam() {
         launchGeneration &+= 1
         let generation = launchGeneration
-        let steamID = "com.valvesoftware.steam"
-        let runningSteam = NSRunningApplication.runningApplications(withBundleIdentifier: steamID)
-            .first(where: {
-                !$0.isTerminated && $0.executableURL?.lastPathComponent == "steam_osx"
-            })
+        let steamID = HollowKnightLaunchPolicy.steamClientBundleIdentifier
+        let runningSteam = runningSteamClient
         launchLog.notice("requesting local Steam launch appid=367520")
         if let executableURL = runningSteam?.executableURL {
             // Steam prohibits multiple app instances, so Launch Services drops

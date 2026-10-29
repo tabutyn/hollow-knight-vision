@@ -613,6 +613,9 @@ struct MenuStencilCatalog {
         liveCaptures: [(capture: MenuStencilLiveCapture, imageURL: URL)],
         positiveCaptureHoldoutIDs: Set<UUID>
     ) -> Scene? {
+        // This modal moves with the selected slot; saved absolute calibration
+        // may describe another row. Translate its labeled reference at runtime.
+        let calibration = context == .clearSave ? nil : calibration
         guard !examples.isEmpty,
               let width = examples.map(\.manifest.imageWidth).mode,
               let height = examples.map(\.manifest.imageHeight).mode,
@@ -696,7 +699,7 @@ struct MenuStencilCatalog {
                 guard matches.count == 1, let annotation = matches.first else { return nil }
                 return pixelBounds(annotation, width: width, height: height)
             }
-            guard perExample.count == compatible.count else { continue }
+            guard perExample.count == compatible.count || identifier == "select-profile.clear-save" else { continue }
             medianBounds[identifier] = medianRect(perExample)
         }
 
@@ -1465,14 +1468,22 @@ struct MenuStencilCatalog {
                     return pixelBounds(annotation, width: width, height: height)
                 }
             }
-            if let labelBounds = clearSaveBounds.isEmpty
-                ? nil : Optional(medianRect(clearSaveBounds)),
+            if !clearSaveBounds.isEmpty,
                let firstSlot = options.first(where: {
                    $0.classIdentifier == "select-profile.slot-1"
                }),
                let firstLeft = firstSlot.leftSelector?.bounds,
                let firstRight = firstSlot.rightSelector?.bounds {
                 let firstCenter = (firstLeft.midY + firstRight.midY) * 0.5
+                let slotCenters = options.compactMap { option -> CGFloat? in
+                    guard option.classIdentifier.hasPrefix("select-profile.slot-"),
+                          let left = option.leftSelector, let right = option.rightSelector else { return nil }
+                    return (left.bounds.midY + right.bounds.midY) * 0.5
+                }
+                let labelBounds = medianRect(clearSaveBounds.map { bounds in
+                    let nearest = slotCenters.min { abs($0 - bounds.midY) < abs($1 - bounds.midY) } ?? firstCenter
+                    return bounds.offsetBy(dx: 0, dy: firstCenter - nearest)
+                })
                 for index in 1...4 {
                     let slotIdentifier = "select-profile.slot-\(index)"
                     guard let slot = options.first(where: {
@@ -1565,6 +1576,8 @@ struct MenuStencilCatalog {
         firstDefinitionIdentifier: String?
     ) -> Bool {
         let identifier = anchor.classIdentifier
+        // Clear Save is expanded into one selector pair per profile row.
+        if context == .selectProfile && identifier == "select-profile.clear-save" { return false }
         if identifier.contains(".header")
             || identifier.contains(".heading")
             || identifier.hasSuffix(".pointer")
@@ -3105,7 +3118,7 @@ final class MenuStencilTracker {
         }
         guard confidence >= validationThreshold,
               acceptedCount >= requiredCount else { return nil }
-        let anchorMatches = scored.map { anchor, score in
+        let scoredMatches = scored.map { anchor, score in
             MenuStencilMatch(
                 classIdentifier: anchor.classIdentifier,
                 name: anchor.name,
@@ -3119,6 +3132,8 @@ final class MenuStencilTracker {
                 reference: score.reference
             )
         }
+        let anchorMatches = withRepeatedProfileActions(scene, pixels: pixels, image: image,
+            language: probe.languageIdentifier, matches: scoredMatches, comparisons: &comparisons)
         let currentAnchorBounds = Dictionary(
             uniqueKeysWithValues: scored.map {
                 ($0.0.classIdentifier, $0.1.rect)
@@ -3199,7 +3214,7 @@ final class MenuStencilTracker {
             comparisons: &comparisons,
             recordsCalibration: true
         )
-        let anchors = previous.anchors.map { match in
+        let previousMatches = previous.anchors.map { match in
             guard match.classIdentifier == scene.probe.classIdentifier else { return match }
             return MenuStencilMatch(
                 classIdentifier: match.classIdentifier,
@@ -3214,6 +3229,8 @@ final class MenuStencilTracker {
                 reference: probe.reference
             )
         }
+        let anchors = withRepeatedProfileActions(scene, pixels: pixels, image: image,
+            language: trackedLanguageIdentifier, matches: previousMatches, comparisons: &comparisons)
         let result = MenuStencilResult(
             context: scene.context,
             isMatch: true,
@@ -3616,7 +3633,7 @@ final class MenuStencilTracker {
                 let searchBounds = bounds.offsetBy(
                     dx: trackedOffset.x, dy: trackedOffset.y
                 )
-                let textBounds = localizedOptionBounds.offsetBy(
+                let textBounds = anchorBoundsByIdentifier[option.classIdentifier] ?? localizedOptionBounds.offsetBy(
                     dx: trackedOffset.x, dy: trackedOffset.y
                 )
                 let accepts: (CGRect) -> Bool = { candidate in
@@ -4075,6 +4092,31 @@ final class MenuStencilTracker {
                 )
             }
         }
+    }
+
+    /// Clear Save appears only beside occupied slots. Translate its captured
+    /// pixel crop intact; fractional annotation geometry must not rescale it.
+    private func withRepeatedProfileActions(
+        _ scene: MenuStencilCatalog.Scene, pixels: ImageStencilPixels, image: CGImage,
+        language: String?, matches: [MenuStencilMatch], comparisons: inout Int
+    ) -> [MenuStencilMatch] {
+        let identifier = "select-profile.clear-save"
+        guard scene.context == .selectProfile,
+              let reference = scene.anchors.first(where: { $0.classIdentifier == identifier }) else { return matches }
+        var result = matches.filter { $0.classIdentifier != identifier }
+        for option in scene.options where option.classIdentifier.hasPrefix(identifier + "-") {
+            let expected = reference.bounds.offsetBy(
+                dx: option.bounds.midX - reference.bounds.midX + trackedOffset.x,
+                dy: option.bounds.midY - reference.bounds.midY + trackedOffset.y)
+            guard let score = bestScore(variants: variants(reference.variants, matching: language),
+                pixels: pixels, around: expected, referenceBounds: reference.bounds,
+                deltaX: -4...4, deltaY: -6...6, comparisons: &comparisons),
+                score.confidence >= Self.anchorThreshold else { continue }
+            result.append(MenuStencilMatch(classIdentifier: identifier, name: option.name,
+                rect: outputRect(score.rect, image: image, referenceWidth: scene.referenceWidth,
+                    referenceHeight: scene.referenceHeight), confidence: score.confidence, reference: score.reference))
+        }
+        return result
     }
 
     private func bestScore(

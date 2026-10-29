@@ -15,6 +15,12 @@ final class BoundedBackgroundSearchTests: XCTestCase {
         })
         wait(for: [started], timeout: 2)
         XCTAssertFalse(worker.submit { 99 })
+        var prepared = false
+        XCTAssertFalse(worker.submitPrepared {
+            prepared = true
+            return { 99 }
+        })
+        XCTAssertFalse(prepared, "A rejected search must not prepare a snapshot on the tracking queue.")
         worker.invalidate()
         gate.signal()
         wait(for: [finished], timeout: 2)

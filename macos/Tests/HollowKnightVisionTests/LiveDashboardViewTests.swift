@@ -91,6 +91,17 @@ final class LiveDashboardViewTests: XCTestCase {
         ))
     }
 
+    func testLExitsLabelDropdownButPreservesTextEntryAndOtherWorkspaces() {
+        XCTAssertTrue(WorkspaceExitShortcutPolicy.shouldHandle(workspace: .label, eventType: .keyDown,
+            keyCode: 37, modifierFlags: [], isRepeat: false))
+        XCTAssertFalse(WorkspaceExitShortcutPolicy.shouldHandle(workspace: .model, eventType: .keyDown,
+            keyCode: 37, modifierFlags: [], isRepeat: false))
+        XCTAssertFalse(WorkspaceExitShortcutPolicy.shouldHandle(workspace: .label, eventType: .keyDown,
+            keyCode: 37, modifierFlags: [], isRepeat: false, isEditingText: true))
+        XCTAssertFalse(WorkspaceExitShortcutPolicy.shouldHandle(workspace: .label, eventType: .keyDown,
+            keyCode: 37, modifierFlags: .command, isRepeat: false))
+    }
+
     func testXExitCommandIsScopedToUnmodifiedLabelAndModelPresses() {
         for workspace in [DashboardWorkspace.label, .model] {
             XCTAssertTrue(WorkspaceExitShortcutPolicy.shouldHandle(

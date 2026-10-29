@@ -53,6 +53,7 @@ struct LabelingModelWorkspaceView: View {
     let onStopTraining: () -> Void
     let onOpenExample: (UUID, LabelingEditorMode) -> Void
     @Binding var selection: LabelingModelWorkspaceSelection
+    var onDatasetChanged: () -> Void = {}
 
     @State private var examples = [SavedLabelingExample]()
     @State private var examplesError: String?
@@ -1047,6 +1048,7 @@ struct LabelingModelWorkspaceView: View {
         do {
             try exemptionStore.save(values, for: example)
             exemptions[example.id] = values
+            onDatasetChanged()
         } catch {
             examplesError = "Exemption failed: \(error.localizedDescription)"
         }
@@ -1070,6 +1072,7 @@ struct LabelingModelWorkspaceView: View {
             exemptions.removeValue(forKey: identifier)
         }
         selectedContractDeletionIdentifiers.subtract(deleted)
+        if !deleted.isEmpty { onDatasetChanged() }
         reconcileSelection()
         selectDefaultObjectReference()
         rebuildObjectAtlas(force: true)

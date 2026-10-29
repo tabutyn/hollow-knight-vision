@@ -78,8 +78,15 @@ local Steam launch (`-applaunch 367520`) instead of opening the game executable
 first or a URL that can select Remote Play on another computer. Steam launches
 through macOS Launch Services so its local-network permissions belong to Steam,
 not Vision. An already-running Steam client receives the command through its
-command-line forwarding process. Separate copies still launch directly. During
-startup, Vision follows replacement processes from the selected installation
+command-line forwarding process. Separate copies still launch directly. For a
+separate Steam build, Vision starts the Steam client without requesting a library
+game, waits for the client to finish launching, then passes `SteamAppId=367520`
+and `SteamGameId=367520` only to the selected game. This preserves the copy's
+Steam identity instead of allowing its [Steam restart check](https://partner.steamgames.com/doc/api/steam_api#SteamAPI_RestartAppIfNecessary)
+to close Modded and open the registered Normal installation. Non-Steam builds
+remain independent of Steam. Launch Services substitution is disabled and the
+returned application path and mode are verified before attaching controls.
+During startup, Vision follows replacement processes from the selected installation
 and reconnects capture for up to 60 seconds
 after an early process exit. After 15 seconds of stable capture, or a confirmed
 Quit, game termination retains the ordinary five-second shutdown countdown.

@@ -14,6 +14,10 @@ enum LabelingCatalogPolicy {
 /// catalog so the source examples and stencil authoring workflow remain
 /// available.
 enum LabelingHUDStencilPolicy {
+    static func isLabelable(_ identifier: String, in context: LabelingContext?) -> Bool {
+        context != .game || !classIdentifiers.contains(LabelingClassIdentity.canonicalIdentifier(identifier))
+    }
+
     static let classIdentifiers: Set<String> = [
         "game.health",
         "game.mana",

@@ -56,12 +56,12 @@ final class LabelingEditorViewTests: XCTestCase {
                 context: .game,
                 annotationClassIdentifiers: ["game.mana", "game.playable-knight"]
             ),
-            "game.mana"
+            "game.playable-knight"
         )
         XCTAssertEqual(
             LabelingFrameOpeningPolicy.classIdentifierForOpening(
                 context: .options,
-                annotationClassIdentifiers: ["game.mana", LabelingClassIdentity.audio]
+                annotationClassIdentifiers: ["game.playable-knight", LabelingClassIdentity.audio]
             ),
             LabelingClassIdentity.audio
         )

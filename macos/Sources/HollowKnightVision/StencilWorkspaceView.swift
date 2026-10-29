@@ -11,10 +11,15 @@ enum StencilLabelSelectionPolicy {
         var seen = Set<String>()
         return (context.labels + custom).filter { definition in
             let identifier = LabelingClassIdentity.canonicalIdentifier(definition.id)
-            guard seen.insert(identifier).inserted else { return false }
+            guard seen.insert(identifier).inserted,
+                  LabelingHUDStencilPolicy.isLabelable(identifier, in: context) else { return false }
             if mode == .normal && identifier == LabelingClassIdentity.mods { return false }
             // Clear Save is absent on fresh profiles and never blocks the first campaign.
-            if hidesCompleted && !includesDeferredLabels && identifier == "select-profile.clear-save" { return false }
+            if hidesCompleted && identifier == StencilInitializationPolicy.deferredProfileClass {
+                return includesDeferredLabels && !rectangles.contains {
+                    !$0.isNegative && LabelingClassIdentity.canonicalIdentifier($0.classID) == identifier
+                }
+            }
             guard hidesCompleted, context != .game else { return true }
             return !LabelingContractEvaluator.shouldAdvance(
                 afterAdding: identifier, in: context, rectangles: rectangles
