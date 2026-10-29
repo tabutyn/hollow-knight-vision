@@ -76,7 +76,7 @@ internal static class RecentFrameTests
     public static void TestCapturedFallbackAndPriority()
     {
         var empty = RecentCapturedFrameLabelingPolicy.StateForOpening(Frame(9), "game", "game.health");
-        Check(empty.ContextIdentifier == "game" && empty.SelectedClassIdentifier == "game.health" && empty.Rectangles.Count == 0);
+        Check(empty.ContextIdentifier == "game" && empty.SelectedClassIdentifier == "game.playable-knight" && empty.Rectangles.Count == 0);
         var hud = new[] { Detection("game.health"), Detection("game.mana"), Detection("game.geo") };
         LabelingFrameOpenState Open(params ObjectDetection[] detections) =>
             RecentCapturedFrameLabelingPolicy.StateForOpening(Frame(9, 1, detections), "options", "options.audio");
@@ -105,7 +105,7 @@ internal static class RecentFrameTests
 
     public static void TestSavedObjectSelection()
     {
-        Check(LabelingFrameOpeningPolicy.ClassIdentifierForOpening("game", ["game.mana", "game.playable-knight"]) == "game.mana");
+        Check(LabelingFrameOpeningPolicy.ClassIdentifierForOpening("game", ["game.mana", "game.playable-knight"]) == "game.playable-knight");
         Check(LabelingFrameOpeningPolicy.ClassIdentifierForOpening("options", ["game.mana", "shared.audio"]) == "shared.audio");
         var options = Box("main-title.options");
         var state = LabelingFrameOpeningPolicy.StateForOpening(Manifest("main-title", options), "shared.select-decoration")!;

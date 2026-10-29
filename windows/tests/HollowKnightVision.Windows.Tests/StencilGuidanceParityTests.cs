@@ -245,6 +245,10 @@ internal static class StencilGuidanceParityTests
             Check(coordinator.ModelGuidance("Model", true, 0, false, true)!.StartsWith("Training your model"));
             Check(coordinator.ModelGuidance("Gameplay", true, 0, true, false)!.StartsWith("Model trained"));
             Check(coordinator.ModelGuidance("Label", true, 0, false, false) is null);
+            Check(coordinator.Guidance("game", "enemies.crawlid")!.Contains("Crawlid")
+                && coordinator.Guidance("game", "enemies.crawlid")!.Contains("press L"));
+            Check(coordinator.Guidance("game", "game.health")!.Contains("Knight")
+                && !coordinator.Guidance("game", "game.health")!.Contains("Health"));
             store.Update(completed, "select-profile", profile.Manifest.Annotations);
             coordinator.Refresh();
             Check(!coordinator.IsScreenComplete("select-profile") && !coordinator.IsComplete && coordinator.IsFirstPhaseComplete,

@@ -35,7 +35,10 @@ internal static class StencilSelectionTests
     public static void TestGameplayRepeatabilityAndMods()
     {
         var gameplay = LabelingContractCatalog.Contexts.Single(item => item.Identifier == "game").Labels;
-        Check(Choices("game", gameplay.Select(item => Box(item.Identifier)).ToArray(), modded: false).SequenceEqual(gameplay));
+        Check(Choices("game", gameplay.Select(item => Box(item.Identifier)).ToArray(), modded: false)
+            .SequenceEqual(gameplay.Where(item => LabelingHudStencilPolicy.IsLabelable("game", item.Identifier))));
+        Check(!Choices("game").Any(item => LabelingHudStencilPolicy.ClassIdentifiers.Contains(item.Identifier)));
+        Check(Choices("gameplay-hud").Single().Identifier == "game.health");
         Check(!Choices("options", modded: false).Any(item => item.Identifier == "shared.mods"));
         Check(Choices("options").Any(item => item.Identifier == "shared.mods"));
         Check(!Choices("options", modded: false, hidesCompleted: false).Any(item => item.Identifier == "shared.mods"));

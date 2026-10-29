@@ -129,6 +129,34 @@ internal static class MenuCatalogTests
         }
     }
 
+    internal static void TestRepeatedClearSaveDetection()
+    {
+        var fixture = new Fixture();
+        (string Id, StencilRect Bounds)[] labels = [("select-profile.heading", new(50, 10, 30, 8)),
+            ("select-profile.slot-1", new(50, 30, 30, 8)), ("select-profile.slot-2", new(50, 50, 30, 8)),
+            ("select-profile.slot-3", new(50, 70, 30, 8)), ("select-profile.slot-4", new(50, 90, 30, 8)),
+            ("shared.back", new(55, 105, 20, 8))];
+        const string clear = "select-profile.clear-save";
+        // User-drawn boxes have fractional edges; their pixel templates round outward.
+        var reference = (clear, new StencilRect(118.4, 52.2, 15.2, 5.4));
+        var annotations = WithSelection(labels, 2);
+        var threeRows = new[] { (clear, new StencilRect(118, 52, 16, 6)), (clear, new StencilRect(118, 72, 16, 6)), (clear, new StencilRect(118, 92, 16, 6)) };
+        var labeled = fixture.Example("select-profile", [.. annotations, reference], paint: [.. annotations, .. threeRows]);
+        var old = fixture.Example("select-profile", annotations, age: 1, paint: [.. annotations, .. threeRows]);
+        var catalog = fixture.Builder(Context("select-profile", [.. labels, reference])).Build([old, labeled], null);
+        var tracker = new MenuStencilTracker(catalog);
+        var result = tracker.Observe(fixture.Images[labeled.ImagePath], 0);
+        Check(result?.IsMatch == true, "Profile not recognized.");
+        var matches = result!.Anchors.Where(match => match.ClassIdentifier == clear).OrderBy(match => match.Rect.Y).ToArray();
+        Equal(3, matches.Length);
+        Check(matches.All(match => match.Rect.Width == 16 && match.Rect.Height == 6), "Repeated text crops were shrunk to fractional annotation dimensions.");
+        for (var index = 0; index < matches.Length; index++)
+            Check(Math.Abs(matches[index].Rect.MidY - (55 + index * 20)) < 3, "Clear Save matched the wrong slot.");
+        var twoRows = fixture.Example("select-profile", annotations, paint: [.. annotations, threeRows[0], threeRows[2]]);
+        var changed = tracker.Observe(fixture.Images[twoRows.ImagePath], 1.0 / 30)!;
+        Equal(2, changed.Anchors.Count(match => match.ClassIdentifier == clear));
+    }
+
     internal static void TestClearSaveMovesBetweenSlots()
     {
         var fixture = new Fixture();

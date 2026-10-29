@@ -25,6 +25,7 @@ public sealed class LabelingSelectionPreferences(string path)
     {
         var savedContext = LabelingContractCatalog.Contexts.Any(item => item.Identifier == persistedContext) ? persistedContext! : "game";
         var savedClass = string.IsNullOrWhiteSpace(persistedClass) ? null : LabelingClassIdentity.CanonicalIdentifier(persistedClass);
+        if (savedClass is not null && !LabelingHudStencilPolicy.IsLabelable(savedContext, savedClass)) savedClass = null;
         string? Containing(string identifier) => LabelingContractCatalog.ScreenContexts.FirstOrDefault(context =>
             LabelingFrameOpeningPolicy.ContextClasses(context.Identifier, customClasses).Contains(identifier))?.Identifier;
         if (!LabelingContractCatalog.ScreenContexts.Any(context => context.Identifier == savedContext))

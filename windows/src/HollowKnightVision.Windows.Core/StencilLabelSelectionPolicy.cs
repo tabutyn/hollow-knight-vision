@@ -11,7 +11,8 @@ public static class StencilLabelSelectionPolicy
         return definitions.Concat(custom ?? []).Where(definition =>
         {
             var identifier = LabelingClassIdentity.CanonicalIdentifier(definition.Identifier);
-            if (!seen.Add(identifier) || (!modded && identifier == "shared.mods")) return false;
+            if (!seen.Add(identifier) || (!modded && identifier == "shared.mods")
+                || !LabelingHudStencilPolicy.IsLabelable(context, identifier)) return false;
             // The shared contract allows zero during phase one. Once deferred
             // labeling is enabled, one positive Clear Save box finishes this task.
             if (hidesCompleted && identifier == "select-profile.clear-save")

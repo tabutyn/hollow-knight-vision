@@ -8,6 +8,7 @@ public static class LabelingFrameOpeningPolicy
     public static IReadOnlyList<string> ContextClasses(string context, IReadOnlyList<string>? customClasses = null) =>
         (LabelingContractCatalog.Contexts.FirstOrDefault(item => item.Identifier == context)?.Labels.Select(item => item.Identifier) ?? [])
         .Concat(context == "game" ? customClasses ?? [] : []).Select(LabelingClassIdentity.CanonicalIdentifier)
+        .Where(identifier => LabelingHudStencilPolicy.IsLabelable(context, identifier))
         .Distinct(StringComparer.Ordinal).ToArray();
 
     public static string ClassIdentifierForOpening(string context, IEnumerable<string> annotations,

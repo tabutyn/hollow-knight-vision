@@ -175,7 +175,10 @@ public sealed class LabelingDatasetExporter
                 LabelingClassIdentity.CanonicalIdentifier(annotation.ClassIdentifier)))) return true;
         // The remembered catalog is global. A menu that knows about the Knight is not a gameplay negative.
         // Match Mac's context.labels guard, not context inference or the selected editor object.
-        return LabelingFrameOpeningPolicy.ContextClasses(example.Manifest.ContextIdentifier).Any(included.Contains)
+        // Editor choices may hide retired HUD objects; explicit legacy exports
+        // still use the saved context vocabulary for known-negative frames.
+        return LabelingContractCatalog.Contexts.FirstOrDefault(context => context.Identifier == example.Manifest.ContextIdentifier)?
+            .Labels.Any(label => included.Contains(LabelingClassIdentity.CanonicalIdentifier(label.Identifier))) == true
             && example.Manifest.EffectiveKnownClassIdentifiers.Any(included.Contains);
     }
 

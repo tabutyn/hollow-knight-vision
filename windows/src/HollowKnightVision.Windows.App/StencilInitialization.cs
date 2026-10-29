@@ -202,6 +202,15 @@ internal sealed class StencilInitializationCoordinator
 
     internal string? Guidance(string? context, string? selected, string? navigationContext = null)
     {
+        if (context == "game")
+        {
+            var identifier = LabelingFrameOpeningPolicy.ClassIdentifierForOpening("game", [], selected);
+            var name = LabelingVisualIdentity.DisplayName(identifier);
+            // Named gameplay objects are valid even though they are not in the bundled catalog.
+            if (!string.IsNullOrEmpty(selected) && LabelingHudStencilPolicy.IsLabelable("game", selected))
+                name = LabelingVisualIdentity.DisplayName(selected);
+            return Text("gameplayLabel", ("object", Text(name)));
+        }
         if (context is not null && StencilInitializationPolicy.RequiredContexts.Any(item => item.Identifier == context))
         {
             if (context == "select-profile" && IsFirstPhaseComplete && selected == "select-profile.clear-save"

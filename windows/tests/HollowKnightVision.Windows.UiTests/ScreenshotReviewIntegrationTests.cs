@@ -94,7 +94,7 @@ internal static class ScreenshotReviewIntegrationTests
 
     private static void TestContractsAndDeletion()
     {
-        using var fixture = new Fixture(); var good = fixture.Save(ValidBoxes); var bad = fixture.Save(Box("game.playable-knight"));
+        using var fixture = new Fixture(); var good = fixture.Save(ValidBoxes); var bad = fixture.Save(Box("game.playable-knight"), Box("game.playable-knight"), Box("world.sign"), Box("world.sign"));
         var session = new LabelingScreenshotReviewSession(fixture.Store); session.Reload(); session.Select(bad.Id);
         var allowDelete = false; var confirmations = 0; var changes = 0; LabelingScreenshotDeletionResult? deleted = null;
         var panel = new ScreenshotReviewPanel(session, key => key, _ => { }, _ => { confirmations++; return allowDelete; }, () => changes++, result => deleted = result);
@@ -127,7 +127,7 @@ internal static class ScreenshotReviewIntegrationTests
 
     private static void TestWriteAndDeleteFailures()
     {
-        using var fixture = new Fixture(); var bad = fixture.Save(Box("game.playable-knight"));
+        using var fixture = new Fixture(); var bad = fixture.Save(Box("game.playable-knight"), Box("game.playable-knight"), Box("world.sign"), Box("world.sign"));
         var session = new LabelingScreenshotReviewSession(fixture.Store); session.Reload(); var changes = 0;
         var panel = new ScreenshotReviewPanel(session, key => key, _ => { }, _ => true, () => changes++, _ => { });
         panel.Refresh("game.playable-knight"); var window = Show(panel);

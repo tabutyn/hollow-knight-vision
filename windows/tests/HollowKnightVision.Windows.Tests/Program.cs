@@ -580,6 +580,8 @@ var tests = new List<(string Name, Action Run)>
     ("Credits signature checks center ring and corners without aspect cropping", LiveGameStatusTests.TestCreditsPixels),
     ("label contracts share Mac resources and reject incomplete screens", LabelingContractTests.TestCatalogAndIncompleteScreens),
     ("label contracts enforce bounds and ignore hard negatives", LabelingContractTests.TestCountsAndNegatives),
+    ("gameplay labels and contracts exclude HUD fields", LabelingContractTests.TestGameplayDoesNotRequireHud),
+    ("profile detection finds only visible Clear Save copies", MenuCatalogTests.TestRepeatedClearSaveDetection),
     ("label auto-advance respects repeats and contract exemptions migrate", LabelingContractTests.TestAdvanceAndExemptions),
     ("menu admission uses contracts with normal Options exception", LabelingContractTests.TestMenuAdmission),
     ("label editor sets contain exact ordered objects", LabelingEditorPolicyParityTests.TestLabelSetsContainTheirExpectedObjects),

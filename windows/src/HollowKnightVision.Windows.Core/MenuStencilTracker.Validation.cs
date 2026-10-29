@@ -48,8 +48,9 @@ public sealed partial class MenuStencilTracker
         var confidence = weighted.Sum(item => item.Value) / Math.Max(1, weighted.Sum(item => item.Weight));
         var required = Math.Min(scene.ContextIdentifier == "options" ? 4 : 2, scene.Anchors.Count);
         if (confidence < threshold || accepted < required) return null;
-        var anchors = scored.Select(item => new MenuStencilMatch(item.Anchor.ClassIdentifier, item.Anchor.Name,
-            OutputRect(item.Score.Rect, image, scene), item.Score.Confidence, item.Score.Reference)).ToArray();
+        var anchors = WithRepeatedProfileActions(scene, pixels, image, probe.Language,
+            scored.Select(item => new MenuStencilMatch(item.Anchor.ClassIdentifier, item.Anchor.Name,
+                OutputRect(item.Score.Rect, image, scene), item.Score.Confidence, item.Score.Reference)).ToArray());
         var currentBounds = scored.ToDictionary(item => item.Anchor.ClassIdentifier, item => item.Score.Rect, StringComparer.Ordinal);
         var selection = DetectSelection(scene, probe.Language, pixels, image, timestamp, false, currentBounds);
         if (selection.Name is { } selectedName && scene.Options.FirstOrDefault(option => option.Name == selectedName) is { } selectedOption
@@ -68,8 +69,9 @@ public sealed partial class MenuStencilTracker
     {
         if (lastValidated is not { } previous) return null;
         var selection = DetectSelection(scene, trackedLanguage, pixels, image, timestamp, true);
-        var anchors = previous.Anchors.Select(match => match.ClassIdentifier == scene.Probe.ClassIdentifier
-            ? match with { Rect = OutputRect(probe.Rect, image, scene), Confidence = probe.Confidence, Reference = probe.Reference } : match).ToArray();
+        var anchors = WithRepeatedProfileActions(scene, pixels, image, trackedLanguage,
+            previous.Anchors.Select(match => match.ClassIdentifier == scene.Probe.ClassIdentifier
+                ? match with { Rect = OutputRect(probe.Rect, image, scene), Confidence = probe.Confidence, Reference = probe.Reference } : match).ToArray());
         var result = new MenuStencilResult(scene.ContextIdentifier, true, probe.Confidence, selection.Name, anchors,
             selection.Matches, selection.Regions, selection.LanguageEvidence, selection.ForegroundEvidence, previous.SceneEvidenceRatio,
             MenuStencilPhase.Tracking, comparisons, timestamp, trackedLanguage);

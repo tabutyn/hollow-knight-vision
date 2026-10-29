@@ -90,7 +90,8 @@ public sealed partial class MenuStencilCatalogBuilder
         {
             var perExample = compatible.Select(example => Annotation(identifier, example)).Where(annotation => annotation is not null)
                 .Select(annotation => PixelBounds(annotation!, width, height)).ToArray();
-            if (perExample.Length == compatible.Length) medianBounds[identifier] = MedianRect(perExample);
+            if (perExample.Length == compatible.Length || identifier == "select-profile.clear-save")
+                medianBounds[identifier] = MedianRect(perExample);
         }
         var definitions = context.Labels.ToDictionary(label => Canonical(label.Identifier), label => label.Name, StringComparer.Ordinal);
         var usable = medianBounds.Keys.Where(id => medianBounds[id].Width * medianBounds[id].Height <= 5000
