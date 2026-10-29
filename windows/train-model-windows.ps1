@@ -18,17 +18,11 @@ if ($env:HKV_TRAINER_START_SIGNAL) {
   } finally { $trainingStartSignal.Dispose() }
 }
 $windowsRoot = $PSScriptRoot
-$gitCommonDirectory = & git -C $windowsRoot rev-parse --path-format=absolute --git-common-dir
-if ($LASTEXITCODE -eq 0 -and $gitCommonDirectory) {
-  $repositoryRoot = Split-Path -Parent $gitCommonDirectory.Trim()
-} else {
-  $repositoryRoot = (Resolve-Path (Join-Path $windowsRoot "..\..\..")).Path
-}
-$python = if ($env:HKV_TRAINER_PYTHON) { $env:HKV_TRAINER_PYTHON } else {
-  Join-Path $repositoryRoot ".tools\hkv-training-windows\Scripts\python.exe"
-}
-$torchCache = Join-Path $repositoryRoot ".tools\hkv-training-cache"
-$trainer = Join-Path $windowsRoot "..\macos\TrainingPython\hkv_incremental_trainer.py"
+. (Join-Path $windowsRoot 'training-environment-windows.ps1')
+$trainingEnvironment = Get-HkvTrainingEnvironment -WindowsRoot $windowsRoot
+$python = $trainingEnvironment.Python
+$torchCache = $trainingEnvironment.TorchCache
+$trainer = $trainingEnvironment.Trainer
 
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
   throw "Training environment missing at '$python'. Run .\setup-training-windows.ps1 or set HKV_TRAINER_PYTHON."

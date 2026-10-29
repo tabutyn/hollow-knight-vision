@@ -21,6 +21,16 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+    <Content Include="../../train-model-windows.ps1;../../setup-training-windows.ps1;../../training-environment-windows.ps1">
+      <Link>training/%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="../../TrainingPython/requirements-windows.txt;../../../macos/TrainingPython/hkv_incremental_trainer.py">
+      <Link>training/TrainingPython/%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <ProjectReference Include="../HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
     <ProjectReference Include="../HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj" />
     <Content Include="../../../models/shared-object-model/**">

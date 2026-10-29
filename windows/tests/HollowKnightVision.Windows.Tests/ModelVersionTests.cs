@@ -150,6 +150,28 @@ internal static class ModelVersionTests
         Throws<JsonException>(() => reviews.LoadCandidates()); // corruption is not silently hidden
     }
 
+    internal static void TestCompactTrainingRunIdentifiers()
+    {
+        using var fixture = new Fixture();
+        var candidate = fixture.Candidate(Shared, 100, "trained", checkpoint: true);
+        var manifest = Path.Combine(candidate.RunDirectory, "training.json");
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(manifest))!;
+        json["id"] = candidate.Id.ToString("N");
+        File.WriteAllText(manifest, json.ToJsonString());
+        var lifecycle = new LabelingModelLifecycle(fixture.Reviews, fixture.Store);
+        lifecycle.Refresh(); lifecycle.PromoteLatest();
+        Equal(candidate.Id, lifecycle.Latest()!.Id);
+        Equal("v1.0", lifecycle.ActiveVersionName());
+        Equal("checkpoint-trained", File.ReadAllText(lifecycle.TrainingCheckpointPath()!));
+        using var promoted = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(lifecycle.ActiveRunDirectories().Single(), "training.json")));
+        Equal(candidate.Id.ToString("D"), promoted.RootElement.GetProperty("id").GetString());
+        foreach (var invalid in new[] { "", " ", "not-a-run-id", "../run", new string('x', 32) })
+        {
+            json["id"] = invalid; File.WriteAllText(manifest, json.ToJsonString());
+            Throws<JsonException>(() => fixture.Reviews.LoadCandidate(candidate.RunDirectory));
+        }
+    }
+
     internal static void TestPromotionSafety()
     {
         using var fixture = new Fixture(); var store = fixture.Store;

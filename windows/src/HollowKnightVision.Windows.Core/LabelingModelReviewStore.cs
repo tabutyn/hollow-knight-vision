@@ -25,6 +25,7 @@ public sealed record LabelingPredictionReview(IReadOnlyList<LabelingReviewExampl
 
 public sealed record LabelingTrainingRunSummary
 {
+    [JsonConverter(typeof(TrainingRunIdentifierConverter))]
     public required Guid Id { get; init; }
     public required Guid DatasetIdentifier { get; init; }
     public required string ClassIdentifier { get; init; }
@@ -40,6 +41,22 @@ public sealed record LabelingTrainingRunSummary
     public LabelingReviewMetrics? ReviewMetrics { get; init; }
     // Preserve the complete shared Python/Swift manifest when making a durable ONNX run.
     [JsonExtensionData] public Dictionary<string, JsonElement>? AdditionalFields { get; init; }
+}
+
+// The Python trainer uses the output directory name as its run identifier.
+// Earlier Windows runs used compact UUIDs; retain those completed models while
+// writing the canonical hyphenated format for new durable metadata.
+internal sealed class TrainingRunIdentifierConverter : JsonConverter<Guid>
+{
+    public TrainingRunIdentifierConverter() { }
+    public override Guid Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.String
+            && (Guid.TryParseExact(reader.GetString(), "D", out var identifier)
+                || Guid.TryParseExact(reader.GetString(), "N", out identifier))) return identifier;
+        throw new JsonException("Training run identifier must be a UUID.");
+    }
+    public override void Write(Utf8JsonWriter writer, Guid value, JsonSerializerOptions options) => writer.WriteStringValue(value);
 }
 
 public sealed record LabelingModelCandidate(string RunDirectory, string DatasetDirectory,

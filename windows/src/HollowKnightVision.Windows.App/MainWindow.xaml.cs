@@ -1011,7 +1011,7 @@ public partial class MainWindow : Window
         menuStencilRecognizer = new WindowsMenuStencilRecognizer(ExamplesRootText.Text, initialization.LanguageIdentifier);
         ModelExamplesRootText.Text = ExamplesRootText.Text;
         DatasetRootText.Text = IOPath.Combine(root, "training-v1", "datasets");
-        TrainingOutputText.Text = IOPath.Combine(root, "training-v1", "runs", Guid.NewGuid().ToString("N"));
+        TrainingOutputText.Text = IOPath.Combine(root, "training-v1", "runs", Guid.NewGuid().ToString("D"));
         modelLifecycle = new LabelingModelLifecycle(
             new LabelingModelReviewStore(IOPath.Combine(root, "training-v1", "runs"), DatasetRootText.Text),
             new LabelingModelVersionStore(IOPath.Combine(root, "models-v1")));
@@ -2439,8 +2439,8 @@ public partial class MainWindow : Window
             BaseCheckpointText.Text = modelLifecycle.TrainingCheckpointPath() ?? "";
         }
         catch (Exception error) { ShowError(error); return; }
-        TrainingOutputText.Text = IOPath.Combine(IOPath.GetDirectoryName(TrainingOutputText.Text)!, Guid.NewGuid().ToString("N"));
-        IterationsText.Text = LabelingTrainingConfiguration.ForModel(ModelIdentifierText.Text).MaximumIterations.ToString(CultureInfo.InvariantCulture);
+        TrainingOutputText.Text = IOPath.Combine(IOPath.GetDirectoryName(TrainingOutputText.Text)!, Guid.NewGuid().ToString("D"));
+        IterationsText.Text = LabelingTrainingConfiguration.ForModel(LabelingSharedModelPolicy.ModelIdentifier).MaximumIterations.ToString(CultureInfo.InvariantCulture);
         ExportClassesText.Text = string.Join(Environment.NewLine, classes);
         LatestDatasetText.Clear();
         ExportDataset_Click(sender, e);
@@ -5245,11 +5245,7 @@ public partial class MainWindow : Window
             var classes = ParseIdentifiers(ExportClassesText.Text);
             if (classes.Count == 0) throw new InvalidOperationException(
                 "Enter at least one included class identifier.");
-            var store = new LabelingExampleStore(ModelExamplesRootText.Text);
-            var snapshot = new LabelingDatasetExporter(DatasetRootText.Text).Export(
-                ModelIdentifierText.Text.Trim(),
-                classes,
-                store.LoadTrainingExamplesInContext("game"));
+            var snapshot = ExportSharedTrainingDataset(ModelExamplesRootText.Text, DatasetRootText.Text, classes);
             LatestDatasetText.Text = snapshot.DirectoryPath;
             SetStatus(
                 $"Exported {snapshot.Manifest.Items.Count} items: "
@@ -7130,6 +7126,8 @@ public partial class MainWindow : Window
 
     private static string? FindWindowsRoot()
     {
+        var packaged = IOPath.Combine(AppContext.BaseDirectory, "training");
+        if (File.Exists(IOPath.Combine(packaged, "train-model-windows.ps1"))) return packaged;
         var current = new DirectoryInfo(AppContext.BaseDirectory);
         for (var depth = 0; depth < 10 && current is not null; depth++, current = current.Parent)
         {

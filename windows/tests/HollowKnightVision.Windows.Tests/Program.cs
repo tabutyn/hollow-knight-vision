@@ -672,6 +672,7 @@ var tests = new List<(string Name, Action Run)>
     ("model review loads latest class candidate and baseline evidence", ModelVersionTests.TestReviewStore),
     ("model promotion rejects unsafe paths and preserves existing state", ModelVersionTests.TestPromotionSafety),
     ("dashboard model lifecycle restores and promotes without duplicating versions", ModelVersionTests.TestLifecycle),
+    ("completed compact Python run IDs promote and retain checkpoint lineage", ModelVersionTests.TestCompactTrainingRunIdentifiers),
     ("durable ONNX promotion preserves real inference after source removal", ModelVersionTests.TestDurableOnnxInference),
     ("failed model registry commit rolls back only the new restore point", ModelVersionTests.TestRegistryFailureRollback),
     ("HUD shield masks atlas and motion without cropping the whole top edge", TestHudAtlasExclusions),

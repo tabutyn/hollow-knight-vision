@@ -4,18 +4,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 $windowsRoot = $PSScriptRoot
-$gitCommonDirectory = & git -C $windowsRoot rev-parse --path-format=absolute --git-common-dir
-if ($LASTEXITCODE -eq 0 -and $gitCommonDirectory) {
-  $repositoryRoot = Split-Path -Parent $gitCommonDirectory.Trim()
-} else {
-  $repositoryRoot = (Resolve-Path (Join-Path $windowsRoot "..\..\..")).Path
-}
+. (Join-Path $windowsRoot 'training-environment-windows.ps1')
+$trainingEnvironment = Get-HkvTrainingEnvironment -WindowsRoot $windowsRoot
+$repositoryRoot = $trainingEnvironment.Root
 $environmentRoot = Join-Path $repositoryRoot ".tools\hkv-training-windows"
 $environmentPython = Join-Path $environmentRoot "Scripts\python.exe"
 $virtualenvBootstrap = Join-Path $repositoryRoot ".tools\hkv-virtualenv-bootstrap"
 $torchCache = Join-Path $repositoryRoot ".tools\hkv-training-cache"
 $requirements = Join-Path $windowsRoot "TrainingPython\requirements-windows.txt"
-$trainer = Join-Path $windowsRoot "..\macos\TrainingPython\hkv_incremental_trainer.py"
+$trainer = $trainingEnvironment.Trainer
 
 if (-not $Python) {
   $repositoryPython = Join-Path $repositoryRoot ".tools\python311\python.exe"
@@ -92,4 +89,9 @@ try {
 & $environmentPython $trainer --help | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Hollow Knight Vision trainer cannot start." }
 
+# Persist the verified environment for the installed launcher, independent of its working directory.
+if ($trainingEnvironment.IsPackaged) {
+  New-Item -ItemType Directory -Path (Split-Path -Parent $trainingEnvironment.SettingsPath) -Force | Out-Null
+  @{ pythonPath = $environmentPython } | ConvertTo-Json | Set-Content -LiteralPath $trainingEnvironment.SettingsPath -Encoding UTF8
+}
 Write-Host "CPU training Python: $environmentPython"

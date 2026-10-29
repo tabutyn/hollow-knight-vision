@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using System.Xml.Linq;
+using System.Text.Json;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 
@@ -20,9 +21,77 @@ internal static class TrainingIntegrationTests
     }
     public static void Run()
     {
-        TestControlsAndLayout(); TestOutputGenerationsAndShutdown();
+        TestSharedDatasetExport(); TestPackagedTrainingEnvironment(); TestControlsAndLayout(); TestOutputGenerationsAndShutdown();
         Console.WriteLine("PASS native training count/dot, Stop/progress states, narrow toolbar, coalesced output and nonblocking shutdown");
     }
+    private static void TestSharedDatasetExport()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-training-start-");
+        try
+        {
+            var examples = Path.Combine(root.FullName, "examples");
+            var store = new LabelingExampleStore(examples);
+            var frame = new BgraFrame(2, 2, 8, new byte[16], 0, DateTimeOffset.UnixEpoch);
+            LabelingExampleAnnotation Box(string id) => new(Guid.NewGuid(), id, .1, .1, .2, .2);
+            store.Save(frame, "main-title", [Box("main-title.start-game")]);
+            var game = store.Save(frame, "game", [Box("game.playable-knight")]);
+            var classes = LabelingSharedModelPolicy.ClassIdentifiers().Order(StringComparer.Ordinal).ToArray();
+            // Exercise the same export boundary used by Train, without constructing
+            // the live capture window or providing any model-name UI state.
+            var snapshot = MainWindow.ExportSharedTrainingDataset(examples, Path.Combine(root.FullName, "datasets"), classes);
+            Check(snapshot.Manifest.ClassIdentifier == LabelingSharedModelPolicy.ModelIdentifier
+                && snapshot.Manifest.ClassIdentifiers!.SequenceEqual(classes), "Train exported an empty or per-object model identity.");
+            Check(snapshot.Manifest.Items.Single().ExampleIdentifier == game.Id
+                && snapshot.Manifest.TrainingAnnotationCount == 1, "Shared training included menu screenshots or lost Knight-only gameplay labels.");
+            Check(LabelingTrainingConfiguration.ForModel(snapshot.Manifest.ClassIdentifier).MaximumIterations == 100,
+                "Shared model export selected the short per-object training preset.");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    private static void TestPackagedTrainingEnvironment()
+    {
+        var packaged = Path.Combine(AppContext.BaseDirectory, "training");
+        foreach (var file in new[] { "train-model-windows.ps1", "setup-training-windows.ps1", "training-environment-windows.ps1",
+            "TrainingPython/requirements-windows.txt", "TrainingPython/hkv_incremental_trainer.py" })
+            Check(File.Exists(Path.Combine(packaged, file)), "Installed training asset missing: " + file);
+        var root = Directory.CreateTempSubdirectory("hkv-training-runtime-");
+        try
+        {
+            var probe = Path.Combine(root.FullName, "probe.ps1");
+            File.WriteAllText(probe, "param([string]$Tools)\n$ErrorActionPreference='Stop'\n. (Join-Path $Tools 'training-environment-windows.ps1')\nGet-HkvTrainingEnvironment -WindowsRoot $Tools | ConvertTo-Json");
+            JsonDocument Resolve(string? overridePython = null)
+            {
+                var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell/v1.0/powershell.exe"))
+                    { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+                foreach (var argument in new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", probe, "-Tools", packaged }) start.ArgumentList.Add(argument);
+                start.Environment["LOCALAPPDATA"] = root.FullName;
+                start.Environment["PATH"] = ""; // Installed training must not require Git or a checkout.
+                start.Environment["HKV_TRAINER_PYTHON"] = overridePython ?? "";
+                using var process = Process.Start(start)!;
+                var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit(15000)) { process.Kill(entireProcessTree: true); throw new Exception("Training environment probe timed out."); }
+                Check(process.ExitCode == 0, "Installed runtime resolution failed: " + stderr.GetAwaiter().GetResult());
+                return JsonDocument.Parse(stdout.GetAwaiter().GetResult());
+            }
+            using var fresh = Resolve();
+            Check(fresh.RootElement.GetProperty("IsPackaged").GetBoolean()
+                && fresh.RootElement.GetProperty("Trainer").GetString() == Path.Combine(packaged, "TrainingPython/hkv_incremental_trainer.py").Replace('/', '\\'),
+                "Installed launcher still depends on source paths.");
+            Check(fresh.RootElement.GetProperty("Python").GetString()!.StartsWith(root.FullName, StringComparison.Ordinal), "Fresh runtime escaped user storage.");
+            var settings = fresh.RootElement.GetProperty("SettingsPath").GetString()!;
+            Directory.CreateDirectory(Path.GetDirectoryName(settings)!);
+            var registered = Path.Combine(root.FullName, "existing environment", "python.exe");
+            File.WriteAllText(settings, JsonSerializer.Serialize(new { pythonPath = registered }));
+            using var saved = Resolve();
+            Check(saved.RootElement.GetProperty("Python").GetString() == registered, "Installed launcher ignored registered training Python.");
+            var explicitPython = Path.Combine(root.FullName, "override", "python.exe");
+            using var overridden = Resolve(explicitPython);
+            Check(overridden.RootElement.GetProperty("Python").GetString() == explicitPython, "Explicit interpreter did not override registered/default paths.");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
     private static void TestControlsAndLayout()
     {
         XNamespace ns = "http://schemas.microsoft.com/winfx/2006/xaml/presentation", x = "http://schemas.microsoft.com/winfx/2006/xaml";

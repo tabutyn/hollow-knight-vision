@@ -1,6 +1,7 @@
 param(
   [string]$SourceDirectory = (Join-Path $PSScriptRoot 'artifacts\app-win-x64'),
-  [string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision')
+  [string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision'),
+  [string]$TrainingPython = $env:HKV_TRAINER_PYTHON
 )
 
 $ErrorActionPreference = 'Stop'
@@ -87,6 +88,15 @@ try {
   if ($null -ne $shortcut) {
     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)
   }
+}
+
+# Keep workstation interpreter paths in user settings, never in distributable artifacts.
+# Future installs preserve this registration when no explicit interpreter is supplied.
+if ($TrainingPython) {
+  if (-not (Test-Path -LiteralPath $TrainingPython -PathType Leaf)) { throw "Training Python not found: $TrainingPython" }
+  $trainingSettings = Join-Path $env:LOCALAPPDATA 'HollowKnightVision\training-v1\runtime-settings.json'
+  New-Item -ItemType Directory -Path (Split-Path -Parent $trainingSettings) -Force | Out-Null
+  @{ pythonPath = [IO.Path]::GetFullPath($TrainingPython) } | ConvertTo-Json | Set-Content -LiteralPath $trainingSettings -Encoding UTF8
 }
 
 $appAssembly = Join-Path $install 'HollowKnightVision.Windows.dll'

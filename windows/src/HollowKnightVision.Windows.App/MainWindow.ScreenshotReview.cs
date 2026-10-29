@@ -28,7 +28,7 @@ public partial class MainWindow
         var canTrain = screenshotReview?.CanTrainModel() == true;
         var help = screenshotReview?.BreachCount > 0
             ? initialization.Text("fixLabels", ("count", screenshotReview.BreachCount.ToString()))
-            : canTrain ? initialization.Text("updateModel", ("model", ModelIdentifierText.Text)) : initialization.Text("enableTraining");
+            : canTrain ? initialization.Text("updateModel", ("model", LabelingSharedModelPolicy.ModelName)) : initialization.Text("enableTraining");
         TrainingControls.Update(untrainedImageCount, canTrain, trainingInProgress, trainingStopping, trainingFinalizing,
             trainingProgress, help, key => initialization.Text(key));
         RefreshGuidance();

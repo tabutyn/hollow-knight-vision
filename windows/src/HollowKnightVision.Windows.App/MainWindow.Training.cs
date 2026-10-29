@@ -15,9 +15,13 @@ public partial class MainWindow
     private int untrainedImageCount;
     private string? trainingProgress;
 
+    internal static LabelingDatasetSnapshot ExportSharedTrainingDataset(string examplesRoot, string datasetRoot,
+        IReadOnlyList<string> classes) => new LabelingDatasetExporter(datasetRoot).ExportSharedModel(classes,
+            new LabelingExampleStore(examplesRoot).LoadTrainingExamplesInContext("game"), LabelingSharedModelPolicy.ModelIdentifier);
+
     private void RefreshTrainingNotification()
     {
-        untrainedImageCount = LabelingTrainingNotificationPolicy.CountExamples(examples, modelLifecycle?.Latest(ModelIdentifierText.Text));
+        untrainedImageCount = LabelingTrainingNotificationPolicy.CountExamples(examples, modelLifecycle?.Latest(LabelingSharedModelPolicy.ModelIdentifier));
         UpdateModelTrainingControls();
     }
     private void ApplyTrainingOutput(TrainingOutputSnapshot snapshot)
