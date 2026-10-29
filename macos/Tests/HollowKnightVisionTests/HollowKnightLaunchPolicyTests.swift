@@ -47,6 +47,34 @@ final class HollowKnightLaunchPolicyTests: XCTestCase {
         XCTAssertEqual(HollowKnightLaunchPolicy.route(for: alias), .steam)
     }
 
+    func testSeparateSteamCopyKeepsItsSteamIdentityWithoutLaunchingLibraryCopy() throws {
+        let root = try workspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try makeSteamInstallation(at: root)
+        let app = root.appendingPathComponent("Modded/Hollow Knight.app")
+        let library = app.appendingPathComponent(
+            "Contents/PlugIns/steam_api.bundle/Contents/MacOS/libsteam_api.dylib"
+        )
+        try FileManager.default.createDirectory(at: library.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: library)
+        XCTAssertEqual(HollowKnightLaunchPolicy.route(for: app), .application(app.resolvingSymlinksInPath().standardizedFileURL))
+        XCTAssertEqual(HollowKnightLaunchPolicy.directLaunchEnvironment(for: app),
+                       ["SteamAppId": "367520", "SteamGameId": "367520"])
+        let alias = root.appendingPathComponent("Hollow Knight.app")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: app)
+        XCTAssertEqual(HollowKnightLaunchPolicy.directLaunchEnvironment(for: alias),
+                       HollowKnightLaunchPolicy.directLaunchEnvironment(for: app))
+    }
+
+    func testNonSteamCopyDoesNotRequireSteam() throws {
+        let root = try workspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = root.appendingPathComponent("GOG/Hollow Knight.app")
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+        XCTAssertTrue(HollowKnightLaunchPolicy.directLaunchEnvironment(for: app).isEmpty)
+        XCTAssertEqual(HollowKnightLaunchPolicy.route(for: app), .application(app.resolvingSymlinksInPath().standardizedFileURL))
+    }
+
     private func workspace() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

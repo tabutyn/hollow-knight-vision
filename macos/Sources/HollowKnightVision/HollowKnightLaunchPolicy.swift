@@ -7,9 +7,22 @@ enum HollowKnightLaunchRoute: Equatable {
 
 enum HollowKnightLaunchPolicy {
     static let steamAppID = "367520"
+    static let steamClientBundleIdentifier = "com.valvesoftware.steam"
     // A steam://run URL can choose Remote Play on another computer. The
     // client's -applaunch command requests this computer's installation.
     static let steamLaunchArguments = ["-applaunch", steamAppID]
+
+    /// A separately installed Steam build must retain its app identity when
+    /// launched through Launch Services. Without it, Steam's restart check
+    /// exits this copy and opens the registered library installation instead.
+    /// Non-Steam builds do not need a Steam client or these environment values.
+    static func directLaunchEnvironment(for gameURL: URL) -> [String: String] {
+        let library = gameURL.resolvingSymlinksInPath().appendingPathComponent(
+            "Contents/PlugIns/steam_api.bundle/Contents/MacOS/libsteam_api.dylib"
+        )
+        guard FileManager.default.fileExists(atPath: library.path) else { return [:] }
+        return ["SteamAppId": steamAppID, "SteamGameId": steamAppID]
+    }
 
     /// Steam may terminate a directly opened game and replace it with its own
     /// process. Only route the manifest's installed bundle through Steam: a
