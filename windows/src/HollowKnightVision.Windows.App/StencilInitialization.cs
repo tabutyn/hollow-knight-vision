@@ -178,6 +178,24 @@ internal sealed class StencilInitializationCoordinator
             ("object", Text(step.ClassName).TrimEnd('.')), ("count", step.Occurrence.ToString()),
             ("total", step.RequiredCount.ToString()));
     }
+    internal StencilInitializationStep? NavigationStep(string? navigationContext = null)
+    {
+        if (navigationContext is null && !HasUsableHUD
+            && !Steps.Any(item => item.ContextIdentifier is "main-title" or "select-profile"))
+            return new("gameplay-hud", "Gameplay HUD", "game.health", "Health", 1, 2);
+        return Steps.FirstOrDefault(item => item.ContextIdentifier == navigationContext) ?? Steps.FirstOrDefault();
+    }
+
+    internal string LabelContextForCapture(string? recognizedContext, string? navigationContext, string fallbackContext)
+    {
+        // Untrained menus can still show the gameplay HUD behind them. An
+        // automatic Gameplay match must not override the instruction that
+        // explicitly told the user which screen to visit before pressing L.
+        // Once guidance is complete, resume ordinary recognized-context entry.
+        if (Contexts.Any(item => item.Identifier == navigationContext)) return navigationContext!;
+        return NavigationStep(navigationContext)?.ContextIdentifier ?? recognizedContext ?? fallbackContext;
+    }
+
     internal string? Guidance(string? context, string? selected, string? navigationContext = null)
     {
         if (context is not null && StencilInitializationPolicy.RequiredContexts.Any(item => item.Identifier == context))
@@ -201,7 +219,7 @@ internal sealed class StencilInitializationCoordinator
             && !Steps.Any(item => item.ContextIdentifier is "main-title" or "select-profile"))
             return ExampleFor("gameplay-hud") is null ? Text("navigateHUD")
                 : Text("resumeStencil", ("screen", ScreenName("Gameplay HUD")));
-        var step = Steps.FirstOrDefault(item => item.ContextIdentifier == navigationContext) ?? Steps.FirstOrDefault();
+        var step = NavigationStep(navigationContext);
         if (step is not null && ExampleFor(step.ContextIdentifier) is not null)
             return Text("resumeStencil", ("screen", ScreenName(step.ContextName)));
         return step is null ? null : step.ContextIdentifier == "gameplay-hud" ? Text("navigateHUD")

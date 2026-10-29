@@ -189,6 +189,7 @@ var tests = new List<(string Name, Action Run)>
     ("ground labels human ignores never change detector input", TestHumanIgnoreRegionsNeverChangeDetectorInput),
     ("ground labels unreviewed data cannot tune or generalize", TestUnreviewedLabelsExcludedFromTuningAndDraftDatasetNotGeneralization),
     ("ground labels Check data cannot choose parameters", TestCheckLabelsCannotChooseParameters),
+    ("phase-two labeling follows navigation and selects the next missing object", StencilGuidanceParityTests.TestPhaseTwoNavigationOpensTheGuidedScreenAndNextObject),
     ("global correction rejects four wrong votes", GroundGlobalCorrectionPolicyTests.TestFourWrongVotesCannotOverrideWideStrip),
     ("global correction rejects repeated-texture phase jumps", GroundGlobalCorrectionPolicyTests.TestSimilarRepeatedTextureDoesNotAuthorizePhaseJump),
     ("global correction accepts a better verified strip", GroundGlobalCorrectionPolicyTests.TestBetterVerifiedStripCanCorrectDriftAndRecoverLostAnchor),

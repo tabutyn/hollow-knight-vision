@@ -78,20 +78,21 @@ public partial class MainWindow
         ApplyLabelSelection(() =>
         {
             initialization.Refresh();
-            var step = initialization.Steps.FirstOrDefault(item => item.ContextIdentifier == initializationTargetContext)
-                ?? (initialization.IsFirstPhaseComplete ? null : initialization.Steps.FirstOrDefault());
-            if (initializationTargetContext is null && !initialization.HasUsableHUD
-                && !initialization.Steps.Any(item => item.ContextIdentifier is "main-title" or "select-profile"))
-                step = new StencilInitializationStep("gameplay-hud", "Gameplay HUD", "game.health", "Health", 1, 2);
-            var target = initialization.Contexts.FirstOrDefault(item => item.Identifier == initializationTargetContext);
-            if (recognizedMenuContext == "game") ContextCombo.SelectedValue = "Gameplay";
-            else if (target is not null) ContextCombo.SelectedValue = target.Name;
-            else if (step is not null) ContextCombo.SelectedValue = step.ContextName;
-            else if (recognizedMenuContext is { } contextIdentifier) ContextCombo.SelectedValue = ContextDisplayName(contextIdentifier);
-            var context = StencilInitializationPolicy.NormalizeContext(CurrentContextName);
+            var context = initialization.LabelContextForCapture(recognizedMenuContext,
+                initializationTargetContext, StencilInitializationPolicy.NormalizeContext(CurrentContextName));
+            CancelLabelGesture();
+            LabelAddButton.IsChecked = true;
+            HardNegativeCheck.IsChecked = false;
+            ContextCombo.SelectedValue = ContextDisplayName(context);
             var saved = context == "game" ? null : initialization.ExampleFor(context);
             if (saved is not null) OpenLabelExample(saved);
             else CaptureFrame_Click(this, new RoutedEventArgs());
+            // Opening a saved image can restore its first annotated object,
+            // and a new capture can retain a selection from another screen.
+            // Guided Add mode must instead start at this screen's next gap.
+            ClassIdentifierText.Text = initialization.Steps
+                .FirstOrDefault(item => item.ContextIdentifier == context)?.ClassIdentifier
+                ?? AvailableClassChoices(CurrentContextName, hidesCompleted: true).FirstOrDefault()?.Identifier ?? "";
             RefreshClassChoices(); RefreshGuidance();
         });
     }

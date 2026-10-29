@@ -227,4 +227,52 @@ internal static class StencilGuidanceParityTests
             Check(coordinator.Guidance(null, null, "options") == "Navigate to Options and press L.");
         });
     }
+    public static void TestPhaseTwoNavigationOpensTheGuidedScreenAndNextObject()
+    {
+        WithTemporaryDirectory(root =>
+        {
+            var store = new LabelingExampleStore(root);
+            foreach (var mode in new[] { GameRuntimeMode.Normal, GameRuntimeMode.Modded })
+            {
+                foreach (var context in StencilInitializationPolicy.Contexts(mode)
+                    .Where(item => StencilInitializationPolicy.Phase(item.Identifier) == 1))
+                {
+                    var labels = context.Requirements.Where(item => !item.ModdedOnly || mode == GameRuntimeMode.Modded)
+                        .SelectMany(item => Enumerable.Range(0, item.Count).Select(_ => Box(item.Identifier))).ToArray();
+                    store.Save(Frame(), context.Identifier, labels);
+                }
+                var coordinator = new StencilInitializationCoordinator(store, mode) { HasUsableHUD = true };
+                Check(coordinator.IsFirstPhaseComplete);
+                Check(coordinator.Guidance(null, null) == "Navigate to Options and press L.");
+                var target = coordinator.LabelContextForCapture(null, null, "game");
+                Check(target == "options", "Phase-two Label entry retained the previous Gameplay context.");
+                var next = coordinator.Steps.First(item => item.ContextIdentifier == target);
+                Check(next.ClassIdentifier == "shared.options");
+                Check(coordinator.Guidance(target, next.ClassIdentifier) == "Draw a box around Options.");
+                Check(coordinator.LabelContextForCapture(null, "audio", "game") == "audio",
+                    "Explicit stencil selection did not override the default next screen.");
+                Check(coordinator.LabelContextForCapture("game", null, "game") == "options",
+                    "HUD visible behind an untrained Options menu overrode the navigation instruction.");
+                Check(coordinator.LabelContextForCapture("game", "audio", "game") == "audio",
+                    "A background HUD overrode an explicitly selected stencil.");
+
+                var partial = store.Save(Frame(), "options", [Box("shared.options")]);
+                coordinator.Refresh();
+                Check(coordinator.LabelContextForCapture(null, null, "game") == "options");
+                var missing = coordinator.Steps.First(item => item.ContextIdentifier == "options");
+                Check(missing.ClassIdentifier != "shared.options"
+                    && coordinator.Guidance("options", missing.ClassIdentifier) == coordinator.Instruction(missing),
+                    "Reopening a partial stencil repeated an already labeled heading.");
+                store.Delete(partial);
+            }
+            foreach (var context in StencilInitializationPolicy.Contexts(GameRuntimeMode.Modded)
+                .Where(item => StencilInitializationPolicy.Phase(item.Identifier) != 1))
+                store.Save(Frame(), context.Identifier, context.Requirements
+                    .SelectMany(item => Enumerable.Range(0, item.Count).Select(_ => Box(item.Identifier))).ToArray());
+            var complete = new StencilInitializationCoordinator(store, GameRuntimeMode.Modded) { HasUsableHUD = true };
+            Check(complete.IsComplete && complete.Guidance(null, null) is null);
+            Check(complete.LabelContextForCapture("game", null, "options") == "game",
+                "Completed setup did not return to recognized Gameplay labeling.");
+        });
+    }
 }
