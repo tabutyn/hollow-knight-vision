@@ -25,12 +25,13 @@ public partial class MainWindow
     private void UpdateModelTrainingControls()
     {
         if (TrainingControls is null || initialization is null) return;
-        var canTrain = screenshotReview?.CanTrainSelectedClass(ClassIdentifierText.Text) == true;
+        var canTrain = screenshotReview?.CanTrainModel() == true;
         var help = screenshotReview?.BreachCount > 0
             ? initialization.Text("fixLabels", ("count", screenshotReview.BreachCount.ToString()))
             : canTrain ? initialization.Text("updateModel", ("model", ModelIdentifierText.Text)) : initialization.Text("enableTraining");
         TrainingControls.Update(untrainedImageCount, canTrain, trainingInProgress, trainingStopping, trainingFinalizing,
             trainingProgress, help, key => initialization.Text(key));
+        RefreshGuidance();
     }
 
     private bool AdmitModelTraining(bool requireSelectedClass)
@@ -42,7 +43,8 @@ public partial class MainWindow
             SetStatus(initialization.Text("fixLabels", ("count", screenshotReview.BreachCount.ToString())));
             return false;
         }
-        if (requireSelectedClass && !screenshotReview.CanTrainSelectedClass(ClassIdentifierText.Text, trainingInProgress))
+        if (!screenshotReview.CanTrainModel(trainingInProgress)
+            || requireSelectedClass && !screenshotReview.CanTrainSelectedClass(ClassIdentifierText.Text, trainingInProgress))
         {
             SetStatus(initialization.Text("enableTraining"));
             return false;

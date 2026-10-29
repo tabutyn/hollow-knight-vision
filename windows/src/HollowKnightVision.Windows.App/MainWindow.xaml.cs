@@ -1111,6 +1111,7 @@ public partial class MainWindow : Window
         // waiting for any persistence or destructive filesystem operation.
         StopVision();
         objectReferencePanel?.StopAndDrain();
+        MenuParticles.SetScene(null, null);
         gameLostCountdownCancellation?.Cancel();
         startupCancellation?.Cancel();
         inputPathReplayCancellation?.Cancel();
@@ -2043,7 +2044,6 @@ public partial class MainWindow : Window
         ModelWorkspaceButton.Visibility = initialization.IsFirstPhaseComplete ? Visibility.Visible : Visibility.Collapsed;
         StencilDetectionCheck.IsEnabled = initialization.IsFirstPhaseComplete;
         ObjectDetectionCheck.IsEnabled = initialization.IsFirstPhaseComplete && trainedGameplayModelReady;
-        if (!StencilDetectionCheck.IsEnabled) StencilDetectionCheck.IsChecked = false;
         if (!ObjectDetectionCheck.IsEnabled) ObjectDetectionCheck.IsChecked = false;
         ObjectDetectionOptions.IsEnabled = ObjectDetectionCheck.IsEnabled && ObjectDetectionCheck.IsChecked == true;
         StencilLockedText.Visibility = StencilDetectionCheck.IsEnabled ? Visibility.Collapsed : Visibility.Visible;
@@ -2165,7 +2165,9 @@ public partial class MainWindow : Window
     private void RefreshGuidance()
     {
         if (StencilGuidanceText is null || initialization is null) return;
-        StencilGuidanceText.Text = initialization.Guidance(
+        StencilGuidanceText.Text = initialization.ModelGuidance(workspace,
+            screenshotReview?.HasGameplayLabels == true, screenshotReview?.BreachCount ?? 0,
+            trainedGameplayModelReady, trainingInProgress) ?? initialization.Guidance(
             workspace == "Label" ? StencilInitializationPolicy.NormalizeContext(CurrentContextName) : null,
             ClassIdentifierText.Text, initializationTargetContext) ?? "";
         StencilGuidanceText.Visibility = StencilGuidanceText.Text.Length == 0
@@ -2425,11 +2427,6 @@ public partial class MainWindow : Window
         try
         {
             if (!AdmitModelTraining(requireSelectedClass: false)) return;
-            if (!CanTrainSelectedObject())
-            {
-                SetStatus(initialization.Text("enableTraining"));
-                return;
-            }
         }
         catch (Exception error) { ShowError(error); return; }
         var classes = LabelingObjectReferencePolicy.ModelClasses(customObjectChoices.Select(item => new MenuStencilLabel(item.Identifier, item.Name)).ToArray())
@@ -3769,6 +3766,7 @@ public partial class MainWindow : Window
         if (gameplayPresentation.TryAcceptAnalysis(result.Frame))
         {
             Volatile.Write(ref recognizedMenuContext, result.MenuContext);
+            MenuParticles.SetScene(result.MenuContext, result.MenuStencil);
             Volatile.Write(ref recognizedMenuSelection, result.Status?.SelectedMenuOption);
             VisionStatusText.ToolTip = result.StencilDiagnostic;
             PresentObjectInferenceDiagnostics(ObjectInferenceIssueOverlay, ObjectInferenceIssueOverlayText,
@@ -3938,7 +3936,7 @@ public partial class MainWindow : Window
             DrawObjectDetectionOverlay(DetectionCanvas, objects, CanvasWidth, CanvasHeight,
                 RawDetectionCheck.IsChecked == true, DetectionPixelsCheck.IsChecked == true);
         }
-        if (StencilDetectionCheck.IsChecked == true)
+        if (StencilDetectionCheck.IsEnabled && StencilDetectionCheck.IsChecked == true)
         {
             if (menuStencil is not null) DrawMenuStencil(DetectionCanvas, menuStencil);
             if (hudStencil is not null) DrawHudStencil(DetectionCanvas, hudStencil);

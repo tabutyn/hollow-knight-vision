@@ -39,7 +39,7 @@ internal static class ScreenshotReviewTests
     {
         using var fixture = new Fixture(); var good = fixture.Save(ValidBoxes); var bad = fixture.Save(Box("game.playable-knight"));
         var session = new LabelingScreenshotReviewSession(fixture.Store); session.Reload();
-        Check(session.BreachCount == 1 && !session.CanTrainSelectedClass("game.playable-knight"));
+        Check(session.BreachCount == 1 && !session.CanTrainModel() && !session.CanTrainSelectedClass("game.playable-knight"));
         Check(session.Outline(good.Id) == LabelingScreenshotOutline.Selected && session.Outline(bad.Id) == LabelingScreenshotOutline.Breach);
         var satisfied = session.Evaluations(good.Id).First(evaluation => evaluation.IsSatisfied).Id;
         Check(!session.ToggleExemption(good.Id, satisfied) && !session.ToggleExemption(good.Id, "unknown"));
@@ -50,6 +50,8 @@ internal static class ScreenshotReviewTests
         Check(session.Outline(bad.Id) == LabelingScreenshotOutline.Breach, "Selection or exemption hid another breach.");
         foreach (var id in failed.Skip(1)) Check(session.ToggleExemption(bad.Id, id));
         Check(session.Outline(bad.Id) == LabelingScreenshotOutline.Exempt && session.BreachCount == 0);
+        Check(session.CanTrainModel() && !session.CanTrainModel(training: true) && !session.CanTrainSelectedClass("shared.options"),
+            "Global model training incorrectly depends on the leftover menu selection.");
         Check(session.CanTrainSelectedClass("game.playable-knight") && !session.CanTrainSelectedClass("custom.absent")
             && !session.CanTrainSelectedClass("game.playable-knight", training: true) && !session.CanTrainSelectedClass(" "));
         session.Reload(); Check(session.BreachCount == 0 && session.Selected?.Id == bad.Id);
@@ -99,7 +101,7 @@ internal static class ScreenshotReviewTests
         Check(session.BreachCount == 1 && session.Evaluations(empty.Id).Any(item => item.Id == "screenshot.has-label" && item.IsBreach));
         foreach (var id in session.Evaluations(empty.Id).Where(item => item.IsBreach).Select(item => item.Id).ToArray()) session.ToggleExemption(empty.Id, id);
         Check(!session.CanTrainSelectedClass("custom.wisp") && session.CanTrainSelectedClass("main-title.options") && session.CanTrainSelectedClass("shared.options"));
-        session.SetExamples([empty]); Check(!session.CanTrainSelectedClass("game.playable-knight"), "Exempt empty screenshots invented positive examples.");
+        session.SetExamples([empty]); Check(!session.CanTrainModel() && !session.CanTrainSelectedClass("game.playable-knight"), "Exempt empty screenshots invented positive examples.");
     }
 
     public static void TestVisualIdentity()

@@ -211,13 +211,54 @@ internal static class StencilGuidanceParityTests
         });
     }
 
+    public static void TestDeferredProfileAndModelGuidance()
+    {
+        WithTemporaryDirectory(root =>
+        {
+            var store = new LabelingExampleStore(root);
+            foreach (var context in StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal).Where(item => StencilInitializationPolicy.Phase(item.Identifier) == 1))
+                store.Save(Frame(), context.Identifier, context.Requirements.Where(item => item.Identifier != StencilInitializationPolicy.DeferredProfileClass)
+                    .SelectMany(item => Enumerable.Range(0, item.Count).Select(_ => Box(item.Identifier))).ToArray());
+            var coordinator = new StencilInitializationCoordinator(store, GameRuntimeMode.Normal);
+            Check(!coordinator.IsScreenComplete("select-profile"), "Deferred Clear Save incorrectly earned a completion checkmark.");
+            Check(coordinator.NavigationStep()?.ContextIdentifier == "gameplay-hud", "Deferred action blocked HUD setup.");
+            coordinator.HasUsableHUD = true;
+            Check(coordinator.IsFirstPhaseComplete && !coordinator.IsScreenComplete("select-profile"));
+            Check(coordinator.NavigationStep()?.ContextIdentifier == "options");
+            foreach (var context in StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal).Where(item => StencilInitializationPolicy.Phase(item.Identifier) != 1))
+                store.Save(Frame(), context.Identifier, context.Requirements.Where(item => !item.ModdedOnly)
+                    .SelectMany(item => Enumerable.Range(0, item.Count).Select(_ => Box(item.Identifier))).ToArray());
+            coordinator.Refresh();
+            Check(!coordinator.IsComplete && coordinator.Steps.Single().ClassIdentifier == StencilInitializationPolicy.DeferredProfileClass);
+            Check(coordinator.Guidance(null, null)!.Contains("Return to Select Profile"));
+            Check(coordinator.LabelContextForCapture("select-profile", null, "game") == "select-profile");
+            Check(coordinator.Guidance("select-profile", StencilInitializationPolicy.DeferredProfileClass) == "Draw a box around Clear Save.");
+            Check(coordinator.ModelGuidance("Gameplay", true, 0, false, false) is null);
+            var profile = coordinator.ExampleFor("select-profile")!;
+            var completed = store.Update(profile, "select-profile", [.. profile.Manifest.Annotations, Box(StencilInitializationPolicy.DeferredProfileClass)]);
+            coordinator.Refresh();
+            Check(coordinator.IsComplete && coordinator.IsScreenComplete("select-profile") && coordinator.CompletedScreenCount == coordinator.ScreenCount);
+            Check(coordinator.ModelGuidance("Gameplay", false, 0, false, false)!.Contains("Enter gameplay"));
+            Check(coordinator.ModelGuidance("Gameplay", true, 0, false, false)!.Contains("Open Model"));
+            Check(coordinator.ModelGuidance("Model", true, 2, false, false)!.Contains("2 screenshots"));
+            Check(coordinator.ModelGuidance("Model", true, 0, false, false)!.StartsWith("Click Train"));
+            Check(coordinator.ModelGuidance("Model", true, 0, false, true)!.StartsWith("Training your model"));
+            Check(coordinator.ModelGuidance("Gameplay", true, 0, true, false)!.StartsWith("Model trained"));
+            Check(coordinator.ModelGuidance("Label", true, 0, false, false) is null);
+            store.Update(completed, "select-profile", profile.Manifest.Annotations);
+            coordinator.Refresh();
+            Check(!coordinator.IsScreenComplete("select-profile") && !coordinator.IsComplete && coordinator.IsFirstPhaseComplete,
+                "Undo failed to restore deferred guidance or locked the already completed first phase.");
+        });
+    }
+
     public static void TestEmptySetupIncludesEveryRequiredScreen()
     {
         WithTemporaryDirectory(root =>
         {
             var coordinator = new StencilInitializationCoordinator(
                 new LabelingExampleStore(root), GameRuntimeMode.Modded);
-            Check(coordinator.TotalCount == 189);
+            Check(coordinator.TotalCount == 190);
             Check(coordinator.ScreenCount == 26);
             Check(coordinator.ButtonTitle == "Stencil (0 / 26)");
             Check(coordinator.CompletedScreenCount == 0);

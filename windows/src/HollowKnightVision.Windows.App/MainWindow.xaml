@@ -96,6 +96,7 @@
                         <Canvas x:Name="GameplayGroundCanvas" Width="640" Height="360"
                                 IsHitTestVisible="False" Panel.ZIndex="19"/>
                     </Canvas>
+                    <local:MenuStencilParticles x:Name="MenuParticles" IsHitTestVisible="False"/>
                     <StackPanel x:Name="GameplayPlaceholder" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <TextBlock Text="⌖" FontSize="34" Foreground="#CC00FFFF" HorizontalAlignment="Center"/>
                         <TextBlock Text="Waiting for Hollow Knight…" FontSize="13" Foreground="#999999" Margin="0,7,0,0"/>
@@ -445,7 +446,7 @@
                             <Separator Margin="0,20"/>
                             <TextBlock x:Name="DebugSettings" Text="Debug View" FontWeight="SemiBold" Margin="0,0,0,12"/>
 
-                            <CheckBox x:Name="GameStateCheck" Content="Game State" Margin="0,0,0,10" Checked="GameStateCheck_Changed" Unchecked="GameStateCheck_Changed"/>
+                            <CheckBox x:Name="GameStateCheck" IsChecked="True" Content="Game State" Margin="0,0,0,10" Checked="GameStateCheck_Changed" Unchecked="GameStateCheck_Changed"/>
                     <CheckBox x:Name="ObjectDetectionCheck" Content="Object Detection" Margin="0,0,0,10" Checked="ObjectDetectionCheck_Changed" Unchecked="ObjectDetectionCheck_Changed"/>
                     <TextBlock x:Name="ModelLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
                     <StackPanel x:Name="ObjectDetectionOptions" IsEnabled="False">
@@ -454,7 +455,7 @@
                         <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="38"/></Grid.ColumnDefinitions><TextBlock Text="Detection Extend"/><Slider x:Name="DetectionExtendSlider" Grid.Column="1" Minimum="0" Maximum="50" Value="12" Margin="8,0" ValueChanged="DetectionExtendSlider_ValueChanged"/><TextBlock x:Name="DetectionExtendText" Grid.Column="2" Text="12%" FontFamily="Consolas" HorizontalAlignment="Right"/></Grid>
                         <CheckBox x:Name="DetectionPixelsCheck" Content="Detection Pixels" Margin="0,0,0,10" Checked="DetectionPixelsCheck_Changed" Unchecked="DetectionPixelsCheck_Changed"/>
                     </StackPanel>
-                    <CheckBox x:Name="StencilDetectionCheck" Content="Stencil Detection" Margin="0,0,0,10"/>
+                    <CheckBox x:Name="StencilDetectionCheck" IsChecked="True" Content="Stencil Detection" Margin="0,0,0,10"/>
                     <TextBlock x:Name="StencilLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
                     <Separator Margin="0,0,0,10"/>
                     <CheckBox x:Name="GroundFeaturesCheck" Content="Ground Features" Margin="0,0,0,10" IsChecked="True"/>

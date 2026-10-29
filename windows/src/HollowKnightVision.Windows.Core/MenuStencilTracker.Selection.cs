@@ -29,7 +29,7 @@ public sealed partial class MenuStencilTracker
             Score? ScoreSelector(IReadOnlyList<Variant> variants, StencilRect bounds, bool usesFallback, MenuSelectorSide side, ImageStencilForegroundMask? mask)
             {
                 var expected = bounds.Offset(trackedOffset.X, trackedOffset.Y);
-                var text = textBounds.Offset(trackedOffset.X, trackedOffset.Y);
+                var text = verifiedText ?? textBounds.Offset(trackedOffset.X, trackedOffset.Y);
                 bool Accepts(StencilRect candidate) => candidate.MidY >= rowBand.Lower && candidate.MidY <= rowBand.Upper
                     && (side == MenuSelectorSide.Left ? candidate.MidX < text.X : candidate.MidX > text.Right);
                 var primary = BestScore(usesFallback ? variants.Take(1).ToArray() : variants, pixels, expected, radiusX, radiusY, accepts: Accepts, idleMask: mask);

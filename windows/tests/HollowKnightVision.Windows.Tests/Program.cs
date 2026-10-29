@@ -597,6 +597,8 @@ var tests = new List<(string Name, Action Run)>
     ("live menu capture store preserves portable language schema and bounds paths", MenuLiveCaptureTests.TestPortableStore),
     ("menu search cadence limits untracked work and resets immediately", MenuTrackerTests.TestCadence),
     ("menu selector pairs require bilateral evidence including faded arrows", MenuTrackerTests.TestPairEvidence),
+    ("deferred Clear Save stays incomplete and guides into model training", StencilGuidanceParityTests.TestDeferredProfileAndModelGuidance),
+    ("Clear Save ignores another slot's calibration and follows every row", MenuCatalogTests.TestClearSaveMovesBetweenSlots),
     ("Clear Save probe searches every profile row", MenuTrackerTests.TestClearSaveOffsets),
     ("solved menu search regions stay narrow and scale with capture", MenuTrackerTests.TestSearchRegions),
     ("menu selector pairs reject different visual rows", MenuTrackerTests.TestDifferentRowsRejected),
@@ -1529,14 +1531,15 @@ static void TestStencilContractCoverage()
 {
     Equal(26, StencilInitializationPolicy.Contexts(GameRuntimeMode.Modded).Length);
     Equal(25, StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal).Length);
-    Equal(189, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Modded));
-    Equal(183, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Normal));
+    Equal(190, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Modded));
+    Equal(184, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Normal));
     var normal = StencilInitializationPolicy.MissingSteps([], "en", GameRuntimeMode.Normal);
     True(!normal.Any(step => step.ContextIdentifier == "mods" || step.ClassIdentifier == "shared.mods"));
     Equal("main-title", normal[0].ContextIdentifier);
     Equal("gameplay-hud", normal.Select(step => step.ContextIdentifier).Distinct().ElementAt(2));
     Equal("clear-save", normal.Last().ContextIdentifier);
-    True(!normal.Any(step => step.ContextIdentifier == "select-profile" && step.ClassIdentifier == "select-profile.clear-save"));
+    True(normal.Any(step => step.ContextIdentifier == "select-profile" && step.ClassIdentifier == "select-profile.clear-save"));
+    True(!StencilInitializationPolicy.IsFirstPhaseStep(normal.Single(step => step.ClassIdentifier == "select-profile.clear-save")));
     True(normal.Where(step => StencilInitializationPolicy.Phase(step.ContextIdentifier) == 1)
         .All(step => step.ContextIdentifier is "main-title" or "select-profile" or "gameplay-hud"));
     foreach (var language in StencilInitializationCoordinator.SupportedLanguages) {
