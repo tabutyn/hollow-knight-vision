@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-27",
+  "status": "incomplete: game and capture stalls fail the wall-clock gate",
+  "recordingId": "c129e897-958c-499b-a6cf-88b8daa9533f",
+  "recordingSha256": "1E98BDBA928AEEF1D66F2CBB6336178223E983A13D5B46C4938B73DC41C37DC6",
+  "acceptedSeconds": 5,
+  "installedCoreSha256": "F4672B8A9636E39B94F9D81DD18C7DC6156C3BF4AE33EA7171050BDE5ECCCD6C",
+  "installedAppSha256": "D3DC1FA5119888E648306C4EED42FAB3C2C22767AD1A491CCD05F6A7B4B63227",
+  "receiverVersion": "0.9.3",
+  "receiverSha256": "4E5C57CD6866EE1C7DF0E52176017E009E640C102553FACF45B4C218D9003D52",
+  "trainingIsolation": {
+    "authorized": true,
+    "method": "Suspend training main threads; leave CUDA service threads available; verify per-process CPU and GPU idle; automatic 180-second resume guard and finally resumption",
+    "bothResumed": true,
+    "lastObservedTrainingGpuPercent": 0,
+    "lastPausedProcesses": [
+      3204,
+      21168
+    ]
+  },
+  "passingFifthSecond": {
+    "frames": 30,
+    "maximumTrackingMilliseconds": 25.2633,
+    "evidenceSha256": "5946019750399F60B3BC008E4C2F08623EFAEE83227FC75854CA6F276B4A0251",
+    "evidenceFile": "attempt-0004-9b7d3b507a504fc48badf034bb26ef51.json.br",
+    "maximumErrorPixels": 3.188973446929392
+  },
+  "latestAttempt": {
+    "scoredFrames": 11,
+    "visionRemainedOnTop": true,
+    "evidenceSha256": "8213A3189FEFAEBBF0AAC938117A0DBA63B2CBB7CD8F236FF3D5C164EF5184EB",
+    "failure": "Missing 30 fps frame 11; next sample was 14.",
+    "gameForegroundConfirmed": true,
+    "evidenceFile": "attempt-0005-27b418aacd7a45ac87764887901364c0.json.br",
+    "maximumErrorPixels": 3.202602576923857,
+    "second": 5,
+    "maximumTrackingMilliseconds": 18.4197
+  },
+  "receiverStall": {
+    "markerUploadMilliseconds": 0.0151,
+    "frameMilliseconds": 95.0697,
+    "lateUpdateStartedMilliseconds": 92.4676,
+    "generationTwoCollections": 0,
+    "renderStartedMilliseconds": 93.1876,
+    "receiverUpdateMilliseconds": 0.0075,
+    "poseApplicationMilliseconds": 0.0255,
+    "gameFrame": 69617,
+    "source": "2026-10-27-receiver-stalled-frame.csv"
+  },
+  "memoryContext": {
+    "availableMiB": 1019,
+    "pageReadsPerSecond": 123.5963,
+    "timing": "Measured after benchmark with training resumed; contextual evidence, not proof of the stalled frame cause."
+  },
+  "changes": [
+    "Shared receiver retains a bounded timing ring and writes slow-frame diagnostics off the Unity thread",
+    "Strict replay uses an eight-frame WGC pool and sixteen-frame analysis queue with original timestamps",
+    "Preview retains its existing newest-frame behavior"
+  ],
+  "validation": {
+    "windowsUiGroups": 69,
+    "sharedReceiverTests": "passed",
+    "coreTests": 990,
+    "macRuntime": "not tested",
+    "installedAndHashVerified": true
+  },
+  "remainingDecision": "Resolved: user selected controlled frames while retaining strict 5 px and 33.33 ms tracking limits.",
+  "followupAudit": "2026-10-27-controlled-step-replay.json"
+}

@@ -46,7 +46,20 @@ public readonly record struct GroundPatchSearchSample(
     int SourceIndex,
     int? TargetOffset);
 
-public sealed record GroundPatchSearchCandidate(
+// Only the solver's bounded candidate builder implements this contract.
+// Revalidate the layout if a caller changes image shape or source count.
+internal interface IValidatedGroundPatchSamples : IReadOnlyList<GroundPatchSearchSample>
+{
+    bool IsValidatedFor(int width, int height, int sources);
+    object LayoutIdentity { get; }
+    bool MatchesSourcePositions(IReadOnlyList<GroundPatchSearchSource> sources);
+    uint EligibleSources { get; }
+    uint MatchedSources { get; }
+    int DisplacementX { get; }
+    int DisplacementY { get; }
+}
+
+public readonly record struct GroundPatchSearchCandidate(
     int Dx,
     int Dy,
     IReadOnlyList<GroundPatchSearchSample> Samples);
@@ -76,6 +89,11 @@ public sealed class GroundPatchMatcher
     public long CudaDispatchCount => enableCuda ? cuda.Value.DispatchCount : 0;
     public void WarmUp() { if (enableCuda) _ = cuda.Value.Available; }
 
+    public void PrepareBroadSearch(int width, int height)
+    {
+        if (enableCuda) cuda.Value.ReserveSearchCapacity(width, height, 32, Math.Max(28 * (2 * 192 + 1), 193 * 193));
+    }
+
     public static GroundPatchMatcher Shared { get; } = new();
 
     public GroundPatchSearchExecution Search(
@@ -84,7 +102,7 @@ public sealed class GroundPatchMatcher
         int width,
         int height,
         IReadOnlyList<GroundPatchSearchCandidate> candidates,
-        GroundComputeBackend requestedBackend)
+        GroundComputeBackend requestedBackend, bool allowVerticalSpread = false)
     {
         ArgumentNullException.ThrowIfNull(sources);
         ArgumentNullException.ThrowIfNull(pixels);
@@ -92,7 +110,7 @@ public sealed class GroundPatchMatcher
         var started = Stopwatch.GetTimestamp();
         if (enableCuda && (requestedBackend == GroundComputeBackend.Cuda
                 || requestedBackend == GroundComputeBackend.Automatic && candidates.Count >= 64)
-            && cuda.Value.TrySearch(sources, pixels, width, height, candidates) is { } gpuResults)
+            && cuda.Value.TrySearch(sources, pixels, width, height, candidates, allowVerticalSpread) is { } gpuResults)
         {
             return new GroundPatchSearchExecution(gpuResults, GroundComputeBackend.Cuda,
                 candidates.Count, candidates.Sum(candidate => candidate.Samples.Count),
@@ -106,8 +124,8 @@ public sealed class GroundPatchMatcher
             _ => requestedBackend,
         };
         var results = selected == GroundComputeBackend.ParallelCpu
-            ? ParallelSearch(sources, pixels, width, height, candidates)
-            : CpuSearch(sources, pixels, width, height, candidates);
+            ? ParallelSearch(sources, pixels, width, height, candidates, allowVerticalSpread)
+            : CpuSearch(sources, pixels, width, height, candidates, allowVerticalSpread);
         return new GroundPatchSearchExecution(
             results,
             selected,
@@ -121,7 +139,7 @@ public sealed class GroundPatchMatcher
         IReadOnlyList<byte> pixels,
         int width,
         int height,
-        IReadOnlyList<GroundPatchSearchCandidate> candidates)
+        IReadOnlyList<GroundPatchSearchCandidate> candidates, bool allowVerticalSpread)
     {
         if (!ValidImage(pixels, width, height)) return [];
         var targets = new Dictionary<int, TargetPatch>();
@@ -131,7 +149,7 @@ public sealed class GroundPatchMatcher
             var result = Evaluate(
                 candidate,
                 sources,
-                offset => Target(offset, pixels, width, height, targets));
+                offset => Target(offset, pixels, width, height, targets), allowVerticalSpread);
             if (result is { } value) results.Add(value);
         }
         return results;
@@ -142,7 +160,7 @@ public sealed class GroundPatchMatcher
         IReadOnlyList<byte> pixels,
         int width,
         int height,
-        IReadOnlyList<GroundPatchSearchCandidate> candidates)
+        IReadOnlyList<GroundPatchSearchCandidate> candidates, bool allowVerticalSpread)
     {
         if (!ValidImage(pixels, width, height)) return [];
         var targets = new ConcurrentDictionary<int, TargetPatch>();
@@ -157,7 +175,7 @@ public sealed class GroundPatchMatcher
                     if (targets.TryGetValue(offset, out var cached)) return cached;
                     var value = ReadTarget(offset, pixels, width, height);
                     return value is null ? null : targets.GetOrAdd(offset, value);
-                });
+                }, allowVerticalSpread);
         });
         return results.Where(result => result.HasValue)
             .Select(result => result!.Value)
@@ -167,15 +185,17 @@ public sealed class GroundPatchMatcher
     private static GroundPatchSearchResult? Evaluate(
         GroundPatchSearchCandidate candidate,
         IReadOnlyList<GroundPatchSearchSource> sources,
-        Func<int, TargetPatch?> target)
+        Func<int, TargetPatch?> target, bool allowVerticalSpread)
     {
         var count = 0;
         var support = 0;
         var minimumInlierX = int.MaxValue;
         var maximumInlierX = int.MinValue;
+        var minimumInlierY = int.MaxValue; var maximumInlierY = int.MinValue;
         float cost = 0;
-        foreach (var sample in candidate.Samples)
+        for (var sampleIndex = 0; sampleIndex < candidate.Samples.Count; sampleIndex++)
         {
+            var sample = candidate.Samples[sampleIndex];
             if (sample.SourceIndex < 0 || sample.SourceIndex >= sources.Count) continue;
             var source = sources[sample.SourceIndex];
             float error;
@@ -195,9 +215,10 @@ public sealed class GroundPatchMatcher
             support++;
             minimumInlierX = Math.Min(minimumInlierX, source.X);
             maximumInlierX = Math.Max(maximumInlierX, source.X);
+            minimumInlierY = Math.Min(minimumInlierY, source.Y); maximumInlierY = Math.Max(maximumInlierY, source.Y);
         }
         if (count < 3 || support < 3 || support * 2 <= count
-            || maximumInlierX - minimumInlierX < 32)
+            || (maximumInlierX - minimumInlierX < 32 && (!allowVerticalSpread || maximumInlierY - minimumInlierY < 32)))
         {
             return null;
         }

@@ -7,6 +7,11 @@ namespace HollowKnightVisionInputReceiver
     {
         private static int Main()
         {
+            Assert("owned paused boundary", CheckpointCapturePolicy.OwnsPausedBoundary(true, 0f, "a", "a"));
+            Assert("foreign pause rejected", !CheckpointCapturePolicy.OwnsPausedBoundary(true, 0f, "a", "b"));
+            Assert("game running rejected", !CheckpointCapturePolicy.OwnsPausedBoundary(true, 1f, "a", "a"));
+            Assert("game's own pause rejected", !CheckpointCapturePolicy.OwnsPausedBoundary(false, 0f, "a", "a"));
+            Assert("missing pause owner rejected", !CheckpointCapturePolicy.OwnsPausedBoundary(true, 0f, null, null));
             InputSnapshot snapshot;
             Assert("valid snapshot", InputSnapshot.TryParse("{\"version\":1,\"type\":\"state\",\"sessionID\":\"test\",\"sequence\":9,\"enabled\":true,\"heldButtons\":33}", out snapshot));
             Assert("snapshot fields", snapshot.Session == "test" && snapshot.Sequence == 9 && snapshot.Enabled);
@@ -34,8 +39,43 @@ namespace HollowKnightVisionInputReceiver
             TestPlayerPoseProtocolAndQueue();
             TestPlayerOpsProtocolAndQueue();
             TestGroundTruthProtocol();
+            TestControlledFrames();
             Console.WriteLine("Protocol and receiver-state tests passed");
             return 0;
+        }
+
+        private static void TestControlledFrames()
+        {
+            var pose = new Newtonsoft.Json.Linq.JObject { ["version"] = 2, ["type"] = "playerPose", ["sessionID"] = "test", ["sequence"] = 1,
+                ["sceneName"] = "room", ["heroX"] = 1, ["heroY"] = 2, ["heroZ"] = 0, ["velocityX"] = 3, ["velocityY"] = 0,
+                ["facingRight"] = true, ["grounded"] = true };
+            var v = new Newtonsoft.Json.Linq.JObject { ["version"] = 2, ["type"] = "controlledFrame", ["sessionID"] = "test",
+                ["commandID"] = Guid.NewGuid().ToString(), ["sequence"] = 1, ["kind"] = "advance", ["deltaSeconds"] = 1.0/30,
+                ["heldButtons"] = 2, ["pose"] = pose };
+            ControlledFrameRequest request;
+            Assert("controlled frame parses", ControlledFrameRequest.TryParse(v.ToString(), out request));
+            var queue = new ControlledFrameQueue();
+            Assert("first frame queued", queue.Accept(request));
+            Assert("duplicate frame refused", !queue.Accept(request));
+            ControlledFrameRequest taken;
+            Assert("exactly one frame taken", queue.TryTake(out taken) && !queue.TryTake(out taken));
+            Assert("old frame refused after consume", !queue.Accept(request));
+            v["sequence"] = 2; pose["sequence"] = 2; v["pose"] = pose;
+            Assert("second frame parses", ControlledFrameRequest.TryParse(v.ToString(), out request));
+            Assert("second frame queued", queue.Accept(request));
+            v["sequence"] = 3; pose["sequence"] = 3; v["pose"] = pose;
+            Assert("third frame parses", ControlledFrameRequest.TryParse(v.ToString(), out request));
+            Assert("busy frame refused", !queue.Accept(request));
+            v["kind"] = "end"; v.Remove("pose");
+            Assert("cleanup parses without pose", ControlledFrameRequest.TryParse(v.ToString(), out request));
+            Assert("cleanup cancels queued frame", queue.Accept(request) && queue.TryTake(out taken) && taken.End);
+            queue.Clear(); Assert("reconnect forgets old sequence", queue.Accept(request));
+            v["kind"] = "advance"; v["pose"] = pose; v["deltaSeconds"] = .1;
+            Assert("oversized tick rejected", !ControlledFrameRequest.TryParse(v.ToString(), out request));
+            v["deltaSeconds"] = 1.0/30; v["heldButtons"] = 1024;
+            Assert("invalid keys rejected", !ControlledFrameRequest.TryParse(v.ToString(), out request));
+            v["heldButtons"] = 0; pose["sessionID"] = "foreign"; v["pose"] = pose;
+            Assert("foreign pose rejected", !ControlledFrameRequest.TryParse(v.ToString(), out request));
         }
 
         private static void Assert(string name, bool value)
@@ -208,6 +248,22 @@ namespace HollowKnightVisionInputReceiver
             Assert("restore requires checkpoint", !CheckpointRequest.TryParse(
                 "{\"version\":2,\"type\":\"restoreCheckpoint\",\"sessionID\":\"test\",\"commandID\":\"bad\"}",
                 out request));
+
+            var saved = Newtonsoft.Json.Linq.JObject.Parse(checkpoint);
+            var masks = Newtonsoft.Json.Linq.JArray.Parse("[{\"objectPath\":\"Secret[0]\",\"fsmName\":\"unmasker\",\"stateName\":\"Fade\",\"enabled\":true,\"active\":true,\"booleans\":{},\"floats\":{},\"sprites\":[{\"objectPath\":\"Secret[0]\",\"alpha\":0.25,\"enabled\":true,\"active\":true}]}]");
+            saved["sceneMasks"] = masks;
+            PlayerCheckpoint withMasks;
+            Assert("room masks parse", PlayerCheckpoint.TryParse(saved, out withMasks));
+            Assert("room mask alpha survives checkpoint round trip", Newtonsoft.Json.Linq.JToken.DeepEquals(withMasks.ToJson()["sceneMasks"], masks));
+            masks[0]["sprites"][0]["alpha"] = 1.1;
+            Assert("invalid mask alpha rejected", !PlayerCheckpoint.TryParse(saved, out withMasks));
+            masks[0]["sprites"][0]["alpha"] = 0;
+            masks.Add(masks[0].DeepClone());
+            Assert("duplicate mask identity rejected", !PlayerCheckpoint.TryParse(saved, out withMasks));
+            masks.RemoveAt(1); masks[0]["fsmName"] = "arbitrary-game-fsm";
+            Assert("unrelated state machines rejected", !PlayerCheckpoint.TryParse(saved, out withMasks));
+            saved.Remove("sceneMasks");
+            Assert("legacy mask state remains absent", PlayerCheckpoint.TryParse(saved, out withMasks) && withMasks.SceneMasks == null);
 
             var queue = new CheckpointRequestQueue();
             Assert("capture reparsed", CheckpointRequest.TryParse(

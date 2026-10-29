@@ -51,6 +51,9 @@ internal static class Program
             return;
         }
         InputPathReplayIntegrationTests.Run();
+        MenuParticleTests.Run();
+        ControlledStepCaptureTests.Run();
+        ReplayLifecycleTests.Run();
         TestWorldReplayRequiresExplicitReturningIntent();
         TestWorldReplayCreatesRequestedReport();
         TestWorldReplayBadArgumentsAndFailureExitCodes();
@@ -117,7 +120,7 @@ internal static class Program
         GpuCaptureTests.TestMappedBounds();
         GpuCaptureTests.RunIfRequested();
         if (args.Contains("--input")) TestBackgroundKeyDelivery();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 70 : 69)}");
+        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 72 : 71)}");
         Application.Current.Shutdown();
     }
 
@@ -1777,15 +1780,13 @@ internal static class Program
         var source = File.ReadAllText(System.IO.Path.Combine(
             AppContext.BaseDirectory,
             "MainWindow.source.xaml"));
-        var element = Regex.Match(
-            source,
-            @"<CheckBox\s+[^>]*x:Name=""GroundFeaturesCheck""[^>]*/>",
-            RegexOptions.Singleline);
-        Check(element.Success && Regex.IsMatch(
-                element.Value,
-                @"IsChecked\s*=\s*""True"""),
-            "The Windows ground-feature overlay is not enabled on launch.");
-        Console.WriteLine("PASS ground feature overlay starts visible");
+        foreach (var name in new[] { "GameStateCheck", "StencilDetectionCheck", "GroundFeaturesCheck" })
+        {
+            var element = Regex.Match(source, "<CheckBox\\s+[^>]*x:Name=\"" + name + "\"[^>]*/>", RegexOptions.Singleline);
+            Check(element.Success && Regex.IsMatch(element.Value, @"IsChecked\s*=\s*""True"""),
+                $"The Windows debug option {name} is not enabled by default.");
+        }
+        Console.WriteLine("PASS game state, stencil detection and ground features default on");
     }
 
     private static void TestGroundFeatureOverlayUsesMacReviewPalette()

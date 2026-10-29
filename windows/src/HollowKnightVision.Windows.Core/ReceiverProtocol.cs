@@ -23,7 +23,7 @@ public static class ReceiverProtocol
     public const int Port = 36752;
     public const int InputVersion = 1;
     public const int ControlVersion = 2;
-    public const int MaximumLineLength = 4096;
+    public const int MaximumLineLength = 262144; // Includes bounded room-mask checkpoints.
 
     public const string PauseCapability = "pause-lease-v1";
     public const string MenuShortcutsCapability = "menu-shortcuts-v1";
@@ -150,6 +150,11 @@ public sealed record RecordedEnemyCheckpoint(
     int Hp,
     bool Active);
 
+public sealed record RecordedMaskSprite(string ObjectPath, double Alpha, bool Enabled, bool Active);
+public sealed record RecordedSceneMask(string ObjectPath, string FsmName, string StateName,
+    bool Enabled, bool Active, IReadOnlyDictionary<string, bool> Booleans,
+    IReadOnlyDictionary<string, double> Floats, IReadOnlyList<RecordedMaskSprite> Sprites);
+
 public sealed record RecordedGameCheckpoint(
     string SceneName,
     string? EntryGateName,
@@ -175,6 +180,8 @@ public sealed record RecordedGameCheckpoint(
     bool? OpenedCrossroads,
     IReadOnlyList<string>? ScenesVisited)
 {
+    public IReadOnlyList<RecordedSceneMask>? SceneMasks { get; init; }
+
     public bool HasFiniteCoordinates()
     {
         var values = new[]
@@ -261,7 +268,8 @@ public sealed record ReceiverGroundTruthSample(
     int? ProjectionPixelWidth,
     int? ProjectionPixelHeight,
     int ScreenWidth,
-    int ScreenHeight)
+    int ScreenHeight,
+    [property: JsonPropertyName("controlledFrameID")] Guid? ControlledFrameId = null)
 {
     public bool HasFiniteCoordinates()
     {

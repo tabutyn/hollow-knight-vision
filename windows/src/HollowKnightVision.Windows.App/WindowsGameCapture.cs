@@ -18,6 +18,9 @@ namespace HollowKnightVision.Windows.App;
 internal sealed class WindowsGameCapture : IDisposable
 {
     private readonly GdiWindowCapture fallback = new();
+    private readonly bool preserveFrames;
+    private int PoolCapacity => preserveFrames ? 8 : 2;
+    internal WindowsGameCapture(bool preserveFrames = false) { this.preserveFrames = preserveFrames; }
     private readonly SemaphoreSlim arrived = new(0, 1);
     private readonly object signalGate = new();
     private ID3D11Device? device;
@@ -82,9 +85,14 @@ internal sealed class WindowsGameCapture : IDisposable
             latest = pool.TryGetNextFrame();
         }
         if (latest is null) return null;
-        // At most two outstanding buffers, retaining only the newest available.
-        var next = pool.TryGetNextFrame();
-        if (next is not null) { latest.Dispose(); latest = next; }
+        // Interactive preview coalesces. Strict replay keeps bounded FIFO evidence
+        // with its original presentation time so a short worker delay cannot
+        // silently throw away the frame needed by the 30 Hz gate.
+        if (!preserveFrames)
+        {
+            var next = pool.TryGetNextFrame();
+            if (next is not null) { latest.Dispose(); latest = next; }
+        }
         var size = latest.ContentSize;
         if (size.Width <= 0 || size.Height <= 0) { latest.Dispose(); return null; }
         if (size.Width != poolSize.Width || size.Height != poolSize.Height)
@@ -92,7 +100,7 @@ internal sealed class WindowsGameCapture : IDisposable
             // The old texture can be clipped after a resize. Drop it before
             // resetting the pool; never scale a partial frame into tracking.
             latest.Dispose();
-            pool.Recreate(winrtDevice!, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, size);
+            pool.Recreate(winrtDevice!, DirectXPixelFormat.B8G8R8A8UIntNormalized, PoolCapacity, size);
             poolSize = size;
             return null;
         }
@@ -189,7 +197,7 @@ internal sealed class WindowsGameCapture : IDisposable
         item.Closed += OnClosed;
         poolSize = item.Size;
         pool = Direct3D11CaptureFramePool.CreateFreeThreaded(winrtDevice,
-            DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, poolSize);
+            DirectXPixelFormat.B8G8R8A8UIntNormalized, PoolCapacity, poolSize);
         pool.FrameArrived += OnFrame;
         session = pool.CreateCaptureSession(item);
         session.IsCursorCaptureEnabled = false;

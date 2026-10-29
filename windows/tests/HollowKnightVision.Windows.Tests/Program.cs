@@ -28,11 +28,23 @@ if (args is ["--export-dataset-probe", var probeRoot])
 
 var tests = new List<(string Name, Action Run)>
 {
+    ("warmed CUDA search reuses large host staging arrays", GroundComputeProcessingTests.TestCudaHostStagingAllocation),
+    ("dense consensus preserves ground calibration across reference handoffs", GroundCameraSolverTests.TestConsensusReferenceCalibration),
+    ("broad search preparation reuses candidate storage without per-candidate allocations", TrackingStepReplayTests.SearchCandidateAllocation),
+    ("bounded feature scoring preserves exact winning errors and ties", TrackingStepReplayTests.FeatureErrorBoundPreservesWinners),
+    ("broad search validity masks preserve every candidate and sample", TrackingStepReplayTests.SearchCandidateParity),
+    ("room mask checkpoint survives Windows recording and wire round trips", TrackingStepReplayTests.MaskCheckpointRoundTrip),
+    ("controlled replay samples 30 simulation frames and preserves boundary input", TrackingStepReplayTests.ControlledSampling),
+    ("step replay fails on first inaccurate, missing, repeated or late frame", TrackingStepReplayTests.StrictGate),
+    ("step replay journals reject incompatible/corrupt state and invalidate bad prefixes", TrackingStepReplayTests.DurableStash),
+    ("step replay preserves held input across one-second boundaries", TrackingStepReplayTests.HeldKeysAcrossBoundary),
     ("direct ground recovery uses four current visible cells", VisualGroundIntegrationTests.TestDirectRecoveryUsesFourCurrentVisibleCells),
     ("direct ground recovery rejects occluded and unrelated pixels", VisualGroundIntegrationTests.TestDirectRecoveryRejectsOccludedAndUnrelatedCells),
     ("atlas New retains previous autosave while Delete discards it", AtlasResetTransactionTests.TestNewRetainsPreviousButDeleteDiscardsIt),
     ("failed autosave Delete rolls back without creating a named copy", AtlasResetTransactionTests.TestFailedDeleteRestoresPreviousAutosave),
     ("capture normalization preserves bilinear pixels and frame ownership", CaptureNormalizationTests.TestPixelsMatchBilinearReference),
+    ("CUDA bounded sample uploads revalidate changed image shapes and source counts", GroundComputeProcessingTests.TestCudaBoundedCandidateLayouts),
+    ("CUDA rejects impossible majorities without changing boundary scores", GroundComputeProcessingTests.TestCudaMajorityBoundaries),
     ("CUDA ground patch scores match CPU and reuse resized buffers", GroundComputeProcessingTests.TestCudaPatchParityAndReuse),
     ("CUDA unavailable and invalid inputs fall back safely", GroundComputeProcessingTests.TestCudaFallbackAndInvalidInputs),
     ("CUDA concurrent searches do not share mutable results", GroundComputeProcessingTests.TestCudaConcurrentSearches),
@@ -103,6 +115,13 @@ var tests = new List<(string Name, Action Run)>
     ("dashboard persistent clean lines stay in atlas coordinates", DashboardPresentationParityTests.TestPersistentCleanLineStaysAtFixedAtlasCoordinates),
     ("dashboard transition portal produces doors and connector", DashboardPresentationParityTests.TestTransitionPortalProducesTwoDoorsAndConnector),
     ("dashboard tile identity retains signed high ID bits", DashboardPresentationParityTests.TestTileUUIDRetainsHighBitsOfTileID),
+    ("sparse abrupt motion requires a unique broad peak and rejects repeated texture", GroundSubpixelTests.TestSparseAbruptUniqueness),
+    ("CUDA precomputed target moments preserve exact scores and mutable frame freshness", GroundComputeProcessingTests.TestCudaPrecomputedMoments),
+    ("camera coordinate conversion preserves registration and correction round trips", GroundCameraSolverTests.TestCameraCoordinateConversion),
+    ("bidirectional subpixel registration preserves fractional motion and rejects flat pixels", GroundSubpixelTests.TestSymmetricTranslation),
+    ("ground texture recent majority overrides a sparse foreground anchor", GroundCameraSolverTests.TestRecentMajorityOverridesSparseForegroundAnchor),
+    ("ground texture sustained fallback retains a longer reference without freezing camera motion", GroundCameraSolverTests.TestSustainedFallbackRetainsBaseline),
+    ("ground texture independent patch consensus rejects foreground parallax", GroundCameraSolverTests.TestPatchConsensusRejectsForeground),
     ("ground texture ReferencePromotionRequiresCleanSparseOrBroadMatch", GroundCameraSolverTests.TestReferencePromotion),
     ("ground texture SparseHighCostPoseIsRejectedBeforeItCanJump", GroundCameraSolverTests.TestPoseAcceptance),
     ("ground texture SparseHighCostMotionInnovationIsRejected", GroundCameraSolverTests.TestInnovation),
@@ -128,6 +147,13 @@ var tests = new List<(string Name, Action Run)>
     ("ground texture WrongParallelRowCannotMoveCameraWithoutMatchingPixels", GroundCameraSolverTests.TestWrongParallelRow),
     ("ground texture MatchingDistantPlatformCannotTeleportOneFrameCameraPose", GroundCameraSolverTests.TestDistantPlatform),
     ("ground texture ReleaseTimingAtCaptureResolution", GroundCameraSolverTests.TestReleaseTiming),
+    ("subpixel fine consensus separates equally supported foreground motion", GroundSubpixelTests.TestFineParallaxConsensus),
+    ("subpixel fine consensus rejects unobservable, sparse and short-baseline fits", GroundSubpixelTests.TestFineConsensusRejectsUnobservable),
+    ("texture fallback recovers lost overlap through the latest verified frame", GroundSubpixelTests.TestFreshTextureReferenceFallback),
+    ("texture fallback cannot anchor camera on isolated moving particles", GroundSubpixelTests.TestIsolatedParticlesRejected),
+    ("texture fallback rejects a sharper moving foreground minority", GroundSubpixelTests.TestForegroundMinorityFallback),
+    ("texture fallback accepts vertically distributed narrow walls on CPU and CUDA", GroundSubpixelTests.TestNarrowWallFallback),
+    ("texture fallback measures two-axis shake without floor rows and rejects masks/flat images", GroundSubpixelTests.TestTextureFallback),
     ("subpixel RecoversFractionalTranslationOnIndependentValidationPixels", GroundSubpixelTests.TestFractionalTranslation),
     ("subpixel IntegratedSolverPublishesFractionalTranslation", GroundSubpixelTests.TestIntegratedFractionalSolve),
     ("subpixel ExactIntegerMotionStaysExactAndFlatFrameIsRejected", GroundSubpixelTests.TestIntegerAndFlat),
@@ -163,12 +189,14 @@ var tests = new List<(string Name, Action Run)>
     ("ground labels human ignores never change detector input", TestHumanIgnoreRegionsNeverChangeDetectorInput),
     ("ground labels unreviewed data cannot tune or generalize", TestUnreviewedLabelsExcludedFromTuningAndDraftDatasetNotGeneralization),
     ("ground labels Check data cannot choose parameters", TestCheckLabelsCannotChooseParameters),
+    ("phase-two labeling follows navigation and selects the next missing object", StencilGuidanceParityTests.TestPhaseTwoNavigationOpensTheGuidedScreenAndNextObject),
     ("global correction rejects four wrong votes", GroundGlobalCorrectionPolicyTests.TestFourWrongVotesCannotOverrideWideStrip),
     ("global correction rejects repeated-texture phase jumps", GroundGlobalCorrectionPolicyTests.TestSimilarRepeatedTextureDoesNotAuthorizePhaseJump),
     ("global correction accepts a better verified strip", GroundGlobalCorrectionPolicyTests.TestBetterVerifiedStripCanCorrectDriftAndRecoverLostAnchor),
     ("global correction permits measurable small refinements", GroundGlobalCorrectionPolicyTests.TestSmallUnambiguousRefinementNeedsOnlyMeasurableImprovement),
     ("global correction accepts occluded wide-inlier loop closure", GroundGlobalCorrectionPolicyTests.TestSmallOccludedLoopClosureUsesWideInlierAdvantage),
     ("global correction closes from an unsupported drifted pose", GroundGlobalCorrectionPolicyTests.TestStrongGlobalStripClosesWhenDriftedLocalPoseHasNoSupport),
+    ("strict global correction rejects minority loop closure", GroundGlobalCorrectionPolicyTests.TestStrictTrackingRejectsMinorityLoopClosureButKeepsStrongCorrections),
     ("pose correction returns exact timestamp samples", PoseCorrectionInterpolationTests.TestExactTimestampReturnsMatchingCorrection),
     ("pose correction interpolates and refines midpoint poses", PoseCorrectionInterpolationTests.TestMidpointLinearlyInterpolatesCorrectionAndRefinesRawPose),
     ("pose correction holds visit endpoints", PoseCorrectionInterpolationTests.TestOutsideIntervalUsesNearestEndpointWithinVisit),
@@ -569,6 +597,8 @@ var tests = new List<(string Name, Action Run)>
     ("live menu capture store preserves portable language schema and bounds paths", MenuLiveCaptureTests.TestPortableStore),
     ("menu search cadence limits untracked work and resets immediately", MenuTrackerTests.TestCadence),
     ("menu selector pairs require bilateral evidence including faded arrows", MenuTrackerTests.TestPairEvidence),
+    ("deferred Clear Save stays incomplete and guides into model training", StencilGuidanceParityTests.TestDeferredProfileAndModelGuidance),
+    ("Clear Save ignores another slot's calibration and follows every row", MenuCatalogTests.TestClearSaveMovesBetweenSlots),
     ("Clear Save probe searches every profile row", MenuTrackerTests.TestClearSaveOffsets),
     ("solved menu search regions stay narrow and scale with capture", MenuTrackerTests.TestSearchRegions),
     ("menu selector pairs reject different visual rows", MenuTrackerTests.TestDifferentRowsRejected),
@@ -848,6 +878,7 @@ var tests = new List<(string Name, Action Run)>
     ("ground pose continuity rejects stale unsupported snaps", TransitionMotionBridgeTests.TestContinuity),
     ("moving foreground rejects only small registration residuals", TransitionMotionBridgeTests.TestForegroundResidual),
     ("transition small motion requires sustained directional evidence", TransitionMotionBridgeTests.TestSmallMotion),
+    ("independent broad texture verifies large camera shake without a delayed fallback", GroundPlacementRecoveryTests.TestIndependentlyVerifiedCameraShake),
     ("landing correction requires a coherent second ground measurement", GroundPlacementRecoveryTests.TestLandingCorrection),
     ("ordinary measured fallback keeps continuity policy", GroundPlacementRecoveryTests.TestOrdinaryFallback),
     ("ground placement rejects duplicate stale weak and incoherent votes", GroundPlacementRecoveryTests.TestRejectsBadVotes),
@@ -1500,14 +1531,15 @@ static void TestStencilContractCoverage()
 {
     Equal(26, StencilInitializationPolicy.Contexts(GameRuntimeMode.Modded).Length);
     Equal(25, StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal).Length);
-    Equal(189, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Modded));
-    Equal(183, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Normal));
+    Equal(190, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Modded));
+    Equal(184, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Normal));
     var normal = StencilInitializationPolicy.MissingSteps([], "en", GameRuntimeMode.Normal);
     True(!normal.Any(step => step.ContextIdentifier == "mods" || step.ClassIdentifier == "shared.mods"));
     Equal("main-title", normal[0].ContextIdentifier);
     Equal("gameplay-hud", normal.Select(step => step.ContextIdentifier).Distinct().ElementAt(2));
     Equal("clear-save", normal.Last().ContextIdentifier);
-    True(!normal.Any(step => step.ContextIdentifier == "select-profile" && step.ClassIdentifier == "select-profile.clear-save"));
+    True(normal.Any(step => step.ContextIdentifier == "select-profile" && step.ClassIdentifier == "select-profile.clear-save"));
+    True(!StencilInitializationPolicy.IsFirstPhaseStep(normal.Single(step => step.ClassIdentifier == "select-profile.clear-save")));
     True(normal.Where(step => StencilInitializationPolicy.Phase(step.ContextIdentifier) == 1)
         .All(step => step.ContextIdentifier is "main-title" or "select-profile" or "gameplay-hud"));
     foreach (var language in StencilInitializationCoordinator.SupportedLanguages) {

@@ -12,7 +12,7 @@ namespace HollowKnightVisionInputReceiver
     // API loader entry point. It owns only the local receiver and virtual device.
     public sealed class HollowKnightVisionInputReceiverMod : Mod
     {
-        public override string GetVersion() { return "0.9.1"; }
+        public override string GetVersion() { return "0.9.5"; }
 
         public override void Initialize(Dictionary<string, Dictionary<string, GameObject>> preloadedObjects)
         {
@@ -28,9 +28,10 @@ namespace HollowKnightVisionInputReceiver
     // Drain the socket queue first, allowing the virtual device to update and
     // commit during that same InControl tick instead of the following one.
     [DefaultExecutionOrder(-1000)]
-    internal sealed class ReceiverBehaviour : MonoBehaviour
+    internal sealed partial class ReceiverBehaviour : MonoBehaviour
     {
         private LocalInputServer server;
+        private ReceiverFrameTiming frameTiming;
         private VisionInputDevice device;
         private HeroActions boundActions;
         private DeviceBindingSource inventoryBinding;
@@ -76,6 +77,8 @@ namespace HollowKnightVisionInputReceiver
 
         private void Awake()
         {
+            frameTiming = new ReceiverFrameTiming(System.IO.Path.Combine(Application.persistentDataPath,
+                "hkv-receiver-timing-" + Process.GetCurrentProcess().Id + ".csv"));
             priorRunInBackground = Application.runInBackground;
             priorSuspendInBackground = InputManager.SuspendInBackground;
             priorVSyncCount = QualitySettings.vSyncCount;
@@ -104,11 +107,12 @@ namespace HollowKnightVisionInputReceiver
 
         private void Update()
         {
+            frameTiming.Begin(Time.frameCount, Time.timeScale, server.RenderFrameMarker);
             if (pointerInput != null) pointerInput.BeginFrame();
             EnsureShortcutBindings();
             server.ExpireIfStale();
             InputSnapshot snapshot;
-            if (server.TryTakeSnapshot(out snapshot)) {
+            if (server.TryTakeSnapshot(out snapshot) && !controlledClockOwned) {
                 appliedEnabled = snapshot.Enabled;
                 applied = snapshot.Enabled ? InputSnapshot.Normalize(snapshot.Buttons) : VisionButtons.None;
                 device.SetState(snapshot.Session, snapshot.Sequence, appliedEnabled, applied);
@@ -127,16 +131,25 @@ namespace HollowKnightVisionInputReceiver
             MaintainEnemyCollisionBypass();
             if (cursorVisibilityOwned) Cursor.visible = true;
             if (visionOwnsPause && Stopwatch.GetTimestamp() >= pauseLeaseDeadline) ReleaseVisionPause();
+            UpdateControlledFrame();
+            frameTiming.EndUpdate();
         }
 
         private void LateUpdate()
         {
+            frameTiming.BeginLate();
             MaintainPlayerOpsReconciliation();
             PlayerPoseRequest poseRequest;
-            if (server.TryTakePlayerPoseRequest(out poseRequest)) ApplyPlayerPose(poseRequest);
+            if (server.TryTakePlayerPoseRequest(out poseRequest) && !controlledClockOwned) {
+                var before = ReceiverFrameTiming.Now;
+                ApplyPlayerPose(poseRequest);
+                frameTiming.Pose(before);
+            }
+            ApplyControlledPose();
             var request = pendingPointerClick;
             pendingPointerClick = null;
             if (request != null) DispatchPointerClick(request);
+            frameTiming.EndLate();
         }
 
         // The receiver must run input before InControl, but its early
@@ -151,7 +164,10 @@ namespace HollowKnightVisionInputReceiver
                 gameplayCamera = cameras.cameraController.cam;
             if (renderingCamera != gameplayCamera || lastTruthFrame == Time.frameCount) return;
             lastTruthFrame = Time.frameCount;
+            frameTiming.Render();
+            CompleteControlledFrame();
             QueueGroundTruthTelemetry();
+            WriteReplayRenderDiagnostics();
         }
 
         // Diagnostic only. The barcode occupies the excluded six-pixel top
@@ -160,6 +176,7 @@ namespace HollowKnightVisionInputReceiver
         {
             if (server == null || !server.RenderFrameMarker
                 || Event.current.type != EventType.Repaint) return;
+            var markerStarted = ReceiverFrameTiming.Now;
             if (frameMarkerTexture == null) {
                 frameMarkerTexture = new Texture2D(40, 2, TextureFormat.RGBA32, false);
                 frameMarkerTexture.filterMode = FilterMode.Point;
@@ -184,6 +201,7 @@ namespace HollowKnightVisionInputReceiver
                 Screen.height * 6f / 360f), frameMarkerTexture, ScaleMode.StretchToFill, false);
             GUI.color = color;
             GUI.depth = depth;
+            frameTiming.Gui(markerStarted);
         }
 
         private int PreventHealthLoss(int damage)
@@ -337,6 +355,7 @@ namespace HollowKnightVisionInputReceiver
             server.QueueGroundTruth(new GroundTruthTelemetry {
                 Sequence = groundTruthSequence++,
                 UnityFrame = Time.frameCount,
+                ControlledFrameID = completedControlledFrame,
                 UnityRealtime = Time.realtimeSinceStartup,
                 SceneName = gameManager == null ? "" : gameManager.sceneName,
                 HeroAvailable = heroAvailable,
@@ -607,14 +626,15 @@ namespace HollowKnightVisionInputReceiver
                 pauseSession = request.Session;
                 visionOwnsPause = true;
             }
-            Time.timeScale = 0f;
+            if (pendingControlledFrame == null) Time.timeScale = 0f;
             pauseLeaseDeadline = Stopwatch.GetTimestamp()
                 + (long)(Stopwatch.Frequency * (request.LeaseMilliseconds / 1000.0));
-            server.QueuePauseAck(request, visionOwnsPause && Time.timeScale == 0f);
+            server.QueuePauseAck(request, visionOwnsPause && (Time.timeScale == 0f || pendingControlledFrame != null));
         }
 
         private void ReleaseVisionPause()
         {
+            EndControlledFrames("Pause lease released.");
             if (!visionOwnsPause) return;
             // If another system changed timeScale after Vision paused, leave
             // that newer value untouched. Otherwise restore exactly what Vision replaced.
@@ -632,7 +652,9 @@ namespace HollowKnightVisionInputReceiver
             string failure;
             bool accepted;
             if (request.Kind == CheckpointCommandKind.Capture) {
-                accepted = TryCaptureCheckpoint(out checkpoint, out failure);
+                accepted = TryCaptureCheckpoint(out checkpoint, out failure,
+                    CheckpointCapturePolicy.OwnsPausedBoundary(visionOwnsPause,
+                        Time.timeScale, pauseSession, request.Session));
                 if (accepted && checkpoint != null) {
                     lastCapturedEnemies = checkpoint.Enemies ?? new List<EnemyCheckpoint>();
                 }
@@ -740,7 +762,8 @@ namespace HollowKnightVisionInputReceiver
 
         private static bool TryCaptureCheckpoint(
             out PlayerCheckpoint checkpoint,
-            out string failure)
+            out string failure,
+            bool pausedBoundary = false)
         {
             checkpoint = null;
             failure = null;
@@ -752,7 +775,7 @@ namespace HollowKnightVisionInputReceiver
                 failure = "Knight is unavailable; enter gameplay first";
                 return false;
             }
-            if (hero.cState == null || !hero.cState.onGround) {
+            if (hero.cState == null || (!pausedBoundary && !hero.cState.onGround)) {
                 failure = "Stand on the ground before recording a path";
                 return false;
             }
@@ -761,8 +784,8 @@ namespace HollowKnightVisionInputReceiver
                 failure = "Knight physics body is unavailable";
                 return false;
             }
-            if (Mathf.Abs(body.linearVelocity.x) > 0.1f
-                || Mathf.Abs(body.linearVelocity.y) > 0.1f) {
+            if (!pausedBoundary && (Mathf.Abs(body.linearVelocity.x) > 0.1f
+                || Mathf.Abs(body.linearVelocity.y) > 0.1f)) {
                 failure = "Stand still before recording a path";
                 return false;
             }
@@ -775,6 +798,9 @@ namespace HollowKnightVisionInputReceiver
             var cameraPosition = cameras.cameraController.transform.position;
             var targetPosition = cameras.cameraTarget.transform.position;
             var playerData = PlayerData.instance;
+            Newtonsoft.Json.Linq.JArray sceneMasks;
+            try { sceneMasks = CaptureSceneMasks(gameManager.sceneName); }
+            catch (Exception error) { failure = "Room mask capture failed: " + error.Message; return false; }
             checkpoint = new PlayerCheckpoint {
                 SceneName = gameManager.sceneName,
                 EntryGateName = NearestEntryGateName(
@@ -793,6 +819,7 @@ namespace HollowKnightVisionInputReceiver
                 CameraTargetY = targetPosition.y,
                 CameraTargetZ = targetPosition.z,
                 Enemies = CaptureEnemies(),
+                SceneMasks = sceneMasks,
                 IsFirstGame = playerData == null ? (bool?)null : playerData.isFirstGame,
                 EnteredTutorialFirstTime = playerData == null
                     ? (bool?)null : playerData.enteredTutorialFirstTime,
@@ -850,6 +877,8 @@ namespace HollowKnightVisionInputReceiver
                 failure = "Path starts in a different room (" + checkpoint.SceneName + ")";
                 return false;
             }
+            if (!RestoreSceneMasks(checkpoint, out failure, true)) return false;
+            ScheduleReplayRenderDiagnostics();
             RestoreStoryState(checkpoint);
             RestoreEnemies(checkpoint.Enemies);
             var body = hero.GetComponent<Rigidbody2D>();
@@ -869,6 +898,7 @@ namespace HollowKnightVisionInputReceiver
             body.position = new Vector2(position.x, position.y);
             Physics2D.SyncTransforms();
             if (checkpoint.Grounded) hero.SetBackOnGround();
+            else if (hero.cState != null) hero.cState.onGround = false;
             if (checkpoint.FacingRight) hero.FaceRight(); else hero.FaceLeft();
             body.linearVelocity = new Vector2(
                 (float)checkpoint.VelocityX,
@@ -893,8 +923,16 @@ namespace HollowKnightVisionInputReceiver
                 cameras.cameraController.lastFramePosition = cameraPosition;
                 cameras.cameraController.destination = cameraPosition;
                 cameras.cameraController.SnapTo(cameraPosition.x, cameraPosition.y);
+                // SnapTo also overwrites camTarget. Reinstate the separately
+                // captured target rather than silently changing camera inertia.
+                if (cameras.cameraTarget != null) {
+                    var savedTarget = new Vector3((float)checkpoint.CameraTargetX,
+                        (float)checkpoint.CameraTargetY, (float)checkpoint.CameraTargetZ);
+                    cameras.cameraTarget.transform.position = savedTarget;
+                    cameras.cameraTarget.destination = savedTarget;
+                }
             }
-            return true;
+            return RestoreSceneMasks(checkpoint, out failure, false);
         }
 
         private static void RestoreStoryState(PlayerCheckpoint checkpoint)
@@ -1201,8 +1239,8 @@ namespace HollowKnightVisionInputReceiver
         private static int RestoreEnemies(List<EnemyCheckpoint> snapshots)
         {
             if (snapshots == null || snapshots.Count == 0) return 0;
-            var gameManager = GameManager.instance;
-            if (gameManager != null) gameManager.ResetSemiPersistentItems();
+            // Restoring enemies must not reset unrelated doors, breakables, or
+            // secret-room masks at every one-second replay boundary.
             var available = new List<HealthManager>(
                 UnityEngine.Object.FindObjectsByType<HealthManager>(
                     FindObjectsInactive.Include, FindObjectsSortMode.None));

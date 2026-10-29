@@ -1,0 +1,1509 @@
+{
+  "measuredAtUtc": "2026-10-28T23:54:53.117357+00:00",
+  "status": "complete-strict-controlled-run",
+  "sourceSha256": "1E98BDBA928AEEF1D66F2CBB6336178223E983A13D5B46C4938B73DC41C37DC6",
+  "sessionId": "ecf641a197914b5f982dd09af63bcaec",
+  "conditionsSha256": "73E5563C942551CB05B56FE9D9D0B97F1C46DB4D9975B3F7CBBD758B6FFB453E",
+  "acceptedSeconds": 60.57706430007238,
+  "acceptedSegments": 61,
+  "sourceDurationSeconds": 60.57706430007238,
+  "gates": {
+    "framesPerSourceSecond": 30,
+    "maxErrorPixels": 5,
+    "maxTrackingMilliseconds": 33.333333333333336,
+    "stopOnFirstBadFrame": true,
+    "wallClockGameAndCaptureWaitsScored": false
+  },
+  "installedAppSha256": "464F45441F7CCEE90CFA3B218A5585D15F11978930B37B63893087CD06DFD845",
+  "installedCoreSha256": "B909CF543DFC470166A22481F5C44E494D00B3361AA42B0F2428A86C4195916B",
+  "receiverVersion": "0.9.5",
+  "receiverSha256": "964721FFAE7F6CA77D7C8861937070CC953E9131BB0F5F2235EDFF570184E346",
+  "tests": {
+    "windowsCore": 1014,
+    "windowsUiGroups": 70,
+    "sharedReceiverProtocol": "passed",
+    "macRuntime": "not available on this Windows workstation"
+  },
+  "trackingPixelDimensions": [
+    640,
+    360
+  ],
+  "experimentalCameraCalibration": {
+    "x": 0.9956,
+    "y": 0.9947,
+    "trainingWindowSeconds": 30,
+    "trainingPairs": 263,
+    "horizontalMedian": 0.9950992086787074,
+    "robustLeastSquares": 0.995615440068298,
+    "runtimeTruthInput": false,
+    "independentRecordingsValidated": false
+  },
+  "previousControlledSession": {
+    "id": "8b2fa05d657549278e70b7ecf5825a22",
+    "acceptedSeconds": 39,
+    "validForCurrentReplay": false,
+    "reason": "Secret Mask Top stayed opaque after checkpoint restore; original low-resolution recording shows a revealed room. Room-mask and camera-target restoration changed replay conditions."
+  },
+  "initialWorldReconstruction": {
+    "recordingChanged": false,
+    "existingSaveSlot": 2,
+    "originalSaveSlot": "not recorded",
+    "mask": "Secret Mask Top / unmasker",
+    "state": "Fade",
+    "spriteAlpha": 0,
+    "evidence": "Original recording lowResolutionFrames near 38.8 s; live mask restoration shows Knight and floor again.",
+    "snapshotMaskCount": 12,
+    "fullOriginalWorldStateKnown": false
+  },
+  "attempts": [
+    {
+      "segment": 0,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 0.4572834813282362,
+      "maxTrackingMilliseconds": 16.5771,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0000-5d4eb4bde937429798b9e76d9b9bdf14.json.br",
+      "evidenceSha256": "E8AAE6DC25CE3E2D1CEBE9EEA6D110E98B0302A3C388531617BB417C40228868",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 85.5005,
+      "maxCaptureWaitMilliseconds": 23.9688,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 1,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.1140265057799046,
+      "maxTrackingMilliseconds": 26.4439,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0001-f66fcdc6b339474190df380ea816dd84.json.br",
+      "evidenceSha256": "4E1460EED9AF203FA14A0007988278616D207FD5E9B3BCACBEF54E9E178043FC",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 26.1663,
+      "maxCaptureWaitMilliseconds": 103.7845,
+      "exactInitialRenderCaptures": 27
+    },
+    {
+      "segment": 2,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.3589639461762588,
+      "maxTrackingMilliseconds": 18.4871,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0002-dab2649bd9df4c0eba96643b4d542674.json.br",
+      "evidenceSha256": "257E6B68271974C7542D57A2DC13EDF62345BE786BA524630C6A95E0B524854E",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 33.894,
+      "maxCaptureWaitMilliseconds": 11.2992,
+      "exactInitialRenderCaptures": 30
+    },
+    {
+      "segment": 3,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.5536581244653185,
+      "maxTrackingMilliseconds": 28.4671,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0003-f6cd79f23ee641608a615d466aa96b89.json.br",
+      "evidenceSha256": "C10DF778BA98203CD0A078B55EC156A9580BD5753AFD6E680619C6F45349DBE2",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 33.1696,
+      "maxCaptureWaitMilliseconds": 22.1723,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 4,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.5060007286041441,
+      "maxTrackingMilliseconds": 9.9606,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0004-c9d917190a7e4f8cb78c284672d40f64.json.br",
+      "evidenceSha256": "14104DC69C7A4DB3C98DC9B68CC00818329AB1093605345B7BD3BA0342DA3590",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 25.6505,
+      "maxCaptureWaitMilliseconds": 34.4465,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 5,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.896302308715197,
+      "maxTrackingMilliseconds": 10.646,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0005-14f98d2dd92e426088a9e4d9c3585cf7.json.br",
+      "evidenceSha256": "958C1F189AE83864F080F75FE4B0174C0916D30FA29FE6FD85A9047974EA2582",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 32.0542,
+      "maxCaptureWaitMilliseconds": 35.337,
+      "exactInitialRenderCaptures": 28
+    },
+    {
+      "segment": 6,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 2.195560043097759,
+      "maxTrackingMilliseconds": 12.8849,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0006-b27ec819ca1f4992ab17bd225c139e3a.json.br",
+      "evidenceSha256": "16D90FFD961C3A9EC03EEA2EB71AE0C7487E94BA42CA18B4A82C5B16EA72BF32",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 35.8415,
+      "maxCaptureWaitMilliseconds": 26.5174,
+      "exactInitialRenderCaptures": 26
+    },
+    {
+      "segment": 7,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 2.3013751059237912,
+      "maxTrackingMilliseconds": 12.0399,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0007-02003fee9567481887dd109f4076ca26.json.br",
+      "evidenceSha256": "DF120443D93258537A1150BE5BFBC2ED99318DF6BCF69BF763FD1BD494796446",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 31.1763,
+      "maxCaptureWaitMilliseconds": 32.0285,
+      "exactInitialRenderCaptures": 28
+    },
+    {
+      "segment": 8,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.9308372906078015,
+      "maxTrackingMilliseconds": 9.819,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0008-c13645620c4e44ac823cde1c51f12e7a.json.br",
+      "evidenceSha256": "912FD7DE4C1E87A7A2340B862BB95BCD98261DE1FF27E669BCD02CDECE7EC2BC",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 224.6916,
+      "maxCaptureWaitMilliseconds": 34.4508,
+      "exactInitialRenderCaptures": 24
+    },
+    {
+      "segment": 9,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.205361110047905,
+      "maxTrackingMilliseconds": 11.0567,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0009-07472ab3f6e14fe6baf877859f1613ac.json.br",
+      "evidenceSha256": "6F831C5D95362550BE6FD3E3545718D396E59946854CB5587C24D0B318CF3C43",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 40.0252,
+      "maxCaptureWaitMilliseconds": 48.4924,
+      "exactInitialRenderCaptures": 28
+    },
+    {
+      "segment": 10,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.4598941491068107,
+      "maxTrackingMilliseconds": 11.2427,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0010-98c2446b02e84fe086bbbd0c037e071b.json.br",
+      "evidenceSha256": "1F8FD8ED089064E11078733641A84B7413293C3303E6B0A704134ABF6CC8FA60",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 40.0769,
+      "maxCaptureWaitMilliseconds": 116.228,
+      "exactInitialRenderCaptures": 26
+    },
+    {
+      "segment": 11,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.2958005964911197,
+      "maxTrackingMilliseconds": 11.0241,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0011-75bfa62524724455a1455b6cf5e04ef1.json.br",
+      "evidenceSha256": "179D68992B46856EF452CFC8D6339B1D630EEC0F6EE9E627E4454F86C423BB49",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 38.8346,
+      "maxCaptureWaitMilliseconds": 42.1777,
+      "exactInitialRenderCaptures": 24
+    },
+    {
+      "segment": 12,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.0114238702859213,
+      "maxTrackingMilliseconds": 23.9598,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0012-c05846a379d6418ba794ae9e3e8f4ad2.json.br",
+      "evidenceSha256": "5AB29C59F31DEA410D4B76BA7C86975962E4BD0084CA185558416C1B5F4B6F45",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 36.2244,
+      "maxCaptureWaitMilliseconds": 18.3717,
+      "exactInitialRenderCaptures": 30
+    },
+    {
+      "segment": 13,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 2.050756363344711,
+      "maxTrackingMilliseconds": 16.4322,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0013-c26844a25e1748a6aa9acae89bd4c67d.json.br",
+      "evidenceSha256": "C6CA79A4036B88D4BDBF1664986A2AD11113DABD1543989F57684E76D1F28D4F",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 37.105,
+      "maxCaptureWaitMilliseconds": 33.122,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 14,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 3.3619509221260326,
+      "maxTrackingMilliseconds": 30.2968,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0014-aa3f1b1139e746e2ab0ee716ed965e46.json.br",
+      "evidenceSha256": "FEB9B4E097F55C233B4036C7C56F01CBF4B19F2D28B9DD194A461F9F5E4FE79A",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 29.856,
+      "maxCaptureWaitMilliseconds": 14.2118,
+      "exactInitialRenderCaptures": 30
+    },
+    {
+      "segment": 15,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 2.6094669603885605,
+      "maxTrackingMilliseconds": 13.775,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0015-47c93f508f544fc69ddff2ecb1fde8eb.json.br",
+      "evidenceSha256": "EE59528DBC202768B1D73EA4035E868D69939B42AF18602131B9D762D822E6C1",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 130.277,
+      "maxCaptureWaitMilliseconds": 35.8821,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 16,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 2.2244407060662716,
+      "maxTrackingMilliseconds": 11.6438,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0016-6124497d8c4444df86d41c4107427c9f.json.br",
+      "evidenceSha256": "5C14FBC1B481FE54B4E4674B00A210C51A1AD8EA4F51265B09C144B0437EE343",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 111.4328,
+      "maxCaptureWaitMilliseconds": 30.8172,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 17,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 2.292599405460572,
+      "maxTrackingMilliseconds": 10.1008,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0017-1b78920deae84ac8bd6ada0662be66ee.json.br",
+      "evidenceSha256": "333804727D17706512C2AB207D293C6B61374E79E33C6A2514A3B50A86C1AEA0",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 131.9579,
+      "maxCaptureWaitMilliseconds": 44.1755,
+      "exactInitialRenderCaptures": 9
+    },
+    {
+      "segment": 18,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.1411644173764377,
+      "maxTrackingMilliseconds": 10.2914,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0018-9f1634c47fda4f2296e85baf6fec8abc.json.br",
+      "evidenceSha256": "6F2322AA5C6FB4BDEEC674AC0CDFB8F3C5BA773629D16EB8F55DF1C7B27D9F62",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 28.206,
+      "maxCaptureWaitMilliseconds": 37.4201,
+      "exactInitialRenderCaptures": 27
+    },
+    {
+      "segment": 19,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.4756816814308722,
+      "maxTrackingMilliseconds": 21.8724,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0019-935abb76c1ec4e909b77212472e16460.json.br",
+      "evidenceSha256": "343BC914FF79403A577E92442316639FF40FA0E8ADBC71E87CE2496A22D0B684",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 33.0274,
+      "maxCaptureWaitMilliseconds": 12.9973,
+      "exactInitialRenderCaptures": 30
+    },
+    {
+      "segment": 20,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.5448247082286264,
+      "maxTrackingMilliseconds": 31.5411,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0020-e96a6248c4a749d393eecbc555053e79.json.br",
+      "evidenceSha256": "B04941E5AF34B0B0D088B125EF651DB95DA08F96721B236E4076FFAD4AABB2CF",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 39.4269,
+      "maxCaptureWaitMilliseconds": 23.7238,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 21,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 3.680814882492163,
+      "maxTrackingMilliseconds": 13.4127,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0021-92731b4fe72549d992f72e38ade6ccd3.json.br",
+      "evidenceSha256": "8215E6678A1131841AC8AC92D3F287C2A86F4661242093D6AB5ADF9AFF972E9B",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 156.7358,
+      "maxCaptureWaitMilliseconds": 39.4868,
+      "exactInitialRenderCaptures": 26
+    },
+    {
+      "segment": 22,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.8858111879413264,
+      "maxTrackingMilliseconds": 16.8264,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0022-2a57c504fb7f44a798c7f03e5b0cfae0.json.br",
+      "evidenceSha256": "62B94446CE89134A2EE271B2AD5905352B3E377FAB2346D78DBCCB1D21C89A95",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 35.2219,
+      "maxCaptureWaitMilliseconds": 42.4629,
+      "exactInitialRenderCaptures": 26
+    },
+    {
+      "segment": 23,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.1700303392218243,
+      "maxTrackingMilliseconds": 32.027,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0023-797e65c593c843a39d0281a5b3db64a2.json.br",
+      "evidenceSha256": "91BECEEDEF5E365251FF08968D75F623FEA4507C568F2ED871CA3161FC60AD91",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 36.0405,
+      "maxCaptureWaitMilliseconds": 17.1258,
+      "exactInitialRenderCaptures": 30
+    },
+    {
+      "segment": 24,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.4887340974485723,
+      "maxTrackingMilliseconds": 21.8195,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0024-1f0e911a66da4996823ead32ddaa942c.json.br",
+      "evidenceSha256": "C28F90C92032D0C4132A4F6ADB37CC7F2AB64ACAAC164302010C2FF04EDFB781",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 38.443,
+      "maxCaptureWaitMilliseconds": 39.2002,
+      "exactInitialRenderCaptures": 22
+    },
+    {
+      "segment": 25,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.6480729844518167,
+      "maxTrackingMilliseconds": 17.8783,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0025-7b5b5675574840589a40a25d7a083c55.json.br",
+      "evidenceSha256": "65A7A3B1E937BE9F126843B5DFDD17B357782D596804DBECBE5399E8926AA2B2",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 33.7844,
+      "maxCaptureWaitMilliseconds": 36.7983,
+      "exactInitialRenderCaptures": 13
+    },
+    {
+      "segment": 26,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 2.3482774149739827,
+      "maxTrackingMilliseconds": 22.8684,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0026-b696672c7ef44e819ef5e8899189849b.json.br",
+      "evidenceSha256": "872AE8E0205939CAC4FD7411ACE7CE3EC3E476FFDB7F163C9AA819FDDAB2E512",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 39.2376,
+      "maxCaptureWaitMilliseconds": 35.3997,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 27,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 2.119599699864832,
+      "maxTrackingMilliseconds": 22.6856,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0027-8688b4c6f2e746f19fe2a6c499cbb6e9.json.br",
+      "evidenceSha256": "B1DB9750FB698248CC82CCF48F144AF74F1D7D783B46E8B472267A9210FC5AA6",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 33.0607,
+      "maxCaptureWaitMilliseconds": 13.108,
+      "exactInitialRenderCaptures": 30
+    },
+    {
+      "segment": 28,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 2.5246290006424648,
+      "maxTrackingMilliseconds": 16.2782,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0028-86a978dad8b34f299bc963a10beb816f.json.br",
+      "evidenceSha256": "792B296965EA06E19D3F0179E2CA23B5D7B91A8900A0F6F94CA0AF7413221872",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 36.1948,
+      "maxCaptureWaitMilliseconds": 37.3015,
+      "exactInitialRenderCaptures": 28
+    },
+    {
+      "segment": 29,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 3.247041190329157,
+      "maxTrackingMilliseconds": 26.6694,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0029-f4b6f97b17f54664bd0238157a935bb0.json.br",
+      "evidenceSha256": "DA1934084001149CC3FE44BC924DA2AC7F3F286C0A650014BAE562EEF59C79C5",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 35.8738,
+      "maxCaptureWaitMilliseconds": 13.7673,
+      "exactInitialRenderCaptures": 30
+    },
+    {
+      "segment": 30,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.7559538475789305,
+      "maxTrackingMilliseconds": 18.2857,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0030-c2f2b757eed244ad9be2fa058529ac41.json.br",
+      "evidenceSha256": "B193523B4903D0DFCE3C2E70601C9A3D077D541437625A6911C3894B9296EAFD",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 34.3543,
+      "maxCaptureWaitMilliseconds": 43.23,
+      "exactInitialRenderCaptures": 24
+    },
+    {
+      "segment": 31,
+      "passed": false,
+      "scored": 8,
+      "failure": "Frame 7: camera error 5.094 px exceeds 5 px.",
+      "maxErrorPixels": 5.093624503007275,
+      "maxTrackingMilliseconds": 18.2872,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "6739EE7A3BFE6A1F5075119831E331E2466F8A573DC241A1C075E20CC7EE6B15",
+      "evidenceFile": "attempt-0031-16bfda0aa66a4cfaa767c86258c1d84a.json.br",
+      "evidenceSha256": "38FD7FD1ACA7FBD591FCFDAA183649FD4872C2809E1D490E01309B4352B8AE58",
+      "controlledFrames": 8,
+      "simulationSeconds": 0.2666666805744171,
+      "maxGameWaitMilliseconds": 34.2676,
+      "maxCaptureWaitMilliseconds": 19.4775,
+      "exactInitialRenderCaptures": 8
+    },
+    {
+      "segment": 31,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.770201370888278,
+      "maxTrackingMilliseconds": 26.969,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "5249999F9DE54276D4470F10A190C5B9B4CC08E005B896E8136A6CF2D357DAC0",
+      "evidenceFile": "attempt-0031-052a127ef8064449ac1ec21a8f149fac.json.br",
+      "evidenceSha256": "205429221433E7028EF1CD8712456B1F245F62E4BAF897FC1573755F51D767E7",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 36.175,
+      "maxCaptureWaitMilliseconds": 41.4504,
+      "exactInitialRenderCaptures": 28
+    },
+    {
+      "segment": 32,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.411418056416592,
+      "maxTrackingMilliseconds": 18.8356,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "5249999F9DE54276D4470F10A190C5B9B4CC08E005B896E8136A6CF2D357DAC0",
+      "evidenceFile": "attempt-0032-5eeeff6370b142d19034df5197a72a4d.json.br",
+      "evidenceSha256": "DD8A753D86C6C473958F44E961354327ADE436456F692C60EE5CE94879899670",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 35.4539,
+      "maxCaptureWaitMilliseconds": 32.5353,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 33,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.050426852070787,
+      "maxTrackingMilliseconds": 27.7673,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "5249999F9DE54276D4470F10A190C5B9B4CC08E005B896E8136A6CF2D357DAC0",
+      "evidenceFile": "attempt-0033-15052b605b6b4aae9971d072a0d51346.json.br",
+      "evidenceSha256": "7BB84928105D144455A725E0279657560A72BA0291E0F615059DAE8E7CD858FB",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 30.5916,
+      "maxCaptureWaitMilliseconds": 29.6736,
+      "exactInitialRenderCaptures": 28
+    },
+    {
+      "segment": 34,
+      "passed": false,
+      "scored": 1,
+      "failure": "Frame 0: camera error 62.777 px exceeds 5 px.",
+      "maxErrorPixels": 62.77672315707349,
+      "maxTrackingMilliseconds": 7.3071,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "5249999F9DE54276D4470F10A190C5B9B4CC08E005B896E8136A6CF2D357DAC0",
+      "evidenceFile": "attempt-0034-3cc6306fdb954784894ffbcc6efc027e.json.br",
+      "evidenceSha256": "BDAB41C324C40649FB90BB2E158C8E11F8499846ADBC97A625FA27F2693E4325",
+      "controlledFrames": 1,
+      "simulationSeconds": 0.03333333507180214,
+      "maxGameWaitMilliseconds": 31.2421,
+      "maxCaptureWaitMilliseconds": 20.9415,
+      "exactInitialRenderCaptures": 1
+    },
+    {
+      "segment": 34,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.522396847717531,
+      "maxTrackingMilliseconds": 12.4031,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "956B4E1D0D3274BF34A6BE90E7C0095484FD5F8793766F96C0B58EA351DDEB27",
+      "evidenceFile": "attempt-0034-93a7fa133b1f49ac84ed76cbd7fa1624.json.br",
+      "evidenceSha256": "3EDE037E09D60CD3C21B24A4CC7273A3AD4C42F3E78315BB31116B8122203C77",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 42.9023,
+      "maxCaptureWaitMilliseconds": 22.8111,
+      "exactInitialRenderCaptures": 30
+    },
+    {
+      "segment": 35,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 3.727692153969782,
+      "maxTrackingMilliseconds": 16.8708,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "956B4E1D0D3274BF34A6BE90E7C0095484FD5F8793766F96C0B58EA351DDEB27",
+      "evidenceFile": "attempt-0035-c18ad914ef694f19931f92e74879456a.json.br",
+      "evidenceSha256": "B26E57D1C096F69B4DDD604BB4FAA1D7987ED23089CA5836D8B581E1E5CDB2D3",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 202.4069,
+      "maxCaptureWaitMilliseconds": 37.9406,
+      "exactInitialRenderCaptures": 24
+    },
+    {
+      "segment": 36,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.7477459976253207,
+      "maxTrackingMilliseconds": 17.5542,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "956B4E1D0D3274BF34A6BE90E7C0095484FD5F8793766F96C0B58EA351DDEB27",
+      "evidenceFile": "attempt-0036-843abb8fd544466aace143ae31a132aa.json.br",
+      "evidenceSha256": "89DC41C112BF45B9F23FB0004500DB6AEB12852CAAAD8DF669C78B1A4EB3AB30",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 33.7889,
+      "maxCaptureWaitMilliseconds": 28.3847,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 37,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.5439489576214718,
+      "maxTrackingMilliseconds": 13.045,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "956B4E1D0D3274BF34A6BE90E7C0095484FD5F8793766F96C0B58EA351DDEB27",
+      "evidenceFile": "attempt-0037-261a39f900e74a86b8ee6876e6a6b40d.json.br",
+      "evidenceSha256": "405ADD91C2F7E1DCD904F3F1EE3A716528927289FCFAF8191B92B1C869026CB0",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 38.4068,
+      "maxCaptureWaitMilliseconds": 121.712,
+      "exactInitialRenderCaptures": 26
+    },
+    {
+      "segment": 38,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 1.9209482339833492,
+      "maxTrackingMilliseconds": 14.1245,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "956B4E1D0D3274BF34A6BE90E7C0095484FD5F8793766F96C0B58EA351DDEB27",
+      "evidenceFile": "attempt-0038-ed9fefcd11ae4ae48606b000fa2b2885.json.br",
+      "evidenceSha256": "6E1637C8EFD69BF1E7F1BD7841731CBBFBEE2B03BC491387CE9674FA4C3871FD",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 33.7428,
+      "maxCaptureWaitMilliseconds": 26.6828,
+      "exactInitialRenderCaptures": 28
+    },
+    {
+      "segment": 39,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 2.249845160834189,
+      "maxTrackingMilliseconds": 28.8101,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "956B4E1D0D3274BF34A6BE90E7C0095484FD5F8793766F96C0B58EA351DDEB27",
+      "evidenceFile": "attempt-0039-d28f7eb5111149728df50f0d6013489b.json.br",
+      "evidenceSha256": "831766CA78FA55685B26E84C24B5B89C16E1C346059F537B0F464DB4A42DC60E",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 598.683,
+      "maxCaptureWaitMilliseconds": 25.155,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 40,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 2.5139001441938027,
+      "maxTrackingMilliseconds": 11.9201,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "956B4E1D0D3274BF34A6BE90E7C0095484FD5F8793766F96C0B58EA351DDEB27",
+      "evidenceFile": "attempt-0040-3c4c05fbc2bd4481ae5eb98afb0d3bb1.json.br",
+      "evidenceSha256": "AF5402A66AA7BCFEF71133749275E27461CC6143A08DE78423669454480435E3",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 73.5109,
+      "maxCaptureWaitMilliseconds": 37.1203,
+      "exactInitialRenderCaptures": 28
+    },
+    {
+      "segment": 41,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 2.7050583191763304,
+      "maxTrackingMilliseconds": 24.905,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "956B4E1D0D3274BF34A6BE90E7C0095484FD5F8793766F96C0B58EA351DDEB27",
+      "evidenceFile": "attempt-0041-ea69d930d310485da218bc2c15aa9959.json.br",
+      "evidenceSha256": "2D4C32BD629F5B3997AB7954B4103618129CD255F23FF6B4B39904C0C392BFCF",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 187.0565,
+      "maxCaptureWaitMilliseconds": 24.137,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 42,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 3.247134333814005,
+      "maxTrackingMilliseconds": 8.8873,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "956B4E1D0D3274BF34A6BE90E7C0095484FD5F8793766F96C0B58EA351DDEB27",
+      "evidenceFile": "attempt-0042-2f4695e1761a4ce39282be8d8693b0fa.json.br",
+      "evidenceSha256": "5FB7AA39D0C7FDC6152EB254670460F4839D23E253753038860EA81344AB99AC",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 181.5767,
+      "maxCaptureWaitMilliseconds": 14.3195,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 43,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.344821223471344,
+      "maxTrackingMilliseconds": 12.3551,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "956B4E1D0D3274BF34A6BE90E7C0095484FD5F8793766F96C0B58EA351DDEB27",
+      "evidenceFile": "attempt-0043-a18da3b55afd4f64bb618270719b5e9a.json.br",
+      "evidenceSha256": "D2E8E9E5AA57DEB2A2D64C3733169CC0B5EAAD53662B974E6E507A411FBC4D27",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 36.8362,
+      "maxCaptureWaitMilliseconds": 131.5204,
+      "exactInitialRenderCaptures": 28
+    },
+    {
+      "segment": 44,
+      "passed": false,
+      "scored": 24,
+      "failure": "Frame 23: camera error 7.705 px exceeds 5 px.",
+      "maxErrorPixels": 7.704691291749237,
+      "maxTrackingMilliseconds": 15.7235,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "956B4E1D0D3274BF34A6BE90E7C0095484FD5F8793766F96C0B58EA351DDEB27",
+      "evidenceFile": "attempt-0044-616d4b1dc3f0458aad5de9bdd32adda8.json.br",
+      "evidenceSha256": "88D349DB76943E3442F7014AB607712DAC744649AE2A257A3712662885FDB5C8",
+      "controlledFrames": 24,
+      "simulationSeconds": 0.8000000417232513,
+      "maxGameWaitMilliseconds": 35.1167,
+      "maxCaptureWaitMilliseconds": 16.2671,
+      "exactInitialRenderCaptures": 24
+    },
+    {
+      "segment": 44,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 2.526968388924906,
+      "maxTrackingMilliseconds": 12.3948,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "4EA5DD3F3747076CC3B5528D89F4415B9AEA38387FA466090097E6FEB06880BF",
+      "evidenceFile": "attempt-0044-fa7a017cfff3463d8dee03defcecd63e.json.br",
+      "evidenceSha256": "797D404DAD98B74C64B55F7B634CA0FA6D14BD32F0FAF07438452D238E94B2B3",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 142.8829,
+      "maxCaptureWaitMilliseconds": 24.8903,
+      "exactInitialRenderCaptures": 26
+    },
+    {
+      "segment": 45,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 3.020683749992559,
+      "maxTrackingMilliseconds": 11.8912,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "4EA5DD3F3747076CC3B5528D89F4415B9AEA38387FA466090097E6FEB06880BF",
+      "evidenceFile": "attempt-0045-86f36692a3f34f21965d72d6bd70bb5e.json.br",
+      "evidenceSha256": "C52A1F0ED15C122B83FDDD82E09AF07324726376090EE8C2503B4F02C2D853AE",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 121.0212,
+      "maxCaptureWaitMilliseconds": 35.9075,
+      "exactInitialRenderCaptures": 26
+    },
+    {
+      "segment": 46,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 3.7395170196477117,
+      "maxTrackingMilliseconds": 23.3577,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "4EA5DD3F3747076CC3B5528D89F4415B9AEA38387FA466090097E6FEB06880BF",
+      "evidenceFile": "attempt-0046-41659142ce174b2dbeff8f1a9cce973b.json.br",
+      "evidenceSha256": "D5CC17D918D59176668FC7DE28B530F118176562A9AE8C8F8852BB18B6C4C932",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 36.4842,
+      "maxCaptureWaitMilliseconds": 19.9209,
+      "exactInitialRenderCaptures": 30
+    },
+    {
+      "segment": 47,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.267871693815355,
+      "maxTrackingMilliseconds": 17.054,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "4EA5DD3F3747076CC3B5528D89F4415B9AEA38387FA466090097E6FEB06880BF",
+      "evidenceFile": "attempt-0047-fc14bd87efef47adb4ada52b039bab1d.json.br",
+      "evidenceSha256": "DEE34D968EDC02EA5CEF014356FB9B6CB436E9AAC6FA44EC797F83D79A09A628",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 35.6962,
+      "maxCaptureWaitMilliseconds": 30.7502,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 48,
+      "passed": false,
+      "scored": 1,
+      "failure": "Frame 0: camera error 67.119 px exceeds 5 px.",
+      "maxErrorPixels": 67.11884498938997,
+      "maxTrackingMilliseconds": 8.7158,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "4EA5DD3F3747076CC3B5528D89F4415B9AEA38387FA466090097E6FEB06880BF",
+      "evidenceFile": "attempt-0048-592316dc901846529e1772e1f025b06d.json.br",
+      "evidenceSha256": "9F4AFD830D97002068B221C3849C7A2AC7F0F0C168E5D98043AE08FD30423BCF",
+      "controlledFrames": 1,
+      "simulationSeconds": 0.03333333507180214,
+      "maxGameWaitMilliseconds": 19.6159,
+      "maxCaptureWaitMilliseconds": 21.8113,
+      "exactInitialRenderCaptures": 1
+    },
+    {
+      "segment": 48,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.811653671563602,
+      "maxTrackingMilliseconds": 30.1162,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "40CD2BA0EB8638479EA02E3411A049A154109779A50794334C766DC90FD99C75",
+      "evidenceFile": "attempt-0048-bb3720699c8d406da8425581cc603fbc.json.br",
+      "evidenceSha256": "D8D1EBD82395A1334379D5AE12048FF6A7BF96FB807578211171ACC494A04362",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 301.5123,
+      "maxCaptureWaitMilliseconds": 37.4298,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 49,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.330040139876712,
+      "maxTrackingMilliseconds": 13.4358,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "40CD2BA0EB8638479EA02E3411A049A154109779A50794334C766DC90FD99C75",
+      "evidenceFile": "attempt-0049-d029595637654360b62369b616291094.json.br",
+      "evidenceSha256": "5DA3F63E37C44561EEC6176DBC42ABA2B64050AF9086E3570C288908D59ECC4B",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 252.5849,
+      "maxCaptureWaitMilliseconds": 35.7194,
+      "exactInitialRenderCaptures": 25
+    },
+    {
+      "segment": 50,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.468757229937675,
+      "maxTrackingMilliseconds": 17.6228,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "40CD2BA0EB8638479EA02E3411A049A154109779A50794334C766DC90FD99C75",
+      "evidenceFile": "attempt-0050-f1e6c28c51834c509963c0287d7c0bdc.json.br",
+      "evidenceSha256": "EC35F61C942DABFA15730118857A07C63ADC8B4BFC6CF56EF2E2DBF4D2F54F9B",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 224.2923,
+      "maxCaptureWaitMilliseconds": 25.9303,
+      "exactInitialRenderCaptures": 27
+    },
+    {
+      "segment": 51,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.5134298431435536,
+      "maxTrackingMilliseconds": 14.1902,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "40CD2BA0EB8638479EA02E3411A049A154109779A50794334C766DC90FD99C75",
+      "evidenceFile": "attempt-0051-b755681decee4483844be46a947b6ee6.json.br",
+      "evidenceSha256": "7407D959149FA3DF640E3ACAE077890C2C31254BAAB0401FAAEF19DCB34B5DFC",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 35.2317,
+      "maxCaptureWaitMilliseconds": 27.2662,
+      "exactInitialRenderCaptures": 28
+    },
+    {
+      "segment": 52,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.557883358671722,
+      "maxTrackingMilliseconds": 11.4161,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "40CD2BA0EB8638479EA02E3411A049A154109779A50794334C766DC90FD99C75",
+      "evidenceFile": "attempt-0052-3f783e6aa4ca4a929545e950957c9691.json.br",
+      "evidenceSha256": "3DCA5582DDDF0FE179ADE13782878F3E7E82DB2960DA270E4070BE1E2FD070BB",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 175.3491,
+      "maxCaptureWaitMilliseconds": 36.3272,
+      "exactInitialRenderCaptures": 24
+    },
+    {
+      "segment": 53,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.900077107837687,
+      "maxTrackingMilliseconds": 16.3326,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "40CD2BA0EB8638479EA02E3411A049A154109779A50794334C766DC90FD99C75",
+      "evidenceFile": "attempt-0053-f958f5272aaa41dca1cb068399871ed5.json.br",
+      "evidenceSha256": "CC32CC35F53CF022395E67C4420F3B7D8A97BA05365957ED8D5E0A3789168378",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 38.3562,
+      "maxCaptureWaitMilliseconds": 35.5806,
+      "exactInitialRenderCaptures": 29
+    },
+    {
+      "segment": 54,
+      "passed": false,
+      "scored": 5,
+      "failure": "Frame 4: camera error 5.007 px exceeds 5 px.",
+      "maxErrorPixels": 5.0068800292874265,
+      "maxTrackingMilliseconds": 13.0176,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "40CD2BA0EB8638479EA02E3411A049A154109779A50794334C766DC90FD99C75",
+      "evidenceFile": "attempt-0054-6fed06aa51ff47eda39e120d09c96ef0.json.br",
+      "evidenceSha256": "4535E4C6BB6C11056283826A75BE99F2D0E3FBF144D9D64FB48EE00432157FFB",
+      "controlledFrames": 5,
+      "simulationSeconds": 0.1666666753590107,
+      "maxGameWaitMilliseconds": 35.0346,
+      "maxCaptureWaitMilliseconds": 23.9067,
+      "exactInitialRenderCaptures": 5
+    },
+    {
+      "segment": 54,
+      "passed": false,
+      "scored": 17,
+      "failure": "Frame 16: camera error 8.610 px exceeds 5 px.",
+      "maxErrorPixels": 8.610193379898924,
+      "maxTrackingMilliseconds": 10.9002,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "DCAAB0E2DD1CCB557157E6B24195DF8A9290EAD30C2F84A3BE883B3604D1BFB2",
+      "evidenceFile": "attempt-0054-e8f1b9d6ba9c493688b646f750ddcc2b.json.br",
+      "evidenceSha256": "3C7AD89D6876B99BEFA3030EB69F56280B77DBF02C12451F2DEF94654CB031E8",
+      "controlledFrames": 17,
+      "simulationSeconds": 0.5666666962206364,
+      "maxGameWaitMilliseconds": 39.8583,
+      "maxCaptureWaitMilliseconds": 36.9915,
+      "exactInitialRenderCaptures": 15
+    },
+    {
+      "segment": 54,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 3.736008595371566,
+      "maxTrackingMilliseconds": 17.1907,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "1816835748A6952E83B1C4D3F22CF270E432417962DA182E74A4981202A0EE4E",
+      "evidenceFile": "attempt-0054-b1a8cf16133f426c921099f738f7678c.json.br",
+      "evidenceSha256": "F5A97E7212AAD21E6B33EB875D42D20CA0D4F0EB40BA11359FEE68BABAC24486",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 42.7345,
+      "maxCaptureWaitMilliseconds": 63.8667,
+      "exactInitialRenderCaptures": 27
+    },
+    {
+      "segment": 55,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 3.965703731197501,
+      "maxTrackingMilliseconds": 25.2159,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "1816835748A6952E83B1C4D3F22CF270E432417962DA182E74A4981202A0EE4E",
+      "evidenceFile": "attempt-0055-8390f7a8294e4257b7516773a6c29b63.json.br",
+      "evidenceSha256": "03394E2BA6A04BA5AF6F7425DFD7EBC6F7803E0827476BD2DCDEEBBA13EA813E",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 36.7681,
+      "maxCaptureWaitMilliseconds": 41.0553,
+      "exactInitialRenderCaptures": 9
+    },
+    {
+      "segment": 56,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 4.225497216038769,
+      "maxTrackingMilliseconds": 21.7462,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "1816835748A6952E83B1C4D3F22CF270E432417962DA182E74A4981202A0EE4E",
+      "evidenceFile": "attempt-0056-acf0ceac5e3a4f57962aed3fd04930d7.json.br",
+      "evidenceSha256": "D99EFE578D4EC9C340FA0E0BA47515EAEB7A2AF1FFF451A36A9221DA5D203A2C",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 90.0681,
+      "maxCaptureWaitMilliseconds": 41.3408,
+      "exactInitialRenderCaptures": 20
+    },
+    {
+      "segment": 57,
+      "passed": false,
+      "scored": 29,
+      "failure": "Frame 28: camera error 5.157 px exceeds 5 px.",
+      "maxErrorPixels": 5.156518805839939,
+      "maxTrackingMilliseconds": 14.4694,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "1816835748A6952E83B1C4D3F22CF270E432417962DA182E74A4981202A0EE4E",
+      "evidenceFile": "attempt-0057-48807378becf427fae0fae3a29eafd88.json.br",
+      "evidenceSha256": "ED70399C49AF458F30D6B272F6DFDA984ABA1E6DF07A8D6366AB27B06BD226D7",
+      "controlledFrames": 29,
+      "simulationSeconds": 0.966666717082262,
+      "maxGameWaitMilliseconds": 237.799,
+      "maxCaptureWaitMilliseconds": 38.1337,
+      "exactInitialRenderCaptures": 28
+    },
+    {
+      "segment": 57,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 3.29909287288599,
+      "maxTrackingMilliseconds": 11.4887,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "B909CF543DFC470166A22481F5C44E494D00B3361AA42B0F2428A86C4195916B",
+      "evidenceFile": "attempt-0057-d63b696bfc3e471ebec1fe7210fafa2b.json.br",
+      "evidenceSha256": "20AF3EBF9E2C1BE707DDFED3A8B86E8CFC7F2FC8AABCB27EA11C517D0AEE39B0",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 39.8239,
+      "maxCaptureWaitMilliseconds": 38.2528,
+      "exactInitialRenderCaptures": 27
+    },
+    {
+      "segment": 58,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 3.3169255533515276,
+      "maxTrackingMilliseconds": 19.2801,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "B909CF543DFC470166A22481F5C44E494D00B3361AA42B0F2428A86C4195916B",
+      "evidenceFile": "attempt-0058-15c9c176c5f74e82b4c47099fa0f3801.json.br",
+      "evidenceSha256": "D0E0509C14452CDED54D2FDFC7CB8B4C5B6C7A4601F00CF6F6E5CED1CADADB38",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 37.0796,
+      "maxCaptureWaitMilliseconds": 30.6097,
+      "exactInitialRenderCaptures": 28
+    },
+    {
+      "segment": 59,
+      "passed": true,
+      "scored": 30,
+      "failure": null,
+      "maxErrorPixels": 3.09173549107965,
+      "maxTrackingMilliseconds": 18.2634,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "B909CF543DFC470166A22481F5C44E494D00B3361AA42B0F2428A86C4195916B",
+      "evidenceFile": "attempt-0059-fbff183835f4400781c91d720e1e7655.json.br",
+      "evidenceSha256": "B2F277834F487F42B60AF752033526351417FF4D4CCE35974037929859602234",
+      "controlledFrames": 30,
+      "simulationSeconds": 1.0000000521540642,
+      "maxGameWaitMilliseconds": 35.2793,
+      "maxCaptureWaitMilliseconds": 38.1423,
+      "exactInitialRenderCaptures": 28
+    },
+    {
+      "segment": 60,
+      "passed": true,
+      "scored": 18,
+      "failure": null,
+      "maxErrorPixels": 3.0917400943467865,
+      "maxTrackingMilliseconds": 18.5718,
+      "backends": [
+        "Cuda"
+      ],
+      "algorithmSha256": "B909CF543DFC470166A22481F5C44E494D00B3361AA42B0F2428A86C4195916B",
+      "evidenceFile": "attempt-0060-24e6ac3117054717878f6fa55e5496bf.json.br",
+      "evidenceSha256": "E6C2DD06718C763D77D9661EEF71F6B99568A5BCB6D9D19671EF0A555DE916E6",
+      "controlledFrames": 18,
+      "simulationSeconds": 0.5770643297582865,
+      "maxGameWaitMilliseconds": 32.838,
+      "maxCaptureWaitMilliseconds": 32.4077,
+      "exactInitialRenderCaptures": 18
+    }
+  ],
+  "sameSavedFrameSearchSetupExperiment": [
+    {
+      "algorithmSha256": "4E57599AC35DD030EBBE24F22C4BC1ED399F39EFC890863BDE8ADCB363953D42",
+      "gameFrame": 165953,
+      "errorPixels": 1.832473898675499,
+      "trackingMilliseconds": 28.8257,
+      "profile": {
+        "groundDetectionMilliseconds": 2.5496,
+        "motionMilliseconds": 1.3678,
+        "visualTrackingMilliseconds": 24.9051,
+        "patchSearchMilliseconds": 2.6648,
+        "patchCandidates": 8470,
+        "backend": "Cuda",
+        "allocatedBytes": 6408008,
+        "globalSearchMilliseconds": 0.0003,
+        "cameraSolveMilliseconds": 23.6986,
+        "featureMatchingMilliseconds": 0.8724,
+        "maintenanceMilliseconds": 0.2701,
+        "outputMilliseconds": 0.0559,
+        "generation0Collections": 0,
+        "generation1Collections": 0,
+        "generation2Collections": 0,
+        "camera": {
+          "referenceSearches": 2,
+          "preparationMilliseconds": 15.351600000000001,
+          "searchMilliseconds": 4.492,
+          "consensusMilliseconds": 2.01,
+          "subpixelMilliseconds": 1.5803
+        }
+      }
+    },
+    {
+      "algorithmSha256": "80BDB7584CBE481860C790AE20E2FE8F120E9E36A077EF4551F98D7D4A07DDCB",
+      "gameFrame": 165953,
+      "errorPixels": 1.832473898675499,
+      "trackingMilliseconds": 18.4269,
+      "profile": {
+        "groundDetectionMilliseconds": 3.0026,
+        "motionMilliseconds": 1.9378,
+        "visualTrackingMilliseconds": 13.4833,
+        "patchSearchMilliseconds": 2.8053,
+        "patchCandidates": 8470,
+        "backend": "Cuda",
+        "allocatedBytes": 6408008,
+        "globalSearchMilliseconds": 0.0003,
+        "cameraSolveMilliseconds": 12.1151,
+        "featureMatchingMilliseconds": 1.0183,
+        "maintenanceMilliseconds": 0.2737,
+        "outputMilliseconds": 0.0681,
+        "generation0Collections": 0,
+        "generation1Collections": 0,
+        "generation2Collections": 0,
+        "camera": {
+          "referenceSearches": 2,
+          "preparationMilliseconds": 1.3075999999999999,
+          "searchMilliseconds": 5.747199999999999,
+          "consensusMilliseconds": 2.8038,
+          "subpixelMilliseconds": 2.0452
+        }
+      }
+    }
+  ],
+  "savedPixelReferenceExperiments": [
+    {
+      "conditionsSession": "8b2fa05d657549278e70b7ecf5825a22",
+      "variant": "longer baseline everywhere",
+      "frames": 665,
+      "maxErrorPixels": 5.056486622398795,
+      "overFivePixels": 2,
+      "finalErrorPixels": 1.169894131212127
+    },
+    {
+      "conditionsSession": "8b2fa05d657549278e70b7ecf5825a22",
+      "variant": "longer baseline after sustained recent fallback",
+      "frames": 665,
+      "maxErrorPixels": 4.144874094954534,
+      "overFivePixels": 0,
+      "finalErrorPixels": 3.777156615821781
+    }
+  ],
+  "changes": [
+    "Strict broad replay requires the existing strong-recovery strip criteria for global corrections, including transported proposals. Ambiguous refinement cannot fall back to an unrefined proposal. Legacy sparse loop closure remains unchanged outside broad mode. Host GPU result capacity follows accepted output count, avoiding large allocations for rejected search candidates.",
+    "Throwaway warm-up explicitly exercises feature recovery and tiered JIT. Recovery caches row queries and reuses candidate scratch space without changing rankings.",
+    "Sparse abrupt matches receive an additional broad two-axis uniqueness check before bypassing continuity clamping; repeated-pattern and masked-image regressions cover rejection.",
+    "Exact CUDA target moments avoid repeated patch scans; saturated costs stop early. Exact SSE2 SAD accelerates CPU feature matching with scalar fallback.",
+    "Calibration is separated from registration coordinates and correction round trips are tested. Bidirectional subpixel registration is under saved-prefix validation; sparse-promotion restrictions were rejected after replay regressions. CPU feature scoring rejects candidates only after their partial error cannot beat the incumbent; compact CUDA batches preserve source/sample order while removing redundant coordinate uploads.",
+    "Trusted texture recovery precedes provisional matches; bounded GPU uploads reuse validated sample layouts only for matching dimensions and source count.",
+    "A latest-verified image provides an additional texture fallback only after durable/recent search fails, retaining full search and majority checks and participating in state rollback.",
+    "Independent broad texture consensus can authorize bounded abrupt camera motion on the same frame, with explicit quality and distinct-frame checks; weak matches retain deferred verification.",
+    "CUDA rejects mathematically impossible majority candidates early, preserving surviving scores and full search coverage; exact-boundary CPU/GPU tests passed.",
+    "Sparse low-error anchors are checked against a larger independent recent consensus before reference promotion; a synthetic foreground-strip regression verifies the decision.",
+    "Controlled simulation commands with acknowledged delta; camera follows recorded hero, no camera truth sent to tracker.",
+    "Room mask FSM states, variables and sprite alpha are retained by both checkpoint codecs; missing objects/state names reject restore.",
+    "Enemy restore no longer resets all semi-persistent room objects; camera SnapTo no longer overwrites the saved target.",
+    "Unchanged mask state actions continue across boundaries; checkpoint socket tests exercise payloads larger than 4 KiB.",
+    "Exact rendered pixels joined with their own live telemetry; simulation waits for frame scoring before advancing.",
+    "Separate controlled-session pointer preserves older wall-clock journals.",
+    "Dense independent patch consensus uses one calibrated ground-plane scale across reference changes; original normal-game sparse policy retained.",
+    "CUDA reuses host staging arrays as well as device buffers; host staging allocation regression passed on the GTX 1080.",
+    "Capture waits during reconstruction and between requested controlled frames, reducing unused pixel allocations.",
+    "Reusable candidate-sample storage and stack scratch space reduce CPU allocation during broad search and subpixel fitting.",
+    "CPU search setup reuses per-row source validity masks and candidate storage; 100-fixture parity and bounded-allocation regressions verify behavior and reuse.",
+    "After sustained recent-reference fallback, a longer overlapping baseline reduces accumulated subpixel drift; global correction cancels retention of pre-correction references.",
+    "Spatially separated fine subpixel consensus separates foreground parallax from ground motion, with held-out validation before acceptance.",
+    "When floor registration fails, a full two-axis CUDA texture search can register remaining walls; competing peaks receive subpixel validation, and flat or masked images are rejected.",
+    "Per-stage timing separates camera setup, aggregate GPU searches, consensus, subpixel refinement, feature matching and atlas maintenance; reports include GC counts."
+  ],
+  "rejectedExperiments": [
+    {
+      "build": 54,
+      "method": "block sparse long-baseline reference promotion",
+      "savedFrames": 1344,
+      "badFrames": 710,
+      "maxErrorPixels": 61.454,
+      "reason": "breaks earlier accepted sections"
+    },
+    {
+      "build": 55,
+      "method": "allow sparse promotion when prior velocity agrees",
+      "savedFrames": 1344,
+      "badFrames": 471,
+      "maxErrorPixels": 64.85608699142693,
+      "firstBadFrame": {
+        "segment": 21,
+        "frame": 1
+      },
+      "reason": "still breaks earlier accepted sections"
+    }
+  ],
+  "limits": [
+    "Checkpoints do not serialize every Unity FSM, animation, or camera smoothing internal.",
+    "Older recordings omitted room-mask state. This run reconstructs Secret Mask Top from original image evidence; other unrecorded initial world state is not known.",
+    "In-flight mask fades restart a saved state action from saved alpha when restoration is needed; this is not a bit-identical full-process snapshot.",
+    "Unscaled effects can run during paused capture waits; later renders retain their own frame IDs and actual truth.",
+    "Inputs are sampled at tick starts; sub-tick taps are quantized. Hero poses interpolate at tick endpoints.",
+    "Accepted prefix reconstruction validates accuracy untimed; original acceptance timings remain in immutable reports."
+  ],
+  "currentCodePrefixValidation": {
+    "algorithm": "B909CF543DFC470166A22481F5C44E494D00B3361AA42B0F2428A86C4195916B",
+    "acceptedSegments": 61,
+    "checkedSegments": 61,
+    "passedSegments": 61,
+    "passed": true,
+    "matchesInstalledCore": true,
+    "matchesAcceptedPrefix": true,
+    "scores": 1818,
+    "maxErrorPixels": 3.966471996034678,
+    "maxTrackingMilliseconds": 31.2125
+  },
+  "rejectedHorizontalCalibration": {
+    "value": 0.9941,
+    "trainingWindowSeconds": 20,
+    "savedFrames": 1344,
+    "maxErrorPixels": 62.64392708041751,
+    "overFivePixels": 175,
+    "adopted": false
+  }
+}

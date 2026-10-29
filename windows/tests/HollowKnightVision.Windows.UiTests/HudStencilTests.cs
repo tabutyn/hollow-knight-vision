@@ -153,7 +153,7 @@ internal static class HudStencilTests
                 var context = StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal)
                     .Single(item => item.Identifier == contextIdentifier);
                 var boxes = context.Requirements
-                    .Where(requirement => !requirement.ModdedOnly)
+                    .Where(requirement => !requirement.ModdedOnly && requirement.Identifier != StencilInitializationPolicy.DeferredProfileClass)
                     .SelectMany(requirement => Enumerable.Range(0, requirement.Count).Select(_ =>
                         new LabelingExampleAnnotation(Guid.NewGuid(), requirement.Identifier, .1, .2, .1, .04)))
                     .ToArray();

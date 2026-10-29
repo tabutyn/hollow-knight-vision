@@ -21,6 +21,7 @@ public static class InputPathPlaybackRunner
         {
             throw new ArgumentException("Total input-path replay duration exceeds 24 hours.");
         }
+        var poses = InputPathPlayback.Poses(path);
         var gameWindow = HollowKnightWindowLocator.FindBest();
         if (gameWindow is null)
         {
@@ -57,6 +58,8 @@ public static class InputPathPlaybackRunner
                 "Receiver does not advertise player-checkpoint-v1.");
         }
 
+        if (poses.Length > 0 && !negotiated.Capabilities.Capabilities.Contains(ReceiverProtocol.PlayerPosePlaybackCapability))
+            throw new InvalidOperationException("Receiver does not advertise player-pose-playback-v1.");
         var acknowledgements = Channel.CreateUnbounded<ReceiverCheckpointAcknowledgement>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
         var drainTask = DrainAsync(
@@ -90,29 +93,14 @@ public static class InputPathPlaybackRunner
                         throw new InvalidOperationException(
                             $"Checkpoint restore rejected: {acknowledgement.Failure ?? "unknown failure"}");
                     }
-                    await Task.Delay(500, cancellation.Token).ConfigureAwait(false);
+
                 }
 
                 divergenceMonitor?.BeginEvaluation(MonotonicSeconds());
 
-                var iterationStart = stopwatch.Elapsed;
-                foreach (var change in changes)
-                {
-                    await DelayUntilAsync(
-                        stopwatch,
-                        iterationStart + TimeSpan.FromSeconds(change.Offset),
-                        cancellation.Token).ConfigureAwait(false);
-                    await receiver.SendStateAsync(
-                        true,
-                        change.HeldButtons,
-                        cancellation.Token).ConfigureAwait(false);
-                }
-                await DelayUntilAsync(
-                    stopwatch,
-                    iterationStart + TimeSpan.FromSeconds(path.Duration),
-                    cancellation.Token).ConfigureAwait(false);
-                await receiver.SendStateAsync(true, InputButtons.None, cancellation.Token)
-                    .ConfigureAwait(false);
+                await InputPathPlayback.RunAsync(path,
+                    (buttons, ct) => receiver.SendStateAsync(true, buttons, ct),
+                    (pose, ct) => receiver.SendPlayerPoseAsync(pose, ct), cancellation.Token).ConfigureAwait(false);
                 completedIterations++;
             }
         }
@@ -147,6 +135,9 @@ public static class InputPathPlaybackRunner
         Console.WriteLine(JsonSerializer.Serialize(new
         {
             ok = divergence is null,
+            trackingEvaluated = divergenceMonitor is not null,
+            playbackMode = poses.Length > 0 ? "recorded-player-poses-and-input" : "input-only",
+            preparation = "restore-ack-only",
             mode = "replay-input-path",
             path = Path.GetFullPath(pathFile),
             path.Id,

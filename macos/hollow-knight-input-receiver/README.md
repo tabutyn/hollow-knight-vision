@@ -22,7 +22,7 @@ reported detour limitations.
 
 ## Protocol
 
-One UTF-8 JSON object per line, maximum 4096 bytes. A client sends full
+One UTF-8 JSON object per line, maximum 262144 characters (including bounded room-mask checkpoint data). A client sends full
 `state` snapshots. `heldButtons` is a complete bitset: left=1, right=2,
 down=4, up=8, A=16, Z=32, X=64, inventory=128, pause menu=256.
 
@@ -59,8 +59,10 @@ previous vSync, target frame rate, background-update, and InControl suspension
 settings when the receiver unloads.
 
 The negotiated `player-checkpoint-v1` capability lets a recorded input path
-carry its own deterministic gameplay start. Capture is accepted only while the
-Knight is grounded and still. The snapshot includes the GameManager room ID,
+carry its own deterministic gameplay start. Ordinary recording capture requires
+the Knight to be grounded and still. Receiver v0.9.2 also accepts moving or
+airborne segment boundaries while the requesting session owns an acknowledged
+Vision pause; the checkpoint preserves velocity and grounded state. The snapshot includes the GameManager room ID,
 Knight position/facing/velocity, and camera/target positions. Restore releases
 all input first. When the current room differs, the receiver loads the recorded
 start room and waits for the Knight and camera before applying the snapshot on
@@ -77,6 +79,26 @@ cadence; Unity coalesces any backlog and applies the newest pose before the
 camera follows. Recorded buttons remain active for animation, attacks, and room
 triggers, but no longer determine the replayed route. Late poses are rejected
 when their scene does not match the current room.
+
+Receiver v0.9.4 additionally advertises `controlled-frame-replay-v1` for strict
+one-second tracking experiments. A `controlledFrame` command has `commandID`,
+monotonically increasing `sequence`, and `kind` (`advance` or `end`). Advance
+includes `deltaSeconds` (positive, at most 1/30), `heldButtons`, and a nested
+`playerPose` sharing its session and sequence. Only the current pause-lease
+owner can advance. Unity sets a fixed capture delta, advances the next game
+tick, applies the hero pose before camera follow, then freezes simulation when
+the gameplay camera renders. `controlledFrameAck` reports acceptance, the real
+Unity frame, and actual simulation delta; the host must wait for that frame's
+score before sending another advance.
+
+Ground truth includes `controlledFrameID` on the completed tick and subsequent
+paused renders. Each render retains its own frame ID and actual camera truth,
+so skipped desktop presentations never require associating stale truth with
+new pixels. `end`, disconnect, or pause-lease expiry restores the prior Unity
+capture clock and releases synthetic input. Unscaled effects are not frozen.
+The Windows workflow is documented in
+[`windows/TRACKING_STEP_REPLAY.md`](../../windows/TRACKING_STEP_REPLAY.md).
+Existing real-time replay clients continue using the original pose protocol.
 
 For repeatable experiments, receiver v0.9.1 exposes an **Invincibility** toggle
 in Vision's Ops context. While enabled, it suppresses Knight health damage and
@@ -176,3 +198,28 @@ after each game or input-binding update.
 Pause must likewise be checked while falling and attacking: animation and
 physics stop after `pauseAck`, normal play resumes after `resumeAck`, and a
 `--pause-drop` run resumes automatically within two seconds.
+
+## Receiver frame timing
+
+When rendered-frame markers are enabled, receiver 0.9.3 keeps a bounded ten-second timing ring. After a frame over 40 ms it writes a CSV snapshot on a worker thread to the game's persistent-data directory as `hkv-receiver-timing-<pid>.csv`. Columns separate receiver Update, LateUpdate, pose application, render start, marker upload, generation-two collections, and time scale. This diagnostic does not alter playback speed or the strict replay gate.
+
+## Room-mask checkpoints (receiver 0.9.5)
+
+`scene-mask-checkpoint-v1` adds optional `sceneMasks` to player checkpoints.
+Each mask carries its scene hierarchy path, supported FSM name/state, boolean
+and float variables, and child sprite alpha/visibility. Paths use names and
+same-name sibling ordinals rather than transient Unity IDs. Invalid payloads
+are rejected; missing runtime objects or states reject restoration before game
+mutation. Enemy restoration no longer calls the room-wide semi-persistent reset.
+The explicit enemy-reset player operation retains its existing room reset.
+
+Both client checkpoint models retain these fields. Legacy recordings remain
+readable but cannot reconstruct room reveal state that was never recorded.
+In-progress fades restart their state action from saved alpha; this is not a
+complete Unity/FSM snapshot. Controlled replay requires the new payload and
+uses a new session condition version.
+
+For local restore diagnosis only, create `hkv-replay-diagnostics.enabled` in
+Unity's persistent data directory. The next restore writes camera, sprite,
+and mask-state snapshots during paused preparation. Remove that file afterward.
+No diagnostics run on scored frames when the preparation renders complete.

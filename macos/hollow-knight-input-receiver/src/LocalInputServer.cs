@@ -280,7 +280,7 @@ namespace HollowKnightVisionInputReceiver
     internal sealed class LocalInputServer : IDisposable
     {
         private const int Port = 36752;
-        private const int MaxLineLength = 4096;
+        private const int MaxLineLength = 262144; // Bounded scene-mask checkpoints.
         private static readonly long WatchdogTicks = Stopwatch.Frequency / 4;
         private readonly object gate = new object();
         private readonly InputStateQueue states = new InputStateQueue();
@@ -288,6 +288,7 @@ namespace HollowKnightVisionInputReceiver
         private readonly PointerRequestQueue pointerRequests = new PointerRequestQueue();
         private readonly CheckpointRequestQueue checkpointRequests = new CheckpointRequestQueue();
         private readonly PlayerOpsRequestQueue playerOpsRequests = new PlayerOpsRequestQueue();
+        private readonly ControlledFrameQueue controlledFrames = new ControlledFrameQueue();
         private readonly PlayerPoseRequestQueue playerPoseRequests = new PlayerPoseRequestQueue();
         private readonly AckQueue acknowledgements = new AckQueue();
         private readonly AutoResetEvent ackSignal = new AutoResetEvent(false);
@@ -337,6 +338,18 @@ namespace HollowKnightVisionInputReceiver
         internal bool TryTakeCheckpointRequest(out CheckpointRequest request)
         {
             lock (gate) return checkpointRequests.TryTake(out request);
+        }
+
+        internal bool TryTakeControlledFrame(out ControlledFrameRequest request)
+        {
+            lock (gate) return controlledFrames.TryTake(out request);
+        }
+        internal void QueueControlledFrameAck(ControlledFrameRequest request, bool accepted, int frame, double delta, string failure)
+        {
+            lock (gate) {
+                if (clientStream != null && session == request.Session)
+                    QueueLineLocked(request.Ack(accepted, frame, delta, failure));
+            }
         }
 
         internal bool TryTakePlayerPoseRequest(out PlayerPoseRequest request)
@@ -493,6 +506,15 @@ namespace HollowKnightVisionInputReceiver
                 }
                 return;
             }
+            if (type == "controlledFrame") {
+                ControlledFrameRequest request;
+                if (!ControlledFrameRequest.TryParse(line, out request)) { lock (gate) DisconnectLocked(); return; }
+                lock (gate) {
+                    if (!AcceptSessionLocked(request.Session)) return;
+                    if (!controlledFrames.Accept(request)) QueueLineLocked(request.Ack(false, -1, 0, "Duplicate or busy frame command."));
+                }
+                return;
+            }
             if (type == "playerPose") {
                 PlayerPoseRequest pose;
                 if (!PlayerPoseRequest.TryParse(line, out pose)) { lock (gate) DisconnectLocked(); return; }
@@ -572,6 +594,7 @@ namespace HollowKnightVisionInputReceiver
             checkpointRequests.Disconnect();
             playerOpsRequests.Disconnect();
             playerPoseRequests.Disconnect();
+            controlledFrames.Clear();
             session = null;
             renderFrameMarker = false;
             acknowledgements.Clear();

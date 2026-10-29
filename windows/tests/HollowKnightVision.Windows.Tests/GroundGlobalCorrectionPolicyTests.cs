@@ -56,4 +56,24 @@ internal static class GroundGlobalCorrectionPolicyTests
         var noisy = new GroundGlobalCorrectionPolicy.Quality(13, 11, 224, 10.5);
         Check(!GroundGlobalCorrectionPolicy.Accepts(noisy, null, 37, true));
     }
+    public static void TestStrictTrackingRejectsMinorityLoopClosureButKeepsStrongCorrections()
+    {
+        var minority = new GroundGlobalCorrectionPolicy.Quality(30, 10, 368, 19.2);
+        var drifted = new GroundGlobalCorrectionPolicy.Quality(28, 3, 96, 25.4);
+        Check(GroundGlobalCorrectionPolicy.Accepts(minority, drifted, 11.3, true));
+        Check(!GroundGlobalCorrectionPolicy.Accepts(minority, drifted, 11.3, true,
+            requireStrongEvidence: true));
+        // Saved second-54 transported candidate: a numerical majority of
+        // five patches is still insufficient evidence for an 11-pixel jump.
+        var transported = new GroundGlobalCorrectionPolicy.Quality(7, 5, 112, 10.8998);
+        var current = new GroundGlobalCorrectionPolicy.Quality(9, 2, 16, 16.6632);
+        Check(GroundGlobalCorrectionPolicy.Accepts(transported, current, 11.3, true));
+        Check(!GroundGlobalCorrectionPolicy.Accepts(transported, current, 11.3, true,
+            requireStrongEvidence: true));
+        var majority = new GroundGlobalCorrectionPolicy.Quality(30, 25, 368, 6);
+        Check(GroundGlobalCorrectionPolicy.Accepts(majority, drifted, 11.3, true,
+            requireStrongEvidence: true));
+        Check(GroundGlobalCorrectionPolicy.Accepts(majority, null, 80, false,
+            requireStrongEvidence: true));
+    }
 }

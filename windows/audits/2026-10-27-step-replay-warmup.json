@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-27",
+  "status": "incomplete: live 30 fps capture gap",
+  "recordingId": "c129e897-958c-499b-a6cf-88b8daa9533f",
+  "recordingSha256": "1E98BDBA928AEEF1D66F2CBB6336178223E983A13D5B46C4938B73DC41C37DC6",
+  "sessionId": "369cf758594248d6a24a588c9e347cfd",
+  "installedCoreSha256": "F4672B8A9636E39B94F9D81DD18C7DC6156C3BF4AE33EA7171050BDE5ECCCD6C",
+  "installedAppSha256": "A9329D66BA391130F3D6D123551F1E94FC93BC37C01FDAE2459877F7CF84307A",
+  "gate": {
+    "anyBadFrameStops": true,
+    "imageWidth": 640,
+    "framesPerSecond": 30,
+    "processingMilliseconds": 33.333333333333336,
+    "imageHeight": 360,
+    "errorPixels": 5
+  },
+  "warmup": {
+    "reserveBroadCudaBuffers": true,
+    "minimumFrames": 180,
+    "oncePerProcessAndImageSize": true,
+    "acceptedJournalReconstructedBeforeEveryStep": true,
+    "includesReversalsAndVerticalShifts": true,
+    "separateDisposableTracker": true,
+    "minimumSeconds": 2
+  },
+  "acceptedSeconds": 4,
+  "exactSavedFailure": {
+    "second": 4,
+    "afterErrorPixels": 3.0911432597675774,
+    "beforeErrorPixels": 5.271753827144335,
+    "frame": 7,
+    "maxWarmProcessingMilliseconds": 27.9589,
+    "availableFrames": 8,
+    "wholeSecondPassed": false,
+    "failure": "Missing 30 fps frames: received 8/30."
+  },
+  "prefixAccuracy": [
+    {
+      "second": 0,
+      "frames": 30,
+      "maxErrorPixels": 0.429201925279057
+    },
+    {
+      "second": 1,
+      "frames": 30,
+      "maxErrorPixels": 0.8814797482970118
+    },
+    {
+      "second": 2,
+      "frames": 30,
+      "maxErrorPixels": 1.2198908550112422
+    },
+    {
+      "second": 3,
+      "frames": 30,
+      "maxErrorPixels": 2.707330082122483
+    }
+  ],
+  "latestLiveAttempt": {
+    "maxProcessingMilliseconds": 28.2958,
+    "evidenceSha256": "78E24DA19C16B21D63D3AD3C0CF3CD74EE175C98DC663E68ED4CCB7383A669DD",
+    "maxErrorPixels": 2.7894509152655274,
+    "scoredFrames": 7,
+    "second": 4,
+    "failure": "Missing 30 fps frame 7; next sample was 9.",
+    "evidenceFile": "attempt-0004-955cc662ba8a4d5aad1d19f234e91568.json.br"
+  },
+  "changes": [
+    "Require independent spatial patch consensus for broad-search acceptance",
+    "Distribute up to 32 disjoint patches across visible floor lines",
+    "Subpixel-refine agreeing patches without foreground silhouettes"
+  ],
+  "validation": {
+    "windowsUiGroups": 69,
+    "macRuntime": "not tested",
+    "sharedReceiverTests": "passed",
+    "coreTests": 990,
+    "installedAndHashVerified": true
+  },
+  "measurementLimitations": [
+    "Two unrelated 2DGS training processes were active during live measurements; they have not been paused.",
+    "Largest final live capture gap was 96.35 ms, while scored tracker processing stayed at or below 28.30 ms.",
+    "New-algorithm prefix reconstruction revalidates accuracy, not live timing.",
+    "Replay is not complete; no claim that the entire recording meets the target."
+  ]
+}

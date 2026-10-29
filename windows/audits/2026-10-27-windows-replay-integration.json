@@ -1,0 +1,230 @@
+{
+  "date": "2026-10-27",
+  "sourceBaseCommit": "79f47a1e2fd69adcf12fa17fcfc56d0c01866695",
+  "initialInstalledAppSha256": "D20DCF6C3783F444C61A9450576CFDF26757DA400A61C78095CBAAAF530A8445",
+  "runtime": "installed Windows app, restored mod receiver, GTX 1080, Tutorial_01",
+  "replayFidelity": {
+    "sameInputSequence": true,
+    "eventTimingMaxSeconds": 0.03618779999669641,
+    "heroDistanceAtSameOffsetWorldUnits": {
+      "median": 0.1968353507403009,
+      "p95": 0.44543209558459873,
+      "max": 0.9707531167161264
+    }
+  },
+  "tracking": {
+    "file": "C:\\Users\\tabut\\Repos\\ballroller-2026\\.tmp\\hkv-integration-20261027\\replay.json",
+    "sha256": "231bcd76a02358bb9b2d2fb54425216a9cb00c27b4caf6de5a64bf4ca7289702",
+    "id": "cc178cc7-308d-4144-a02f-430c912e75bb",
+    "sourcePathID": "9756db31-bd5d-4195-8754-403ce13fb45e",
+    "createdAt": "2026-10-27T13:52:00.3787735+00:00",
+    "duration": 76.06685339997057,
+    "events": 128,
+    "trackingSamples": 3310,
+    "groundTruthSamples": 4519,
+    "matchedFrames": 3309,
+    "scoreUnits": "pixels in 640x360 tracking frame; one fixed starting offset; exact rendered frame joins",
+    "poseSources": {
+      "ground": 3225,
+      "transition-bridge": 83,
+      "ground-provisional": 2
+    },
+    "scenes": {
+      "Tutorial_01": 4519
+    },
+    "verifiedSamples": 3225,
+    "atlasWrites": 972,
+    "cameraError": {
+      "median": 35.55108669141809,
+      "p95": 40.80807157214659,
+      "max": 59.248395744722366
+    },
+    "endCameraError": {
+      "offset": 76.02774239995051,
+      "error": 0.8357565137533574,
+      "errorX": -0.8357565125916153,
+      "errorY": -4.4066619011573493e-05,
+      "source": "ground",
+      "verified": true,
+      "truthX": 752.1328393771546,
+      "truthY": 313.58432278296095,
+      "publishedX": -59,
+      "publishedY": 0
+    },
+    "firstOverPixels": {
+      "8": 7.759287599939853,
+      "16": 7.759287599939853,
+      "32": 7.759287599939853,
+      "64": null,
+      "128": null,
+      "256": null,
+      "640": null
+    },
+    "errorOver32Fraction": 0.862496222423693,
+    "verifiedButOver32": 2817,
+    "sampleGapsSeconds": {
+      "median": 0.020232899929396808,
+      "p95": 0.04450388003606349,
+      "max": 0.1090095000108704
+    },
+    "startHero": {
+      "heroX": 35.459999084472656,
+      "heroY": 11.408123016357422,
+      "cameraX": 36.46000289916992,
+      "cameraY": 14.109999656677246
+    },
+    "endHero": {
+      "heroX": 34.84278869628906,
+      "heroY": 11.408124923706055,
+      "cameraX": 33.84282302856445,
+      "cameraY": 14.109996795654297
+    }
+  },
+  "performance": {
+    "AnalyzedFramesPerSecond": {
+      "median": 47.837453258983096,
+      "max": 58.44568585563537
+    },
+    "MaxAnalysisGapMilliseconds": {
+      "median": 50.445049999999995,
+      "max": 105.2521
+    },
+    "LastAtlasSaveMilliseconds": {
+      "median": 2106.04315,
+      "max": 10725.3826
+    },
+    "AtlasAndWorldMilliseconds": {
+      "median": 0.26075000000000004,
+      "max": 0.5017
+    }
+  },
+  "checkpointCapture": {
+    "pathId": "d708bf01-da62-468a-8c58-677d8ba97b17",
+    "entryGateName": "top2",
+    "enemyCount": 7,
+    "storyFlagsPresent": true,
+    "scenesVisited": [
+      "Tutorial_01"
+    ]
+  },
+  "limits": [
+    "Original recording has no enemy/story checkpoint state.",
+    "Wall-clock pose replay is not frame-identical rendering or deterministic enemy simulation.",
+    "Cross-room commands tested in loopback; live route is single-room.",
+    "Mac runtime not available on Windows.",
+    "Persistent world recovery can pause atlas admission without pausing the local visual camera."
+  ],
+  "finalInstalledAppSha256": "03A86A523BAF134FDDDC1BE66A8E2E292A7290465814AA58F0C821439A9A1404",
+  "finalReplay": {
+    "tracking": {
+      "file": "C:\\Users\\tabut\\Repos\\ballroller-2026\\.tmp\\hkv-integration-20261027\\replay-final.json",
+      "sha256": "240474fec2eb11aab6e2610981353088764ac61efba6dac45f7e43e8b66ead3d",
+      "id": "506721d3-66aa-42aa-b018-685946e2f8bf",
+      "sourcePathID": "9756db31-bd5d-4195-8754-403ce13fb45e",
+      "createdAt": "2026-10-27T14:06:25.5408941+00:00",
+      "duration": 76.07927009998821,
+      "events": 128,
+      "trackingSamples": 3663,
+      "groundTruthSamples": 4564,
+      "matchedFrames": 3662,
+      "scoreUnits": "pixels in 640x360 tracking frame; one fixed starting offset; exact rendered frame joins",
+      "poseSources": {
+        "ground": 3629,
+        "transition-bridge": 33,
+        "coarse-presentation": 1
+      },
+      "scenes": {
+        "Tutorial_01": 4564
+      },
+      "verifiedSamples": 3629,
+      "atlasWrites": 1552,
+      "cameraError": {
+        "median": 2.5504571460243413,
+        "p95": 14.903946031166186,
+        "max": 57.739830148690096
+      },
+      "endCameraError": {
+        "offset": 76.07058840000536,
+        "error": 0.26149801867309197,
+        "errorX": 0.26149801496012515,
+        "errorY": -4.4066619011573493e-05,
+        "source": "ground",
+        "verified": true,
+        "truthX": 752.1337026210967,
+        "truthY": 313.58432278296095,
+        "publishedX": -57.9006,
+        "publishedY": 0
+      },
+      "firstOverPixels": {
+        "8": 1.160628900048323,
+        "16": 1.2432605000212789,
+        "32": 31.690911500016227,
+        "64": null,
+        "128": null,
+        "256": null,
+        "640": null
+      },
+      "errorOver32Fraction": 0.023211359912616056,
+      "verifiedButOver32": 65,
+      "sampleGapsSeconds": {
+        "median": 0.018135499965865165,
+        "p95": 0.03985879502724855,
+        "max": 0.07040339999366552
+      },
+      "startHero": {
+        "heroX": 35.459999084472656,
+        "heroY": 11.408123016357422,
+        "cameraX": 36.45999526977539,
+        "cameraY": 14.109999656677246
+      },
+      "endHero": {
+        "heroX": 34.84278869628906,
+        "heroY": 11.408124923706055,
+        "cameraX": 33.84282684326172,
+        "cameraY": 14.109996795654297
+      }
+    },
+    "fidelity": {
+      "sameInputSequence": true,
+      "eventTimingMaxSeconds": 0.024689799989573658,
+      "heroDistanceAtSameOffsetWorldUnits": {
+        "median": 0.22400472454083442,
+        "p95": 0.5270817860643938,
+        "max": 1.057120707922766
+      }
+    },
+    "evaluation": {
+      "sourcePath": "C:\\Users\\tabut\\OneDrive\\Documents\\HollowKnightVision\\paths\\path-20261026-151052-9756db31-bd5d-4195-8754-403ce13fb45e.json",
+      "output": "C:\\Users\\tabut\\OneDrive\\Documents\\HollowKnightVision\\paths\\path-20261027-140625-506721d3-66aa-42aa-b018-685946e2f8bf.json",
+      "iteration": 1,
+      "mode": "full-trace",
+      "decision": null,
+      "completed": true,
+      "matchedSamples": 3669,
+      "evaluatedSamples": 3406,
+      "maximumErrorPixels": 57.73983014869006,
+      "cancelled": false,
+      "status": "no-sustained-divergence"
+    }
+  },
+  "validation": {
+    "coreTestsPassed": 986,
+    "uiRegressionCountReported": 69,
+    "additionalIntegrationChecks": [
+      "outgoing pose traffic and scene boundaries",
+      "full acknowledged checkpoint fields",
+      "missing pose capability rejection",
+      "single restore and preparation phase order",
+      "no input/pose traffic after cancellation",
+      "bounded world queue and serialized writes during a slow save",
+      "four fresh readiness samples, pose tolerance, stale frame rejection",
+      "live mouse clicks blocked during replay"
+    ],
+    "sharedReceiverProtocolTestsPassed": true,
+    "cudaRequired": true,
+    "gpuCaptureRequired": true,
+    "liveReplaysCompleted": 2
+  },
+  "liveReplayBuildSha256": "2D256F8CE4007B1DD15BBA53F6CCEB048DCF2E668973D9B7C60AD458B5554879",
+  "finalReleaseNote": "Final change after live replay blocks pointer forwarding during replay/capture; full canonical build, tests, install and hash verification repeated."
+}

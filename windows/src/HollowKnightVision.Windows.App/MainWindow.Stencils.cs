@@ -40,8 +40,7 @@ public partial class MainWindow
                 });
                 lastPhase = phase;
             }
-            var complete = !initialization.Steps.Any(step => step.ContextIdentifier == context.Identifier)
-                && (context.Identifier != "gameplay-hud" || initialization.HasUsableHUD);
+            var complete = initialization.IsScreenComplete(context.Identifier);
             var row = new Grid();
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
             row.ColumnDefinitions.Add(new ColumnDefinition());

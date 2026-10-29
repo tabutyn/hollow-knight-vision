@@ -112,16 +112,45 @@ internal static class MenuCatalogTests
             ("select-profile.slot-1", new(50, 30, 30, 8)), ("select-profile.slot-2", new(50, 50, 30, 8)),
             ("select-profile.slot-3", new(50, 70, 30, 8)), ("select-profile.slot-4", new(50, 90, 30, 8)),
             ("shared.back", new(55, 105, 20, 8))];
-        var withClear = fixture.Example("select-profile", [.. WithSelection(labels, 1), ("select-profile.clear-save", new(118, 32, 16, 6))]);
+        var withClear = fixture.Example("select-profile", [.. WithSelection(labels, 2), ("select-profile.clear-save", new(118, 52, 16, 6))]);
         var withoutClear = fixture.Example("select-profile", WithSelection(labels, 2), age: 1);
         var scene = fixture.Builder(Context("select-profile", labels)).Build([withoutClear, withClear], null).Scenes.Single();
         var rows = scene.Options.Where(option => option.ClassIdentifier.StartsWith("select-profile.clear-save-", StringComparison.Ordinal)).OrderBy(option => option.ClassIdentifier).ToArray();
         Equal(4, rows.Length);
+        var singleReference = fixture.Builder(Context("select-profile", labels)).Build([withClear], null).Scenes.Single();
+        Check(!singleReference.Options.Any(option => option.ClassIdentifier == "select-profile.clear-save")
+            && singleReference.Options.Count(option => option.ClassIdentifier.StartsWith("select-profile.clear-save-", StringComparison.Ordinal)) == 4,
+            "A completed single profile reference created a duplicate Clear Save selector candidate.");
         for (var index = 0; index < rows.Length; index++)
         {
             Equal($"Clear Save {index + 1}", rows[index].Name);
             Equal(new StencilRect(94, 32 + index * 20, 15, 12), rows[index].LeftSelector!.Bounds);
             Equal(new StencilRect(145, 32 + index * 20, 15, 12), rows[index].RightSelector!.Bounds);
+        }
+    }
+
+    internal static void TestClearSaveMovesBetweenSlots()
+    {
+        var fixture = new Fixture();
+        (string Id, StencilRect Bounds)[] slots = [("select-profile.heading", new(50, 4, 30, 8)),
+            ("select-profile.slot-1", new(25, 26, 12, 8)), ("select-profile.slot-2", new(25, 46, 12, 8)),
+            ("select-profile.slot-3", new(25, 66, 12, 8)), ("select-profile.slot-4", new(25, 86, 12, 8))];
+        (string Id, string Name, StencilRect Bounds)[] dialog = [("clear-save.heading", "Clear Save", new(10, 46, 40, 8)),
+            ("shared.yes", "Yes", new(80, 46, 15, 8)), ("shared.no", "No", new(125, 46, 15, 8))];
+        var profile = fixture.Example("select-profile", WithSelection(slots, 1));
+        var source = fixture.Example("clear-save", WithSelection(Plain(dialog), 2));
+        var stale = new MenuStencilCalibration(1, 160, 120, Now, [])
+            .ReplacingSelector("clear-save", "shared.yes", new(65, 26, 8, 8), new(102, 26, 8, 8))
+            .ReplacingSelector("clear-save", "shared.no", new(110, 26, 8, 8), new(147, 26, 8, 8));
+        var catalog = fixture.Builder(Context("select-profile", slots), Context("clear-save", dialog)).Build([source, profile], stale);
+        foreach (var offset in new[] { 0, 20, 40, -20 })
+        {
+            var moved = fixture.Example("clear-save", WithSelection(Plain(dialog).Select(item => (item.Id, item.Bounds.Offset(0, offset))).ToArray(), 2));
+            var result = new MenuStencilTracker(catalog).Observe(fixture.Images[moved.ImagePath], 0);
+            Check(result?.IsMatch == true && result.ContextIdentifier == "clear-save", $"Dialog not recognized at offset {offset}.");
+            Equal("No", result!.SelectedOption);
+            Check(result.SelectorSearchRegions.Count == 4 && result.SelectorSearchRegions.All(region => Math.Abs(region.Rect.MidY - (50 + offset)) < 8),
+                $"Selector search stayed on another slot at offset {offset}.");
         }
     }
 

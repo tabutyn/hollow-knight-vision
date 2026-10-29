@@ -88,7 +88,7 @@ internal static class InputPathRecorderTests
         Check(path.RuntimeMetadata?["lowResolutionMotionBridge"]
             == "tentative-transition-handoff-v14");
         Check(path.RuntimeMetadata?["pathPlaybackPreparation"]
-            == "purge-single-restore-settle-repurge-v2");
+            == "none");
         Check(path.RuntimeMetadata?["groundRelocalization"]
             == "floorless-background-search-continuity-v1");
         Check(path.Events.Select(item => item.Button).SequenceEqual([

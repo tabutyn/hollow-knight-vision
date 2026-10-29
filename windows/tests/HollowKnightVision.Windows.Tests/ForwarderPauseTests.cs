@@ -27,7 +27,7 @@ internal static class ForwarderPauseTests
         var pressed = ReceiverWireCodec.DecodeLine<ReceiverInputSnapshot>(await fixture.Next("state"));
         Check(pressed.Enabled && pressed.HeldButtons == InputButtons.ActionZ);
         forwarder.ReleaseAll(); await fixture.Next("state");
-        Check(forwarder.StartRecording() && !forwarder.SetLabelPauseActive(true), "Label pause interrupted an input recording.");
+        Check(await forwarder.StartRecordingAsync() && !forwarder.SetLabelPauseActive(true), "Label pause interrupted an input recording.");
         Check(forwarder.StopRecording() is not null);
         Check(forwarder.SetLabelPauseActive(true));
         var neutral = ReceiverWireCodec.DecodeLine<ReceiverInputSnapshot>(await fixture.Next("state"));
@@ -40,7 +40,7 @@ internal static class ForwarderPauseTests
             "Wrong-session acknowledgement was accepted or unconfirmed pause was not renewed.");
         await fixture.Acknowledge(renewed, true);
         await Until(() => forwarder.PauseState == GamePauseState.Paused);
-        Check(!forwarder.StartRecording() && !forwarder.ForwardPointer("leftDown", .5, .5));
+        Check(!(await forwarder.StartRecordingAsync()) && !forwarder.ForwardPointer("leftDown", .5, .5));
         var boundary = fixture.Seen.Count;
         forwarder.Press(InputButtons.ActionX); forwarder.Heartbeat(); forwarder.Release(InputButtons.ActionX);
         await fixture.Next("pause"); // Real renewal timer is the observation barrier; no game or synthetic keys.
@@ -138,12 +138,21 @@ internal static class ForwarderPauseTests
                 await using var output = new StreamWriter(stream, new UTF8Encoding(false), 1024, leaveOpen: true) { AutoFlush = true };
                 writer = output;
                 var hello = ReceiverWireCodec.DecodeLine<ReceiverCapabilityRequest>((await reader.ReadLineAsync(lifetime.Token))!);
-                var capabilities = new List<string> { "input-state-v1", ReceiverProtocol.MenuShortcutsCapability, ReceiverProtocol.PointerCapability };
+                var capabilities = new List<string> { "input-state-v1", ReceiverProtocol.MenuShortcutsCapability, ReceiverProtocol.PointerCapability, ReceiverProtocol.PlayerCheckpointCapability };
                 if (pauseSupported) capabilities.Add(ReceiverProtocol.PauseCapability);
                 await output.WriteAsync(ReceiverWireCodec.EncodeLine(new ReceiverCapabilitiesAcknowledgement(2, "capabilitiesAck",
                     hello.SessionId, capabilities, pauseSupported ? 2000 : 0)));
                 while (await reader.ReadLineAsync(lifetime.Token) is { } line)
-                { Seen.Enqueue(line); await messages.Writer.WriteAsync(line, lifetime.Token); }
+                {
+                    Seen.Enqueue(line); await messages.Writer.WriteAsync(line, lifetime.Token);
+                    if (ReceiverWireCodec.MessageType(line) == "captureCheckpoint")
+                    {
+                        var command = ReceiverWireCodec.DecodeLine<ReceiverCheckpointCommand>(line);
+                        var checkpoint = System.Text.Json.JsonSerializer.Deserialize<RecordedGameCheckpoint>("""{"sceneName":"Tutorial_01","grounded":true} """, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+                        await output.WriteAsync(ReceiverWireCodec.EncodeLine(new ReceiverCheckpointAcknowledgement(
+                            2, "captureCheckpointAck", hello.SessionId, command.CommandId, true, checkpoint, null)));
+                    }
+                }
             }
             catch (Exception error) when (error is OperationCanceledException or IOException or SocketException or ObjectDisposedException) { }
             finally { messages.Writer.TryComplete(); }

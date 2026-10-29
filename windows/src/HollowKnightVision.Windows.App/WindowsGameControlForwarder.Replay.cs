@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using HollowKnightVision.Windows.Core;
 
@@ -6,33 +5,58 @@ namespace HollowKnightVision.Windows.App;
 
 internal sealed partial class WindowsGameControlForwarder
 {
-    private bool checkpointAvailable;
+    private bool checkpointAvailable, posePlaybackAvailable, capturingCheckpoint;
     private CancellationTokenSource? replayCancellation;
+    private TaskCompletionSource? replayFinished;
     private readonly Dictionary<Guid, TaskCompletionSource<ReceiverCheckpointAcknowledgement>> pendingCheckpoints = [];
     internal bool IsReplaying { get { lock (stateLock) return replayCancellation is not null; } }
     internal void CancelReplay() { lock (stateLock) replayCancellation?.Cancel(); }
 
-    // The receiver serves one connection. Keep controls, checkpoint acknowledgements,
-    // render markers and recording telemetry on the already negotiated live connection.
-    internal async Task ReplayPathAsync(RecordedInputPath path, int iteration, bool restoreCheckpoint,
-        Action<RecordedInputPath> saveRecording, CancellationToken cancellationToken = default)
+    private async Task<RecordedGameCheckpoint> CheckpointAsync(ReceiverClient active,
+        ReceiverCheckpointCommand command, CancellationToken token)
     {
-        path.Validate();
+        var completion = new TaskCompletionSource<ReceiverCheckpointAcknowledgement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token, lifetime.Token);
+        lock (stateLock) pendingCheckpoints.Add(command.CommandId, completion);
+        try
+        {
+            await outboundGate.WaitAsync(cancellation.Token).ConfigureAwait(false);
+            try { await active.SendCheckpointCommandAsync(command, cancellation.Token).ConfigureAwait(false); }
+            finally { outboundGate.Release(); }
+            var ack = await completion.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellation.Token).ConfigureAwait(false);
+            if (!ack.Accepted || ack.Checkpoint is not { } checkpoint || !checkpoint.HasFiniteCoordinates())
+                throw new InvalidOperationException($"Checkpoint rejected: {ack.Failure ?? "missing or invalid state"}");
+            return checkpoint;
+        }
+        finally { lock (stateLock) pendingCheckpoints.Remove(command.CommandId); }
+    }
+
+    // All controls, poses and acknowledgements use the receiver's single live connection.
+    internal async Task ReplayPathAsync(RecordedInputPath path, int iteration, bool restoreCheckpoint,
+        Action<RecordedInputPath> saveRecording, CancellationToken cancellationToken = default,
+        Func<bool, CancellationToken, Task>? prepare = null, Action<double>? beginEvaluation = null,
+        string evaluationMode = "none")
+    {
+        var poses = InputPathPlayback.Poses(path);
         ArgumentNullException.ThrowIfNull(saveRecording);
         ReceiverClient active;
         TaskCompletionSource fault;
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime.Token);
-        cancellation.CancelAfter(TimeSpan.FromSeconds(path.Duration + 30));
+        cancellation.CancelAfter(TimeSpan.FromSeconds(path.Duration + 120));
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (stateLock)
         {
-            if (receiver is null || connectionFault is null || replayCancellation is not null
+            if (receiver is null || connectionFault is null || replayCancellation is not null || capturingCheckpoint
                 || inputPathRecorder.IsRecording || pause.BlocksInput)
                 throw new InvalidOperationException("Enter modded Gameplay and stop recording before replaying.");
             if (restoreCheckpoint && (path.StartCheckpoint is null || !checkpointAvailable))
                 throw new InvalidOperationException("Replay needs a saved start checkpoint and a compatible receiver.");
+            if (poses.Length > 0 && !posePlaybackAvailable)
+                throw new InvalidOperationException("Update the mod receiver: player-pose-playback-v1 is required for this recording.");
             active = receiver;
             fault = connectionFault;
             replayCancellation = cancellation;
+            replayFinished = finished;
             heldButtons = InputButtons.None;
             isEnabled = false;
             awaitingFreshPress = true;
@@ -42,46 +66,45 @@ internal sealed partial class WindowsGameControlForwarder
         try
         {
             await SendReplayStateAsync(active, fault, InputButtons.None, token).ConfigureAwait(false);
+            if (prepare is not null) await prepare(false, token).ConfigureAwait(false);
             if (restoreCheckpoint)
-            {
-                var command = ReceiverCheckpointCommand.Restore(active.SessionId, path.StartCheckpoint!);
-                var completion = new TaskCompletionSource<ReceiverCheckpointAcknowledgement>(TaskCreationOptions.RunContinuationsAsynchronously);
-                lock (stateLock) pendingCheckpoints.Add(command.CommandId, completion);
-                try
-                {
-                    await outboundGate.WaitAsync(token).ConfigureAwait(false);
-                    try { await active.SendCheckpointCommandAsync(command, token).ConfigureAwait(false); }
-                    finally { outboundGate.Release(); }
-                    var ack = await completion.Task.WaitAsync(TimeSpan.FromSeconds(10), token).ConfigureAwait(false);
-                    if (!ack.Accepted) throw new InvalidOperationException($"Checkpoint restore rejected: {ack.Failure}");
-                    await Task.Delay(500, token).ConfigureAwait(false);
-                }
-                finally { lock (stateLock) pendingCheckpoints.Remove(command.CommandId); }
-            }
+                await CheckpointAsync(active, ReceiverCheckpointCommand.Restore(active.SessionId, path.StartCheckpoint!), token).ConfigureAwait(false);
+            if (prepare is not null) await prepare(true, token).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
             var start = MonotonicSeconds();
             recordingStarted = inputPathRecorder.Start(start, DateTimeOffset.UtcNow,
-                sourcePathId: path.Id, replayIteration: iteration, startCheckpoint: path.StartCheckpoint);
+                sourcePathId: path.Id, replayIteration: iteration, startCheckpoint: path.StartCheckpoint,
+                metadata: new Dictionary<string, string> {
+                    ["playbackMode"] = poses.Length > 0 ? "recorded-player-poses-and-input" : "input-only",
+                    ["pathPlaybackPreparation"] = prepare is not null ? "isolated-single-restore-settle-reset-v1" : restoreCheckpoint ? "restore-ack-only" : "none",
+                    ["evaluationMode"] = evaluationMode });
             if (!recordingStarted) throw new InvalidOperationException("Replay recorder is already active.");
+            beginEvaluation?.Invoke(start);
             var previous = InputButtons.None;
-            foreach (var change in path.PlaybackStates())
-            {
-                var remaining = start + change.Offset - MonotonicSeconds();
-                if (remaining > 0) await Task.Delay(TimeSpan.FromSeconds(remaining), token).ConfigureAwait(false);
-                await SendReplayStateAsync(active, fault, change.HeldButtons, token).ConfigureAwait(false);
-                var now = MonotonicSeconds();
+            await InputPathPlayback.RunAsync(path, async (buttons, ct) => {
+                await SendReplayStateAsync(active, fault, buttons, ct).ConfigureAwait(false);
                 foreach (var button in Enum.GetValues<RecordedGameButton>())
                 {
                     var bit = button.ToInputButton();
-                    if ((previous & bit) != (change.HeldButtons & bit))
-                        inputPathRecorder.RecordInput(button, (change.HeldButtons & bit) != 0, now);
+                    if ((previous & bit) != (buttons & bit))
+                        inputPathRecorder.RecordInput(button, (buttons & bit) != 0, MonotonicSeconds());
                 }
-                previous = change.HeldButtons;
-            }
+                previous = buttons;
+            }, async (sample, ct) => {
+                ct.ThrowIfCancellationRequested();
+                await outboundGate.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    lock (stateLock)
+                        if (!ReferenceEquals(receiver, active) || fault.Task.IsCompleted)
+                            throw new IOException("Receiver connection changed during pose replay.");
+                    await active.SendPlayerPoseAsync(sample, ct).ConfigureAwait(false);
+                }
+                finally { outboundGate.Release(); }
+            }, token).ConfigureAwait(false);
         }
         finally
         {
-            RecordedInputPath? recording = null;
             try
             {
                 using var releaseTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
@@ -89,16 +112,19 @@ internal sealed partial class WindowsGameControlForwarder
             }
             finally
             {
-                if (recordingStarted) recording = inputPathRecorder.Stop(MonotonicSeconds());
-                lock (stateLock)
+                try
                 {
-                    if (ReferenceEquals(replayCancellation, cancellation)) replayCancellation = null;
-                    heldButtons = InputButtons.None;
-                    isEnabled = false;
-                    awaitingFreshPress = true;
+                    var recording = recordingStarted ? inputPathRecorder.Stop(MonotonicSeconds()) : null;
+                    lock (stateLock)
+                    {
+                        if (ReferenceEquals(replayCancellation, cancellation)) replayCancellation = null;
+                        heldButtons = InputButtons.None;
+                        isEnabled = false;
+                        awaitingFreshPress = true;
+                    }
+                    if (recording is not null) saveRecording(recording);
                 }
-                // Keep partial evidence on cancellation/failure as well as completed runs.
-                if (recording is not null) saveRecording(recording);
+                finally { finished.TrySetResult(); }
             }
         }
     }

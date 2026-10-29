@@ -12,7 +12,11 @@ public static class StencilLabelSelectionPolicy
         {
             var identifier = LabelingClassIdentity.CanonicalIdentifier(definition.Identifier);
             if (!seen.Add(identifier) || (!modded && identifier == "shared.mods")) return false;
-            if (hidesCompleted && !includesDeferredLabels && identifier == "select-profile.clear-save") return false;
+            // The shared contract allows zero during phase one. Once deferred
+            // labeling is enabled, one positive Clear Save box finishes this task.
+            if (hidesCompleted && identifier == "select-profile.clear-save")
+                return includesDeferredLabels && !rectangles.Any(item => !item.IsHardNegative
+                    && LabelingClassIdentity.CanonicalIdentifier(item.ClassIdentifier) == identifier);
             return !hidesCompleted || context == "game"
                 || !LabelingContractEvaluator.ShouldAdvance(identifier, context, rectangles);
         }).Select(definition => definition.Identifier == "shared.select-decoration"

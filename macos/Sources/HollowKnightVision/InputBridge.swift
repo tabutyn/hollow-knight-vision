@@ -109,6 +109,24 @@ struct ReceiverPointerCommand: Codable, Equatable, Sendable {
     }
 }
 
+struct RecordedMaskSprite: Codable, Equatable, Sendable {
+    let objectPath: String
+    let alpha: Double
+    let enabled: Bool
+    let active: Bool
+}
+
+struct RecordedSceneMask: Codable, Equatable, Sendable {
+    let objectPath: String
+    let fsmName: String
+    let stateName: String
+    let enabled: Bool
+    let active: Bool
+    let booleans: [String: Bool]
+    let floats: [String: Double]
+    let sprites: [RecordedMaskSprite]
+}
+
 struct RecordedGameCheckpoint: Codable, Equatable, Sendable {
     let sceneName: String
     /// A real TransitionPoint in the saved scene. Cross-room replay uses it
@@ -136,6 +154,7 @@ struct RecordedGameCheckpoint: Codable, Equatable, Sendable {
     let openedTown: Bool?
     let openedCrossroads: Bool?
     let scenesVisited: [String]?
+    let sceneMasks: [RecordedSceneMask]?
 
     init(
         sceneName: String,
@@ -160,7 +179,8 @@ struct RecordedGameCheckpoint: Codable, Equatable, Sendable {
         visitedCrossroads: Bool? = nil,
         openedTown: Bool? = nil,
         openedCrossroads: Bool? = nil,
-        scenesVisited: [String]? = nil
+        scenesVisited: [String]? = nil,
+        sceneMasks: [RecordedSceneMask]? = nil
     ) {
         self.sceneName = sceneName
         self.entryGateName = entryGateName
@@ -185,6 +205,7 @@ struct RecordedGameCheckpoint: Codable, Equatable, Sendable {
         self.openedTown = openedTown
         self.openedCrossroads = openedCrossroads
         self.scenesVisited = scenesVisited
+        self.sceneMasks = sceneMasks
     }
 
     var hasFiniteCoordinates: Bool {

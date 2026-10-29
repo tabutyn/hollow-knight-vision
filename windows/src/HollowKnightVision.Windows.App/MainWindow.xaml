@@ -96,6 +96,7 @@
                         <Canvas x:Name="GameplayGroundCanvas" Width="640" Height="360"
                                 IsHitTestVisible="False" Panel.ZIndex="19"/>
                     </Canvas>
+                    <local:MenuStencilParticles x:Name="MenuParticles" IsHitTestVisible="False"/>
                     <StackPanel x:Name="GameplayPlaceholder" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <TextBlock Text="⌖" FontSize="34" Foreground="#CC00FFFF" HorizontalAlignment="Center"/>
                         <TextBlock Text="Waiting for Hollow Knight…" FontSize="13" Foreground="#999999" Margin="0,7,0,0"/>
@@ -309,7 +310,7 @@
                                    SnapsToDevicePixels="True" IsHitTestVisible="False" Panel.ZIndex="10"/>
                             <Canvas x:Name="HackerOverlayCanvas" Width="640" Height="360" Background="Transparent" Panel.ZIndex="20"/>
                         </Canvas>
-                        <StackPanel x:Name="AtlasEmptyPanel" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="🔨" FontSize="34" Foreground="#80FF80"/></StackPanel>
+                        <StackPanel x:Name="AtlasEmptyPanel" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="Waiting for a matched game frame…" FontSize="14" Foreground="#9AA3AD"/></StackPanel>
                         <TextBlock x:Name="AtlasPreviewText" Visibility="Collapsed"/>
                     </Grid>
                 </Grid>
@@ -334,7 +335,20 @@
             <StackPanel Grid.Column="2" Orientation="Horizontal">
                 <Button x:Name="PathRecordingButton" Content="K" Click="PathRecording_Click"/>
                 <Button x:Name="ReplayInputPathButton" Content="Replay" ToolTip="Replay a recorded input path"
-                        Visibility="{Binding Visibility, ElementName=PathRecordingButton}" Click="ReplayInputPath_Click"/>
+                        Visibility="{Binding Visibility, ElementName=PathRecordingButton}" Click="ReplayInputPath_Click">
+                    <Button.ContextMenu><ContextMenu>
+                        <MenuItem x:Name="ReplayFullTraceItem" Header="Record full replay" Tag="full-trace" IsCheckable="True" IsChecked="True" Click="ReplayEvaluation_Click"/>
+                        <MenuItem x:Name="ReplayFailFastItem" Header="Stop when tracking diverges" Tag="fail-fast" IsCheckable="True" Click="ReplayEvaluation_Click"/>
+                    </ContextMenu></Button.ContextMenu>
+                </Button>
+                <Button x:Name="StepReplayButton" Content="Step 1s" Click="TrackingStep_Click"
+                        ToolTip="Replay one second; stop on any frame over 5 pixels or a missed 30 fps frame."
+                        Visibility="{Binding Visibility, ElementName=PathRecordingButton}">
+                    <Button.ContextMenu><ContextMenu>
+                        <MenuItem Header="Restart step replay from beginning" Click="RestartTrackingSteps_Click"/>
+                        <MenuItem Header="Leave step replay and resume game" Click="LeaveTrackingSteps_Click"/>
+                    </ContextMenu></Button.ContextMenu>
+                </Button>
                 <StackPanel x:Name="GameplayControlsPanel" Orientation="Horizontal">
                     <RadioButton Content="Free Fly" Tag="Free Fly" GroupName="GameplayFraming" Style="{StaticResource Segment}" Checked="CameraMode_Checked" Click="GameplayFraming_Click"/>
                     <RadioButton Content="Fit" Tag="Fit" GroupName="GameplayFraming" Style="{StaticResource Segment}" Checked="CameraMode_Checked" Click="GameplayFraming_Click"/>
@@ -432,7 +446,7 @@
                             <Separator Margin="0,20"/>
                             <TextBlock x:Name="DebugSettings" Text="Debug View" FontWeight="SemiBold" Margin="0,0,0,12"/>
 
-                            <CheckBox x:Name="GameStateCheck" Content="Game State" Margin="0,0,0,10" Checked="GameStateCheck_Changed" Unchecked="GameStateCheck_Changed"/>
+                            <CheckBox x:Name="GameStateCheck" IsChecked="True" Content="Game State" Margin="0,0,0,10" Checked="GameStateCheck_Changed" Unchecked="GameStateCheck_Changed"/>
                     <CheckBox x:Name="ObjectDetectionCheck" Content="Object Detection" Margin="0,0,0,10" Checked="ObjectDetectionCheck_Changed" Unchecked="ObjectDetectionCheck_Changed"/>
                     <TextBlock x:Name="ModelLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
                     <StackPanel x:Name="ObjectDetectionOptions" IsEnabled="False">
@@ -441,7 +455,7 @@
                         <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="38"/></Grid.ColumnDefinitions><TextBlock Text="Detection Extend"/><Slider x:Name="DetectionExtendSlider" Grid.Column="1" Minimum="0" Maximum="50" Value="12" Margin="8,0" ValueChanged="DetectionExtendSlider_ValueChanged"/><TextBlock x:Name="DetectionExtendText" Grid.Column="2" Text="12%" FontFamily="Consolas" HorizontalAlignment="Right"/></Grid>
                         <CheckBox x:Name="DetectionPixelsCheck" Content="Detection Pixels" Margin="0,0,0,10" Checked="DetectionPixelsCheck_Changed" Unchecked="DetectionPixelsCheck_Changed"/>
                     </StackPanel>
-                    <CheckBox x:Name="StencilDetectionCheck" Content="Stencil Detection" Margin="0,0,0,10"/>
+                    <CheckBox x:Name="StencilDetectionCheck" IsChecked="True" Content="Stencil Detection" Margin="0,0,0,10"/>
                     <TextBlock x:Name="StencilLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
                     <Separator Margin="0,0,0,10"/>
                     <CheckBox x:Name="GroundFeaturesCheck" Content="Ground Features" Margin="0,0,0,10" IsChecked="True"/>

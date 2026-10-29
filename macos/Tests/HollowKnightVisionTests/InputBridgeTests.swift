@@ -2,6 +2,14 @@ import XCTest
 @testable import HollowKnightVision
 
 final class InputBridgeTests: XCTestCase {
+    func testSceneMaskCheckpointRoundTrip() throws {
+        let wire = #"{"sceneName":"room","heroX":1,"heroY":2,"heroZ":0,"velocityX":0,"velocityY":0,"facingRight":true,"grounded":true,"cameraX":1,"cameraY":2,"cameraZ":-38.1,"cameraTargetX":1,"cameraTargetY":2,"cameraTargetZ":0,"sceneMasks":[{"objectPath":"Secret[0]","fsmName":"unmasker","stateName":"Fade","enabled":true,"active":true,"booleans":{"Activated":true},"floats":{"Timer":0.2},"sprites":[{"objectPath":"Secret[0]","alpha":0.25,"enabled":true,"active":true}]}]}"#
+        let checkpoint = try JSONDecoder().decode(RecordedGameCheckpoint.self, from: Data(wire.utf8))
+        let restored = try JSONDecoder().decode(RecordedGameCheckpoint.self, from: JSONEncoder().encode(checkpoint))
+        XCTAssertEqual(restored, checkpoint)
+        XCTAssertEqual(restored.sceneMasks?.first?.sprites.first?.alpha, 0.25)
+    }
+
     func testPlayerTestStateNormalizesBoundsAndRandomizesValidValues() {
         let normalized = PlayerTestState(
             maxHealth: 20, health: 0, lifebloodSeed: 40,

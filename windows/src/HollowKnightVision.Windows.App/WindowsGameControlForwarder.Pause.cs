@@ -6,6 +6,10 @@ namespace HollowKnightVision.Windows.App;
 
 internal sealed partial class WindowsGameControlForwarder
 {
+    // Remains owned between segments. Capture shutdown must not resume a
+    // stashed game; only LeaveStepReplayAsync or disconnect releases this lease.
+    private bool stepPauseOwned;
+
     private readonly ReceiverPauseController pause = new();
     private readonly Func<ReceiverClient> createReceiver;
     internal WindowsGameControlForwarder(Func<ReceiverClient>? createReceiver = null) =>
@@ -16,8 +20,8 @@ internal sealed partial class WindowsGameControlForwarder
     {
         lock (stateLock)
         {
-            if (receiver is null || connectionFault is null || pause.State == GamePauseState.Unavailable
-                || active && (inputPathRecorder.IsRecording || replayCancellation is not null)) return false;
+            if (stepPauseOwned || receiver is null || connectionFault is null || pause.State == GamePauseState.Unavailable
+                || active && (inputPathRecorder.IsRecording || replayCancellation is not null || capturingCheckpoint)) return false;
             var command = pause.Request(active);
             if (command is null) return true;
             if (active)

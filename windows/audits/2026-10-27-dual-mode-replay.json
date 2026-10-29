@@ -1,0 +1,455 @@
+{
+  "date": "2026-10-27",
+  "sourcePath": "C:\\Users\\tabut\\OneDrive\\Documents\\HollowKnightVision\\paths\\path-20261027-144238-c129e897-958c-499b-a6cf-88b8daa9533f.json",
+  "sourceSha256": "1e98bdba928aeef1d66f2cbb6336178223e983a13d5b46c4938b73dc41c37dc6",
+  "installedAssemblySha256": "4B67021430ED3745C298C833DCB59CF306C60958A5BFBA2FD81B4444B4734BE2",
+  "sourceCommit": "79f47a1e2fd69adcf12fa17fcfc56d0c01866695 plus uncommitted replay integration and frame audit changes",
+  "runtimeValidation": {
+    "coreTests": 986,
+    "uiRegressionGroups": 69,
+    "sharedReceiverProtocolTests": "passed",
+    "evaluatorTests": 2,
+    "validLiveReplays": 2
+  },
+  "measurement": {
+    "trackingResolution": [
+      640,
+      360
+    ],
+    "twoPixelThreshold": "Chosen audit target, not an existing product guarantee; equals four source-game pixels at 1280x720",
+    "gameplayRegistration": "One initial translation only; no slope, scale, or endpoint fitting",
+    "hackerRegistration": "Absolute camera reconstructed from canvas image placement; no fitted offset",
+    "scope": "All received Unity frames enumerated. Both traces have zero missing Unity frame IDs. Uncaptured, unanalyzed and unpresented frames explicitly marked.",
+    "presentation": "WPF CompositionTarget.Rendering state; no physical scanout measurement",
+    "thirtyFps": "Held published image sampled at fixed 33.333ms deadlines; no interpolated tracking poses",
+    "limitations": [
+      "One route, one live run per mode, one machine; not a Mac runtime comparison",
+      "Only telemetry and frame identities persisted; not raw pixels for every frame",
+      "Pose playback corrects hero position and velocity, not the camera; wall-clock scheduling is not frame-identical replay",
+      "GPU measurements are 12 point samples per run; short utilization spikes can be missed",
+      "Hacker uses mod camera telemetry and does not validate the visual tracker"
+    ]
+  },
+  "reports": {
+    "Hacker": {
+      "workspace": "Hacker",
+      "sourceId": "c129e897-958c-499b-a6cf-88b8daa9533f",
+      "replayId": "1ac350dd-4d8e-4eab-a549-de5ff0f9091c",
+      "duration": 60.583374099922366,
+      "sourceSha256": "1e98bdba928aeef1d66f2cbb6336178223e983a13d5b46c4938b73dc41c37dc6",
+      "auditOmitted": 0,
+      "definition": "Errors in 640x360 solve pixels. Gameplay subtracts ONE initial translation. Hacker uses absolute camera coordinates reconstructed from image placement. Missing frames remain missing. Rendering event measures WPF publication, not physical monitor scanout.",
+      "sameInputs": true,
+      "inputEvents": 146,
+      "inputTimingErrorSeconds": {
+        "count": 146,
+        "mean": 0.006704561588552155,
+        "median": 0.006572649930603802,
+        "p95": 0.007850649883039296,
+        "p99": 0.009958099928917365,
+        "max": 0.012732599978335202
+      },
+      "heroReplayErrorWorldUnits": {
+        "count": 3633,
+        "mean": 0.20220838402488528,
+        "median": 0.17832749745559795,
+        "p95": 0.3868788118872594,
+        "p99": 0.7683321682163476,
+        "max": 3.818971301668458
+      },
+      "cameraReplayErrorWorldUnits": {
+        "count": 3633,
+        "mean": 0.3288962638247038,
+        "median": 0.23962931375278426,
+        "p95": 0.9781839070399629,
+        "p99": 2.3849805686300334,
+        "max": 2.888826082352487
+      },
+      "heroEndpointErrorWorldUnits": 0.0,
+      "sourceStartToEndWorldUnits": 157.27210632694985,
+      "telemetryFrames": 3633,
+      "telemetryMissingFrames": 0,
+      "captureFrames": 3106,
+      "analysisFrames": 3103,
+      "presentedFrames": 2676,
+      "captureCoverage": 0.8549408202587393,
+      "analysisCoverage": 0.8541150564271952,
+      "presentationCoverage": 0.7365813377374071,
+      "solverError": {
+        "count": 3103,
+        "mean": 41.23888089335327,
+        "median": 9.818615258853674,
+        "p95": 239.4476215370632,
+        "p99": 263.62443975079174,
+        "max": 263.6292284345923
+      },
+      "solverEndpointError": 263.62443975079174,
+      "solverVerifiedWrongOver8px": 1150,
+      "solverVerifiedSamples": 2412,
+      "displayError": {
+        "count": 3376,
+        "mean": 0.7635539743297003,
+        "median": 0.8166932683654704,
+        "p95": 1.205896744647489,
+        "p99": 1.3388792906491425,
+        "max": 1.4138825667097676
+      },
+      "displayEndpointError": 1.0447004247644955,
+      "analysisIntervalMs": {
+        "count": 3103,
+        "mean": 19.51835636479304,
+        "median": 17.705499893054366,
+        "p95": 33.66390001028775,
+        "p99": 45.62971197068691,
+        "max": 65.48729992937297
+      },
+      "displayNewFrameIntervalMs": {
+        "count": 2677,
+        "mean": 22.623323309671886,
+        "median": 17.729800078086555,
+        "p95": 48.433819971978664,
+        "p99": 59.02716405224044,
+        "max": 74.59059997927397
+      },
+      "displayAgeMs": {
+        "count": 3380,
+        "mean": 24.016311833464137,
+        "median": 20.92374995118007,
+        "p95": 41.87890000175683,
+        "p99": 52.632607948035016,
+        "max": 66.55360001605004
+      },
+      "at30fps": {
+        "ticks": 1818,
+        "valid": 1816,
+        "reused": 156,
+        "within2px": 1816,
+        "within8px": 1816,
+        "freshAndWithin2px": 466,
+        "ageMs": {
+          "count": 1817,
+          "mean": 36.4064533141968,
+          "median": 33.84876670315862,
+          "p95": 66.585346753709,
+          "p99": 68.21448665112257,
+          "max": 84.85340001061559
+        },
+        "imageFrameLag": {
+          "count": 1817,
+          "mean": 2.4056136488717668,
+          "median": 2.0,
+          "p95": 4.0,
+          "p99": 5.0,
+          "max": 6.0
+        },
+        "error": {
+          "count": 1816,
+          "mean": 0.7659817694863101,
+          "median": 0.8172408627638421,
+          "p95": 1.2070348090051448,
+          "p99": 1.3372264329677608,
+          "max": 1.4008250719049702
+        },
+        "errorVersusCurrentGame": {
+          "count": 1816,
+          "mean": 7.966467691181887,
+          "median": 6.944866010049706,
+          "p95": 16.729843207953014,
+          "p99": 24.075650812025682,
+          "max": 42.28117717055076
+        }
+      }
+    },
+    "Gameplay": {
+      "workspace": "Gameplay",
+      "sourceId": "c129e897-958c-499b-a6cf-88b8daa9533f",
+      "replayId": "cd94986a-ee2b-4e89-9e03-e9fa2715bc80",
+      "duration": 60.57787889998872,
+      "sourceSha256": "1e98bdba928aeef1d66f2cbb6336178223e983a13d5b46c4938b73dc41c37dc6",
+      "auditOmitted": 0,
+      "definition": "Errors in 640x360 solve pixels. Gameplay subtracts ONE initial translation. Hacker uses absolute camera coordinates reconstructed from image placement. Missing frames remain missing. Rendering event measures WPF publication, not physical monitor scanout.",
+      "sameInputs": true,
+      "inputEvents": 146,
+      "inputTimingErrorSeconds": {
+        "count": 146,
+        "mean": 0.000634152719699969,
+        "median": 0.0004959499929100275,
+        "p95": 0.001640449947444722,
+        "p99": 0.00250929002068006,
+        "max": 0.003657599911093712
+      },
+      "heroReplayErrorWorldUnits": {
+        "count": 3634,
+        "mean": 0.13041245647684954,
+        "median": 0.10330390074530049,
+        "p95": 0.2472528275873315,
+        "p99": 0.8746095804889302,
+        "max": 3.8364803946298314
+      },
+      "cameraReplayErrorWorldUnits": {
+        "count": 3634,
+        "mean": 0.27699447132662214,
+        "median": 0.18344828250163142,
+        "p95": 1.060629260585097,
+        "p99": 2.4200527622542443,
+        "max": 2.8891028849882265
+      },
+      "heroEndpointErrorWorldUnits": 0.0,
+      "sourceStartToEndWorldUnits": 157.27210632694985,
+      "telemetryFrames": 3634,
+      "telemetryMissingFrames": 0,
+      "captureFrames": 3391,
+      "analysisFrames": 3388,
+      "presentedFrames": 2627,
+      "captureCoverage": 0.9331315354980737,
+      "analysisCoverage": 0.9323059988992846,
+      "presentationCoverage": 0.7228948816730875,
+      "solverError": {
+        "count": 3388,
+        "mean": 39.29113307881617,
+        "median": 33.24126087528316,
+        "p95": 103.32609699601213,
+        "p99": 165.18545557725108,
+        "max": 190.99101945566028
+      },
+      "solverEndpointError": 20.795625586491198,
+      "solverVerifiedWrongOver8px": 2791,
+      "solverVerifiedSamples": 2878,
+      "displayError": {
+        "count": 3491,
+        "mean": 39.395920404213335,
+        "median": 33.03122040567883,
+        "p95": 101.95025202731588,
+        "p99": 164.5070146848297,
+        "max": 190.99101945566028
+      },
+      "displayEndpointError": 20.795625586491198,
+      "analysisIntervalMs": {
+        "count": 3388,
+        "mean": 17.873367473449825,
+        "median": 16.98884996585548,
+        "p95": 29.54679999966173,
+        "p99": 40.23555998923259,
+        "max": 57.726899976842105
+      },
+      "displayNewFrameIntervalMs": {
+        "count": 2627,
+        "mean": 23.052018347921628,
+        "median": 18.67410005070269,
+        "p95": 43.837420037016216,
+        "p99": 64.70935396151613,
+        "max": 87.88630005437881
+      },
+      "displayAgeMs": {
+        "count": 3493,
+        "mean": 14.574236586891784,
+        "median": 16.775100026279688,
+        "p95": 32.645180006511495,
+        "p99": 34.950468018650994,
+        "max": 51.10329994931817
+      },
+      "at30fps": {
+        "ticks": 1818,
+        "valid": 1817,
+        "reused": 95,
+        "within2px": 28,
+        "within8px": 55,
+        "freshAndWithin2px": 21,
+        "ageMs": {
+          "count": 1817,
+          "mean": 25.38951398803759,
+          "median": 19.885900081135333,
+          "p95": 52.28766000363975,
+          "p99": 70.116997375153,
+          "max": 102.68383333459496
+        },
+        "imageFrameLag": {
+          "count": 1817,
+          "mean": 1.5844799119427628,
+          "median": 1.0,
+          "p95": 3.0,
+          "p99": 4.0,
+          "max": 6.0
+        },
+        "error": {
+          "count": 1817,
+          "mean": 39.11699039098251,
+          "median": 33.15832018659258,
+          "p95": 101.08961145369655,
+          "p99": 162.753789558585,
+          "max": 190.99101945566028
+        },
+        "errorVersusCurrentGame": {
+          "count": 1817,
+          "mean": 40.289366934222905,
+          "median": 36.081917743857986,
+          "p95": 101.07838933448298,
+          "p99": 163.3854733879066,
+          "max": 190.7103563383125
+        }
+      }
+    }
+  },
+  "details": {
+    "Hacker": {
+      "benchmarkDirectory": "9d88de6a44be42a68f3cc3e29261bbd5",
+      "evaluation": {
+        "sourcePath": "C:\\Users\\tabut\\OneDrive\\Documents\\HollowKnightVision\\paths\\path-20261027-144238-c129e897-958c-499b-a6cf-88b8daa9533f.json",
+        "output": "C:\\Users\\tabut\\OneDrive\\Documents\\HollowKnightVision\\paths\\path-20261027-150632-1ac350dd-4d8e-4eab-a549-de5ff0f9091c.json",
+        "iteration": 1,
+        "workspace": "Hacker",
+        "mode": "full-trace",
+        "decision": {
+          "Cause": 0,
+          "ErrorPixels": 171.13683880824496,
+          "ThresholdPixels": 160,
+          "SceneName": "Tutorial_01",
+          "ConsecutiveSamples": 12,
+          "SilenceSeconds": null
+        },
+        "completed": true,
+        "matchedSamples": 3110,
+        "evaluatedSamples": 2815,
+        "maximumErrorPixels": 263.6292284345923,
+        "cancelled": false,
+        "status": "diverged"
+      },
+      "gpu": {
+        "sampleCount": 12,
+        "samplePeriodSeconds": 5,
+        "scope": "nvidia-smi whole-GPU point samples; not per-frame profiling",
+        "utilizationPercent": {
+          "min": 16.0,
+          "median": 32.5,
+          "max": 37.0
+        },
+        "encoderPercent": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "decoderPercent": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "cameraBackend": [
+          "Cuda"
+        ],
+        "cudaSearchMilliseconds": {
+          "min": 0.6095,
+          "median": 0.86205,
+          "max": 4.5016
+        },
+        "captureReadbackMilliseconds": {
+          "min": 2.2271,
+          "median": 3.13145,
+          "max": 23.3117
+        }
+      },
+      "firstSolverErrorOver8Seconds": 4.244043699931353
+    },
+    "Gameplay": {
+      "benchmarkDirectory": "9acc9b146caf49ce8b6253b2bb1518ad",
+      "evaluation": {
+        "sourcePath": "C:\\Users\\tabut\\OneDrive\\Documents\\HollowKnightVision\\paths\\path-20261027-144238-c129e897-958c-499b-a6cf-88b8daa9533f.json",
+        "output": "C:\\Users\\tabut\\OneDrive\\Documents\\HollowKnightVision\\paths\\path-20261027-150821-cd94986a-ee2b-4e89-9e03-e9fa2715bc80.json",
+        "iteration": 1,
+        "workspace": "Gameplay",
+        "mode": "full-trace",
+        "decision": {
+          "Cause": 0,
+          "ErrorPixels": 175.8678677053456,
+          "ThresholdPixels": 160,
+          "SceneName": "Tutorial_01",
+          "ConsecutiveSamples": 12,
+          "SilenceSeconds": null
+        },
+        "completed": true,
+        "matchedSamples": 3392,
+        "evaluatedSamples": 3149,
+        "maximumErrorPixels": 190.99101945566028,
+        "cancelled": false,
+        "status": "diverged"
+      },
+      "gpu": {
+        "sampleCount": 12,
+        "samplePeriodSeconds": 5,
+        "scope": "nvidia-smi whole-GPU point samples; not per-frame profiling",
+        "utilizationPercent": {
+          "min": 12.0,
+          "median": 17.0,
+          "max": 39.0
+        },
+        "encoderPercent": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "decoderPercent": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "cameraBackend": [
+          "Cuda"
+        ],
+        "cudaSearchMilliseconds": {
+          "min": 0.2753,
+          "median": 0.7068000000000001,
+          "max": 3.8623
+        },
+        "captureReadbackMilliseconds": {
+          "min": 2.1126,
+          "median": 2.9162,
+          "max": 4.1401
+        }
+      },
+      "firstSolverErrorOver8Seconds": 1.8635654000099748
+    }
+  },
+  "findings": [
+    {
+      "priority": 1,
+      "problem": "Visual tracker accepts a wrong accumulated origin as verified",
+      "evidence": "Gameplay: 2791 verified analyzed samples exceed 8 pixels absolute camera error after one initial registration. First >8px at 1.864s, worst 190.991px.",
+      "action": "Strengthen independent long-baseline/keyframe relocalization, ambiguity and spatial-support checks; keep provisional bridge offsets from silently becoming trusted atlas origins. Test groundless and reappearing-ground intervals."
+    },
+    {
+      "priority": 2,
+      "problem": "Ordinary search cannot cover abrupt camera changes outside prediction",
+      "evidence": "Recorded route contains about 76 and 86 pixel one-frame X jumps, and 97 pixel displacement across a 33ms interval. Normal X radius is max(16,min(96,ceil(elapsed*400))), hence 16 pixels near 30fps.",
+      "action": "Add GPU coarse-to-fine wider 2D fallback triggered by innovation or ambiguity; do not globally enlarge expensive fine search or inject ground truth into Gameplay tracking."
+    },
+    {
+      "priority": 3,
+      "problem": "Gameplay publishes newest pixels with older analysis camera",
+      "evidence": "Capture loop replaces GameplayImage.Source independently; Apply analysis passes LatestFrame and current bitmap with result.GameplayTelemetry.",
+      "action": "Publish image, camera and overlays with one capture ID; if extrapolating, predict to that exact image timestamp and record uncertainty."
+    },
+    {
+      "priority": 4,
+      "problem": "Hacker live display waits behind atlas composition and staging",
+      "evidence": "Unbounded Hacker work channel; Process and StageHackerAtlas occur before QueueHackerPublication. Hacker 30Hz deadlines repeat images 156 times and p95 displayed age is about 67ms.",
+      "action": "Separate bounded newest matched-image publication from atlas integration, update only dirty tiles, and budget each 33.33ms deadline."
+    },
+    {
+      "priority": 5,
+      "problem": "Repeatability is pose-corrected but not frame deterministic",
+      "evidence": "Both endpoints exact and all 146 input transitions replayed; maximum elapsed-time hero discrepancy about 3.84 world units around discrete changes.",
+      "action": "For strict regression input equality, add fixed-game-tick scheduling, applied-pose acknowledgments and rendered-frame pairing; retain visual solver isolation from telemetry."
+    }
+  ],
+  "changesMade": [
+    "Replace ambiguous hammer empty-atlas icon with Waiting for a matched game frame text",
+    "Keep capture stopped until checkpoint restore acknowledgment so non-returning routes cannot seed tracker from the old endpoint",
+    "Save per-replay captured and WPF-presented frame audit with actual displayed camera placement"
+  ],
+  "acceptance": [
+    "Every 30Hz deadline has a distinct scored image/pose pair with at most 2 pixels camera error, or explicitly fails the deadline",
+    "All telemetry/capture/analysis/presentation omissions counted; no zero-error imputation",
+    "Age at publication plus actual scanout separately measured; target <=33.33ms capture-to-publication for the strict audit",
+    "Maximum and p99 error, first divergence, false verified count, endpoint error and missed deadlines compared on repeated routes",
+    "Same routes rerun on Mac and Windows before parity claim"
+  ]
+}

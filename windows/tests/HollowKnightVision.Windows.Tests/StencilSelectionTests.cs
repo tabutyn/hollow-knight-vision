@@ -45,6 +45,8 @@ internal static class StencilSelectionTests
     {
         Check(!Choices("select-profile").Any(item => item.Identifier == "select-profile.clear-save"));
         Check(Choices("select-profile", deferred: true).Any(item => item.Identifier == "select-profile.clear-save"));
+        Check(!Choices("select-profile", [Box("select-profile.clear-save")], deferred: true).Any(item => item.Identifier == "select-profile.clear-save"));
+        Check(Choices("select-profile", [Box("select-profile.clear-save", true)], deferred: true).Any(item => item.Identifier == "select-profile.clear-save"));
         Check(Choices("select-profile", hidesCompleted: false).Any(item => item.Identifier == "select-profile.clear-save"));
         var title = Choices("main-title", custom: [new("main-title.options", "duplicate"), new("custom.banner", "Banner")]);
         Check(title.Count(item => LabelingClassIdentity.CanonicalIdentifier(item.Identifier) == "shared.options") == 1);
