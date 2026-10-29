@@ -659,6 +659,14 @@ final class GroundCameraSolver {
         let patches = makePatches()
         if diagnostics { traceDetail += " patches=\(patches.count)" }
         guard patches.count >= 3 else { return nil }
+        var searchableRows = [Bool](repeating: false, count: height)
+        for line in searchLines {
+            let lower = max(0, line.row - 3)
+            let upper = min(height - 1, line.row + 3)
+            if lower <= upper {
+                for row in lower...upper { searchableRows[row] = true }
+            }
+        }
         func scan(_ hypotheses: [Int], horizontalRange: ClosedRange<Int>) {
             // Gather every unique Y band into one command buffer. A thread
             // scores one (dx,dy) candidate across the balanced patch set.
@@ -686,9 +694,7 @@ final class GroundCameraSolver {
                         // A partially detected row can still verify previously
                         // observed ground texture beyond today's visible edge
                         // islands. This never creates ground or features.
-                        let targetOffset = searchLines.contains(where: {
-                            abs($0.row - y) <= 3
-                        }) ? y * width + x : nil
+                        let targetOffset = searchableRows[y] ? y * width + x : nil
                         samples.append(GroundPatchSearchSample(
                             sourceIndex: sourceIndex,
                             targetOffset: targetOffset
@@ -719,13 +725,12 @@ final class GroundCameraSolver {
         }
         typealias Candidate = (dx: Int, dy: Int, error: CGFloat, support: Int)
         func winner(requiringBroadSupport: Bool) -> Candidate? {
-            let ranked = candidates.sorted { $0.error < $1.error }
             traceOutcome = "no-texture-consensus"
-            guard let best = ranked.first else { return nil }
+            guard let best = candidates.min(by: { $0.error < $1.error }) else { return nil }
             if diagnostics { traceDetail += " best=\(best.dx),\(best.dy) error=\(best.error) support=\(best.support)" }
-            if let rival = ranked.first(where: {
+            if let rival = candidates.lazy.filter({
                 abs($0.dx - best.dx) > 2 || abs($0.dy - best.dy) > 2
-            }), rival.error <= best.error * 1.12 + 0.25 {
+            }).min(by: { $0.error < $1.error }), rival.error <= best.error * 1.12 + 0.25 {
                 traceOutcome = "ambiguous"
                 if diagnostics { traceDetail += " rival=\(rival.dx),\(rival.dy),\(rival.error)" }
                 return nil

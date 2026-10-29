@@ -289,7 +289,14 @@
     "Applying latest player state…": "Applying player state…",
     "nativeInputReady": "Keyboard controls ready",
     "nativeInputPermission": "Enable Hollow Knight Vision in System Settings → Privacy & Security → Accessibility. If already enabled, remove it from the list and add /Applications/Hollow Knight Vision.app again.",
-    "nativeInputPermissionTitle": "Keyboard controls need Accessibility access"
+    "nativeInputPermissionTitle": "Keyboard controls need Accessibility access",
+    "profileClearSave": "Highlight an occupied slot in Select Profile. If Clear Save is missing from the saved screenshot, delete that screenshot in Stencil, then press L.",
+    "modelLabelGameplay": "Stencils complete. Enter gameplay, press L, and label Hollow Knight and the visible gameplay objects.",
+    "modelOpen": "Stencils complete. Open Model to train your labeled gameplay screenshots.",
+    "modelReview": "Open Model, then Screenshots. Fix or exempt the {count} screenshots with labeling errors before training.",
+    "modelTrain": "Click Train to build your model from the labeled gameplay screenshots.",
+    "modelTraining": "Training your model. Wait for training to finish; progress appears above.",
+    "modelReady": "Model trained. Open Settings and enable Object Detection to test it during gameplay."
   },
   "es": {
     "nativeName": "Español",
@@ -581,7 +588,14 @@
     "Applying latest player state…": "Aplicando estado del jugador…",
     "nativeInputReady": "Controles de teclado listos",
     "nativeInputPermission": "Activa Hollow Knight Vision en Ajustes del Sistema → Privacidad y seguridad → Accesibilidad. Si ya está activado, elimínalo de la lista y vuelve a añadir /Applications/Hollow Knight Vision.app.",
-    "nativeInputPermissionTitle": "Los controles de teclado necesitan acceso de accesibilidad"
+    "nativeInputPermissionTitle": "Los controles de teclado necesitan acceso de accesibilidad",
+    "profileClearSave": "Resalta una partida guardada en Seleccionar perfil. Si Borrar partida no aparece en la captura guardada, elimina esa captura en Plantillas y pulsa L.",
+    "modelLabelGameplay": "Plantillas completas. Entra en la partida, pulsa L y etiqueta a Hollow Knight y los objetos visibles.",
+    "modelOpen": "Plantillas completas. Abre Modelo para entrenarlo con tus capturas de juego etiquetadas.",
+    "modelReview": "Abre Modelo y luego Capturas. Corrige o exime las {count} capturas con errores de etiquetado antes de entrenar.",
+    "modelTrain": "Haz clic en Entrenar para crear tu modelo con las capturas de juego etiquetadas.",
+    "modelTraining": "Entrenando tu modelo. Espera a que termine; el progreso aparece arriba.",
+    "modelReady": "Modelo entrenado. Abre Ajustes y activa Detección de objetos para probarlo durante la partida."
   },
   "fr": {
     "nativeName": "Français",
@@ -873,7 +887,14 @@
     "Applying latest player state…": "Application de l’état du joueur…",
     "nativeInputReady": "Commandes clavier prêtes",
     "nativeInputPermission": "Activez Hollow Knight Vision dans Réglages Système → Confidentialité et sécurité → Accessibilité. Si l’app est déjà activée, retirez-la de la liste et ajoutez à nouveau /Applications/Hollow Knight Vision.app.",
-    "nativeInputPermissionTitle": "Les commandes clavier nécessitent l’accès à l’accessibilité"
+    "nativeInputPermissionTitle": "Les commandes clavier nécessitent l’accès à l’accessibilité",
+    "profileClearSave": "Surlignez une sauvegarde existante dans Sélection du profil. Si Effacer la sauvegarde n’apparaît pas sur la capture enregistrée, supprimez cette capture dans Pochoirs, puis appuyez sur L.",
+    "modelLabelGameplay": "Pochoirs terminés. Entrez dans le jeu, appuyez sur L et étiquetez Hollow Knight et les objets visibles.",
+    "modelOpen": "Pochoirs terminés. Ouvrez Modèle pour entraîner le modèle avec vos captures de jeu étiquetées.",
+    "modelReview": "Ouvrez Modèle, puis Captures. Corrigez ou exemptez les {count} captures comportant des erreurs avant l’entraînement.",
+    "modelTrain": "Cliquez sur Entraîner pour créer votre modèle à partir des captures de jeu étiquetées.",
+    "modelTraining": "Entraînement du modèle en cours. Attendez la fin ; la progression apparaît au-dessus.",
+    "modelReady": "Modèle entraîné. Ouvrez Paramètres et activez Détection d’objets pour le tester en jeu."
   },
   "it": {
     "nativeName": "Italiano",
@@ -1165,7 +1186,14 @@
     "Applying latest player state…": "Applicazione stato del giocatore…",
     "nativeInputReady": "Comandi da tastiera pronti",
     "nativeInputPermission": "Abilita Hollow Knight Vision in Impostazioni di Sistema → Privacy e sicurezza → Accessibilità. Se è già abilitato, rimuovilo dall’elenco e aggiungi nuovamente /Applications/Hollow Knight Vision.app.",
-    "nativeInputPermissionTitle": "I comandi da tastiera richiedono l’accesso all’accessibilità"
+    "nativeInputPermissionTitle": "I comandi da tastiera richiedono l’accesso all’accessibilità",
+    "profileClearSave": "Evidenzia un salvataggio esistente in Seleziona profilo. Se Cancella salvataggio non appare nella schermata salvata, elimina quella schermata in Stencil e premi L.",
+    "modelLabelGameplay": "Stencil completati. Entra in gioco, premi L ed etichetta Hollow Knight e gli oggetti visibili.",
+    "modelOpen": "Stencil completati. Apri Modello per addestrarlo con le schermate di gioco etichettate.",
+    "modelReview": "Apri Modello, poi Schermate. Correggi o esenta le {count} schermate con errori di etichettatura prima dell’addestramento.",
+    "modelTrain": "Fai clic su Addestra per creare il modello dalle schermate di gioco etichettate.",
+    "modelTraining": "Addestramento del modello in corso. Attendi il completamento; l’avanzamento appare sopra.",
+    "modelReady": "Modello addestrato. Apri Impostazioni e attiva Rilevamento oggetti per provarlo durante il gioco."
   },
   "de": {
     "nativeName": "Deutsch",
@@ -1457,7 +1485,14 @@
     "Applying latest player state…": "Spielerstatus wird angewendet…",
     "nativeInputReady": "Tastatursteuerung bereit",
     "nativeInputPermission": "Aktiviere Hollow Knight Vision unter Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen. Falls es bereits aktiviert ist, entferne es aus der Liste und füge /Applications/Hollow Knight Vision.app erneut hinzu.",
-    "nativeInputPermissionTitle": "Tastatursteuerung benötigt Zugriff auf Bedienungshilfen"
+    "nativeInputPermissionTitle": "Tastatursteuerung benötigt Zugriff auf Bedienungshilfen",
+    "profileClearSave": "Markiere einen belegten Speicherplatz in der Profilauswahl. Fehlt Spielstand löschen auf der gespeicherten Aufnahme, lösche diese unter Schablonen und drücke dann L.",
+    "modelLabelGameplay": "Schablonen vollständig. Starte das Spiel, drücke L und markiere Hollow Knight und die sichtbaren Spielobjekte.",
+    "modelOpen": "Schablonen vollständig. Öffne Modell, um es mit deinen markierten Spielaufnahmen zu trainieren.",
+    "modelReview": "Öffne Modell und dann Bildschirmaufnahmen. Korrigiere die {count} Aufnahmen mit Markierungsfehlern oder erteile Ausnahmen, bevor du trainierst.",
+    "modelTrain": "Klicke auf Trainieren, um dein Modell aus den markierten Spielaufnahmen zu erstellen.",
+    "modelTraining": "Dein Modell wird trainiert. Warte auf den Abschluss; der Fortschritt wird oben angezeigt.",
+    "modelReady": "Modell trainiert. Öffne Einstellungen und aktiviere Objekterkennung, um es im Spiel zu testen."
   },
   "pt-BR": {
     "nativeName": "Português (Brasil)",
@@ -1749,7 +1784,14 @@
     "Applying latest player state…": "Aplicando estado do jogador…",
     "nativeInputReady": "Controles do teclado prontos",
     "nativeInputPermission": "Ative Hollow Knight Vision em Ajustes do Sistema → Privacidade e Segurança → Acessibilidade. Se já estiver ativado, remova-o da lista e adicione /Applications/Hollow Knight Vision.app novamente.",
-    "nativeInputPermissionTitle": "Os controles do teclado precisam de acesso à acessibilidade"
+    "nativeInputPermissionTitle": "Os controles do teclado precisam de acesso à acessibilidade",
+    "profileClearSave": "Destaque um espaço ocupado em Selecionar perfil. Se Apagar salvamento não aparecer na captura salva, exclua essa captura em Estênceis e pressione L.",
+    "modelLabelGameplay": "Estênceis concluídos. Entre no jogo, pressione L e rotule Hollow Knight e os objetos visíveis.",
+    "modelOpen": "Estênceis concluídos. Abra Modelo para treiná-lo com suas capturas de jogo rotuladas.",
+    "modelReview": "Abra Modelo e depois Capturas. Corrija ou isente as {count} capturas com erros de rotulagem antes de treinar.",
+    "modelTrain": "Clique em Treinar para criar seu modelo com as capturas de jogo rotuladas.",
+    "modelTraining": "Treinando seu modelo. Aguarde a conclusão; o progresso aparece acima.",
+    "modelReady": "Modelo treinado. Abra Configurações e ative Detecção de objetos para testá-lo durante o jogo."
   },
   "ru": {
     "nativeName": "Русский",
@@ -2041,7 +2083,14 @@
     "Applying latest player state…": "Применение состояния игрока…",
     "nativeInputReady": "Управление с клавиатуры готово",
     "nativeInputPermission": "Разрешите Hollow Knight Vision в Системные настройки → Конфиденциальность и безопасность → Универсальный доступ. Если разрешение уже включено, удалите приложение из списка и снова добавьте /Applications/Hollow Knight Vision.app.",
-    "nativeInputPermissionTitle": "Для управления с клавиатуры нужен доступ к универсальному доступу"
+    "nativeInputPermissionTitle": "Для управления с клавиатуры нужен доступ к универсальному доступу",
+    "profileClearSave": "Выделите занятый слот в выборе профиля. Если на сохранённом снимке нет пункта удаления сохранения, удалите этот снимок в разделе «Трафареты» и нажмите L.",
+    "modelLabelGameplay": "Трафареты готовы. Войдите в игру, нажмите L и разметьте Hollow Knight и видимые игровые объекты.",
+    "modelOpen": "Трафареты готовы. Откройте «Модель», чтобы обучить её на размеченных игровых снимках.",
+    "modelReview": "Откройте «Модель», затем «Снимки экрана». До обучения исправьте ошибки разметки на {count} снимках или добавьте исключения.",
+    "modelTrain": "Нажмите «Обучить», чтобы создать модель по размеченным игровым снимкам.",
+    "modelTraining": "Модель обучается. Дождитесь завершения; ход обучения показан выше.",
+    "modelReady": "Модель обучена. Откройте настройки и включите обнаружение объектов для проверки во время игры."
   },
   "ja": {
     "nativeName": "日本語",
@@ -2333,7 +2382,14 @@
     "Applying latest player state…": "プレイヤー状態を適用中…",
     "nativeInputReady": "キーボード操作の準備完了",
     "nativeInputPermission": "システム設定 → プライバシーとセキュリティ → アクセシビリティで Hollow Knight Vision を許可してください。すでに許可されている場合は、一覧から削除して /Applications/Hollow Knight Vision.app を追加し直してください。",
-    "nativeInputPermissionTitle": "キーボード操作にはアクセシビリティの許可が必要です"
+    "nativeInputPermissionTitle": "キーボード操作にはアクセシビリティの許可が必要です",
+    "profileClearSave": "プロフィール選択で保存データのあるスロットを選んでください。保存済み画像に「セーブデータを消去」がない場合は、「ステンシル」でその画像を削除してからLを押してください。",
+    "modelLabelGameplay": "ステンシルの設定が完了しました。ゲームに入り、Lを押してHollow Knightと画面内のゲームオブジェクトをラベル付けしてください。",
+    "modelOpen": "ステンシルの設定が完了しました。「モデル」を開いて、ラベル付けしたゲーム画像で学習してください。",
+    "modelReview": "「モデル」から「スクリーンショット」を開き、学習前にラベルの誤りがある{count}枚を修正するか、例外に指定してください。",
+    "modelTrain": "「学習」をクリックして、ラベル付けしたゲーム画像からモデルを作成してください。",
+    "modelTraining": "モデルを学習中です。完了までお待ちください。進行状況は上に表示されます。",
+    "modelReady": "モデルの学習が完了しました。「設定」を開き、「オブジェクト検出」を有効にしてゲーム中に試してください。"
   },
   "ko": {
     "nativeName": "한국어",
@@ -2625,7 +2681,14 @@
     "Applying latest player state…": "플레이어 상태 적용 중…",
     "nativeInputReady": "키보드 조작 준비 완료",
     "nativeInputPermission": "시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용에서 Hollow Knight Vision을 허용하세요. 이미 허용되어 있다면 목록에서 제거한 뒤 /Applications/Hollow Knight Vision.app을 다시 추가하세요.",
-    "nativeInputPermissionTitle": "키보드 조작에는 손쉬운 사용 권한이 필요합니다"
+    "nativeInputPermissionTitle": "키보드 조작에는 손쉬운 사용 권한이 필요합니다",
+    "profileClearSave": "프로필 선택에서 저장 데이터가 있는 슬롯을 선택하세요. 저장된 화면에 저장 삭제가 없다면 스텐실에서 해당 화면을 삭제한 뒤 L을 누르세요.",
+    "modelLabelGameplay": "스텐실 설정이 완료되었습니다. 게임에 들어가 L을 누르고 Hollow Knight와 보이는 게임 오브젝트에 라벨을 지정하세요.",
+    "modelOpen": "스텐실 설정이 완료되었습니다. 모델을 열어 라벨을 지정한 게임 화면으로 학습시키세요.",
+    "modelReview": "모델에서 스크린샷을 여세요. 학습 전에 라벨 오류가 있는 스크린샷 {count}개를 수정하거나 예외로 지정하세요.",
+    "modelTrain": "학습을 클릭해 라벨을 지정한 게임 화면으로 모델을 만드세요.",
+    "modelTraining": "모델을 학습하는 중입니다. 완료될 때까지 기다리세요. 진행 상황은 위에 표시됩니다.",
+    "modelReady": "모델 학습이 완료되었습니다. 설정에서 오브젝트 감지를 켜고 게임 중에 테스트하세요."
   },
   "zh-Hans": {
     "nativeName": "简体中文",
@@ -2917,7 +2980,14 @@
     "Applying latest player state…": "正在应用玩家状态…",
     "nativeInputReady": "键盘控制已就绪",
     "nativeInputPermission": "请在系统设置 → 隐私与安全性 → 辅助功能中启用 Hollow Knight Vision。如果已经启用，请从列表中移除，然后重新添加 /Applications/Hollow Knight Vision.app。",
-    "nativeInputPermissionTitle": "键盘控制需要辅助功能权限"
+    "nativeInputPermissionTitle": "键盘控制需要辅助功能权限",
+    "profileClearSave": "在选择存档中选中一个已有存档的栏位。如果保存的截图中没有清除存档，请在模板中删除该截图，然后按L。",
+    "modelLabelGameplay": "模板设置完成。进入游戏，按L为Hollow Knight和可见的游戏对象添加标签。",
+    "modelOpen": "模板设置完成。打开模型，使用已标注的游戏截图进行训练。",
+    "modelReview": "打开模型，然后打开截图。在训练前修正{count}张有标注错误的截图，或将相关错误设为例外。",
+    "modelTrain": "点击训练，使用已标注的游戏截图构建模型。",
+    "modelTraining": "正在训练模型。请等待训练完成；进度显示在上方。",
+    "modelReady": "模型训练完成。打开设置并启用对象检测，在游戏中测试。"
   },
   "zh-Hant": {
     "nativeName": "繁體中文",
@@ -3209,6 +3279,13 @@
     "Applying latest player state…": "正在套用玩家狀態…",
     "nativeInputReady": "鍵盤控制已就緒",
     "nativeInputPermission": "請在系統設定 → 隱私權與安全性 → 輔助使用中啟用 Hollow Knight Vision。如果已經啟用，請從列表中移除，再重新加入 /Applications/Hollow Knight Vision.app。",
-    "nativeInputPermissionTitle": "鍵盤控制需要輔助使用權限"
+    "nativeInputPermissionTitle": "鍵盤控制需要輔助使用權限",
+    "profileClearSave": "在選擇存檔中選中一個已有存檔的欄位。如果儲存的截圖中沒有清除存檔，請在範本中刪除該截圖，然後按L。",
+    "modelLabelGameplay": "範本設定完成。進入遊戲，按L為Hollow Knight和可見的遊戲物件新增標籤。",
+    "modelOpen": "範本設定完成。開啟模型，使用已標註的遊戲截圖進行訓練。",
+    "modelReview": "開啟模型，然後開啟截圖。在訓練前修正{count}張有標註錯誤的截圖，或將相關錯誤設為例外。",
+    "modelTrain": "點擊訓練，使用已標註的遊戲截圖建立模型。",
+    "modelTraining": "正在訓練模型。請等待訓練完成；進度顯示在上方。",
+    "modelReady": "模型訓練完成。開啟設定並啟用物件偵測，在遊戲中測試。"
   }
 }

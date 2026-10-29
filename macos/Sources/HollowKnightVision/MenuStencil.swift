@@ -613,6 +613,9 @@ struct MenuStencilCatalog {
         liveCaptures: [(capture: MenuStencilLiveCapture, imageURL: URL)],
         positiveCaptureHoldoutIDs: Set<UUID>
     ) -> Scene? {
+        // This modal moves with the selected slot; saved absolute calibration
+        // may describe another row. Translate its labeled reference at runtime.
+        let calibration = context == .clearSave ? nil : calibration
         guard !examples.isEmpty,
               let width = examples.map(\.manifest.imageWidth).mode,
               let height = examples.map(\.manifest.imageHeight).mode,
@@ -1465,14 +1468,22 @@ struct MenuStencilCatalog {
                     return pixelBounds(annotation, width: width, height: height)
                 }
             }
-            if let labelBounds = clearSaveBounds.isEmpty
-                ? nil : Optional(medianRect(clearSaveBounds)),
+            if !clearSaveBounds.isEmpty,
                let firstSlot = options.first(where: {
                    $0.classIdentifier == "select-profile.slot-1"
                }),
                let firstLeft = firstSlot.leftSelector?.bounds,
                let firstRight = firstSlot.rightSelector?.bounds {
                 let firstCenter = (firstLeft.midY + firstRight.midY) * 0.5
+                let slotCenters = options.compactMap { option -> CGFloat? in
+                    guard option.classIdentifier.hasPrefix("select-profile.slot-"),
+                          let left = option.leftSelector, let right = option.rightSelector else { return nil }
+                    return (left.bounds.midY + right.bounds.midY) * 0.5
+                }
+                let labelBounds = medianRect(clearSaveBounds.map { bounds in
+                    let nearest = slotCenters.min { abs($0 - bounds.midY) < abs($1 - bounds.midY) } ?? firstCenter
+                    return bounds.offsetBy(dx: 0, dy: firstCenter - nearest)
+                })
                 for index in 1...4 {
                     let slotIdentifier = "select-profile.slot-\(index)"
                     guard let slot = options.first(where: {
@@ -1565,6 +1576,8 @@ struct MenuStencilCatalog {
         firstDefinitionIdentifier: String?
     ) -> Bool {
         let identifier = anchor.classIdentifier
+        // Clear Save is expanded into one selector pair per profile row.
+        if context == .selectProfile && identifier == "select-profile.clear-save" { return false }
         if identifier.contains(".header")
             || identifier.contains(".heading")
             || identifier.hasSuffix(".pointer")
@@ -3616,7 +3629,7 @@ final class MenuStencilTracker {
                 let searchBounds = bounds.offsetBy(
                     dx: trackedOffset.x, dy: trackedOffset.y
                 )
-                let textBounds = localizedOptionBounds.offsetBy(
+                let textBounds = anchorBoundsByIdentifier[option.classIdentifier] ?? localizedOptionBounds.offsetBy(
                     dx: trackedOffset.x, dy: trackedOffset.y
                 )
                 let accepts: (CGRect) -> Bool = { candidate in

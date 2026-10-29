@@ -424,6 +424,8 @@ struct DashboardView: View {
     @State private var modelCandidates = [LabelingModelCandidate]()
     @State private var activeModelVersionName = "Default"
     @State private var trainedGameplayModelReady = false
+    @State private var hasGameplayTrainingLabels = false
+    @State private var gameplayLabelBreaches = 0
     @State private var hasUntrainedLabelChanges = false
     @State private var untrainedLabeledImageCount = 0
     @State private var trainingAlertMessage: String?
@@ -708,7 +710,8 @@ struct DashboardView: View {
                     onOpenExample: { identifier, editorMode in
                         openModelErrorExample(identifier, editorMode: editorMode)
                     },
-                    selection: $modelWorkspaceSelection
+                    selection: $modelWorkspaceSelection,
+                    onDatasetChanged: refreshTrainingEligibility
                 )
                 .id(reviewingModelCandidate?.id)
             } else if let labelImage = model.labelImage {
@@ -1265,6 +1268,10 @@ struct DashboardView: View {
                 labelingContext: workspace == .label ? labelingContext : nil,
                 selectedClassIdentifier: labelingSelectedClassID,
                 navigationContext: initializationTargetContext
+            ) ?? initialization.modelGuidance(
+                workspace: workspace, hasGameplayLabels: hasGameplayTrainingLabels,
+                breaches: gameplayLabelBreaches, modelReady: trainedGameplayModelReady,
+                training: labelingTrainer.isRunning
             ) {
                 Text(guidance)
                     .foregroundStyle(.blue)
@@ -1508,20 +1515,13 @@ struct DashboardView: View {
             hackerFramingRequest &+= 1
         case .label:
             initialization.refresh(mode: model.gameMode)
-            if recognizedLabelingContext == .game {
-                labelingContext = .game
-                labelingSelectedClassID = LabelingContext.game.labels.first?.id ?? ""
-            } else if let target = initializationTargetContext, initialization.contexts.contains(target) {
-                labelingContext = target
-                labelingSelectedClassID = initialization.steps.first(where: { $0.context == target })?.classIdentifier
-                    ?? target.labels.first?.id ?? ""
-            } else if !initialization.isFirstPhaseComplete, let step = initialization.currentStep {
-                labelingContext = step.context
-                labelingSelectedClassID = step.classIdentifier
-            } else if let context = recognizedLabelingContext {
-                labelingContext = context
-                labelingSelectedClassID = context.labels.first?.id ?? ""
-            }
+            labelingContext = initialization.labelContextForCapture(
+                recognized: recognizedLabelingContext, navigation: initializationTargetContext,
+                fallback: labelingContext
+            )
+            labelingSelectedClassID = initialization.navigationStep(context: initializationTargetContext)
+                .flatMap { $0.context == labelingContext ? $0.classIdentifier : nil }
+                ?? labelingContext.labels.first?.id ?? ""
             workspace = .label
             model.toggleLabelMode()
         case .model:
@@ -1736,25 +1736,18 @@ struct DashboardView: View {
     }
 
     private var canTrainSelectedObject: Bool {
-        let isLabeling = model.labelImage != nil
-        guard isLabeling || workspace == .model else { return false }
-        let currentRectangles = isLabeling ? labelingDraft.rectangles : []
-        let editingExampleIdentifier = isLabeling ? editingLabelingExample?.id : nil
-        if labelingContext == .mainTitle {
-            return LabelingTrainingEligibility.canTrain(
-                classIdentifiers: selectedTrainingClassIdentifiers,
-                currentRectangles: currentRectangles,
-                savedExampleIdentifiers: labelingSavedExampleIDsByContext[
-                    labelingContext.storageIdentifier
-                ] ?? [],
-                editingExampleIdentifier: editingExampleIdentifier
-            )
+        let isLabeling = model.labelImage != nil && labelingContext == .game
+        guard !labelingTrainer.isRunning, gameplayLabelBreaches == 0,
+              isLabeling || workspace == .model else { return false }
+        let saved = selectedTrainingClassIdentifiers.reduce(into: Set<UUID>()) {
+            $0.formUnion(labelingSavedExampleIDsByClass[$1] ?? [])
         }
+        // Train the shared gameplay model regardless of which object is selected.
         return LabelingTrainingEligibility.canTrain(
-            classIdentifier: labelingSelectedClassID,
-            currentRectangles: currentRectangles,
-            savedExampleIdentifiers: labelingSavedExampleIDsByClass[labelingSelectedClassID] ?? [],
-            editingExampleIdentifier: editingExampleIdentifier
+            classIdentifiers: selectedTrainingClassIdentifiers,
+            currentRectangles: isLabeling ? labelingDraft.rectangles : [],
+            savedExampleIdentifiers: saved,
+            editingExampleIdentifier: isLabeling ? editingLabelingExample?.id : nil
         )
     }
 
@@ -1815,6 +1808,15 @@ struct DashboardView: View {
 
     private func refreshTrainingNotification() {
         let examples = (try? labelingExampleStore.loadTrainingExamples(in: .game)) ?? []
+        hasGameplayTrainingLabels = examples.contains { example in
+            example.manifest.annotations.contains {
+                !$0.isHardNegative && selectedTrainingClassIdentifiers.contains($0.classIdentifier)
+            }
+        }
+        let exemptions = LabelingContractExemptionStore()
+        gameplayLabelBreaches = examples.filter {
+            LabelingContractEvaluator.evaluate($0, exemptions: exemptions.load(for: $0)).contains(where: \.isBreach)
+        }.count
         let modificationDates = examples.compactMap { example in
             try? example.directoryURL
                 .appendingPathComponent(LabelingExampleStore.manifestFilename)

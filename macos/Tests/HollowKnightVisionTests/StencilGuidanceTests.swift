@@ -61,10 +61,31 @@ final class StencilGuidanceTests: XCTestCase {
         XCTAssertEqual(StencilInitializationPolicy.requiredContexts.last, .clearSave)
     }
 
+    func testDeferredClearSaveDisappearsAfterOnePositiveBox() {
+        let identifier = StencilInitializationPolicy.deferredProfileClass
+        for negative in [false, true] {
+            let available = StencilLabelSelectionPolicy.availableLabels(
+                context: .selectProfile, rectangles: [box(identifier, negative: negative)],
+                mode: .normal, hidesCompleted: true, includesDeferredLabels: true)
+            XCTAssertEqual(available.contains { $0.id == identifier }, negative)
+        }
+    }
+
+    func testDeferredClearSaveFollowsPhaseTwoMenus() {
+        let steps = StencilInitializationPolicy.missingSteps(examples: [], languageIdentifier: "en", mode: .normal)
+        let deferred = steps.firstIndex(where: StencilInitializationPolicy.isDeferred)!
+        let options = steps.lastIndex { $0.context == .options }!
+        let confirm = steps.firstIndex { $0.context == .clearSave }!
+        XCTAssertLessThan(options, deferred)
+        XCTAssertLessThan(deferred, confirm)
+        XCTAssertFalse(StencilInitializationPolicy.isFirstPhaseStep(steps[deferred]))
+    }
+
     func testVisibleButtonsAndCampaignInstructionsHaveTranslations() {
         let keys = ["Gameplay", "Label", "Model", "Add", "Modify", "Negative", "Save State", "New", "Delete", "Load",
             "Free Fly", "Current", "Fit", "Object Detection", "Stencil Detection", "Left Select Decoration",
             "Right Select Decoration", "Summary", "Objects", "Screenshots", "Train", "Stop Training", "Recent Frames",
+            "profileClearSave", "modelLabelGameplay", "modelOpen", "modelReview", "modelTrain", "modelTraining", "modelReady",
             "profilePhaseDone", "navigateHUD", "drawHealthFirst", "drawHealthSecond", "phase1", "phase2", "phase3",
             "stencilLocked", "modelLocked", "resumeStencil", "deleteScreenshot", "runtimeHelp", "Max Health"]
         for language in HollowKnightMenuLanguage.allCases {
@@ -206,7 +227,9 @@ final class StencilGuidanceTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let coordinator = StencilInitializationCoordinator(store: LabelingExampleStore(rootURL: root), defaults: defaults)
         coordinator.refresh(mode: .modded)
-        XCTAssertEqual(coordinator.totalRequiredCount, 189)
+        XCTAssertEqual(coordinator.labelContextForCapture(recognized: .game, navigation: nil, fallback: .game), .mainTitle)
+        XCTAssertEqual(coordinator.labelContextForCapture(recognized: .game, navigation: .options, fallback: .game), .options)
+        XCTAssertEqual(coordinator.totalRequiredCount, 190)
         XCTAssertEqual(coordinator.screenCount, 26)
         XCTAssertEqual(coordinator.buttonTitle, "Stencil (0 / 26)")
         XCTAssertEqual(coordinator.completedScreenCount, 0)

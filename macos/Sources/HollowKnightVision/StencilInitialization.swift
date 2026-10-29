@@ -21,6 +21,20 @@ struct StencilInitializationStep: Identifiable, Equatable {
 }
 
 enum StencilInitializationPolicy {
+    static let deferredProfileClass = "select-profile.clear-save"
+
+    static func isDeferred(_ step: StencilInitializationStep) -> Bool {
+        step.classIdentifier == deferredProfileClass
+    }
+
+    static func isFirstPhaseStep(_ step: StencilInitializationStep) -> Bool {
+        firstPhaseContexts.contains(step.context) && !isDeferred(step)
+    }
+
+    static func phase(for step: StencilInitializationStep) -> Int {
+        isDeferred(step) ? 3 : phase(for: step.context)
+    }
+
     static let firstPhaseContexts: [LabelingContext] = [.mainTitle, .selectProfile, .gameplayHUD]
 
     static func phase(for context: LabelingContext) -> Int {
@@ -54,7 +68,9 @@ enum StencilInitializationPolicy {
                 return nil
             }
             let override = contract?.occurrenceOverrides?[identifier]
-            let minimum = override?.minimum ?? (contract?.requiresAllContextObjects == true ? 1 : 0)
+            // Optional for a fresh-save recognition contract, required later in the campaign.
+            let minimum = identifier == deferredProfileClass ? 1
+                : override?.minimum ?? (contract?.requiresAllContextObjects == true ? 1 : 0)
             return minimum > 0 ? (definition, minimum) : nil
         }
     }
@@ -87,7 +103,10 @@ enum StencilInitializationPolicy {
                     )
                 }
             }
-        }
+        }.enumerated().sorted {
+            let left = phase(for: $0.element), right = phase(for: $1.element)
+            return left == right ? $0.offset < $1.offset : left < right
+        }.map(\.element)
     }
 
     static func representativeExample(
@@ -187,10 +206,10 @@ final class StencilInitializationCoordinator: ObservableObject {
     }
 
     var isFirstPhaseComplete: Bool {
-        issue == nil && !steps.contains { StencilInitializationPolicy.firstPhaseContexts.contains($0.context) }
+        issue == nil && !steps.contains(where: StencilInitializationPolicy.isFirstPhaseStep)
             && hasUsableHUD
     }
-    var currentPhase: Int { currentStep.map { StencilInitializationPolicy.phase(for: $0.context) } ?? 3 }
+    var currentPhase: Int { currentStep.map { StencilInitializationPolicy.phase(for: $0) } ?? 3 }
 
     func isScreenComplete(_ context: LabelingContext) -> Bool {
         issue == nil && !steps.contains { $0.context == context }
@@ -227,19 +246,22 @@ final class StencilInitializationCoordinator: ObservableObject {
                StencilInitializationPolicy.positiveCounts(example)["select-profile.clear-save", default: 0] == 0 {
                 return text("draw", ["object": text("Clear Save")])
             }
-            let remaining = steps.filter { $0.context == context }
+            let remaining = steps.filter {
+                $0.context == context && (isFirstPhaseComplete || !StencilInitializationPolicy.isDeferred($0))
+            }
             if let step = remaining.first(where: { $0.classIdentifier == selectedClassIdentifier }) ?? remaining.first {
                 return words.instruction(step)
             }
             if context == .gameplayHUD && !hasUsableHUD { return text("invalidHUD") }
-            return context == .selectProfile ? text("profilePhaseDone")
+            return context == .selectProfile && !isScreenComplete(context) ? text("profilePhaseDone")
                 : text("screenDone", ["screen": screenName(context)])
         }
         if let context = navigationContext, contexts.contains(context),
            !steps.contains(where: { $0.context == context }) {
             return text("screenReady", ["screen": screenName(context)])
         }
-        guard let next = steps.first(where: { $0.context == navigationContext }) ?? currentStep else { return nil }
+        guard let next = navigationStep(context: navigationContext) else { return nil }
+        if StencilInitializationPolicy.isDeferred(next) { return text("profileClearSave") }
         if example(for: next.context) != nil {
             return text("resumeStencil", ["screen": screenName(next.context)])
         }
@@ -252,13 +274,36 @@ final class StencilInitializationCoordinator: ObservableObject {
     }
 
     var isComplete: Bool { steps.isEmpty && issue == nil && hasUsableHUD }
-    var currentStep: StencilInitializationStep? {
-        if !hasUsableHUD && !steps.contains(where: { $0.context == .mainTitle || $0.context == .selectProfile }) {
+    var currentStep: StencilInitializationStep? { navigationStep() }
+
+    func navigationStep(context: LabelingContext? = nil) -> StencilInitializationStep? {
+        if context == nil && !hasUsableHUD && !steps.contains(where: {
+            !StencilInitializationPolicy.isDeferred($0) && ($0.context == .mainTitle || $0.context == .selectProfile)
+        }) {
             return steps.first(where: { $0.context == .gameplayHUD }) ?? StencilInitializationStep(
                 context: .gameplayHUD, classIdentifier: "game.health", className: "Health", occurrence: 1, requiredCount: 2)
         }
-        return steps.first
+        return steps.first(where: { $0.context == context }) ?? steps.first
     }
+
+    func labelContextForCapture(recognized: LabelingContext?, navigation: LabelingContext?,
+                                fallback: LabelingContext) -> LabelingContext {
+        // The HUD can remain visible behind an untrained menu. Follow the
+        // instruction shown beside L before trusting that incidental match.
+        if let navigation, contexts.contains(navigation) { return navigation }
+        return navigationStep(context: navigation)?.context ?? recognized ?? fallback
+    }
+
+    func modelGuidance(workspace: DashboardWorkspace, hasGameplayLabels: Bool, breaches: Int,
+                       modelReady: Bool, training: Bool) -> String? {
+        guard isComplete, workspace != .label else { return nil }
+        if training { return text("modelTraining") }
+        if !hasGameplayLabels { return text("modelLabelGameplay") }
+        if breaches > 0 { return text("modelReview", ["count": String(breaches)]) }
+        if modelReady { return text("modelReady") }
+        return text(workspace == .model ? "modelTrain" : "modelOpen")
+    }
+
     var completedCount: Int {
         max(0, totalRequiredCount - steps.count)
     }

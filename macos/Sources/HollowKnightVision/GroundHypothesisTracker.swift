@@ -2607,17 +2607,6 @@ final class GroundHypothesisTracker {
     ) -> GroundGlobalPoseFit? {
         let completed = globalSearchWorker.take()
         if lastGlobalSearchTimestamp.map({ timestamp - $0 >= 0.25 }) ?? true {
-            // Only value data is copied. The background tracker never owns live
-            // camera, line-ledger, or atlas state, and only returns a proposal.
-            let snapshot = GroundHypothesisTracker()
-            snapshot.active = active
-            snapshot.globalFeatures = globalFeatures
-            snapshot.retiredGlobalFeatures = retiredGlobalFeatures
-            snapshot.canonicalAnchorFeatures = canonicalAnchorFeatures
-            snapshot.canonicalFirstViewIDs = canonicalFirstViewIDs
-            snapshot.cachedRelocalizationFeatures = relocalizationFeatures
-            snapshot.localCameraPosition = localCameraPosition
-            snapshot.globalAnchorValid = globalAnchorValid
             let canonicalInterval = recovering ? 0.75 : 2.0
             let scanCanonical = correctionConfirmation.needsConfirmation || (lastCanonicalPhaseSearchTimestamp.map {
                 timestamp - $0 >= canonicalInterval
@@ -2625,14 +2614,27 @@ final class GroundHypothesisTracker {
             let scanAlternatives = lastAlternativeGlobalSearchTimestamp.map {
                 timestamp - $0 >= 1
             } ?? true
-            let submitted = globalSearchWorker.submit {
-                let started = ProcessInfo.processInfo.systemUptime
-                let fit = snapshot.searchSnapshot(luma: luma, width: width, height: height,
-                    floorLines: floorLines, exclusions: exclusions,
-                    scanCanonical: scanCanonical, scanAlternatives: scanAlternatives)
-                return SearchResult(fit: fit, timestamp: timestamp,
-                    localPose: snapshot.localCameraPosition,
-                    duration: ProcessInfo.processInfo.systemUptime - started)
+            let submitted = globalSearchWorker.submitPrepared {
+                // Only value data is copied. The background tracker never owns live
+                // camera, line-ledger, or atlas state, and only returns a proposal.
+                let snapshot = GroundHypothesisTracker()
+                snapshot.active = active
+                snapshot.globalFeatures = globalFeatures
+                snapshot.retiredGlobalFeatures = retiredGlobalFeatures
+                snapshot.canonicalAnchorFeatures = canonicalAnchorFeatures
+                snapshot.canonicalFirstViewIDs = canonicalFirstViewIDs
+                snapshot.cachedRelocalizationFeatures = relocalizationFeatures
+                snapshot.localCameraPosition = localCameraPosition
+                snapshot.globalAnchorValid = globalAnchorValid
+                return {
+                    let started = ProcessInfo.processInfo.systemUptime
+                    let fit = snapshot.searchSnapshot(luma: luma, width: width, height: height,
+                        floorLines: floorLines, exclusions: exclusions,
+                        scanCanonical: scanCanonical, scanAlternatives: scanAlternatives)
+                    return SearchResult(fit: fit, timestamp: timestamp,
+                        localPose: snapshot.localCameraPosition,
+                        duration: ProcessInfo.processInfo.systemUptime - started)
+                }
             }
             if submitted {
                 lastGlobalSearchTimestamp = timestamp
@@ -2729,39 +2731,18 @@ final class GroundHypothesisTracker {
             else { continue }
             let descriptor = normalizedDescriptor(feature.patch)
             guard descriptorEnergy(descriptor) >= 6 else { continue }
-            let ranked = storedFeatures.map {
-                ($0, descriptorDistance(descriptor, $0.descriptor))
-            }.sorted { $0.1 < $1.1 }
-            // Preserve the established local hypotheses, then add one best
-            // candidate from each otherwise-unrepresented segment. The latter
-            // gives an older line a bounded chance to challenge a drifted
-            // duplicate without weakening normal same-line reacquisition.
-            let primary = ranked.prefix(6).filter {
-                $0.1 <= Self.descriptorMatchThreshold
-            }
-            var seenSegmentIDs = Set(primary.map { $0.0.segmentID })
-            var alternatives = [(GlobalFeature, CGFloat)]()
-            for candidate in ranked where alternatives.count < 4 {
-                guard candidate.1 <= Self.descriptorMatchThreshold else { break }
-                if seenSegmentIDs.insert(candidate.0.segmentID).inserted {
-                    alternatives.append(candidate)
-                }
-            }
-            var canonical = [(GlobalFeature, CGFloat)]()
-            for segmentID in canonicalSegmentIDs where !seenSegmentIDs.contains(segmentID) {
-                guard let candidate = ranked.first(where: {
-                    $0.0.segmentID == segmentID
-                        && $0.1 <= Self.descriptorMatchThreshold
-                }) else { continue }
-                seenSegmentIDs.insert(segmentID)
-                canonical.append(candidate)
-            }
-            observations.append(contentsOf: (primary + alternatives + canonical).map {
-                candidate in
+            let matches = GroundDescriptorMatcher.select(
+                count: storedFeatures.count,
+                canonicalSegmentIDs: Array(canonicalSegmentIDs),
+                threshold: Self.descriptorMatchThreshold,
+                segmentID: { storedFeatures[$0].segmentID },
+                error: { GroundDescriptorMatcher.distance(descriptor, storedFeatures[$0].descriptor) }
+            )
+            observations.append(contentsOf: matches.map { match in
                 self.poseObservation(
                     feature: feature,
-                    global: candidate.0,
-                    descriptorError: candidate.1
+                    global: storedFeatures[match.index],
+                    descriptorError: match.error
                 )
             })
         }
@@ -3553,11 +3534,7 @@ final class GroundHypothesisTracker {
     }
 
     private func descriptorDistance(_ left: [Int16], _ right: [Int16]) -> CGFloat {
-        guard left.count == right.count, !left.isEmpty else { return .infinity }
-        let total = zip(left, right).reduce(0) {
-            $0 + abs(Int($1.0) - Int($1.1))
-        }
-        return CGFloat(total) / CGFloat(left.count)
+        GroundDescriptorMatcher.distance(left, right)
     }
 
     private func descriptorEnergy(_ descriptor: [Int16]) -> CGFloat {

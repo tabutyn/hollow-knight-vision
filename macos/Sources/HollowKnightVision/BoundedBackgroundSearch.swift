@@ -12,11 +12,19 @@ final class BoundedBackgroundSearch<Value> {
 
     @discardableResult
     func submit(_ operation: @escaping () -> Value) -> Bool {
+        submitPrepared { operation }
+    }
+
+    /// Reserve the slot before preparing a snapshot on the caller's queue.
+    /// A busy worker must not allocate/copy a snapshot that it will discard.
+    @discardableResult
+    func submitPrepared(_ prepare: () -> (() -> Value)) -> Bool {
         lock.lock()
         guard !busy else { lock.unlock(); return false }
         busy = true
         let submittedEpoch = epoch
         lock.unlock()
+        let operation = prepare()
         queue.async { [self] in
             let value = autoreleasepool(invoking: operation)
             lock.lock()

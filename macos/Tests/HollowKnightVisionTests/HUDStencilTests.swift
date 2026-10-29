@@ -78,7 +78,8 @@ final class HUDStencilTests: XCTestCase {
         coordinator.refresh(mode: .normal)
         XCTAssertFalse(coordinator.isFirstPhaseComplete)
         for context in [LabelingContext.mainTitle, .selectProfile] {
-            let boxes = StencilInitializationPolicy.requiredCounts(context: context, mode: .normal).flatMap { requirement in
+            let boxes = StencilInitializationPolicy.requiredCounts(context: context, mode: .normal)
+                .filter { $0.definition.id != StencilInitializationPolicy.deferredProfileClass }.flatMap { requirement in
                 (0..<requirement.count).map { _ in LabelingDraftRectangle(id: UUID(), classID: requirement.definition.id,
                     normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.1, height: 0.04)) }
             }
@@ -108,9 +109,38 @@ final class HUDStencilTests: XCTestCase {
                 timestamp: 2, generation: 2)?.establishesGameplay == true, fixture.id)
         }
         XCTAssertTrue(coordinator.isFirstPhaseComplete)
+        XCTAssertTrue(coordinator.steps.contains { StencilInitializationPolicy.isDeferred($0) },
+                      "Clear Save remains a later task without blocking a fresh save.")
+        XCTAssertEqual(coordinator.labelContextForCapture(recognized: .game, navigation: .options, fallback: .game), .options)
+        XCTAssertEqual(coordinator.labelContextForCapture(recognized: .game, navigation: nil, fallback: .game),
+                       coordinator.currentStep?.context)
         XCTAssertFalse(coordinator.isComplete, "Later menus must not block Phase 1.")
         XCTAssertNil(HUDStencilTemplate.captured(examples: [], languageIdentifier: "en"))
         XCTAssertNil(HUDStencilTemplate.captured(examples: try store.loadExamples(), languageIdentifier: "fr"))
+        // Finish later screens to verify the campaign-to-model handoff.
+        for context in coordinator.contexts where context != .gameplayHUD {
+            let boxes = StencilInitializationPolicy.requiredCounts(context: context, mode: .normal).flatMap { requirement in
+                (0..<requirement.count).map { _ in LabelingDraftRectangle(id: UUID(), classID: requirement.definition.id,
+                    normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.1, height: 0.04)) }
+            }
+            _ = try store.saveDraft(image: image, context: context, rectangles: boxes)
+        }
+        coordinator.refresh(mode: .normal)
+        XCTAssertTrue(coordinator.isComplete)
+        XCTAssertEqual(coordinator.labelContextForCapture(recognized: .game, navigation: nil, fallback: .mainTitle), .game)
+        XCTAssertEqual(coordinator.labelContextForCapture(recognized: nil, navigation: nil, fallback: .options), .options)
+        for (workspace, labels, breaches, ready, training, key) in [
+            (DashboardWorkspace.gameplay, false, 0, false, false, "modelLabelGameplay"),
+            (.gameplay, true, 0, false, false, "modelOpen"),
+            (.model, true, 0, false, false, "modelTrain"),
+            (.model, true, 2, false, false, "modelReview"),
+            (.gameplay, true, 0, true, false, "modelReady"),
+            (.model, true, 0, false, true, "modelTraining")
+        ] {
+            XCTAssertEqual(coordinator.modelGuidance(workspace: workspace, hasGameplayLabels: labels,
+                breaches: breaches, modelReady: ready, training: training), coordinator.text(key, ["count": "2"]))
+        }
+        XCTAssertNil(coordinator.modelGuidance(workspace: .label, hasGameplayLabels: true, breaches: 0, modelReady: true, training: false))
         coordinator.language = .french
         XCTAssertFalse(coordinator.isFirstPhaseComplete, "A language change must relock incomplete references.")
     }
