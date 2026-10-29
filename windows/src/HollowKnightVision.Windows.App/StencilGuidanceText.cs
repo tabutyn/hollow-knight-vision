@@ -12,6 +12,9 @@ internal static class StencilGuidanceText
 
     internal static string Text(string language, string key, params (string Key, string Value)[] values)
     {
+        // The shared Mac catalog calls this controller backend MFI. Windows
+        // shows XInput; keep the shared key and annotation ID for saved labels.
+        if (key == "MFI") return "XInput";
         var result = Catalog.GetValueOrDefault(language)?.GetValueOrDefault(key)
             ?? Catalog["en"].GetValueOrDefault(key) ?? key;
         foreach (var (name, value) in values) result = result.Replace("{" + name + "}", value);
