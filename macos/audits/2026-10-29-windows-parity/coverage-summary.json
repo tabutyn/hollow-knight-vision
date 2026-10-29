@@ -1,0 +1,3031 @@
+{
+  "base": "ad08a4b7ae9fbb27119e8645c4ebd8318160b38e",
+  "source_revision": "730228a7189c3aae74cd1712338ec7a25e43ec81",
+  "scope": "Production changes since ad08a4b; experimental Step 1s is inventoried but not ported to Mac.",
+  "macos_llvm_summary": {
+    "lines": {
+      "covered": 34206,
+      "count": 60465,
+      "percent": 56.57
+    },
+    "functions": {
+      "covered": 4001,
+      "count": 7420,
+      "percent": 53.92
+    },
+    "regions": {
+      "covered": 9826,
+      "count": 17999,
+      "percent": 54.59
+    }
+  },
+  "groups": {
+    "macos": {
+      "unique_executable_line_coverage": {
+        "covered": 25896,
+        "count": 42757,
+        "percent": 60.57
+      },
+      "changed_executable_line_coverage": {
+        "covered": 232,
+        "count": 367,
+        "percent": 63.22
+      },
+      "unmeasured_changed_files": [],
+      "files": {
+        "macos/Sources/HollowKnightVision/App.swift": {
+          "covered": 32,
+          "count": 468,
+          "percent": 6.84
+        },
+        "macos/Sources/HollowKnightVision/AtlasManagerView.swift": {
+          "covered": 0,
+          "count": 145,
+          "percent": 0.0
+        },
+        "macos/Sources/HollowKnightVision/AtlasStateStore.swift": {
+          "covered": 105,
+          "count": 133,
+          "percent": 78.95
+        },
+        "macos/Sources/HollowKnightVision/BoundedBackgroundSearch.swift": {
+          "covered": 55,
+          "count": 57,
+          "percent": 96.49
+        },
+        "macos/Sources/HollowKnightVision/CameraSolver.swift": {
+          "covered": 127,
+          "count": 149,
+          "percent": 85.23
+        },
+        "macos/Sources/HollowKnightVision/CaptureConfiguration.swift": {
+          "covered": 41,
+          "count": 41,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/CaptureFrameConverter.swift": {
+          "covered": 0,
+          "count": 6,
+          "percent": 0.0
+        },
+        "macos/Sources/HollowKnightVision/FeatureCorrectionPolicy.swift": {
+          "covered": 46,
+          "count": 46,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/FeatureRefinementCoordinator.swift": {
+          "covered": 65,
+          "count": 107,
+          "percent": 60.75
+        },
+        "macos/Sources/HollowKnightVision/FramePipelineTelemetry.swift": {
+          "covered": 28,
+          "count": 28,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/FramePresentation.swift": {
+          "covered": 24,
+          "count": 34,
+          "percent": 70.59
+        },
+        "macos/Sources/HollowKnightVision/GameControlForwarder.swift": {
+          "covered": 95,
+          "count": 1354,
+          "percent": 7.02
+        },
+        "macos/Sources/HollowKnightVision/GameStartupDetector.swift": {
+          "covered": 273,
+          "count": 302,
+          "percent": 90.4
+        },
+        "macos/Sources/HollowKnightVision/GameWindowSelection.swift": {
+          "covered": 10,
+          "count": 10,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/GlobalFeatureMatcher.swift": {
+          "covered": 422,
+          "count": 429,
+          "percent": 98.37
+        },
+        "macos/Sources/HollowKnightVision/GroundAtlasFootprint.swift": {
+          "covered": 28,
+          "count": 28,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/GroundCameraSolver.swift": {
+          "covered": 762,
+          "count": 821,
+          "percent": 92.81
+        },
+        "macos/Sources/HollowKnightVision/GroundDescriptorMatcher.swift": {
+          "covered": 51,
+          "count": 51,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/GroundFeatureEligibility.swift": {
+          "covered": 91,
+          "count": 95,
+          "percent": 95.79
+        },
+        "macos/Sources/HollowKnightVision/GroundFeatureWindow.swift": {
+          "covered": 71,
+          "count": 456,
+          "percent": 15.57
+        },
+        "macos/Sources/HollowKnightVision/GroundFrameAudit.swift": {
+          "covered": 0,
+          "count": 62,
+          "percent": 0.0
+        },
+        "macos/Sources/HollowKnightVision/GroundGlobalCorrectionPolicy.swift": {
+          "covered": 43,
+          "count": 43,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/GroundHypothesisTracker.swift": {
+          "covered": 2688,
+          "count": 2979,
+          "percent": 90.23
+        },
+        "macos/Sources/HollowKnightVision/GroundLabelDataset.swift": {
+          "covered": 117,
+          "count": 127,
+          "percent": 92.13
+        },
+        "macos/Sources/HollowKnightVision/GroundLabelEvaluator.swift": {
+          "covered": 189,
+          "count": 239,
+          "percent": 79.08
+        },
+        "macos/Sources/HollowKnightVision/GroundLineDetector.swift": {
+          "covered": 644,
+          "count": 682,
+          "percent": 94.43
+        },
+        "macos/Sources/HollowKnightVision/GroundLinePresence.swift": {
+          "covered": 145,
+          "count": 145,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/GroundMetalProcessing.swift": {
+          "covered": 472,
+          "count": 482,
+          "percent": 97.93
+        },
+        "macos/Sources/HollowKnightVision/GroundPixels.swift": {
+          "covered": 23,
+          "count": 23,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/GroundPlacementRecovery.swift": {
+          "covered": 91,
+          "count": 94,
+          "percent": 96.81
+        },
+        "macos/Sources/HollowKnightVision/GroundPoseRefinementSearch.swift": {
+          "covered": 30,
+          "count": 31,
+          "percent": 96.77
+        },
+        "macos/Sources/HollowKnightVision/GroundReferenceTracker.swift": {
+          "covered": 174,
+          "count": 206,
+          "percent": 84.47
+        },
+        "macos/Sources/HollowKnightVision/GroundSemanticAtlas.swift": {
+          "covered": 77,
+          "count": 80,
+          "percent": 96.25
+        },
+        "macos/Sources/HollowKnightVision/GroundSubpixelRegistration.swift": {
+          "covered": 155,
+          "count": 155,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/GroundSurfaceEvidence.swift": {
+          "covered": 42,
+          "count": 42,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/GroundTruthLabeling.swift": {
+          "covered": 315,
+          "count": 446,
+          "percent": 70.63
+        },
+        "macos/Sources/HollowKnightVision/HUDStencil.swift": {
+          "covered": 310,
+          "count": 310,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/HackerAtlas.swift": {
+          "covered": 696,
+          "count": 765,
+          "percent": 90.98
+        },
+        "macos/Sources/HollowKnightVision/HollowKnightLaunchPolicy.swift": {
+          "covered": 34,
+          "count": 34,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/ImageFileIO.swift": {
+          "covered": 14,
+          "count": 14,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/ImageStencil.swift": {
+          "covered": 225,
+          "count": 315,
+          "percent": 71.43
+        },
+        "macos/Sources/HollowKnightVision/InputBridge.swift": {
+          "covered": 334,
+          "count": 371,
+          "percent": 90.03
+        },
+        "macos/Sources/HollowKnightVision/InputPathRecorder.swift": {
+          "covered": 338,
+          "count": 379,
+          "percent": 89.18
+        },
+        "macos/Sources/HollowKnightVision/LabelingClassIdentity.swift": {
+          "covered": 9,
+          "count": 10,
+          "percent": 90.0
+        },
+        "macos/Sources/HollowKnightVision/LabelingContracts.swift": {
+          "covered": 175,
+          "count": 208,
+          "percent": 84.13
+        },
+        "macos/Sources/HollowKnightVision/LabelingDatasetExporter.swift": {
+          "covered": 366,
+          "count": 390,
+          "percent": 93.85
+        },
+        "macos/Sources/HollowKnightVision/LabelingEditorView.swift": {
+          "covered": 623,
+          "count": 1359,
+          "percent": 45.84
+        },
+        "macos/Sources/HollowKnightVision/LabelingExampleStore.swift": {
+          "covered": 370,
+          "count": 386,
+          "percent": 95.85
+        },
+        "macos/Sources/HollowKnightVision/LabelingExamplesView.swift": {
+          "covered": 97,
+          "count": 304,
+          "percent": 31.91
+        },
+        "macos/Sources/HollowKnightVision/LabelingModelReviewStore.swift": {
+          "covered": 55,
+          "count": 55,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/LabelingModelVersionStore.swift": {
+          "covered": 283,
+          "count": 343,
+          "percent": 82.51
+        },
+        "macos/Sources/HollowKnightVision/LabelingModelWorkspaceView.swift": {
+          "covered": 0,
+          "count": 1054,
+          "percent": 0.0
+        },
+        "macos/Sources/HollowKnightVision/LabelingObjectAtlas.swift": {
+          "covered": 179,
+          "count": 185,
+          "percent": 96.76
+        },
+        "macos/Sources/HollowKnightVision/LabelingReviewAnalysis.swift": {
+          "covered": 141,
+          "count": 151,
+          "percent": 93.38
+        },
+        "macos/Sources/HollowKnightVision/LabelingSelectionPreferences.swift": {
+          "covered": 40,
+          "count": 40,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/LabelingSharedModelPolicy.swift": {
+          "covered": 12,
+          "count": 12,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/LabelingTrainingController.swift": {
+          "covered": 23,
+          "count": 220,
+          "percent": 10.45
+        },
+        "macos/Sources/HollowKnightVision/LabelingVisualIdentity.swift": {
+          "covered": 38,
+          "count": 115,
+          "percent": 33.04
+        },
+        "macos/Sources/HollowKnightVision/LatestFramePump.swift": {
+          "covered": 88,
+          "count": 91,
+          "percent": 96.7
+        },
+        "macos/Sources/HollowKnightVision/LayerSceneViewport.swift": {
+          "covered": 426,
+          "count": 1111,
+          "percent": 38.34
+        },
+        "macos/Sources/HollowKnightVision/LiveAtlasPipeline.swift": {
+          "covered": 785,
+          "count": 1097,
+          "percent": 71.56
+        },
+        "macos/Sources/HollowKnightVision/LiveCaptureModel.swift": {
+          "covered": 0,
+          "count": 3928,
+          "percent": 0.0
+        },
+        "macos/Sources/HollowKnightVision/LiveCaptureRestartPolicy.swift": {
+          "covered": 43,
+          "count": 43,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/LiveDashboardView.swift": {
+          "covered": 291,
+          "count": 1916,
+          "percent": 15.19
+        },
+        "macos/Sources/HollowKnightVision/LiveGameStatusResolver.swift": {
+          "covered": 270,
+          "count": 329,
+          "percent": 82.07
+        },
+        "macos/Sources/HollowKnightVision/LiveMenuStencilWorker.swift": {
+          "covered": 72,
+          "count": 88,
+          "percent": 81.82
+        },
+        "macos/Sources/HollowKnightVision/LiveObjectDetector.swift": {
+          "covered": 103,
+          "count": 252,
+          "percent": 40.87
+        },
+        "macos/Sources/HollowKnightVision/LiveObjectTracking.swift": {
+          "covered": 212,
+          "count": 227,
+          "percent": 93.39
+        },
+        "macos/Sources/HollowKnightVision/LiveTiledAtlas.swift": {
+          "covered": 1711,
+          "count": 1779,
+          "percent": 96.18
+        },
+        "macos/Sources/HollowKnightVision/LiveTrackingTiming.swift": {
+          "covered": 134,
+          "count": 198,
+          "percent": 67.68
+        },
+        "macos/Sources/HollowKnightVision/LiveWorldModel.swift": {
+          "covered": 245,
+          "count": 255,
+          "percent": 96.08
+        },
+        "macos/Sources/HollowKnightVision/LiveWorldReplayEvaluator.swift": {
+          "covered": 306,
+          "count": 321,
+          "percent": 95.33
+        },
+        "macos/Sources/HollowKnightVision/LiveWorldSessionStore.swift": {
+          "covered": 95,
+          "count": 127,
+          "percent": 74.8
+        },
+        "macos/Sources/HollowKnightVision/LiveWorldTracker.swift": {
+          "covered": 506,
+          "count": 531,
+          "percent": 95.29
+        },
+        "macos/Sources/HollowKnightVision/LowResolutionTraceEvaluator.swift": {
+          "covered": 736,
+          "count": 824,
+          "percent": 89.32
+        },
+        "macos/Sources/HollowKnightVision/MenuStencil.swift": {
+          "covered": 2097,
+          "count": 3696,
+          "percent": 56.74
+        },
+        "macos/Sources/HollowKnightVision/MenuStencilCalibration.swift": {
+          "covered": 25,
+          "count": 794,
+          "percent": 3.15
+        },
+        "macos/Sources/HollowKnightVision/MenuStencilConsensus.swift": {
+          "covered": 278,
+          "count": 444,
+          "percent": 62.61
+        },
+        "macos/Sources/HollowKnightVision/MenuStencilLiveCapture.swift": {
+          "covered": 0,
+          "count": 90,
+          "percent": 0.0
+        },
+        "macos/Sources/HollowKnightVision/MovingObjectMask.swift": {
+          "covered": 34,
+          "count": 38,
+          "percent": 89.47
+        },
+        "macos/Sources/HollowKnightVision/NormalGameKeyForwarder.swift": {
+          "covered": 106,
+          "count": 556,
+          "percent": 19.06
+        },
+        "macos/Sources/HollowKnightVision/PersistentFeatureTracker.swift": {
+          "covered": 663,
+          "count": 723,
+          "percent": 91.7
+        },
+        "macos/Sources/HollowKnightVision/PlaybackDivergenceMonitor.swift": {
+          "covered": 267,
+          "count": 294,
+          "percent": 90.82
+        },
+        "macos/Sources/HollowKnightVision/PlayerOpsView.swift": {
+          "covered": 0,
+          "count": 136,
+          "percent": 0.0
+        },
+        "macos/Sources/HollowKnightVision/PoseCorrectionInterpolation.swift": {
+          "covered": 37,
+          "count": 39,
+          "percent": 94.87
+        },
+        "macos/Sources/HollowKnightVision/RawGroundFrameAudit.swift": {
+          "covered": 0,
+          "count": 62,
+          "percent": 0.0
+        },
+        "macos/Sources/HollowKnightVision/RecentCapturedFrameBuffer.swift": {
+          "covered": 42,
+          "count": 46,
+          "percent": 91.3
+        },
+        "macos/Sources/HollowKnightVision/RectangleOverlap.swift": {
+          "covered": 7,
+          "count": 7,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/RegistrationFrameMask.swift": {
+          "covered": 46,
+          "count": 47,
+          "percent": 97.87
+        },
+        "macos/Sources/HollowKnightVision/RenderedFrameMarker.swift": {
+          "covered": 58,
+          "count": 62,
+          "percent": 93.55
+        },
+        "macos/Sources/HollowKnightVision/RuntimeMode.swift": {
+          "covered": 109,
+          "count": 220,
+          "percent": 49.55
+        },
+        "macos/Sources/HollowKnightVision/SceneRegionDetector.swift": {
+          "covered": 1029,
+          "count": 1165,
+          "percent": 88.33
+        },
+        "macos/Sources/HollowKnightVision/SceneSessionStore.swift": {
+          "covered": 162,
+          "count": 175,
+          "percent": 92.57
+        },
+        "macos/Sources/HollowKnightVision/SourceWindowIdentity.swift": {
+          "covered": 28,
+          "count": 28,
+          "percent": 100.0
+        },
+        "macos/Sources/HollowKnightVision/SparseGroundRecoveryGate.swift": {
+          "covered": 56,
+          "count": 58,
+          "percent": 96.55
+        },
+        "macos/Sources/HollowKnightVision/StableSegmentedPicker.swift": {
+          "covered": 0,
+          "count": 35,
+          "percent": 0.0
+        },
+        "macos/Sources/HollowKnightVision/StencilGuidanceText.swift": {
+          "covered": 27,
+          "count": 37,
+          "percent": 72.97
+        },
+        "macos/Sources/HollowKnightVision/StencilInitialization.swift": {
+          "covered": 237,
+          "count": 263,
+          "percent": 90.11
+        },
+        "macos/Sources/HollowKnightVision/StencilWorkspaceView.swift": {
+          "covered": 25,
+          "count": 109,
+          "percent": 22.94
+        },
+        "macos/Sources/HollowKnightVision/TransitionMotionBridge.swift": {
+          "covered": 217,
+          "count": 239,
+          "percent": 90.79
+        },
+        "macos/Sources/HollowKnightVision/TranslationPoseGraph.swift": {
+          "covered": 181,
+          "count": 202,
+          "percent": 89.6
+        },
+        "macos/Sources/HollowKnightVision/UserObjectCatalog.swift": {
+          "covered": 78,
+          "count": 98,
+          "percent": 79.59
+        },
+        "macos/Sources/HollowKnightVision/VisionResetController.swift": {
+          "covered": 36,
+          "count": 73,
+          "percent": 49.32
+        },
+        "macos/Sources/HollowKnightVision/VisualRoomTransitionTracker.swift": {
+          "covered": 2032,
+          "count": 2174,
+          "percent": 93.47
+        },
+        "macos/Sources/HollowKnightVision/WorldBasisController.swift": {
+          "covered": 103,
+          "count": 114,
+          "percent": 90.35
+        }
+      }
+    },
+    "windows_core": {
+      "unique_executable_line_coverage": {
+        "covered": 20430,
+        "count": 23359,
+        "percent": 87.46
+      },
+      "changed_executable_line_coverage": {
+        "covered": 1097,
+        "count": 1457,
+        "percent": 75.29
+      },
+      "unmeasured_changed_files": [
+        "windows/src/HollowKnightVision.Windows.Core/TestVisibility.cs"
+      ],
+      "files": {
+        "windows/src/HollowKnightVision.Windows.Core/AtlasStateStore.cs": {
+          "covered": 111,
+          "count": 176,
+          "percent": 63.07
+        },
+        "windows/src/HollowKnightVision.Windows.Core/BgraFrame.cs": {
+          "covered": 29,
+          "count": 29,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/BgraPngReader.cs": {
+          "covered": 99,
+          "count": 132,
+          "percent": 75.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/BoundedBackgroundSearch.cs": {
+          "covered": 81,
+          "count": 88,
+          "percent": 92.05
+        },
+        "windows/src/HollowKnightVision.Windows.Core/CameraTracking.cs": {
+          "covered": 118,
+          "count": 125,
+          "percent": 94.4
+        },
+        "windows/src/HollowKnightVision.Windows.Core/ControlledFrameReplay.cs": {
+          "covered": 33,
+          "count": 39,
+          "percent": 84.62
+        },
+        "windows/src/HollowKnightVision.Windows.Core/CpuBgraNormalizer.cs": {
+          "covered": 73,
+          "count": 73,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/DashboardPresentation.cs": {
+          "covered": 416,
+          "count": 438,
+          "percent": 94.98
+        },
+        "windows/src/HollowKnightVision.Windows.Core/FeatureCorrectionPolicy.cs": {
+          "covered": 40,
+          "count": 43,
+          "percent": 93.02
+        },
+        "windows/src/HollowKnightVision.Windows.Core/FeatureRefinementCoordinator.cs": {
+          "covered": 76,
+          "count": 123,
+          "percent": 61.79
+        },
+        "windows/src/HollowKnightVision.Windows.Core/FrameGeometry.cs": {
+          "covered": 23,
+          "count": 24,
+          "percent": 95.83
+        },
+        "windows/src/HollowKnightVision.Windows.Core/FramePipelineTelemetry.cs": {
+          "covered": 39,
+          "count": 40,
+          "percent": 97.5
+        },
+        "windows/src/HollowKnightVision.Windows.Core/FrameRegionRenderer.cs": {
+          "covered": 118,
+          "count": 124,
+          "percent": 95.16
+        },
+        "windows/src/HollowKnightVision.Windows.Core/FrameSignalProfile.cs": {
+          "covered": 42,
+          "count": 42,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GameStartup.cs": {
+          "covered": 216,
+          "count": 238,
+          "percent": 90.76
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GameplayPresentationState.cs": {
+          "covered": 15,
+          "count": 15,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GlobalFeatureMatcher.cs": {
+          "covered": 499,
+          "count": 509,
+          "percent": 98.04
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundCameraSolver.Matching.cs": {
+          "covered": 224,
+          "count": 224,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundCameraSolver.Texture.cs": {
+          "covered": 62,
+          "count": 70,
+          "percent": 88.57
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundCameraSolver.Verification.cs": {
+          "covered": 20,
+          "count": 21,
+          "percent": 95.24
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundCameraSolver.cs": {
+          "covered": 262,
+          "count": 277,
+          "percent": 94.58
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundComputeProcessing.cs": {
+          "covered": 196,
+          "count": 209,
+          "percent": 93.78
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundCudaPatchMatcher.cs": {
+          "covered": 40,
+          "count": 223,
+          "percent": 17.94
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundFeatureEligibility.cs": {
+          "covered": 88,
+          "count": 91,
+          "percent": 96.7
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundGlobalCorrectionPolicy.cs": {
+          "covered": 31,
+          "count": 31,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundHypothesisTracker.cs": {
+          "covered": 1586,
+          "count": 1670,
+          "percent": 94.97
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundLabelDataset.cs": {
+          "covered": 370,
+          "count": 428,
+          "percent": 86.45
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundLabelEvaluator.cs": {
+          "covered": 215,
+          "count": 250,
+          "percent": 86.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundLineDetector.cs": {
+          "covered": 730,
+          "count": 762,
+          "percent": 95.8
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundLinePresence.cs": {
+          "covered": 159,
+          "count": 160,
+          "percent": 99.38
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundPatchConsensus.cs": {
+          "covered": 31,
+          "count": 34,
+          "percent": 91.18
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundPlacementRecovery.cs": {
+          "covered": 118,
+          "count": 120,
+          "percent": 98.33
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundPoseRefinementSearch.cs": {
+          "covered": 32,
+          "count": 32,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundSemanticAtlas.cs": {
+          "covered": 84,
+          "count": 87,
+          "percent": 96.55
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundSubpixelRegistration.cs": {
+          "covered": 119,
+          "count": 120,
+          "percent": 99.17
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundTruthAtlasMosaic.cs": {
+          "covered": 522,
+          "count": 537,
+          "percent": 97.21
+        },
+        "windows/src/HollowKnightVision.Windows.Core/GroundTruthLabeling.cs": {
+          "covered": 352,
+          "count": 490,
+          "percent": 71.84
+        },
+        "windows/src/HollowKnightVision.Windows.Core/HackerAtlas.cs": {
+          "covered": 190,
+          "count": 665,
+          "percent": 28.57
+        },
+        "windows/src/HollowKnightVision.Windows.Core/HudAtlasMask.cs": {
+          "covered": 10,
+          "count": 10,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/HudStencil.cs": {
+          "covered": 20,
+          "count": 197,
+          "percent": 10.15
+        },
+        "windows/src/HollowKnightVision.Windows.Core/ImageStencil.cs": {
+          "covered": 149,
+          "count": 151,
+          "percent": 98.68
+        },
+        "windows/src/HollowKnightVision.Windows.Core/InputAcknowledgementTracker.cs": {
+          "covered": 61,
+          "count": 68,
+          "percent": 89.71
+        },
+        "windows/src/HollowKnightVision.Windows.Core/InputBridgeState.cs": {
+          "covered": 39,
+          "count": 50,
+          "percent": 78.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/InputPathPlayback.cs": {
+          "covered": 4,
+          "count": 21,
+          "percent": 19.05
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelCaptureSession.cs": {
+          "covered": 22,
+          "count": 23,
+          "percent": 95.65
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingContextTransition.cs": {
+          "covered": 16,
+          "count": 16,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingContracts.cs": {
+          "covered": 94,
+          "count": 96,
+          "percent": 97.92
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingDatasetExporter.cs": {
+          "covered": 266,
+          "count": 271,
+          "percent": 98.15
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingExampleContextInference.cs": {
+          "covered": 26,
+          "count": 27,
+          "percent": 96.3
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingExampleStore.cs": {
+          "covered": 266,
+          "count": 277,
+          "percent": 96.03
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingFrameOpeningPolicy.cs": {
+          "covered": 38,
+          "count": 38,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingModelLifecycle.cs": {
+          "covered": 19,
+          "count": 20,
+          "percent": 95.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingModelReviewStore.cs": {
+          "covered": 82,
+          "count": 83,
+          "percent": 98.8
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingModelSummarySession.cs": {
+          "covered": 40,
+          "count": 41,
+          "percent": 97.56
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingModelVersionStore.cs": {
+          "covered": 151,
+          "count": 155,
+          "percent": 97.42
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingObjectReferences.cs": {
+          "covered": 64,
+          "count": 64,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingReviewAnalysis.cs": {
+          "covered": 59,
+          "count": 59,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingScreenshotReview.cs": {
+          "covered": 60,
+          "count": 61,
+          "percent": 98.36
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingSelectionPreferences.cs": {
+          "covered": 35,
+          "count": 35,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingTrainingPresentation.cs": {
+          "covered": 82,
+          "count": 87,
+          "percent": 94.25
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LabelingVisualIdentity.cs": {
+          "covered": 18,
+          "count": 18,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LatestFramePump.cs": {
+          "covered": 31,
+          "count": 31,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LatestFrameSlot.cs": {
+          "covered": 13,
+          "count": 16,
+          "percent": 81.25
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveAtlasPresentationPipeline.cs": {
+          "covered": 265,
+          "count": 345,
+          "percent": 76.81
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveAtlasTransitionMaskPolicy.cs": {
+          "covered": 19,
+          "count": 19,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveCaptureRestartPolicy.cs": {
+          "covered": 1,
+          "count": 1,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveGameStatus.cs": {
+          "covered": 57,
+          "count": 58,
+          "percent": 98.28
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveLabelSetScorer.cs": {
+          "covered": 48,
+          "count": 48,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveMenuStencilWorker.cs": {
+          "covered": 60,
+          "count": 62,
+          "percent": 96.77
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveObjectDetection.cs": {
+          "covered": 65,
+          "count": 65,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveObjectDetectionPipeline.cs": {
+          "covered": 19,
+          "count": 19,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveObjectInferenceWorker.cs": {
+          "covered": 93,
+          "count": 94,
+          "percent": 98.94
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveObjectPixelRefiner.cs": {
+          "covered": 37,
+          "count": 37,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveTiledAtlas.cs": {
+          "covered": 1371,
+          "count": 1449,
+          "percent": 94.62
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveTrackingTimingPolicies.cs": {
+          "covered": 79,
+          "count": 86,
+          "percent": 91.86
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveWorldModel.cs": {
+          "covered": 317,
+          "count": 344,
+          "percent": 92.15
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveWorldReplayEvaluator.cs": {
+          "covered": 292,
+          "count": 347,
+          "percent": 84.15
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveWorldSessionStore.cs": {
+          "covered": 521,
+          "count": 802,
+          "percent": 64.96
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LiveWorldTracker.cs": {
+          "covered": 581,
+          "count": 632,
+          "percent": 91.93
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LowResolutionMotion.cs": {
+          "covered": 277,
+          "count": 279,
+          "percent": 99.28
+        },
+        "windows/src/HollowKnightVision.Windows.Core/LowResolutionTraceEvaluator.cs": {
+          "covered": 800,
+          "count": 951,
+          "percent": 84.12
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MenuSelectorCalibrationTracker.cs": {
+          "covered": 97,
+          "count": 99,
+          "percent": 97.98
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MenuStencilCalibration.cs": {
+          "covered": 118,
+          "count": 119,
+          "percent": 99.16
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MenuStencilCatalog.cs": {
+          "covered": 31,
+          "count": 31,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MenuStencilCatalogBuilder.cs": {
+          "covered": 177,
+          "count": 179,
+          "percent": 98.88
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MenuStencilCatalogCorrections.cs": {
+          "covered": 74,
+          "count": 78,
+          "percent": 94.87
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MenuStencilCatalogSelectors.cs": {
+          "covered": 45,
+          "count": 45,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MenuStencilConsensus.cs": {
+          "covered": 130,
+          "count": 130,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MenuStencilLiveCaptureStore.cs": {
+          "covered": 42,
+          "count": 43,
+          "percent": 97.67
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MenuStencilTracker.Acquisition.cs": {
+          "covered": 66,
+          "count": 66,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MenuStencilTracker.ProfileActions.cs": {
+          "covered": 10,
+          "count": 10,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MenuStencilTracker.Selection.cs": {
+          "covered": 96,
+          "count": 96,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MenuStencilTracker.Validation.cs": {
+          "covered": 83,
+          "count": 89,
+          "percent": 93.26
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MenuStencilTracker.cs": {
+          "covered": 106,
+          "count": 111,
+          "percent": 95.5
+        },
+        "windows/src/HollowKnightVision.Windows.Core/MovingObjectMask.cs": {
+          "covered": 21,
+          "count": 21,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/OnnxObjectDetector.cs": {
+          "covered": 161,
+          "count": 169,
+          "percent": 95.27
+        },
+        "windows/src/HollowKnightVision.Windows.Core/OnnxObjectDetectorSet.cs": {
+          "covered": 13,
+          "count": 14,
+          "percent": 92.86
+        },
+        "windows/src/HollowKnightVision.Windows.Core/PersistentFeatureTracker.cs": {
+          "covered": 639,
+          "count": 700,
+          "percent": 91.29
+        },
+        "windows/src/HollowKnightVision.Windows.Core/PlaybackDivergenceMonitor.cs": {
+          "covered": 253,
+          "count": 288,
+          "percent": 87.85
+        },
+        "windows/src/HollowKnightVision.Windows.Core/PngWriter.cs": {
+          "covered": 59,
+          "count": 62,
+          "percent": 95.16
+        },
+        "windows/src/HollowKnightVision.Windows.Core/PoseCorrectionInterpolation.cs": {
+          "covered": 35,
+          "count": 36,
+          "percent": 97.22
+        },
+        "windows/src/HollowKnightVision.Windows.Core/ReceiverClient.cs": {
+          "covered": 82,
+          "count": 104,
+          "percent": 78.85
+        },
+        "windows/src/HollowKnightVision.Windows.Core/ReceiverPauseController.cs": {
+          "covered": 30,
+          "count": 30,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/ReceiverProtocol.cs": {
+          "covered": 292,
+          "count": 304,
+          "percent": 96.05
+        },
+        "windows/src/HollowKnightVision.Windows.Core/RecentCapturedFrameBuffer.cs": {
+          "covered": 23,
+          "count": 24,
+          "percent": 95.83
+        },
+        "windows/src/HollowKnightVision.Windows.Core/RecordedInputPath.cs": {
+          "covered": 437,
+          "count": 473,
+          "percent": 92.39
+        },
+        "windows/src/HollowKnightVision.Windows.Core/RegistrationFrameMask.cs": {
+          "covered": 34,
+          "count": 34,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/RenderedFrameMarker.cs": {
+          "covered": 43,
+          "count": 53,
+          "percent": 81.13
+        },
+        "windows/src/HollowKnightVision.Windows.Core/ReplayReadiness.cs": {
+          "covered": 0,
+          "count": 21,
+          "percent": 0.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/SceneRegionDetector.Particles.cs": {
+          "covered": 92,
+          "count": 92,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/SceneRegionDetector.cs": {
+          "covered": 160,
+          "count": 160,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/SceneRegions.cs": {
+          "covered": 82,
+          "count": 82,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/SceneSessionStore.cs": {
+          "covered": 291,
+          "count": 337,
+          "percent": 86.35
+        },
+        "windows/src/HollowKnightVision.Windows.Core/StencilLabelSelectionPolicy.cs": {
+          "covered": 19,
+          "count": 19,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/TrackingStepReplay.cs": {
+          "covered": 136,
+          "count": 261,
+          "percent": 52.11
+        },
+        "windows/src/HollowKnightVision.Windows.Core/TrainingRunWorkspace.cs": {
+          "covered": 0,
+          "count": 26,
+          "percent": 0.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/TransitionMotionBridge.cs": {
+          "covered": 110,
+          "count": 111,
+          "percent": 99.1
+        },
+        "windows/src/HollowKnightVision.Windows.Core/TranslationPoseGraph.cs": {
+          "covered": 225,
+          "count": 243,
+          "percent": 92.59
+        },
+        "windows/src/HollowKnightVision.Windows.Core/UserObjectCatalog.cs": {
+          "covered": 63,
+          "count": 67,
+          "percent": 94.03
+        },
+        "windows/src/HollowKnightVision.Windows.Core/VisualGameplayTracker.cs": {
+          "covered": 137,
+          "count": 142,
+          "percent": 96.48
+        },
+        "windows/src/HollowKnightVision.Windows.Core/VisualRoomTransitionTracker.cs": {
+          "covered": 1494,
+          "count": 1600,
+          "percent": 93.38
+        },
+        "windows/src/HollowKnightVision.Windows.Core/VisualRouteReplay.cs": {
+          "covered": 180,
+          "count": 198,
+          "percent": 90.91
+        },
+        "windows/src/HollowKnightVision.Windows.Core/VisualRouteWorldBuilder.cs": {
+          "covered": 117,
+          "count": 128,
+          "percent": 91.41
+        },
+        "windows/src/HollowKnightVision.Windows.Core/WindowsTrainingProcess.cs": {
+          "covered": 0,
+          "count": 45,
+          "percent": 0.0
+        },
+        "windows/src/HollowKnightVision.Windows.Core/WorldBasisController.cs": {
+          "covered": 101,
+          "count": 107,
+          "percent": 94.39
+        }
+      }
+    },
+    "windows_app": {
+      "unique_executable_line_coverage": {
+        "covered": 1163,
+        "count": 1777,
+        "percent": 65.45
+      },
+      "changed_executable_line_coverage": {
+        "covered": 101,
+        "count": 269,
+        "percent": 37.55
+      },
+      "unmeasured_changed_files": [
+        "windows/src/HollowKnightVision.Windows.App/LabelSelectorShortcut.cs",
+        "windows/src/HollowKnightVision.Windows.App/MainWindow.LabelPause.cs",
+        "windows/src/HollowKnightVision.Windows.App/MainWindow.Replay.cs",
+        "windows/src/HollowKnightVision.Windows.App/MainWindow.ReplayFrameAudit.cs",
+        "windows/src/HollowKnightVision.Windows.App/MainWindow.ScreenshotReview.cs",
+        "windows/src/HollowKnightVision.Windows.App/MainWindow.Stencils.cs",
+        "windows/src/HollowKnightVision.Windows.App/MainWindow.TrackingSteps.cs",
+        "windows/src/HollowKnightVision.Windows.App/MainWindow.WorldIntegration.cs",
+        "windows/src/HollowKnightVision.Windows.App/MainWindow.xaml.cs",
+        "windows/src/HollowKnightVision.Windows.App/MenuStencilParticles.cs",
+        "windows/src/HollowKnightVision.Windows.App/ReplayFrameAudit.cs",
+        "windows/src/HollowKnightVision.Windows.App/SerialWorldWorker.cs",
+        "windows/src/HollowKnightVision.Windows.App/WindowsGameCapture.cs",
+        "windows/src/HollowKnightVision.Windows.App/WindowsLiveWorldPipeline.cs"
+      ],
+      "files": {
+        "windows/src/HollowKnightVision.Windows.App/AtlasPersistenceBarrier.cs": {
+          "covered": 6,
+          "count": 6,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.App/GameRuntimeModeValue.cs": {
+          "covered": 4,
+          "count": 4,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.App/GameplayViewportPolicy.cs": {
+          "covered": 257,
+          "count": 298,
+          "percent": 86.24
+        },
+        "windows/src/HollowKnightVision.Windows.App/LabelBoxBounds.cs": {
+          "covered": 4,
+          "count": 4,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.App/LabelingViewportTransform.cs": {
+          "covered": 14,
+          "count": 14,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.App/NormalGameInputPolicy.cs": {
+          "covered": 35,
+          "count": 45,
+          "percent": 77.78
+        },
+        "windows/src/HollowKnightVision.Windows.App/StencilGuidanceText.cs": {
+          "covered": 20,
+          "count": 20,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.App/StencilInitialization.cs": {
+          "covered": 172,
+          "count": 191,
+          "percent": 90.05
+        },
+        "windows/src/HollowKnightVision.Windows.App/StencilPreviewPresentation.cs": {
+          "covered": 14,
+          "count": 21,
+          "percent": 66.67
+        },
+        "windows/src/HollowKnightVision.Windows.App/VisionResetController.cs": {
+          "covered": 356,
+          "count": 569,
+          "percent": 62.57
+        },
+        "windows/src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.Pause.cs": {
+          "covered": 30,
+          "count": 33,
+          "percent": 90.91
+        },
+        "windows/src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.Replay.cs": {
+          "covered": 13,
+          "count": 98,
+          "percent": 13.27
+        },
+        "windows/src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.Steps.cs": {
+          "covered": 1,
+          "count": 72,
+          "percent": 1.39
+        },
+        "windows/src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.cs": {
+          "covered": 237,
+          "count": 402,
+          "percent": 58.96
+        }
+      }
+    },
+    "windows_host": {
+      "unique_executable_line_coverage": {
+        "covered": 118,
+        "count": 2273,
+        "percent": 5.19
+      },
+      "changed_executable_line_coverage": {
+        "covered": 0,
+        "count": 19,
+        "percent": 0.0
+      },
+      "unmeasured_changed_files": [],
+      "files": {
+        "windows/src/HollowKnightVision.Windows.Host/AtlasRecordingRunner.cs": {
+          "covered": 0,
+          "count": 87,
+          "percent": 0.0
+        },
+        "windows/src/HollowKnightVision.Windows.Host/AutoNavigationRunner.cs": {
+          "covered": 0,
+          "count": 536,
+          "percent": 0.0
+        },
+        "windows/src/HollowKnightVision.Windows.Host/BmpWriter.cs": {
+          "covered": 28,
+          "count": 28,
+          "percent": 100.0
+        },
+        "windows/src/HollowKnightVision.Windows.Host/GdiWindowCapture.cs": {
+          "covered": 0,
+          "count": 63,
+          "percent": 0.0
+        },
+        "windows/src/HollowKnightVision.Windows.Host/HollowKnightGameLauncher.cs": {
+          "covered": 40,
+          "count": 108,
+          "percent": 37.04
+        },
+        "windows/src/HollowKnightVision.Windows.Host/HollowKnightWindowLocator.cs": {
+          "covered": 0,
+          "count": 139,
+          "percent": 0.0
+        },
+        "windows/src/HollowKnightVision.Windows.Host/InputPathPlaybackRunner.cs": {
+          "covered": 0,
+          "count": 146,
+          "percent": 0.0
+        },
+        "windows/src/HollowKnightVision.Windows.Host/LabelingCommandRunner.cs": {
+          "covered": 0,
+          "count": 134,
+          "percent": 0.0
+        },
+        "windows/src/HollowKnightVision.Windows.Host/Program.cs": {
+          "covered": 50,
+          "count": 776,
+          "percent": 6.44
+        },
+        "windows/src/HollowKnightVision.Windows.Host/ReceiverConnection.cs": {
+          "covered": 0,
+          "count": 28,
+          "percent": 0.0
+        },
+        "windows/src/HollowKnightVision.Windows.Host/VisualMotionRunner.cs": {
+          "covered": 0,
+          "count": 53,
+          "percent": 0.0
+        },
+        "windows/src/HollowKnightVision.Windows.Host/VisualRouteRunner.cs": {
+          "covered": 0,
+          "count": 169,
+          "percent": 0.0
+        },
+        "windows/src/HollowKnightVision.Windows.Host/WindowsDpiAwareness.cs": {
+          "covered": 0,
+          "count": 6,
+          "percent": 0.0
+        }
+      }
+    },
+    "shared_receiver": {
+      "unique_executable_line_coverage": {
+        "covered": 521,
+        "count": 830,
+        "percent": 62.77
+      },
+      "changed_executable_line_coverage": {
+        "covered": 64,
+        "count": 84,
+        "percent": 76.19
+      },
+      "unmeasured_changed_files": [
+        "macos/hollow-knight-input-receiver/src/Mod.ControlledFrames.cs",
+        "macos/hollow-knight-input-receiver/src/Mod.ReplayDiagnostics.cs",
+        "macos/hollow-knight-input-receiver/src/Mod.SceneMasks.cs",
+        "macos/hollow-knight-input-receiver/src/Mod.cs",
+        "macos/hollow-knight-input-receiver/src/ReceiverFrameTiming.cs"
+      ],
+      "files": {
+        "macos/hollow-knight-input-receiver/src/ControlledFrame.cs": {
+          "covered": 28,
+          "count": 32,
+          "percent": 87.5
+        },
+        "macos/hollow-knight-input-receiver/src/LocalInputServer.cs": {
+          "covered": 108,
+          "count": 323,
+          "percent": 33.44
+        },
+        "macos/hollow-knight-input-receiver/src/Protocol.cs": {
+          "covered": 358,
+          "count": 418,
+          "percent": 85.65
+        },
+        "macos/hollow-knight-input-receiver/src/SceneMaskCheckpoint.cs": {
+          "covered": 27,
+          "count": 27,
+          "percent": 100.0
+        },
+        "macos/hollow-knight-input-receiver/src/VisionInputDevice.cs": {
+          "covered": 0,
+          "count": 30,
+          "percent": 0.0
+        }
+      }
+    }
+  },
+  "changed_files": {
+    "macos/Sources/HollowKnightVision/BoundedBackgroundSearch.swift": {
+      "added_or_modified_physical_lines": 8,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 4,
+        "count": 4,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/Sources/HollowKnightVision/GameControlForwarder.swift": {
+      "added_or_modified_physical_lines": 111,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 94,
+        "percent": 0.0
+      },
+      "uncovered_changed_executable_lines": [
+        1438,
+        1439,
+        1440,
+        1441,
+        1442,
+        1443,
+        1444,
+        1445,
+        1446,
+        1447,
+        1448,
+        1449,
+        1450,
+        1452,
+        1453,
+        1454,
+        1455,
+        1456,
+        1457,
+        1458,
+        1464,
+        1465,
+        1466,
+        1467,
+        1468,
+        1469,
+        1470,
+        1471,
+        1472,
+        1473,
+        1474,
+        1475,
+        1476,
+        1477,
+        1478,
+        1479,
+        1480,
+        1482,
+        1483,
+        1484,
+        1485,
+        1486,
+        1487,
+        1488,
+        1489,
+        1490,
+        1491,
+        1498,
+        1499,
+        1500,
+        1501,
+        1502,
+        1503,
+        1504,
+        1505,
+        1506,
+        1507,
+        1508,
+        1509,
+        1510,
+        1511,
+        1512,
+        1513,
+        1514,
+        1520,
+        1521,
+        1522,
+        1523,
+        1524,
+        1525,
+        1526,
+        1527,
+        1528,
+        1529,
+        1530,
+        1531,
+        1532,
+        1533,
+        1534,
+        1535,
+        1536,
+        1537,
+        1538,
+        1539,
+        1541,
+        1542,
+        1543,
+        1544,
+        1545,
+        1546,
+        1547,
+        1548,
+        1556,
+        1557
+      ]
+    },
+    "macos/Sources/HollowKnightVision/GroundCameraSolver.swift": {
+      "added_or_modified_physical_lines": 12,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 12,
+        "count": 12,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/Sources/HollowKnightVision/GroundDescriptorMatcher.swift": {
+      "added_or_modified_physical_lines": 67,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 51,
+        "count": 51,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/Sources/HollowKnightVision/GroundHypothesisTracker.swift": {
+      "added_or_modified_physical_lines": 32,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 32,
+        "count": 32,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/Sources/HollowKnightVision/HollowKnightLaunchPolicy.swift": {
+      "added_or_modified_physical_lines": 13,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 7,
+        "count": 7,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/Sources/HollowKnightVision/InputBridge.swift": {
+      "added_or_modified_physical_lines": 22,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 1,
+        "count": 1,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/Sources/HollowKnightVision/LabelingContracts.swift": {
+      "added_or_modified_physical_lines": 5,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 5,
+        "count": 5,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/Sources/HollowKnightVision/LabelingExamplesView.swift": {
+      "added_or_modified_physical_lines": 5,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 5,
+        "count": 5,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/Sources/HollowKnightVision/LabelingModelWorkspaceView.swift": {
+      "added_or_modified_physical_lines": 3,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 3,
+        "percent": 0.0
+      },
+      "uncovered_changed_executable_lines": [
+        56,
+        1051,
+        1075
+      ]
+    },
+    "macos/Sources/HollowKnightVision/LabelingSelectionPreferences.swift": {
+      "added_or_modified_physical_lines": 14,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 14,
+        "count": 14,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/Sources/HollowKnightVision/LabelingSharedModelPolicy.swift": {
+      "added_or_modified_physical_lines": 4,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 3,
+        "count": 3,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/Sources/HollowKnightVision/LiveDashboardView.swift": {
+      "added_or_modified_physical_lines": 39,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 1,
+        "count": 38,
+        "percent": 2.63
+      },
+      "uncovered_changed_executable_lines": [
+        141,
+        142,
+        428,
+        429,
+        466,
+        714,
+        715,
+        1272,
+        1273,
+        1274,
+        1275,
+        1519,
+        1520,
+        1521,
+        1522,
+        1523,
+        1524,
+        1525,
+        1740,
+        1741,
+        1742,
+        1743,
+        1744,
+        1746,
+        1748,
+        1749,
+        1750,
+        1751,
+        1812,
+        1813,
+        1814,
+        1815,
+        1816,
+        1817,
+        1818,
+        1819,
+        1820
+      ]
+    },
+    "macos/Sources/HollowKnightVision/MenuStencil.swift": {
+      "added_or_modified_physical_lines": 48,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 42,
+        "count": 42,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/Sources/HollowKnightVision/StencilInitialization.swift": {
+      "added_or_modified_physical_lines": 60,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 48,
+        "count": 49,
+        "percent": 97.96
+      },
+      "uncovered_changed_executable_lines": [
+        212
+      ]
+    },
+    "macos/Sources/HollowKnightVision/StencilWorkspaceView.swift": {
+      "added_or_modified_physical_lines": 7,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 7,
+        "count": 7,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/hollow-knight-input-receiver/src/ControlledFrame.cs": {
+      "added_or_modified_physical_lines": 69,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 28,
+        "count": 32,
+        "percent": 87.5
+      },
+      "uncovered_changed_executable_lines": [
+        43,
+        47,
+        48,
+        49
+      ]
+    },
+    "macos/hollow-knight-input-receiver/src/LocalInputServer.cs": {
+      "added_or_modified_physical_lines": 24,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 16,
+        "percent": 0.0
+      },
+      "uncovered_changed_executable_lines": [
+        291,
+        345,
+        346,
+        349,
+        350,
+        351,
+        352,
+        353,
+        509,
+        511,
+        512,
+        513,
+        514,
+        515,
+        516,
+        597
+      ]
+    },
+    "macos/hollow-knight-input-receiver/src/Mod.ControlledFrames.cs": {
+      "added_or_modified_physical_lines": 89,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/hollow-knight-input-receiver/src/Mod.ReplayDiagnostics.cs": {
+      "added_or_modified_physical_lines": 90,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/hollow-knight-input-receiver/src/Mod.SceneMasks.cs": {
+      "added_or_modified_physical_lines": 107,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/hollow-knight-input-receiver/src/Mod.cs": {
+      "added_or_modified_physical_lines": 52,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/hollow-knight-input-receiver/src/Protocol.cs": {
+      "added_or_modified_physical_lines": 22,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 9,
+        "count": 9,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/hollow-knight-input-receiver/src/ReceiverFrameTiming.cs": {
+      "added_or_modified_physical_lines": 65,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "macos/hollow-knight-input-receiver/src/SceneMaskCheckpoint.cs": {
+      "added_or_modified_physical_lines": 46,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 27,
+        "count": 27,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/AtlasPersistenceBarrier.cs": {
+      "added_or_modified_physical_lines": 23,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 6,
+        "count": 6,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/LabelSelectorShortcut.cs": {
+      "added_or_modified_physical_lines": 15,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/MainWindow.LabelPause.cs": {
+      "added_or_modified_physical_lines": 30,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/MainWindow.Replay.cs": {
+      "added_or_modified_physical_lines": 80,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/MainWindow.ReplayFrameAudit.cs": {
+      "added_or_modified_physical_lines": 64,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/MainWindow.ScreenshotReview.cs": {
+      "added_or_modified_physical_lines": 4,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/MainWindow.Stencils.cs": {
+      "added_or_modified_physical_lines": 1,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/MainWindow.TrackingSteps.cs": {
+      "added_or_modified_physical_lines": 352,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/MainWindow.WorldIntegration.cs": {
+      "added_or_modified_physical_lines": 49,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/MainWindow.xaml.cs": {
+      "added_or_modified_physical_lines": 334,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/MenuStencilParticles.cs": {
+      "added_or_modified_physical_lines": 82,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/ReplayFrameAudit.cs": {
+      "added_or_modified_physical_lines": 32,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/SerialWorldWorker.cs": {
+      "added_or_modified_physical_lines": 53,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/StencilGuidanceText.cs": {
+      "added_or_modified_physical_lines": 16,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 13,
+        "count": 13,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/StencilInitialization.cs": {
+      "added_or_modified_physical_lines": 53,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 32,
+        "count": 32,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/WindowsGameCapture.cs": {
+      "added_or_modified_physical_lines": 283,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.Pause.cs": {
+      "added_or_modified_physical_lines": 6,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 2,
+        "count": 2,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.Replay.cs": {
+      "added_or_modified_physical_lines": 143,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 13,
+        "count": 98,
+        "percent": 13.27
+      },
+      "uncovered_changed_executable_lines": [
+        12,
+        28,
+        40,
+        41,
+        44,
+        45,
+        46,
+        47,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        110,
+        111,
+        112,
+        117,
+        118,
+        120,
+        121,
+        122,
+        123,
+        124,
+        125,
+        126,
+        127,
+        130,
+        135,
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.Steps.cs": {
+      "added_or_modified_physical_lines": 123,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 1,
+        "count": 72,
+        "percent": 1.39
+      },
+      "uncovered_changed_executable_lines": [
+        15,
+        16,
+        17,
+        18,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        30,
+        31,
+        36,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        46,
+        47,
+        49,
+        50,
+        51,
+        52,
+        53,
+        55,
+        62,
+        63,
+        65,
+        66,
+        67,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        88,
+        89,
+        91,
+        92,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        106,
+        108,
+        109,
+        110,
+        111,
+        114,
+        119,
+        120,
+        121,
+        122
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.App/WindowsGameControlForwarder.cs": {
+      "added_or_modified_physical_lines": 62,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 34,
+        "count": 46,
+        "percent": 73.91
+      },
+      "uncovered_changed_executable_lines": [
+        126,
+        127,
+        153,
+        154,
+        155,
+        156,
+        303,
+        551,
+        552,
+        553,
+        554,
+        555
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.App/WindowsLiveWorldPipeline.cs": {
+      "added_or_modified_physical_lines": 4,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/BoundedBackgroundSearch.cs": {
+      "added_or_modified_physical_lines": 32,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 11,
+        "count": 11,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/ControlledFrameReplay.cs": {
+      "added_or_modified_physical_lines": 58,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 33,
+        "count": 39,
+        "percent": 84.62
+      },
+      "uncovered_changed_executable_lines": [
+        12,
+        13,
+        14,
+        15,
+        16,
+        18
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/CpuBgraNormalizer.cs": {
+      "added_or_modified_physical_lines": 38,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 20,
+        "count": 20,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/GroundCameraSolver.Matching.cs": {
+      "added_or_modified_physical_lines": 147,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 111,
+        "count": 111,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/GroundCameraSolver.Texture.cs": {
+      "added_or_modified_physical_lines": 123,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 62,
+        "count": 70,
+        "percent": 88.57
+      },
+      "uncovered_changed_executable_lines": [
+        113,
+        114,
+        115,
+        116,
+        118,
+        119,
+        121,
+        122
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/GroundCameraSolver.Verification.cs": {
+      "added_or_modified_physical_lines": 32,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 20,
+        "count": 21,
+        "percent": 95.24
+      },
+      "uncovered_changed_executable_lines": [
+        31
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/GroundCameraSolver.cs": {
+      "added_or_modified_physical_lines": 210,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 119,
+        "count": 133,
+        "percent": 89.47
+      },
+      "uncovered_changed_executable_lines": [
+        41,
+        42,
+        48,
+        49,
+        89,
+        90,
+        91,
+        92,
+        99,
+        100,
+        106,
+        111,
+        146,
+        371
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/GroundComputeProcessing.cs": {
+      "added_or_modified_physical_lines": 33,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 10,
+        "count": 12,
+        "percent": 83.33
+      },
+      "uncovered_changed_executable_lines": [
+        94,
+        95
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/GroundCudaPatchMatcher.cs": {
+      "added_or_modified_physical_lines": 194,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 9,
+        "count": 132,
+        "percent": 6.82
+      },
+      "uncovered_changed_executable_lines": [
+        61,
+        62,
+        63,
+        76,
+        77,
+        78,
+        79,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        114,
+        115,
+        121,
+        124,
+        125,
+        127,
+        128,
+        129,
+        130,
+        134,
+        135,
+        136,
+        137,
+        139,
+        140,
+        141,
+        142,
+        144,
+        146,
+        147,
+        149,
+        150,
+        151,
+        152,
+        160,
+        161,
+        162,
+        163,
+        165,
+        166,
+        168,
+        169,
+        170,
+        171,
+        172,
+        173,
+        174,
+        177,
+        179,
+        180,
+        185,
+        186,
+        187,
+        188,
+        208,
+        209,
+        215,
+        216,
+        217,
+        218,
+        219,
+        239,
+        240,
+        241,
+        243,
+        245,
+        246,
+        251,
+        252,
+        253,
+        254,
+        256,
+        258,
+        259,
+        260,
+        271,
+        272,
+        273,
+        274,
+        275,
+        276,
+        277,
+        278,
+        282,
+        283,
+        284,
+        286,
+        287,
+        288,
+        289,
+        290,
+        291,
+        292,
+        294,
+        295,
+        300,
+        302,
+        306,
+        307,
+        308,
+        310,
+        311,
+        313,
+        314,
+        323,
+        324,
+        325,
+        329,
+        339,
+        342
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/GroundGlobalCorrectionPolicy.cs": {
+      "added_or_modified_physical_lines": 12,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 6,
+        "count": 6,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/GroundHypothesisTracker.cs": {
+      "added_or_modified_physical_lines": 477,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 265,
+        "count": 288,
+        "percent": 92.01
+      },
+      "uncovered_changed_executable_lines": [
+        512,
+        1085,
+        1087,
+        1088,
+        1089,
+        1263,
+        1280,
+        1283,
+        1296,
+        1297,
+        1298,
+        1299,
+        1300,
+        1301,
+        1302,
+        1303,
+        1352,
+        1726,
+        1727,
+        2539,
+        2540,
+        2541,
+        2542
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/GroundPatchConsensus.cs": {
+      "added_or_modified_physical_lines": 52,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 31,
+        "count": 34,
+        "percent": 91.18
+      },
+      "uncovered_changed_executable_lines": [
+        23,
+        24,
+        25
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/GroundPlacementRecovery.cs": {
+      "added_or_modified_physical_lines": 19,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 11,
+        "count": 11,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/GroundSubpixelRegistration.cs": {
+      "added_or_modified_physical_lines": 107,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 66,
+        "count": 67,
+        "percent": 98.51
+      },
+      "uncovered_changed_executable_lines": [
+        52
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/GroundTruthAtlasMosaic.cs": {
+      "added_or_modified_physical_lines": 86,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 66,
+        "count": 66,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/InputPathPlayback.cs": {
+      "added_or_modified_physical_lines": 47,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 4,
+        "count": 21,
+        "percent": 19.05
+      },
+      "uncovered_changed_executable_lines": [
+        21,
+        22,
+        23,
+        24,
+        25,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        34,
+        40,
+        41,
+        42,
+        43,
+        46
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/LabelingContracts.cs": {
+      "added_or_modified_physical_lines": 3,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 3,
+        "count": 3,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/LabelingDatasetExporter.cs": {
+      "added_or_modified_physical_lines": 4,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 2,
+        "count": 2,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/LabelingFrameOpeningPolicy.cs": {
+      "added_or_modified_physical_lines": 1,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 1,
+        "count": 1,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/LabelingObjectReferences.cs": {
+      "added_or_modified_physical_lines": 2,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 2,
+        "count": 2,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/LabelingScreenshotReview.cs": {
+      "added_or_modified_physical_lines": 4,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 3,
+        "count": 3,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/LabelingSelectionPreferences.cs": {
+      "added_or_modified_physical_lines": 1,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 1,
+        "count": 1,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/MenuStencilCatalogBuilder.cs": {
+      "added_or_modified_physical_lines": 2,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 2,
+        "count": 2,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/MenuStencilCatalogSelectors.cs": {
+      "added_or_modified_physical_lines": 15,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 8,
+        "count": 8,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/MenuStencilTracker.ProfileActions.cs": {
+      "added_or_modified_physical_lines": 28,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 10,
+        "count": 10,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/MenuStencilTracker.Selection.cs": {
+      "added_or_modified_physical_lines": 1,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 1,
+        "count": 1,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/MenuStencilTracker.Validation.cs": {
+      "added_or_modified_physical_lines": 6,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 6,
+        "count": 6,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/OnnxObjectDetector.cs": {
+      "added_or_modified_physical_lines": 5,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 2,
+        "count": 2,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/PlaybackDivergenceMonitor.cs": {
+      "added_or_modified_physical_lines": 14,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 7,
+        "count": 11,
+        "percent": 63.64
+      },
+      "uncovered_changed_executable_lines": [
+        230,
+        231,
+        232,
+        298
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/ReceiverClient.cs": {
+      "added_or_modified_physical_lines": 20,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 2,
+        "count": 12,
+        "percent": 16.67
+      },
+      "uncovered_changed_executable_lines": [
+        111,
+        112,
+        113,
+        114,
+        115,
+        120,
+        121,
+        122,
+        123,
+        124
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/ReceiverProtocol.cs": {
+      "added_or_modified_physical_lines": 10,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 7,
+        "count": 7,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/RecordedInputPath.cs": {
+      "added_or_modified_physical_lines": 6,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 5,
+        "count": 5,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/ReplayReadiness.cs": {
+      "added_or_modified_physical_lines": 35,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 21,
+        "percent": 0.0
+      },
+      "uncovered_changed_executable_lines": [
+        6,
+        7,
+        8,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/StencilLabelSelectionPolicy.cs": {
+      "added_or_modified_physical_lines": 7,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 7,
+        "count": 7,
+        "percent": 100.0
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/TestVisibility.cs": {
+      "added_or_modified_physical_lines": 1,
+      "measured": false,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 0,
+        "percent": null
+      },
+      "uncovered_changed_executable_lines": []
+    },
+    "windows/src/HollowKnightVision.Windows.Core/TrackingStepReplay.cs": {
+      "added_or_modified_physical_lines": 387,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 136,
+        "count": 261,
+        "percent": 52.11
+      },
+      "uncovered_changed_executable_lines": [
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        43,
+        49,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        96,
+        116,
+        133,
+        134,
+        139,
+        141,
+        142,
+        145,
+        146,
+        149,
+        151,
+        152,
+        153,
+        157,
+        158,
+        160,
+        161,
+        162,
+        164,
+        165,
+        166,
+        167,
+        168,
+        170,
+        171,
+        172,
+        176,
+        177,
+        178,
+        180,
+        181,
+        182,
+        183,
+        184,
+        185,
+        279,
+        280,
+        281,
+        282,
+        283,
+        284,
+        285,
+        287,
+        288,
+        290,
+        291,
+        293,
+        294,
+        295,
+        296,
+        297,
+        299,
+        300,
+        301,
+        302,
+        304,
+        305,
+        306,
+        307,
+        308,
+        309,
+        310,
+        312,
+        313,
+        314,
+        315,
+        320,
+        321,
+        322,
+        323,
+        324,
+        325,
+        326,
+        327,
+        328,
+        329,
+        330,
+        332,
+        333,
+        334,
+        336,
+        337,
+        338,
+        339,
+        340,
+        341
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Core/VisualGameplayTracker.cs": {
+      "added_or_modified_physical_lines": 64,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 48,
+        "count": 50,
+        "percent": 96.0
+      },
+      "uncovered_changed_executable_lines": [
+        31,
+        32
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Host/InputPathPlaybackRunner.cs": {
+      "added_or_modified_physical_lines": 10,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 9,
+        "percent": 0.0
+      },
+      "uncovered_changed_executable_lines": [
+        24,
+        61,
+        62,
+        101,
+        102,
+        103,
+        138,
+        139,
+        140
+      ]
+    },
+    "windows/src/HollowKnightVision.Windows.Host/Program.cs": {
+      "added_or_modified_physical_lines": 20,
+      "measured": true,
+      "changed_executable_lines": {
+        "covered": 0,
+        "count": 10,
+        "percent": 0.0
+      },
+      "uncovered_changed_executable_lines": [
+        131,
+        135,
+        136,
+        137,
+        139,
+        141,
+        145,
+        146,
+        147,
+        149
+      ]
+    }
+  },
+  "limitations": [
+    "Changed-line percentages only include instrumented executable lines. Unmeasured files are listed separately; they are not assumed covered.",
+    "Swift LLVM summary counts may include compiler-instantiated line entries; unique LCOV line counts are reported separately.",
+    "Windows measurements were collected on macOS, with five remaining Windows filesystem-semantics failures and 14 skipped checks. This is not native Windows UI/CUDA validation.",
+    "Unity runtime receiver hooks, Metal shader instructions, native GUI/input/capture wiring and the trainer are not fully covered by these harnesses."
+  ],
+  "tests": {
+    "macos_xctest_cases": 837,
+    "macos_xctest_passed": 827,
+    "macos_xctest_skipped": 10,
+    "macos_swift_testing_passed": 1,
+    "macos_failures": 0,
+    "macos_excluded_corpus_class_cases": 60,
+    "python_passed": 60,
+    "windows_registered_cases": 1019,
+    "windows_passed": 1000,
+    "windows_skipped": 14,
+    "windows_host_semantics_failures": 5
+  }
+}
