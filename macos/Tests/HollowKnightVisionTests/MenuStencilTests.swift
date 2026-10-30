@@ -298,7 +298,17 @@ final class MenuStencilTests: XCTestCase {
         ))
         XCTAssertTrue(result.isMatch)
         XCTAssertEqual(result.context, .clearSave)
-        XCTAssertEqual(result.selectedOption, "Yes")
+        let decorations = source.manifest.annotations.filter {
+            !$0.isHardNegative && $0.classIdentifier == LabelingClassIdentity.selectDecoration
+        }.sorted { $0.x < $1.x }
+        let left = try XCTUnwrap(decorations.first)
+        let right = try XCTUnwrap(decorations.last)
+        let selected = try XCTUnwrap(source.manifest.annotations.first {
+            !$0.isHardNegative && ["shared.yes", "shared.no"].contains($0.classIdentifier)
+                && $0.x + $0.width / 2 > left.x + left.width / 2
+                && $0.x + $0.width / 2 < right.x + right.width / 2
+        })
+        XCTAssertEqual(result.selectedOption, selected.classIdentifier == "shared.yes" ? "Yes" : "No")
         XCTAssertEqual(result.selectorSearchRegions.count, 4)
     }
 
@@ -622,6 +632,7 @@ final class MenuStencilTests: XCTestCase {
             }
         } ?? allExpectedContexts
         let captures = try MenuStencilLiveCaptureStore().load()
+        guard !captures.isEmpty else { throw XCTSkip("No live front-end language audit captures") }
         let requestedLanguages = ProcessInfo.processInfo.environment[
             "HKV_MENU_FRONT_END_LANGUAGES"
         ]?.split(separator: ",").map(String.init)
@@ -711,6 +722,7 @@ final class MenuStencilTests: XCTestCase {
             }
         } ?? allFrontEndContexts
         let captures = try MenuStencilLiveCaptureStore().load()
+        guard !captures.isEmpty else { throw XCTSkip("No live front-end language audit captures") }
         let requestedLanguages = ProcessInfo.processInfo.environment[
             "HKV_MENU_FRONT_END_LANGUAGES"
         ]?.split(separator: ",").map(String.init)
@@ -1415,6 +1427,9 @@ final class MenuStencilTests: XCTestCase {
         ]
         let store = LabelingExampleStore()
         let examples = try store.loadExamples()
+        guard expected.allSatisfy({ entry in examples.contains { $0.id == UUID(uuidString: entry.0) } }) else {
+            throw XCTSkip("Named Korean correction fixtures are unavailable")
+        }
         let catalog = try MenuStencilCatalog(
             examplesRootURL: store.rootURL,
             calibration: try XCTUnwrap(MenuStencilCalibration.loadDefault())
@@ -1453,6 +1468,11 @@ final class MenuStencilTests: XCTestCase {
 
     func testNewestKoreanCorrectionsPersistIntoCalibration() throws {
         let store = LabelingExampleStore()
+        let requiredIDs = ["66CCC048-781A-4D48-8D80-6D58A1CA9530", "F17C0BF8-9346-47B7-B0F2-CBCD9436E61F", "BB7C33FD-0000-41D3-A25F-525B663772D2"]
+        let availableIDs = Set(try store.loadExamples().map(\.id))
+        guard requiredIDs.allSatisfy({ UUID(uuidString: $0).map(availableIDs.contains) == true }) else {
+            throw XCTSkip("Named Korean correction fixtures are unavailable")
+        }
         let catalog = try MenuStencilCatalog(
             examplesRootURL: store.rootURL,
             calibration: try XCTUnwrap(MenuStencilCalibration.loadDefault())
@@ -1668,11 +1688,10 @@ final class MenuStencilTests: XCTestCase {
     }
 
     func testStableSelectorMatchPersistsProductCalibration() throws {
-        let source = try XCTUnwrap(try MenuStencilLiveCaptureStore().load().first {
+        guard let source = try MenuStencilLiveCaptureStore().load().first(where: {
             $0.capture.contextIdentifier == LabelingContext.mainTitle.storageIdentifier
-                && $0.capture.resolvedLanguageIdentifier
-                    == HollowKnightMenuLanguage.english.rawValue
-        })
+                && $0.capture.resolvedLanguageIdentifier == HollowKnightMenuLanguage.english.rawValue
+        }) else { throw XCTSkip("No English Main Title live calibration capture") }
         let catalog = try MenuStencilCatalog(
             examplesRootURL: LabelingExampleStore.defaultRootURL(),
             calibration: try bundledCalibration()
@@ -2135,45 +2154,18 @@ final class MenuStencilTests: XCTestCase {
     }
 
     func testIntermittentSelectorMatchesDoNotPersistCalibration() throws {
-        let sources = try MenuStencilLiveCaptureStore().load().filter {
-            $0.capture.contextIdentifier == LabelingContext.mainTitle.storageIdentifier
+        let catalog = Self.selectorRecalibrationCatalog()
+        let images = try [20, 32].map { y in
+            try XCTUnwrap(Self.selectorRecalibrationImage(
+                left: CGPoint(x: 12, y: y), right: CGPoint(x: 50, y: y)))
         }
-        var latestBySelection = [String: (
-            capture: MenuStencilLiveCapture,
-            imageURL: URL
-        )]()
-        for source in sources where
-            latestBySelection[source.capture.selectedIdentifier] == nil {
-            latestBySelection[source.capture.selectedIdentifier] = source
-        }
-        let alternating = Array(latestBySelection.values.prefix(2))
-        XCTAssertEqual(alternating.count, 2)
-        let catalog = try MenuStencilCatalog(
-            examplesRootURL: LabelingExampleStore.defaultRootURL(),
-            calibration: try bundledCalibration()
-        ).containingOnly(.mainTitle)
-        let images = try alternating.map { source in
-            try XCTUnwrap(ImageFileIO.load(source.imageURL))
-        }
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "hkv-menu-calibration-\(UUID().uuidString)", isDirectory: true
-        )
-        let outputURL = directory.appendingPathComponent("menu-stencil-positions.json")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let tracker = MenuStencilTracker(
-            catalog: catalog,
-            selectorCalibrationURL: outputURL
-        )
+        let outputURL = directory.appendingPathComponent("calibration.json")
+        let tracker = MenuStencilTracker(catalog: catalog, selectorCalibrationURL: outputURL)
         for index in 0..<20 {
-            let sourceIndex = index % 2
-            let result = try XCTUnwrap(tracker.observe(
-                images[sourceIndex],
-                timestamp: Double(index) * 0.25
-            ))
-            XCTAssertEqual(
-                result.selectedOption,
-                alternating[sourceIndex].capture.selectedName
-            )
+            let result = try XCTUnwrap(tracker.observe(images[index % 2], timestamp: Double(index) * 0.25))
+            XCTAssertEqual(result.selectedOption, index % 2 == 0 ? "Fixture Option" : nil)
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
     }
@@ -2257,6 +2249,7 @@ final class MenuStencilTests: XCTestCase {
                 latest[key] = source
             }
         }
+        guard !latest.isEmpty else { throw XCTSkip("No live menu transition captures") }
         var images = [String: CGImage]()
         for (key, source) in latest {
             images[key] = try XCTUnwrap(ImageFileIO.load(source.imageURL))
@@ -2320,9 +2313,9 @@ final class MenuStencilTests: XCTestCase {
     }
 
     func testFindingStateKeepsBestCandidateSearchBoxesVisible() throws {
-        let capture = try XCTUnwrap(try MenuStencilLiveCaptureStore().load().first {
+        guard let capture = try MenuStencilLiveCaptureStore().load().first(where: {
             $0.capture.contextIdentifier == LabelingContext.mainTitle.storageIdentifier
-        })
+        }) else { throw XCTSkip("No Main Title live calibration capture") }
         let fullCatalog = try MenuStencilCatalog(
             examplesRootURL: LabelingExampleStore.defaultRootURL()
         )
