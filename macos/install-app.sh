@@ -95,6 +95,16 @@ if [[ "$install_app" == "$canonical_app" ]]; then
   fi
 fi
 
+# Register workstation Python outside the bundle; later builds preserve it.
+if [[ "$install_app" == "$canonical_app" ]]; then
+  trainer_helper="$stage_app/Contents/Helpers/HollowKnightVisionTrainer"
+  if [[ -n "${HKV_TRAINER_PYTHON:-}" ]]; then
+    "$trainer_helper" --register-python "$HKV_TRAINER_PYTHON"
+  elif [[ -x "$script_dir/.training-venv/bin/python" ]]; then
+    "$trainer_helper" --register-python "$script_dir/.training-venv/bin/python" --if-unset
+  fi
+fi
+
 # A normal update must not leave an older process owning the Dock icon. SIGTERM
 # gives the app its ordinary termination path before the canonical bundle moves.
 if [[ "$install_app" == "$canonical_app" ]] \

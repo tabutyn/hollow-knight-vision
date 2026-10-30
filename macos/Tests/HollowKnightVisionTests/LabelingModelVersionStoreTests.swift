@@ -231,6 +231,47 @@ final class LabelingModelVersionStoreTests: XCTestCase {
         )
     }
 
+    func testCompactBaseRunIdentifierAdvancesRetainedTrainingLineage() throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hkv-model-retention-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        let modelsRoot = temporaryRoot.appendingPathComponent("models", isDirectory: true)
+        let runsRoot = temporaryRoot.appendingPathComponent("runs", isDirectory: true)
+        try FileManager.default.createDirectory(at: runsRoot, withIntermediateDirectories: true)
+        let base = try candidate(
+            classIdentifier: LabelingModelIdentity.sharedObjectModel,
+            completedAt: Date(timeIntervalSince1970: 100),
+            modelContents: "base-model",
+            checkpointContents: "base-checkpoint",
+            runsRoot: runsRoot,
+            classIdentifiers: ["title", "decoration"],
+            averagePrecisionByClass: ["title": 1, "decoration": 1]
+        )
+        let regressed = try candidate(
+            classIdentifier: LabelingModelIdentity.sharedObjectModel,
+            completedAt: Date(timeIntervalSince1970: 200),
+            modelContents: "regressed-model",
+            checkpointContents: "regressed-checkpoint",
+            runsRoot: runsRoot,
+            baseRunIdentifier: base.id.uuidString.replacingOccurrences(of: "-", with: "").lowercased(),
+            classIdentifiers: ["title", "decoration", "mana"],
+            averagePrecisionByClass: ["title": 1, "decoration": 1, "mana": 1]
+        )
+        let store = LabelingModelVersionStore(rootURL: modelsRoot)
+        try store.synchronizeCandidates([base, regressed])
+        try store.reconcileDevelopmentCandidates([base, regressed])
+
+        let checkpoint = try XCTUnwrap(store.trainingCheckpointURL(
+            for: LabelingModelIdentity.sharedObjectModel,
+            candidates: [base, regressed]
+        ))
+        XCTAssertEqual(try String(contentsOf: checkpoint), "regressed-checkpoint")
+        XCTAssertEqual(
+            try store.candidateVersion(for: regressed),
+            LabelingModelSemanticVersion(major: 0, minor: 2)
+        )
+    }
+
     func testDetectionRequiresActiveArtifactTrainedOnCurrentLabels() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -328,8 +328,8 @@ final class LabelingModelVersionStore {
                 $0.summary.baseRunIdentifier == nil
             }) else { continue }
             for candidate in checkpointCandidates where candidate.id != accepted.id {
-                guard candidate.summary.baseRunIdentifier?.lowercased()
-                        == accepted.id.uuidString.lowercased(),
+                guard candidate.summary.baseRunIdentifier.flatMap(TrainingRunIdentifier.parse)
+                        == accepted.id,
                       LabelingDevelopmentCandidatePolicy.preservesBase(
                         candidate: candidate,
                         base: accepted

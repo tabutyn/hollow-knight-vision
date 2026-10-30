@@ -226,3 +226,24 @@ Localization coverage and remaining native-language/Windows UI checks are tracke
 Existing partial references show **Click Stencil and Edit Labels** guidance. Each reference has **Edit Labels** and **Delete Screen Shot** actions, and label boxes show their localized class names without requiring captured icons. **L** selects Gameplay when gameplay is recognized; explicit Edit Labels still opens the selected stencil. The wider object selector sits above the editing controls to avoid overlap at small window sizes.
 
 Hacker is offered only for recognized gameplay with mod telemetry. Ops controls live in Settings and require recognized gameplay plus the player-ops capability. Clicking outside Settings closes it; arrow keys continue forwarding to the modded game. Dragging in Current camera mode switches to Free Fly while ordinary clicks retain game input.
+
+### Installed training runtime
+
+The installed app includes its trainer, requirements, and setup script. Run:
+
+```sh
+"/Applications/Hollow Knight Vision.app/Contents/Resources/setup-incremental-trainer.sh"
+```
+
+Setup requires Python 3.12 at `/opt/homebrew/bin/python3.12` and installs the
+training environment under `~/Library/Application Support/HollowKnightVision/
+training-v1/runtime/`. Its interpreter is registered in `training-v1/runtime-settings.json`,
+so Finder/Dock launches work without Git, the source checkout, or terminal variables.
+App updates preserve that registration. An existing source `.training-venv` is
+registered during installation if no registration exists. `HKV_TRAINER_PYTHON`
+overrides the registered interpreter; passing it to the installer updates the
+registration. Workstation paths are never embedded in the app package.
+
+Training review also accepts older compact Python/Windows run UUIDs and checkpoint
+lineage. New Mac runs and restore-point identifiers use canonical UUIDs. This
+metadata compatibility does not convert Windows ONNX models to Core ML.

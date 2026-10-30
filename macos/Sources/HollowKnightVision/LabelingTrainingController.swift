@@ -22,7 +22,7 @@ struct LabelingReviewMetrics: Codable, Equatable {
 }
 
 struct LabelingTrainingRunSummary: Decodable, Equatable {
-    let id: UUID
+    @TrainingRunIdentifier var id: UUID
     let datasetIdentifier: UUID
     let classIdentifier: String
     let completedAt: Date

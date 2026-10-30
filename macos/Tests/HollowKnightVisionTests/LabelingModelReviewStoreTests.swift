@@ -3,6 +3,52 @@ import XCTest
 @testable import HollowKnightVision
 
 final class LabelingModelReviewStoreTests: XCTestCase {
+    func testCompactRunRecoversPromotesAndRetainsCheckpointAfterSourceRemoval() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("hkv-compact-run-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runs = root.appendingPathComponent("runs")
+        try FileManager.default.createDirectory(at: runs, withIntermediateDirectories: true)
+        let id = UUID()
+        let run = try writeRun(id: id, datasetID: UUID(), completedAt: "2026-10-29T12:00:00Z",
+            predictionsFilename: nil, classIdentifier: LabelingModelIdentity.sharedObjectModel, runsRoot: runs)
+        let manifest = run.appendingPathComponent("training.json")
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any])
+        json["id"] = id.uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        json["checkpointFilename"] = "Detector.pt"
+        try JSONSerialization.data(withJSONObject: json).write(to: manifest)
+        try Data("model".utf8).write(to: run.appendingPathComponent("Detector.mlmodel"))
+        try Data("checkpoint".utf8).write(to: run.appendingPathComponent("Detector.pt"))
+        let reviews = LabelingModelReviewStore(runsRootURL: runs, datasetsRootURL: root.appendingPathComponent("datasets"))
+        let candidate = try XCTUnwrap(reviews.loadLatestCandidate())
+        XCTAssertEqual(candidate.id, id)
+        let versions = LabelingModelVersionStore(rootURL: root.appendingPathComponent("models"))
+        try versions.synchronizeCandidates([candidate])
+        let restored = try versions.promote(candidate)
+        XCTAssertEqual(restored.sourceRunIdentifier, id)
+        XCTAssertEqual(restored.version.displayName, "v1.0")
+        try FileManager.default.removeItem(at: run)
+        let checkpoint = try XCTUnwrap(versions.trainingCheckpointURL(for: LabelingModelIdentity.sharedObjectModel, candidates: []))
+        XCTAssertEqual(try String(contentsOf: checkpoint), "checkpoint")
+        let restoreJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf:
+            checkpoint.deletingLastPathComponent().appendingPathComponent("restore-point.json"))) as? [String: Any])
+        XCTAssertEqual((restoreJSON["sourceRunIdentifier"] as? String)?.lowercased(), id.uuidString.lowercased())
+    }
+
+    func testRunIdentifierAcceptsOnlyCanonicalOrCompactUUIDs() throws {
+        let decoder = JSONDecoder()
+        let id = UUID()
+        for valid in [id.uuidString, id.uuidString.lowercased(), id.uuidString.replacingOccurrences(of: "-", with: ""), id.uuidString.replacingOccurrences(of: "-", with: "").lowercased()] {
+            let decoded = try decoder.decode(TrainingRunIdentifier.self, from: JSONEncoder().encode(valid))
+            XCTAssertEqual(decoded.wrappedValue, id)
+        }
+        for invalid in ["", " ", "not-a-run-id", "../run", String(repeating: "x", count: 32), String(repeating: "1", count: 36), "{" + id.uuidString + "}", String(repeating: "é", count: 16)] {
+            XCTAssertThrowsError(try decoder.decode(TrainingRunIdentifier.self, from: JSONEncoder().encode(invalid)))
+        }
+        for invalid in ["null", "42", "{}"] {
+            XCTAssertThrowsError(try decoder.decode(TrainingRunIdentifier.self, from: Data(invalid.utf8)))
+        }
+    }
+
     func testLoadsNewestCandidateAndItsPredictionReview() throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("hkv-review-store-\(UUID().uuidString)", isDirectory: true)

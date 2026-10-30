@@ -86,6 +86,7 @@ cp "$script_dir/Resources/HollowKnightVision.icns" \
   "$contents_dir/Resources/$icon_filename"
 rm -rf "$contents_dir/Resources/TrainingPython"
 cp -R "$script_dir/TrainingPython" "$contents_dir/Resources/TrainingPython"
+cp "$script_dir/setup-incremental-trainer.sh" "$contents_dir/Resources/setup-incremental-trainer.sh"
 cp "$script_dir/Info.plist" "$contents_dir/Info.plist"
 plutil -replace CFBundleVersion -string "$build_version" "$contents_dir/Info.plist"
 plutil -replace CFBundleIconFile -string "$icon_filename" "$contents_dir/Info.plist"

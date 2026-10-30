@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import HollowKnightVisionTrainingRuntime
 
 private enum LauncherError: LocalizedError {
     case trainerMissing(String)
@@ -10,7 +11,7 @@ private enum LauncherError: LocalizedError {
         case .trainerMissing(let path):
             return "Incremental trainer is missing: \(path)"
         case .environmentMissing(let path):
-            return "Incremental trainer environment is missing. Run setup-incremental-trainer.sh (expected \(path))."
+            return "Incremental trainer environment is missing. Run the app's Contents/Resources/setup-incremental-trainer.sh (expected \(path))."
         }
     }
 }
@@ -26,14 +27,7 @@ private func launch() throws -> Never {
         throw LauncherError.trainerMissing(trainer.path)
     }
 
-    let packageDirectory = contentsDirectory
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-    let defaultPython = packageDirectory.appendingPathComponent(".training-venv/bin/python")
-    let environmentPython = ProcessInfo.processInfo.environment["HKV_TRAINER_PYTHON"]
-        .map { URL(fileURLWithPath: $0) }
-    let python = environmentPython ?? defaultPython
+    let python = try TrainingEnvironment().pythonURL()
     guard fileManager.isExecutableFile(atPath: python.path) else {
         throw LauncherError.environmentMissing(python.path)
     }
@@ -51,6 +45,13 @@ private func launch() throws -> Never {
 }
 
 do {
+    if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--register-python" {
+        try TrainingEnvironment().register(
+            pythonURL: URL(fileURLWithPath: CommandLine.arguments[2]),
+            onlyIfUnset: CommandLine.arguments.dropFirst(3).contains("--if-unset")
+        )
+        exit(EXIT_SUCCESS)
+    }
     try launch()
 } catch {
     FileHandle.standardError.write(Data("Training failed: \(error.localizedDescription)\n".utf8))

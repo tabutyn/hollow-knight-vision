@@ -13,8 +13,9 @@ let package = Package(
             name: "HollowKnightVision",
             resources: [.process("Resources")]
         ),
-        .executableTarget(name: "HollowKnightVisionTrainer"),
-        .testTarget(name: "HollowKnightVisionTests", dependencies: ["HollowKnightVision"],
+        .target(name: "HollowKnightVisionTrainingRuntime"),
+        .executableTarget(name: "HollowKnightVisionTrainer", dependencies: ["HollowKnightVisionTrainingRuntime"]),
+        .testTarget(name: "HollowKnightVisionTests", dependencies: ["HollowKnightVision", "HollowKnightVisionTrainingRuntime"],
                     resources: [
                         .process("hud-stencil-cases.json"),
                         .process("hud-stencil-reference.json"),
