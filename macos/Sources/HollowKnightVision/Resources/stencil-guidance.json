@@ -298,7 +298,18 @@
     "modelTrain": "Click Train to build your model from the labeled gameplay screenshots.",
     "modelTraining": "Training your model. Wait for training to finish; progress appears above.",
     "modelReady": "Model trained. Open Settings and enable Object Detection to test it during gameplay.",
-    "gameplayLabel": "Draw a box around {object}. Label the other visible gameplay objects, then press L to return."
+    "gameplayLabel": "Draw a box around {object}. Label the other visible gameplay objects, then press L to return.",
+    "campaignExamples": "Labeled examples",
+    "campaignCaptureHelp": "One example per object per capture. Label every visible instance. Gray bars show the next target.",
+    "campaignQuality": "Validation accuracy",
+    "campaignRun": "Training run",
+    "campaignValidationHelp": "Held-out mAP@50; higher is better. Small samples and changing validation sets limit comparisons.",
+    "campaignNoValidation": "No held-out results yet. Collect varied examples and train.",
+    "campaignMissingHistory": "Training dataset unavailable. Restore it to track the next batch.",
+    "campaignCollect": "Capture {remaining} more examples of {object} ({count}/{target}). Press L during gameplay.",
+    "campaignDraw": "Draw a tight box around {object}, excluding shadows and effects. {count}/{target} examples saved.",
+    "campaignTrain": "Batch ready for {object} ({count}/{target}). Open Model and train.",
+    "campaignTrainHere": "Batch ready for {object} ({count}/{target}). Click Train."
   },
   "es": {
     "nativeName": "Español",
@@ -599,7 +610,18 @@
     "modelTrain": "Haz clic en Entrenar para crear tu modelo con las capturas de juego etiquetadas.",
     "modelTraining": "Entrenando tu modelo. Espera a que termine; el progreso aparece arriba.",
     "modelReady": "Modelo entrenado. Abre Ajustes y activa Detección de objetos para probarlo durante la partida.",
-    "gameplayLabel": "Dibuja un cuadro alrededor de {object}. Etiqueta los demás objetos visibles del juego y pulsa L para volver."
+    "gameplayLabel": "Dibuja un cuadro alrededor de {object}. Etiqueta los demás objetos visibles del juego y pulsa L para volver.",
+    "campaignExamples": "Ejemplos etiquetados",
+    "campaignCaptureHelp": "Un ejemplo por objeto y captura. Etiqueta todas las instancias visibles. Las barras grises muestran el siguiente objetivo.",
+    "campaignQuality": "Precisión de validación",
+    "campaignRun": "Entrenamiento",
+    "campaignValidationHelp": "mAP@50 en datos reservados; más alto es mejor. Las muestras pequeñas y los cambios en los datos de validación limitan las comparaciones.",
+    "campaignNoValidation": "Aún no hay resultados independientes. Reúne ejemplos variados y entrena.",
+    "campaignMissingHistory": "Datos de entrenamiento no disponibles. Restáuralos para seguir el próximo lote.",
+    "campaignCollect": "Captura {remaining} ejemplos más de {object} ({count}/{target}). Pulsa L durante el juego.",
+    "campaignDraw": "Dibuja un recuadro ajustado alrededor de {object}, sin sombras ni efectos. {count}/{target} ejemplos guardados.",
+    "campaignTrain": "Lote listo para {object} ({count}/{target}). Abre Modelo y entrena.",
+    "campaignTrainHere": "Lote listo para {object} ({count}/{target}). Haz clic en Entrenar."
   },
   "fr": {
     "nativeName": "Français",
@@ -900,7 +922,18 @@
     "modelTrain": "Cliquez sur Entraîner pour créer votre modèle à partir des captures de jeu étiquetées.",
     "modelTraining": "Entraînement du modèle en cours. Attendez la fin ; la progression apparaît au-dessus.",
     "modelReady": "Modèle entraîné. Ouvrez Paramètres et activez Détection d’objets pour le tester en jeu.",
-    "gameplayLabel": "Tracez un cadre autour de {object}. Étiquetez les autres objets visibles du jeu, puis appuyez sur L pour revenir."
+    "gameplayLabel": "Tracez un cadre autour de {object}. Étiquetez les autres objets visibles du jeu, puis appuyez sur L pour revenir.",
+    "campaignExamples": "Exemples annotés",
+    "campaignCaptureHelp": "Un exemple par objet et par capture. Annotez chaque instance visible. Les barres grises indiquent le prochain objectif.",
+    "campaignQuality": "Précision de validation",
+    "campaignRun": "Entraînement",
+    "campaignValidationHelp": "mAP@50 sur données réservées ; plus élevé est mieux. Les petits échantillons et les changements du jeu de validation limitent les comparaisons.",
+    "campaignNoValidation": "Aucun résultat indépendant. Collectez des exemples variés et lancez un entraînement.",
+    "campaignMissingHistory": "Données d’entraînement indisponibles. Restaurez-les pour suivre le prochain lot.",
+    "campaignCollect": "Capturez encore {remaining} exemples de {object} ({count}/{target}). Appuyez sur L en jeu.",
+    "campaignDraw": "Tracez un cadre serré autour de {object}, sans ombres ni effets. {count}/{target} exemples enregistrés.",
+    "campaignTrain": "Lot prêt pour {object} ({count}/{target}). Ouvrez Modèle et lancez un entraînement.",
+    "campaignTrainHere": "Lot prêt pour {object} ({count}/{target}). Cliquez sur Entraîner."
   },
   "it": {
     "nativeName": "Italiano",
@@ -1201,7 +1234,18 @@
     "modelTrain": "Fai clic su Addestra per creare il modello dalle schermate di gioco etichettate.",
     "modelTraining": "Addestramento del modello in corso. Attendi il completamento; l’avanzamento appare sopra.",
     "modelReady": "Modello addestrato. Apri Impostazioni e attiva Rilevamento oggetti per provarlo durante il gioco.",
-    "gameplayLabel": "Disegna un riquadro attorno a {object}. Etichetta gli altri oggetti di gioco visibili, poi premi L per tornare."
+    "gameplayLabel": "Disegna un riquadro attorno a {object}. Etichetta gli altri oggetti di gioco visibili, poi premi L per tornare.",
+    "campaignExamples": "Esempi etichettati",
+    "campaignCaptureHelp": "Un esempio per oggetto e cattura. Etichetta ogni istanza visibile. Le barre grigie indicano il prossimo obiettivo.",
+    "campaignQuality": "Accuratezza di validazione",
+    "campaignRun": "Addestramento",
+    "campaignValidationHelp": "mAP@50 su dati riservati; valori maggiori sono migliori. Campioni piccoli e modifiche ai dati di validazione limitano i confronti.",
+    "campaignNoValidation": "Nessun risultato indipendente. Raccogli esempi vari e avvia l’addestramento.",
+    "campaignMissingHistory": "Dati di addestramento non disponibili. Ripristinali per seguire il prossimo gruppo.",
+    "campaignCollect": "Cattura altri {remaining} esempi di {object} ({count}/{target}). Premi L durante il gioco.",
+    "campaignDraw": "Disegna un riquadro aderente intorno a {object}, escludendo ombre ed effetti. {count}/{target} esempi salvati.",
+    "campaignTrain": "Gruppo pronto per {object} ({count}/{target}). Apri Modello e avvia l’addestramento.",
+    "campaignTrainHere": "Gruppo pronto per {object} ({count}/{target}). Fai clic su Addestra."
   },
   "de": {
     "nativeName": "Deutsch",
@@ -1502,7 +1546,18 @@
     "modelTrain": "Klicke auf Trainieren, um dein Modell aus den markierten Spielaufnahmen zu erstellen.",
     "modelTraining": "Dein Modell wird trainiert. Warte auf den Abschluss; der Fortschritt wird oben angezeigt.",
     "modelReady": "Modell trainiert. Öffne Einstellungen und aktiviere Objekterkennung, um es im Spiel zu testen.",
-    "gameplayLabel": "Zeichne einen Rahmen um {object}. Markiere die anderen sichtbaren Spielobjekte und drücke dann L, um zurückzukehren."
+    "gameplayLabel": "Zeichne einen Rahmen um {object}. Markiere die anderen sichtbaren Spielobjekte und drücke dann L, um zurückzukehren.",
+    "campaignExamples": "Beschriftete Beispiele",
+    "campaignCaptureHelp": "Ein Beispiel pro Objekt und Aufnahme. Alle sichtbaren Instanzen markieren. Graue Balken zeigen das nächste Ziel.",
+    "campaignQuality": "Validierungsgenauigkeit",
+    "campaignRun": "Trainingslauf",
+    "campaignValidationHelp": "mAP@50 auf zurückgehaltenen Daten; höher ist besser. Kleine Stichproben und wechselnde Validierungsdaten schränken Vergleiche ein.",
+    "campaignNoValidation": "Noch keine unabhängigen Ergebnisse. Vielfältige Beispiele sammeln und trainieren.",
+    "campaignMissingHistory": "Trainingsdaten fehlen. Für die nächste Sammelrunde bitte wiederherstellen.",
+    "campaignCollect": "Noch {remaining} Beispiele für {object} aufnehmen ({count}/{target}). Im Spiel L drücken.",
+    "campaignDraw": "{object} eng einrahmen, ohne Schatten und Effekte. {count}/{target} Beispiele gespeichert.",
+    "campaignTrain": "Beispiele für {object} bereit ({count}/{target}). Modell öffnen und trainieren.",
+    "campaignTrainHere": "Beispiele für {object} bereit ({count}/{target}). Auf Trainieren klicken."
   },
   "pt-BR": {
     "nativeName": "Português (Brasil)",
@@ -1803,7 +1858,18 @@
     "modelTrain": "Clique em Treinar para criar seu modelo com as capturas de jogo rotuladas.",
     "modelTraining": "Treinando seu modelo. Aguarde a conclusão; o progresso aparece acima.",
     "modelReady": "Modelo treinado. Abra Configurações e ative Detecção de objetos para testá-lo durante o jogo.",
-    "gameplayLabel": "Desenhe uma caixa ao redor de {object}. Rotule os outros objetos visíveis do jogo e pressione L para voltar."
+    "gameplayLabel": "Desenhe uma caixa ao redor de {object}. Rotule os outros objetos visíveis do jogo e pressione L para voltar.",
+    "campaignExamples": "Exemplos rotulados",
+    "campaignCaptureHelp": "Um exemplo por objeto e captura. Marque todas as instâncias visíveis. As barras cinzas mostram a próxima meta.",
+    "campaignQuality": "Precisão de validação",
+    "campaignRun": "Treinamento",
+    "campaignValidationHelp": "mAP@50 em dados reservados; quanto maior, melhor. Amostras pequenas e mudanças nos dados de validação limitam as comparações.",
+    "campaignNoValidation": "Ainda não há resultados independentes. Reúna exemplos variados e treine.",
+    "campaignMissingHistory": "Dados de treinamento indisponíveis. Restaure-os para acompanhar o próximo lote.",
+    "campaignCollect": "Capture mais {remaining} exemplos de {object} ({count}/{target}). Pressione L durante o jogo.",
+    "campaignDraw": "Desenhe uma caixa justa ao redor de {object}, sem sombras nem efeitos. {count}/{target} exemplos salvos.",
+    "campaignTrain": "Lote pronto para {object} ({count}/{target}). Abra Modelo e treine.",
+    "campaignTrainHere": "Lote pronto para {object} ({count}/{target}). Clique em Treinar."
   },
   "ru": {
     "nativeName": "Русский",
@@ -2104,7 +2170,18 @@
     "modelTrain": "Нажмите «Обучить», чтобы создать модель по размеченным игровым снимкам.",
     "modelTraining": "Модель обучается. Дождитесь завершения; ход обучения показан выше.",
     "modelReady": "Модель обучена. Откройте настройки и включите обнаружение объектов для проверки во время игры.",
-    "gameplayLabel": "Обведите рамкой {object}. Разметьте остальные видимые игровые объекты и нажмите L, чтобы вернуться."
+    "gameplayLabel": "Обведите рамкой {object}. Разметьте остальные видимые игровые объекты и нажмите L, чтобы вернуться.",
+    "campaignExamples": "Размеченные примеры",
+    "campaignCaptureHelp": "Один пример объекта на снимок. Разметьте все видимые экземпляры. Серые полосы показывают следующую цель.",
+    "campaignQuality": "Точность на проверке",
+    "campaignRun": "Запуск обучения",
+    "campaignValidationHelp": "mAP@50 на отложенных данных: выше — лучше. Малые выборки и изменения проверочных данных ограничивают сравнение.",
+    "campaignNoValidation": "Результатов независимой проверки пока нет. Соберите разнообразные примеры и запустите обучение.",
+    "campaignMissingHistory": "Данные обучения недоступны. Восстановите их для отслеживания следующей партии.",
+    "campaignCollect": "Снимите ещё {remaining} примеров объекта «{object}» ({count}/{target}). Нажмите L во время игры.",
+    "campaignDraw": "Плотно обведите объект «{object}», исключая тени и эффекты. Сохранено примеров: {count}/{target}.",
+    "campaignTrain": "Партия для «{object}» готова ({count}/{target}). Откройте «Модель» и запустите обучение.",
+    "campaignTrainHere": "Партия для «{object}» готова ({count}/{target}). Нажмите «Обучить»."
   },
   "ja": {
     "nativeName": "日本語",
@@ -2405,7 +2482,18 @@
     "modelTrain": "「学習」をクリックして、ラベル付けしたゲーム画像からモデルを作成してください。",
     "modelTraining": "モデルを学習中です。完了までお待ちください。進行状況は上に表示されます。",
     "modelReady": "モデルの学習が完了しました。「設定」を開き、「オブジェクト検出」を有効にしてゲーム中に試してください。",
-    "gameplayLabel": "{object}を枠で囲んでください。他の見えているゲームオブジェクトもラベル付けし、Lを押して戻ってください。"
+    "gameplayLabel": "{object}を枠で囲んでください。他の見えているゲームオブジェクトもラベル付けし、Lを押して戻ってください。",
+    "campaignExamples": "ラベル付きの例",
+    "campaignCaptureHelp": "1回のキャプチャにつき各物体を1例と数えます。見えている同種の物体をすべて囲んでください。灰色の棒は次の目標です。",
+    "campaignQuality": "検証精度",
+    "campaignRun": "学習回",
+    "campaignValidationHelp": "未学習の検証データでのmAP@50。高いほど良好です。少数のサンプルや検証データの変更により比較には限界があります。",
+    "campaignNoValidation": "独立した検証結果はまだありません。多様な例を集めて学習してください。",
+    "campaignMissingHistory": "学習データがありません。次の収集目標を確認するには復元してください。",
+    "campaignCollect": "{object}の例をあと{remaining}個集めてください（{count}/{target}）。ゲーム中にLを押してください。",
+    "campaignDraw": "影やエフェクトを除き、{object}をぴったり囲んでください。保存済みの例：{count}/{target}。",
+    "campaignTrain": "{object}の例が揃いました（{count}/{target}）。「モデル」を開いて学習してください。",
+    "campaignTrainHere": "{object}の例が揃いました（{count}/{target}）。「学習」をクリックしてください。"
   },
   "ko": {
     "nativeName": "한국어",
@@ -2706,7 +2794,18 @@
     "modelTrain": "학습을 클릭해 라벨을 지정한 게임 화면으로 모델을 만드세요.",
     "modelTraining": "모델을 학습하는 중입니다. 완료될 때까지 기다리세요. 진행 상황은 위에 표시됩니다.",
     "modelReady": "모델 학습이 완료되었습니다. 설정에서 오브젝트 감지를 켜고 게임 중에 테스트하세요.",
-    "gameplayLabel": "{object} 주위에 상자를 그리세요. 다른 보이는 게임 오브젝트에도 라벨을 지정한 뒤 L을 눌러 돌아가세요."
+    "gameplayLabel": "{object} 주위에 상자를 그리세요. 다른 보이는 게임 오브젝트에도 라벨을 지정한 뒤 L을 눌러 돌아가세요.",
+    "campaignExamples": "라벨이 있는 예시",
+    "campaignCaptureHelp": "캡처마다 객체별로 한 예시를 셉니다. 보이는 같은 종류의 객체를 모두 표시하세요. 회색 막대는 다음 목표입니다.",
+    "campaignQuality": "검증 정확도",
+    "campaignRun": "학습 회차",
+    "campaignValidationHelp": "학습에 사용하지 않은 데이터의 mAP@50이며 높을수록 좋습니다. 표본이 작거나 검증 데이터가 바뀌면 비교에 한계가 있습니다.",
+    "campaignNoValidation": "독립적인 검증 결과가 없습니다. 다양한 예시를 모아 학습하세요.",
+    "campaignMissingHistory": "학습 데이터를 사용할 수 없습니다. 다음 목표를 확인하려면 복원하세요.",
+    "campaignCollect": "{object} 예시를 {remaining}개 더 캡처하세요 ({count}/{target}). 게임 중 L을 누르세요.",
+    "campaignDraw": "그림자와 효과를 제외하고 {object}에 꼭 맞는 상자를 그리세요. 저장된 예시: {count}/{target}.",
+    "campaignTrain": "{object} 예시가 준비되었습니다 ({count}/{target}). 모델을 열어 학습하세요.",
+    "campaignTrainHere": "{object} 예시가 준비되었습니다 ({count}/{target}). 학습을 클릭하세요."
   },
   "zh-Hans": {
     "nativeName": "简体中文",
@@ -3007,7 +3106,18 @@
     "modelTrain": "点击训练，使用已标注的游戏截图构建模型。",
     "modelTraining": "正在训练模型。请等待训练完成；进度显示在上方。",
     "modelReady": "模型训练完成。打开设置并启用对象检测，在游戏中测试。",
-    "gameplayLabel": "在{object}周围画一个框。标注其他可见的游戏对象，然后按L返回。"
+    "gameplayLabel": "在{object}周围画一个框。标注其他可见的游戏对象，然后按L返回。",
+    "campaignExamples": "已标注示例",
+    "campaignCaptureHelp": "每次截图中每类物体只计一个示例。请标注所有可见实例。灰色条表示下一个目标。",
+    "campaignQuality": "验证准确率",
+    "campaignRun": "训练轮次",
+    "campaignValidationHelp": "独立验证集上的 mAP@50，越高越好。样本较少或验证集变化时，比较结果有局限。",
+    "campaignNoValidation": "暂无独立验证结果。收集多样化示例后训练。",
+    "campaignMissingHistory": "训练数据不可用。请恢复数据以跟踪下一批示例。",
+    "campaignCollect": "再截取 {remaining} 个{object}示例（{count}/{target}）。游戏中按 L。",
+    "campaignDraw": "紧贴{object}绘制方框，不包括阴影和特效。已保存 {count}/{target} 个示例。",
+    "campaignTrain": "{object}的本批示例已备齐（{count}/{target}）。打开“模型”并训练。",
+    "campaignTrainHere": "{object}的本批示例已备齐（{count}/{target}）。点击“训练”。"
   },
   "zh-Hant": {
     "nativeName": "繁體中文",
@@ -3308,6 +3418,17 @@
     "modelTrain": "點擊訓練，使用已標註的遊戲截圖建立模型。",
     "modelTraining": "正在訓練模型。請等待訓練完成；進度顯示在上方。",
     "modelReady": "模型訓練完成。開啟設定並啟用物件偵測，在遊戲中測試。",
-    "gameplayLabel": "在{object}周圍畫一個框。標註其他可見的遊戲物件，然後按L返回。"
+    "gameplayLabel": "在{object}周圍畫一個框。標註其他可見的遊戲物件，然後按L返回。",
+    "campaignExamples": "已標註範例",
+    "campaignCaptureHelp": "每次擷取畫面中每類物件只計一個範例。請標註所有可見實例。灰色長條表示下一個目標。",
+    "campaignQuality": "驗證準確率",
+    "campaignRun": "訓練回次",
+    "campaignValidationHelp": "獨立驗證集上的 mAP@50，越高越好。樣本較少或驗證集變更時，比較結果有限制。",
+    "campaignNoValidation": "暫無獨立驗證結果。收集多樣化範例後訓練。",
+    "campaignMissingHistory": "訓練資料無法使用。請還原資料以追蹤下一批範例。",
+    "campaignCollect": "再擷取 {remaining} 個{object}範例（{count}/{target}）。遊戲中按 L。",
+    "campaignDraw": "緊貼{object}繪製方框，不包括陰影和特效。已儲存 {count}/{target} 個範例。",
+    "campaignTrain": "{object}的本批範例已備齊（{count}/{target}）。開啟「模型」並訓練。",
+    "campaignTrainHere": "{object}的本批範例已備齊（{count}/{target}）。點擊「訓練」。"
   }
 }

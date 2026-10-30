@@ -37,6 +37,7 @@ public sealed record LabelingTrainingRunSummary
     public string? BaseRunIdentifier { get; init; }
     public string[]? ClassIdentifiers { get; init; }
     public LabelingTrainingMetricSummary? TrainingMetrics { get; init; }
+    public int ValidationAnnotationCount { get; init; }
     public LabelingTrainingMetricSummary? ValidationMetrics { get; init; }
     public LabelingReviewMetrics? ReviewMetrics { get; init; }
     // Preserve the complete shared Python/Swift manifest when making a durable ONNX run.

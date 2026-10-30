@@ -2165,9 +2165,9 @@ public partial class MainWindow : Window
     private void RefreshGuidance()
     {
         if (StencilGuidanceText is null || initialization is null) return;
-        StencilGuidanceText.Text = initialization.ModelGuidance(workspace,
+        StencilGuidanceText.Text = (workspace == "Label" && CurrentContextName == "Gameplay" ? CampaignGuidance() : null) ?? initialization.ModelGuidance(workspace,
             screenshotReview?.HasGameplayLabels == true, screenshotReview?.BreachCount ?? 0,
-            trainedGameplayModelReady, trainingInProgress) ?? initialization.Guidance(
+            trainedGameplayModelReady, trainingInProgress, CampaignGuidance()) ?? initialization.Guidance(
             workspace == "Label" ? StencilInitializationPolicy.NormalizeContext(CurrentContextName) : null,
             ClassIdentifierText.Text, initializationTargetContext) ?? "";
         StencilGuidanceText.Visibility = StencilGuidanceText.Text.Length == 0
@@ -2490,6 +2490,12 @@ public partial class MainWindow : Window
     {
         if (ObjectDetectionOptions is null) return;
         ObjectDetectionOptions.IsEnabled = ObjectDetectionCheck.IsEnabled && ObjectDetectionCheck.IsChecked == true;
+        if (ObjectDetectionCheck.IsChecked == true)
+        {
+            try { initialization?.RecordObjectDetectionEnabled(); }
+            catch (Exception error) { ShowError(error); }
+        }
+        RefreshGuidance();
     }
 
     private void DetectionPixelsCheck_Changed(object sender, RoutedEventArgs e) =>

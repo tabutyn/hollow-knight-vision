@@ -199,6 +199,15 @@ enum StencilInitializationPolicy {
 
 @MainActor
 final class StencilInitializationCoordinator: ObservableObject {
+    private static let detectionCompletedKey = "HollowKnightVision.initialization.objectDetectionCompleted.v1"
+    @Published private(set) var hasEnabledObjectDetection: Bool
+
+    func recordObjectDetectionEnabled() {
+        guard !hasEnabledObjectDetection else { return }
+        hasEnabledObjectDetection = true
+        defaults.set(true, forKey: Self.detectionCompletedKey)
+    }
+
     private static let languageKey = "HollowKnightVision.initialization.language.v1"
     private let store: LabelingExampleStore
     private let defaults: UserDefaults
@@ -221,6 +230,7 @@ final class StencilInitializationCoordinator: ObservableObject {
     ) {
         self.store = store
         self.defaults = defaults
+        hasEnabledObjectDetection = defaults.bool(forKey: Self.detectionCompletedKey)
         language = defaults.string(forKey: Self.languageKey)
             .flatMap(HollowKnightMenuLanguage.init(rawValue:)) ?? .english
     }
@@ -328,13 +338,14 @@ final class StencilInitializationCoordinator: ObservableObject {
     }
 
     func modelGuidance(workspace: DashboardWorkspace, hasGameplayLabels: Bool, breaches: Int,
-                       modelReady: Bool, training: Bool, objectDetectionEnabled: Bool) -> String? {
+                       modelReady: Bool, training: Bool, campaignGuidance: String? = nil) -> String? {
         guard isComplete, workspace != .label else { return nil }
         if training { return text("modelTraining") }
-        if !hasGameplayLabels { return text("modelLabelGameplay") }
+        if !hasGameplayLabels { return campaignGuidance ?? text("modelLabelGameplay") }
         if breaches > 0 { return text("modelReview", ["count": String(breaches)]) }
-        if modelReady { return objectDetectionEnabled ? nil : text("modelReady") }
-        return text(workspace == .model ? "modelTrain" : "modelOpen")
+        if modelReady && !hasEnabledObjectDetection { return text("modelReady") }
+        if let campaignGuidance { return campaignGuidance }
+        return modelReady ? nil : text(workspace == .model ? "modelTrain" : "modelOpen")
     }
 
     var completedCount: Int {

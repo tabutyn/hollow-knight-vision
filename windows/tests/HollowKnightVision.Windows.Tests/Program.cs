@@ -28,6 +28,8 @@ if (args is ["--export-dataset-probe", var probeRoot])
 
 var tests = new List<(string Name, Action Run)>
 {
+    ("labeling campaign batches and honest validation history", LabelingCampaignTests.TestBatchesAndValidationHistory),
+    ("labeling campaign counts distinct positive captures", LabelingCampaignTests.TestCaptureCountsAndTrainingSnapshot),
     ("warmed CUDA search reuses large host staging arrays", GroundComputeProcessingTests.TestCudaHostStagingAllocation),
     ("dense consensus preserves ground calibration across reference handoffs", GroundCameraSolverTests.TestConsensusReferenceCalibration),
     ("broad search preparation reuses candidate storage without per-candidate allocations", TrackingStepReplayTests.SearchCandidateAllocation),

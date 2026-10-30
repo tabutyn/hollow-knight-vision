@@ -40,6 +40,9 @@ struct LabelingModelWorkspaceView: View {
     }
 
     let candidate: LabelingModelCandidate?
+    let campaignProgress: [LabelingCampaignProgress]
+    let campaignHistory: [LabelingCampaignPoint]
+    let campaignHistoryUnavailable: Bool
     @Binding var context: LabelingContext
     @Binding var selectedClassIdentifier: String
     let activeVersionName: String
@@ -186,7 +189,13 @@ struct LabelingModelWorkspaceView: View {
             Text(examplesError).foregroundStyle(.red).padding()
         } else {
             switch selection.tab {
-            case .summary: summary
+            case .summary:
+                VStack(spacing: 0) {
+                    LabelingCampaignView(progress: campaignProgress, history: campaignHistory,
+                                         historyUnavailable: campaignHistoryUnavailable)
+                    Divider()
+                    summary
+                }
             case .objects: objects
             case .screenshots: screenshots
             }

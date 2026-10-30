@@ -51,6 +51,8 @@ Setup is a three-phase stencil campaign with persistent blue guidance in the bot
 
 Gameplay objects use the learned detector. In **Label**, press **+ Object**, choose Gameplay, Enemy, or World, enter a name, then draw boxes for it. The app stores the new identifier in `object-catalog-v1.json`; dataset export and subsequent training include it without a source-code change. The catalog JSON is deliberately the same schema on both platforms, so it can be copied with the user's private labels when moving a training workspace.
 
+Model guidance starts with ten labeled captures per object and asks for another ten after a completed training run reaches that milestone. A capture counts once per object, regardless of repeated boxes; hard negatives do not count as positive examples. Smaller experimental training runs remain available. The Model Summary plots collected examples against each next target and held-out mAP@50 by training run. Training-only runs are omitted from the accuracy plot, and changing validation sets or small samples limit comparisons. Enabling Object Detection completes that onboarding instruction permanently across restarts and later toggle changes; Factory Reset clears the completion state.
+
 The repository model is inference-only. Incremental training runs keep their PyTorch checkpoints in local application data; they are not committed. A fresh machine can train from its local labels, while an existing Mac or Windows training workspace can continue from its last checkpoint.
 
 ## Data locations

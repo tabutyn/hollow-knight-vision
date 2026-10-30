@@ -138,6 +138,14 @@ internal sealed class StencilInitializationCoordinator
     private readonly LabelingExampleStore store;
     private readonly GameRuntimeMode mode;
     private readonly string languagePath;
+    private string DetectionCompletedPath => Path.Combine(store.RootDirectory, "object-detection-completed-v1");
+    internal bool HasEnabledObjectDetection => File.Exists(DetectionCompletedPath);
+    internal void RecordObjectDetectionEnabled()
+    {
+        if (HasEnabledObjectDetection) return;
+        Directory.CreateDirectory(store.RootDirectory);
+        File.WriteAllText(DetectionCompletedPath, "completed");
+    }
 
     internal StencilInitializationCoordinator(LabelingExampleStore store, GameRuntimeMode mode)
     {
@@ -242,14 +250,14 @@ internal sealed class StencilInitializationCoordinator
             ? Text("selectProfile") : Text("navigateShort", ("screen", ScreenName(step.ContextName)));
     }
 
-    internal string? ModelGuidance(string workspace, bool hasGameplayLabels, int breaches, bool modelReady, bool training)
+    internal string? ModelGuidance(string workspace, bool hasGameplayLabels, int breaches, bool modelReady, bool training, string? campaignGuidance = null)
     {
         if (!IsComplete || workspace == "Label") return null;
         if (training) return Text("modelTraining");
-        if (!hasGameplayLabels) return Text("modelLabelGameplay");
+        if (!hasGameplayLabels) return campaignGuidance ?? Text("modelLabelGameplay");
         if (breaches > 0) return Text("modelReview", ("count", breaches.ToString()));
-        if (modelReady) return Text("modelReady");
-        return Text(workspace == "Model" ? "modelTrain" : "modelOpen");
+        if (modelReady && !HasEnabledObjectDetection) return Text("modelReady");
+        return campaignGuidance ?? (modelReady ? null : Text(workspace == "Model" ? "modelTrain" : "modelOpen"));
     }
 
     internal void SetLanguage(string identifier)

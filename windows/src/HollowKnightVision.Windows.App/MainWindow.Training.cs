@@ -21,6 +21,7 @@ public partial class MainWindow
 
     private void RefreshTrainingNotification()
     {
+        RefreshCampaignProgress();
         untrainedImageCount = LabelingTrainingNotificationPolicy.CountExamples(examples, modelLifecycle?.Latest(LabelingSharedModelPolicy.ModelIdentifier));
         UpdateModelTrainingControls();
     }

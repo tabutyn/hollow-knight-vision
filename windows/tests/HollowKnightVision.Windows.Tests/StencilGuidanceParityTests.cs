@@ -244,6 +244,12 @@ internal static class StencilGuidanceParityTests
             Check(coordinator.ModelGuidance("Model", true, 0, false, false)!.StartsWith("Click Train"));
             Check(coordinator.ModelGuidance("Model", true, 0, false, true)!.StartsWith("Training your model"));
             Check(coordinator.ModelGuidance("Gameplay", true, 0, true, false)!.StartsWith("Model trained"));
+            coordinator.RecordObjectDetectionEnabled();
+            Check(coordinator.ModelGuidance("Gameplay", true, 0, true, false) is null);
+            var reopened = new StencilInitializationCoordinator(store, GameRuntimeMode.Normal) { HasUsableHUD = true };
+            Check(reopened.HasEnabledObjectDetection);
+            Check(reopened.ModelGuidance("Gameplay", true, 0, true, false) is null);
+            Check(reopened.ModelGuidance("Gameplay", true, 0, true, false, "Next batch") == "Next batch");
             Check(coordinator.ModelGuidance("Label", true, 0, false, false) is null);
             Check(coordinator.Guidance("game", "enemies.crawlid")!.Contains("Crawlid")
                 && coordinator.Guidance("game", "enemies.crawlid")!.Contains("press L"));

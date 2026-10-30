@@ -138,26 +138,29 @@ final class HUDStencilTests: XCTestCase {
             (.model, true, 0, false, true, "modelTraining")
         ] {
             XCTAssertEqual(coordinator.modelGuidance(workspace: workspace, hasGameplayLabels: labels,
-                breaches: breaches, modelReady: ready, training: training, objectDetectionEnabled: false),
+                breaches: breaches, modelReady: ready, training: training),
                 coordinator.text(key, ["count": "2"]))
         }
         XCTAssertNil(coordinator.modelGuidance(workspace: .label, hasGameplayLabels: true,
-            breaches: 0, modelReady: true, training: false, objectDetectionEnabled: false))
-        // Toggling detection must immediately satisfy (or restore) the instruction,
-        // without refreshing stencils or changing workspaces.
-        for enabled in [false, true, false] {
-            for workspace in [DashboardWorkspace.gameplay, .model] {
-                XCTAssertEqual(coordinator.modelGuidance(workspace: workspace, hasGameplayLabels: true,
-                    breaches: 0, modelReady: true, training: false, objectDetectionEnabled: enabled),
-                    enabled ? nil : coordinator.text("modelReady"))
-            }
+            breaches: 0, modelReady: true, training: false))
+        coordinator.recordObjectDetectionEnabled()
+        for workspace in [DashboardWorkspace.gameplay, .model] {
+            XCTAssertNil(coordinator.modelGuidance(workspace: workspace, hasGameplayLabels: true,
+                breaches: 0, modelReady: true, training: false))
         }
+        let reopened = StencilInitializationCoordinator(store: store, defaults: defaults)
+        reopened.refresh(mode: .normal)
+        XCTAssertTrue(reopened.hasEnabledObjectDetection)
+        XCTAssertNil(reopened.modelGuidance(workspace: .gameplay, hasGameplayLabels: true,
+            breaches: 0, modelReady: true, training: false))
+        XCTAssertEqual(reopened.modelGuidance(workspace: .gameplay, hasGameplayLabels: true,
+            breaches: 0, modelReady: true, training: false, campaignGuidance: "Next batch"), "Next batch")
         // Detection being enabled does not hide unfinished training or label review.
         XCTAssertEqual(coordinator.modelGuidance(workspace: .model, hasGameplayLabels: true,
-            breaches: 2, modelReady: true, training: false, objectDetectionEnabled: true),
+            breaches: 2, modelReady: true, training: false),
             coordinator.text("modelReview", ["count": "2"]))
         XCTAssertEqual(coordinator.modelGuidance(workspace: .model, hasGameplayLabels: true,
-            breaches: 0, modelReady: true, training: true, objectDetectionEnabled: true),
+            breaches: 0, modelReady: true, training: true),
             coordinator.text("modelTraining"))
         coordinator.language = .french
         XCTAssertFalse(coordinator.isFirstPhaseComplete, "A language change must relock incomplete references.")

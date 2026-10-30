@@ -420,6 +420,9 @@ struct DashboardView: View {
     @State private var labelingEditorIdentity = UUID()
     @State private var labelingObjectAtlas: LabelingObjectAtlasSnapshot?
     @State private var latestModelCandidate: LabelingModelCandidate?
+    @State private var campaignCounts = [String: Int]()
+    @State private var campaignCompletedCounts = [String: Int]()
+    @State private var campaignHistoryUnavailable = false
     @State private var reviewingModelCandidate: LabelingModelCandidate?
     @State private var modelWorkspaceSelection = LabelingModelWorkspaceSelection()
     @State private var modelCandidates = [LabelingModelCandidate]()
@@ -475,6 +478,9 @@ struct DashboardView: View {
             model.setNativeReviewActive(value != .gameplay)
         }
         .onChange(of: showingSettings) { _, active in model.setSettingsDialogActive(active) }
+        .onChange(of: model.objectDetectionEnabled, initial: true) { _, enabled in
+            if enabled { initialization.recordObjectDetectionEnabled() }
+        }
         .sheet(item: $recentFramesPresentation) { presentation in
             RecentFramesView(
                 examples: presentation.examples,
@@ -699,6 +705,9 @@ struct DashboardView: View {
             } else if workspace == .model {
                 LabelingModelWorkspaceView(
                     candidate: reviewingModelCandidate,
+                    campaignProgress: campaignProgress,
+                    campaignHistory: LabelingCampaignPolicy.history(modelCandidates),
+                    campaignHistoryUnavailable: campaignHistoryUnavailable,
                     context: $labelingContext,
                     selectedClassIdentifier: $labelingSelectedClassID,
                     activeVersionName: activeModelVersionName,
@@ -1264,17 +1273,36 @@ struct DashboardView: View {
         return UUID(uuidString: "7A11A500-\(high)-4000-8000-\(low)")!
     }
 
+    private var campaignProgress: [LabelingCampaignProgress] {
+        selectedTrainingClassIdentifiers.sorted().map {
+            LabelingCampaignProgress(id: $0, count: campaignCounts[$0, default: 0],
+                                     completedCount: campaignCompletedCounts[$0, default: 0])
+        }
+    }
+
+    private var campaignGuidance: String? {
+        if campaignHistoryUnavailable { return visionText("campaignMissingHistory") }
+        let identifier = selectedTrainingClassIdentifiers.contains(labelingSelectedClassID)
+            ? labelingSelectedClassID : "game.playable-knight"
+        guard let progress = campaignProgress.first(where: { $0.id == identifier }) else { return nil }
+        return visionText(progress.guidanceKey(labeling: workspace == .label, inModel: workspace == .model), [
+            "object": visionText(LabelingVisualIdentity.displayName(for: identifier)),
+            "count": String(progress.count), "target": String(progress.target),
+            "remaining": String(progress.remaining)
+        ])
+    }
+
     private var controls: some View {
         HStack(spacing: 8) {
             workspaceSelector
-            if let guidance = initialization.guidance(
+            if let guidance = (workspace == .label && labelingContext == .game ? campaignGuidance : nil) ?? initialization.guidance(
                 labelingContext: workspace == .label ? labelingContext : nil,
                 selectedClassIdentifier: labelingSelectedClassID,
                 navigationContext: initializationTargetContext
             ) ?? initialization.modelGuidance(
                 workspace: workspace, hasGameplayLabels: hasGameplayTrainingLabels,
                 breaches: gameplayLabelBreaches, modelReady: trainedGameplayModelReady,
-                training: labelingTrainer.isRunning, objectDetectionEnabled: model.objectDetectionEnabled
+                training: labelingTrainer.isRunning, campaignGuidance: campaignGuidance
             ) {
                 Text(guidance)
                     .foregroundStyle(.blue)
@@ -1812,6 +1840,7 @@ struct DashboardView: View {
 
     private func refreshTrainingNotification() {
         let examples = (try? labelingExampleStore.loadTrainingExamples(in: .game)) ?? []
+        campaignCounts = LabelingCampaignPolicy.counts(examples)
         hasGameplayTrainingLabels = examples.contains { example in
             example.manifest.annotations.contains {
                 !$0.isHardNegative && selectedTrainingClassIdentifiers.contains($0.classIdentifier)
@@ -1951,6 +1980,15 @@ struct DashboardView: View {
             try labelingModelVersionStore.reconcileDevelopmentCandidates(candidates)
             modelCandidates = candidates
             latestModelCandidate = candidates.last { $0.summary.classIdentifier == selectedModelIdentifier }
+            do {
+                campaignCompletedCounts = try latestModelCandidate.map {
+                    try LabelingCampaignPolicy.completedCounts(datasetURL: $0.datasetURL)
+                } ?? [:]
+                campaignHistoryUnavailable = false
+            } catch {
+                campaignCompletedCounts = [:]
+                campaignHistoryUnavailable = true
+            }
             refreshActiveModelVersion()
             refreshTrainingNotification()
         } catch {
