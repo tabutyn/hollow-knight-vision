@@ -67,7 +67,9 @@ enum LabelingExampleContextInference {
             guard contract.requiresAllContextObjects,
                   let context = LabelingContext(storageIdentifier: contract.contextIdentifier)
             else { return nil }
-            let members = Set(context.labels.map {
+            let members = Set(ControllerStencilPolicy.requiredLabels(
+                in: context, positiveIdentifiers: Set(counts.keys)
+            ).map {
                 LabelingClassIdentity.canonicalIdentifier($0.id)
             })
             var missing = 0

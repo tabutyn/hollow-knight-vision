@@ -60,6 +60,50 @@ final class TransitionMotionBridgeTests: XCTestCase {
         XCTAssertEqual(result.source, .maskedRegistration)
     }
 
+    func testFallbackRecoversMeasuredMotionAcrossShortCaptureGap() throws {
+        let reference = try asymmetricTexture(horizontalShift: 0)
+        let moved = try asymmetricTexture(horizontalShift: -64, verticalShift: -40)
+        let bridge = TransitionMotionBridge()
+        bridge.anchor(frame: reference, excluding: [], cameraPosition: .zero, timestamp: 10)
+        let result = try XCTUnwrap(bridge.track(frame: moved, excluding: [],
+            solveWidth: CGFloat(reference.width), timestamp: 10.383))
+        XCTAssertEqual(result.cameraPosition.x, 64, accuracy: 2)
+        XCTAssertEqual(result.cameraPosition.y, 40, accuracy: 2)
+    }
+
+    func testFallbackRecoversFastVerticalCameraChangeConfirmedByBothImages() throws {
+        let reference = try asymmetricTexture(horizontalShift: 0)
+        let moved = try asymmetricTexture(horizontalShift: 0, verticalShift: -40)
+        let bridge = TransitionMotionBridge()
+        bridge.anchor(frame: reference, excluding: [], cameraPosition: .zero, timestamp: 10)
+        let result = try XCTUnwrap(bridge.track(frame: moved, excluding: [],
+            solveWidth: CGFloat(reference.width), timestamp: 10.016))
+        XCTAssertEqual(result.cameraPosition.x, 0, accuracy: 2)
+        XCTAssertEqual(result.cameraPosition.y, 40, accuracy: 2)
+    }
+
+    func testFastVerticalRecoveryStillRejectsStaleOrOutOfRangeImages() throws {
+        let reference = try asymmetricTexture(horizontalShift: 0)
+        for (shift, elapsed) in [(CGFloat(-40), 1.0), (CGFloat(-70), 0.016)] {
+            let moved = try asymmetricTexture(horizontalShift: 0, verticalShift: shift)
+            let bridge = TransitionMotionBridge()
+            bridge.anchor(frame: reference, excluding: [], cameraPosition: .zero, timestamp: 10)
+            XCTAssertNil(bridge.track(frame: moved, excluding: [],
+                solveWidth: CGFloat(reference.width), timestamp: 10 + elapsed))
+        }
+    }
+
+    func testFallbackKeepsLargeMotionRejectionOutsideShortCaptureGap() throws {
+        let reference = try asymmetricTexture(horizontalShift: 0)
+        let moved = try asymmetricTexture(horizontalShift: -64, verticalShift: -40)
+        for elapsed in [0.016, 1.0] {
+            let bridge = TransitionMotionBridge()
+            bridge.anchor(frame: reference, excluding: [], cameraPosition: .zero, timestamp: 10)
+            XCTAssertNil(bridge.track(frame: moved, excluding: [],
+                solveWidth: CGFloat(reference.width), timestamp: 10 + elapsed))
+        }
+    }
+
     func testFallbackIgnoresMovingExcludedForeground() throws {
         let background = try asymmetricTexture(horizontalShift: 0)
         let firstRect = CGRect(x: 45, y: 55, width: 100, height: 90)
@@ -226,7 +270,7 @@ final class TransitionMotionBridgeTests: XCTestCase {
         return image(width: 16, height: 16, pixels: pixels)
     }
 
-    private func asymmetricTexture(horizontalShift: CGFloat) throws -> CGImage {
+    private func asymmetricTexture(horizontalShift: CGFloat, verticalShift: CGFloat = 0) throws -> CGImage {
         let extent = CGRect(x: 0, y: 0, width: 384, height: 216)
         var image = CIImage(color: CIColor(red: 0.03, green: 0.04, blue: 0.06))
             .cropped(to: extent)
@@ -252,7 +296,7 @@ final class TransitionMotionBridgeTests: XCTestCase {
             )
             let rect = CGRect(x: x, y: y, width: width, height: height)
             image = CIImage(color: color)
-                .cropped(to: rect.offsetBy(dx: horizontalShift, dy: 0))
+                .cropped(to: rect.offsetBy(dx: horizontalShift, dy: verticalShift))
                 .composited(over: image)
         }
         return try XCTUnwrap(CIContext(options: [.useSoftwareRenderer: true])

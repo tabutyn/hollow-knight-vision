@@ -1274,7 +1274,7 @@ struct DashboardView: View {
             ) ?? initialization.modelGuidance(
                 workspace: workspace, hasGameplayLabels: hasGameplayTrainingLabels,
                 breaches: gameplayLabelBreaches, modelReady: trainedGameplayModelReady,
-                training: labelingTrainer.isRunning
+                training: labelingTrainer.isRunning, objectDetectionEnabled: model.objectDetectionEnabled
             ) {
                 Text(guidance)
                     .foregroundStyle(.blue)
@@ -1791,7 +1791,8 @@ struct DashboardView: View {
 
     private func rebuildLabelingObjectAtlas() {
         let examples = (try? labelingExampleStore.loadExamples()) ?? []
-        let identifiers = Array(LabelingSharedModelPolicy.classIdentifiers).sorted()
+        // Display icons include captured stencils as well as trainable objects.
+        let identifiers = Array(LabelingCatalogPolicy.classIdentifiers).sorted()
         let input = LabelingObjectAtlasBuildInput(
             examples: examples,
             classIdentifiers: identifiers,

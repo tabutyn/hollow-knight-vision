@@ -1071,6 +1071,40 @@ final class GroundHypothesisTrackerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(result.cameraPosition).x, 13, accuracy: 0.01)
     }
 
+    func testAcceptedCoarseHandoffCanRecoverAfterSustainedGroundEvidence() throws {
+        let line = [CleanFloorLine(row: 44, xRange: 0...319)]
+        for coarsePoseAccepted in [false, true] {
+            let tracker = GroundHypothesisTracker(minimumObservationSeconds: 0)
+            let origin = try textureImage(width: 320, height: 100, shiftX: 0, shiftY: 0)
+            for index in 0..<3 {
+                _ = tracker.update(frame: origin,
+                    floorLines: [CleanFloorLine(row: 40, xRange: 0...319)],
+                    timestamp: Double(index) / 60)
+            }
+            // New texture cannot relocalize to the old image. Its initial
+            // position comes only from the accepted coarse camera handoff.
+            tracker.reanchorLocalCamera(to: CGPoint(x: 12, y: 4),
+                frame: try textureImage(width: 320, height: 100, shiftX: 0, shiftY: 4, seed: 0xA11CE),
+                floorLines: line, timestamp: 0.05,
+                allowsProvisionalPromotion: GroundFallbackPromotionPolicy.allowsRecovery(
+                    coarsePoseAccepted: coarsePoseAccepted, maskedConfidence: nil))
+            var result = GroundHypothesisTrackingResult.empty
+            for index in 1...16 {
+                result = tracker.update(
+                    frame: try textureImage(width: 320, height: 100,
+                        shiftX: -index * 2, shiftY: 4, seed: 0xA11CE),
+                    floorLines: line, timestamp: 0.05 + Double(index) / 60)
+                if index < 12 || !coarsePoseAccepted {
+                    XCTAssertFalse(result.poseVerified,
+                        "A provisional origin requires sustained independent pixel evidence")
+                }
+            }
+            XCTAssertEqual(result.poseVerified, coarsePoseAccepted)
+            XCTAssertEqual(try XCTUnwrap(result.cameraPosition).x, 44, accuracy: 1)
+            XCTAssertEqual(try XCTUnwrap(result.cameraPosition).y, 4, accuracy: 1)
+        }
+    }
+
     func testProvisionalContinuitySurvivesBriefTextureMissThenExpires() throws {
         let tracker = GroundHypothesisTracker(minimumObservationSeconds: 0)
         let origin = try textureImage(width: 320, height: 100, shiftX: 0, shiftY: 0)
@@ -1169,7 +1203,8 @@ final class GroundHypothesisTrackerTests: XCTestCase {
         shiftX: Int,
         shiftY: Int,
         gain: Double = 1,
-        bias: Double = 0
+        bias: Double = 0,
+        seed: UInt64 = 0
     ) throws -> CGImage {
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         for y in 0..<height {
@@ -1178,7 +1213,7 @@ final class GroundHypothesisTrackerTests: XCTestCase {
                 let sourceY = y - shiftY
                 let value: UInt8
                 if (0..<width).contains(sourceX), (0..<height).contains(sourceY) {
-                    var hash = UInt64(sourceX &* 73_856_093) ^ UInt64(sourceY &* 19_349_663)
+                    var hash = UInt64(sourceX &* 73_856_093) ^ UInt64(sourceY &* 19_349_663) ^ seed
                     hash ^= hash >> 13
                     hash &*= 1_274_126_177
                     let original = UInt8(truncatingIfNeeded: hash >> 11)

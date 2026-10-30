@@ -1593,6 +1593,12 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                 )
                 issue = "Replay stopped: Vision published no camera for \(milliseconds) ms while Hacker camera moved \(error) px in \(decision.sceneName)"
             }
+            if ReplayDiagnosticOptions.continueAfterDivergence {
+                self.inputPathLog.error("Diagnostic replay continuing after divergence: error=\(error, privacy: .public) threshold=\(threshold, privacy: .public) scene=\(decision.sceneName, privacy: .public) cause=\(decision.cause.rawValue, privacy: .public)")
+                // Keep accepting frame pairs so the diagnostic trace retains
+                // rendered frame IDs after the one-shot threshold report.
+                return
+            }
             self.pathPlaybackAbortIssue = issue
             self.inputPathLog.error("\(issue, privacy: .public) samples=\(decision.consecutiveSamples, privacy: .public)")
             self.playbackDivergenceMonitor.stop()
@@ -2911,11 +2917,12 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 presentedAt: timestamp,
                 solveWidth: converted.solveWidth
             )
+        let horizontalInput = gameControlForwarder.currentHorizontalRoomDirection()
         let room = solved.gameplayEnabled
             ? visualRoomTracker.observe(
                 profile: signalProfile,
                 baseDecision: transitionDecision,
-                horizontalInput: gameControlForwarder.currentHorizontalRoomDirection(),
+                horizontalInput: horizontalInput,
                 knightRect: transitionRegions.knight,
                 frameSize: CGSize(width: frame.width, height: frame.height),
                 currentWorldPose: roomCameraPosition,
@@ -2960,6 +2967,15 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             coarsePoseRevision: room.coarsePoseRevision,
             signalMeanPeak: signalProfile.meanPeak,
             signalVisibleFraction: signalProfile.visibleFraction,
+            input: RecordedCoarseMotionInput(
+                gameplayEnabled: solved.gameplayEnabled,
+                groundTrackingReliable: groundTrackingReliable,
+                cameraX: Double(roomCameraPosition.x), cameraY: Double(roomCameraPosition.y),
+                velocityX: reliableCameraVelocity.map { Double($0.velocity.dx) },
+                velocityY: reliableCameraVelocity.map { Double($0.velocity.dy) },
+                velocityTimestamp: reliableCameraVelocity?.timestamp,
+                horizontalInput: horizontalInput?.rawValue
+            ),
             observedAt: capturedAt
         )
         if let renderedGameFrame,
@@ -3541,7 +3557,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             var floorlessSelectionForRecording: String?
             let groundCandidate: CGPoint? = {
                 guard let ground = hypothesisTracking,
-                      ground.poseVerified, ground.hasConfirmedGround,
+                      GroundMotionEvidence.isMeasured(ground),
                       let pose = ground.cameraPosition else { return nil }
                 return CGPoint(
                     x: pose.x / latestPresentationScale,
@@ -3574,7 +3590,8 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                     frame: snapshot.presentationFrame,
                     excluding: regions?.omittedRects ?? [],
                     cameraPosition: position,
-                    movingForegroundRect: regions?.knight
+                    movingForegroundRect: regions?.knight,
+                    timestamp: snapshot.timestamp
                 )
             } else {
                 var bridged: TransitionMotionBridgeResult?
@@ -3586,7 +3603,8 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                     transitionMotionBridge.resumeAfterTransition(
                         frame: snapshot.presentationFrame,
                         excluding: regions?.omittedRects ?? [],
-                        movingForegroundRect: regions?.knight
+                        movingForegroundRect: regions?.knight,
+                        timestamp: snapshot.timestamp
                     )
                     bridged = nil
                 } else if snapshot.room.coarsePlaceMatch != nil,
@@ -3605,7 +3623,8 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                         // Historical ground is not evidence that Y is stationary
                         // during a current-frame ground miss or rejected solve.
                         lockVertical: false,
-                        movingForegroundRect: regions?.knight
+                        movingForegroundRect: regions?.knight,
+                        timestamp: snapshot.timestamp
                     )
                     let expectedDirection =
                         gameControlForwarder.currentHorizontalRoomDirection()
@@ -3639,7 +3658,8 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                                 frame: snapshot.presentationFrame,
                                 excluding: regions?.omittedRects ?? [],
                                 cameraPosition: accumulator.position,
-                                movingForegroundRect: regions?.knight
+                                movingForegroundRect: regions?.knight,
+                                timestamp: snapshot.timestamp
                             )
                         }
                     }
@@ -3678,7 +3698,8 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                         frame: snapshot.presentationFrame,
                         excluding: regions?.omittedRects ?? [],
                         cameraPosition: position,
-                        movingForegroundRect: regions?.knight
+                        movingForegroundRect: regions?.knight,
+                        timestamp: snapshot.timestamp
                     )
                 }
                 if let bridged {
@@ -3712,7 +3733,10 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 // Keep private odometry in the same coordinate system as a
                 // measured fallback. Never seed a merely held/unobserved pose.
                 let measuredFallback = bridged != nil || usedCoarseFloorlessPose
-                if measuredFallback && hypothesisTracking?.poseVerified == false
+                if measuredFallback && hypothesisTracking != nil && !groundMotionMeasured
+                    // A trusted coordinate seed has no pixel measurement yet.
+                    // Keep its new reference aligned with this frame's motion,
+                    // just as for an explicitly unverified ground solve.
                     // Once ground texture carries provisional relative motion,
                     // do not overwrite that independent trajectory with the
                     // same coarse pose on every frame. Its absolute origin
@@ -3730,9 +3754,10 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                         timestamp: snapshot.timestamp,
                         sourceLuma: groundAnalysis?.sourceLuma,
                         protectedOcclusions: trackerForegroundRects,
-                        allowsProvisionalPromotion: bridged.map {
-                            $0.confidence >= 0.8
-                        } ?? false
+                        allowsProvisionalPromotion: GroundFallbackPromotionPolicy.allowsRecovery(
+                            coarsePoseAccepted: usedCoarseFloorlessPose,
+                            maskedConfidence: bridged?.confidence
+                        )
                     )
                 }
             }

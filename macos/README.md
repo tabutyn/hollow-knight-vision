@@ -103,7 +103,7 @@ macos/run-live.sh --auto-navigate-gameplay
 ```
 
 Normal mode forwards arrows and common keyboard controls (A/D/Z/X/C, I,
-Return, Tab, Space, Escape) from the Vision window to the selected unmodified
+Return, Tab, Space, Escape, and P for Pause) from the Vision window to the selected unmodified
 Hollow Knight process. Pointer events over the displayed live frame are mapped
 through the captured content rectangle, including title-bar cropping, and sent
 to the same validated process. macOS Accessibility permission is checked when

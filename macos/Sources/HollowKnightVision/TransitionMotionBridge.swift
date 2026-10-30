@@ -86,6 +86,7 @@ final class TransitionMotionBridge {
 
     private let imageContext = CIContext(options: [.cacheIntermediates: false])
     private var previousFrame: CGImage?
+    private var previousFrameTimestamp: TimeInterval?
     private var previousExclusions = [CGRect]()
     private var previousMovingForegroundRect: CGRect?
     private var smallHorizontalMotion = TransitionSmallMotionAccumulator()
@@ -94,6 +95,7 @@ final class TransitionMotionBridge {
 
     func reset() {
         previousFrame = nil
+        previousFrameTimestamp = nil
         previousExclusions = []
         previousMovingForegroundRect = nil
         smallHorizontalMotion.reset()
@@ -105,11 +107,12 @@ final class TransitionMotionBridge {
         frame: CGImage,
         excluding: [CGRect],
         cameraPosition: CGPoint,
-        movingForegroundRect: CGRect? = nil
+        movingForegroundRect: CGRect? = nil,
+        timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) {
         position = cameraPosition
         awaitingSceneResume = false
-        seedTranslation(frame, excluding: excluding)
+        seedTranslation(frame, excluding: excluding, timestamp: timestamp)
         previousMovingForegroundRect = movingForegroundRect
         smallHorizontalMotion.reset()
     }
@@ -118,6 +121,7 @@ final class TransitionMotionBridge {
         guard !awaitingSceneResume else { return }
         awaitingSceneResume = true
         previousFrame = nil
+        previousFrameTimestamp = nil
         previousExclusions = []
         previousMovingForegroundRect = nil
         smallHorizontalMotion.reset()
@@ -131,11 +135,12 @@ final class TransitionMotionBridge {
     func resumeAfterTransition(
         frame: CGImage,
         excluding: [CGRect],
-        movingForegroundRect: CGRect? = nil
+        movingForegroundRect: CGRect? = nil,
+        timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) -> CGPoint? {
         guard awaitingSceneResume else { return nil }
         awaitingSceneResume = false
-        seedTranslation(frame, excluding: excluding)
+        seedTranslation(frame, excluding: excluding, timestamp: timestamp)
         previousMovingForegroundRect = movingForegroundRect
         smallHorizontalMotion.reset()
         return position
@@ -146,12 +151,13 @@ final class TransitionMotionBridge {
         excluding: [CGRect],
         solveWidth: CGFloat,
         lockVertical: Bool = false,
-        movingForegroundRect: CGRect? = nil
+        movingForegroundRect: CGRect? = nil,
+        timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) -> TransitionMotionBridgeResult? {
         guard !awaitingSceneResume, var next = position,
               let referenceFrame = previousFrame,
               solveWidth.isFinite, solveWidth > 0 else {
-            seedTranslation(frame, excluding: excluding)
+            seedTranslation(frame, excluding: excluding, timestamp: timestamp)
             return nil
         }
         // Mask the union in both images. Masking each frame only at its own
@@ -161,6 +167,8 @@ final class TransitionMotionBridge {
         let reference = masked(referenceFrame, excluding: comparisonExclusions)
         let current = masked(frame, excluding: comparisonExclusions)
         let priorMovingForegroundRect = previousMovingForegroundRect
+        let elapsed = previousFrameTimestamp.map { timestamp - $0 }
+        previousFrameTimestamp = timestamp
         previousFrame = frame
         previousExclusions = excluding
         previousMovingForegroundRect = movingForegroundRect
@@ -191,7 +199,11 @@ final class TransitionMotionBridge {
                 solveWidth: solveWidth
             )
             step.dx = smallHorizontalMotion.ingest(step.dx)
-            guard isPlausible(step, solveWidth: solveWidth) else { return nil }
+            guard isPlausible(step, solveWidth: solveWidth, elapsed: elapsed,
+                              confidence: observation.confidence)
+                    || confirmsFastMotion(step, reference: reference, current: current,
+                        solveWidth: solveWidth, elapsed: elapsed,
+                        confidence: observation.confidence) else { return nil }
             next.x += step.dx
             next.y += step.dy
             position = next
@@ -206,15 +218,54 @@ final class TransitionMotionBridge {
         }
     }
 
-    private func seedTranslation(_ frame: CGImage, excluding: [CGRect]) {
+    private func seedTranslation(_ frame: CGImage, excluding: [CGRect], timestamp: TimeInterval) {
+        previousFrameTimestamp = timestamp
         previousFrame = frame
         previousExclusions = excluding
     }
 
-    private func isPlausible(_ step: CGVector, solveWidth: CGFloat) -> Bool {
-        step.dx.isFinite && step.dy.isFinite
-            && abs(step.dx) <= max(8, solveWidth * 0.08)
-            && abs(step.dy) <= max(6, solveWidth * 0.05)
+    private func isPlausible(
+        _ step: CGVector, solveWidth: CGFloat, elapsed: TimeInterval?, confidence: Float
+    ) -> Bool {
+        var horizontalLimit = max(8, solveWidth * 0.08)
+        var verticalLimit = max(6, solveWidth * 0.05)
+        if let elapsed, elapsed > LowResolutionTransitionOdometry.maximumSampleAge,
+           elapsed <= 0.5, confidence >= 0.8 {
+            // A missed capture interval can contain more travel than an ordinary
+            // frame. Retain a high-confidence image measurement across a short
+            // gap instead of silently assigning its new pixels the old pose.
+            horizontalLimit = max(horizontalLimit, min(solveWidth * 0.35, solveWidth * elapsed))
+            verticalLimit = max(verticalLimit, min(solveWidth * 0.25, solveWidth * elapsed * 0.75))
+        }
+        return step.dx.isFinite && step.dy.isFinite
+            && abs(step.dx) <= horizontalLimit && abs(step.dy) <= verticalLimit
+    }
+
+    private func confirmsFastMotion(
+        _ step: CGVector, reference: CGImage, current: CGImage,
+        solveWidth: CGFloat, elapsed: TimeInterval?, confidence: Float
+    ) -> Bool {
+        // Camera zones can snap vertically within one capture. The prior
+        // ground result still looks reliable on capture, so coarse ownership
+        // begins one frame too late to retain that displacement. Admit a larger
+        // fine-registration step only when these same images independently
+        // agree at low resolution; no velocity or input predicts this jump.
+        guard let elapsed, elapsed > 0,
+              elapsed <= LowResolutionTransitionOdometry.maximumSampleAge,
+              confidence >= 0.8, step.dx.isFinite, step.dy.isFinite,
+              let referenceGrid = FrameRegionRenderer.signalProfile(in: reference).motionGrid,
+              let currentGrid = FrameRegionRenderer.signalProfile(in: current).motionGrid,
+              let motion = LowResolutionRoomMotionTracker.translation(
+                from: referenceGrid, to: currentGrid), motion.confidence >= 0.35 else {
+            return false
+        }
+        let scale = solveWidth / CGFloat(referenceGrid.width)
+        guard abs(step.dx) <= (CGFloat(LowResolutionRoomMotionTracker.maximumShift) + 0.5) * scale,
+              abs(step.dy) <= (CGFloat(LowResolutionRoomMotionTracker.maximumVerticalShift) + 0.5) * scale else {
+            return false
+        }
+        return hypot(step.dx + CGFloat(motion.screenShiftX) * scale,
+                     step.dy - CGFloat(motion.screenShiftY) * scale) <= scale * 1.5
     }
 
     private func masked(_ frame: CGImage, excluding: [CGRect]) -> CGImage {

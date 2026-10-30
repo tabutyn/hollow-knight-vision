@@ -794,6 +794,13 @@ struct LowResolutionTransitionOdometry {
     private var verticalVelocities = [VerticalVelocitySample]()
     private var lastVerticalMeasuredAt: TimeInterval?
     private var predictedVerticalSteps = 0
+    /// A one-axis prediction must not keep a stale second axis in control of
+    /// the full camera pose. These describe the last eligible comparison,
+    /// rather than intervening captures below the sampling interval.
+    private(set) var lastObservationTimestamp: TimeInterval?
+    private(set) var lastEstimateIsComplete = false
+    private var requiresHorizontalPrediction = false
+    private var requiresVerticalPrediction = false
     /// Trust lineage for this floorless episode. Direction changes clear the
     /// velocity samples, but a later measured low-resolution step may seed a
     /// new direction only when the episode began from fresh ground velocity.
@@ -824,6 +831,10 @@ struct LowResolutionTransitionOdometry {
         lastVerticalMeasuredAt = nil
         predictedVerticalSteps = 0
         hasReliableCameraVelocityLineage = false
+        lastObservationTimestamp = nil
+        lastEstimateIsComplete = false
+        requiresHorizontalPrediction = false
+        requiresVerticalPrediction = false
     }
 
     mutating func arm(
@@ -843,6 +854,8 @@ struct LowResolutionTransitionOdometry {
               seed.timestamp.isFinite,
               seed.velocity.dx.isFinite,
               seed.velocity.dy.isFinite else { return }
+        requiresHorizontalPrediction = abs(seed.velocity.dx) >= 5
+        requiresVerticalPrediction = abs(seed.velocity.dy) >= 5
         var seeded = false
         if let expectedDirection,
            abs(seed.velocity.dx) >= 5,
@@ -885,6 +898,8 @@ struct LowResolutionTransitionOdometry {
         }
         let age = timestamp - reference.timestamp
         guard age >= Self.minimumSampleAge else { return nil }
+        lastObservationTimestamp = timestamp
+        lastEstimateIsComplete = false
         defer { self.reference = Sample(grid: grid, timestamp: timestamp) }
         guard age <= Self.maximumSampleAge else {
             clearVelocityPrediction()
@@ -935,130 +950,47 @@ struct LowResolutionTransitionOdometry {
             )
             if predictedHorizontal != nil { predictedSteps += 1 }
             if predictedVertical != nil { predictedVerticalSteps += 1 }
+            lastEstimateIsComplete = (predictedHorizontal != nil || !requiresHorizontalPrediction)
+                && (predictedVertical != nil || !requiresVerticalPrediction)
             return stepX
         }
         let stepX = -CGFloat(motion.screenShiftX) * pixelScale
         let stepY = CGFloat(motion.screenShiftY) * pixelScale
         guard stepX.isFinite, stepY.isFinite else { return nil }
-        let predictedVertical = predictedVerticalStep(
-            age: age,
-            timestamp: timestamp,
-            pixelScale: pixelScale
-        )
-        let usesPredictedVertical = predictedVertical.map {
-            shouldUsePredictedVertical(measured: stepY, predicted: $0.step)
-        } ?? false
-        let acceptedStepY = usesPredictedVertical
-            ? predictedVertical!.step : stepY
-        // The first collapsing-fade match can retain just enough overlap to
-        // report a small, wrong-direction displacement. The ordinary easing
-        // allowance accepts that value, which would erase the fresh verified
-        // ground velocity before the subsequent no-overlap frames. A trusted,
-        // bounded lineage outranks only this contradictory measurement.
-        if let expectedDirection,
-           hasReliableCameraVelocityLineage,
-           !Self.step(stepX, agreesWith: expectedDirection),
-           let predicted = predictedHorizontalStep(
-               age: age,
-               timestamp: timestamp,
-               pixelScale: pixelScale,
-               expectedDirection: expectedDirection
-            ) {
-            worldDeltaX += predicted.step
-            worldDeltaY += acceptedStepY
-            sampleCount += 1
-            confidenceTotal += max(
-                predicted.confidence,
-                usesPredictedVertical
-                    ? predictedVertical?.confidence ?? 0 : motion.confidence
-            )
-            predictedSteps += 1
-            if usesPredictedVertical { predictedVerticalSteps += 1 }
-            else {
-                rememberMeasuredVerticalVelocity(
-                    stepY: stepY,
-                    age: age,
-                    timestamp: timestamp,
-                    confidence: motion.confidence
-                )
-            }
-            return predicted.step
-        }
-        guard Self.acceptsDirection(
-            motion,
-            expectedDirection: expectedDirection
-        ) else {
-            if let predicted = predictedHorizontalStep(
-                age: age,
-                timestamp: timestamp,
-                pixelScale: pixelScale,
+        var acceptedStepX = stepX
+        var acceptedConfidence = motion.confidence
+        if !Self.acceptsDirection(motion, expectedDirection: expectedDirection) {
+            guard let predicted = predictedHorizontalStep(
+                age: age, timestamp: timestamp, pixelScale: pixelScale,
                 expectedDirection: expectedDirection
-            ) {
-                worldDeltaX += predicted.step
-                worldDeltaY += acceptedStepY
-                sampleCount += 1
-                confidenceTotal += max(
-                    predicted.confidence,
-                    usesPredictedVertical
-                        ? predictedVertical?.confidence ?? 0 : motion.confidence
-                )
-                predictedSteps += 1
-                if usesPredictedVertical { predictedVerticalSteps += 1 }
-                else {
-                    rememberMeasuredVerticalVelocity(
-                        stepY: stepY,
-                        age: age,
-                        timestamp: timestamp,
-                        confidence: motion.confidence
-                    )
-                }
-                return predicted.step
+            ) else {
+                clearVelocityPrediction()
+                lastExpectedDirection = expectedDirection
+                return nil
             }
-            clearVelocityPrediction()
-            lastExpectedDirection = expectedDirection
-            return nil
-        }
-        let predictedHorizontal = predictedHorizontalStep(
-            age: age,
-            timestamp: timestamp,
-            pixelScale: pixelScale,
-            expectedDirection: expectedDirection
-        )
-        let usesPredictedHorizontal = predictedHorizontal.map {
-            shouldUsePredictedHorizontal(measured: stepX, predicted: $0.step)
-        } ?? false
-        let acceptedStepX = usesPredictedHorizontal
-            ? predictedHorizontal!.step : stepX
-        worldDeltaX += acceptedStepX
-        worldDeltaY += acceptedStepY
-        sampleCount += 1
-        confidenceTotal += max(
-            usesPredictedHorizontal
-                ? predictedHorizontal?.confidence ?? 0 : motion.confidence,
-            usesPredictedVertical
-                ? predictedVertical?.confidence ?? 0 : motion.confidence
-        )
-        if usesPredictedHorizontal {
+            acceptedStepX = predicted.step
+            acceptedConfidence = predicted.confidence
             predictedSteps += 1
         } else {
+            // A valid image observation can describe camera easing, stopping or
+            // reversing while the same input remains held. Older velocity is
+            // fallback evidence, not permission to replace that measurement.
             rememberMeasuredVelocity(
-                stepX: stepX,
-                age: age,
-                timestamp: timestamp,
-                confidence: motion.confidence,
-                expectedDirection: expectedDirection
+                stepX: stepX, age: age, timestamp: timestamp,
+                confidence: motion.confidence, expectedDirection: expectedDirection
             )
         }
-        if usesPredictedVertical {
-            predictedVerticalSteps += 1
-        } else {
-            rememberMeasuredVerticalVelocity(
-                stepY: stepY,
-                age: age,
-                timestamp: timestamp,
-                confidence: motion.confidence
-            )
-        }
+        worldDeltaX += acceptedStepX
+        worldDeltaY += stepY
+        sampleCount += 1
+        confidenceTotal += acceptedConfidence
+        rememberMeasuredVerticalVelocity(
+            stepY: stepY, age: age, timestamp: timestamp,
+            confidence: motion.confidence
+        )
+        requiresHorizontalPrediction = abs(acceptedStepX) >= 0.25
+        requiresVerticalPrediction = abs(stepY) >= 0.25
+        lastEstimateIsComplete = true
         return acceptedStepX
     }
 
@@ -1070,7 +1002,7 @@ struct LowResolutionTransitionOdometry {
     ) {
         guard hasReliableCameraVelocityLineage, age > 0,
               stepY.isFinite, abs(stepY) >= 0.25 else {
-            if abs(stepY) < 0.25 { predictedVerticalSteps += 1 }
+            if abs(stepY) < 0.25 { clearVerticalVelocityPrediction() }
             return
         }
         let velocity = stepY / age
@@ -1164,29 +1096,6 @@ struct LowResolutionTransitionOdometry {
             $0.worldPixelsPerSecond < $1.worldPixelsPerSecond
         }
         return ordered[ordered.count / 2].worldPixelsPerSecond
-    }
-
-    private func shouldUsePredictedVertical(
-        measured: CGFloat,
-        predicted: CGFloat
-    ) -> Bool {
-        guard abs(predicted) >= 4 else { return false }
-        let contradicts = measured * predicted < 0
-        let collapses = abs(measured) < abs(predicted) * 0.35
-        return contradicts || collapses
-    }
-
-    private func shouldUsePredictedHorizontal(
-        measured: CGFloat,
-        predicted: CGFloat
-    ) -> Bool {
-        guard abs(predicted) >= 4, measured * predicted > 0 else { return false }
-        // During a fast fade or fall the remaining visible texture can report
-        // the correct direction but only a fraction of the actual travel. For
-        // the short ground-velocity handoff window, keep the independently
-        // measured velocity when image motion collapses this far. A true stop
-        // remains rejected as insignificant motion before reaching this path.
-        return abs(measured) < abs(predicted) * 0.85
     }
 
     private func predictedHorizontalStep(
@@ -1680,8 +1589,47 @@ struct LowResolutionRoomMotionTracker {
         guard deviation > 0.001 else {
             return (values.map { _ in 0 }, deviation, visible)
         }
-        return (values.map { ($0 - mean) / deviation }, deviation, visible)
+        // A gameplay visibility halo moves and changes shape independently of
+        // world texture. Global exposure normalization still follows that halo.
+        // Remove local illumination only on masked/dark frames, preserving the
+        // wall detail that remains visible when there is no ground to track.
+        let normalizedValues = excludingDarkPixels
+            ? locallyNormalizedTexture(values, width: grid.width, height: grid.height, visible: visible)
+            : values.map { ($0 - mean) / deviation }
+        return (normalizedValues, deviation, visible)
     }
+    private static func locallyNormalizedTexture(
+        _ values: [Double], width: Int, height: Int, visible: [Bool]?
+    ) -> [Double] {
+        var output = [Double](repeating: 0, count: values.count)
+        let radius = 2
+        for y in 0..<height {
+            for x in 0..<width {
+                let index = y * width + x
+                if visible?[index] == false { continue }
+                var sum = 0.0, squareSum = 0.0
+                var count = 0
+                for sampleY in max(0, y - radius)...min(height - 1, y + radius) {
+                    for sampleX in max(0, x - radius)...min(width - 1, x + radius) {
+                        let sampleIndex = sampleY * width + sampleX
+                        if visible?[sampleIndex] == false { continue }
+                        let value = values[sampleIndex]
+                        sum += value
+                        squareSum += value * value
+                        count += 1
+                    }
+                }
+                guard count >= 6 else { continue }
+                let divisor = Double(count)
+                let mean = sum / divisor
+                let deviation = sqrt(max(0, squareSum / divisor - mean * mean))
+                // Do not amplify nearly uniform dark pixels into strong texture.
+                output[index] = (values[index] - mean) / max(minimumTextureDeviation, deviation)
+            }
+        }
+        return output
+    }
+
 }
 
 /// Vision-only room ownership. Darkness by itself never changes rooms. Coarse
@@ -1836,6 +1784,7 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
     private var floorlessAnchorWorldPose: CGPoint?
     private var floorlessWorldPose: CGPoint?
     private var floorlessPoseMeasured = false
+    private var floorlessLastAcceptedAt: TimeInterval?
     private var floorlessPoseRevision: UInt64 = 0
     private var previousMotionSample: (grid: LowResolutionMotionGrid, timestamp: TimeInterval)?
     private var previousEdgeBlackBands: FrameEdgeBlackBands?
@@ -2550,6 +2499,23 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
                 expectedDirection: horizontalInput ?? screenMotion?.direction
             )
         }
+        if let acceptedAt = floorlessLastAcceptedAt,
+           timestamp - acceptedAt > LowResolutionTransitionOdometry.maximumSampleAge {
+            // A previously measured pose is not a fresh camera measurement.
+            // Let completed registration own presentation through a longer gap.
+            floorlessPoseMeasured = false
+            floorlessLastAcceptedAt = nil
+            floorlessPoseRevision &+= 1
+        }
+        if !floorlessPoseMeasured {
+            // While broad-image matching is unavailable, follow the accepted
+            // tracking stream's origin. A later coarse step resumes from that
+            // pose instead of resurrecting the frozen pre-gap trajectory.
+            floorlessAnchorWorldPose = CGPoint(
+                x: currentWorldPose.x - floorlessOdometry.worldDeltaX,
+                y: currentWorldPose.y - floorlessOdometry.worldDeltaY
+            )
+        }
         // Camera travel continues during jumps, falls, and scripted pans when
         // neither horizontal key is held. Hacker truth on the one-way Tutorial
         // -> Town route contains 79 ground-unreliable, vertical-only 50 ms
@@ -2562,8 +2528,15 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
             timestamp: timestamp,
             solveWidth: solveWidth,
             expectedDirection: horizontalInput ?? screenMotion?.direction
-        ) != nil {
+        ) != nil, floorlessOdometry.lastEstimateIsComplete {
             floorlessPoseMeasured = true
+            floorlessLastAcceptedAt = timestamp
+        } else if floorlessOdometry.lastObservationTimestamp == timestamp {
+            // A rejected comparison or an expired axis is not a fresh 2D
+            // camera estimate. Let completed tracking continue that motion.
+            if floorlessPoseMeasured { floorlessPoseRevision &+= 1 }
+            floorlessPoseMeasured = false
+            floorlessLastAcceptedAt = nil
         }
         if let anchor = floorlessAnchorWorldPose {
             floorlessWorldPose = CGPoint(
@@ -2582,6 +2555,7 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
             floorlessAnchorWorldPose = match.cameraPosition
             floorlessWorldPose = match.cameraPosition
             floorlessPoseMeasured = true
+            floorlessLastAcceptedAt = timestamp
             floorlessOdometry.arm(grid: currentGrid, timestamp: timestamp)
         }
     }
@@ -2595,6 +2569,7 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
         floorlessAnchorWorldPose = nil
         floorlessWorldPose = nil
         floorlessPoseMeasured = false
+        floorlessLastAcceptedAt = nil
     }
 
     private func boundaryDirection(

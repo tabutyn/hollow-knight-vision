@@ -176,8 +176,10 @@ final class StencilGuidanceTests: XCTestCase {
         for item in contexts {
             let context = try XCTUnwrap(LabelingContext(storageIdentifier: item.contextIdentifier))
             XCTAssertEqual(item.name, context.rawValue)
-            XCTAssertEqual(item.objects.map(\.id), context.labels.map(\.id))
-            XCTAssertEqual(item.objects.map(\.name), context.labels.map(\.name))
+            // Mac additionally supports the game's inactive-controller layout.
+            let sharedLabels = context.labels.filter { $0.id != ControllerStencilPolicy.noActiveController }
+            XCTAssertEqual(item.objects.map(\.id), sharedLabels.map(\.id))
+            XCTAssertEqual(item.objects.map(\.name), sharedLabels.map(\.name))
             if StencilInitializationPolicy.requiredContexts.contains(context) {
                 for language in HollowKnightMenuLanguage.allCases {
                     let words = StencilGuidanceText.catalog[language.rawValue]!
@@ -242,7 +244,7 @@ final class StencilGuidanceTests: XCTestCase {
         coordinator.refresh(mode: .modded)
         XCTAssertEqual(coordinator.labelContextForCapture(recognized: .game, navigation: nil, fallback: .game), .mainTitle)
         XCTAssertEqual(coordinator.labelContextForCapture(recognized: .game, navigation: .options, fallback: .game), .options)
-        XCTAssertEqual(coordinator.totalRequiredCount, 190)
+        XCTAssertEqual(coordinator.totalRequiredCount, 189)
         XCTAssertEqual(coordinator.screenCount, 26)
         XCTAssertEqual(coordinator.buttonTitle, "Stencil (0 / 26)")
         XCTAssertEqual(coordinator.completedScreenCount, 0)

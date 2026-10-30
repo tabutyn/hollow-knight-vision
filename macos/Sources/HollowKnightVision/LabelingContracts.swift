@@ -102,8 +102,18 @@ enum LabelingContractEvaluator {
             ))
         }
 
+        if context == .controller {
+            let positives = Set(counts.keys)
+            result.append(evaluation(
+                id: "set.controller.layout", title: "Controller layout labels must match one screen",
+                satisfied: !positives.contains(ControllerStencilPolicy.noActiveController)
+                    || positives.isDisjoint(with: ControllerStencilPolicy.connectedIdentifiers),
+                exemptions: exemptions
+            ))
+        }
         if let setContract, setContract.requiresAllContextObjects, let context {
-            for definition in context.labels where LabelingHUDStencilPolicy.isLabelable(definition.id, in: context) {
+            let definitions = ControllerStencilPolicy.requiredLabels(in: context, positiveIdentifiers: Set(counts.keys))
+            for definition in definitions where LabelingHUDStencilPolicy.isLabelable(definition.id, in: context) {
                 let classIdentifier = LabelingClassIdentity.canonicalIdentifier(definition.id)
                 let override = setContract.occurrenceOverrides?[classIdentifier]
                 let minimum = override?.minimum ?? 1

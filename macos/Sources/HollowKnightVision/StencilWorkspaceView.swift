@@ -9,11 +9,18 @@ enum StencilLabelSelectionPolicy {
         hidesCompleted: Bool, includesDeferredLabels: Bool = false
     ) -> [LabelingClassDefinition] {
         var seen = Set<String>()
+        let positives = Set(rectangles.filter { !$0.isNegative }.map {
+            LabelingClassIdentity.canonicalIdentifier($0.classID)
+        })
         return (context.labels + custom).filter { definition in
             let identifier = LabelingClassIdentity.canonicalIdentifier(definition.id)
             guard seen.insert(identifier).inserted,
                   LabelingHUDStencilPolicy.isLabelable(identifier, in: context) else { return false }
             if mode == .normal && identifier == LabelingClassIdentity.mods { return false }
+            if hidesCompleted && context == .controller
+                && !ControllerStencilPolicy.isAvailable(identifier, positiveIdentifiers: positives) {
+                return false
+            }
             // Clear Save is absent on fresh profiles and never blocks the first campaign.
             if hidesCompleted && identifier == StencilInitializationPolicy.deferredProfileClass {
                 return includesDeferredLabels && !rectangles.contains {

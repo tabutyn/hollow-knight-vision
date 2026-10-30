@@ -160,6 +160,15 @@ struct FloorlessPoseCandidate: Equatable {
     let source: Source
 }
 
+/// An accepted coarse handoff must be able to return to ground tracking.
+/// This only enables validation: GroundHypothesisTracker still requires 12
+/// consecutive strong texture matches, 0.2 seconds, and placement acceptance.
+enum GroundFallbackPromotionPolicy {
+    static func allowsRecovery(coarsePoseAccepted: Bool, maskedConfidence: Float?) -> Bool {
+        coarsePoseAccepted || (maskedConfidence.map { $0 >= 0.8 } ?? false)
+    }
+}
+
 /// Selects between two independently measured floorless trajectories without
 /// letting either become unconditional authority. The capture-rate path sees
 /// skipped fast motion; masked registration is more stable through a stop or
@@ -211,7 +220,25 @@ enum FloorlessPoseCandidateSelector {
             abs(step(from: current, to: $0.position).dx)
                 < abs(step(from: current, to: $1.position).dx)
         }) {
+            if let masked = directional.first(where: { $0.source == .maskedRegistration }),
+               abs(step(from: current, to: strongest.position).dx)
+                    - abs(step(from: current, to: masked.position).dx) <= stationaryTolerance {
+                // Subpixel X differences do not establish that coarse motion
+                // caught a skipped frame. Preserve the fine Y measurement too,
+                // instead of repeatedly replacing it with a frozen coarse Y.
+                return masked
+            }
             return strongest
+        }
+
+        // Horizontal input does not constrain a vertical camera-zone change.
+        // Preserve measured falls with small opposing camera easing, matching
+        // the vertical-dominant allowance in low-resolution odometry.
+        for candidate in [maskedCandidate, coarseCandidate].compactMap({ $0 }) {
+            let delta = step(from: current, to: candidate.position)
+            if abs(delta.dy) >= verticalPreferenceThreshold, abs(delta.dy) > abs(delta.dx) {
+                return candidate
+            }
         }
 
         // When both trackers say the camera is stationary, retaining the more

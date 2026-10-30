@@ -202,7 +202,7 @@ final class LabelingEditorViewTests: XCTestCase {
             "Film Grain", "Reset Defaults", "Back", "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.controller.labels.map(\.name), [
-            "Controller", "Controller Diagram", "Remap Controlls", "Advanced Settings", "Back",
+            "Controller", "No Active Controller", "Controller Diagram", "Remap Controlls", "Advanced Settings", "Back",
             "Select Decorations",
         ])
         XCTAssertEqual(LabelingContext.remapController.labels.map(\.name), [

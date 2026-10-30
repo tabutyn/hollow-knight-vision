@@ -52,17 +52,30 @@ enum StencilInitializationPolicy {
             + contexts.filter { $0 == .clearSave }
     }()
 
-    static func contexts(for mode: HollowKnightRuntimeMode) -> [LabelingContext] {
-        requiredContexts.filter { mode == .modded || $0 != .mods }
+    static func contexts(
+        for mode: HollowKnightRuntimeMode, examples: [SavedLabelingExample] = [],
+        languageIdentifier: String = "en", requiredSize: (width: Int, height: Int) = (640, 360)
+    ) -> [LabelingContext] {
+        let controller = representativeExample(examples: examples, context: .controller,
+            languageIdentifier: languageIdentifier, mode: mode, requiredSize: requiredSize)
+        let inactive = controller.map {
+            positiveCounts($0)[ControllerStencilPolicy.noActiveController, default: 0] > 0
+        } ?? false
+        return requiredContexts.filter {
+            (mode == .modded || $0 != .mods) && (!inactive || $0 != .remapController)
+        }
     }
 
     static func requiredCounts(
         context: LabelingContext,
         mode: HollowKnightRuntimeMode,
-        catalog: LabelingContractCatalog = .bundled
+        catalog: LabelingContractCatalog = .bundled,
+        positiveCounts: [String: Int] = [:]
     ) -> [(definition: LabelingClassDefinition, count: Int)] {
         let contract = catalog.setContract(for: context.storageIdentifier)
-        return context.labels.compactMap { definition in
+        return ControllerStencilPolicy.requiredLabels(in: context,
+            positiveIdentifiers: Set(positiveCounts.filter { $0.value > 0 }.keys)
+        ).compactMap { definition in
             let identifier = LabelingClassIdentity.canonicalIdentifier(definition.id)
             if mode == .normal && identifier == LabelingClassIdentity.mods {
                 return nil
@@ -81,12 +94,13 @@ enum StencilInitializationPolicy {
         mode: HollowKnightRuntimeMode,
         requiredSize: (width: Int, height: Int) = (640, 360)
     ) -> [StencilInitializationStep] {
-        contexts(for: mode).flatMap { context -> [StencilInitializationStep] in
-            let requirements = requiredCounts(context: context, mode: mode)
+        contexts(for: mode, examples: examples, languageIdentifier: languageIdentifier,
+                 requiredSize: requiredSize).flatMap { context -> [StencilInitializationStep] in
             let bestCounts = representativeExample(
                 examples: examples, context: context, languageIdentifier: languageIdentifier,
                 mode: mode, requiredSize: requiredSize
             ).map(positiveCounts) ?? [:]
+            let requirements = requiredCounts(context: context, mode: mode, positiveCounts: bestCounts)
             return requirements.flatMap { requirement -> [StencilInitializationStep] in
                 let identifier = LabelingClassIdentity.canonicalIdentifier(
                     requirement.definition.id
@@ -114,15 +128,21 @@ enum StencilInitializationPolicy {
         languageIdentifier: String, mode: HollowKnightRuntimeMode,
         requiredSize: (width: Int, height: Int) = (640, 360)
     ) -> SavedLabelingExample? {
-        let requirements = requiredCounts(context: context, mode: mode)
         return examples.filter {
             $0.manifest.contextIdentifier == context.storageIdentifier
                 && $0.manifest.resolvedLanguageIdentifier == languageIdentifier
                 && $0.manifest.imageWidth == requiredSize.width
                 && $0.manifest.imageHeight == requiredSize.height
         }.sorted {
-            let lhs = score(positiveCounts($0), requirements: requirements)
-            let rhs = score(positiveCounts($1), requirements: requirements)
+            // A newly captured controller layout supersedes the old hardware state.
+            if context == .controller && $0.manifest.createdAt != $1.manifest.createdAt {
+                return $0.manifest.createdAt > $1.manifest.createdAt
+            }
+            let leftCounts = positiveCounts($0), rightCounts = positiveCounts($1)
+            let lhs = score(leftCounts, requirements: requiredCounts(
+                context: context, mode: mode, positiveCounts: leftCounts))
+            let rhs = score(rightCounts, requirements: requiredCounts(
+                context: context, mode: mode, positiveCounts: rightCounts))
             if lhs != rhs { return lhs > rhs }
             if $0.manifest.createdAt != $1.manifest.createdAt {
                 return $0.manifest.createdAt > $1.manifest.createdAt
@@ -219,7 +239,9 @@ final class StencilInitializationCoordinator: ObservableObject {
         guard issue == nil else { return 0 }
         return contexts.filter(isScreenComplete).count
     }
-    var contexts: [LabelingContext] { StencilInitializationPolicy.contexts(for: mode) }
+    var contexts: [LabelingContext] {
+        StencilInitializationPolicy.contexts(for: mode, examples: examples, languageIdentifier: language.rawValue)
+    }
     var screenCount: Int { contexts.count }
     var buttonTitle: String {
         isComplete ? text("stencil") : "\(text("stencil")) (\(completedScreenCount) / \(screenCount))"
@@ -253,6 +275,12 @@ final class StencilInitializationCoordinator: ObservableObject {
             }
             let remaining = steps.filter {
                 $0.context == context && (isFirstPhaseComplete || !StencilInitializationPolicy.isDeferred($0))
+            }
+            if context == .controller, let identifier = selectedClassIdentifier,
+               identifier == ControllerStencilPolicy.diagram,
+               let definition = context.labels.first(where: { $0.id == identifier }),
+               example(for: context).map({ StencilInitializationPolicy.positiveCounts($0)[identifier, default: 0] }) ?? 0 == 0 {
+                return text("draw", ["object": text(definition.name)])
             }
             if let step = remaining.first(where: { $0.classIdentifier == selectedClassIdentifier }) ?? remaining.first {
                 return words.instruction(step)
@@ -300,12 +328,12 @@ final class StencilInitializationCoordinator: ObservableObject {
     }
 
     func modelGuidance(workspace: DashboardWorkspace, hasGameplayLabels: Bool, breaches: Int,
-                       modelReady: Bool, training: Bool) -> String? {
+                       modelReady: Bool, training: Bool, objectDetectionEnabled: Bool) -> String? {
         guard isComplete, workspace != .label else { return nil }
         if training { return text("modelTraining") }
         if !hasGameplayLabels { return text("modelLabelGameplay") }
         if breaches > 0 { return text("modelReview", ["count": String(breaches)]) }
-        if modelReady { return text("modelReady") }
+        if modelReady { return objectDetectionEnabled ? nil : text("modelReady") }
         return text(workspace == .model ? "modelTrain" : "modelOpen")
     }
 
@@ -316,7 +344,8 @@ final class StencilInitializationCoordinator: ObservableObject {
         contexts.reduce(0) { total, context in
             total + StencilInitializationPolicy.requiredCounts(
                 context: context,
-                mode: mode
+                mode: mode,
+                positiveCounts: example(for: context).map(StencilInitializationPolicy.positiveCounts) ?? [:]
             ).reduce(0) { $0 + $1.count }
         }
     }

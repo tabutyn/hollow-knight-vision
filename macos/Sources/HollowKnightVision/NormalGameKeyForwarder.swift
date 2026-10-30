@@ -12,6 +12,12 @@ struct NativeGameKeyState {
     private(set) var targetPID: pid_t?
     private(set) var heldKeyCodes = Set<UInt16>()
 
+    // Keep physical ownership separate from the game's key. P and Escape
+    // share one output, released only when both physical keys are up.
+    var forwardedKeyCodes: Set<UInt16> {
+        Set(heldKeyCodes.map(NormalGameKeyPolicy.forwardedKeyCode))
+    }
+
     mutating func press(_ keyCode: UInt16, targetPID: pid_t, isRepeat: Bool) -> Bool {
         guard !isRepeat, self.targetPID == nil || self.targetPID == targetPID,
               heldKeyCodes.insert(keyCode).inserted else { return false }
@@ -74,7 +80,13 @@ enum NormalGameKeyPolicy {
     static let arrows: Set<UInt16> = [123, 124, 125, 126]
     // Common stock bindings plus menu keys. L and S stay with Vision for
     // labeling and stencils, matching the existing workspace shortcuts.
-    static let supported = arrows.union([0, 2, 6, 7, 8, 34, 36, 48, 49, 53])
+    static let supported = arrows.union([0, 2, 6, 7, 8, 34, 35, 36, 48, 49, 53])
+
+    static func forwardedKeyCode(_ keyCode: UInt16) -> UInt16 {
+        // Vision's P shortcut matches the receiver's Pause action; the stock
+        // game opens that menu with Escape.
+        keyCode == 35 ? 53 : keyCode
+    }
 
     static func keyCodes(labeling: Bool, reviewing: Bool, settings: Bool) -> Set<UInt16> {
         guard !labeling, !reviewing else { return [] }
@@ -480,8 +492,10 @@ final class NormalGameKeyForwarder {
         isRepeat: Bool,
         to game: NSRunningApplication
     ) -> Bool {
+        let forwardedKeyCode = NormalGameKeyPolicy.forwardedKeyCode(keyCode)
+        let alreadyForwarded = keys.forwardedKeyCodes.contains(forwardedKeyCode)
         guard let forwardedEvent = NativeGameEventFactory.keyboard(
-            keyCode: keyCode,
+            keyCode: forwardedKeyCode,
             isDown: true,
             flags: flags
         ) else { return false }
@@ -489,7 +503,7 @@ final class NormalGameKeyForwarder {
         guard keys.press(keyCode, targetPID: game.processIdentifier,
                          isRepeat: isRepeat) else { return true }
         pressFlags[keyCode] = flags
-        forwardedEvent.postToPid(game.processIdentifier)
+        if !alreadyForwarded { forwardedEvent.postToPid(game.processIdentifier) }
         statusHandler(visionText("nativeInputReady"))
         activityHandler()
         return true
@@ -584,8 +598,10 @@ final class NormalGameKeyForwarder {
         guard keys.release(keyCode), let flags = pressFlags.removeValue(forKey: keyCode),
               let pid, let target, !target.isTerminated,
               target.processIdentifier == pid else { return }
-        guard let event = NativeGameEventFactory.keyboard(
-            keyCode: keyCode,
+        let forwardedKeyCode = NormalGameKeyPolicy.forwardedKeyCode(keyCode)
+        guard !keys.forwardedKeyCodes.contains(forwardedKeyCode),
+              let event = NativeGameEventFactory.keyboard(
+            keyCode: forwardedKeyCode,
             isDown: false,
             flags: flags
         ) else { return }

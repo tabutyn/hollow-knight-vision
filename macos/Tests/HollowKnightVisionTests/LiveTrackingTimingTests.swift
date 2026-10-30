@@ -57,6 +57,26 @@ final class LiveTrackingTimingTests: XCTestCase {
         )
     }
 
+    func testFloorlessSelectorKeepsFineVerticalMotionWhenHorizontalTravelAgrees() {
+        let result = FloorlessPoseCandidateSelector.select(
+            current: .zero, coarse: CGPoint(x: -5.1, y: 0),
+            masked: CGPoint(x: -5, y: -30), expectedDirection: .left,
+            coarseIsPlaceMatch: false)
+        XCTAssertEqual(result?.source, .maskedRegistration)
+        XCTAssertEqual(result?.position, CGPoint(x: -5, y: -30))
+    }
+
+    func testFloorlessSelectorAllowsVerticalCameraChangeAgainstHorizontalInput() {
+        let result = FloorlessPoseCandidateSelector.select(
+            current: .zero, coarse: nil, masked: CGPoint(x: -3, y: -60),
+            expectedDirection: .right, coarseIsPlaceMatch: false)
+        XCTAssertEqual(result?.source, .maskedRegistration)
+        XCTAssertEqual(result?.position, CGPoint(x: -3, y: -60))
+        XCTAssertNil(FloorlessPoseCandidateSelector.select(
+            current: .zero, coarse: nil, masked: CGPoint(x: -20, y: 0),
+            expectedDirection: .right, coarseIsPlaceMatch: false))
+    }
+
     func testFloorlessSelectorAlwaysAcceptsAbsolutePlaceMatch() {
         XCTAssertEqual(
             FloorlessPoseCandidateSelector.select(

@@ -133,6 +133,28 @@ struct RecordedGroundTruthSample: Codable, Equatable, Sendable {
     let sample: ReceiverGroundTruthSample
 }
 
+/// Explicit automation diagnostics; normal interactive replay retains its stop guard.
+enum ReplayDiagnosticOptions {
+    private static let arguments = ProcessInfo.processInfo.arguments
+    private static let automation = arguments.contains("--enable-automation-control")
+    static let fullRateMotionTrace = automation && arguments.contains("--record-full-rate-motion")
+    static let continueAfterDivergence = automation && arguments.contains("--diagnostic-replay-continue")
+}
+
+/// Inputs actually supplied to the capture-rate tracker, before the delayed
+/// ground solve completes. Recording these avoids reconstructing a different
+/// reliability decision or velocity seed from later worker results.
+struct RecordedCoarseMotionInput: Codable, Equatable, Sendable {
+    let gameplayEnabled: Bool
+    let groundTrackingReliable: Bool
+    let cameraX: Double
+    let cameraY: Double
+    let velocityX: Double?
+    let velocityY: Double?
+    let velocityTimestamp: TimeInterval?
+    let horizontalInput: Int?
+}
+
 /// Capture-rate trace of the inexpensive motion bridge. Unlike ground solves,
 /// these samples continue through frames rejected as dark transitions, which
 /// makes the exact intervals that need bridging observable offline.
@@ -159,6 +181,7 @@ struct RecordedCoarseMotionSample: Codable, Equatable, Sendable {
     /// Revision of the capture-rate floorless trajectory. Changes identify a
     /// place reanchor, masked-registration correction, or reset.
     var coarsePoseRevision: UInt64? = nil
+    var input: RecordedCoarseMotionInput? = nil
 }
 
 /// Sparse raw input to the low-resolution bridge. Full-resolution world
@@ -281,11 +304,15 @@ final class InputPathRecorder: @unchecked Sendable {
         metadata["groundTextureRegistration"] = "keyframe-subpixel-v1"
         metadata["groundImageMotionScale"] = "hacker-cohort-v4-anchor-and-recent-distance"
         metadata["lowResolutionMotionBridge"] =
-            "tentative-transition-handoff-v14"
+            "local-contrast-measured-ground-handoff-v22"
         metadata["floorlessPosePriority"] = "place-match-masked-registration-coarse-rebase-v2"
         metadata["lowResolutionPlaceMemory"] = "room-local-64x36-v1"
-        metadata["lowResolutionFrameTrace"] =
-            "64x36-20hz-measured-ground-reliability-v3"
+        metadata["lowResolutionFrameTrace"] = ReplayDiagnosticOptions.fullRateMotionTrace
+            ? "64x36-capture-rate-measured-ground-reliability-v4"
+            : "64x36-20hz-measured-ground-reliability-v3"
+        metadata["replayDivergencePolicy"] = ReplayDiagnosticOptions.continueAfterDivergence
+            ? "record-only-diagnostic" : "stop"
+        metadata["coarseMotionInputs"] = "capture-time-v1"
         metadata["localMatchDiagnostics"] = "reference-v1"
         metadata["playbackDivergenceGuard"] =
             "hacker-exact-frame-v2-\(Int(PlaybackDivergenceMonitor.thresholdPixels))px-\(PlaybackDivergenceMonitor.requiredConsecutiveSamples)samples-\(Int(PlaybackDivergenceMonitor.maximumVisionSilence * 1_000))ms-silence"
@@ -505,6 +532,7 @@ final class InputPathRecorder: @unchecked Sendable {
         coarsePoseRevision: UInt64? = nil,
         signalMeanPeak: Double,
         signalVisibleFraction: Double,
+        input: RecordedCoarseMotionInput? = nil,
         observedAt timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) {
         lock.withLock {
@@ -529,13 +557,14 @@ final class InputPathRecorder: @unchecked Sendable {
                 roomRevision: roomRevision,
                 signalMeanPeak: signalMeanPeak,
                 signalVisibleFraction: signalVisibleFraction,
-                coarsePoseRevision: coarsePoseRevision
+                coarsePoseRevision: coarsePoseRevision,
+                input: input
             ))
             if let motionGrid,
                motionGrid.width > 0, motionGrid.height > 0,
                motionGrid.luma.count == motionGrid.width * motionGrid.height,
                current.lastLowResolutionFrameAt.map({
-                   timestamp - $0 >= 0.045
+                   ReplayDiagnosticOptions.fullRateMotionTrace || timestamp - $0 >= 0.045
                }) ?? true {
                 let frameIndex = current.lowResolutionFrames.count
                 current.lowResolutionFrames.append(RecordedLowResolutionFrame(

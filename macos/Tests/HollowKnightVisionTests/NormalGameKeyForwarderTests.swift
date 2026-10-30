@@ -65,7 +65,7 @@ final class NormalGameKeyForwarderTests: XCTestCase {
         XCTAssertTrue(NormalGameKeyPolicy.keyCodes(labeling: true, reviewing: true, settings: true).isEmpty)
         XCTAssertEqual(NormalGameKeyPolicy.keyCodes(labeling: false, reviewing: false, settings: true), [123, 124, 125, 126])
         let gameplay = NormalGameKeyPolicy.keyCodes(labeling: false, reviewing: false, settings: false)
-        XCTAssertTrue(gameplay.isSuperset(of: [123, 124, 125, 126, 6, 7, 36, 53]))
+        XCTAssertTrue(gameplay.isSuperset(of: [123, 124, 125, 126, 6, 7, 35, 36, 53]))
         XCTAssertFalse(gameplay.contains(37), "L belongs to labeling")
         XCTAssertFalse(gameplay.contains(1), "S belongs to stencils")
         XCTAssertEqual(GameKeyRelay.action(type: .keyDown, keyCode: 7,
@@ -84,6 +84,64 @@ final class NormalGameKeyForwarderTests: XCTestCase {
             labeling: false,
             reviewing: true
         ))
+    }
+
+    func testPauseShortcutRoutesToEscapeAndRespectsWorkspaceAndModifiers() throws {
+        let gameplay = NormalGameKeyPolicy.keyCodes(labeling: false, reviewing: false, settings: false)
+        XCTAssertEqual(GameKeyRelay.action(type: .keyDown, keyCode: 35,
+            supportedKeyCodes: gameplay), .forward)
+        XCTAssertEqual(GameKeyRelay.action(type: .keyDown, keyCode: 35,
+            modifierFlags: .command, supportedKeyCodes: gameplay), .pass)
+        XCTAssertEqual(GameKeyRelay.action(type: .keyUp, keyCode: 35,
+            modifierFlags: .command, supportedKeyCodes: gameplay), .forward)
+        for (labeling, reviewing, settings) in [(true, false, false), (false, true, false), (false, false, true)] {
+            XCTAssertEqual(GameKeyRelay.action(type: .keyDown, keyCode: 35,
+                supportedKeyCodes: NormalGameKeyPolicy.keyCodes(
+                    labeling: labeling, reviewing: reviewing, settings: settings)), .pass)
+        }
+        for keyCode: UInt16 in [35, 53] {
+            for isDown in [true, false] {
+                let event = try XCTUnwrap(NativeGameEventFactory.keyboard(
+                    keyCode: NormalGameKeyPolicy.forwardedKeyCode(keyCode), isDown: isDown))
+                XCTAssertEqual(event.getIntegerValueField(.keyboardEventKeycode), 53)
+                XCTAssertEqual(event.type, isDown ? .keyDown : .keyUp)
+            }
+        }
+        for keyCode in gameplay.subtracting([35]) {
+            XCTAssertEqual(NormalGameKeyPolicy.forwardedKeyCode(keyCode), keyCode)
+        }
+    }
+
+    func testPauseAliasesShareOneHeldOutputUntilBothPhysicalKeysRelease() {
+        for order: [UInt16] in [[35, 53], [53, 35]] {
+            var state = NativeGameKeyState()
+            XCTAssertTrue(state.forwardedKeyCodes.isEmpty)
+            XCTAssertTrue(state.press(order[0], targetPID: 10, isRepeat: false))
+            XCTAssertEqual(state.forwardedKeyCodes, [53])
+            XCTAssertFalse(state.press(order[0], targetPID: 10, isRepeat: true))
+            XCTAssertTrue(state.press(order[1], targetPID: 10, isRepeat: false))
+            XCTAssertEqual(state.forwardedKeyCodes, [53])
+            XCTAssertTrue(state.release(order[0]))
+            XCTAssertEqual(state.forwardedKeyCodes, [53])
+            XCTAssertEqual(state.targetPID, 10)
+            XCTAssertTrue(state.release(order[1]))
+            XCTAssertTrue(state.forwardedKeyCodes.isEmpty)
+            XCTAssertNil(state.targetPID)
+        }
+    }
+
+    func testPausePressSurvivesPendingFocusTransferAndReleasesOnFocusLoss() {
+        var pending = PendingNativeKeyState()
+        XCTAssertTrue(pending.press(35, flags: [], isRepeat: false))
+        XCTAssertTrue(pending.release(35))
+        let presses = pending.drain()
+        XCTAssertEqual(presses, [.init(keyCode: 35, flags: [], wasReleased: true)])
+        var state = NativeGameKeyState()
+        XCTAssertTrue(state.press(presses[0].keyCode, targetPID: 10, isRepeat: false))
+        XCTAssertEqual(state.forwardedKeyCodes, [53])
+        XCTAssertEqual(state.releaseAll(), [35])
+        XCTAssertTrue(state.forwardedKeyCodes.isEmpty)
+        XCTAssertFalse(state.press(35, targetPID: 10, isRepeat: true))
     }
 
     func testNativeInputAccessAcceptsEitherMacOSTrustSignal() {

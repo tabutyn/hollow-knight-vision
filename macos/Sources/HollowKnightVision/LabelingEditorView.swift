@@ -199,6 +199,7 @@ enum LabelingContext: String, CaseIterable, Identifiable {
         case .controller:
             return [
                 .init(id: LabelingClassIdentity.controller, name: "Controller"),
+                .init(id: ControllerStencilPolicy.noActiveController, name: "No Active Controller"),
                 .init(id: "controller.controller-diagram", name: "Controller Diagram"),
                 .init(id: "controller.remap-controls", name: "Remap Controlls"),
                 .init(id: LabelingClassIdentity.advancedSettings, name: "Advanced Settings"),

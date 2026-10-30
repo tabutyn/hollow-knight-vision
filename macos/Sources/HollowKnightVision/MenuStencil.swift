@@ -1,6 +1,22 @@
 import CoreGraphics
 import Foundation
 
+/// Search and refinement stay near an immutable, language-specific prediction.
+/// A high pixel score cannot authorize a new origin for the next search.
+enum MenuSelectorDriftPolicy {
+    static let maximumOffsetX: CGFloat = 8
+    static let maximumOffsetY: CGFloat = 6
+
+    static func accepts(_ candidate: CGRect, relativeTo reference: CGRect) -> Bool {
+        abs(candidate.midX - reference.midX) <= maximumOffsetX
+            && abs(candidate.midY - reference.midY) <= maximumOffsetY
+    }
+
+    static func resolved(_ candidate: CGRect, relativeTo reference: CGRect) -> CGRect {
+        accepts(candidate, relativeTo: reference) ? candidate : reference
+    }
+}
+
 struct MenuStencilMatch: Equatable {
     let classIdentifier: String
     let name: String
@@ -121,21 +137,36 @@ struct MenuStencilCatalog {
         let variants: [Variant]
         let localizedBounds: [String: CGRect]
         let idleForegroundMasks: [String: ImageStencilForegroundMask]
+        let referenceBounds: CGRect
+        let localizedReferenceBounds: [String: CGRect]
 
         init(
             bounds: CGRect,
             variants: [Variant],
             localizedBounds: [String: CGRect] = [:],
-            idleForegroundMasks: [String: ImageStencilForegroundMask] = [:]
+            idleForegroundMasks: [String: ImageStencilForegroundMask] = [:],
+            referenceBounds: CGRect? = nil,
+            localizedReferenceBounds: [String: CGRect]? = nil
         ) {
-            self.bounds = bounds
+            let reference = referenceBounds ?? bounds
+            let localizedReferences = localizedReferenceBounds ?? localizedBounds
+            self.referenceBounds = reference
+            self.localizedReferenceBounds = localizedReferences
+            self.bounds = MenuSelectorDriftPolicy.resolved(bounds, relativeTo: reference)
             self.variants = variants
-            self.localizedBounds = localizedBounds
+            self.localizedBounds = localizedBounds.reduce(into: [:]) { result, entry in
+                result[entry.key] = MenuSelectorDriftPolicy.resolved(entry.value,
+                    relativeTo: localizedReferences[entry.key] ?? reference)
+            }
             self.idleForegroundMasks = idleForegroundMasks
         }
 
+        func referenceBounds(for languageIdentifier: String?) -> CGRect {
+            languageIdentifier.flatMap { localizedReferenceBounds[$0] } ?? referenceBounds
+        }
+
         func bounds(for languageIdentifier: String?) -> CGRect {
-            languageIdentifier.flatMap { localizedBounds[$0] } ?? bounds
+            languageIdentifier.flatMap { localizedBounds[$0] ?? localizedReferenceBounds[$0] } ?? bounds
         }
 
         func idleForegroundMask(for languageIdentifier: String?)
@@ -205,6 +236,7 @@ struct MenuStencilCatalog {
             ? []
             : (liveCapturesOverride
                 ?? ((try? MenuStencilLiveCaptureStore().load()) ?? []))
+        let referenceCalibration = calibration == nil ? nil : MenuStencilCalibration.loadBundled()
         var scenes = [Scene]()
         for context in LabelingContext.contractSetCases where
             context != .game && context != .gameplayHUD && (includedContexts?.contains(context) ?? true) {
@@ -232,6 +264,7 @@ struct MenuStencilCatalog {
                 },
                 store: store,
                 calibration: calibration?.scene(context),
+                referenceCalibration: referenceCalibration?.scene(context),
                 liveCaptures: liveCaptures.filter {
                     $0.capture.contextIdentifier == context.storageIdentifier
                 },
@@ -539,6 +572,8 @@ struct MenuStencilCatalog {
             guard let selector, let bounds else { return selector }
             var localized = selector.localizedBounds
             localized[languageIdentifier] = bounds
+            var references = selector.localizedReferenceBounds
+            references[languageIdentifier] = bounds
             var variants = selector.variants
             if let reference = pixels.reference(in: bounds) {
                 variants.append(makeVariant(
@@ -552,7 +587,9 @@ struct MenuStencilCatalog {
                 bounds: selector.bounds,
                 variants: variants,
                 localizedBounds: localized,
-                idleForegroundMasks: selector.idleForegroundMasks
+                idleForegroundMasks: selector.idleForegroundMasks,
+                referenceBounds: selector.referenceBounds,
+                localizedReferenceBounds: references
             )
         }
 
@@ -610,6 +647,7 @@ struct MenuStencilCatalog {
         supplementalExamples: [SavedLabelingExample],
         store: LabelingExampleStore,
         calibration: MenuStencilCalibration.Scene?,
+        referenceCalibration: MenuStencilCalibration.Scene?,
         liveCaptures: [(capture: MenuStencilLiveCapture, imageURL: URL)],
         positiveCaptureHoldoutIDs: Set<UUID>
     ) -> Scene? {
@@ -1206,6 +1244,16 @@ struct MenuStencilCatalog {
                     example.manifest.resolvedLanguageIdentifier
                 )
             }
+            let humanBounds = captures.map(\.capture.annotationBounds)
+            let humanLocalized = Dictionary(grouping: captures) {
+                $0.languageIdentifier ?? HollowKnightMenuLanguage.english.rawValue
+            }.mapValues { medianRect($0.map(\.capture.annotationBounds)) }
+            let originalSelector = referenceCalibration?.selectors.first {
+                $0.selectedIdentifier == identifier
+            }
+            let originalBounds = originalSelector.map {
+                side == "left" ? $0.leftRect.cgRect : $0.rightRect.cgRect
+            }
             let measuredBounds = calibration?.selectors.first(where: {
                 $0.selectedIdentifier == identifier
             }).map {
@@ -1273,6 +1321,12 @@ struct MenuStencilCatalog {
                     }
                 }
             }
+            var localizedReferences = localizedBounds
+            for (language, placement) in originalSelector?.localizedPlacements ?? [:] {
+                localizedReferences[language] = side == "left" ? placement.leftRect.cgRect : placement.rightRect.cgRect
+            }
+            if let originalBounds { localizedReferences["en"] = originalBounds }
+            localizedReferences.merge(humanLocalized) { _, human in human }
             for (language, placement) in
                 calibratedSelector?.localizedPlacements ?? [:] {
                 localizedBounds[language] = side == "left"
@@ -1367,11 +1421,16 @@ struct MenuStencilCatalog {
                 bounds: consensus.bounds,
                 variants: variants,
                 localizedBounds: localizedBounds,
-                idleForegroundMasks: idleForegroundMasks
+                idleForegroundMasks: idleForegroundMasks,
+                referenceBounds: humanBounds.isEmpty ? originalBounds ?? fallbackBounds ?? consensus.bounds : medianRect(humanBounds),
+                localizedReferenceBounds: localizedReferences
             )
         }
         var options = optionAnchors.map { anchor in
             let calibratedSelector = calibration?.selectors.first {
+                $0.selectedIdentifier == anchor.classIdentifier
+            }
+            let originalSelector = referenceCalibration?.selectors.first {
                 $0.selectedIdentifier == anchor.classIdentifier
             }
             let capturedLeft = positionedSelector(
@@ -1435,7 +1494,11 @@ struct MenuStencilCatalog {
                                 capturedLeft?.localizedBounds ?? [:]
                         ).merging(
                             capturedLeft?.idleForegroundMasks ?? [:]
-                        ) { _, captured in captured }
+                        ) { _, captured in captured },
+                        referenceBounds: capturedLeft?.referenceBounds ?? originalSelector?.leftRect.cgRect
+                            ?? inferredSelector(side: "left")?.bounds,
+                        localizedReferenceBounds: capturedLeft?.localizedReferenceBounds
+                            ?? originalSelector?.localizedPlacements?.mapValues { $0.leftRect.cgRect } ?? [:]
                     )
                 } ?? capturedLeft ?? inferredSelector(side: "left"),
                 rightSelector: calibratedSelector.map {
@@ -1450,7 +1513,11 @@ struct MenuStencilCatalog {
                                 capturedRight?.localizedBounds ?? [:]
                         ).merging(
                             capturedRight?.idleForegroundMasks ?? [:]
-                        ) { _, captured in captured }
+                        ) { _, captured in captured },
+                        referenceBounds: capturedRight?.referenceBounds ?? originalSelector?.rightRect.cgRect
+                            ?? inferredSelector(side: "right")?.bounds,
+                        localizedReferenceBounds: capturedRight?.localizedReferenceBounds
+                            ?? originalSelector?.localizedPlacements?.mapValues { $0.rightRect.cgRect } ?? [:]
                     )
                 } ?? capturedRight ?? inferredSelector(side: "right")
             )
@@ -1508,6 +1575,7 @@ struct MenuStencilCatalog {
                     let calibrated = calibration?.selectors.first {
                         $0.selectedIdentifier == optionIdentifier
                     }
+                    let original = referenceCalibration?.selectors.first { $0.selectedIdentifier == optionIdentifier }
                     let leftBounds = calibrated?.leftRect.cgRect ?? defaultLeft
                     let rightBounds = calibrated?.rightRect.cgRect ?? defaultRight
                     let capturedLeft = positionedSelector(
@@ -1537,7 +1605,10 @@ struct MenuStencilCatalog {
                                     capturedLeft?.localizedBounds ?? [:]
                             ).merging(
                                 capturedLeft?.idleForegroundMasks ?? [:]
-                            ) { _, captured in captured }
+                            ) { _, captured in captured },
+                            referenceBounds: capturedLeft?.referenceBounds ?? original?.leftRect.cgRect ?? defaultLeft,
+                            localizedReferenceBounds: capturedLeft?.localizedReferenceBounds
+                                ?? original?.localizedPlacements?.mapValues { $0.leftRect.cgRect } ?? [:]
                         ),
                         rightSelector: PositionedSelector(
                             bounds: rightBounds,
@@ -1551,7 +1622,10 @@ struct MenuStencilCatalog {
                                     capturedRight?.localizedBounds ?? [:]
                             ).merging(
                                 capturedRight?.idleForegroundMasks ?? [:]
-                            ) { _, captured in captured }
+                            ) { _, captured in captured },
+                            referenceBounds: capturedRight?.referenceBounds ?? original?.rightRect.cgRect ?? defaultRight,
+                            localizedReferenceBounds: capturedRight?.localizedReferenceBounds
+                                ?? original?.localizedPlacements?.mapValues { $0.rightRect.cgRect } ?? [:]
                         )
                     ))
                 }
@@ -1581,6 +1655,7 @@ struct MenuStencilCatalog {
         if identifier.contains(".header")
             || identifier.contains(".heading")
             || identifier.hasSuffix(".pointer")
+            || identifier == ControllerStencilPolicy.noActiveController
             || identifier == "controller-advanced.mfi" {
             return false
         }
@@ -1909,11 +1984,9 @@ final class MenuStencilTracker {
     private static func selectorRecoveryRadiusX(
         for context: LabelingContext
     ) -> Int {
-        // Localized labels change width, moving their flanking decorations by
-        // much more than calibration jitter. This wider pass runs only after
-        // the cheap row search has no strong side; stable live matches are
-        // persisted and return subsequent frames to the narrow path.
-        40
+        // Localization supplies its own prediction. Recovery only handles
+        // animation and small alignment errors around that fixed origin.
+        Int(MenuSelectorDriftPolicy.maximumOffsetX)
     }
 
     static func qualifiedSelectorPairConfidence(
@@ -2044,6 +2117,7 @@ final class MenuStencilTracker {
     /// stencil without requiring an application restart.
     func replaceCatalog(_ catalog: MenuStencilCatalog) {
         self.catalog = catalog
+        learnedSelectorBounds.removeAll()
         // Rebuilding references does not change the language selected in the
         // running game. Retaining it prevents one transitional frame from
         // reopening the expensive, ambiguous all-language search.
@@ -3270,8 +3344,11 @@ final class MenuStencilTracker {
             scene: scene,
             option: option,
             languageIdentifier: languageIdentifier
-        )] {
-            return learned
+        )], let left = option.leftSelector, let right = option.rightSelector {
+            return SelectorBounds(
+                left: MenuSelectorDriftPolicy.resolved(learned.left, relativeTo: left.referenceBounds(for: languageIdentifier)),
+                right: MenuSelectorDriftPolicy.resolved(learned.right, relativeTo: right.referenceBounds(for: languageIdentifier))
+            )
         }
         guard let left = option.leftSelector?.bounds,
               let right = option.rightSelector?.bounds else { return nil }
@@ -3345,23 +3422,16 @@ final class MenuStencilTracker {
             selectorCalibrationDiagnostic = "disabled"
             return
         }
-        guard let current = selectorBounds(
-                scene: scene,
-                option: option,
-                languageIdentifier: trackedLanguageIdentifier
-              ) else {
+        guard let leftSelector = option.leftSelector, let rightSelector = option.rightSelector else {
             selectorCalibrationDiagnostic = "missing-bounds"
             return
         }
-        guard abs(current.left.midX - left.midX)
-                <= CGFloat(Self.selectorRecoveryRadiusX(for: scene.context)),
-              abs(current.left.midY - left.midY)
-                <= CGFloat(Self.selectorRecoveryRadiusY),
-              abs(current.right.midX - right.midX)
-                <= CGFloat(Self.selectorRecoveryRadiusX(for: scene.context)),
-              abs(current.right.midY - right.midY)
-                <= CGFloat(Self.selectorRecoveryRadiusY) else {
-            selectorCalibrationDiagnostic = "outside-recovery"
+        guard MenuSelectorDriftPolicy.accepts(left,
+                relativeTo: leftSelector.referenceBounds(for: trackedLanguageIdentifier)),
+              MenuSelectorDriftPolicy.accepts(right,
+                relativeTo: rightSelector.referenceBounds(for: trackedLanguageIdentifier)) else {
+            pendingSelectorCalibration = nil
+            selectorCalibrationDiagnostic = "outside-reference"
             return
         }
         let languageIdentifier = trackedLanguageIdentifier
@@ -3636,8 +3706,12 @@ final class MenuStencilTracker {
                 let textBounds = anchorBoundsByIdentifier[option.classIdentifier] ?? localizedOptionBounds.offsetBy(
                     dx: trackedOffset.x, dy: trackedOffset.y
                 )
+                let reference = (side == .left ? leftSelector : rightSelector)
+                    .referenceBounds(for: languageIdentifier)
+                    .offsetBy(dx: trackedOffset.x, dy: trackedOffset.y)
                 let accepts: (CGRect) -> Bool = { candidate in
-                    guard rowBand.contains(candidate.midY) else { return false }
+                    guard rowBand.contains(candidate.midY),
+                          MenuSelectorDriftPolicy.accepts(candidate, relativeTo: reference) else { return false }
                     switch side {
                     case .left: return candidate.midX < textBounds.minX
                     case .right: return candidate.midX > textBounds.maxX
@@ -3746,9 +3820,12 @@ final class MenuStencilTracker {
                 side: MenuStencilSelectorSearchRegion.Side,
                 idleForegroundMask: ImageStencilForegroundMask?
             ) -> ScoredVariant? {
+                let origin = radiusX > Self.selectorSearchRadiusX || radiusY > Self.selectorSearchRadiusY
+                    ? (side == .left ? leftSelector : rightSelector).referenceBounds(for: languageIdentifier)
+                    : configuredBounds
                 guard var score = scoreSelector(
                     variants,
-                    around: configuredBounds,
+                    around: origin,
                     usesLiveFallback: usesLiveFallback,
                     side: side,
                     idleForegroundMask: idleForegroundMask

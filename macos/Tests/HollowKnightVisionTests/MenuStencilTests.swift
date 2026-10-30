@@ -195,7 +195,14 @@ final class MenuStencilTests: XCTestCase {
     }
 
     func testFirstLearnedClearSaveSelectorCreatesCalibrationScene() throws {
-        let updated = try XCTUnwrap(try bundledCalibration().replacingSelector(
+        // The shipped catalog now has Clear Save selectors. Exercise creation
+        // with an actually missing scene instead of depending on old resources.
+        let original = try bundledCalibration()
+        let missingScene = MenuStencilCalibration(schemaVersion: original.schemaVersion,
+            referenceWidth: original.referenceWidth, referenceHeight: original.referenceHeight,
+            generatedAt: original.generatedAt,
+            scenes: original.scenes.filter { $0.contextIdentifier != "clear-save" })
+        let updated = try XCTUnwrap(missingScene.replacingSelector(
             contextIdentifier: LabelingContext.clearSave.storageIdentifier,
             selectedIdentifier: LabelingClassIdentity.yes,
             leftRect: CGRect(x: 280, y: 100, width: 12, height: 11),
@@ -1986,6 +1993,131 @@ final class MenuStencilTests: XCTestCase {
                 region.rect.contains($0.rect)
             })
         }
+    }
+
+    func testSelectorRefinementCannotWalkAwayFromOriginalPrediction() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let output = root.appendingPathComponent("calibration.json")
+        let tracker = MenuStencilTracker(catalog: Self.selectorRecalibrationCatalog(), selectorCalibrationURL: output)
+        let near = try XCTUnwrap(Self.selectorRecalibrationImage(
+            left: CGPoint(x: 18, y: 20), right: CGPoint(x: 56, y: 20)))
+        for frame in 0...10 { _ = tracker.observe(near, timestamp: Double(frame) * 0.25) }
+        let learned = try XCTUnwrap(MenuStencilCalibration.load(output)?.scene(.mainTitle)?.selectors.first {
+            $0.selectedIdentifier == "fixture-option"
+        })
+        XCTAssertEqual(learned.leftRect.x, 18, accuracy: 0.001)
+
+        let outside = try XCTUnwrap(Self.selectorRecalibrationImage(
+            left: CGPoint(x: 21, y: 20), right: CGPoint(x: 59, y: 20)))
+        for frame in 0...12 {
+            let result = try XCTUnwrap(tracker.observe(outside, timestamp: 3 + Double(frame) * 0.25))
+            // Even repeated perfect pixel copies outside the original bound
+            // must not become the next learned origin.
+            for match in result.selectorCandidates {
+                let referenceX: CGFloat = match.name.hasSuffix("left") ? 12 : 50
+                XCTAssertLessThanOrEqual(abs(match.rect.midX - referenceX), MenuSelectorDriftPolicy.maximumOffsetX)
+            }
+            for region in result.selectorSearchRegions {
+                let referenceX: CGFloat = region.side == .left ? 12 : 50
+                XCTAssertLessThanOrEqual(abs(region.rect.midX - referenceX), MenuSelectorDriftPolicy.maximumOffsetX)
+            }
+        }
+        let persisted = try XCTUnwrap(MenuStencilCalibration.load(output)?.scene(.mainTitle)?.selectors.first {
+            $0.selectedIdentifier == "fixture-option"
+        })
+        XCTAssertLessThanOrEqual(abs(persisted.leftRect.cgRect.midX - 12), MenuSelectorDriftPolicy.maximumOffsetX)
+        XCTAssertLessThanOrEqual(abs(persisted.rightRect.cgRect.midX - 50), MenuSelectorDriftPolicy.maximumOffsetX)
+
+        // The last learned position was +8. Recovery must search from the
+        // original prediction to reach a valid -3 position on the next frame.
+        let returned = try XCTUnwrap(Self.selectorRecalibrationImage(
+            left: CGPoint(x: 7, y: 20), right: CGPoint(x: 45, y: 20)))
+        let recovered = try XCTUnwrap(tracker.observe(returned, timestamp: 7))
+        XCTAssertEqual(recovered.selectedOption, "Fixture Option")
+        XCTAssertEqual(recovered.selectorCandidates.first?.rect.minX, 7)
+    }
+
+    func testSavedBadSelectorPositionsResetToTrustedLanguageReference() {
+        let reference = CGRect(x: 57, y: 262, width: 15, height: 11)
+        let french = reference.offsetBy(dx: -60, dy: 0)
+        let selector = MenuStencilCatalog.PositionedSelector(
+            bounds: CGRect(x: 81, y: 255, width: 15, height: 11), variants: [],
+            localizedBounds: ["en": reference.offsetBy(dx: 24, dy: -7), "fr": french.offsetBy(dx: 2, dy: 1)],
+            referenceBounds: reference, localizedReferenceBounds: ["fr": french])
+        XCTAssertEqual(selector.bounds, reference)
+        XCTAssertEqual(selector.bounds(for: "en"), reference)
+        XCTAssertEqual(selector.bounds(for: "fr"), french.offsetBy(dx: 2, dy: 1))
+        XCTAssertEqual(selector.referenceBounds(for: "fr"), french)
+        let localizedPrediction = MenuStencilCatalog.PositionedSelector(bounds: reference, variants: [],
+            referenceBounds: reference, localizedReferenceBounds: ["fr": french])
+        XCTAssertEqual(localizedPrediction.bounds(for: "fr"), french)
+        XCTAssertFalse(MenuSelectorDriftPolicy.accepts(reference.offsetBy(dx: 9, dy: 0), relativeTo: reference))
+        XCTAssertFalse(MenuSelectorDriftPolicy.accepts(reference.offsetBy(dx: 0, dy: 7), relativeTo: reference))
+    }
+
+    func testProfileFourCatalogRejectsPreviouslyPersistedInwardDrift() throws {
+        // Opt-in audit uses the user's own boxes and screenshot; no reference
+        // image or personal labeling data is bundled with Vision or its tests.
+        guard let path = ProcessInfo.processInfo.environment["HKV_SELECTOR_REFERENCE_AUDIT"] else {
+            throw XCTSkip("Requires a human-labeled Select Profile reference")
+        }
+        let root = URL(fileURLWithPath: path)
+        let calibrationURL = try XCTUnwrap(ProcessInfo.processInfo.environment["HKV_SELECTOR_CALIBRATION_AUDIT"])
+        let calibration = try XCTUnwrap(MenuStencilCalibration.load(URL(fileURLWithPath: calibrationURL)))
+        let catalog = try MenuStencilCatalog(examplesRootURL: root, calibration: calibration,
+            liveCapturesOverride: [], includedContexts: [.selectProfile])
+        let scene = try XCTUnwrap(catalog.scenes.first)
+        let fourth = try XCTUnwrap(scene.options.first { $0.classIdentifier == "select-profile.slot-4" })
+        let left = try XCTUnwrap(fourth.leftSelector), right = try XCTUnwrap(fourth.rightSelector)
+        XCTAssertEqual(left.bounds(for: "en").minX, 57, accuracy: 0.001)
+        XCTAssertEqual(right.bounds(for: "en").minX, 433, accuracy: 0.001)
+        XCTAssertEqual(left.referenceBounds(for: "en").minX, 57, accuracy: 0.001)
+        XCTAssertEqual(right.referenceBounds(for: "en").minX, 433, accuracy: 0.001)
+        let store = LabelingExampleStore(rootURL: root)
+        let example = try XCTUnwrap(try store.loadExamples().first { $0.manifest.contextIdentifier == "select-profile" })
+        let source = try store.loadImage(for: example)
+        let selectors = example.manifest.annotations.filter {
+            !$0.isHardNegative && $0.classIdentifier == LabelingClassIdentity.selectDecoration
+        }.sorted { $0.x < $1.x }
+        XCTAssertEqual(selectors.count, 2)
+        let bitmap = try XCTUnwrap(CGContext(data: nil, width: 640, height: 360,
+            bitsPerComponent: 8, bytesPerRow: 640 * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        bitmap.draw(source, in: CGRect(x: 0, y: 0, width: 640, height: 360))
+        // Move only the two human-cropped decorations from row 1 to row 4;
+        // leave the distracting profile artwork and text intact.
+        for (annotation, target) in zip(selectors, [left.referenceBounds, right.referenceBounds]) {
+            let cropRect = CGRect(x: annotation.x * 640, y: annotation.y * 360,
+                width: annotation.width * 640, height: annotation.height * 360).integral
+            let crop = try XCTUnwrap(source.cropping(to: cropRect))
+            bitmap.setFillColor(CGColor(gray: 0, alpha: 1))
+            bitmap.fill(CGRect(x: cropRect.minX, y: 360 - cropRect.maxY, width: cropRect.width, height: cropRect.height))
+            bitmap.draw(crop, in: CGRect(x: target.minX, y: 360 - target.minY - cropRect.height,
+                width: cropRect.width, height: cropRect.height))
+        }
+        let image = try XCTUnwrap(bitmap.makeImage())
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        let output = temporary.appendingPathComponent("calibration.json")
+        try Data(contentsOf: URL(fileURLWithPath: calibrationURL)).write(to: output)
+        let tracker = MenuStencilTracker(catalog: catalog, selectorCalibrationURL: output)
+        for frame in 0...12 {
+            let result = try XCTUnwrap(tracker.observe(image, timestamp: Double(frame) * 0.25))
+            XCTAssertEqual(result.selectedOption, "4.", "frame \(frame)")
+            let actual = result.selectorCandidates.sorted { $0.rect.minX < $1.rect.minX }
+            XCTAssertEqual(actual.count, 2)
+            if actual.count == 2 {
+                XCTAssertEqual(actual[0].rect.minX, 57, accuracy: 3)
+                XCTAssertEqual(actual[1].rect.minX, 433, accuracy: 3)
+            }
+        }
+        let repaired = try XCTUnwrap(MenuStencilCalibration.load(output)?.scene(.selectProfile)?.selectors.first {
+            $0.selectedIdentifier == "select-profile.slot-4"
+        })
+        XCTAssertEqual(repaired.leftRect.x, 57, accuracy: 3)
+        XCTAssertEqual(repaired.rightRect.x, 433, accuracy: 3)
     }
 
     func testSelectorPairRejectsCandidatesOnDifferentVisualRows() throws {

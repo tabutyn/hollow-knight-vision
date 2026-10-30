@@ -63,6 +63,9 @@ final class InputPathRecorderTests: XCTestCase {
             coarsePoseRevision: 42,
             signalMeanPeak: 12,
             signalVisibleFraction: 0.2,
+            input: RecordedCoarseMotionInput(gameplayEnabled: true, groundTrackingReliable: false,
+                cameraX: 50, cameraY: -8, velocityX: 120, velocityY: -30,
+                velocityTimestamp: 101.2, horizontalInput: -1),
             observedAt: 101.35
         )
 
@@ -78,7 +81,7 @@ final class InputPathRecorderTests: XCTestCase {
         )
         XCTAssertEqual(
             path.runtimeMetadata?["lowResolutionMotionBridge"],
-            "tentative-transition-handoff-v14"
+            "local-contrast-measured-ground-handoff-v22"
         )
         XCTAssertEqual(
             path.runtimeMetadata?["pathPlaybackPreparation"],
@@ -133,6 +136,14 @@ final class InputPathRecorderTests: XCTestCase {
         XCTAssertTrue(coarse.isControlling)
         XCTAssertEqual(coarse.roomID, 2)
         XCTAssertEqual(coarse.coarsePoseRevision, 42)
+        XCTAssertEqual(coarse.input?.cameraX, 50)
+        XCTAssertEqual(coarse.input?.cameraY, -8)
+        XCTAssertEqual(coarse.input?.groundTrackingReliable, false)
+        XCTAssertEqual(coarse.input?.velocityX, 120)
+        XCTAssertEqual(coarse.input?.velocityY, -30)
+        XCTAssertEqual(coarse.input?.velocityTimestamp, 101.2)
+        XCTAssertEqual(coarse.input?.horizontalInput, -1)
+        XCTAssertEqual(path.runtimeMetadata?["replayDivergencePolicy"], "stop")
         let lowResolution = try XCTUnwrap(path.lowResolutionFrameTrace.first)
         XCTAssertEqual(lowResolution.offset, 1.35, accuracy: 0.000_001)
         XCTAssertEqual(lowResolution.renderedGameFrame, 88)
@@ -149,6 +160,7 @@ final class InputPathRecorderTests: XCTestCase {
             decodedPath.lowResolutionFrameTrace.first
         )
         XCTAssertEqual(decodedLowResolution, lowResolution)
+        XCTAssertEqual(decodedPath.coarseMotionTrace.first?.input, coarse.input)
         XCTAssertNil(recorder.stop(at: 103))
     }
 

@@ -241,6 +241,31 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         ))
     }
 
+    func testLowResolutionMotionTracksTextureAcrossMovingLightHalo() {
+        let reference = softLightHalo(
+            fractionalMotionGrid(horizontalShift: 0), centerX: 28, centerY: 18
+        )
+        // The light follows a different trajectory from the terrain. Match the
+        // terrain in both a horizontal traversal and a predominantly vertical fall.
+        for shift in [(-1.4, 0.7), (0.6, 1.6)] {
+            let current = softLightHalo(
+                fractionalMotionGrid(horizontalShift: shift.0, verticalShift: shift.1),
+                centerX: 35, centerY: 15
+            )
+            let vector = LowResolutionRoomMotionTracker.translation(from: reference, to: current)
+            XCTAssertEqual(vector?.screenShiftX ?? .nan, shift.0, accuracy: 0.25)
+            XCTAssertEqual(vector?.screenShiftY ?? .nan, shift.1, accuracy: 0.25)
+        }
+    }
+
+    func testMovingLightHaloCannotInventCameraMotion() {
+        let terrain = fractionalMotionGrid(horizontalShift: 0)
+        XCTAssertNil(LowResolutionRoomMotionTracker.translation(
+            from: softLightHalo(terrain, centerX: 28, centerY: 18),
+            to: softLightHalo(terrain, centerX: 35, centerY: 15)
+        ))
+    }
+
     func testTinyVisibilityCircleCannotCreateMotion() {
         let reference = visibilityCircle(
             fractionalMotionGrid(horizontalShift: 0),
@@ -343,10 +368,10 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         XCTAssertEqual(odometry.worldDeltaX, afterOverlapLoss, accuracy: 0.001)
     }
 
-    func testReliableVelocityHandoffBridgesInitialFadeMismatch() {
+    func testReliableVelocityBridgesRejectedMotionWithoutOverridingValidEasing() {
         var odometry = LowResolutionTransitionOdometry()
         odometry.arm(
-            grid: motionGrid(shift: 0),
+            grid: fractionalMotionGrid(horizontalShift: 0),
             timestamp: 0
         )
         odometry.primeHorizontalVelocity(
@@ -360,14 +385,14 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         XCTAssertEqual(odometry.observe(
             // Direct image registration points strongly left, so the trusted
             // pre-fade velocity must carry this first corrupted sample right.
-            grid: motionGrid(shift: 2),
+            grid: fractionalMotionGrid(horizontalShift: 2),
             timestamp: 0.05,
             solveWidth: 640,
             expectedDirection: .right
         ) ?? .nan, 10, accuracy: 0.001)
         XCTAssertEqual(odometry.observe(
             grid: visibilityCircle(
-                motionGrid(shift: 3), radius: 2
+                fractionalMotionGrid(horizontalShift: 3), radius: 2
             ),
             timestamp: 0.10,
             solveWidth: 640,
@@ -388,16 +413,16 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
             expectedDirection: .left
         )
         XCTAssertEqual(smallContradiction.observe(
-            // The ordinary easing policy would accept this +5 px camera
-            // estimate. Fresh verified velocity must carry the fade left.
-            grid: fractionalMotionGrid(horizontalShift: -0.5),
+            // Valid +10 px camera easing wins over the older leftward velocity,
+            // even while the left input remains held.
+            grid: fractionalMotionGrid(horizontalShift: -1),
             timestamp: 0.05,
             solveWidth: 640,
             expectedDirection: .left
-        ) ?? .nan, -18, accuracy: 0.001)
+        ) ?? .nan, 10, accuracy: 1)
 
         var expired = LowResolutionTransitionOdometry()
-        expired.arm(grid: motionGrid(shift: 0), timestamp: 0.45)
+        expired.arm(grid: fractionalMotionGrid(horizontalShift: 0), timestamp: 0.45)
         expired.primeHorizontalVelocity(
             LowResolutionCameraVelocitySeed(
                 velocity: CGVector(dx: 200, dy: 0),
@@ -406,7 +431,7 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
             expectedDirection: .right
         )
         XCTAssertNil(expired.observe(
-            grid: motionGrid(shift: 2),
+            grid: fractionalMotionGrid(horizontalShift: 2),
             timestamp: 0.50,
             solveWidth: 640,
             expectedDirection: .right
@@ -414,7 +439,7 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         XCTAssertEqual(expired.worldDeltaX, 0, accuracy: 0.001)
     }
 
-    func testReliableVelocityHandoffBridgesCollapsedSameDirectionMotion() {
+    func testObservedCameraSlowdownOverridesOlderVelocity() {
         var odometry = LowResolutionTransitionOdometry()
         odometry.arm(
             grid: fractionalMotionGrid(horizontalShift: 0),
@@ -429,14 +454,14 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         )
 
         XCTAssertEqual(odometry.observe(
-            // Fading texture retains the right sign but reports only one
-            // quarter of the independently measured pre-fade camera speed.
+            // The observed image travel has slowed to one quarter of the old
+            // velocity. Keeping that old speed would invent additional travel.
             grid: fractionalMotionGrid(horizontalShift: -0.25),
             timestamp: 0.05,
             solveWidth: 640,
             expectedDirection: .right
-        ) ?? .nan, 10, accuracy: 0.5)
-        XCTAssertEqual(odometry.worldDeltaX, 10, accuracy: 0.5)
+        ) ?? .nan, 2.5, accuracy: 1.5)
+        XCTAssertEqual(odometry.worldDeltaX, 2.5, accuracy: 1.5)
     }
 
     func testReliableVelocityHandoffKeepsStrongSameDirectionMeasurement() {
@@ -461,59 +486,23 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         ) ?? .nan, 9.5, accuracy: 1)
     }
 
-    func testReliableVelocityHandoffBridgesWeakVerticalFadeMotion() {
+    func testObservedVerticalTravelAndReversalOverrideOlderVelocity() {
         var odometry = LowResolutionTransitionOdometry()
-        odometry.arm(
-            grid: fractionalMotionGrid(
-                horizontalShift: 0,
-                verticalShift: 0
-            ),
-            timestamp: 0
-        )
+        odometry.arm(grid: fractionalMotionGrid(horizontalShift: 0), timestamp: 0)
         odometry.primeHorizontalVelocity(
-            LowResolutionCameraVelocitySeed(
-                velocity: CGVector(dx: 0, dy: -560),
-                timestamp: 0
-            ),
+            LowResolutionCameraVelocitySeed(velocity: CGVector(dx: 0, dy: -560), timestamp: 0),
             expectedDirection: .left
         )
-
-        XCTAssertNotNil(odometry.observe(
-            // The tiny visible circle reports only -2.5 px while the fresh
-            // verified trajectory predicts -28 px.
-            grid: fractionalMotionGrid(
-                horizontalShift: 0,
-                verticalShift: -0.25
-            ),
-            timestamp: 0.05,
-            solveWidth: 640,
-            expectedDirection: .left
-        ))
-        XCTAssertEqual(odometry.worldDeltaY, -28, accuracy: 2)
-
-        XCTAssertNotNil(odometry.observe(
-            // One contradictory weak vector is also bridged, but the bounded
-            // policy cannot continue doing this indefinitely.
-            grid: fractionalMotionGrid(
-                horizontalShift: 0,
-                verticalShift: -0.10
-            ),
-            timestamp: 0.10,
-            solveWidth: 640,
-            expectedDirection: .left
-        ))
-        XCTAssertEqual(odometry.worldDeltaY, -56, accuracy: 3)
-
-        XCTAssertNotNil(odometry.observe(
-            grid: fractionalMotionGrid(
-                horizontalShift: 0,
-                verticalShift: -2.46
-            ),
-            timestamp: 0.15,
-            solveWidth: 640,
-            expectedDirection: .left
-        ))
-        XCTAssertEqual(odometry.worldDeltaY, -79.6, accuracy: 4)
+        for (index, shift) in [-0.25, -0.10, -2.46].enumerated() {
+            XCTAssertNotNil(odometry.observe(
+                grid: fractionalMotionGrid(horizontalShift: 0, verticalShift: shift),
+                timestamp: Double(index + 1) * 0.05,
+                solveWidth: 640, expectedDirection: .left
+            ))
+            // The synthetic image displacement is the measured camera travel;
+            // an old velocity must not invent tens of additional pixels.
+            XCTAssertEqual(odometry.worldDeltaY, shift * 10, accuracy: 2)
+        }
     }
 
     func testVerticalHandoffUsesLatestMeasuredAcceleration() {
@@ -543,9 +532,12 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
             expectedDirection: .left
         ))
         XCTAssertNotNil(odometry.observe(
-            // Direct overlap collapses to about -1 px. Carry the newest
-            // measured -10 px step rather than the older -4 px median.
-            grid: fractionalMotionGrid(horizontalShift: 0, verticalShift: -1.5),
+            // Too little visible overlap remains for image registration.
+            // Carry the newest measured step, not the older, slower velocity.
+            grid: visibilityCircle(
+                fractionalMotionGrid(horizontalShift: 0, verticalShift: -2.4),
+                radius: 2
+            ),
             timestamp: 0.15,
             solveWidth: 640,
             expectedDirection: .left
@@ -568,7 +560,10 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         )
 
         XCTAssertNotNil(odometry.observe(
-            grid: fractionalMotionGrid(horizontalShift: 0, verticalShift: -0.25),
+            grid: visibilityCircle(
+                fractionalMotionGrid(horizontalShift: 0, verticalShift: -2.8),
+                radius: 2
+            ),
             timestamp: 0.05,
             solveWidth: 640,
             expectedDirection: nil
@@ -576,12 +571,58 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         XCTAssertNotNil(odometry.observe(
             // Horizontal intent appears after the vertical camera motion began.
             // This is not a left/right reversal and must not erase the fall.
-            grid: fractionalMotionGrid(horizontalShift: 0, verticalShift: -0.10),
+            grid: visibilityCircle(
+                fractionalMotionGrid(horizontalShift: 0, verticalShift: -5.6),
+                radius: 2
+            ),
             timestamp: 0.10,
             solveWidth: 640,
             expectedDirection: .left
         ))
         XCTAssertEqual(odometry.worldDeltaY, -56, accuracy: 3)
+        XCTAssertNil(odometry.observe(
+            grid: visibilityCircle(
+                fractionalMotionGrid(horizontalShift: 0, verticalShift: -8.4),
+                radius: 2
+            ),
+            timestamp: 0.15, solveWidth: 640, expectedDirection: .left
+        ))
+        XCTAssertEqual(odometry.worldDeltaY, -56, accuracy: 3)
+    }
+
+    func testHorizontalPredictionCannotRenewAnExpiredVerticalEstimate() {
+        var odometry = LowResolutionTransitionOdometry()
+        odometry.arm(grid: fractionalMotionGrid(horizontalShift: 0), timestamp: 0)
+        odometry.primeHorizontalVelocity(
+            LowResolutionCameraVelocitySeed(velocity: CGVector(dx: 200, dy: -560), timestamp: 0),
+            expectedDirection: .right
+        )
+        for index in 1...3 {
+            XCTAssertNotNil(odometry.observe(
+                grid: insufficientOverlapMotionGrid(),
+                timestamp: Double(index) * 0.05, solveWidth: 640, expectedDirection: .right
+            ))
+            XCTAssertEqual(odometry.lastEstimateIsComplete, index <= 2)
+        }
+        XCTAssertEqual(odometry.worldDeltaX, 30, accuracy: 0.001)
+        XCTAssertEqual(odometry.worldDeltaY, -56, accuracy: 0.001)
+    }
+
+    func testMeasuredVerticalStopCannotResurrectOldFallVelocity() {
+        var odometry = LowResolutionTransitionOdometry()
+        odometry.arm(grid: fractionalMotionGrid(horizontalShift: 0), timestamp: 0)
+        odometry.primeHorizontalVelocity(
+            LowResolutionCameraVelocitySeed(velocity: CGVector(dx: 200, dy: -560), timestamp: 0),
+            expectedDirection: .right
+        )
+        XCTAssertNotNil(odometry.observe(grid: fractionalMotionGrid(horizontalShift: -1),
+            timestamp: 0.05, solveWidth: 640, expectedDirection: .right))
+        XCTAssertNotNil(odometry.observe(
+            grid: insufficientOverlapMotionGrid(),
+            timestamp: 0.10, solveWidth: 640, expectedDirection: .right))
+        XCTAssertTrue(odometry.lastEstimateIsComplete)
+        XCTAssertEqual(odometry.worldDeltaX, 20, accuracy: 0.1)
+        XCTAssertEqual(odometry.worldDeltaY, 0, accuracy: 0.1)
     }
 
     func testFloorlessTurnaroundRecognizesRoomOneBeforePlacingNextRoomLeft() {
@@ -1547,6 +1588,77 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         XCTAssertEqual(reacquired.roomID, 0)
     }
 
+    func testStaleFloorlessPoseReleasesPresentationAndResumesFromAcceptedTracking() {
+        let tracker = VisualRoomTransitionTracker()
+        func observe(_ grid: LowResolutionMotionGrid, at time: Double,
+                     pose: CGPoint = .zero, reliable: Bool = false) -> VisualRoomSnapshot {
+            tracker.observe(
+                profile: FrameSignalProfile(sampleCount: 1_000, signaledCount: 800,
+                    visibleCount: 700, meanPeak: 80, motionGrid: grid),
+                baseDecision: admitted, horizontalInput: .left, knightRect: nil,
+                frameSize: size, currentWorldPose: pose, solveWidth: 640,
+                timestamp: time, groundTrackingReliable: reliable
+            )
+        }
+        _ = observe(motionGrid(shift: 0), at: 1, reliable: true)
+        XCTAssertTrue(observe(motionGrid(shift: 2), at: 1.1).coarseMotionIsControlling)
+        let blank = LowResolutionMotionGrid(width: 32, height: 18,
+            luma: Array(repeating: 0, count: 32 * 18))
+        let stale = observe(blank, at: 1.4, pose: CGPoint(x: -80, y: 0))
+        XCTAssertNil(stale.coarseWorldPose)
+        XCTAssertFalse(stale.coarseMotionIsControlling)
+        func newTerrain(_ shift: Int) -> LowResolutionMotionGrid {
+            let grid = motionGrid(shift: shift)
+            return LowResolutionMotionGrid(width: grid.width, height: grid.height,
+                luma: grid.luma.map { 255 - $0 })
+        }
+        _ = observe(newTerrain(2), at: 1.45, pose: CGPoint(x: -100, y: 0))
+        let resumed = observe(newTerrain(3), at: 1.5, pose: CGPoint(x: -100, y: 0))
+        XCTAssertTrue(resumed.coarseMotionIsControlling)
+        XCTAssertEqual(resumed.coarseWorldPose?.x ?? .nan, -120, accuracy: 0.5)
+    }
+
+    func testPartialFloorlessPredictionReleasesControlAndResumesFromCompletedPose() {
+        let tracker = VisualRoomTransitionTracker()
+        func observe(_ grid: LowResolutionMotionGrid, at time: Double,
+                     pose: CGPoint = .zero, reliable: Bool = false) -> VisualRoomSnapshot {
+            tracker.observe(
+                profile: FrameSignalProfile(sampleCount: 1_000, signaledCount: 800,
+                    visibleCount: 700, meanPeak: 80, motionGrid: grid),
+                baseDecision: admitted, horizontalInput: .right, knightRect: nil,
+                frameSize: size, currentWorldPose: pose,
+                reliableCameraVelocity: LowResolutionCameraVelocitySeed(
+                    velocity: CGVector(dx: 200, dy: -560), timestamp: 1),
+                solveWidth: 640, timestamp: time, groundTrackingReliable: reliable
+            )
+        }
+        let full = fractionalMotionGrid(horizontalShift: 0)
+        _ = observe(full, at: 1, reliable: true)
+        let tiny = insufficientOverlapMotionGrid()
+        XCTAssertEqual(LowResolutionRoomMotionTracker.diagnoseTranslation(
+            from: full, to: tiny).finalRejection, .insufficientOverlap)
+        XCTAssertEqual(LowResolutionRoomMotionTracker.diagnoseTranslation(
+            from: tiny, to: tiny).finalRejection, .insufficientOverlap)
+        let first = observe(tiny, at: 1.05)
+        XCTAssertTrue(first.coarseMotionIsControlling)
+        XCTAssertEqual(first.coarseWorldPose?.y ?? .nan, -28, accuracy: 0.001)
+        let waiting = observe(tiny, at: 1.06)
+        XCTAssertTrue(waiting.coarseMotionIsControlling, "A capture before the sample interval is not a rejection.")
+        let second = observe(tiny, at: 1.10)
+        XCTAssertTrue(second.coarseMotionIsControlling)
+        XCTAssertEqual(second.coarseWorldPose?.y ?? .nan, -56, accuracy: 0.001)
+        let released = observe(tiny, at: 1.15, pose: CGPoint(x: 30, y: -84))
+        XCTAssertNil(released.coarseWorldPose)
+        XCTAssertFalse(released.coarseMotionIsControlling)
+        XCTAssertGreaterThan(released.coarsePoseRevision, second.coarsePoseRevision)
+        _ = observe(full, at: 1.20, pose: CGPoint(x: 40, y: -112))
+        let resumed = observe(fractionalMotionGrid(horizontalShift: -1, verticalShift: -2),
+            at: 1.25, pose: CGPoint(x: 40, y: -112))
+        XCTAssertTrue(resumed.coarseMotionIsControlling)
+        XCTAssertEqual(resumed.coarseWorldPose?.x ?? .nan, 50, accuracy: 1)
+        XCTAssertEqual(resumed.coarseWorldPose?.y ?? .nan, -132, accuracy: 1)
+    }
+
     func testFloorlessTraversalKeepsDoorwayDepartureAtLastGroundAnchor() {
         let tracker = VisualRoomTransitionTracker()
         func profile(
@@ -2102,6 +2214,16 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         return LowResolutionMotionGrid(width: width, height: height, luma: pixels)
     }
 
+    private func insufficientOverlapMotionGrid() -> LowResolutionMotionGrid {
+        var pixels = [UInt8](repeating: 0, count: 64 * 36)
+        // Contrast remains, but only four pixels are visible. This tests
+        // missing overlap without assuming a feathered halo hides its texture.
+        for (index, value) in [UInt8(30), 80, 140, 200].enumerated() {
+            pixels[18 * 64 + 30 + index] = value
+        }
+        return LowResolutionMotionGrid(width: 64, height: 36, luma: pixels)
+    }
+
     private func fractionalMotionGrid(
         horizontalShift: Double,
         verticalShift: Double = 0,
@@ -2131,6 +2253,19 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
             }
         }
         return LowResolutionMotionGrid(width: width, height: height, luma: pixels)
+    }
+
+    private func softLightHalo(
+        _ grid: LowResolutionMotionGrid, centerX: Double, centerY: Double
+    ) -> LowResolutionMotionGrid {
+        let pixels = grid.luma.enumerated().map { index, value -> UInt8 in
+            let x = (Double(index % grid.width) - centerX) / 13
+            let y = (Double(index / grid.width) - centerY) / 10
+            let illumination = exp(-0.5 * (x * x + y * y))
+            let lowContrastTexture = 45 + 0.15 * (Double(value) - 127)
+            return UInt8(max(0, min(255, (lowContrastTexture * illumination).rounded())))
+        }
+        return LowResolutionMotionGrid(width: grid.width, height: grid.height, luma: pixels)
     }
 
     private func unrelatedMotionGrid(
