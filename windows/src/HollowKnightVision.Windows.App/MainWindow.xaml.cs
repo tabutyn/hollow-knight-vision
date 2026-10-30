@@ -5198,11 +5198,20 @@ public partial class MainWindow : Window
             if (identifier == "shared.select-decoration")
                 name = boxes.Where(item => item.ClassIdentifier == identifier && !item.IsNegative)
                     .OrderBy(item => item.X).FirstOrDefault() == box ? "Left Select Decoration" : "Right Select Decoration";
-            var caption = new Border { Background = Brushes.DodgerBlue, Padding = new Thickness(3, 1, 3, 1),
-                IsHitTestVisible = false, Child = new TextBlock { Text = initialization.Text(name),
-                    Foreground = Brushes.White, FontSize = 11 } };
-            Canvas.SetLeft(caption, box.X * CanvasWidth);
-            Canvas.SetTop(caption, identifier != "shared.select-decoration" && box.Y * CanvasHeight >= 20 ? box.Y * CanvasHeight - 20 : (box.Y + box.Height) * CanvasHeight + 2);
+            // Captions live inside the zoomed 640x360 canvas. Their screen-space
+            // metrics are refreshed with the viewport so they match the compact
+            // Mac presentation at every window size and labeling zoom level.
+            var caption = new Border
+            {
+                IsHitTestVisible = false,
+                Tag = box,
+                Child = new TextBlock
+                {
+                    Text = initialization.Text(name),
+                    Foreground = Brushes.White
+                }
+            };
+            ApplyLabelCaption(caption, box);
             LabelCanvas.Children.Add(caption);
         }
         SyncLabelSelection();
