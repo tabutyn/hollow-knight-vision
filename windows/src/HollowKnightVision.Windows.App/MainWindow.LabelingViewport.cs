@@ -134,9 +134,11 @@ public partial class MainWindow
         UpdateLabelCrosshair();
     }
 
-    private double LabelBorderWidth => LabelBoxBounds.CanvasStrokeWidth(
+    private double LabelDisplayScale =>
         Math.Min(LabelViewport.ActualWidth / CanvasWidth, LabelViewport.ActualHeight / CanvasHeight)
-        * labelViewport.Zoom);
+        * labelViewport.Zoom;
+
+    private double LabelBorderWidth => LabelBoxBounds.CanvasStrokeWidth(LabelDisplayScale);
 
     private LabelingImageLayout CurrentLabelingImageLayout => new(
         new Size(CanvasWidth, CanvasHeight),
@@ -171,11 +173,39 @@ public partial class MainWindow
         rectangle.Height = outer.Height;
     }
 
+    private void ApplyLabelCaption(Border caption, EditableBox box)
+    {
+        var displayScale = Math.Max(LabelDisplayScale, .0001);
+        caption.Background = new SolidColorBrush(box.IsNegative
+            ? Color.FromArgb(242, 255, 69, 0)
+            : Color.FromArgb(242, 30, 144, 255));
+        caption.CornerRadius = new CornerRadius(3 / displayScale);
+        caption.Padding = new Thickness(
+            4 / displayScale,
+            2 / displayScale,
+            4 / displayScale,
+            2 / displayScale);
+        if (caption.Child is TextBlock text)
+        {
+            text.FontSize = 11 / displayScale;
+            text.FontWeight = FontWeights.SemiBold;
+        }
+
+        var captionOffset = 22 / displayScale;
+        Canvas.SetLeft(caption, box.X * CanvasWidth);
+        Canvas.SetTop(caption,
+            box.ClassIdentifier != "shared.select-decoration" && box.Y * CanvasHeight >= captionOffset
+                ? box.Y * CanvasHeight - captionOffset
+                : (box.Y + box.Height) * CanvasHeight + 3 / displayScale);
+    }
+
     private void UpdateLabelBoxBorders()
     {
         if (LabelCanvas is null) return;
         foreach (var rectangle in LabelCanvas.Children.OfType<Rectangle>())
             if (rectangle.Tag is LabelBoxBounds selection) ApplyLabelBoxBorder(rectangle, selection);
+        foreach (var caption in LabelCanvas.Children.OfType<Border>())
+            if (caption.Tag is EditableBox box) ApplyLabelCaption(caption, box);
     }
 
     private void HideLabelCrosshair()
