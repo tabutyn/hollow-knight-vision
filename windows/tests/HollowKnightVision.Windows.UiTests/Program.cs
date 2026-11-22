@@ -1432,13 +1432,13 @@ internal static class Program
         var freshProfileLabels = StencilLabelSelectionPolicy.AvailableLabels(
             "select-profile", Array.Empty<LabelingExampleAnnotation>(),
             modded: false, hidesCompleted: true);
-        Check(!freshProfileLabels.Any(label => label.Identifier == "select-profile.clear-save"),
-            "A fresh Select Profile unexpectedly offered deferred Clear Save labeling.");
-        var deferredProfileLabels = StencilLabelSelectionPolicy.AvailableLabels(
-            "select-profile", Array.Empty<LabelingExampleAnnotation>(),
-            modded: false, hidesCompleted: true, includesDeferredLabels: true);
-        Check(deferredProfileLabels.Any(label => label.Identifier == "select-profile.clear-save"),
-            "Select Profile did not offer Clear Save when deferred labels were included.");
+        Check(freshProfileLabels.Any(label => label.Identifier == "select-profile.clear-save"),
+            "Select Profile did not offer the required Clear Save label.");
+        var labeled = new LabelingExampleAnnotation(Guid.NewGuid(), "select-profile.clear-save", .1, .2, .3, .1);
+        var completedProfileLabels = StencilLabelSelectionPolicy.AvailableLabels(
+            "select-profile", [labeled], modded: false, hidesCompleted: true);
+        Check(!completedProfileLabels.Any(label => label.Identifier == "select-profile.clear-save"),
+            "A completed Clear Save stencil remained available in Add mode.");
 
         var requiredContexts = StencilInitializationPolicy.RequiredContexts
             .Select(context => context.Identifier).ToArray();

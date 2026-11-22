@@ -472,7 +472,7 @@ var tests = new List<(string Name, Action Run)>
     ("stencil choices preserve Mac menu order and restore undone labels", StencilSelectionTests.TestMenuOrderAndUndo),
     ("stencil selector pairs and HUD health need two positive boxes and remain editable", StencilSelectionTests.TestPositivePairsRemainEditable),
     ("gameplay labels remain repeatable and normal mode omits Mods", StencilSelectionTests.TestGameplayRepeatabilityAndMods),
-    ("fresh profiles defer Clear Save and selector classes deduplicate canonically", StencilSelectionTests.TestDeferredAndCanonicalDuplicates),
+    ("Clear Save is available until labeled and selector classes deduplicate canonically", StencilSelectionTests.TestRequiredClearSaveAndCanonicalDuplicates),
     ("context inference repairs clear complete gameplay mismatches", ContextInferenceTests.TestClearMultiObjectMismatch),
     ("context inference requires a complete contract instead of shared overlap", ContextInferenceTests.TestCompleteContractNotOverlap),
     ("context repair rejects ties excess missing and unexpected positive labels", ContextInferenceTests.TestAmbiguityCountsAndNegatives),
@@ -602,7 +602,7 @@ var tests = new List<(string Name, Action Run)>
     ("live menu capture store preserves portable language schema and bounds paths", MenuLiveCaptureTests.TestPortableStore),
     ("menu search cadence limits untracked work and resets immediately", MenuTrackerTests.TestCadence),
     ("menu selector pairs require bilateral evidence including faded arrows", MenuTrackerTests.TestPairEvidence),
-    ("deferred Clear Save stays incomplete and guides into model training", StencilGuidanceParityTests.TestDeferredProfileAndModelGuidance),
+    ("Clear Save belongs to the initial stencil setup before model training", StencilGuidanceParityTests.TestRequiredProfileAndModelGuidance),
     ("Clear Save ignores another slot's calibration and follows every row", MenuCatalogTests.TestClearSaveMovesBetweenSlots),
     ("Clear Save probe searches every profile row", MenuTrackerTests.TestClearSaveOffsets),
     ("solved menu search regions stay narrow and scale with capture", MenuTrackerTests.TestSearchRegions),
@@ -1545,7 +1545,7 @@ static void TestStencilContractCoverage()
     Equal("gameplay-hud", normal.Select(step => step.ContextIdentifier).Distinct().ElementAt(2));
     Equal("clear-save", normal.Last().ContextIdentifier);
     True(normal.Any(step => step.ContextIdentifier == "select-profile" && step.ClassIdentifier == "select-profile.clear-save"));
-    True(!StencilInitializationPolicy.IsFirstPhaseStep(normal.Single(step => step.ClassIdentifier == "select-profile.clear-save")));
+    True(StencilInitializationPolicy.IsFirstPhaseStep(normal.Single(step => step.ClassIdentifier == "select-profile.clear-save")));
     True(normal.Where(step => StencilInitializationPolicy.Phase(step.ContextIdentifier) == 1)
         .All(step => step.ContextIdentifier is "main-title" or "select-profile" or "gameplay-hud"));
     foreach (var language in StencilInitializationCoordinator.SupportedLanguages) {

@@ -98,7 +98,7 @@ internal static class HudStencilTests
         Check(HudStencilTemplate.Captured(blank, annotations, "blank") is null, "Blank patches incorrectly unlock HUD detection.");
         Check(HudStencilTemplate.Captured(first, [annotations[0], annotations[0]], "overlap") is null, "Overlapping labels accepted.");
         Console.WriteLine("PASS Two captured health labels extrapolate nine icons without stock reference pixels");
-        TestCapturedHUDUnlocksFirstCampaignWithoutModelOrClearSave(fixtures, capturedFrame, template);
+        TestCapturedHUDUnlocksFirstCampaignWithoutModelOrLaterMenus(fixtures, capturedFrame, template);
         TestRecognizer(capturedFrame, Frame(nineFull), annotations);
         TestAtlasMasks(first, one);
         var twoHealth = new HudStencilResult([new(0, "full", default, .9), new(1, "full", default, .9)], null, [], [], [], default, false, 1);
@@ -120,7 +120,7 @@ internal static class HudStencilTests
         Console.WriteLine("Windows Hacker atlas parity regressions passed: 9");
     }
 
-    private static void TestCapturedHUDUnlocksFirstCampaignWithoutModelOrClearSave(
+    private static void TestCapturedHUDUnlocksFirstCampaignWithoutModelOrLaterMenus(
         Fixture[] fixtures,
         BgraFrame image,
         HudStencilTemplate bundled)
@@ -153,7 +153,7 @@ internal static class HudStencilTests
                 var context = StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal)
                     .Single(item => item.Identifier == contextIdentifier);
                 var boxes = context.Requirements
-                    .Where(requirement => !requirement.ModdedOnly && requirement.Identifier != StencilInitializationPolicy.DeferredProfileClass)
+                    .Where(requirement => !requirement.ModdedOnly)
                     .SelectMany(requirement => Enumerable.Range(0, requirement.Count).Select(_ =>
                         new LabelingExampleAnnotation(Guid.NewGuid(), requirement.Identifier, .1, .2, .1, .04)))
                     .ToArray();
@@ -167,8 +167,8 @@ internal static class HudStencilTests
                 "Gameplay HUD was not the next Phase 1 campaign step.");
             Check(coordinator.Guidance(null, null) == "Enter gameplay, make health icons visible, press L.",
                 "Gameplay HUD navigation guidance differs from Mac.");
-            Check(coordinator.Guidance("select-profile", null)?.Contains("Press L", StringComparison.Ordinal) == true,
-                "Completed Select Profile guidance does not return the user with L.");
+            Check(coordinator.Guidance("select-profile", null)?.Contains("Select Profile", StringComparison.Ordinal) == true,
+                "Completed Select Profile guidance lost its screen name.");
 
             var health = Enumerable.Range(0, 2).Select(offset =>
                 new LabelingExampleAnnotation(Guid.NewGuid(), "game.health",
@@ -198,7 +198,7 @@ internal static class HudStencilTests
             Refresh(coordinator.LanguageIdentifier);
             Check(!coordinator.IsFirstPhaseComplete && !coordinator.HasUsableHUD,
                 "A language change must relock incomplete references.");
-            Console.WriteLine("PASS Captured HUD unlocks Phase 1 without model training or Clear Save");
+            Console.WriteLine("PASS Captured HUD unlocks Phase 1 after the profile stencil is complete");
         }
         finally
         {

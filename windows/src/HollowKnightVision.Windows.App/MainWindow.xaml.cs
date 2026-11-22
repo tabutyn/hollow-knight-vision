@@ -2307,7 +2307,6 @@ public partial class MainWindow : Window
         var identifier = StencilInitializationPolicy.NormalizeContext(context ?? "Gameplay");
         return StencilLabelSelectionPolicy.AvailableLabels(identifier, boxes.Select(box => box.ToAnnotation()).ToArray(),
                 modded: gameMode == GameRuntimeMode.Modded, hidesCompleted: hidesCompleted ?? LabelAddButton.IsChecked == true,
-                includesDeferredLabels: initialization.IsFirstPhaseComplete,
                 custom: identifier == "game" ? customObjectChoices.Select(item => new MenuStencilLabel(item.Identifier, item.Name)).ToArray() : [])
             .Select(choice => new ClassChoice(initialization.Text(choice.Name), choice.Identifier)).ToArray();
     }

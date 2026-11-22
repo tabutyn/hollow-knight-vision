@@ -33,9 +33,8 @@ internal static class StencilInitializationPolicy
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, name)), JsonOptions)
         ?? throw new InvalidDataException($"Missing {name}.");
 
-    internal const string DeferredProfileClass = "select-profile.clear-save";
-    internal static bool IsDeferred(StencilInitializationStep step) => step.ClassIdentifier == DeferredProfileClass;
-    internal static bool IsFirstPhaseStep(StencilInitializationStep step) => Phase(step.ContextIdentifier) == 1 && !IsDeferred(step);
+    internal const string ProfileClearSaveClass = "select-profile.clear-save";
+    internal static bool IsFirstPhaseStep(StencilInitializationStep step) => Phase(step.ContextIdentifier) == 1;
 
     internal static int Phase(string context) => context is "main-title" or "select-profile" or "gameplay-hud" ? 1
         : context == "clear-save" ? 3 : 2;
@@ -55,7 +54,7 @@ internal static class StencilInitializationPolicy
             var contract = contracts.LabelSets.First(item => item.ContextIdentifier == context.ContextIdentifier);
             return new ContextRequirements(context.ContextIdentifier, context.Name,
                 context.Objects.Select(item => new Requirement(item.Id, item.Name,
-                    item.Id == DeferredProfileClass ? 1 : contract.OccurrenceOverrides?.GetValueOrDefault(item.Id)?.Minimum
+                    item.Id == ProfileClearSaveClass ? 1 : contract.OccurrenceOverrides?.GetValueOrDefault(item.Id)?.Minimum
                         ?? (contract.RequiresAllContextObjects ? 1 : 0),
                     context.ContextIdentifier == "mods" || item.Id == "shared.mods")).ToArray());
         }).ToArray();
@@ -89,7 +88,7 @@ internal static class StencilInitializationPolicy
                 }
             }
         }
-        return missing.OrderBy(step => IsDeferred(step) ? 3 : Phase(step.ContextIdentifier)).ToArray();
+        return missing;
     }
 
     internal static SavedLabelingExample? RepresentativeExample(
@@ -193,7 +192,7 @@ internal sealed class StencilInitializationCoordinator
     internal StencilInitializationStep? NavigationStep(string? navigationContext = null)
     {
         if (navigationContext is null && !HasUsableHUD
-            && !Steps.Any(item => !StencilInitializationPolicy.IsDeferred(item) && item.ContextIdentifier is "main-title" or "select-profile"))
+            && !Steps.Any(item => item.ContextIdentifier is "main-title" or "select-profile"))
             return new("gameplay-hud", "Gameplay HUD", "game.health", "Health", 1, 2);
         return Steps.FirstOrDefault(item => item.ContextIdentifier == navigationContext) ?? Steps.FirstOrDefault();
     }
@@ -221,28 +220,23 @@ internal sealed class StencilInitializationCoordinator
         }
         if (context is not null && StencilInitializationPolicy.RequiredContexts.Any(item => item.Identifier == context))
         {
-            if (context == "select-profile" && IsFirstPhaseComplete && selected == "select-profile.clear-save"
-                && ExampleFor(context) is { } example
-                && !example.Manifest.Annotations.Any(annotation => !annotation.IsHardNegative
-                    && annotation.ClassIdentifier == "select-profile.clear-save"))
-                return Text("draw", ("object", Text("Clear Save")));
-            var remaining = Steps.Where(step => step.ContextIdentifier == context
-                && (IsFirstPhaseComplete || !StencilInitializationPolicy.IsDeferred(step))).ToArray();
+            var remaining = Steps.Where(step => step.ContextIdentifier == context).ToArray();
             var next = remaining.FirstOrDefault(step => step.ClassIdentifier == selected) ?? remaining.FirstOrDefault();
             var name = StencilInitializationPolicy.RequiredContexts.First(item => item.Identifier == context).Name;
             if (next is null && context == "gameplay-hud" && !HasUsableHUD) return Text("invalidHUD");
-            return next is null ? context == "select-profile" && !IsScreenComplete(context) ? Text("profilePhaseDone")
-                : Text("screenDone", ("screen", ScreenName(name))) : Instruction(next);
+            if (next is null) return Text("screenDone", ("screen", ScreenName(name)));
+            return next.ClassIdentifier == StencilInitializationPolicy.ProfileClearSaveClass
+                ? Instruction(next) + " " + Text("profileClearSave")
+                : Instruction(next);
         }
         if (Contexts.FirstOrDefault(item => item.Identifier == navigationContext) is { } target
             && !Steps.Any(item => item.ContextIdentifier == navigationContext))
             return Text("screenReady", ("screen", ScreenName(target.Name)));
         if (navigationContext is null && !HasUsableHUD
-            && !Steps.Any(item => !StencilInitializationPolicy.IsDeferred(item) && item.ContextIdentifier is "main-title" or "select-profile"))
+            && !Steps.Any(item => item.ContextIdentifier is "main-title" or "select-profile"))
             return ExampleFor("gameplay-hud") is null ? Text("navigateHUD")
                 : Text("resumeStencil", ("screen", ScreenName("Gameplay HUD")));
         var step = NavigationStep(navigationContext);
-        if (step is not null && StencilInitializationPolicy.IsDeferred(step)) return Text("profileClearSave");
         if (step is not null && ExampleFor(step.ContextIdentifier) is not null)
             return Text("resumeStencil", ("screen", ScreenName(step.ContextName)));
         return step is null ? null : step.ContextIdentifier == "gameplay-hud" ? Text("navigateHUD")

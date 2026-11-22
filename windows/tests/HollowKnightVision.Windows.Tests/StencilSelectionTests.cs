@@ -6,8 +6,8 @@ internal static class StencilSelectionTests
     { if (!condition) throw new Exception(message); }
     private static LabelingExampleAnnotation Box(string id, bool negative = false) => new(Guid.NewGuid(), id, .1, .1, .2, .2, negative);
     private static IReadOnlyList<MenuStencilLabel> Choices(string context, IReadOnlyList<LabelingExampleAnnotation>? boxes = null,
-        bool modded = true, bool hidesCompleted = true, bool deferred = false, IReadOnlyList<MenuStencilLabel>? custom = null) =>
-        StencilLabelSelectionPolicy.AvailableLabels(context, boxes ?? [], modded, hidesCompleted, deferred, custom);
+        bool modded = true, bool hidesCompleted = true, IReadOnlyList<MenuStencilLabel>? custom = null) =>
+        StencilLabelSelectionPolicy.AvailableLabels(context, boxes ?? [], modded, hidesCompleted, custom);
 
     public static void TestMenuOrderAndUndo()
     {
@@ -44,12 +44,11 @@ internal static class StencilSelectionTests
         Check(!Choices("options", modded: false, hidesCompleted: false).Any(item => item.Identifier == "shared.mods"));
     }
 
-    public static void TestDeferredAndCanonicalDuplicates()
+    public static void TestRequiredClearSaveAndCanonicalDuplicates()
     {
-        Check(!Choices("select-profile").Any(item => item.Identifier == "select-profile.clear-save"));
-        Check(Choices("select-profile", deferred: true).Any(item => item.Identifier == "select-profile.clear-save"));
-        Check(!Choices("select-profile", [Box("select-profile.clear-save")], deferred: true).Any(item => item.Identifier == "select-profile.clear-save"));
-        Check(Choices("select-profile", [Box("select-profile.clear-save", true)], deferred: true).Any(item => item.Identifier == "select-profile.clear-save"));
+        Check(Choices("select-profile").Any(item => item.Identifier == "select-profile.clear-save"));
+        Check(!Choices("select-profile", [Box("select-profile.clear-save")]).Any(item => item.Identifier == "select-profile.clear-save"));
+        Check(Choices("select-profile", [Box("select-profile.clear-save", true)]).Any(item => item.Identifier == "select-profile.clear-save"));
         Check(Choices("select-profile", hidesCompleted: false).Any(item => item.Identifier == "select-profile.clear-save"));
         var title = Choices("main-title", custom: [new("main-title.options", "duplicate"), new("custom.banner", "Banner")]);
         Check(title.Count(item => LabelingClassIdentity.CanonicalIdentifier(item.Identifier) == "shared.options") == 1);

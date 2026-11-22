@@ -211,31 +211,33 @@ internal static class StencilGuidanceParityTests
         });
     }
 
-    public static void TestDeferredProfileAndModelGuidance()
+    public static void TestRequiredProfileAndModelGuidance()
     {
         WithTemporaryDirectory(root =>
         {
             var store = new LabelingExampleStore(root);
             foreach (var context in StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal).Where(item => StencilInitializationPolicy.Phase(item.Identifier) == 1))
-                store.Save(Frame(), context.Identifier, context.Requirements.Where(item => item.Identifier != StencilInitializationPolicy.DeferredProfileClass)
+                store.Save(Frame(), context.Identifier, context.Requirements.Where(item => item.Identifier != StencilInitializationPolicy.ProfileClearSaveClass)
                     .SelectMany(item => Enumerable.Range(0, item.Count).Select(_ => Box(item.Identifier))).ToArray());
             var coordinator = new StencilInitializationCoordinator(store, GameRuntimeMode.Normal);
-            Check(!coordinator.IsScreenComplete("select-profile"), "Deferred Clear Save incorrectly earned a completion checkmark.");
-            Check(coordinator.NavigationStep()?.ContextIdentifier == "gameplay-hud", "Deferred action blocked HUD setup.");
+            Check(!coordinator.IsScreenComplete("select-profile"), "Missing Clear Save incorrectly earned a completion checkmark.");
+            Check(coordinator.NavigationStep()?.ContextIdentifier == "select-profile", "Setup advanced past an incomplete profile.");
             coordinator.HasUsableHUD = true;
-            Check(coordinator.IsFirstPhaseComplete && !coordinator.IsScreenComplete("select-profile"));
-            Check(coordinator.NavigationStep()?.ContextIdentifier == "options");
+            Check(!coordinator.IsFirstPhaseComplete && !coordinator.IsScreenComplete("select-profile"));
+            Check(coordinator.NavigationStep()?.ClassIdentifier == StencilInitializationPolicy.ProfileClearSaveClass);
             foreach (var context in StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal).Where(item => StencilInitializationPolicy.Phase(item.Identifier) != 1))
                 store.Save(Frame(), context.Identifier, context.Requirements.Where(item => !item.ModdedOnly)
                     .SelectMany(item => Enumerable.Range(0, item.Count).Select(_ => Box(item.Identifier))).ToArray());
             coordinator.Refresh();
-            Check(!coordinator.IsComplete && coordinator.Steps.Single().ClassIdentifier == StencilInitializationPolicy.DeferredProfileClass);
-            Check(coordinator.Guidance(null, null)!.Contains("Return to Select Profile"));
+            Check(!coordinator.IsComplete && coordinator.Steps.Single().ClassIdentifier == StencilInitializationPolicy.ProfileClearSaveClass);
+            Check(coordinator.Guidance(null, null) == "Click Stencil and Edit Labels for Select Profile.");
             Check(coordinator.LabelContextForCapture("select-profile", null, "game") == "select-profile");
-            Check(coordinator.Guidance("select-profile", StencilInitializationPolicy.DeferredProfileClass) == "Draw a box around Clear Save.");
+            var guidance = coordinator.Guidance("select-profile", StencilInitializationPolicy.ProfileClearSaveClass);
+            Check(guidance is not null && guidance.StartsWith("Draw a box around Clear Save.")
+                && guidance.Contains("create a save") && guidance.Contains("Return to Select Profile"));
             Check(coordinator.ModelGuidance("Gameplay", true, 0, false, false) is null);
             var profile = coordinator.ExampleFor("select-profile")!;
-            var completed = store.Update(profile, "select-profile", [.. profile.Manifest.Annotations, Box(StencilInitializationPolicy.DeferredProfileClass)]);
+            var completed = store.Update(profile, "select-profile", [.. profile.Manifest.Annotations, Box(StencilInitializationPolicy.ProfileClearSaveClass)]);
             coordinator.Refresh();
             Check(coordinator.IsComplete && coordinator.IsScreenComplete("select-profile") && coordinator.CompletedScreenCount == coordinator.ScreenCount);
             Check(coordinator.ModelGuidance("Gameplay", false, 0, false, false)!.Contains("Enter gameplay"));
@@ -257,8 +259,8 @@ internal static class StencilGuidanceParityTests
                 && !coordinator.Guidance("game", "game.health")!.Contains("Health"));
             store.Update(completed, "select-profile", profile.Manifest.Annotations);
             coordinator.Refresh();
-            Check(!coordinator.IsScreenComplete("select-profile") && !coordinator.IsComplete && coordinator.IsFirstPhaseComplete,
-                "Undo failed to restore deferred guidance or locked the already completed first phase.");
+            Check(!coordinator.IsScreenComplete("select-profile") && !coordinator.IsComplete && !coordinator.IsFirstPhaseComplete,
+                "Removing Clear Save did not reopen Phase 1.");
         });
     }
 
