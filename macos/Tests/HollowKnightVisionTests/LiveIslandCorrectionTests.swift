@@ -84,12 +84,16 @@ final class LiveIslandCorrectionTests: XCTestCase {
                     localPose: CGPoint(x: positions[index] - positions[group[0]], y: 0), measured: true) })
         }
         let keyframes = observations.map { LiveWorldKeyframe(id: $0.id, observationID: $0.id, sourceObservationID: $0.id) }
-        let landmarks = observations.flatMap { observation in
-            (0..<3).map { index in LiveWorldLandmark(id: observation.id * 10 + index,
-                keyframeID: observation.id, sourceObservationID: observation.id,
-                samplePoint: CGPoint(x: 10 + index * 20, y: 10),
-                worldPoint: CGPoint(x: observation.rawPose.x + CGFloat(10 + index * 20), y: 10),
-                descriptor: [0, 1, 2], depth: 1, depthConfidence: 1) }
+        let landmarks = observations.flatMap { observation -> [LiveWorldLandmark] in
+            (0..<3).map { index -> LiveWorldLandmark in
+                let sampleX = CGFloat(10 + index * 20)
+                let samplePoint = CGPoint(x: sampleX, y: 10)
+                let worldPoint = CGPoint(x: observation.rawPose.x + sampleX, y: 10)
+                return LiveWorldLandmark(id: observation.id * 10 + index,
+                    keyframeID: observation.id, sourceObservationID: observation.id,
+                    samplePoint: samplePoint, worldPoint: worldPoint,
+                    descriptor: [0, 1, 2], depth: 1, depthConfidence: 1)
+            }
         }
         return try LiveWorldSnapshot(mapRevision: 5, anchoredObservationID: 0, observations: observations,
             keyframes: keyframes, landmarks: landmarks,

@@ -4,9 +4,10 @@ import XCTest
 
 final class VisualReplayArchiveTests: XCTestCase {
     func testPartialReplayRequiresExplicitOptInAndRetainsGapIdentityAndTiming() throws {
-        let frames = (0..<4).map { index in
-            VisualReplayFrame(index: index, captureTimestamp: 10 + Double(index) * 0.05,
-                capturedAt: 10 + Double(index) * 0.05, captureGeneration: 1, solveWidth: 640,
+        let frames = (0..<4).map { index -> VisualReplayFrame in
+            let time: Double = 10 + Double(index) * 0.05
+            return VisualReplayFrame(index: index, captureTimestamp: time,
+                capturedAt: time, captureGeneration: 1, solveWidth: 640,
                 width: 640, height: 360, renderedGameFrame: index,
                 fileName: index == 1 ? nil : String(format: "%08d.png", index),
                 sha256: index == 1 ? nil : "hash", issue: index == 1 ? "writerBackpressure" : nil)

@@ -56,10 +56,13 @@ final class BotGeoCacheTests: XCTestCase {
             let row = BotObservationBuilder.make(captureTimestamp: 1, capturedAt: 1, availableAt: 1.01,
                 generation: 1, roomID: 1, roomRevision: 0, frameSize: CGSize(width: image.width, height: image.height),
                 detections: batch, terrain: [], terrainValid: true, transitioning: false)
-            let aspect = Double(image.width) / Double(image.height)
-            let detectionsTopLeft = (row.geoCaches ?? []).map {
-                CGRect(x: $0.x - $0.width / 2, y: 1 - ($0.y + $0.height / 2) * aspect,
-                       width: $0.width, height: $0.height * aspect)
+            let aspect = CGFloat(image.width) / CGFloat(image.height)
+            let detectionsTopLeft = (row.geoCaches ?? []).map { cache -> CGRect in
+                let width = CGFloat(cache.width)
+                let height = CGFloat(cache.height)
+                let left = CGFloat(cache.x) - width / 2
+                let top = 1 - (CGFloat(cache.y) + height / 2) * aspect
+                return CGRect(x: left, y: top, width: width, height: height * aspect)
             }
             labeled += boxes.count
             reported += detectionsTopLeft.count

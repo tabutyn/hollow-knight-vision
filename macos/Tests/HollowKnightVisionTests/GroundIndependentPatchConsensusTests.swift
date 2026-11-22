@@ -107,10 +107,11 @@ final class GroundIndependentPatchConsensusTests: XCTestCase {
     private func frame(dx: Int = 0, dy: Int = 0) -> [UInt8] {
         (0..<(width * height)).map { index in
             let x = Double(index % width - dx), y = Double(index / width - dy)
-            let value = 110 + 18 * sin(0.47 * x + 0.2 * y)
-                + 22 * cos(0.17 * x - 0.31 * y)
-                + 20 * sin(0.11 * x + 0.57 * y)
-                + 16 * cos(0.63 * x - 0.23 * y)
+            let waveA: Double = 18 * sin(0.47 * x + 0.2 * y)
+            let waveB: Double = 22 * cos(0.17 * x - 0.31 * y)
+            let waveC: Double = 20 * sin(0.11 * x + 0.57 * y)
+            let waveD: Double = 16 * cos(0.63 * x - 0.23 * y)
+            let value: Double = 110 + waveA + waveB + waveC + waveD
             return UInt8(clamping: Int(value.rounded()))
         }
     }
