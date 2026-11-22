@@ -693,7 +693,6 @@ public partial class MainWindow : Window
         double CaptureTimestamp,
         int? RenderedGameFrame = null,
         ReceiverGroundTruthSample? ReceiverTelemetry = null,
-        double? ReceiverObservedAt = null,
         bool OwnsHackerWork = false,
         bool IntegratesHackerAtlas = false,
         long HackerWorkGeneration = 0);
@@ -727,67 +726,7 @@ public partial class MainWindow : Window
         long WorkGeneration,
         int ApplyAttempt = 0);
 
-    private sealed record GroundTruthMatchedContext(
-        BgraFrame Frame,
-        ReceiverGroundTruthSample Telemetry,
-        double ReceiverObservedAt,
-        IReadOnlyList<GroundLinePresenceReview> GroundPresenceReviews,
-        bool AdmitsTracking,
-        long CaptureGeneration,
-        long CaptureId);
-
-    private sealed class GroundTruthSeedEvidence
-    {
-        private readonly GroundLinePresence presence = new(
-            minimumObservationSeconds: .2,
-            confirmedLossGraceSeconds: 3);
-        private string? sceneName;
-
-        internal void Reset()
-        {
-            presence.Reset();
-            sceneName = null;
-        }
-
-        internal IReadOnlyList<GroundLinePresenceReview> Observe(
-            BgraFrame frame,
-            IReadOnlyList<DetectedFloorLine> lines,
-            IReadOnlyList<PixelRect> exclusions,
-            ReceiverGroundTruthSample telemetry,
-            double timestamp,
-            bool poseVerified)
-        {
-            if (string.IsNullOrWhiteSpace(telemetry.SceneName)
-                || !telemetry.CameraAvailable
-                || !telemetry.HasFiniteCoordinates()
-                || !double.IsFinite(timestamp))
-            {
-                Reset();
-                return [];
-            }
-            if (!string.Equals(sceneName, telemetry.SceneName, StringComparison.Ordinal))
-            {
-                presence.Reset();
-                sceneName = telemetry.SceneName;
-            }
-            var scale = telemetry.PixelsPerWorldUnit(frame.Height);
-            if (scale is not > 0 || !double.IsFinite(scale.Value)) return [];
-            var camera = new AtlasPoint(
-                telemetry.CameraX * scale.Value,
-                telemetry.CameraY * scale.Value);
-            presence.Update(
-                poseVerified
-                    ? lines.Select(line => line.ToSemanticLine()).ToArray()
-                    : [],
-                camera,
-                frame.Width,
-                frame.Height,
-                timestamp,
-                poseVerified,
-                exclusions);
-            return presence.Reviews(camera, frame.Width, frame.Height);
-        }
-    }
+    private sealed record GroundTruthMatchedContext(long CaptureGeneration, long CaptureId);
 
     private sealed class GroundHypothesisWorkerState
     {
@@ -918,11 +857,9 @@ public partial class MainWindow : Window
         public int LiveWorldRevision { get; init; }
         public AtlasPoint AppliedWorldCorrection { get; init; }
         public double CaptureTimestamp { get; init; }
-        public double? ReceiverObservedAt { get; init; }
         public bool OwnsHackerWork { get; init; }
         public bool IntegratesHackerAtlas { get; init; }
         public long HackerWorkGeneration { get; init; }
-        public IReadOnlyList<GroundLinePresenceReview> GroundPresenceReviews { get; init; } = [];
         public GroundHypothesisTrackingResult GroundHypotheses { get; init; } =
             GroundHypothesisTrackingResult.Empty;
     }
@@ -2795,7 +2732,6 @@ public partial class MainWindow : Window
         CancellationToken cancellationToken)
     {
         var frameAdmission = new GameplayFrameAdmission();
-        var groundTruthSeedEvidence = new GroundTruthSeedEvidence();
         var groundHypothesisState = new GroundHypothesisWorkerState();
         var normalAtlasRoomIdentity = new NormalAtlasRoomIdentity();
         var appliedGroundResetGeneration = Interlocked.Read(
@@ -2817,7 +2753,6 @@ public partial class MainWindow : Window
                 {
                     frameMotionTracker.Reset();
                     inputPathMotionTracker.Reset();
-                    groundTruthSeedEvidence.Reset();
                     groundHypothesisState.Reset();
                     frameAdmission = new();
                     lastLabelRevision = pending.LabelRevision;
@@ -2835,11 +2770,9 @@ public partial class MainWindow : Window
                     pending.CaptureTimestamp,
                     pending.RenderedGameFrame,
                     pending.ReceiverTelemetry,
-                    pending.ReceiverObservedAt,
                     pending.OwnsHackerWork,
                     pending.IntegratesHackerAtlas,
                     pending.HackerWorkGeneration,
-                    groundTruthSeedEvidence,
                     groundHypothesisState,
                     normalAtlasRoomIdentity);
                 if (result is null) continue;
@@ -3190,7 +3123,6 @@ public partial class MainWindow : Window
             matched.Capture.CapturedAt,
             matched.Capture.UnityFrame,
             matched.Sample,
-            matched.SampleObservedAt,
             ownsHackerWork,
             matched.Capture.IntegratesAtlas,
             hackerGeneration);
@@ -3255,11 +3187,9 @@ public partial class MainWindow : Window
         double captureTimestamp,
         int? exactRenderedGameFrame,
         ReceiverGroundTruthSample? exactReceiverTelemetry,
-        double? exactReceiverObservedAt,
         bool ownsHackerWork,
         bool integratesHackerAtlas,
         long pendingHackerWorkGeneration,
-        GroundTruthSeedEvidence groundTruthSeedEvidence,
         GroundHypothesisWorkerState groundHypothesisState,
         NormalAtlasRoomIdentity normalAtlasRoomIdentity)
     {
@@ -3338,15 +3268,6 @@ public partial class MainWindow : Window
         }
         else frameMotionTracker.Reset();
         latestMotion = motion;
-        var groundPresenceReviews = exactReceiverTelemetry is { } seedTelemetry
-            ? groundTruthSeedEvidence.Observe(
-                frame,
-                ground,
-                groundExclusions,
-                seedTelemetry,
-                captureTimestamp,
-                admission.AdmitsTracking)
-            : [];
         if (!labelCapture.CanProcess(labelRevision)) return null;
 
         AtlasMosaicDelta? gameplayTiles = null;
@@ -3590,11 +3511,9 @@ public partial class MainWindow : Window
                 AppliedWorldCorrection = liveWorldResult?.AppliedCorrection
                     ?? new AtlasPoint(0, 0),
                 CaptureTimestamp = captureTimestamp,
-                ReceiverObservedAt = exactReceiverObservedAt,
                 OwnsHackerWork = ownsHackerWork,
                 IntegratesHackerAtlas = integratesHackerAtlas,
                 HackerWorkGeneration = pendingHackerWorkGeneration,
-                GroundPresenceReviews = groundPresenceReviews,
                 GroundHypotheses = groundHypotheses
             };
     }
@@ -3699,20 +3618,9 @@ public partial class MainWindow : Window
         var presentsLatestFrame = result.Frame.CaptureId
             == Interlocked.Read(ref latestPresentedCaptureId);
         var presentsLatestMatchedFrame = TryAcceptLatestMatchedResult(result);
-        if (presentsLatestMatchedFrame && result.ReceiverTelemetry is { } matchedTelemetry)
+        if (presentsLatestMatchedFrame && result.ReceiverTelemetry is not null)
         {
-            var observedAt = result.ReceiverObservedAt is { } exactObservedAt
-                && double.IsFinite(exactObservedAt)
-                    ? exactObservedAt
-                    : result.CaptureTimestamp;
-            latestGroundTruthContext = new(
-                result.Frame,
-                matchedTelemetry,
-                observedAt,
-                result.GroundPresenceReviews,
-                result.AdmitsTracking,
-                result.CaptureGeneration,
-                result.Frame.CaptureId);
+            latestGroundTruthContext = new(result.CaptureGeneration, result.Frame.CaptureId);
             if (workspace == "Hacker")
                 PresentGroundTruthMatchedContext(latestGroundTruthContext);
         }
@@ -4335,9 +4243,7 @@ public partial class MainWindow : Window
             return;
         }
         TryMigrateLegacyGroundEdits();
-        if (context.AdmitsTracking)
-            EnterGroundTruthLabelScene(context.GroundPresenceReviews);
-        else RedrawHackerEdits();
+        RedrawHackerEdits();
     }
 
     private void TryMigrateLegacyGroundEdits()
@@ -4447,21 +4353,6 @@ public partial class MainWindow : Window
     private static bool ValidLegacyGroundLine(GroundEditLine line) =>
         line.Id != Guid.Empty && RenderableLegacyGroundLine(line)
         && Math.Abs(line.X1 - line.X0) >= 4;
-
-    private void EnterGroundTruthLabelScene(
-        IReadOnlyList<GroundLinePresenceReview> reviews)
-    {
-        if (!TryGroundTruthContext(out var transform, out var liveBounds)) return;
-        TryMigrateLegacyGroundEdits();
-        var confirmed = GroundLineDetector.FeatureHypothesisPresenceReviews(reviews);
-        if (confirmed.Count > 0)
-        {
-            groundTruthLabels.Enter([], confirmed, transform, liveBounds);
-            PresentGroundTruthPersistenceError();
-        }
-        GroundUndoButton.IsEnabled = groundTruthLabels.CanUndo;
-        RedrawHackerEdits();
-    }
 
     private void PresentGroundTruthPersistenceError()
     {
@@ -4651,8 +4542,8 @@ public partial class MainWindow : Window
                         StrokeThickness = 4
                     });
                 }
-                var sceneLines = groundTruthLabels.Document.Lines.Where(line =>
-                    string.Equals(line.SceneName, transform.SceneName, StringComparison.Ordinal));
+                var sceneLines = groundTruthLabels.Document.Lines.Where(line => !line.SeededFromDetector
+                    && string.Equals(line.SceneName, transform.SceneName, StringComparison.Ordinal));
                 GroundCountText.Text = $"+{sceneLines.Count(line => line.Kind == GroundTruthLineKind.Positive)
                     + legacyGroundEdits.Count(line => !line.IsNegative)}  "
                     + $"−{sceneLines.Count(line => line.Kind == GroundTruthLineKind.Negative)

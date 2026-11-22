@@ -945,7 +945,7 @@ var tests = new List<(string Name, Action Run)>
     ("ground truth line store round trips world lines", TestGroundTruthLineStoreRoundTripsWorldLines),
     ("ground truth add negative modify delete and undo stay horizontal", TestGroundTruthAddNegativeModifyDeleteAndUndoKeepHorizontalWorldLines),
     ("ground truth overlay uses positive negative and selected kinds", TestGroundTruthOverlayUsesPositiveNegativeAndSelectedKinds),
-    ("ground truth entering scene seeds only once", TestGroundTruthEnteringSceneSeedsOnlyOnce),
+    ("Hacker ground overlay and editor use authored lines only", TestGroundTruthRequiresAuthoredLines),
     ("ground truth store rejects malformed and missing document fields", TestGroundTruthStoreRejectsMalformedAndMissingDocumentFields),
     ("ground truth store rejects missing and invalid line fields", TestGroundTruthStoreRejectsMissingAndInvalidLineFields),
     ("ground truth failed atomic replace preserves old document", TestGroundTruthFailedAtomicReplacePreservesOldDocument),
@@ -7942,30 +7942,39 @@ static void TestGroundTruthOverlayUsesPositiveNegativeAndSelectedKinds()
     True(overlay.All(line => line.Start.Y == line.End.Y));
 }
 
-static void TestGroundTruthEnteringSceneSeedsOnlyOnce()
+static void TestGroundTruthRequiresAuthoredLines()
 {
     WithTemporaryDirectory(root =>
     {
-        var controller = new GroundTruthLabelController(
-            new GroundTruthLineStore(Path.Combine(root, "world-lines.json")));
+        var store = new GroundTruthLineStore(Path.Combine(root, "world-lines.json"));
+        var oldDetection = new GroundTruthWorldLine("Tutorial_01", 1, 6, 2,
+            GroundTruthLineKind.Positive, seededFromDetector: true);
+        store.Save(new() { SeededScenes = ["Tutorial_01"], Lines = [oldDetection] });
+        var controller = new GroundTruthLabelController(store);
         var transform = GroundTruthTransform(new AtlasPoint(0, 0));
         var bounds = new GroundTruthRect(100, 200, 640, 360);
-        GroundLinePresenceReview[] reviews =
-        [
-            new(
-                1,
-                new CleanFloorLine(240, new PixelSpan(80, 500)),
-                GroundLinePresenceState.Confirmed,
-                VisibleSeconds: 3,
-                DetectedFraction: 1)
-        ];
+        var seededPosition = transform.WorldToAtlas(new AtlasPoint(3, 2), bounds);
+        Equal(0, controller.OverlayLines(transform, bounds).Count);
+        controller.Mode = GroundTruthEditingMode.Delete;
+        controller.Handle(GroundTruthPointerPhase.Began, seededPosition, 6, transform, bounds);
+        controller.Handle(GroundTruthPointerPhase.Ended, seededPosition, 6, transform, bounds);
+        True(store.Load().Lines.SequenceEqual([oldDetection]));
 
-        controller.Enter([], reviews, transform, bounds);
-        controller.Enter([], reviews, transform, bounds);
+        var start = transform.WorldToAtlas(new AtlasPoint(1, 2), bounds);
+        var end = transform.WorldToAtlas(new AtlasPoint(6, 2), bounds);
+        controller.Mode = GroundTruthEditingMode.Add;
+        controller.Handle(GroundTruthPointerPhase.Began, start, 6, transform, bounds);
+        controller.Handle(GroundTruthPointerPhase.Ended, end, 6, transform, bounds);
+        Equal(1, controller.OverlayLines(transform, bounds).Count);
+        Equal(1, store.Load().Lines.Count(line => !line.SeededFromDetector));
 
-        True(controller.Document.SeededScenes.SetEquals(["Tutorial_01"]));
-        Equal(1, controller.Document.Lines.Count);
-        True(controller.Document.Lines[0].SeededFromDetector);
+        controller.Mode = GroundTruthEditingMode.Delete;
+        controller.Handle(GroundTruthPointerPhase.Began, seededPosition, 6, transform, bounds);
+        controller.Handle(GroundTruthPointerPhase.Ended, seededPosition, 6, transform, bounds);
+        Equal(0, controller.OverlayLines(transform, bounds).Count);
+        var reopened = new GroundTruthLabelController(store);
+        Equal(0, reopened.OverlayLines(transform, bounds).Count);
+        True(store.Load().Lines.SequenceEqual([oldDetection]));
     });
 }
 

@@ -314,7 +314,7 @@ public static class GroundTruthLineProjection
         var result = new List<GroundTruthOverlayLine>();
         foreach (var line in lines)
         {
-            if (line.SceneName != transform.SceneName) continue;
+            if (line.SeededFromDetector || line.SceneName != transform.SceneName) continue;
             var start = transform.WorldToAtlas(
                 new AtlasPoint(line.MinimumWorldX, line.WorldY),
                 liveBounds);
@@ -330,68 +330,6 @@ public static class GroundTruthLineProjection
             result.Add(new(start, end, kind));
         }
         return result;
-    }
-
-    public static IReadOnlyList<GroundTruthWorldLine> SeedLines(
-        IReadOnlyList<GroundHypothesisAtlasLine> atlasLines,
-        IReadOnlyList<GroundLinePresenceReview> lineReviews,
-        GroundTruthCameraTransform transform,
-        GroundTruthRect liveBounds)
-    {
-        ArgumentNullException.ThrowIfNull(atlasLines);
-        ArgumentNullException.ThrowIfNull(lineReviews);
-        ArgumentNullException.ThrowIfNull(transform);
-        var result = new List<GroundTruthWorldLine>();
-        foreach (var line in atlasLines)
-        {
-            var first = transform.AtlasToWorld(line.AtlasStart, liveBounds);
-            var last = transform.AtlasToWorld(line.AtlasEnd, liveBounds);
-            AppendSeed(new(
-                transform.SceneName,
-                Math.Min(first.X, last.X),
-                Math.Max(first.X, last.X),
-                (first.Y + last.Y) * .5,
-                GroundTruthLineKind.Positive,
-                seededFromDetector: true), transform.PixelsPerWorldUnitY, result);
-        }
-
-        foreach (var review in GroundLineDetector.FeatureHypothesisPresenceReviews(
-                     lineReviews))
-        {
-            var y = review.Line.Row + .5;
-            var first = transform.ScreenToWorld(
-                new AtlasPoint(review.Line.XSpan.Start, y));
-            var last = transform.ScreenToWorld(
-                new AtlasPoint(review.Line.XSpan.EndInclusive + 1, y));
-            AppendSeed(new(
-                transform.SceneName,
-                Math.Min(first.X, last.X),
-                Math.Max(first.X, last.X),
-                (first.Y + last.Y) * .5,
-                GroundTruthLineKind.Positive,
-                seededFromDetector: true), transform.PixelsPerWorldUnitY, result);
-        }
-        return result;
-    }
-
-    private static void AppendSeed(
-        GroundTruthWorldLine proposed,
-        double pixelsPerWorldUnit,
-        List<GroundTruthWorldLine> result)
-    {
-        var rowTolerance = 3 / Math.Max(1, pixelsPerWorldUnit);
-        var duplicate = result.Any(existing =>
-        {
-            if (Math.Abs(existing.WorldY - proposed.WorldY) > rowTolerance)
-                return false;
-            var overlap = Math.Min(existing.MaximumWorldX, proposed.MaximumWorldX)
-                - Math.Max(existing.MinimumWorldX, proposed.MinimumWorldX);
-            var shorter = Math.Min(
-                existing.MaximumWorldX - existing.MinimumWorldX,
-                proposed.MaximumWorldX - proposed.MinimumWorldX);
-            return overlap >= Math.Max(0, shorter * .6);
-        });
-        if (!duplicate) result.Add(proposed.Standardized);
     }
 
     private static bool Finite(AtlasPoint point) =>
@@ -463,38 +401,6 @@ public sealed class GroundTruthLabelController
         line => line.Kind == GroundTruthLineKind.Positive);
     public int VisibleNegativeCount => Document.Lines.Count(
         line => line.Kind == GroundTruthLineKind.Negative);
-
-    public void Enter(
-        IReadOnlyList<GroundHypothesisAtlasLine> atlasLines,
-        IReadOnlyList<GroundLinePresenceReview> lineReviews,
-        GroundTruthCameraTransform? transform,
-        GroundTruthRect liveBounds)
-    {
-        if (transform is null)
-        {
-            Error = "Camera transform unavailable";
-            return;
-        }
-        if (Document.SeededScenes.Contains(transform.SceneName))
-        {
-            Error = null;
-            return;
-        }
-        var seeds = GroundTruthLineProjection.SeedLines(
-            atlasLines,
-            lineReviews,
-            transform,
-            liveBounds);
-        if (seeds.Count == 0)
-        {
-            Error = "Waiting for solved ground lines";
-            return;
-        }
-        RecordSnapshot();
-        Document.Lines.AddRange(seeds);
-        Document.SeededScenes.Add(transform.SceneName);
-        Persist();
-    }
 
     public IReadOnlyList<GroundTruthOverlayLine> OverlayLines(
         GroundTruthCameraTransform? transform,
@@ -784,7 +690,7 @@ public sealed class GroundTruthLabelController
         string sceneName,
         double toleranceX,
         double toleranceY) => Document.Lines
-        .Where(line => line.SceneName == sceneName
+        .Where(line => !line.SeededFromDetector && line.SceneName == sceneName
             && Math.Abs(line.WorldY - point.Y) <= toleranceY
             && point.X >= line.MinimumWorldX - toleranceX
             && point.X <= line.MaximumWorldX + toleranceX)
