@@ -1529,6 +1529,12 @@ public partial class MainWindow : Window
         ModifierKeys modifiers = ModifierKeys.None)
     {
         if (isRepeat) return false;
+        if (key == Key.R && modifiers == ModifierKeys.None && CanResetRoom()
+            && (SettingsOverlay.Visibility == Visibility.Visible || workspace is "Gameplay" or "Hacker" or "Ops"))
+        {
+            _ = ResetRoomAsync();
+            return true;
+        }
         if (SettingsOverlay.Visibility == Visibility.Visible)
         {
             if (key == Key.Escape) SettingsOverlay.Visibility = Visibility.Collapsed;
@@ -2053,6 +2059,7 @@ public partial class MainWindow : Window
         OpsWorkspaceButton.Visibility = Visibility.Collapsed;
         OpsPanel.Visibility = CanUseOps() && recognizedMenuContext == "game" ? Visibility.Visible : Visibility.Collapsed;
         OpsSettingsTitle.Visibility = OpsPanel.Visibility;
+        OpsResetRoomButton.IsEnabled = CanResetRoom();
         var groundToolsAvailable = DashboardPresentationPolicy.ShowsGroundTrackingTools(
             workspace, recognizedMenuContext);
         GroundFeaturesCheck.IsEnabled = groundToolsAvailable;
@@ -5347,6 +5354,55 @@ public partial class MainWindow : Window
         ApplyPlayerOpsAcknowledgement(acknowledgement);
     }
 
+    private bool CanResetRoom() =>
+        CanUseOps() && recognizedMenuContext == "game" && gameControls.RoomResetAvailable
+        && !atlasOperationInProgress && !gameControls.IsRecording && !gameControls.IsReplaying
+        && inputPathReplayCancellation is null && !isClosing && !gameLostCountdownStarted;
+
+    private async void OpsResetRoom_Click(object sender, RoutedEventArgs e) => await ResetRoomAsync();
+
+    private async Task ResetRoomAsync()
+    {
+        if (!CanResetRoom()) return;
+        ReleaseForwardedInput();
+        var resetting = initialization.Text("Resetting room…");
+        OpsStatusText.Text = resetting;
+        OpsPanel.IsEnabled = false;
+        try
+        {
+            await RunAtlasOperationAsync(async () =>
+            {
+                var acknowledgement = await gameControls.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.ResetRoom);
+                if (acknowledgement?.ConfirmsRoomReset != true)
+                {
+                    if (acknowledgement?.Accepted == true)
+                        OpsStatusText.Text = initialization.Text("Room reset was not confirmed.");
+                    else
+                        ApplyPlayerOpsAcknowledgement(acknowledgement);
+                    return;
+                }
+
+                if (acknowledgement.State is { } state) SetPlayerTestState(state.Normalized());
+                OpsStatusText.Text = initialization.Text("Clearing Atlas…");
+                liveWorldPipeline?.InvalidatePendingWork();
+                var errors = new List<string>();
+                try { await ReplaceActiveAtlasWithEmptyAsync(retainPrevious: false); }
+                catch (Exception error) { errors.Add(error.Message); }
+                try { ClearHackerAtlas(); }
+                catch (Exception error) { errors.Add(error.Message); }
+                var result = initialization.Text("Room reset.");
+                OpsStatusText.Text = errors.Count == 0 ? result : result + " " + string.Join(" ", errors);
+            }, canReplaceFaultedActive: true);
+        }
+        finally
+        {
+            if (OpsStatusText.Text == resetting)
+                OpsStatusText.Text = initialization.Text("Room reset did not finish.");
+            OpsPanel.IsEnabled = true;
+            OpsResetRoomButton.IsEnabled = CanResetRoom();
+        }
+    }
+
     private void OpsReload_Click(object sender, RoutedEventArgs e) => RefreshOps();
 
     private bool TryReadPlayerTestState(out PlayerTestState state)
@@ -6066,70 +6122,71 @@ public partial class MainWindow : Window
 
     private async void AtlasNew_Click(object sender, RoutedEventArgs e) => await ResetActiveAtlasAsync(retainPrevious: true);
 
-    private async Task ResetActiveAtlasAsync(bool retainPrevious)
+    private Task ResetActiveAtlasAsync(bool retainPrevious) =>
+        RunAtlasOperationAsync(() => ReplaceActiveAtlasWithEmptyAsync(retainPrevious),
+            canReplaceFaultedActive: true, invalidateLiveWorld: true);
+
+    private async Task ReplaceActiveAtlasWithEmptyAsync(bool retainPrevious)
     {
-        await RunAtlasOperationAsync(async () =>
+        var resetAt = DateTimeOffset.UtcNow;
+        var metadata = new VisionResetController.PersistedAtlasMetadata(
+            0,
+            resetAt,
+            gameplayAtlas.TileSize,
+            gameplayAtlas.PixelsPerWorldUnit);
+        var reset = await Task.Run(() =>
         {
-            var resetAt = DateTimeOffset.UtcNow;
-            var metadata = new VisionResetController.PersistedAtlasMetadata(
-                0,
-                resetAt,
-                gameplayAtlas.TileSize,
-                gameplayAtlas.PixelsPerWorldUnit);
-            var reset = await Task.Run(() =>
+            VisionResetController.ActiveAtlasReplacement<
+                VisionResetController.ValidatedPersistedAtlas> replacement;
+            try
             {
-                VisionResetController.ActiveAtlasReplacement<
-                    VisionResetController.ValidatedPersistedAtlas> replacement;
+                replacement = WriteAtlasGeneration(
+                    new AtlasMosaicDelta(gameplayAtlas.Revision, []),
+                    metadata,
+                    copyActiveWorld: false,
+                    retainPrevious: retainPrevious,
+                    activateWorld: _ => ReopenActiveLiveWorld());
+            }
+            catch (Exception replacementError)
+            {
                 try
                 {
-                    replacement = WriteAtlasGeneration(
-                        new AtlasMosaicDelta(gameplayAtlas.Revision, []),
-                        metadata,
-                        copyActiveWorld: false,
-                        retainPrevious: retainPrevious,
-                        activateWorld: _ => ReopenActiveLiveWorld());
+                    if (Directory.Exists(activeAtlasDirectory))
+                        ReopenActiveLiveWorld();
                 }
-                catch (Exception replacementError)
+                catch (Exception rollbackError)
                 {
-                    try
-                    {
-                        if (Directory.Exists(activeAtlasDirectory))
-                            ReopenActiveLiveWorld();
-                    }
-                    catch (Exception rollbackError)
-                    {
-                        throw new AggregateException(replacementError, rollbackError);
-                    }
-                    throw;
+                    throw new AggregateException(replacementError, rollbackError);
                 }
+                throw;
+            }
 
-                AtlasSavedState? backup = null;
-                VisionResetController.PreviousActiveAtlasImportException? importError = null;
-                if (replacement.ArchivedPreviousAtlasDirectory is { } archive)
+            AtlasSavedState? backup = null;
+            VisionResetController.PreviousActiveAtlasImportException? importError = null;
+            if (replacement.ArchivedPreviousAtlasDirectory is { } archive)
+            {
+                try
                 {
-                    try
-                    {
-                        backup = VisionResetController.ImportPreviousActiveAtlas(
-                            atlasStateStore,
-                            archive,
-                            $"Before reset {DateTime.Now:g}");
-                    }
-                    catch (VisionResetController.PreviousActiveAtlasImportException error)
-                    {
-                        importError = error;
-                    }
+                    backup = VisionResetController.ImportPreviousActiveAtlas(
+                        atlasStateStore,
+                        archive,
+                        $"Before reset {DateTime.Now:g}");
                 }
-                return (replacement, backup, importError);
-            });
-            atlasPersistTask = null;
-            PublishPersistentAtlas(
-                reset.replacement.ValidatedWorld,
-                explicitlyRequested: true,
-                reopenLiveWorld: false);
-            SetStatus(reset.backup is null ? "Active atlas cleared. Stencil labels kept."
-                : $"Active atlas cleared. Restore with Load: {reset.backup.Name}. Stencil labels kept.");
-            if (reset.importError is { } importError) ShowError(importError);
-        }, canReplaceFaultedActive: true, invalidateLiveWorld: true);
+                catch (VisionResetController.PreviousActiveAtlasImportException error)
+                {
+                    importError = error;
+                }
+            }
+            return (replacement, backup, importError);
+        });
+        atlasPersistTask = null;
+        PublishPersistentAtlas(
+            reset.replacement.ValidatedWorld,
+            explicitlyRequested: true,
+            reopenLiveWorld: false);
+        SetStatus(reset.backup is null ? "Active atlas cleared. Stencil labels kept."
+            : $"Active atlas cleared. Restore with Load: {reset.backup.Name}. Stencil labels kept.");
+        if (reset.importError is { } importError) ShowError(importError);
     }
 
     private void ReopenActiveLiveWorld()
@@ -6349,36 +6406,41 @@ public partial class MainWindow : Window
         SettingsOverlay.Visibility = Visibility.Collapsed;
         await RunAtlasOperationAsync(() =>
         {
-            CancelGroundTruthGesture();
-            InvalidatePendingHackerWork(resetCore: true);
-            foreach (var image in hackerTileImages.Values)
-                AtlasCanvas.Children.Remove(image);
-            foreach (var image in hackerPreviewTileImages.Values)
-                AtlasCanvas.Children.Remove(image);
-            hackerTileImages.Clear();
-            hackerPreviewTileImages.Clear();
-            hackerTileBounds.Clear();
-            hackerTileContentBounds.Clear();
-            hackerOccupiedTileBounds.Clear();
-            hackerAtlasMinimumTileX = hackerAtlasMinimumTileY = null;
-            hackerLiveFrame = null;
-            hackerPreviewActive = false;
-            HackerLiveImage.Source = null;
-            HackerLiveImage.Visibility = Visibility.Collapsed;
-            AtlasCanvas.Width = CanvasWidth;
-            AtlasCanvas.Height = CanvasHeight;
-            HackerOverlayCanvas.Width = CanvasWidth;
-            HackerOverlayCanvas.Height = CanvasHeight;
-            hackerViewport.Reset("Fit");
-            AtlasCanvas.RenderTransform = Transform.Identity;
-            groundTruthLabels.ClearSelection();
-            rooms.Clear();
-            roomConnections.Clear();
-            PersistHackerEdits();
-            AtlasEmptyPanel.Visibility = Visibility.Visible;
-            RedrawHackerEdits();
+            ClearHackerAtlas();
             return Task.CompletedTask;
         });
+    }
+
+    private void ClearHackerAtlas()
+    {
+        CancelGroundTruthGesture();
+        InvalidatePendingHackerWork(resetCore: true);
+        foreach (var image in hackerTileImages.Values)
+            AtlasCanvas.Children.Remove(image);
+        foreach (var image in hackerPreviewTileImages.Values)
+            AtlasCanvas.Children.Remove(image);
+        hackerTileImages.Clear();
+        hackerPreviewTileImages.Clear();
+        hackerTileBounds.Clear();
+        hackerTileContentBounds.Clear();
+        hackerOccupiedTileBounds.Clear();
+        hackerAtlasMinimumTileX = hackerAtlasMinimumTileY = null;
+        hackerLiveFrame = null;
+        hackerPreviewActive = false;
+        HackerLiveImage.Source = null;
+        HackerLiveImage.Visibility = Visibility.Collapsed;
+        AtlasCanvas.Width = CanvasWidth;
+        AtlasCanvas.Height = CanvasHeight;
+        HackerOverlayCanvas.Width = CanvasWidth;
+        HackerOverlayCanvas.Height = CanvasHeight;
+        hackerViewport.Reset("Fit");
+        AtlasCanvas.RenderTransform = Transform.Identity;
+        groundTruthLabels.ClearSelection();
+        rooms.Clear();
+        roomConnections.Clear();
+        PersistHackerEdits();
+        AtlasEmptyPanel.Visibility = Visibility.Visible;
+        RedrawHackerEdits();
     }
 
     private static void SaveBitmap(BgraFrame frame, string path)

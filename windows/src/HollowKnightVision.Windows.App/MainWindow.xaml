@@ -438,7 +438,7 @@
                             <TextBlock Grid.Row="5" Text="Geo" Margin="0,7"/><TextBox x:Name="OpsGeoText" Grid.Row="5" Grid.Column="1" Text="18" Width="72" HorizontalAlignment="Right"/>
                         </Grid>
                         <CheckBox x:Name="OpsInvincibleCheck" Grid.Row="1" Content="Invincibility — ignore damage and phase through enemies" Margin="0,0,0,18"/>
-                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,18"><Button Content="Randomize Now" Click="OpsRandomize_Click"/><Button Content="Restore Enemies" Click="OpsRestoreEnemies_Click"/></StackPanel>
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,18"><Button Content="Randomize Now" Click="OpsRandomize_Click"/><Button Content="Restore Enemies" Click="OpsRestoreEnemies_Click"/><Button x:Name="OpsResetRoomButton" Content="Reset Room" ToolTip="Reset Room (R)" Click="OpsResetRoom_Click" IsEnabled="False"/></StackPanel>
                         <StackPanel Grid.Row="3"><Separator Margin="0,0,0,18"/><CheckBox x:Name="OpsRandomizeAfterLabelCheck" Content="Randomize health, lifeblood, mana, and geo after each Label session"/></StackPanel>
                         <StackPanel Grid.Row="5" Orientation="Horizontal"><Button Content="Apply" Click="OpsApply_Click"/><Button Content="Reload" Click="OpsReload_Click"/><TextBlock x:Name="OpsStatusText" Foreground="#999999" VerticalAlignment="Center" Margin="8,0"/></StackPanel>
                     </Grid>

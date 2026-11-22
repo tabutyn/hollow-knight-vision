@@ -490,6 +490,7 @@ var tests = new List<(string Name, Action Run)>
     ("frozen labels own their clean image and invalidate pre-pause work", LabelPauseTests.TestFrozenFrameOwnership),
     ("normal labeling freezes locally and paused startup accepts only one image", LabelPauseTests.TestNormalAndMissingFirstFrame),
     ("Windows bridge renews pause leases blocks input and resumes on close", ForwarderPauseTests.TestLeaseTransport),
+    ("room reset stays capability-gated and waits for its scene acknowledgement", ForwarderPauseTests.TestRoomResetTransport),
     ("pause capability and receiver disconnect gate labeling without breaking controls", ForwarderPauseTests.TestUnsupportedAndDisconnectedReceiver),
     ("closing a paused bridge is bounded even when sending is blocked", ForwarderPauseTests.TestBlockedShutdown),
     ("recent captures retain the newest 64 with unique identities", RecentFrameTests.TestCapacityAndOrdering),

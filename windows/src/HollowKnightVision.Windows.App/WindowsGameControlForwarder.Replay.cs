@@ -47,7 +47,7 @@ internal sealed partial class WindowsGameControlForwarder
         lock (stateLock)
         {
             if (receiver is null || connectionFault is null || replayCancellation is not null || capturingCheckpoint
-                || inputPathRecorder.IsRecording || pause.BlocksInput)
+                || roomResetPending || inputPathRecorder.IsRecording || pause.BlocksInput)
                 throw new InvalidOperationException("Enter modded Gameplay and stop recording before replaying.");
             if (restoreCheckpoint && (path.StartCheckpoint is null || !checkpointAvailable))
                 throw new InvalidOperationException("Replay needs a saved start checkpoint and a compatible receiver.");

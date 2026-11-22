@@ -29,6 +29,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
     private bool menuShortcutsAvailable;
     private bool pointerAvailable;
     private bool playerOpsAvailable;
+    private bool roomResetAvailable;
+    private bool roomResetPending;
     private ReceivedGroundTruth? latestGroundTruth;
     private readonly Dictionary<Guid, TaskCompletionSource<ReceiverPlayerOpsAcknowledgement>>
         pendingPlayerOps = [];
@@ -44,6 +46,11 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
     internal bool PlayerOpsAvailable
     {
         get { lock (stateLock) return playerOpsAvailable; }
+    }
+
+    internal bool RoomResetAvailable
+    {
+        get { lock (stateLock) return playerOpsAvailable && roomResetAvailable; }
     }
 
     internal double? InputAcknowledgementP95Seconds
@@ -73,7 +80,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         lock (stateLock)
         {
             if (receiver is null || !checkpointAvailable || replayCancellation is not null || capturingCheckpoint
-                || inputPathRecorder.IsRecording || pause.BlocksInput || heldButtons != InputButtons.None) return false;
+                || roomResetPending || inputPathRecorder.IsRecording || pause.BlocksInput
+                || heldButtons != InputButtons.None) return false;
             active = receiver;
             capturingCheckpoint = true;
         }
@@ -297,13 +305,19 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         ReceiverClient active;
         TaskCompletionSource? fault;
         ReceiverPlayerOpsCommand command;
+        bool resetsRoom;
         TaskCompletionSource<ReceiverPlayerOpsAcknowledgement> pending;
         lock (stateLock)
         {
-            if (receiver is null || connectionFault is null || !playerOpsAvailable || replayCancellation is not null || capturingCheckpoint) return null;
+            if (receiver is null || connectionFault is null || !playerOpsAvailable
+                || replayCancellation is not null || capturingCheckpoint || roomResetPending) return null;
             active = receiver;
             fault = connectionFault;
             command = createCommand(active.SessionId);
+            resetsRoom = command.Operation == ReceiverPlayerOpsCommand.ResetRoomOperation;
+            if (resetsRoom && (!roomResetAvailable || pause.BlocksInput || inputPathRecorder.IsRecording))
+                return null;
+            roomResetPending = resetsRoom;
             pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
             pendingPlayerOps[command.CommandId] = pending;
         }
@@ -320,7 +334,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                 outboundGate.Release();
             }
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(3));
+            timeout.CancelAfter(TimeSpan.FromSeconds(resetsRoom ? 15 : 3));
             return await pending.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -334,7 +348,11 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         }
         finally
         {
-            lock (stateLock) pendingPlayerOps.Remove(command.CommandId);
+            lock (stateLock)
+            {
+                pendingPlayerOps.Remove(command.CommandId);
+                if (resetsRoom) roomResetPending = false;
+            }
         }
     }
 
@@ -419,6 +437,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                     controlledFramesAvailable = capabilities.Capabilities.Contains(ControlledFrameReplay.Capability);
                     playerOpsAvailable = capabilities.Capabilities.Contains(
                         ReceiverProtocol.PlayerOpsCapability);
+                    roomResetAvailable = capabilities.Capabilities.Contains(
+                        ReceiverProtocol.RoomResetCapability);
                     pause.Negotiate(pending.SessionId, capabilities);
                 }
 
@@ -467,6 +487,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                             menuShortcutsAvailable = false;
                             pointerAvailable = false;
                             playerOpsAvailable = false;
+                            roomResetAvailable = false;
                             checkpointAvailable = false;
                             posePlaybackAvailable = false;
                             replayCancellation?.Cancel();
@@ -568,12 +589,16 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
             {
                 var acknowledgement = ReceiverWireCodec
                     .DecodeLine<ReceiverPlayerOpsAcknowledgement>(line);
-                TaskCompletionSource<ReceiverPlayerOpsAcknowledgement>? pending;
                 lock (stateLock)
                 {
-                    pendingPlayerOps.TryGetValue(acknowledgement.CommandId, out pending);
+                    if (ReferenceEquals(receiver, client)
+                        && acknowledgement.Version == ReceiverProtocol.ControlVersion
+                        && acknowledgement.SessionId == client.SessionId
+                        && pendingPlayerOps.TryGetValue(acknowledgement.CommandId, out var pending))
+                    {
+                        pending.TrySetResult(acknowledgement);
+                    }
                 }
-                pending?.TrySetResult(acknowledgement);
                 continue;
             }
             if (type != "groundTruth") continue;

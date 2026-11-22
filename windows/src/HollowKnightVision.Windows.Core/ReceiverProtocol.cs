@@ -32,6 +32,7 @@ public static class ReceiverProtocol
     public const string PlayerPosePlaybackCapability = "player-pose-playback-v1";
     public const string GroundTruthCapability = "ground-truth-telemetry-v1";
     public const string PlayerOpsCapability = "player-ops-v1";
+    public const string RoomResetCapability = "room-reset-v1";
 }
 
 public sealed record ReceiverCapabilityRequest(
@@ -398,8 +399,13 @@ public sealed record ReceiverPlayerOpsCommand(
     public static ReceiverPlayerOpsCommand Apply(Guid sessionId, PlayerTestState state) =>
         new(ReceiverProtocol.ControlVersion, "playerOps", sessionId, Guid.NewGuid(), "apply", state.Normalized());
 
+    public const string ResetRoomOperation = "resetRoom";
+
     public static ReceiverPlayerOpsCommand RestoreEnemies(Guid sessionId) =>
         new(ReceiverProtocol.ControlVersion, "playerOps", sessionId, Guid.NewGuid(), "restoreEnemies", null);
+
+    public static ReceiverPlayerOpsCommand ResetRoom(Guid sessionId) =>
+        new(ReceiverProtocol.ControlVersion, "playerOps", sessionId, Guid.NewGuid(), ResetRoomOperation, null);
 }
 
 public sealed record ReceiverPlayerOpsAcknowledgement(
@@ -410,7 +416,12 @@ public sealed record ReceiverPlayerOpsAcknowledgement(
     bool Accepted,
     PlayerTestState? State,
     int? EnemiesRestored,
-    string? Failure);
+    string? Failure,
+    string? ResetScene = null)
+{
+    [JsonIgnore]
+    public bool ConfirmsRoomReset => Accepted && !string.IsNullOrWhiteSpace(ResetScene);
+}
 
 public static class ReceiverWireCodec
 {
