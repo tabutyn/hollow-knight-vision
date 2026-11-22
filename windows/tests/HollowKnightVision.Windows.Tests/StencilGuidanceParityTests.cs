@@ -207,7 +207,7 @@ internal static class StencilGuidanceParityTests
             store.Delete(example);
             coordinator.Refresh();
             Check(coordinator.Guidance(null, null, "select-profile") ==
-                "Select Start Game to navigate to Select Profile and press L.");
+                "Create a save if needed, return to Select Profile, and highlight it. Capture with L only when Clear Save is visible.");
         });
     }
 

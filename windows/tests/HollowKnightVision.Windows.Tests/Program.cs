@@ -1634,7 +1634,8 @@ static void TestPartialStencilGuidance()
         True(!setup.Steps.Any(step => step.ContextIdentifier == "select-profile" && step.ClassIdentifier == "shared.back"));
         store.Delete(example);
         setup.Refresh();
-        Equal("Select Start Game to navigate to Select Profile and press L.", setup.Guidance(null, null, "select-profile")!);
+        Equal("Create a save if needed, return to Select Profile, and highlight it. Capture with L only when Clear Save is visible.",
+            setup.Guidance(null, null, "select-profile")!);
     });
 }
 
