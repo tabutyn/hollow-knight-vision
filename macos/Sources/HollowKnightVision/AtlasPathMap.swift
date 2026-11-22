@@ -616,13 +616,16 @@ final class AtlasPathMap {
         let height = row.authoredTerrain?.height ?? width * 9 / 16
         let hasCoverage = r.calibration != nil
         if hasCoverage {
-            let extent = [
-                Int(floor(camera.x / cell)), Int(floor((camera.x + width - 1) / cell)),
-                Int(floor(camera.y / cell)), Int(floor((camera.y + height - 1) / cell)),
-            ]
+            let lastX: CGFloat = camera.x + width - 1
+            let lastY: CGFloat = camera.y + height - 1
+            let firstColumn = Int(floor(camera.x / cell))
+            let lastColumn = Int(floor(lastX / cell))
+            let firstRow = Int(floor(camera.y / cell))
+            let lastRow = Int(floor(lastY / cell))
+            let extent = [firstColumn, lastColumn, firstRow, lastRow]
             if extent != r.lastCameraExtent {
-                for y in extent[2]...extent[3] {
-                    for x in extent[0]...extent[1] { r.visible.insert(.init(x: x, y: y)) }
+                for y in firstRow...lastRow {
+                    for x in firstColumn...lastColumn { r.visible.insert(.init(x: x, y: y)) }
                 }
                 r.lastCameraExtent = extent
             }
