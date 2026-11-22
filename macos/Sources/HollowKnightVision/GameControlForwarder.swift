@@ -186,8 +186,14 @@ final class GameControlForwarder {
     private let capabilitiesHandler: (Set<String>) -> Void
     private let pauseStateHandler: (GamePauseState) -> Void
     private let physicalInputHandler: (RecordedGameButton, Bool, TimeInterval) -> Void
+    private let demonstrationInputHandler: (String, Bool, TimeInterval) -> Void
+    private let botInterruptionHandler: (UUID, String) -> Void
     private let groundTruthHandler: (ReceiverGroundTruthSample, TimeInterval) -> Void
     private let stateQueue = DispatchQueue(label: "com.ballroller.hollow-knight-vision.input-bridge", qos: .userInteractive)
+    private var nativeDirections = Set<String>() // stateQueue, committed key transitions
+    private var directGameMovement = InputBridgeButtons() // observed while the game owns the keyboard
+    private var lastSampledGameMovement = InputBridgeButtons() // main queue
+    private var lastJumpInputAt = -Double.infinity // stateQueue, monotonic time
     private var nativeForwarder: NormalGameKeyForwarder?
     private var eventMonitor: Any?
     private var notificationObservers = [NSObjectProtocol]()
@@ -206,6 +212,7 @@ final class GameControlForwarder {
     private var automationPulseActive = false
     private var pathPlaybackGeneration: UInt64 = 0
     private var pathPlaybackActive = false
+    private var botLease = BotInputLease()
     private var pathPlaybackCompletion: ((Bool) -> Void)?
     private let backgroundPathPlayback = ProcessInfo.processInfo.arguments.contains("--enable-automation-control")
         && ProcessInfo.processInfo.arguments.contains("--allow-background-path-playback")
@@ -238,6 +245,7 @@ final class GameControlForwarder {
     private var pauseDesired = false
     private var pauseConfirmed = false
     private var managedApplication: NSRunningApplication?
+    var managedGameIsActive: Bool { managedApplication?.isActive == true }
     private var launchInFlight = false
     private var launchGeneration: UInt64 = 0
     private let launchLog = Logger(
@@ -254,6 +262,8 @@ final class GameControlForwarder {
         capabilitiesHandler: @escaping (Set<String>) -> Void = { _ in },
         pauseStateHandler: @escaping (GamePauseState) -> Void = { _ in },
         physicalInputHandler: @escaping (RecordedGameButton, Bool, TimeInterval) -> Void = { _, _, _ in },
+        demonstrationInputHandler: @escaping (String, Bool, TimeInterval) -> Void = { _, _, _ in },
+        botInterruptionHandler: @escaping (UUID, String) -> Void = { _, _ in },
         groundTruthHandler: @escaping (ReceiverGroundTruthSample, TimeInterval) -> Void = { _, _ in }
     ) {
         self.activityHandler = activityHandler
@@ -261,6 +271,8 @@ final class GameControlForwarder {
         self.capabilitiesHandler = capabilitiesHandler
         self.pauseStateHandler = pauseStateHandler
         self.physicalInputHandler = physicalInputHandler
+        self.demonstrationInputHandler = demonstrationInputHandler
+        self.botInterruptionHandler = botInterruptionHandler
         self.groundTruthHandler = groundTruthHandler
     }
 
@@ -293,9 +305,20 @@ final class GameControlForwarder {
         nativeForwarder?.stop()
         nativeForwarder = NormalGameKeyForwarder(
             gameURL: requestedGameURL, activityHandler: activityHandler,
-            statusHandler: connectionStateHandler
+            statusHandler: connectionStateHandler,
+            demonstrationInputHandler: { [weak self] key, down, time in
+                guard let self else { return }
+                if key == "left" || key == "right" || key == "z" {
+                    self.stateQueue.async {
+                        if down { self.nativeDirections.insert(key) } else { self.nativeDirections.remove(key) }
+                        if key == "z" && down { self.lastJumpInputAt = ProcessInfo.processInfo.systemUptime }
+                    }
+                }
+                self.demonstrationInputHandler(key, down, time)
+            }
         )
         nativeForwarder?.start()
+        startInputSampler()
         _ = ensureGameRunning()
     }
 
@@ -306,16 +329,23 @@ final class GameControlForwarder {
     func stop() {
         launchGeneration &+= 1
         launchInFlight = false
+        guard started || nativeForwarder != nil || inputSampler != nil else { return }
         nativeForwarder?.stop()
         nativeForwarder = nil
+        inputSampler?.cancel()
+        inputSampler = nil
+        lastSampledGameMovement = []
+        stateQueue.sync {
+            directGameMovement = []
+            nativeDirections.removeAll()
+            lastJumpInputAt = -.infinity
+        }
         guard started else { return }
         started = false
         if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
         eventMonitor = nil
         notificationObservers.forEach(NotificationCenter.default.removeObserver)
         notificationObservers.removeAll()
-        inputSampler?.cancel()
-        inputSampler = nil
         pauseLeaseTimer?.cancel()
         pauseLeaseTimer = nil
         stateQueue.sync {
@@ -351,6 +381,69 @@ final class GameControlForwarder {
     func releaseForGroundLabeling() {
         nativeForwarder?.releaseAll()
         stateQueue.async { [weak self] in self?.releaseAllLocked() }
+    }
+
+    func beginBotControl() -> UUID? {
+        guard NSApp.isActive else { return nil }
+        return stateQueue.sync {
+            guard started, transportReady, botLease.sessionID == nil,
+                  !pauseDesired, !pauseConfirmed, !settingsDialogActive, !reviewNavigationActive,
+                  !pathPlaybackActive, !automationPulseActive, !automatedTapInFlight,
+                  pendingCheckpointCommands.isEmpty, pendingPlayerOpsCommands.isEmpty else { return nil }
+            releaseAllLocked()
+            let id = botLease.begin()
+            awaitingFreshPress = false
+            sendLocked(sender.beginFreshPress([]))
+            return id
+        }
+    }
+
+    func applyBotAction(_ action: BotAction, validUntil: Double, sessionID: UUID) -> Bool {
+        stateQueue.sync {
+            guard started, transportReady, !pauseDesired, !pauseConfirmed,
+                  !settingsDialogActive, !reviewNavigationActive,
+                  pendingCheckpointCommands.isEmpty, pendingPlayerOpsCommands.isEmpty,
+                  botLease.renew(sessionID: sessionID, until: validUntil,
+                                 now: ProcessInfo.processInfo.systemUptime) else { return false }
+            sendLocked(sender.beginFreshPress(action.buttons))
+            return true
+        }
+    }
+
+    func neutralizeBotControl(sessionID: UUID) {
+        stateQueue.sync {
+            guard botLease.sessionID == sessionID else { return }
+            botLease.neutralize(sessionID: sessionID)
+            if !sender.heldButtons.isEmpty { sendLocked(sender.beginFreshPress([])) }
+        }
+    }
+
+    /// A UI-authorized Demo routine owns the same exclusive input lease as
+    /// policy play. Every menu command is a short pulse with a guarded release.
+    func pulseBotDemoButton(_ button: GameAutomationCommand.Button, sessionID: UUID) -> Bool {
+        stateQueue.sync {
+            let now = ProcessInfo.processInfo.systemUptime
+            let deadline = now + 0.1
+            guard started, transportReady, !pauseDesired, !pauseConfirmed,
+                  !settingsDialogActive, !reviewNavigationActive,
+                  let buttons = Self.bridgeButton(for: button),
+                  botLease.renew(sessionID: sessionID, until: deadline, now: now) else { return false }
+            sendLocked(sender.beginFreshPress(buttons))
+            stateQueue.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
+                guard let self, self.botLease.sessionID == sessionID,
+                      self.botLease.validUntil == deadline else { return }
+                self.botLease.neutralize(sessionID: sessionID)
+                self.sendLocked(self.sender.beginFreshPress([]))
+            }
+            return true
+        }
+    }
+
+    func endBotControl(sessionID: UUID) {
+        stateQueue.sync {
+            guard botLease.sessionID == sessionID else { return }
+            releaseAllLocked(reason: "Bot stopped")
+        }
     }
 
     func setRenderFrameMarkerEnabled(_ enabled: Bool) {
@@ -389,7 +482,7 @@ final class GameControlForwarder {
         stateQueue.sync {
             guard started, transportReady, playerCheckpointCapabilityAvailable,
                   let controlSessionID, pendingCheckpointCommands.isEmpty,
-                  !pauseDesired, !pauseConfirmed, !pathPlaybackActive,
+                  !pauseDesired, !pauseConfirmed, !pathPlaybackActive, botLease.sessionID == nil,
                   sender.heldButtons.isEmpty else { return false }
             let command = ReceiverCheckpointCommand.capture(sessionID: controlSessionID)
             pendingCheckpointCommands[command.commandID] = PendingCheckpointCommand { acknowledgement in
@@ -425,7 +518,7 @@ final class GameControlForwarder {
         return stateQueue.sync {
             guard started, transportReady, playerCheckpointCapabilityAvailable,
                   let controlSessionID, pendingCheckpointCommands.isEmpty,
-                  !pauseDesired, !pauseConfirmed, !pathPlaybackActive else { return false }
+                  !pauseDesired, !pauseConfirmed, !pathPlaybackActive, botLease.sessionID == nil else { return false }
             awaitingFreshPress = true
             physicalKeyReconciler.reset()
             sendLocked(sender.releaseAll())
@@ -463,13 +556,13 @@ final class GameControlForwarder {
         stateQueue.sync {
             guard started, transportReady, playerOpsCapabilityAvailable,
                   let controlSessionID, pendingPlayerOpsCommands.isEmpty,
-                  !pathPlaybackActive else { return false }
+                  !pathPlaybackActive, botLease.sessionID == nil else { return false }
             let command = makeCommand(controlSessionID)
             pendingPlayerOpsCommands[command.commandID] = PendingPlayerOpsCommand(
                 completion: completion
             )
             sendControlLocked(command)
-            expirePlayerOpsCommandLocked(command.commandID)
+            expirePlayerOpsCommandLocked(command.commandID, timeout: command.operation == "resetRoom" ? 15 : 3)
             return true
         }
     }
@@ -511,7 +604,7 @@ final class GameControlForwarder {
     @discardableResult
     func tapMenuSelect() -> Bool {
         stateQueue.sync {
-            guard started, transportReady, !automatedTapInFlight,
+            guard started, transportReady, !automatedTapInFlight, botLease.sessionID == nil,
                   !pathPlaybackActive,
                   pendingCheckpointCommands.isEmpty,
                   !pauseDesired, !pauseConfirmed, sender.heldButtons.isEmpty else { return false }
@@ -547,7 +640,7 @@ final class GameControlForwarder {
         duration: TimeInterval
     ) -> Bool {
         stateQueue.sync {
-            guard started, transportReady,
+            guard started, transportReady, botLease.sessionID == nil,
                   !pathPlaybackActive,
                   pendingCheckpointCommands.isEmpty,
                   !pauseDesired, !pauseConfirmed,
@@ -576,10 +669,21 @@ final class GameControlForwarder {
     /// same bridge-owned held-button state before a frame is captured.
     func currentHorizontalRoomDirection() -> VisualRoomDirection? {
         stateQueue.sync {
-            let left = sender.heldButtons.contains(.left)
-            let right = sender.heldButtons.contains(.right)
+            let buttons = sender.heldButtons.union(directGameMovement)
+            let left = buttons.contains(.left) || nativeDirections.contains("left")
+            let right = buttons.contains(.right) || nativeDirections.contains("right")
             guard left != right else { return nil }
             return left ? .left : .right
+        }
+    }
+
+    static let jumpContactCooldown = 0.4
+
+    func hasRecentJumpInput() -> Bool {
+        stateQueue.sync {
+            let now = ProcessInfo.processInfo.systemUptime
+            if sender.heldButtons.contains(.actionZ) || directGameMovement.contains(.actionZ) || nativeDirections.contains("z") { lastJumpInputAt = now }
+            return now - lastJumpInputAt <= Self.jumpContactCooldown
         }
     }
 
@@ -596,7 +700,7 @@ final class GameControlForwarder {
         return stateQueue.sync {
             guard started, transportReady,
                   !pauseDesired, !pauseConfirmed,
-                  !automationPulseActive, !pathPlaybackActive,
+                  !automationPulseActive, !pathPlaybackActive, botLease.sessionID == nil,
                   sender.heldButtons.isEmpty,
                   poseTrace.isEmpty || playerPosePlaybackCapabilityAvailable
             else { return false }
@@ -697,6 +801,7 @@ final class GameControlForwarder {
     }
 
     private func startInputSampler() {
+        guard inputSampler == nil else { return }
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + Self.samplingInterval, repeating: Self.samplingInterval)
         timer.setEventHandler { [weak self] in self?.sampleInputState() }
@@ -726,6 +831,7 @@ final class GameControlForwarder {
                   self.pendingCheckpointCommands.isEmpty else { return }
             if event.type == .keyDown {
                 guard !event.isARepeat else { return }
+                if self.botLease.sessionID != nil { self.releaseAllLocked(reason: "Manual control") }
                 if self.awaitingFreshPress {
                     self.awaitingFreshPress = false
                     self.sendLocked(self.sender.beginFreshPress(button))
@@ -736,7 +842,8 @@ final class GameControlForwarder {
                     self.publishPhysicalInputLocked(button, isPressed: true)
                     DispatchQueue.main.async { self.activityHandler() }
                 }
-            } else if !self.awaitingFreshPress, let snapshot = self.sender.setHeld(button, isHeld: false) {
+            } else if self.botLease.sessionID == nil, !self.awaitingFreshPress,
+                      let snapshot = self.sender.setHeld(button, isHeld: false) {
                 self.physicalKeyReconciler.noteLocalRelease(event.keyCode)
                 self.sendLocked(snapshot)
                 self.publishPhysicalInputLocked(button, isPressed: false)
@@ -747,11 +854,37 @@ final class GameControlForwarder {
     /// This timer runs on the main queue. A frozen Vision UI emits no heartbeat,
     /// so the receiver watchdog releases all controls after 250 ms.
     private func sampleInputState() {
+        // Input sent directly to Hollow Knight has no Vision key event. Read
+        // only the game's movement controls, without forwarding a second press.
+        var movement = InputBridgeButtons()
+        if managedApplication?.isActive == true {
+            if CGEventSource.keyState(.hidSystemState, key: 123) { movement.insert(.left) }
+            if CGEventSource.keyState(.hidSystemState, key: 124) { movement.insert(.right) }
+            if CGEventSource.keyState(.hidSystemState, key: 6) { movement.insert(.actionZ) }
+        }
+        if movement != lastSampledGameMovement {
+            lastSampledGameMovement = movement
+            let sampled = movement
+            stateQueue.async { [weak self] in
+                self?.directGameMovement = sampled
+                if sampled.contains(.actionZ) { self?.lastJumpInputAt = ProcessInfo.processInfo.systemUptime }
+            }
+        }
+        guard started else { return }
         let applicationActive = NSApp.isActive
         guard applicationActive || backgroundPathPlayback else { return }
         stateQueue.async { [weak self] in
             guard let self, self.transportReady, self.sender.isEnabled,
                   !self.pauseDesired, !self.pauseConfirmed else { return }
+            if self.botLease.sessionID != nil {
+                guard applicationActive else { self.releaseAllLocked(reason: "Focus changed"); return }
+                if !self.botLease.hasFreshDecision(at: ProcessInfo.processInfo.systemUptime),
+                   !self.sender.heldButtons.isEmpty {
+                    self.sendLocked(self.sender.beginFreshPress([]))
+                }
+                self.sendLocked(self.sender.heartbeat())
+                return
+            }
             if self.pathPlaybackActive {
                 self.sendLocked(self.sender.heartbeat())
                 return
@@ -794,8 +927,10 @@ final class GameControlForwarder {
     }
     private func requireFreshPresses() { stateQueue.async { [weak self] in self?.awaitingFreshPress = true } }
 
-    private func releaseAllLocked() {
+    private func releaseAllLocked(reason: String = "Controls released") {
         let heldButtons = sender.heldButtons
+        let botSession = botLease.sessionID
+        botLease.end()
         let playbackCompletion = pathPlaybackActive ? pathPlaybackCompletion : nil
         pathPlaybackGeneration &+= 1
         pathPlaybackActive = false
@@ -807,6 +942,9 @@ final class GameControlForwarder {
         physicalKeyReconciler.reset()
         if transportReady { sendLocked(sender.releaseAll()) } else { _ = sender.releaseAll() }
         publishPhysicalReleasesLocked(heldButtons)
+        if let botSession {
+            DispatchQueue.main.async { [weak self] in self?.botInterruptionHandler(botSession, reason) }
+        }
         if let playbackCompletion {
             DispatchQueue.main.async { playbackCompletion(false) }
         }
@@ -1049,8 +1187,8 @@ final class GameControlForwarder {
         pending.forEach { $0.completion(nil) }
     }
 
-    private func expirePlayerOpsCommandLocked(_ commandID: UUID) {
-        stateQueue.asyncAfter(deadline: .now() + .seconds(3)) { [weak self] in
+    private func expirePlayerOpsCommandLocked(_ commandID: UUID, timeout: Int) {
+        stateQueue.asyncAfter(deadline: .now() + .seconds(timeout)) { [weak self] in
             guard let self,
                   let pending = self.pendingPlayerOpsCommands.removeValue(forKey: commandID)
             else { return }
@@ -1066,6 +1204,7 @@ final class GameControlForwarder {
 
     private func sendLocked(_ snapshot: InputBridgeSnapshot) {
         guard transportReady, let connection, let data = try? InputBridgeWireCodec.encode(snapshot) else { return }
+        if snapshot.heldButtons.contains(.actionZ) { lastJumpInputAt = ProcessInfo.processInfo.systemUptime }
         _ = acknowledgementTracker.recordSent(snapshot, at: ProcessInfo.processInfo.systemUptime)
         connection.send(content: data, completion: .contentProcessed { [weak self, weak connection] error in
             guard error != nil, let self else { return }
@@ -1120,6 +1259,11 @@ final class GameControlForwarder {
 
     private func handleDisconnectedLocked() {
         guard connection != nil else { return }
+        let botSession = botLease.sessionID
+        botLease.end()
+        if let botSession {
+            DispatchQueue.main.async { [weak self] in self?.botInterruptionHandler(botSession, "Receiver disconnected") }
+        }
         if pathPlaybackActive { playbackLog.notice("playback interrupted reason=receiver-disconnected") }
         let heldButtons = sender.heldButtons
         let playbackCompletion = pathPlaybackActive ? pathPlaybackCompletion : nil
@@ -1220,12 +1364,15 @@ final class GameControlForwarder {
         isPressed: Bool
     ) {
         guard let recorded = RecordedGameButton.from(button) else { return }
-        physicalInputHandler(recorded, isPressed, ProcessInfo.processInfo.systemUptime)
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        physicalInputHandler(recorded, isPressed, timestamp)
+        demonstrationInputHandler(recorded.rawValue, isPressed, timestamp)
     }
 
     private func publishPhysicalReleasesLocked(_ heldButtons: InputBridgeButtons) {
         for button in RecordedGameButton.allCases where heldButtons.contains(button.bridgeButton) {
             physicalInputHandler(button, false, ProcessInfo.processInfo.systemUptime)
+            demonstrationInputHandler(button.rawValue, false, ProcessInfo.processInfo.systemUptime)
         }
     }
 

@@ -17,6 +17,23 @@ enum MenuSelectorDriftPolicy {
     }
 }
 
+/// Plain text menu rows place decorations beside the verified glyphs. Profile
+/// cards, key bindings and value controls retain their different geometry.
+enum MenuSelectorTextAlignmentPolicy {
+    static func applies(context: LabelingContext, identifier: String) -> Bool {
+        guard [.mainTitle, .extras, .options, .pause, .quitToMenu, .quitGame].contains(context),
+              identifier != "extras.menu-style" else { return false }
+        return context.labels.contains { LabelingClassIdentity.matches($0.id, identifier) }
+    }
+
+    static func prediction(_ reference: CGRect, beside text: CGRect, left: Bool) -> CGRect {
+        let gap = left ? text.minX - reference.maxX : reference.minX - text.maxX
+        let safeGap = (2...24).contains(gap) ? gap : 10
+        return CGRect(x: left ? text.minX - safeGap - reference.width : text.maxX + safeGap,
+                      y: text.midY - reference.height / 2, width: reference.width, height: reference.height)
+    }
+}
+
 struct MenuStencilMatch: Equatable {
     let classIdentifier: String
     let name: String
@@ -60,6 +77,7 @@ struct MenuStencilResult: Equatable {
     /// Language that supplied the text evidence. Nil is reserved for scenes
     /// established only by language-independent decoration pixels.
     let languageIdentifier: String?
+    var checkedProfileSlots = Set<Int>()
 }
 
 /// A menu catalog derived from the user's human annotations and the latest
@@ -1053,6 +1071,20 @@ struct MenuStencilCatalog {
                 probeVariants: [probe] + foreignProbeVariants
             ))
         }
+        if context == .inventory, let pixels = sourcePixels[firstSource.id] {
+            let corners = firstSource.manifest.annotations.filter {
+                !$0.isHardNegative && $0.classIdentifier == "inventory.corner"
+            }.sorted {
+                abs($0.y - $1.y) > 0.05 ? $0.y < $1.y : $0.x < $1.x
+            }
+            for (index, annotation) in corners.enumerated() {
+                let bounds = pixelBounds(annotation, width: width, height: height)
+                guard let reference = pixels.reference(in: bounds) else { continue }
+                let variant = makeVariant(kind: "inventory.corner.\(index)", reference: reference, sampleStride: 2)
+                anchors.append(.init(classIdentifier: "inventory.corner.\(index)", name: "Inventory Corner",
+                    bounds: bounds, calibratedBounds: nil, variants: [variant], probe: variant))
+            }
+        }
         guard let probe = anchors.first(where: {
             $0.classIdentifier == probeIdentifier
         }) else { return nil }
@@ -1650,6 +1682,7 @@ struct MenuStencilCatalog {
         firstDefinitionIdentifier: String?
     ) -> Bool {
         let identifier = anchor.classIdentifier
+        if context == .inventory { return false }
         // Clear Save is expanded into one selector pair per profile row.
         if context == .selectProfile && identifier == "select-profile.clear-save" { return false }
         if identifier.contains(".header")
@@ -1786,7 +1819,8 @@ struct MenuStencilCatalog {
             let bounds = pixelBounds(annotation, width: width, height: height)
             guard bounds.width * bounds.height <= 5_000,
                   bounds.minX > leftX,
-                  bounds.maxX < rightX else { return nil }
+                  bounds.maxX < rightX,
+                  abs(bounds.midY - selectorCenterY) <= max(6, bounds.height / 2) else { return nil }
             return (
                 LabelingClassIdentity.canonicalIdentifier(annotation.classIdentifier),
                 abs(bounds.midY - selectorCenterY)
@@ -2056,6 +2090,7 @@ final class MenuStencilTracker {
     private var languageReacquisitionMissFrames = 0
     private var framesUntilValidation = 0
     private var lastValidatedResult: MenuStencilResult?
+    private var verifiedAnchorBounds = [LabelingContext: [String: CGRect]]()
     private var searchCadence: MenuStencilSearchCadence
     private var learnedSelectorBounds = [String: SelectorBounds]()
     private var pendingSelectorCalibration: PendingSelectorCalibration?
@@ -2107,6 +2142,7 @@ final class MenuStencilTracker {
         }
         framesUntilValidation = 0
         lastValidatedResult = nil
+        verifiedAnchorBounds.removeAll()
         pendingSelectorCalibration = nil
         selectorCalibrationDiagnostic = nil
         searchCadence.reset()
@@ -2252,22 +2288,16 @@ final class MenuStencilTracker {
                 }
                 trackedOffset = parentOffset
             }
-            let expected = scene.probe.bounds.offsetBy(
-                dx: trackedOffset.x,
-                dy: trackedOffset.y
-            )
-            let probe = bestScore(
-                variants: variants(
-                    scene.probe.searchProbeVariants,
-                    matching: trackedLanguageIdentifier
-                ),
+            // Menus are fixed in screen space. Centering each search on the
+            // previous hit lets a sequence of small false matches walk across
+            // a cutscene. Reuse the immutable acquisition origins instead.
+            let probe = reacquisitionProbeCandidates(
+                for: scene,
+                catalog: catalog,
                 pixels: pixels,
-                around: expected,
-                referenceBounds: scene.probe.bounds,
-                deltaX: -4...4,
-                deltaY: -6...6,
+                preferredLanguageIdentifier: trackedLanguageIdentifier,
                 comparisons: &comparisons
-            )
+            ).max { $0.confidence < $1.confidence }
             if let probe,
                Self.isConfirmationDialog(scene.context),
                let validated = validate(
@@ -2714,7 +2744,8 @@ final class MenuStencilTracker {
                 sourceTimestamp: baseResult.sourceTimestamp,
                 languageIdentifier: resolved.0.score.languageIdentifier
                     ?? preferredLanguageIdentifier
-                    ?? trackedLanguageIdentifier
+                    ?? trackedLanguageIdentifier,
+                checkedProfileSlots: baseResult.checkedProfileSlots
             )
         } ?? baseResult
         trackedOffset = resolved.2
@@ -2929,7 +2960,8 @@ final class MenuStencilTracker {
             comparisonCount: comparisons,
             sourceTimestamp: base.sourceTimestamp,
             languageIdentifier: resolved.candidate.score.languageIdentifier
-                ?? trackedLanguageIdentifier
+                ?? trackedLanguageIdentifier,
+            checkedProfileSlots: base.checkedProfileSlots
         )
         trackedOffset = resolved.offset
         trackedContext = resolved.candidate.scene.context
@@ -3050,10 +3082,11 @@ final class MenuStencilTracker {
                 }
                 continue
             }
-            let expected = anchor.bounds.offsetBy(
-                dx: trackedOffset.x,
-                dy: trackedOffset.y
-            )
+            // Confirmation rows estimate pose independently of their weak
+            // heading, but must not inherit the previous rows' drift either.
+            let anchorOffset = Self.isConfirmationDialog(scene.context)
+                ? CGPoint.zero : trackedOffset
+            let expected = anchor.bounds.offsetBy(dx: anchorOffset.x, dy: anchorOffset.y)
             var score = bestScore(
                 variants: variants(
                     anchor.variants,
@@ -3075,7 +3108,7 @@ final class MenuStencilTracker {
                     ),
                     pixels: pixels,
                     around: calibratedBounds.offsetBy(
-                        dx: trackedOffset.x, dy: trackedOffset.y
+                        dx: anchorOffset.x, dy: anchorOffset.y
                     ),
                     referenceBounds: anchor.bounds,
                     deltaX: anchorDeltaX,
@@ -3190,6 +3223,13 @@ final class MenuStencilTracker {
                     + "confidence=\(String(format: "%.3f", confidence))"
             )
         }
+        if scene.context == .inventory {
+            // The heading alone can correlate with scenery. Repeated corner
+            // labels are independent frame evidence, not duplicate text rows.
+            guard scored.count(where: {
+                $0.0.classIdentifier.hasPrefix("inventory.corner.") && $0.1.confidence >= 0.65
+            }) >= 2 else { return nil }
+        }
         guard confidence >= validationThreshold,
               acceptedCount >= requiredCount else { return nil }
         let scoredMatches = scored.map { anchor, score in
@@ -3206,13 +3246,15 @@ final class MenuStencilTracker {
                 reference: score.reference
             )
         }
+        var checkedSlots = Set<Int>()
         let anchorMatches = withRepeatedProfileActions(scene, pixels: pixels, image: image,
-            language: probe.languageIdentifier, matches: scoredMatches, comparisons: &comparisons)
+            language: probe.languageIdentifier, matches: scoredMatches, comparisons: &comparisons, checkedSlots: &checkedSlots)
         let currentAnchorBounds = Dictionary(
             uniqueKeysWithValues: scored.map {
-                ($0.0.classIdentifier, $0.1.rect)
+                ($0.0.classIdentifier, $0.1.reference.verifiedBounds(in: $0.1.rect))
             }
         )
+        verifiedAnchorBounds[scene.context] = currentAnchorBounds
         var selection = detectSelection(
             scene,
             languageIdentifier: probe.languageIdentifier,
@@ -3266,7 +3308,8 @@ final class MenuStencilTracker {
             comparisonCount: comparisons,
             sourceTimestamp: timestamp,
             languageIdentifier: probe.languageIdentifier
-                ?? trackedLanguageIdentifier
+                ?? trackedLanguageIdentifier,
+            checkedProfileSlots: checkedSlots
         )
     }
 
@@ -3279,6 +3322,8 @@ final class MenuStencilTracker {
         comparisons: inout Int
     ) -> MenuStencilResult? {
         guard let previous = lastValidatedResult else { return nil }
+        verifiedAnchorBounds[scene.context, default: [:]][scene.probe.classIdentifier] =
+            probe.reference.verifiedBounds(in: probe.rect)
         let selection = detectSelection(
             scene,
             languageIdentifier: trackedLanguageIdentifier,
@@ -3303,8 +3348,9 @@ final class MenuStencilTracker {
                 reference: probe.reference
             )
         }
+        var checkedSlots = Set<Int>()
         let anchors = withRepeatedProfileActions(scene, pixels: pixels, image: image,
-            language: trackedLanguageIdentifier, matches: previousMatches, comparisons: &comparisons)
+            language: trackedLanguageIdentifier, matches: previousMatches, comparisons: &comparisons, checkedSlots: &checkedSlots)
         let result = MenuStencilResult(
             context: scene.context,
             isMatch: true,
@@ -3319,7 +3365,7 @@ final class MenuStencilTracker {
             phase: .tracking,
             comparisonCount: comparisons,
             sourceTimestamp: timestamp,
-            languageIdentifier: trackedLanguageIdentifier
+            languageIdentifier: trackedLanguageIdentifier, checkedProfileSlots: checkedSlots
         )
         lastValidatedResult = result
         return result
@@ -3340,22 +3386,46 @@ final class MenuStencilTracker {
         option: MenuStencilCatalog.Option,
         languageIdentifier: String? = nil
     ) -> SelectorBounds? {
+        guard let reference = selectorReferenceBounds(scene: scene, option: option,
+                languageIdentifier: languageIdentifier) else { return nil }
+        func placement(_ candidate: CGRect, relativeTo reference: CGRect) -> CGRect {
+            let resolved = MenuSelectorDriftPolicy.resolved(candidate, relativeTo: reference)
+            guard MenuSelectorTextAlignmentPolicy.applies(context: scene.context, identifier: option.classIdentifier) else {
+                return resolved
+            }
+            return resolved.offsetBy(dx: 0, dy: reference.midY - resolved.midY)
+        }
         if let learned = learnedSelectorBounds[selectorKey(
             scene: scene,
             option: option,
             languageIdentifier: languageIdentifier
-        )], let left = option.leftSelector, let right = option.rightSelector {
+        )] {
             return SelectorBounds(
-                left: MenuSelectorDriftPolicy.resolved(learned.left, relativeTo: left.referenceBounds(for: languageIdentifier)),
-                right: MenuSelectorDriftPolicy.resolved(learned.right, relativeTo: right.referenceBounds(for: languageIdentifier))
+                left: placement(learned.left, relativeTo: reference.left),
+                right: placement(learned.right, relativeTo: reference.right)
             )
         }
         guard let left = option.leftSelector?.bounds,
               let right = option.rightSelector?.bounds else { return nil }
         return SelectorBounds(
-            left: option.leftSelector?.bounds(for: languageIdentifier) ?? left,
-            right: option.rightSelector?.bounds(for: languageIdentifier) ?? right
-        )
+            left: placement(option.leftSelector?.bounds(for: languageIdentifier) ?? left, relativeTo: reference.left),
+            right: placement(option.rightSelector?.bounds(for: languageIdentifier) ?? right, relativeTo: reference.right))
+    }
+
+    private func selectorReferenceBounds(scene: MenuStencilCatalog.Scene, option: MenuStencilCatalog.Option,
+                                         languageIdentifier: String?) -> SelectorBounds? {
+        guard let left = option.leftSelector, let right = option.rightSelector else { return nil }
+        let reference = SelectorBounds(left: left.referenceBounds(for: languageIdentifier),
+                                       right: right.referenceBounds(for: languageIdentifier))
+        guard MenuSelectorTextAlignmentPolicy.applies(context: scene.context, identifier: option.classIdentifier) else {
+            return reference
+        }
+        let anchor = scene.anchors.first { $0.classIdentifier == option.classIdentifier }
+        let text = verifiedAnchorBounds[scene.context]?[option.classIdentifier].map {
+            $0.offsetBy(dx: -trackedOffset.x, dy: -trackedOffset.y)
+        } ?? anchor?.variants.first(where: { $0.languageIdentifier == languageIdentifier })?.nominalBounds ?? option.bounds
+        return .init(left: MenuSelectorTextAlignmentPolicy.prediction(reference.left, beside: text, left: true),
+                     right: MenuSelectorTextAlignmentPolicy.prediction(reference.right, beside: text, left: false))
     }
 
     private func selectorRowBand(
@@ -3422,14 +3492,15 @@ final class MenuStencilTracker {
             selectorCalibrationDiagnostic = "disabled"
             return
         }
-        guard let leftSelector = option.leftSelector, let rightSelector = option.rightSelector else {
+        guard let reference = selectorReferenceBounds(scene: scene, option: option,
+                languageIdentifier: trackedLanguageIdentifier) else {
             selectorCalibrationDiagnostic = "missing-bounds"
             return
         }
         guard MenuSelectorDriftPolicy.accepts(left,
-                relativeTo: leftSelector.referenceBounds(for: trackedLanguageIdentifier)),
+                relativeTo: reference.left),
               MenuSelectorDriftPolicy.accepts(right,
-                relativeTo: rightSelector.referenceBounds(for: trackedLanguageIdentifier)) else {
+                relativeTo: reference.right) else {
             pendingSelectorCalibration = nil
             selectorCalibrationDiagnostic = "outside-reference"
             return
@@ -3606,7 +3677,7 @@ final class MenuStencilTracker {
         timestamp: Double,
         comparisons: inout Int,
         recordsCalibration: Bool,
-        anchorBoundsByIdentifier: [String: CGRect] = [:],
+        anchorBoundsByIdentifier suppliedAnchorBounds: [String: CGRect] = [:],
         excludingOptionIdentifiers: Set<String> = []
     ) -> (
         name: String?,
@@ -3616,6 +3687,8 @@ final class MenuStencilTracker {
         foregroundEvidenceCount: Int
     ) {
         guard !scene.options.isEmpty else { return (nil, [], [], 0, 0) }
+        let anchorBoundsByIdentifier = suppliedAnchorBounds.isEmpty
+            ? (verifiedAnchorBounds[scene.context] ?? [:]) : suppliedAnchorBounds
 
         func configuredSearchRegions(
             solvedIdentifier: String?,
@@ -3706,15 +3779,19 @@ final class MenuStencilTracker {
                 let textBounds = anchorBoundsByIdentifier[option.classIdentifier] ?? localizedOptionBounds.offsetBy(
                     dx: trackedOffset.x, dy: trackedOffset.y
                 )
-                let reference = (side == .left ? leftSelector : rightSelector)
-                    .referenceBounds(for: languageIdentifier)
+                guard let references = selectorReferenceBounds(scene: scene, option: option,
+                    languageIdentifier: languageIdentifier) else { return nil }
+                let reference = (side == .left ? references.left : references.right)
                     .offsetBy(dx: trackedOffset.x, dy: trackedOffset.y)
                 let accepts: (CGRect) -> Bool = { candidate in
                     guard rowBand.contains(candidate.midY),
                           MenuSelectorDriftPolicy.accepts(candidate, relativeTo: reference) else { return false }
+                    let alignsWithText = MenuSelectorTextAlignmentPolicy.applies(context: scene.context, identifier: option.classIdentifier)
+                    if alignsWithText,
+                       abs(candidate.midY - textBounds.midY) > 4 { return false }
                     switch side {
-                    case .left: return candidate.midX < textBounds.minX
-                    case .right: return candidate.midX > textBounds.maxX
+                    case .left: return alignsWithText ? candidate.maxX <= textBounds.minX : candidate.midX < textBounds.minX
+                    case .right: return alignsWithText ? candidate.minX >= textBounds.maxX : candidate.midX > textBounds.maxX
                     }
                 }
                 // The aligned consensus is the fast path. Distinct animation
@@ -3820,9 +3897,9 @@ final class MenuStencilTracker {
                 side: MenuStencilSelectorSearchRegion.Side,
                 idleForegroundMask: ImageStencilForegroundMask?
             ) -> ScoredVariant? {
+                let references = selectorReferenceBounds(scene: scene, option: option, languageIdentifier: languageIdentifier)
                 let origin = radiusX > Self.selectorSearchRadiusX || radiusY > Self.selectorSearchRadiusY
-                    ? (side == .left ? leftSelector : rightSelector).referenceBounds(for: languageIdentifier)
-                    : configuredBounds
+                    ? (side == .left ? references?.left : references?.right) ?? configuredBounds : configuredBounds
                 guard var score = scoreSelector(
                     variants,
                     around: origin,
@@ -4175,7 +4252,7 @@ final class MenuStencilTracker {
     /// pixel crop intact; fractional annotation geometry must not rescale it.
     private func withRepeatedProfileActions(
         _ scene: MenuStencilCatalog.Scene, pixels: ImageStencilPixels, image: CGImage,
-        language: String?, matches: [MenuStencilMatch], comparisons: inout Int
+        language: String?, matches: [MenuStencilMatch], comparisons: inout Int, checkedSlots: inout Set<Int>
     ) -> [MenuStencilMatch] {
         let identifier = "select-profile.clear-save"
         guard scene.context == .selectProfile,
@@ -4187,8 +4264,9 @@ final class MenuStencilTracker {
                 dy: option.bounds.midY - reference.bounds.midY + trackedOffset.y)
             guard let score = bestScore(variants: variants(reference.variants, matching: language),
                 pixels: pixels, around: expected, referenceBounds: reference.bounds,
-                deltaX: -4...4, deltaY: -6...6, comparisons: &comparisons),
-                score.confidence >= Self.anchorThreshold else { continue }
+                deltaX: -4...4, deltaY: -6...6, comparisons: &comparisons) else { continue }
+            if let slot = Int(option.classIdentifier.dropFirst(identifier.count + 1)) { checkedSlots.insert(slot) }
+            guard score.confidence >= Self.anchorThreshold else { continue }
             result.append(MenuStencilMatch(classIdentifier: identifier, name: option.name,
                 rect: outputRect(score.rect, image: image, referenceWidth: scene.referenceWidth,
                     referenceHeight: scene.referenceHeight), confidence: score.confidence, reference: score.reference))
@@ -4232,6 +4310,10 @@ final class MenuStencilTracker {
                     if accepts?(candidate) == false { continue }
                     comparisons += 1
                     guard let comparison = pixels.compare(variant.kernel, at: candidate) else {
+                        continue
+                    }
+                    if variant.kernel.kind.hasPrefix("inventory.corner."),
+                       (!comparison.supportsCorrelation || comparison.normalizedCorrelation < 0.65) {
                         continue
                     }
                     let confidence = comparison.confidence(
@@ -4360,7 +4442,7 @@ enum MenuStencilRenderer {
     static func shouldRenderSelectedPairAsAccepted(
         _ result: MenuStencilResult
     ) -> Bool {
-        result.selectedOption != nil && result.selectorCandidates.count == 2
+        result.isMatch && result.selectedOption != nil && result.selectorCandidates.count == 2
     }
 
     static func overlay(
@@ -4368,6 +4450,9 @@ enum MenuStencilRenderer {
         width: Int,
         height: Int
     ) -> CGImage? {
+        // Failed acquisition returns its best probe for diagnostics. It has
+        // not established a menu and must not paint stencils onto gameplay.
+        guard result.isMatch else { return nil }
         guard let context = CGContext(
             data: nil,
             width: width,

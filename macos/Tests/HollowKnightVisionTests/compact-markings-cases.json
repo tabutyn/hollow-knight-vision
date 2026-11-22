@@ -1,0 +1,918 @@
+[
+  {
+    "geometry": null,
+    "knightX": 0.3,
+    "knightY": 0.25,
+    "expected": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "geometry": {
+      "width": 200,
+      "height": 100,
+      "floors": [],
+      "walls": []
+    },
+    "knightX": 0.3,
+    "knightY": 0.25,
+    "expected": [
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "geometry": {
+      "width": 200,
+      "height": 100,
+      "floors": [
+        {
+          "minimumX": -10,
+          "maximumX": 110,
+          "y": 20,
+          "confidence": 1
+        }
+      ],
+      "walls": [
+        {
+          "x": 120,
+          "bottomY": -5,
+          "topY": 80,
+          "solidSide": 0
+        }
+      ],
+      "spikes": [
+        {
+          "x1": 30,
+          "y1": 30,
+          "x2": 50,
+          "y2": 30
+        }
+      ],
+      "doors": [
+        {
+          "x1": 150,
+          "y1": 20,
+          "x2": 150,
+          "y2": 80
+        }
+      ]
+    },
+    "knightX": 0.3,
+    "knightY": 0.25,
+    "expected": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.0625,
+      0.0625,
+      0.0625,
+      0.0625,
+      0.0,
+      -0.15,
+      -0.1,
+      -0.05,
+      -0.1,
+      0.0,
+      1.0,
+      -0.3,
+      -0.15,
+      0.25,
+      -0.15,
+      0.33,
+      1.0,
+      0.3,
+      -0.25,
+      0.3,
+      0.15,
+      0.66,
+      1.0,
+      0.45,
+      -0.15,
+      0.45,
+      0.15,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "geometry": {
+      "width": 200,
+      "height": 100,
+      "floors": [
+        {
+          "minimumX": 0,
+          "maximumX": 1,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 2,
+          "maximumX": 3,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 4,
+          "maximumX": 5,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 6,
+          "maximumX": 7,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 8,
+          "maximumX": 9,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 10,
+          "maximumX": 11,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 12,
+          "maximumX": 13,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 14,
+          "maximumX": 15,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 16,
+          "maximumX": 17,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 18,
+          "maximumX": 19,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 20,
+          "maximumX": 21,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 22,
+          "maximumX": 23,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 24,
+          "maximumX": 25,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 26,
+          "maximumX": 27,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 28,
+          "maximumX": 29,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 30,
+          "maximumX": 31,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 32,
+          "maximumX": 33,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 34,
+          "maximumX": 35,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 36,
+          "maximumX": 37,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 38,
+          "maximumX": 39,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 40,
+          "maximumX": 41,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 42,
+          "maximumX": 43,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 44,
+          "maximumX": 45,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 46,
+          "maximumX": 47,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 48,
+          "maximumX": 49,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 50,
+          "maximumX": 51,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 52,
+          "maximumX": 53,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 54,
+          "maximumX": 55,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 56,
+          "maximumX": 57,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 58,
+          "maximumX": 59,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 60,
+          "maximumX": 61,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 62,
+          "maximumX": 63,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 64,
+          "maximumX": 65,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 66,
+          "maximumX": 67,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 68,
+          "maximumX": 69,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 70,
+          "maximumX": 71,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 72,
+          "maximumX": 73,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 74,
+          "maximumX": 75,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 76,
+          "maximumX": 77,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 78,
+          "maximumX": 79,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 80,
+          "maximumX": 81,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 82,
+          "maximumX": 83,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 84,
+          "maximumX": 85,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 86,
+          "maximumX": 87,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 88,
+          "maximumX": 89,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 90,
+          "maximumX": 91,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 92,
+          "maximumX": 93,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 94,
+          "maximumX": 95,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 96,
+          "maximumX": 97,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 98,
+          "maximumX": 99,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 100,
+          "maximumX": 101,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 102,
+          "maximumX": 103,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 104,
+          "maximumX": 105,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 106,
+          "maximumX": 107,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 108,
+          "maximumX": 109,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 110,
+          "maximumX": 111,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 112,
+          "maximumX": 113,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 114,
+          "maximumX": 115,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 116,
+          "maximumX": 117,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 118,
+          "maximumX": 119,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 120,
+          "maximumX": 121,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 122,
+          "maximumX": 123,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 124,
+          "maximumX": 125,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 126,
+          "maximumX": 127,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 128,
+          "maximumX": 129,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 130,
+          "maximumX": 131,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 132,
+          "maximumX": 133,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 134,
+          "maximumX": 135,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 136,
+          "maximumX": 137,
+          "y": 40,
+          "confidence": 1
+        },
+        {
+          "minimumX": 138,
+          "maximumX": 139,
+          "y": 40,
+          "confidence": 1
+        }
+      ],
+      "walls": [],
+      "spikes": [],
+      "doors": []
+    },
+    "knightX": 0.3,
+    "knightY": 0.25,
+    "expected": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      4,
+      0.0,
+      0.0,
+      0.0,
+      3.375,
+      0.0,
+      -0.05,
+      0.005,
+      -0.05,
+      0.33,
+      1.0,
+      -0.01,
+      -0.05,
+      -0.005,
+      -0.05,
+      0.33,
+      1.0,
+      0.01,
+      -0.05,
+      0.015,
+      -0.05,
+      0.33,
+      1.0,
+      -0.02,
+      -0.05,
+      -0.015,
+      -0.05,
+      0.33,
+      1.0,
+      0.02,
+      -0.05,
+      0.025,
+      -0.05,
+      0.33,
+      1.0,
+      -0.03,
+      -0.05,
+      -0.025,
+      -0.05,
+      0.33,
+      1.0,
+      0.03,
+      -0.05,
+      0.035,
+      -0.05,
+      0.33,
+      1.0,
+      -0.04,
+      -0.05,
+      -0.035,
+      -0.05,
+      0.33,
+      1.0,
+      0.04,
+      -0.05,
+      0.045,
+      -0.05,
+      0.33,
+      1.0,
+      -0.05,
+      -0.05,
+      -0.045,
+      -0.05,
+      0.33,
+      1.0,
+      0.05,
+      -0.05,
+      0.055,
+      -0.05,
+      0.33,
+      1.0,
+      -0.06,
+      -0.05,
+      -0.055,
+      -0.05,
+      0.33,
+      1.0,
+      0.06,
+      -0.05,
+      0.065,
+      -0.05,
+      0.33,
+      1.0,
+      -0.07,
+      -0.05,
+      -0.065,
+      -0.05,
+      0.33,
+      1.0,
+      0.07,
+      -0.05,
+      0.075,
+      -0.05,
+      0.33,
+      1.0,
+      -0.08,
+      -0.05,
+      -0.075,
+      -0.05,
+      0.33,
+      1.0
+    ]
+  }
+]

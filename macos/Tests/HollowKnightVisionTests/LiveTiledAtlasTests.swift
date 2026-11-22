@@ -5,6 +5,60 @@ import XCTest
 final class LiveTiledAtlasTests: XCTestCase {
     private let context = CIContext(options: [.useSoftwareRenderer: true])
 
+    func testTransactionRollsBackInsertionCorrectionAndTemporalHistoryOnError() throws {
+        enum FailedCommit: Error { case rejected }
+        let atlas = LiveTiledAtlas(context: context, pixelPolicy: .temporalAgreement)
+        let red = try solid(.red, size: CGSize(width: 16, height: 16))
+        let green = try solid(.green, size: CGSize(width: 16, height: 16))
+        XCTAssertTrue(atlas.insert(observationID: 1, maskedImage: red, solveWidth: 16,
+            cameraPosition: .zero, timestamp: 1))
+        let before = atlas.snapshot
+        let diagnostics = atlas.temporalDiagnostics
+        let links = atlas.retainedContributionTileLinkCount
+        XCTAssertThrowsError(try atlas.transaction {
+            XCTAssertTrue(atlas.insert(observationID: 2, maskedImage: green, solveWidth: 16,
+                cameraPosition: CGPoint(x: 300, y: 0), timestamp: 1.1))
+            XCTAssertTrue(atlas.replaceCameraPositions(
+                [1: CGPoint(x: 40, y: 0), 2: CGPoint(x: 80, y: 0)],
+                baseRevision: atlas.revision))
+            throw FailedCommit.rejected
+        })
+        XCTAssertEqual(atlas.revision, before.revision)
+        XCTAssertEqual(atlas.snapshot.contentBounds, before.contentBounds)
+        XCTAssertEqual(atlas.snapshot.tiles.map(\.contributionIDs), before.tiles.map(\.contributionIDs))
+        XCTAssertEqual(atlas.temporalDiagnostics, diagnostics)
+        XCTAssertEqual(atlas.retainedContributionTileLinkCount, links)
+        for (actual, original) in zip(atlas.tiles, before.tiles) {
+            XCTAssertTrue(actual.image === original.image)
+        }
+        // A rejected capture must not remain in the temporal deduplication map.
+        XCTAssertTrue(atlas.transaction {
+            atlas.insert(observationID: 3, maskedImage: green, solveWidth: 16,
+                cameraPosition: CGPoint(x: 300, y: 0), captureIdentity: 2, timestamp: 1.1)
+        })
+        XCTAssertTrue(atlas.tiles.flatMap(\.contributionIDs).contains(3))
+        XCTAssertFalse(atlas.tiles.flatMap(\.contributionIDs).contains(2))
+    }
+
+    func testRejectedTransactionRestoresFirstAnchorAndPixels() throws {
+        let atlas = LiveTiledAtlas(context: context)
+        let image = try solid(.white, size: CGSize(width: 16, height: 16))
+        XCTAssertFalse(atlas.transaction {
+            XCTAssertTrue(atlas.insert(observationID: 1, maskedImage: image, solveWidth: 16,
+                cameraPosition: CGPoint(x: 400, y: 20)))
+            return false
+        })
+        XCTAssertNil(atlas.fixedAnchorPosition)
+        XCTAssertTrue(atlas.tiles.isEmpty)
+        XCTAssertEqual(atlas.revision, 0)
+        XCTAssertTrue(atlas.transaction {
+            atlas.insert(observationID: 2, maskedImage: image, solveWidth: 16,
+                cameraPosition: CGPoint(x: 100, y: 30))
+        })
+        XCTAssertEqual(atlas.fixedAnchorPosition, CGPoint(x: 100, y: 30))
+        XCTAssertEqual(atlas.snapshot.contentBounds.origin, .zero)
+    }
+
     func testLargeWorldKeepsBothEndsAndStableTileIDs() throws {
         let atlas = LiveTiledAtlas(context: context)
         let image = try solid(.red, size: CGSize(width: 64, height: 32))

@@ -4,6 +4,69 @@ import XCTest
 @testable import HollowKnightVision
 
 final class MenuStencilTests: XCTestCase {
+    func testCurrentUserPlainMenuRowsWhenRequested() throws {
+        guard ProcessInfo.processInfo.environment["HKV_CURRENT_STENCIL_AUDIT"] == "1" else {
+            throw XCTSkip("Opt-in audit of the user's current references")
+        }
+        let store = LabelingExampleStore()
+        let examples = try store.loadExamples()
+        let catalog = try MenuStencilCatalog(examplesRootURL: store.rootURL, calibration: .loadDefault(),
+            includedContexts: [.mainTitle, .extras, .inventory])
+        for context in [LabelingContext.mainTitle, .extras] {
+            let example = try XCTUnwrap(StencilInitializationPolicy.representativeExample(examples: examples,
+                context: context, languageIdentifier: "en", mode: .modded))
+            let image = try store.loadImage(for: example)
+            let tracker = MenuStencilTracker(catalog: catalog.containingOnly(context))
+            for frame in 0..<12 {
+                let result = try XCTUnwrap(tracker.observe(image, timestamp: Double(frame) * 0.25))
+                XCTAssertTrue(result.isMatch)
+                if context == .extras { XCTAssertNotEqual(result.selectedOption, "Credits", "The reference selects Menu Style, not Credits.") }
+                for region in result.selectorSearchRegions where MenuSelectorTextAlignmentPolicy.applies(
+                    context: context, identifier: region.optionIdentifier) {
+                    let anchor = try XCTUnwrap(result.anchors.first { $0.classIdentifier == region.optionIdentifier })
+                    let text = anchor.reference?.verifiedBounds(in: anchor.rect) ?? anchor.rect
+                    XCTAssertEqual(region.rect.midY, text.midY, accuracy: 1, "\(context)/\(region.optionName)")
+                    if region.side == .left { XCTAssertLessThan(region.rect.midX, text.minX) }
+                    else { XCTAssertGreaterThan(region.rect.midX, text.maxX) }
+                }
+            }
+        }
+        let inventory = try XCTUnwrap(StencilInitializationPolicy.representativeExample(examples: examples,
+            context: .inventory, languageIdentifier: "en", mode: .modded))
+        let source = try store.loadImage(for: inventory)
+        let heading = try XCTUnwrap(inventory.manifest.annotations.first { $0.classIdentifier == "inventory.inventory" })
+        let box = heading.normalizedRect
+        let pixels = CGRect(x: box.minX * CGFloat(source.width), y: box.minY * CGFloat(source.height),
+            width: box.width * CGFloat(source.width), height: box.height * CGFloat(source.height)).integral
+        let crop = try XCTUnwrap(source.cropping(to: pixels))
+        let bitmap = try XCTUnwrap(CGContext(data: nil, width: source.width, height: source.height,
+            bitsPerComponent: 8, bytesPerRow: source.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        bitmap.setFillColor(CGColor(gray: 0, alpha: 1))
+        bitmap.fill(CGRect(x: 0, y: 0, width: source.width, height: source.height))
+        bitmap.draw(crop, in: CGRect(x: pixels.minX, y: CGFloat(source.height) - pixels.maxY,
+            width: pixels.width, height: pixels.height))
+        let headingOnly = try XCTUnwrap(bitmap.makeImage())
+        let falseInventory = MenuStencilTracker(catalog: catalog.containingOnly(.inventory))
+            .observe(headingOnly, timestamp: 1)
+        XCTAssertFalse(falseInventory?.isMatch == true, "Inventory requires corners as well as its heading.")
+    }
+
+    func testPlainMenuSelectorPredictionRejectsWrongRowsAndInsideText() {
+        let text = CGRect(x: 297, y: 131, width: 46, height: 10)
+        let wrongRow = CGRect(x: 168, y: 101, width: 12, height: 11)
+        let left = MenuSelectorTextAlignmentPolicy.prediction(wrongRow, beside: text, left: true)
+        let right = MenuSelectorTextAlignmentPolicy.prediction(wrongRow, beside: text, left: false)
+        XCTAssertEqual(left.midY, text.midY)
+        XCTAssertEqual(right.midY, text.midY)
+        XCTAssertEqual(text.minX - left.maxX, 10)
+        XCTAssertEqual(right.minX - text.maxX, 10)
+        XCTAssertTrue(MenuSelectorTextAlignmentPolicy.applies(context: .extras, identifier: "extras.credits"))
+        XCTAssertTrue(MenuSelectorTextAlignmentPolicy.applies(context: .mainTitle, identifier: "main-title.start-game"))
+        XCTAssertFalse(MenuSelectorTextAlignmentPolicy.applies(context: .extras, identifier: "extras.menu-style"))
+        XCTAssertFalse(MenuSelectorTextAlignmentPolicy.applies(context: .selectProfile, identifier: "select-profile.slot-1"))
+    }
+
     private var examplesRoot: URL? {
         ProcessInfo.processInfo.environment["HKV_MENU_STENCIL_AUDIT"].map {
             URL(fileURLWithPath: $0, isDirectory: true)

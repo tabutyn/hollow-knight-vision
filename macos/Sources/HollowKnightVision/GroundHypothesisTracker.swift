@@ -88,6 +88,8 @@ struct GroundHypothesisTrackingResult: Equatable {
     let atlasFeatures: [GroundHypothesisAtlasFeature]
     var atlasLines: [GroundHypothesisAtlasLine]
     var lineReviews: [GroundLinePresenceReview] = []
+    var detectedFloorLines: [CleanFloorLine] = []
+    var matchedPatchRects: [CGRect] = []
     var cameraPosition: CGPoint? = nil
     var poseVerified = false
     var hasConfirmedGround = false
@@ -98,6 +100,7 @@ struct GroundHypothesisTrackingResult: Equatable {
     var localReferenceTimestamp: Double? = nil
     var localReferencePosition: CGVector? = nil
     var localMatchedImageDisplacement: CGVector? = nil
+    var localProjectedImageDisplacement: CGVector? = nil
 
     static let empty = GroundHypothesisTrackingResult(
         features: [],
@@ -298,7 +301,12 @@ private enum GroundGlobalPoseRANSAC {
         let grouped = Dictionary(grouping: unique) {
             SegmentPair(current: $0.currentSegmentID, global: $0.globalSegmentID)
         }
-        return grouped.values.flatMap(orderPreservingSequence)
+        // Dictionary enumeration has a randomized order between processes.
+        // Keep consensus accumulation stable; even sub-ulp differences can
+        // alter a later threshold or candidate tie during a long replay.
+        return grouped.keys.sorted {
+            $0.current == $1.current ? $0.global < $1.global : $0.current < $1.current
+        }.flatMap { orderPreservingSequence(grouped[$0]!) }
     }
 
     private static func orderPreservingSequence(
@@ -374,7 +382,7 @@ private enum GroundGlobalPoseRANSAC {
 /// solve, and promotes only stable patches to a persistent world feature set.
 /// Every current clean line is tiled at 16-pixel intervals without overlap.
 final class GroundHypothesisTracker {
-    static let featureWidth = 16
+    static let featureWidth = GroundPixels.patchWidth
     static let featureHeight = 12
     /// Horizontal lattice spacing retained for existing atlas indexing.
     static let featureSize = featureWidth
@@ -530,6 +538,7 @@ final class GroundHypothesisTracker {
     private var groundSegments = [GroundSegment]()
     private var pendingLines = [PendingLine]()
     private var lineMotionCandidates = [LineMotionCandidate]()
+    private var platformPatches = GroundPlatformPatches()
     private var globalFeatures = [Int: GlobalFeature]() { didSet { cachedRelocalizationFeatures = nil } }
     /// Immutable first-observation cohorts. Visible line merging and duplicate
     /// cleanup must never rewrite the place signature used for loop closure.
@@ -575,6 +584,7 @@ final class GroundHypothesisTracker {
     private var localReferenceTimestamp: Double?
     private var localReferencePosition: CGVector?
     private var localMatchedImageDisplacement: CGVector?
+    private var localProjectedImageDisplacement: CGVector?
     private var latestLineReviews = [GroundLinePresenceReview]()
     private var consecutiveTrackingMisses = 0
     private let traceEnabled = ProcessInfo.processInfo.arguments.contains("--trace-ground-tracking")
@@ -602,7 +612,13 @@ final class GroundHypothesisTracker {
         self.backgroundGlobalSearch = backgroundGlobalSearch
         cameraSolver = productionCameraSolver
             ? GroundCameraSolver(
+                // Refine every accepted capture. Integer-only intervening
+                // frames can alternate between adjacent rows even when the
+                // camera is level; keyframe-only refinement preserves that
+                // oscillation in the published pose and saved floor samples.
+                subpixelEnabled: true,
                 keyframeSubpixelEnabled: true,
+                independentPatchConsensusEnabled: true,
                 calibratedMotionEnabled: true,
                 matcherBackend: .automatic,
                 maximumLocalSearchRadius: 192
@@ -624,6 +640,7 @@ final class GroundHypothesisTracker {
         lastLocalFailureTimestamp = -Double.infinity
         bootstrapFailureStartedAt = nil
         lastTimestamp = nil
+        platformPatches = GroundPlatformPatches()
         lastGlobalSearchTimestamp = nil
         lastAlternativeGlobalSearchTimestamp = nil
         lastCanonicalPhaseSearchTimestamp = nil
@@ -720,10 +737,12 @@ final class GroundHypothesisTracker {
     func update(
         frame: CGImage,
         floorLines: [CleanFloorLine],
+        visibleFloors: [CleanFloorLine]? = nil,
         lineSeparation: Int = 40,
         occlusionMergeGap: Int = 300,
         timestamp: Double? = nil,
         sourceLuma: [UInt8]? = nil,
+        knightRect: CGRect? = nil,
         protectedOcclusions: [CGRect] = [],
         placementValidator: ((GroundPlacementRecovery.Proposal) -> Bool)? = nil
     ) -> GroundHypothesisTrackingResult {
@@ -733,6 +752,7 @@ final class GroundHypothesisTracker {
         localReferenceTimestamp = nil
         localReferencePosition = nil
         localMatchedImageDisplacement = nil
+        localProjectedImageDisplacement = nil
         completedGlobalSearchMilliseconds = nil
         let width = frame.width
         let height = frame.height
@@ -791,6 +811,7 @@ final class GroundHypothesisTracker {
             localReferenceTimestamp = solution.referenceTimestamp
             localReferencePosition = solution.referencePosition
             localMatchedImageDisplacement = solution.matchedImageDisplacement
+            localProjectedImageDisplacement = solution.projectedImageDisplacement
             if !solution.referenceTrusted {
                 lastProvisionalTextureTimestamp = now
                 if provisionalPromotionAllowed,
@@ -804,6 +825,9 @@ final class GroundHypothesisTracker {
                 }
             }
         }
+        let surfaces = visibleFloors ?? floorLines
+        let currentSurfaces = surfaces.map(GroundClearance.span)
+        let knightHeight = GroundClearance.height(frameHeight: CGFloat(height), knight: knightRect)
         let previousActive = active
         let matchCandidates = solution == nil
             ? recoveryFeatureCandidates(from: active)
@@ -1080,7 +1104,8 @@ final class GroundHypothesisTracker {
             updatedFeature(from: $0, fit: cameraFit, luma: luma, width: width)
         }
         // Match existing geometry before committing line votes or reference pixels.
-        active = projectGroundSegments(floorLines: stabilizedFloorLines, tracked: tracked,
+        active = projectGroundSegments(floorLines: stabilizedFloorLines, currentSurfaces: currentSurfaces,
+            knightHeight: knightHeight, tracked: tracked,
             previous: previousActive, luma: luma, width: width, height: height,
             protectedOcclusions: protectedOcclusions)
         let shouldSearchGlobally = !backgroundGlobalSearch && recoveryGlobalFit == nil
@@ -1265,6 +1290,9 @@ final class GroundHypothesisTracker {
             lineSeparation: lineSeparation,
             protectedOcclusions: protectedOcclusions
         )
+        if linePresence.minimumObservationSeconds > 0 {
+            cameraSolver.prioritizeAdmittedReferenceRows(at: now, lines: admissionLines)
+        }
         linePresence.update(
             lines: admissionLines, camera: localCameraPosition,
             width: width, height: height, timestamp: now,
@@ -1309,7 +1337,7 @@ final class GroundHypothesisTracker {
             )
         }
         active = projectGroundSegments(
-            floorLines: confirmedLines,
+            floorLines: confirmedLines, currentSurfaces: currentSurfaces, knightHeight: knightHeight,
             tracked: active,
             previous: previousActive,
             luma: luma,
@@ -1320,12 +1348,17 @@ final class GroundHypothesisTracker {
         recordReferencePatches()
 
         promoteVerifiedFeatures()
-        return result(
+        var output = result(
             cameraFit: cameraFit,
             globalFit: globalFit,
             globalCorrection: globalCorrection,
             verticalLineCorrection: verticalLineCorrection
         )
+        if latestPoseVerified {
+            output.matchedPatchRects = platformPatches.observe(pixels: luma, width: width, height: height,
+                floors: surfaces, masks: protectedOcclusions, camera: localCameraPosition, frameIndex: frameIndex)
+        }
+        return output
     }
 
     static func overlayImage(
@@ -1428,7 +1461,8 @@ final class GroundHypothesisTracker {
                 } ?? false,
             localReferenceTimestamp: localReferenceTimestamp,
             localReferencePosition: localReferencePosition,
-            localMatchedImageDisplacement: localMatchedImageDisplacement
+            localMatchedImageDisplacement: localMatchedImageDisplacement,
+            localProjectedImageDisplacement: localProjectedImageDisplacement
         )
     }
 
@@ -1548,7 +1582,9 @@ final class GroundHypothesisTracker {
     /// patch searches may be ambiguous, but feature N can never pass N+1.
     private func orderPreservingMatches(_ matches: [Match]) -> [Match] {
         var selected = [Match]()
-        for group in Dictionary(grouping: matches, by: { $0.feature.segmentID }).values {
+        let groups = Dictionary(grouping: matches, by: { $0.feature.segmentID })
+        for segmentID in groups.keys.sorted() {
+            let group = groups[segmentID]!
             let ordered = group.sorted {
                 $0.feature.sequenceIndex < $1.feature.sequenceIndex
             }
@@ -1740,12 +1776,9 @@ final class GroundHypothesisTracker {
                expectedRow >= 0, expectedRow + Self.featureHeight <= height {
                 for reference in candidate.referencePatches {
                     let x = Int((reference.worldX - localCameraPosition.x).rounded())
-                    let featureRange = x...(x + Self.featureWidth - 1)
                     guard x >= 0, x + Self.featureWidth <= width,
-                          line.evidenceRanges.contains(where: {
-                              min($0.upperBound, featureRange.upperBound)
-                                  - max($0.lowerBound, featureRange.lowerBound) + 1 >= 8
-                          })
+                          line.containsPatch(atX: x, row: expectedRow),
+                          line.evidenceCount(in: x...(x + Self.featureWidth - 1)) >= Self.featureWidth / 2
                     else { continue }
                     let rect = CGRect(
                         x: x, y: expectedRow,
@@ -1828,19 +1861,18 @@ final class GroundHypothesisTracker {
         protectedOcclusions: [CGRect]
     ) -> [PendingLinePatch] {
         guard line.row >= 0, line.row + Self.featureHeight <= height else { return [] }
-        var positions = Set<Int>()
-        for evidence in line.evidenceRanges where evidence.count >= Self.featureWidth {
-            var x = evidence.lowerBound
-            while x + Self.featureWidth - 1 <= evidence.upperBound {
-                positions.insert(x)
-                x += Self.featureSize
-            }
-            positions.insert(evidence.upperBound - Self.featureWidth + 1)
+        let first = max(0, line.xRange.lowerBound)
+        let last = min(width, line.xRange.upperBound + 1) - Self.featureWidth
+        guard first <= last else { return [] }
+        var positions = Set(stride(from: first, through: last, by: Self.featureWidth))
+        for evidence in line.evidenceRanges {
+            positions.insert(min(last, max(first, evidence.lowerBound)))
+            positions.insert(min(last, max(first, evidence.upperBound - Self.featureWidth + 1)))
         }
-        let ordered = positions.sorted()
-        let stride = max(1, Int(ceil(Double(ordered.count) / 16)))
+        let ordered = positions.sorted().filter { line.evidenceCount(in: $0...($0 + Self.featureWidth - 1)) >= Self.featureWidth / 2 }
+        let samplingStride = max(1, Int(ceil(Double(ordered.count) / 16)))
         return ordered.enumerated().compactMap { offset, x in
-            guard offset.isMultiple(of: stride),
+            guard offset.isMultiple(of: samplingStride),
                   x >= 0, x + Self.featureWidth <= width else { return nil }
             let rect = CGRect(
                 x: x, y: line.row,
@@ -2289,7 +2321,7 @@ final class GroundHypothesisTracker {
     }
 
     private func projectGroundSegments(
-        floorLines: [CleanFloorLine],
+        floorLines: [CleanFloorLine], currentSurfaces: [GroundClearance.Span], knightHeight: CGFloat,
         tracked: [ActiveFeature],
         previous: [ActiveFeature],
         luma: [UInt8],
@@ -2301,6 +2333,12 @@ final class GroundHypothesisTracker {
         let previousByID = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
         var projected = [ActiveFeature]()
         for segment in groundSegments {
+            let left = max(0, segment.minimumWorldX - localCameraPosition.x)
+            let right = min(CGFloat(width), segment.maximumWorldX - localCameraPosition.x + 1)
+            let row = segment.worldTopY + localCameraPosition.y
+            guard left < right, !currentSurfaces.contains(where: {
+                $0.excludes(left..<right, row: row, height: knightHeight, rowTolerance: Self.segmentAssociationRowTolerance)
+            }) else { continue }
             for (sequenceIndex, id) in segment.cellIDs.sorted(by: { $0.key < $1.key }) {
                 let worldX = segment.originWorldX
                     + CGFloat(sequenceIndex * Self.featureSize)
@@ -2489,9 +2527,9 @@ final class GroundHypothesisTracker {
     }
 
     private func globalFeatureID(nearWorldX worldX: CGFloat, worldY: CGFloat) -> Int? {
-        globalFeatures.values.first {
+        globalFeatures.values.filter {
             hypot($0.worldX - worldX, $0.worldTopY - worldY) <= 2
-        }?.id
+        }.map(\.id).min()
     }
 
     private var relocalizationFeatures: [GlobalFeature] {
@@ -2544,8 +2582,9 @@ final class GroundHypothesisTracker {
             let worldX = canonical.x
             let worldY = canonical.y
             if let existing = globalFeatures.values.min(by: {
-                worldDistance($0, x: worldX, y: worldY)
-                    < worldDistance($1, x: worldX, y: worldY)
+                let a = worldDistance($0, x: worldX, y: worldY)
+                let b = worldDistance($1, x: worldX, y: worldY)
+                return a == b ? $0.id < $1.id : a < b
             }), worldDistance(existing, x: worldX, y: worldY) <= 4,
                descriptorDistance(descriptor, existing.descriptor) <= 12 {
                 active[index].globalFeatureID = existing.id
@@ -2990,7 +3029,7 @@ final class GroundHypothesisTracker {
             let spread = (inliers.map(\.x).max() ?? 0) - (inliers.map(\.x).min() ?? 0)
             return GroundGlobalCorrectionPolicy.Quality(tested: errors.count, inliers: inliers.count,
                 horizontalSpread: spread,
-                error: errors.values.reduce(CGFloat.zero) { $0 + min(32, $1.error) } / CGFloat(errors.count))
+                error: errors.keys.sorted().reduce(CGFloat.zero) { $0 + min(32, errors[$1]!.error) } / CGFloat(errors.count))
         }
         // Keep one visibility set across all candidate offsets. A candidate
         // cannot improve its score by moving a difficult patch behind a mask
@@ -3045,7 +3084,8 @@ final class GroundHypothesisTracker {
             var minimumInlierX = CGFloat.greatestFiniteMagnitude
             var maximumInlierX = -CGFloat.greatestFiniteMagnitude
             var totalError = CGFloat.zero
-            for value in errors.values {
+            for key in errors.keys.sorted() {
+                let value = errors[key]!
                 totalError += min(CGFloat(32), value.error)
                 guard value.error <= 12 else { continue }
                 inlierCount += 1

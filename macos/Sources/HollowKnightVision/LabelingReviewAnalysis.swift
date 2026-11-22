@@ -102,7 +102,42 @@ private extension Sequence where Element: Hashable {
     }
 }
 
+struct LabelingReviewErrors {
+    let falsePositives: [LabelingReviewBox]
+    let falseNegatives: [LabelingReviewBox]
+    let overlaps: [Double]
+}
+
 enum LabelingPredictionReviewAnalyzer {
+    /// A review uses the labels captured at evaluation time, even if today's labels change.
+    static func errors(in example: LabelingReviewExample, classIdentifier: String,
+                       confidenceThreshold: Double, intersectionOverUnionThreshold: Double) -> LabelingReviewErrors {
+        let human = example.human.filter {
+            LabelingClassIdentity.matches($0.label, classIdentifier)
+        }
+        let predictions = example.predictions.filter {
+            LabelingClassIdentity.matches($0.label, classIdentifier) && $0.confidence >= confidenceThreshold
+        }.sorted { $0.confidence > $1.confidence }
+        var unmatched = Set(human.indices)
+        var falsePositives = [LabelingReviewBox]()
+        var overlaps = [Double]()
+        for prediction in predictions {
+            let match = unmatched.map { index in
+                (index: index, overlap: RectangleOverlap.intersectionOverUnion(
+                    prediction.normalizedRect, human[index].normalizedRect))
+            }.max { $0.overlap < $1.overlap }
+            if let match, match.overlap >= intersectionOverUnionThreshold {
+                overlaps.append(match.overlap)
+                unmatched.remove(match.index)
+            } else {
+                falsePositives.append(prediction)
+            }
+        }
+        return LabelingReviewErrors(falsePositives: falsePositives,
+                                    falseNegatives: unmatched.sorted().map { human[$0] },
+                                    overlaps: overlaps)
+    }
+
     static func summaries(
         review: LabelingPredictionReview,
         classIdentifiers: [String] = [],
@@ -130,34 +165,14 @@ enum LabelingPredictionReviewAnalyzer {
             var failingExampleIdentifiers = Set<UUID>()
 
             for example in review.examples {
-                let human = example.human.filter {
-                    LabelingClassIdentity.matches($0.label, classIdentifier)
-                }
-                let predictions = example.predictions.filter {
-                    LabelingClassIdentity.matches($0.label, classIdentifier)
-                        && $0.confidence >= confidenceThreshold
-                }.sorted { $0.confidence > $1.confidence }
-                var unmatchedHuman = Set(human.indices)
-                var exampleFalsePositives = 0
-
-                for prediction in predictions {
-                    let match = unmatchedHuman.map { index in
-                        (index: index, overlap: RectangleOverlap.intersectionOverUnion(
-                            prediction.normalizedRect,
-                            human[index].normalizedRect
-                        ))
-                    }.max { $0.overlap < $1.overlap }
-                    if let match, match.overlap >= overlapThreshold {
-                        truePositives += 1
-                        overlaps.append(match.overlap)
-                        unmatchedHuman.remove(match.index)
-                    } else {
-                        falsePositives += 1
-                        exampleFalsePositives += 1
-                    }
-                }
-                falseNegatives += unmatchedHuman.count
-                if exampleFalsePositives > 0 || !unmatchedHuman.isEmpty {
+                let matched = errors(in: example, classIdentifier: classIdentifier,
+                                     confidenceThreshold: confidenceThreshold,
+                                     intersectionOverUnionThreshold: overlapThreshold)
+                truePositives += matched.overlaps.count
+                overlaps.append(contentsOf: matched.overlaps)
+                falsePositives += matched.falsePositives.count
+                falseNegatives += matched.falseNegatives.count
+                if !matched.falsePositives.isEmpty || !matched.falseNegatives.isEmpty {
                     failingExampleIdentifiers.insert(example.id)
                 }
             }

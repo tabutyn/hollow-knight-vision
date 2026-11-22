@@ -20,6 +20,15 @@ final class GroundCameraSolverTests: XCTestCase {
         XCTAssertFalse(GroundPoseAcceptancePolicy.rejects(support: 8, error: 18.01))
     }
 
+    func testInvalidPoseQualityIsRejectedEvenWithBroadSupport() {
+        for support in [3, 4, 8, 12, 32] {
+            for error: CGFloat in [.infinity, -.infinity, .nan, -1] {
+                XCTAssertTrue(GroundPoseAcceptancePolicy.rejects(support: support, error: error))
+                XCTAssertFalse(GroundReferencePromotionPolicy.permits(support: support, error: error))
+            }
+        }
+    }
+
     func testSparseHighCostMotionInnovationIsRejected() {
         XCTAssertTrue(GroundPoseInnovationPolicy.rejects(
             support: 9, error: 19.45, innovation: 11.48
@@ -166,6 +175,7 @@ final class GroundCameraSolverTests: XCTestCase {
             lines: [], timestamp: 1.0 / 60, exclusions: []))
         solver.followMeasuredCamera(correction: CGVector(dx: 4, dy: 0), pixels: fallback,
             width: width, height: height, lines: lines, timestamp: 1.0 / 60, exclusions: [])
+        solver.prioritizeAdmittedReferenceRows(at: 1.0 / 60, lines: [])
 
         let provisional = try XCTUnwrap(solver.solve(pixels: current, width: width,
             height: height, lines: lines, timestamp: 2.0 / 60, exclusions: []))

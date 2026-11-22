@@ -4,6 +4,27 @@ import XCTest
 @testable import HollowKnightVision
 
 final class LabelingDatasetExporterTests: XCTestCase {
+    func testGameplayModelExportsOptionalObjectWithoutKnightAndRejectsMenuReferences() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = LabelingExampleStore(rootURL: root.appendingPathComponent("examples"))
+        let game = try store.saveDraft(image: makeImage(width: 100, height: 50, red: 0.2),
+            context: .game, rectangles: [rectangle(classID: "world.sign",
+                normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.2, height: 0.3)),
+                rectangle(classID: "enemies.shade", normalizedRect: CGRect(x: 0.5, y: 0.2, width: 0.1, height: 0.2),
+                    isNegative: true)])
+        let menu = try store.saveDraft(image: makeImage(width: 100, height: 50, red: 0.8),
+            context: .mainTitle, rectangles: [rectangle(classID: "main-title.start-game",
+                normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.2, height: 0.3))])
+        let exporter = LabelingDatasetExporter(rootURL: root.appendingPathComponent("datasets"))
+        let snapshot = try exporter.exportGameplayModel(examples: [menu, game])
+        XCTAssertEqual(snapshot.manifest.items.map(\.exampleIdentifier), [game.id])
+        let annotations = try decodeAnnotations(at: snapshot.directoryURL.appendingPathComponent("training"))
+        XCTAssertEqual(annotations.flatMap(\.annotations).map(\.label), ["world.sign"])
+        XCTAssertEqual(snapshot.manifest.classIdentifiers, ["world.sign"])
+        XCTAssertFalse(snapshot.manifest.classIdentifiers?.contains("main-title.start-game") == true)
+    }
+
     func testCatalogExportKeepsMenuClassesAndRepeatedInstances() throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("hkv-dataset-shared-\(UUID().uuidString)", isDirectory: true)
@@ -44,7 +65,7 @@ final class LabelingDatasetExporterTests: XCTestCase {
         XCTAssertEqual(snapshot.manifest.classIdentifier, LabelingModelIdentity.sharedObjectModel)
         XCTAssertEqual(
             snapshot.manifest.classIdentifiers,
-            LabelingCatalogPolicy.classIdentifiers.sorted()
+            ["main-title.start-game", "shared.select-decoration"]
         )
         XCTAssertEqual(snapshot.manifest.trainingAnnotationCount, 3)
         XCTAssertEqual(

@@ -14,6 +14,58 @@ enum HUDStencilTestReference {
 }
 
 final class HUDStencilTests: XCTestCase {
+    func testCurrentMenuCapturesDoNotSupplyAtlasPathEvidenceWhenRequested() throws {
+        guard ProcessInfo.processInfo.environment["HKV_CURRENT_STENCIL_AUDIT"] == "1" else {
+            throw XCTSkip("Opt-in audit of the user's captured menu and HUD references")
+        }
+        let store = LabelingExampleStore()
+        let examples = try store.loadExamples()
+        let template = try XCTUnwrap(HUDStencilTemplate.captured(examples: examples, languageIdentifier: "en"))
+        let recentKnight = LiveObjectDetection(classIdentifier: "game.playable-knight",
+            normalizedRect: CGRect(x: 0.5, y: 0.4, width: 0.05, height: 0.1), confidence: 0.9,
+            sourceFrameIdentifier: 1, modelVersion: .init(major: 1, minor: 0))
+        for context in [LabelingContext.pause, .inventory] {
+            let example = try XCTUnwrap(examples.first { $0.manifest.contextIdentifier == context.storageIdentifier })
+            let image = try store.loadImage(for: example)
+            let hud = HUDStencilTracker(template: template).observe(image, gameplay: true, timestamp: 1, generation: 1)
+            let contextOnFrame = LiveGameStatusResolver.resolve([recentKnight], hudStencil: hud)?.context
+            XCTAssertFalse(LiveAtlasPresentationPolicy.admitsPathFrame(
+                hasSceneSignal: true, recognizedContext: contextOnFrame
+            ), "\(context.rawValue) HUD matches: \(hud?.health.count ?? 0)")
+        }
+    }
+
+    func testCurrentCapturedHUDRecognizesLowHealthLifebloodWhenRequested() throws {
+        guard ProcessInfo.processInfo.environment["HKV_CURRENT_STENCIL_AUDIT"] == "1" else {
+            throw XCTSkip("Opt-in audit of the user's captured health reference")
+        }
+        let template = try XCTUnwrap(HUDStencilTemplate.captured(examples: LabelingExampleStore().loadExamples(),
+            languageIdentifier: "en"))
+        for fixture in try fixtures() where (fixture.health?.first == 1 && (fixture.health?.last ?? 0) > 0) {
+            let result = try XCTUnwrap(HUDStencilTracker(template: template).observe(try frame(fixture),
+                gameplay: true, timestamp: 1, generation: 1))
+            XCTAssertTrue(result.establishesGameplay,
+                "\(fixture.id): \(result.health.map { ($0.index, $0.kind, $0.confidence) })")
+        }
+    }
+
+    func testFilledOnlyReferenceRecognizesLifebloodAfterUnlabeledEmptyMasks() throws {
+        let template = try HUDStencilTestReference.load()
+        let captured = HUDStencilTemplate(schemaVersion: template.schemaVersion, sourceExampleID: "filled-only",
+            referenceWidth: template.referenceWidth, referenceHeight: template.referenceHeight,
+            healthPitch: template.healthPitch, health: template.health.filter { $0.kind == "full" },
+            manaMain: [], manaContainer: [0, 0, 0, 0], manaReserves: [], geo: [0, 0, 0, 0])
+        for fixture in try fixtures() where (fixture.health?.first == 1 && (fixture.health?.last ?? 0) > 0) {
+            let result = try XCTUnwrap(HUDStencilTracker(template: captured).observe(try frame(fixture),
+                gameplay: true, timestamp: 1, generation: 1))
+            XCTAssertTrue(result.establishesGameplay, "\(fixture.id): \(result.health.map { ($0.index, $0.kind, $0.confidence) })")
+            XCTAssertTrue(result.health.contains { $0.kind == "lifeblood" }, fixture.id)
+            XCTAssertFalse(result.health.contains { $0.kind == "empty" }, "Missing references must not invent empty-mask counts.")
+        }
+        XCTAssertFalse(try XCTUnwrap(HUDStencilTracker(template: captured).observe(
+            context().makeImage()!, gameplay: true, timestamp: 1, generation: 1)).establishesGameplay)
+    }
+
     private struct Fixture: Decodable {
         let id: String
         let width: Int, height: Int
@@ -66,7 +118,7 @@ final class HUDStencilTests: XCTestCase {
         }
     }
 
-    @MainActor func testCapturedHUDUnlocksFirstCampaignWithoutModelOrClearSave() throws {
+    @MainActor func testCapturedHUDAndOccupiedProfileUnlockFirstCampaignWithoutModel() throws {
         let image = try frame(XCTUnwrap(fixtures().first { $0.health == [9, 0, 0] }))
         let bundled = try XCTUnwrap(HUDStencilTestReference.load())
         let full = try XCTUnwrap(bundled.health.first { $0.kind == "full" }).bounds
@@ -79,7 +131,7 @@ final class HUDStencilTests: XCTestCase {
         XCTAssertFalse(coordinator.isFirstPhaseComplete)
         for context in [LabelingContext.mainTitle, .selectProfile] {
             let boxes = StencilInitializationPolicy.requiredCounts(context: context, mode: .normal)
-                .filter { $0.definition.id != StencilInitializationPolicy.deferredProfileClass }.flatMap { requirement in
+                .filter { $0.definition.id != StencilInitializationPolicy.profileClearSaveClass }.flatMap { requirement in
                 (0..<requirement.count).map { _ in LabelingDraftRectangle(id: UUID(), classID: requirement.definition.id,
                     normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.1, height: 0.04)) }
             }
@@ -87,10 +139,8 @@ final class HUDStencilTests: XCTestCase {
         }
         coordinator.refresh(mode: .normal)
         XCTAssertFalse(coordinator.isFirstPhaseComplete)
-        XCTAssertEqual(coordinator.currentStep?.context, .gameplayHUD)
-        XCTAssertEqual(coordinator.guidance(labelingContext: nil, selectedClassIdentifier: nil),
-                       "Enter gameplay, make health icons visible, press L.")
-        XCTAssertTrue(coordinator.guidance(labelingContext: .selectProfile, selectedClassIdentifier: nil)?.contains("Press L") == true)
+        XCTAssertEqual(coordinator.currentStep?.context, .selectProfile)
+        XCTAssertTrue(coordinator.guidance(labelingContext: .selectProfile, selectedClassIdentifier: nil)?.contains("Clear Save") == true)
         let boxes = (0..<2).map { offset in
             LabelingDraftRectangle(id: UUID(), classID: "game.health", normalizedRect: CGRect(
                 x: (full.minX + CGFloat(offset) * bundled.healthPitch) / 640, y: full.minY / 360,
@@ -108,9 +158,15 @@ final class HUDStencilTests: XCTestCase {
             XCTAssertTrue(HUDStencilTracker(template: custom).observe(try frame(fixture), gameplay: true,
                 timestamp: 2, generation: 2)?.establishesGameplay == true, fixture.id)
         }
+        XCTAssertFalse(coordinator.isFirstPhaseComplete, "HUD cannot bypass the missing Clear Save label.")
+        let profileBoxes = StencilInitializationPolicy.requiredCounts(context: .selectProfile, mode: .normal).flatMap { requirement in
+            (0..<requirement.count).map { _ in LabelingDraftRectangle(id: UUID(), classID: requirement.definition.id,
+                normalizedRect: CGRect(x: 0.1, y: 0.2, width: 0.1, height: 0.04)) }
+        }
+        _ = try store.saveDraft(image: image, context: .selectProfile, rectangles: profileBoxes)
+        coordinator.refresh(mode: .normal)
         XCTAssertTrue(coordinator.isFirstPhaseComplete)
-        XCTAssertTrue(coordinator.steps.contains { StencilInitializationPolicy.isDeferred($0) },
-                      "Clear Save remains a later task without blocking a fresh save.")
+        XCTAssertFalse(coordinator.steps.contains { $0.classIdentifier == StencilInitializationPolicy.profileClearSaveClass })
         XCTAssertEqual(coordinator.labelContextForCapture(recognized: .game, navigation: .options, fallback: .game), .options)
         XCTAssertEqual(coordinator.labelContextForCapture(recognized: .game, navigation: nil, fallback: .game),
                        coordinator.currentStep?.context)
@@ -127,40 +183,59 @@ final class HUDStencilTests: XCTestCase {
         }
         coordinator.refresh(mode: .normal)
         XCTAssertTrue(coordinator.isComplete)
+        for context in [LabelingContext.brightness, .clearSave] {
+            func prompt(for target: LabelingContext? = nil) -> String? {
+                coordinator.guidance(labelingContext: nil, selectedClassIdentifier: nil, navigationContext: target)
+            }
+            XCTAssertNil(prompt(for: context))
+            let reference = try XCTUnwrap(coordinator.example(for: context))
+            let replacement = try XCTUnwrap(LabelingFrameOpeningPolicy.stateForOpening(reference.manifest))
+            try store.delete(reference)
+            coordinator.refresh(mode: .normal)
+
+            XCTAssertTrue(coordinator.isFirstPhaseComplete)
+            let instruction = context == .clearSave ? coordinator.text("navigateClearSave")
+                : coordinator.text("navigateShort", ["screen": coordinator.screenName(context)])
+            XCTAssertEqual(prompt(for: context), instruction)
+            XCTAssertEqual(prompt(), instruction)
+            XCTAssertNil(prompt(for: .mainTitle))
+            XCTAssertEqual(coordinator.labelContextForCapture(recognized: .game, navigation: context, fallback: .game), context)
+
+            _ = try store.saveDraft(image: image, context: context, rectangles: replacement.draft.rectangles)
+            coordinator.refresh(mode: .normal)
+            XCTAssertNil(prompt(for: context))
+            XCTAssertNil(prompt())
+        }
         XCTAssertEqual(coordinator.labelContextForCapture(recognized: .game, navigation: nil, fallback: .mainTitle), .game)
         XCTAssertEqual(coordinator.labelContextForCapture(recognized: nil, navigation: nil, fallback: .options), .options)
-        for (workspace, labels, breaches, ready, training, key) in [
-            (DashboardWorkspace.gameplay, false, 0, false, false, "modelLabelGameplay"),
-            (.gameplay, true, 0, false, false, "modelOpen"),
-            (.model, true, 0, false, false, "modelTrain"),
-            (.model, true, 2, false, false, "modelReview"),
-            (.gameplay, true, 0, true, false, "modelReady"),
-            (.model, true, 0, false, true, "modelTraining")
+        for (workspace, labels, ready, training, key) in [
+            (DashboardWorkspace.gameplay, false, false, false, "modelLabelGameplay"),
+            (.gameplay, true, false, false, "modelOpen"),
+            (.model, true, false, false, "modelTrain"),
+            (.gameplay, true, true, false, "modelReady"),
+            (.model, true, false, true, "modelTraining")
         ] {
             XCTAssertEqual(coordinator.modelGuidance(workspace: workspace, hasGameplayLabels: labels,
-                breaches: breaches, modelReady: ready, training: training),
+                modelReady: ready, training: training),
                 coordinator.text(key, ["count": "2"]))
         }
         XCTAssertNil(coordinator.modelGuidance(workspace: .label, hasGameplayLabels: true,
-            breaches: 0, modelReady: true, training: false))
+            modelReady: true, training: false))
         coordinator.recordObjectDetectionEnabled()
         for workspace in [DashboardWorkspace.gameplay, .model] {
             XCTAssertNil(coordinator.modelGuidance(workspace: workspace, hasGameplayLabels: true,
-                breaches: 0, modelReady: true, training: false))
+                modelReady: true, training: false))
         }
         let reopened = StencilInitializationCoordinator(store: store, defaults: defaults)
         reopened.refresh(mode: .normal)
         XCTAssertTrue(reopened.hasEnabledObjectDetection)
         XCTAssertNil(reopened.modelGuidance(workspace: .gameplay, hasGameplayLabels: true,
-            breaches: 0, modelReady: true, training: false))
+            modelReady: true, training: false))
         XCTAssertEqual(reopened.modelGuidance(workspace: .gameplay, hasGameplayLabels: true,
-            breaches: 0, modelReady: true, training: false, campaignGuidance: "Next batch"), "Next batch")
-        // Detection being enabled does not hide unfinished training or label review.
+            modelReady: true, training: false, campaignGuidance: "Next batch"), "Next batch")
+        // Detection being enabled does not hide unfinished training.
         XCTAssertEqual(coordinator.modelGuidance(workspace: .model, hasGameplayLabels: true,
-            breaches: 2, modelReady: true, training: false),
-            coordinator.text("modelReview", ["count": "2"]))
-        XCTAssertEqual(coordinator.modelGuidance(workspace: .model, hasGameplayLabels: true,
-            breaches: 0, modelReady: true, training: true),
+            modelReady: true, training: true),
             coordinator.text("modelTraining"))
         coordinator.language = .french
         XCTAssertFalse(coordinator.isFirstPhaseComplete, "A language change must relock incomplete references.")

@@ -62,7 +62,7 @@ final class LiveGameStatusResolverTests: XCTestCase {
         )
         XCTAssertNil(LiveGameStatusResolver.resolve([weakTitle]))
         let gameplay = try XCTUnwrap(LiveGameStatusResolver.resolve(
-            [], hudStencil: matchedHUDStencil()
+            [knightDetection()], hudStencil: matchedHUDStencil()
         ))
         var tracker = LiveGameStatusTracker()
         XCTAssertEqual(tracker.observe(gameplay, at: 1)?.context, .gameplay)
@@ -84,7 +84,7 @@ final class LiveGameStatusResolverTests: XCTestCase {
 
     func testMenuStencilWinsOverGameplayHUDStencil() throws {
         let status = try XCTUnwrap(LiveGameStatusResolver.resolve(
-            [],
+            [knightDetection()],
             menuStencil: matchedMenuStencil(.selectProfile, selected: nil),
             hudStencil: matchedHUDStencil()
         ))
@@ -92,7 +92,7 @@ final class LiveGameStatusResolverTests: XCTestCase {
         XCTAssertEqual(status.context, .selectProfile)
     }
 
-    func testHealthStencilEstablishesGameplayWithoutManaMatch() {
+    func testHealthStencilAndKnightEstablishGameplayWithoutManaMatch() {
         let healthOnly = HUDStencilResult(
             health: [
                 HUDStencilMatch(index: 0, kind: "full", rect: .zero, confidence: 0.9),
@@ -107,7 +107,7 @@ final class LiveGameStatusResolverTests: XCTestCase {
             sourceTimestamp: 1
         )
         XCTAssertEqual(
-            LiveGameStatusResolver.resolve([], hudStencil: healthOnly)?.context,
+            LiveGameStatusResolver.resolve([knightDetection()], hudStencil: healthOnly)?.context,
             .gameplay
         )
     }
@@ -117,16 +117,16 @@ final class LiveGameStatusResolverTests: XCTestCase {
         let mana = detection("game.mana", x: 0.05, y: 0.05, width: 0.08)
         XCTAssertNil(LiveGameStatusResolver.resolve([health]))
         XCTAssertNil(LiveGameStatusResolver.resolve([health, mana]))
-        XCTAssertEqual(LiveGameStatusResolver.resolve(
+        XCTAssertNil(LiveGameStatusResolver.resolve(
             [health, mana], hudStencil: matchedHUDStencil()
-        )?.context, .gameplay)
+        ))
         XCTAssertTrue(SceneRegions.fromObjectDetections(
             [health, mana],
             in: CGRect(x: 0, y: 0, width: 1000, height: 562)
         ).geo.isEmpty)
     }
 
-    func testKnightEnemyAndWorldObjectsSupportGameplay() {
+    func testGameplayObjectsCannotBypassHUDAndKnightRequirements() {
         let pairs = [
             ["game.playable-knight", "enemies.crawlid"],
             ["enemies.crawlid", "world.geo-deposit"],
@@ -136,13 +136,74 @@ final class LiveGameStatusResolverTests: XCTestCase {
             let detections = identifiers.enumerated().map {
                 detection($0.element, x: CGFloat($0.offset) * 0.2, y: 0.2, width: 0.1)
             }
-            XCTAssertEqual(LiveGameStatusResolver.resolve(detections)?.context, .gameplay)
+            XCTAssertNil(LiveGameStatusResolver.resolve(detections))
+            XCTAssertEqual(
+                LiveGameStatusResolver.resolve(detections, hudStencil: matchedHUDStencil())?.context,
+                identifiers.contains("game.playable-knight") ? .gameplay : nil
+            )
         }
+    }
+
+    func testGameplayEntryRequiresMultipleFreshHealthMatchesAndConfidentKnight() {
+        let knight = knightDetection()
+        XCTAssertNil(LiveGameStatusResolver.resolve([], hudStencil: matchedHUDStencil()))
+        XCTAssertNil(LiveGameStatusResolver.resolve([knight]))
+        for count in [0, 1] {
+            XCTAssertNil(LiveGameStatusResolver.resolve(
+                [knight], hudStencil: matchedHUDStencil(healthCount: count)
+            ))
+        }
+        for confidence in [0.05, 0.49, Double.nan, Double.infinity] {
+            XCTAssertNil(LiveGameStatusResolver.resolve(
+                [knightDetection(confidence: confidence)], hudStencil: matchedHUDStencil()
+            ))
+        }
+        XCTAssertEqual(LiveGameStatusResolver.resolve(
+            [knightDetection(confidence: 0.5)], hudStencil: matchedHUDStencil()
+        )?.context, .gameplay)
+        XCTAssertNil(LiveGameStatusResolver.resolve(
+            [knight], hudStencil: matchedHUDStencil(healthCount: 0, holdsHealthMask: true)
+        ))
+        XCTAssertNil(LiveGameStatusResolver.resolve(
+            [], menuStencil: matchedMenuStencil(.game, selected: nil)
+        ))
+    }
+
+    func testStaleOrDifferentCaptureKnightCannotEstablishGameplay() {
+        let batch = LiveObjectDetectionBatch(
+            detections: [knightDetection()], sourceFrameIdentifier: 1,
+            sourceTimestamp: 1, captureGeneration: 1, inferenceDuration: 0.01
+        )
+        for (generation, timestamp) in [(UInt64(1), 2.0), (UInt64(2), 1.0)] {
+            let detections = LiveObjectDetectionFreshness.detections(
+                from: batch, captureGeneration: generation, timestamp: timestamp
+            )
+            XCTAssertNil(LiveGameStatusResolver.resolve(detections, hudStencil: matchedHUDStencil()))
+        }
+    }
+
+    func testCutsceneCannotLatchGameplayUntilHUDAndKnightAgree() throws {
+        var tracker = LiveGameStatusTracker()
+        let profile = try XCTUnwrap(LiveGameStatusResolver.resolve(
+            [], menuStencil: matchedMenuStencil(.selectProfile, selected: "1.")
+        ))
+        _ = tracker.observe(profile, at: 0)
+        let scenery = [detection("enemies.crawlid", x: 0.2, y: 0.2, width: 0.1),
+                       detection("world.geo-deposit", x: 0.5, y: 0.2, width: 0.1)]
+        for time in [0.2, 0.5, 1.0, 2.0] {
+            let recognized = LiveGameStatusResolver.resolve(scenery, hudStencil: matchedHUDStencil())
+            XCTAssertNil(recognized)
+            XCTAssertNotEqual(tracker.observe(recognized, at: time)?.context, .gameplay)
+        }
+        XCTAssertEqual(tracker.observe(LiveGameStatusResolver.resolve(
+            [knightDetection()], hudStencil: matchedHUDStencil()
+        ), at: 3)?.context, .gameplay)
+        XCTAssertEqual(tracker.observe(nil, at: 4)?.context, .gameplay)
     }
 
     func testMainTitleStencilWinsOverStaleGameplayDetections() throws {
         let status = try XCTUnwrap(LiveGameStatusResolver.resolve(
-            [],
+            [knightDetection()],
             menuStencil: matchedMenuStencil(.mainTitle, selected: nil),
             hudStencil: matchedHUDStencil()
         ))
@@ -166,7 +227,7 @@ final class LiveGameStatusResolverTests: XCTestCase {
 
     func testGameplayStaysLatchedWithoutHudUntilTitleIsDetected() throws {
         let gameplay = try XCTUnwrap(LiveGameStatusResolver.resolve(
-            [], hudStencil: matchedHUDStencil()
+            [knightDetection()], hudStencil: matchedHUDStencil()
         ))
         var tracker = LiveGameStatusTracker()
         XCTAssertEqual(tracker.observe(gameplay, at: 1)?.context, .gameplay)
@@ -193,7 +254,7 @@ final class LiveGameStatusResolverTests: XCTestCase {
 
     func testCreditsVisualCueCannotReleaseGameplayLatch() throws {
         let gameplay = try XCTUnwrap(LiveGameStatusResolver.resolve(
-            [], hudStencil: matchedHUDStencil()
+            [knightDetection()], hudStencil: matchedHUDStencil()
         ))
         let credits = try XCTUnwrap(LiveGameStatusResolver.resolve(
             [], creditsLikely: true
@@ -226,16 +287,19 @@ final class LiveGameStatusResolverTests: XCTestCase {
         ))
 
         XCTAssertTrue(LiveGameStatusEvidencePolicy.shouldRunObjectInference(for: nil))
-        XCTAssertTrue(LiveGameStatusEvidencePolicy.shouldRunObjectInference(for: credits))
         XCTAssertTrue(LiveGameStatusEvidencePolicy.shouldRunObjectInference(for:
             LiveGameStatusResolver.resolve([], hudStencil: matchedHUDStencil())
+        ))
+        XCTAssertTrue(LiveGameStatusEvidencePolicy.shouldRunObjectInference(for: credits))
+        XCTAssertTrue(LiveGameStatusEvidencePolicy.shouldRunObjectInference(for:
+            LiveGameStatusResolver.resolve([knightDetection()], hudStencil: matchedHUDStencil())
         ))
         XCTAssertFalse(LiveGameStatusEvidencePolicy.shouldRunObjectInference(for: title))
     }
 
     func testProfileStencilReleasesGameplayLatch() throws {
         let gameplay = try XCTUnwrap(LiveGameStatusResolver.resolve(
-            [], hudStencil: matchedHUDStencil()
+            [knightDetection()], hudStencil: matchedHUDStencil()
         ))
         let profile = try XCTUnwrap(LiveGameStatusResolver.resolve(
             [], menuStencil: matchedMenuStencil(.selectProfile, selected: nil)
@@ -446,6 +510,18 @@ final class LiveGameStatusResolverTests: XCTestCase {
         ))
     }
 
+    func testFreshHUDCanEstablishGameplayBeforeItHasLatchedDespiteFalseInventoryStencil() {
+        var gate = GameplayMenuEvidenceGate()
+        XCTAssertFalse(gate.admits(menuContext: .inventory, gameplayLatched: false,
+            hudHealthMatchCount: 2, timestamp: 1))
+        XCTAssertFalse(gate.admits(menuContext: .inventory, gameplayLatched: false,
+            hudHealthMatchCount: 0, timestamp: 1.1))
+        XCTAssertFalse(gate.admits(menuContext: .pause, gameplayLatched: false,
+            hudHealthMatchCount: 0, timestamp: 1.5))
+        XCTAssertTrue(gate.admits(menuContext: .pause, gameplayLatched: false,
+            hudHealthMatchCount: 0, timestamp: 1.6))
+    }
+
     func testStableMenuIsAdmittedAfterGameplayHUDDisappears() {
         var gate = GameplayMenuEvidenceGate()
         XCTAssertFalse(gate.admits(
@@ -542,7 +618,18 @@ final class LiveGameStatusResolverTests: XCTestCase {
         )
     }
 
-    private func matchedHUDStencil() -> HUDStencilResult {
+    private func knightDetection(confidence: Double = 0.9) -> LiveObjectDetection {
+        let knight = detection("game.playable-knight", x: 0.5, y: 0.4, width: 0.05, height: 0.1)
+        return LiveObjectDetection(
+            classIdentifier: knight.classIdentifier, normalizedRect: knight.normalizedRect,
+            confidence: confidence, sourceFrameIdentifier: knight.sourceFrameIdentifier,
+            modelVersion: knight.modelVersion
+        )
+    }
+
+    private func matchedHUDStencil(
+        healthCount: Int = 2, holdsHealthMask: Bool = false
+    ) -> HUDStencilResult {
         let match = HUDStencilMatch(
             index: 0,
             kind: "main",
@@ -550,16 +637,16 @@ final class LiveGameStatusResolverTests: XCTestCase {
             confidence: 0.9
         )
         return HUDStencilResult(
-            health: [
-                HUDStencilMatch(index: 0, kind: "full", rect: .zero, confidence: 0.9),
-                HUDStencilMatch(index: 1, kind: "full", rect: .zero, confidence: 0.9),
-            ],
+            health: (0..<healthCount).map {
+                HUDStencilMatch(index: $0, kind: "full", rect: .zero, confidence: 0.9)
+            },
             manaMain: match,
             manaReserves: [],
-            healthMasks: [],
+            healthMasks: holdsHealthMask
+                ? [CGRect(x: 100, y: 300, width: 80, height: 40)] : [],
             manaMasks: [],
             geo: .zero,
-            holdsHealthMask: false,
+            holdsHealthMask: holdsHealthMask,
             sourceTimestamp: 1
         )
     }

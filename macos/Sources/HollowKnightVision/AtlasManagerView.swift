@@ -11,72 +11,40 @@ struct AtlasManagerView: View {
     @State private var stateName = ""
     @State private var selectedStateID: UUID?
     @State private var showingPermanentDeleteConfirmation = false
-    @State private var showingHackerDeleteConfirmation = false
 
     private var selectedState: AtlasSavedState? {
-        model.atlasSavedStates.first { $0.id == selectedStateID }
+        savedStates.first { $0.id == selectedStateID }
     }
 
     private var autoSaveSelected: Bool {
         selectedStateID == AtlasAutoSaveSummary.activeID
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            gameplayManager
-            if workspace == .hacker { Divider(); hackerManager }
-        }
-    }
+    private var isHacker: Bool { workspace == .hacker }
+    private var savedStates: [AtlasSavedState] { isHacker ? model.hackerAtlasSavedStates : model.atlasSavedStates }
+    private var autoSave: AtlasAutoSaveSummary { isHacker ? model.hackerAtlasAutoSave : model.atlasAutoSave }
+    private var managementBusy: Bool { isHacker ? model.hackerAtlasManagementBusy : model.atlasManagementBusy }
+    private var managementIssue: String? { isHacker ? model.hackerAtlasManagementIssue : model.atlasManagementIssue }
 
-    private var hackerManager: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text(visionText("Manage Hacker Atlas"))
-                    .font(.title3.weight(.semibold))
-                Spacer()
-            }
-            Button(visionText("Delete Atlas"), role: .destructive) {
-                showingHackerDeleteConfirmation = true
-            }
-        }
+    var body: some View { atlasManager }
 
-        .confirmationDialog(
-            visionText("deleteHackerAtlas"),
-            isPresented: $showingHackerDeleteConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button(visionText("Delete Permanently"), role: .destructive) {
-                model.deleteHackerAtlas()
-            }
-            Button(visionText("Cancel"), role: .cancel) {}
-        }
-    }
-
-    private var gameplayManager: some View {
+    private var atlasManager: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(visionText("Manage Atlas"))
-                    .font(.title3.weight(.semibold))
-                Spacer()
-            }
-            Text(visionText("The active atlas auto-saves. Save State creates a named restore point; New archives the active atlas before clearing it."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
             HStack {
                 TextField(visionText("State name"), text: $stateName)
                     .textFieldStyle(.roundedBorder)
                 Button(visionText("Save State")) {
-                    model.saveAtlasState(name: stateName)
+                    if isHacker { model.saveHackerAtlasState(name: stateName) }
+                    else { model.saveAtlasState(name: stateName) }
                 }
                 .disabled(stateName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || model.atlasManagementBusy)
+                    || managementBusy)
             }
 
             List(selection: $selectedStateID) {
                 autoSaveRow
                     .tag(AtlasAutoSaveSummary.activeID)
-                ForEach(model.atlasSavedStates) { state in
+                ForEach(savedStates) { state in
                     HStack {
                         Text(state.name)
                         Spacer()
@@ -88,31 +56,39 @@ struct AtlasManagerView: View {
             }
             .frame(height: 180)
 
-            if let issue = model.atlasManagementIssue {
+            if let issue = managementIssue {
                 Text(issue)
                     .font(.caption)
                     .foregroundStyle(.red)
             }
             HStack {
-                Button(visionText("New"), action: model.newAtlas)
+                Button(visionText("New")) {
+                    if isHacker { model.newHackerAtlas() } else { model.newAtlas() }
+                }
                 Spacer()
                 Button(visionText("Delete"), role: .destructive) {
                     showingPermanentDeleteConfirmation = true
                 }
-                .disabled((selectedState == nil && !autoSaveSelected) || model.atlasManagementBusy)
+                .disabled((selectedState == nil && !autoSaveSelected) || managementBusy)
                 Button(visionText("Load")) {
-                    if let selectedState { model.loadAtlasState(selectedState) }
+                    if let selectedState {
+                        if isHacker { model.loadHackerAtlasState(selectedState) }
+                        else { model.loadAtlasState(selectedState) }
+                    }
                 }
-                .disabled(selectedState == nil || autoSaveSelected || model.atlasManagementBusy)
+                .disabled(selectedState == nil || autoSaveSelected || managementBusy)
             }
-            .disabled(model.atlasManagementBusy)
-            if model.atlasManagementBusy {
+            .disabled(managementBusy)
+            if managementBusy {
                 ProgressView()
                     .controlSize(.small)
             }
         }
 
-        .onAppear { model.refreshAtlasSavedStates() }
+        .onAppear {
+            if isHacker { model.refreshHackerAtlasSavedStates() }
+            else { model.refreshAtlasSavedStates() }
+        }
         .confirmationDialog(
             visionText("deleteAtlas"),
             isPresented: $showingPermanentDeleteConfirmation,
@@ -120,9 +96,10 @@ struct AtlasManagerView: View {
         ) {
             Button(visionText("Delete Permanently"), role: .destructive) {
                 if autoSaveSelected {
-                    model.deleteAutoSave()
+                    if isHacker { model.deleteHackerAutoSave() } else { model.deleteAutoSave() }
                 } else if let selectedState {
-                    model.deleteAtlasState(selectedState)
+                    if isHacker { model.deleteHackerAtlasState(selectedState) }
+                    else { model.deleteAtlasState(selectedState) }
                 }
             }
             Button(visionText("Cancel"), role: .cancel) {}
@@ -135,9 +112,9 @@ struct AtlasManagerView: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(visionText("Auto Save"))
+                    Text([autoSave.profile?.name, visionText("Auto Save")].compactMap { $0 }.joined(separator: " · "))
                         .fontWeight(.semibold)
-                    Text(visionText("registrations", ["count": String(model.atlasAutoSave.registrationCount)]))
+                    Text(visionText("registrations", ["count": String(autoSave.registrationCount)]))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(autoSaveSizeText)
@@ -145,7 +122,7 @@ struct AtlasManagerView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                let age = max(0, Int(context.date.timeIntervalSince(model.atlasAutoSave.createdAt)))
+                let age = max(0, Int(context.date.timeIntervalSince(autoSave.createdAt)))
                 Text(visionText("secondsOld", ["count": String(age)]))
                     .foregroundStyle(.secondary)
             }
@@ -153,7 +130,7 @@ struct AtlasManagerView: View {
     }
 
     private var autoSaveSizeText: String {
-        guard let bytes = model.atlasAutoSave.totalByteCount else {
+        guard let bytes = autoSave.totalByteCount else {
             return visionText("calculatingSize")
         }
         return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)

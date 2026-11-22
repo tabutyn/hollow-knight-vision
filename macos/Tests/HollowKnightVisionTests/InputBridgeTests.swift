@@ -21,18 +21,17 @@ final class InputBridgeTests: XCTestCase {
         XCTAssertEqual(normalized.mana, 198)
         XCTAssertEqual(normalized.extraManaSlots, 3)
         XCTAssertEqual(normalized.geo, 0)
-        XCTAssertTrue(normalized.invincible)
+        XCTAssertFalse(normalized.invincible)
+        XCTAssertFalse(PlayerTestState.defaults.invincible)
 
         var generator = SystemRandomNumberGenerator()
         for _ in 0..<100 {
-            let state = PlayerTestState.randomized(
-                invincible: false,
-                using: &generator
-            )
+            let state = PlayerTestState.randomized(using: &generator)
             XCTAssertEqual(state, state.normalized)
             XCTAssertTrue((0...3).contains(state.extraManaSlots))
             XCTAssertFalse(state.invincible)
         }
+        XCTAssertTrue(PlayerTestState.randomized(invincible: true, using: &generator).invincible)
     }
 
     func testPlayerOpsWireRoundTrip() throws {
@@ -213,14 +212,17 @@ final class InputBridgeTests: XCTestCase {
 
     func testGroundTruthTelemetryDecodesAndProvidesProjectionScale() throws {
         let sessionID = UUID()
+        let epoch = UUID()
         let data = """
-        {"version":2,"type":"groundTruth","sessionID":"\(sessionID.uuidString)","sequence":7,"unityFrame":99,"unityRealtime":12.5,"sceneName":"Tutorial_01","heroAvailable":true,"heroX":36.25,"heroY":11.5,"heroZ":0.004,"velocityX":-2,"velocityY":0,"facingRight":false,"grounded":true,"cameraAvailable":true,"cameraX":37.25,"cameraY":14.1,"cameraZ":-38.1,"cameraTargetX":36.25,"cameraTargetY":14.1,"cameraTargetZ":0.004,"orthographicSize":480,"pixelsPerWorldUnitX":38.4,"pixelsPerWorldUnitY":38.4,"heroScreenX":1000,"heroScreenY":420,"projectionPixelWidth":1920,"projectionPixelHeight":1080,"screenWidth":1920,"screenHeight":1080}
+        {"version":2,"type":"groundTruth","sessionID":"\(sessionID.uuidString)","sequence":7,"unityFrame":99,"unityRealtime":12.5,"sceneName":"Tutorial_01","heroAvailable":true,"heroX":36.25,"heroY":11.5,"heroZ":0.004,"velocityX":-2,"velocityY":0,"facingRight":false,"grounded":true,"cameraAvailable":true,"cameraX":37.25,"cameraY":14.1,"cameraZ":-38.1,"cameraTargetX":36.25,"cameraTargetY":14.1,"cameraTargetZ":0.004,"orthographicSize":480,"pixelsPerWorldUnitX":38.4,"pixelsPerWorldUnitY":38.4,"heroScreenX":1000,"heroScreenY":420,"projectionPixelWidth":1920,"projectionPixelHeight":1080,"screenWidth":1920,"screenHeight":1080,"blueHealthOutcomes":{"epoch":"\(epoch.uuidString)","gained":2}}
         """.data(using: .utf8)!
 
         let sample = try InputBridgeWireCodec.decodeGroundTruth(line: data)
         XCTAssertEqual(sample.sessionID, sessionID)
         XCTAssertEqual(sample.sceneName, "Tutorial_01")
         XCTAssertEqual(sample.cameraX, 37.25)
+        XCTAssertEqual(sample.blueHealthOutcomes, .init(epoch: epoch, gained: 2))
+        XCTAssertEqual(try JSONDecoder().decode(ReceiverGroundTruthSample.self, from: JSONEncoder().encode(sample)).blueHealthOutcomes, sample.blueHealthOutcomes)
         XCTAssertTrue(sample.hasFiniteCoordinates)
         XCTAssertEqual(sample.pixelsPerWorldUnit(frameHeight: 360) ?? 0, 12.8, accuracy: 0.000_001)
     }

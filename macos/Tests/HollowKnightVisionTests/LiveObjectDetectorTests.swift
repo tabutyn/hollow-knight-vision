@@ -5,6 +5,103 @@ import XCTest
 @testable import HollowKnightVision
 
 final class LiveObjectDetectorTests: XCTestCase {
+    func testDepositHeatmapRequiresMatchingModelRunAndCalibratedConfidence() throws {
+        let run = UUID()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        func write(_ confidence: Double) throws {
+            let recipe: [String: Any] = [
+                "sourceRunIdentifier": run.uuidString,
+                "localizer": ["modelFilename": "GeoDeposit.mlmodel", "sha256": String(repeating: "a", count: 64),
+                              "standaloneConfidence": confidence, "boxWidth": 0.058, "boxHeight": 0.105]
+            ]
+            try JSONSerialization.data(withJSONObject: recipe).write(to: url)
+        }
+        try write(0.95)
+        XCTAssertNotNil(LiveGeoDepositConfirmation.load(from: url, run: run))
+        XCTAssertNil(LiveGeoDepositConfirmation.load(from: url, run: UUID()))
+        try write(0.6)
+        XCTAssertNil(LiveGeoDepositConfirmation.load(from: url, run: run))
+    }
+
+    func testGeoDepositPeakRejectsSoulVesselButAllowsTheNearbyRoom() {
+        func sample(_ x: CGFloat, _ y: CGFloat) -> LiveObjectDetection {
+            .init(classIdentifier: LiveGeoDepositConfirmation.identifier,
+                  normalizedRect: CGRect(x: x - 0.025, y: y - 0.05, width: 0.05, height: 0.1),
+                  confidence: 0.98, sourceFrameIdentifier: 1, modelVersion: .init(major: 8, minor: 0))
+        }
+        XCTAssertFalse(LiveGeoDepositConfirmation.visibleDeposit(sample(60 / 640, 40 / 360)))
+        XCTAssertTrue(LiveGeoDepositConfirmation.visibleDeposit(sample(80 / 640, 40 / 360)))
+        XCTAssertTrue(LiveGeoDepositConfirmation.visibleDeposit(sample(60 / 640, 61 / 360)))
+    }
+
+    func testKnightReferenceRecoversMissingMeasurementsAndChecksStrongHUDDisagreements() {
+        let recipe = LiveKnightConfirmation(sourceRunIdentifier: UUID(), weakConfidence: 0.25,
+            referenceConfidence: 0.975, correctHUDMatches: true,
+            localizer: .init(modelFilename: "Knight.mlmodel", sha256: String(repeating: "a", count: 64),
+                standaloneConfidence: 0.98, boxWidth: 0.034, boxHeight: 0.12))
+        func knight(_ x: CGFloat, _ y: CGFloat, _ confidence: Double) -> LiveObjectDetection {
+            .init(classIdentifier: LiveKnightConfirmation.identifier, normalizedRect: CGRect(x: x, y: y, width: 0.034, height: 0.12),
+                  confidence: confidence, sourceFrameIdentifier: 42, modelVersion: .init(major: 8, minor: 0))
+        }
+        let strong = knight(0.48, 0.56, 0.78), weak = knight(0.48, 0.56, 0.35)
+        let corroborated = knight(0.49, 0.56, 0.976), independent = knight(0.49, 0.56, 0.997)
+        let hud = knight(0.1, 0.04, 0.85)
+        XCTAssertFalse(recipe.needsReference([strong]))
+        XCTAssertEqual(recipe.supplement([strong], reference: [independent]), [strong])
+        XCTAssertEqual(recipe.supplement([], reference: [corroborated]), [])
+        XCTAssertEqual(recipe.supplement([weak], reference: [corroborated]), [corroborated])
+        XCTAssertEqual(recipe.supplement([], reference: [independent]), [independent])
+        XCTAssertEqual(recipe.supplement([hud], reference: [independent]), [independent])
+        XCTAssertEqual(recipe.supplement([hud], reference: [knight(0.12, 0.03, 0.999)]), [hud])
+    }
+
+    func testCrawlidHeatmapKeepsThePeakInTopLeftImageCoordinates() throws {
+        let localizer = LiveActorHeatmap(modelFilename: "Crawlid.mlmodel", sha256: String(repeating: "a", count: 64),
+            standaloneConfidence: 0.995, boxWidth: 0.05, boxHeight: 20.0 / 360)
+        let scores = try MLMultiArray(shape: [1, 1, 90, 160], dataType: .float32)
+        for index in 0..<scores.count { scores[index] = 0 }
+        scores[30 * 160 + 80] = 0.998
+        scores[30 * 160 + 81] = 0.994
+        scores[75 * 160 + 35] = 0.992
+        let boxes = localizer.detections(scores, identifier: LiveCrawlidConfirmation.identifier, threshold: 0.99, frame: 5, version: .init(major: 8, minor: 0))
+        XCTAssertEqual(boxes.count, 2)
+        XCTAssertEqual(boxes[0].normalizedRect.midX, 0.5, accuracy: 1e-6)
+        XCTAssertEqual(boxes[0].normalizedRect.midY, 1.0 / 3, accuracy: 1e-6)
+        var calibration = LiveCrawlidConfirmation(sourceRunIdentifier: UUID(), weakConfidence: 0.1,
+            referenceConfidence: 0.99, minimumOverlap: 0.25)
+        calibration.localizer = localizer
+        XCTAssertEqual(calibration.supplement([], weak: [], reference: boxes), [boxes[0]])
+    }
+
+    func testCrawlidConfirmationRequiresSpatialAgreementAndPreservesExistingDetections() {
+        let calibration = LiveCrawlidConfirmation(sourceRunIdentifier: UUID(), weakConfidence: 0.18,
+                                                   referenceConfidence: 0.65, minimumOverlap: 0.6)
+        func box(_ x: CGFloat, _ confidence: Double, _ name: String = "enemies.crawlid") -> LiveObjectDetection {
+            .init(classIdentifier: name, normalizedRect: CGRect(x: x, y: 0.6, width: 0.05, height: 0.08),
+                  confidence: confidence, sourceFrameIdentifier: 1, modelVersion: .init(major: 8, minor: 0))
+        }
+        let original = box(0.2, 0.86), knight = box(0.4, 0.51, "game.playable-knight"), agreed = box(0.601, 0.93)
+        let detections = calibration.supplement([original, knight], weak: [box(0.2, 0.24), box(0.6, 0.23)],
+            reference: [box(0.201, 0.8), agreed, box(0.8, 0.97), box(0.6, 0.53)])
+        XCTAssertEqual(detections, [original, knight, agreed])
+    }
+
+    func testUntrainedHeadsCannotPublishEvenAtFullConfidence() {
+        var artifact = LabelingActiveModelArtifact(classIdentifier: LabelingModelIdentity.sharedObjectModel,
+            version: .init(major: 3, minor: 0), modelURL: URL(fileURLWithPath: "/tmp/Detector.mlmodel"),
+            trainedClassIdentifiers: ["game.playable-knight", "enemies.crawlid"])
+        let predictions = ["enemies.shade", "game.playable-knight", "enemies.crawlid"].map {
+            LiveRawObjectPrediction(classIdentifier: $0,
+                normalizedVisionRect: CGRect(x: 0.2, y: 0.2, width: 0.1, height: 0.2), confidence: 1)
+        }
+        XCTAssertEqual(Set(LiveObjectDetectionPostprocessor.detections(from: predictions, artifact: artifact,
+            sourceFrameIdentifier: 1).map(\.classIdentifier)), ["game.playable-knight", "enemies.crawlid"])
+        artifact.trainedClassIdentifiers = []
+        XCTAssertTrue(LiveObjectDetectionPostprocessor.detections(from: predictions, artifact: artifact,
+            sourceFrameIdentifier: 1).isEmpty)
+    }
+
     func testTensorAccessorReadsContiguousFloat32Output() throws {
         let values = try MLMultiArray(shape: [1, 2, 2, 2], dataType: .float32)
         for index in 0..<values.count {
@@ -21,7 +118,8 @@ final class LiveObjectDetectorTests: XCTestCase {
         let artifact = LabelingActiveModelArtifact(
             classIdentifier: LabelingModelIdentity.sharedObjectModel,
             version: LabelingModelSemanticVersion(major: 1, minor: 0),
-            modelURL: URL(fileURLWithPath: "/tmp/Detector.mlmodel")
+            modelURL: URL(fileURLWithPath: "/tmp/Detector.mlmodel"),
+            trainedClassIdentifiers: ["enemies.crawlid", "world.sign", "enemies.vengfly", "game.playable-knight"]
         )
         let predictions = [
             LiveRawObjectPrediction(
@@ -179,12 +277,10 @@ final class LiveObjectDetectorTests: XCTestCase {
             modelVersion: LabelingModelSemanticVersion(major: 1, minor: 0)
         )
 
-        let result = LiveObjectPixelRefiner.refine(
-            [raw], in: image, extensionFraction: 0.6
-        )
+        let result = LiveObjectPixelRefiner.refine([raw], in: image)
 
         XCTAssertNotNil(result.diagnosticImage)
-        XCTAssertGreaterThan(result.detections[0].normalizedRect.width, raw.normalizedRect.width)
+        XCTAssertLessThanOrEqual(result.detections[0].normalizedRect.width, raw.normalizedRect.width)
     }
 
     private func objectDetection(

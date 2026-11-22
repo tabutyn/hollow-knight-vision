@@ -198,14 +198,14 @@ final class GameStartupDetectorTests: XCTestCase {
         ).admitsWorldFrames)
     }
 
-    func testBrightHudArtEstablishesGameplay() throws {
+    func testBrightHudArtCannotEstablishGameplay() throws {
         let image = try makeImage(brightTopOriginRects: [
             CGRect(x: 0.06, y: 0.04, width: 0.06, height: 0.11),
             CGRect(x: 0.12, y: 0.06, width: 0.10, height: 0.05),
         ])
         let evidence = GameStartupDetector().detect(in: image)
         XCTAssertNil(evidence.screen)
-        XCTAssertTrue(evidence.gameplayLikely)
+        XCTAssertFalse(evidence.gameplayLikely)
     }
 
     func testDetectorUsesMenuStencil() throws {
@@ -274,26 +274,65 @@ final class GameStartupDetectorTests: XCTestCase {
         ).screen)
     }
 
-    func testGameplayNeedsBothHudElementsButNotKnight() throws {
+    func testGameplayNeedsVerifiedMasksAndKnightInsteadOfBrightHUDRegions() throws {
         let hud = try makeImage(brightTopOriginRects: [
             CGRect(x: 0.06, y: 0.06, width: 0.05, height: 0.11),
             CGRect(x: 0.13, y: 0.06, width: 0.11, height: 0.06),
         ])
-        XCTAssertTrue(GameStartupDetector().detect(in: hud).gameplayLikely)
-        let manaOnly = try makeImage(brightTopOriginRects: [
-            CGRect(x: 0.06, y: 0.06, width: 0.05, height: 0.11),
-        ])
-        XCTAssertFalse(GameStartupDetector().detect(in: manaOnly).gameplayLikely)
+        let detector = GameStartupDetector()
+        XCTAssertFalse(detector.detect(in: hud).gameplayLikely)
+        XCTAssertFalse(detector.detect(in: hud, objectDetections: [knightDetection()]).gameplayLikely)
+        XCTAssertFalse(detector.detect(in: hud,
+            hudStencil: matchedHUDStencil(includesMana: true)).gameplayLikely)
+        XCTAssertFalse(detector.detect(in: hud,
+            hudStencil: matchedHUDStencil(includesMana: false),
+            objectDetections: [knightDetection(confidence: 0.49)]).gameplayLikely)
+        XCTAssertTrue(detector.detect(in: hud,
+            hudStencil: matchedHUDStencil(includesMana: false),
+            objectDetections: [knightDetection(confidence: 0.5)]).gameplayLikely)
     }
 
-    func testVerifiedHealthReleasesStaleProfileStencilWithoutSoul() throws {
+    func testCutsceneCannotOpenWorldWritesBeforeBothSourcesRemainStable() throws {
+        let brightScene = try makeImage(brightTopOriginRects: [
+            CGRect(x: 0.06, y: 0.06, width: 0.05, height: 0.11),
+            CGRect(x: 0.13, y: 0.06, width: 0.11, height: 0.06),
+        ])
+        let detector = GameStartupDetector()
+        let hud = matchedHUDStencil(includesMana: false)
+        var coordinator = GameStartupCoordinator()
+        for _ in 0..<16 {
+            XCTAssertFalse(coordinator.observe(detector.detect(
+                in: brightScene, hudStencil: hud
+            )).admitsWorldFrames)
+        }
+        for _ in 0..<7 {
+            XCTAssertFalse(coordinator.observe(detector.detect(
+                in: brightScene, hudStencil: hud, objectDetections: [knightDetection()]
+            )).admitsWorldFrames)
+        }
+        // Missing either source resets the consecutive confirmation window.
+        XCTAssertFalse(coordinator.observe(detector.detect(
+            in: brightScene, objectDetections: [knightDetection()]
+        )).admitsWorldFrames)
+        for _ in 0..<7 {
+            XCTAssertFalse(coordinator.observe(detector.detect(
+                in: brightScene, hudStencil: hud, objectDetections: [knightDetection()]
+            )).admitsWorldFrames)
+        }
+        XCTAssertTrue(coordinator.observe(detector.detect(
+            in: brightScene, hudStencil: hud, objectDetections: [knightDetection()]
+        )).admitsWorldFrames)
+    }
+
+    func testVerifiedHealthAndKnightReleaseStaleProfileStencilWithoutSoul() throws {
         let blank = try makeImage(brightTopOriginRects: [])
         let staleProfile = matchedMenuStencil(.selectProfile, selectedOption: "1.")
 
         let gameplay = GameStartupDetector().detect(
             in: blank,
             menuStencil: staleProfile,
-            hudStencil: matchedHUDStencil(includesMana: true)
+            hudStencil: matchedHUDStencil(includesMana: true),
+            objectDetections: [knightDetection()]
         )
         XCTAssertTrue(gameplay.gameplayLikely)
         XCTAssertNil(gameplay.screen)
@@ -301,13 +340,14 @@ final class GameStartupDetectorTests: XCTestCase {
         let healthOnlyGameplay = GameStartupDetector().detect(
             in: blank,
             menuStencil: staleProfile,
-            hudStencil: matchedHUDStencil(includesMana: false)
+            hudStencil: matchedHUDStencil(includesMana: false),
+            objectDetections: [knightDetection()]
         )
         XCTAssertTrue(healthOnlyGameplay.gameplayLikely)
         XCTAssertNil(healthOnlyGameplay.screen)
     }
 
-    func testHudPairWinsWhenGameplaySceneryResemblesTitle() throws {
+    func testHUDAndKnightWinWhenGameplaySceneryResemblesTitle() throws {
         let image = try makeImage(brightTopOriginRects: [
             CGRect(x: 0.06, y: 0.06, width: 0.05, height: 0.11),
             CGRect(x: 0.13, y: 0.06, width: 0.11, height: 0.06),
@@ -315,9 +355,21 @@ final class GameStartupDetectorTests: XCTestCase {
             CGRect(x: 0.46, y: 0.57, width: 0.088, height: 0.055),
             CGRect(x: 0.568, y: 0.57, width: 0.032, height: 0.055),
         ])
-        let evidence = GameStartupDetector().detect(in: image)
+        let evidence = GameStartupDetector().detect(
+            in: image, hudStencil: matchedHUDStencil(includesMana: false),
+            objectDetections: [knightDetection()]
+        )
         XCTAssertNil(evidence.screen)
         XCTAssertTrue(evidence.gameplayLikely)
+    }
+
+    private func knightDetection(confidence: Double = 0.9) -> LiveObjectDetection {
+        LiveObjectDetection(
+            classIdentifier: "game.playable-knight",
+            normalizedRect: CGRect(x: 0.5, y: 0.4, width: 0.05, height: 0.1),
+            confidence: confidence, sourceFrameIdentifier: 1,
+            modelVersion: LabelingModelSemanticVersion(major: 1, minor: 0)
+        )
     }
 
     private func matchedHUDStencil(includesMana: Bool) -> HUDStencilResult {

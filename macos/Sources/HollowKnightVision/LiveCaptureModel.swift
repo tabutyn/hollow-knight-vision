@@ -49,6 +49,14 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     @Published private(set) var localizationStatus = "Tracking"
     @Published private(set) var activeRoomStatus = "Room 1"
     @Published private(set) var hasGameplayStarted = false
+    private var atlasPathFrameEvidence = LiveAtlasPathFrameEvidence()
+
+    func hasAtlasPathEvidence(for image: CGImage?) -> Bool {
+        atlasPathFrameEvidence.admits(image.flatMap { LivePresentationTiming.shared.timestamp(for: $0) })
+    }
+    var hasHackerAtlasPathEvidence: Bool {
+        hackerLiveImage != nil && atlasPathFrameEvidence.admitsHackerPreview
+    }
     /// Explicit developer review only. Does not set the recognized state,
     /// change input, relax tracking acceptance, or enable atlas writes.
     var groundReviewAvailable: Bool {
@@ -63,13 +71,22 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     @Published private(set) var hackerAtlasTiles = [LiveAtlasOutput.AtlasLayer]()
     @Published private(set) var hackerAtlasRooms = [HackerAtlasRoom]()
     @Published private(set) var hackerRoomConnections = [HackerRoomConnection]()
-    @Published private(set) var hackerRoomOffsets = [UUID: CGPoint]()
+    @Published private(set) var hackerRoomPositionOverrides = [UUID: CGPoint]()
     @Published private(set) var hackerAtlasBounds: CGRect?
     @Published private(set) var hackerLiveImage: CGImage?
     @Published private(set) var hackerLiveBounds = CGRect.zero
     @Published private(set) var hackerMapFocus = CGPoint.zero
     @Published private(set) var hackerCameraTransform: GroundTruthCameraTransform?
     private var hackerRoomLayout = HackerRoomLayout.empty
+    @Published private(set) var hackerAtlasSavedStates = [AtlasSavedState]()
+    @Published private(set) var hackerAtlasAutoSave = AtlasAutoSaveSummary(registrationCount: 0, createdAt: Date())
+    @Published private(set) var hackerAtlasManagementBusy = false
+    private var hackerAtlasBlocksGameplay = false
+    @Published private(set) var hackerAtlasManagementIssue: String?
+    private var hackerAtlasRestored = false
+    private var hackerAutoSaveScheduled = false
+    private var hackerAutoSaveAllowed = true
+    private var hackerWorkspaceWanted = false
     @Published private(set) var labelImage: CGImage?
     @Published private(set) var liveBounds = CGRect.zero
     @Published private(set) var mapFocus = CGPoint.zero
@@ -78,10 +95,11 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     @Published private(set) var groundEdgeImage: CGImage?
     @Published var groundDetectEnabled = false
     @Published private(set) var groundDetectImage: CGImage?
+    @Published var groundStageEnabled = false
     @Published private(set) var groundStageImage: CGImage?
     @Published var cleanedEnabled = false
     @Published private(set) var cleanedImage: CGImage?
-    @Published var groundHypothesesEnabled = true
+    @Published var groundHypothesesEnabled = false
     @Published private(set) var groundHypothesisImage: CGImage?
     @Published private(set) var groundHypothesisTracking = GroundHypothesisTrackingResult.empty
     /// Debug/evaluation camera truth. The lock-backed getter avoids publishing
@@ -109,6 +127,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     @Published var coarseMotionDiagnosticsEnabled = false
     @Published private(set) var coarseMotionDiagnosticImage: CGImage?
     @Published private(set) var coarseMotionDiagnosticStatus = "Coarse Motion · ready"
+    private var coarseDiagnosticPrevious: (grid: LowResolutionMotionGrid, timestamp: Double)?
     @Published var stencilDetectionEnabled = false
     @Published private(set) var menuStencilImage: CGImage?
     // Admission is owned by sampleQueue; recognition is serialized on its
@@ -129,13 +148,104 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     private var hudStencilTracker = HUDStencilTracker(template: nil)
     @Published var objectDetectionEnabled = false
     @Published var objectDetectionRawEnabled = false
-    @Published var objectDetectionExtension = 0.12
     @Published var objectDetectionPixelsEnabled = false
     @Published private(set) var objectDetectionPixelImage: CGImage?
     private var groundTuning = GroundTheoryTuning.default
     private var semanticGroundTuning = GroundTheoryTuning.semanticDefault
     @Published private(set) var liveWorldReview: LiveWorldTrackerReview?
     @Published private(set) var liveWorldSnapshot: LiveWorldSnapshot?
+    @Published private(set) var ownedGroundLines = [LiveWorldGroundLine]()
+    @Published private(set) var ownedGroundOverlayLines = [GroundHypothesisAtlasLine]()
+    @Published private(set) var islandPlacementOverlay = LayerSceneFeatureReviewOverlay(markers: [], lines: [])
+    var hasEstimatedIslandPlacement: Bool {
+        liveWorldSnapshot?.trackingIslands.contains(where: \.isProvisional) == true
+    }
+    var usesIslandGroundProjection: Bool {
+        liveWorldSnapshot?.trackingIslands.contains { $0.placement != .legacyUnknown } ?? false
+    }
+    private var groundOverlayRevision = -1
+    private var groundOverlayScale: CGFloat = 0
+    private var groundOverlayAnchor = CGPoint.zero
+    private(set) lazy var visualPaths = makePathMap()
+    private(set) lazy var hackerPaths = makePathMap()
+    private var lastHackerPathRoom: String?
+    // The synchronizer supplies exact rendered-frame joins. Route evaluation is
+    // main-thread serialized and cached so paired domains cannot advance it twice.
+    private let sharedPathMatchLock = NSLock()
+    private var sharedPathMatches = [HackerMatchedFrame]()
+    private var sharedPathResults = [(generation: UInt64, timestamp: Double, row: BotObservation)]()
+    private var sharedPathLastTimestamp = -Double.infinity
+    private var sharedPathGeneration: UInt64?
+
+    private func sharedHackerPath(for row: BotObservation) -> BotObservation? {
+        if let cached = sharedPathResults.last(where: { $0.generation == row.generation && $0.timestamp == row.captureTimestamp }) {
+            return cached.row
+        }
+        sharedPathMatchLock.lock()
+        let match = sharedPathMatches.last { $0.capture.captureGeneration == row.generation && $0.capture.capturedAt == row.captureTimestamp }
+        sharedPathMatchLock.unlock()
+        guard let match else { return nil }
+        if sharedPathGeneration != row.generation {
+            sharedPathGeneration = row.generation
+            sharedPathLastTimestamp = -Double.infinity
+            sharedPathResults.removeAll()
+            if let previous = lastHackerPathRoom { hackerPaths.interrupt(room: previous) }
+            lastHackerPathRoom = nil
+        }
+        guard row.captureTimestamp > sharedPathLastTimestamp,
+              let frame = botHackerObservations.makeFrame(match, now: ProcessInfo.processInfo.systemUptime),
+              let camera = GroundTruthCameraTransform(sample: match.sample, observedAt: match.sampleObservedAt,
+                  frameSize: CGSize(width: match.capture.image.width, height: match.capture.image.height)) else { return nil }
+        sharedPathLastTimestamp = row.captureTimestamp
+        var result = frame.observation
+        let document = botHumanGround.snapshot
+        let room = hackerAtlasRooms.first { $0.sceneName == camera.sceneName }
+        let calibration = room.flatMap { AtlasPathCalibration.hacker(room: $0, document: document, camera: camera) }
+            ?? .init(scene: camera.sceneName, origin: .zero, scale: .init(x: camera.pixelsPerWorldUnitX, y: camera.pixelsPerWorldUnitY))
+        let key = room?.id.uuidString ?? "scene/" + camera.sceneName
+        if let previous = lastHackerPathRoom, previous != key { hackerPaths.interrupt(room: previous) }
+        lastHackerPathRoom = key
+        hackerPaths.setAuthored(room: key, calibration: calibration, document: document)
+        let center = calibration.local(camera.cameraWorld)
+        let local = CGPoint(x: center.x - camera.frameSize.width / 2, y: center.y - camera.frameSize.height / 2)
+        hackerPaths.observe(room: key, camera: local, width: camera.frameSize.width, row: &result, grounded: match.sample.grounded)
+        sharedPathResults.append((row.generation, row.captureTimestamp, result))
+        if sharedPathResults.count > 60 { sharedPathResults.removeFirst(sharedPathResults.count - 60) }
+        return result
+    }
+    private var visualBaseRooms = Set<Int>()
+    private(set) var visualPathRoom = ""
+    private(set) var visualPathOffset = CGPoint.zero
+    private var visualPathHandoff: (generation: UInt64, room: Int, timestamp: Double)?
+    private func makePathMap() -> AtlasPathMap {
+        let map = AtlasPathMap()
+        map.onChange = { [weak self] in self?.objectWillChange.send() }
+        return map
+    }
+
+    private func refreshHackerPaths() {
+        let document = botHumanGround.snapshot
+        for room in hackerAtlasRooms {
+            if let calibration = AtlasPathCalibration.hacker(room:room,document:document,camera:hackerCameraTransform) {
+                hackerPaths.setAuthored(room:room.id.uuidString,calibration:calibration,document:document)
+                hackerPaths.setRegisteredCoverage(room:room.id.uuidString,coverage:room.botCoverage)
+            }
+        }
+    }
+    private var botAtlasCoverage = BotAtlasCoverage()
+    private var pairedVisualAtlas: (recording: UUID, frame: BotObservation)?
+    private var publishedIslandProjection: LiveIslandWorldProjection?
+    // Protected by trackingStateLock; capture diagnostics may run off-main.
+    private var trackingIslandProjection: LiveIslandWorldProjection?
+    private struct PresentedIslandFrame {
+        let rawBounds: CGRect
+        let rawFocus: CGPoint
+        let rawPose: CGPoint
+        let island: LiveIslandCapture?
+        let scale: CGFloat
+        let anchor: CGPoint
+    }
+    private var presentedIslandFrame: PresentedIslandFrame?
     @Published private(set) var localFeatureTracking = FeatureTrackingResult.empty
     @Published private(set) var groundReference: GroundReferenceEstimate?
     @Published private(set) var activeObjectModelSummary: String?
@@ -163,43 +273,53 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
 
     private let sampleQueue = DispatchQueue(
         label: "com.ballroller.hollow-knight-vision.samples",
-        qos: .userInteractive
+        qos: .userInteractive,
+        autoreleaseFrequency: .workItem
     )
     private let menuStencilReloadQueue = DispatchQueue(
         label: "com.ballroller.hollow-knight-vision.menu-stencil-reload",
-        qos: .utility
+        qos: .utility,
+        autoreleaseFrequency: .workItem
     )
     private let renderQueue = DispatchQueue(
         label: "com.ballroller.hollow-knight-vision.render",
-        qos: .userInitiated
+        qos: .userInitiated,
+        autoreleaseFrequency: .workItem
     )
     private let hackerPresentationQueue = DispatchQueue(
         label: "com.ballroller.hollow-knight-vision.hacker-presentation",
-        qos: .userInteractive
+        qos: .userInteractive,
+        autoreleaseFrequency: .workItem
     )
     private let hackerAtlasQueue = DispatchQueue(
         label: "com.ballroller.hollow-knight-vision.hacker-atlas",
-        qos: .userInitiated
+        qos: .userInitiated,
+        autoreleaseFrequency: .workItem
     )
     private let atlasManagementQueue = DispatchQueue(
         label: "com.ballroller.hollow-knight-vision.atlas-management",
-        qos: .userInitiated
+        qos: .userInitiated,
+        autoreleaseFrequency: .workItem
     )
     private let atlasMetadataQueue = DispatchQueue(
         label: "com.ballroller.hollow-knight-vision.atlas-metadata",
-        qos: .utility
+        qos: .utility,
+        autoreleaseFrequency: .workItem
     )
     private let inputPathStoreQueue = DispatchQueue(
         label: "com.ballroller.hollow-knight-vision.input-path-store",
-        qos: .utility
+        qos: .utility,
+        autoreleaseFrequency: .workItem
     )
     private let visionQueue = DispatchQueue(
         label: "com.ballroller.hollow-knight-vision.vision",
-        qos: .userInitiated
+        qos: .userInitiated,
+        autoreleaseFrequency: .workItem
     )
     private let objectInferenceQueue = DispatchQueue(
         label: "com.ballroller.hollow-knight-vision.object-inference",
-        qos: .userInitiated
+        qos: .userInitiated,
+        autoreleaseFrequency: .workItem
     )
     private let poseImageContext = GroundMetalResources.shared.makeImageContext()
     private let framePump = LatestFramePump<RenderFrame>()
@@ -217,14 +337,23 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     private let persistentFeatureTracker = PersistentFeatureTracker()
     // Twelve 60 Hz observations admit motion-verified, cleaned floor evidence
     // before a newly exposed tile travels behind the player.
-    private let groundHypothesisTracker = GroundHypothesisTracker(
-        minimumObservationSeconds: 0.2, backgroundGlobalSearch: true,
-        confirmedLossGraceSeconds: 3, productionCameraSolver: true)
+    private let groundHypothesisTracker: GroundHypothesisTracker
+    private var trackingIslandCoordinator = LiveTrackingIslandCoordinator()
+    private let gameplayGym: Bool
+    private var gymPreviousAction = BotAction.neutral
+    private var gymObservation: BotObservation?
+    private let visualReplayMode: Bool
+    private var visualReplayInput: VisualReplayGroundInput?
+    private var visualReplayDirection: VisualRoomDirection?
+    private var visualReplayLastJump = -Double.infinity
+    private var visualReplayWorldTimestamp: Double?
     /// Semantic ground uses the tracker pose but never participates in its
     /// camera solve. This lets labeled edge tuning change the green map without
     /// changing the feature anchors that make return tracking stable.
     private let semanticGroundAtlas = GroundSemanticAtlas()
     private let transitionMotionBridge = TransitionMotionBridge()
+    private let calibratedSceneMotion = CalibratedSceneMotionTracker()
+    private var visualFallMotion = VisualFallMotionPrior()
     private var groundPlacementRecovery = GroundPlacementRecovery()
     private let visualRoomTracker = VisualRoomTransitionTracker()
     /// Vision-queue-owned runtime state. Unlike the published diagnostic
@@ -255,8 +384,60 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     // construct this thread-safe pipeline before either queue starts.
     private let atlasPipeline: LiveAtlasPipeline
     private let roomTopologyURL: URL
-    private let atlasStateStore = AtlasStateStore()
+    private var roomTopologyWritesEnabled = true
+    private let atlasStateStore: AtlasStateStore
+    private let hackerAtlasStateStore: AtlasStateStore
+    private let hackerAtlasActiveURL: URL
     private let inputPathRecorder = InputPathRecorder()
+    let botDemonstrations = BotDemonstrationController()
+    let botPlayer: BotPlaybackController
+    private let botEvaluation = BotEvaluationRecorder()
+    let botDemo = BotDemoController()
+    private let botHumanGround = BotHumanGroundTerrainCache()
+    private let hackerBotQueue = DispatchQueue(label: "hkv.bot.hacker-walls", qos: .userInitiated)
+    private lazy var botHackerObservations = BotHackerObservationSource(ground: botHumanGround)
+    private var visualBotGate = BotObservationPublicationGate() // main thread
+    private var hackerBotGate = BotObservationPublicationGate() // main thread
+    private var botVisualKnightMemory = BotVisualKnightMemory() // main thread
+    private var blockadeVisits = [BotDomain: BotBlockadeVisit]()
+    private var blockadeResetAt = -Double.infinity
+
+    private func resetLiveBlockades(at timestamp: Double = ProcessInfo.processInfo.systemUptime) {
+        guard timestamp > blockadeResetAt else { return }
+        objectWillChange.send()
+        blockadeVisits.removeAll()
+        blockadeResetAt = timestamp
+    }
+
+    func blockadeOverlay(_ domain: BotDomain) -> [LayerSceneFeatureReviewOverlay.Line] {
+        (blockadeVisits[domain]?.map.marks ?? []).compactMap { mark in
+            guard !mark.crossed else { return nil }
+            let center: CGPoint, width: Double
+            if domain == .hacker {
+                guard let camera = hackerCameraTransform, mark.space == "hacker/" + camera.sceneName,
+                      !hackerLiveBounds.isEmpty else { return nil }
+                center = camera.worldToAtlas(CGPoint(x: mark.x, y: mark.y), liveBounds: hackerLiveBounds)
+                width = mark.viewWidth * camera.pixelsPerWorldUnitX
+            } else {
+                guard let origin = publishedIslandProjection?.blockadeOrigin(mark.space), groundOverlayScale > 0 else { return nil }
+                center = CGPoint(x: (origin.x + mark.x - groundOverlayAnchor.x) * groundOverlayScale,
+                                 y: (origin.y + mark.y - groundOverlayAnchor.y) * groundOverlayScale)
+                width = mark.viewWidth * groundOverlayScale
+            }
+            let dy = 0.035 * width
+            return .init(start: CGPoint(x: center.x, y: center.y - dy), end: CGPoint(x: center.x, y: center.y + dy),
+                         kind: .blockedPassage)
+        }
+    }
+    @Published private(set) var botTerrainSource = "detected"
+    @Published private(set) var botHumanTerrainCount = 0
+    // Protected by objectInferenceStateLock; delayed solves cannot use future boxes.
+    private var botDetectionHistory = [LiveObjectDetectionBatch]()
+    private var lastBotObservationTimestamp = -Double.infinity // visionQueue
+    private var lastBotAuditTimestamp = -Double.infinity // visionQueue
+    private var botObservationRoomID: Int?
+    private var botObservationRoomStartedAt = -Double.infinity
+    private var stoppingUnifiedRecording = false
     private let inputPathStore = InputPathStore()
     private let playbackDivergenceMonitor = PlaybackDivergenceMonitor()
     private var pathPlaybackAbortIssue: String?
@@ -270,7 +451,13 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             DispatchQueue.main.async { self?.inputControlStatus = status }
         },
         capabilitiesHandler: { [weak self] capabilities in
-            self?.receiverCapabilities = capabilities
+            guard let self else { return }
+            if self.receiverCapabilities.contains(ReceiverControlProtocol.groundTruthCapability),
+               !capabilities.contains(ReceiverControlProtocol.groundTruthCapability) {
+                self.updateAtlasPathEvidence { $0 = LiveAtlasPathFrameEvidence() }
+                self.groundTruthCameraStateLock.withLock { self.latestGroundTruthCameraSample = nil }
+            }
+            self.receiverCapabilities = capabilities
         },
         pauseStateHandler: { [weak self] state in
             DispatchQueue.main.async { self?.applyLabelPauseState(state) }
@@ -283,7 +470,15 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             )
             DispatchQueue.main.async { [weak self] in
                 self?.handleQuitGameButton(button, isPressed: isPressed)
+                if isPressed { self?.stopBotDemo(reason: "Manual control") }
             }
+        },
+        demonstrationInputHandler: { [weak self] button, pressed, timestamp in
+            self?.botDemonstrations.recordInput(button: button, isPressed: pressed, at: timestamp)
+        },
+        botInterruptionHandler: { [weak self] sessionID, reason in
+            self?.botPlayer.interrupted(sessionID: sessionID, reason: reason)
+            self?.botDemo.interrupted(sessionID: sessionID, reason: reason)
         },
         groundTruthHandler: { [weak self] sample, timestamp in
             self?.inputPathRecorder.recordGroundTruth(sample, observedAt: timestamp)
@@ -354,6 +549,11 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     private var objectDetectionTracker = LiveObjectDetectionTracker()
     private var objectDetectionIcons = [String: CGImage]()
     private var gameStatusTracker = LiveGameStatusTracker()
+    private var profileLaunchDetector = ProfileLaunchDetector() // sampleQueue
+    private var profileLaunchPending = false // sampleQueue
+    private var profileLaunchFailed = false // sampleQueue
+    private let profileAtlasGate = OSAllocatedUnfairLock(initialState: false)
+    private var switchingProfileAtlas = false // main queue
     // Owned by sampleQueue with menu stencil admission.
     private var gameplayMenuEvidenceGate = GameplayMenuEvidenceGate()
     private var quitGameExitWatchGeneration: UInt64 = 0
@@ -381,6 +581,46 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         generation: 0
     )
 
+    private var knightFootLocator = KnightFootLocator()
+    private var knightContactTracker = KnightTerrainContactTracker()
+    private var walkedGroundMemory = WalkedGroundMemory() // visionQueue
+    private struct TerrainReviewFrame {
+        let detection: TerrainWallDetection
+        let time: Double
+        let generation: UInt64
+        let roomID: Int
+        let camera: CGPoint
+        let islandID: Int?
+        let walked: [CleanFloorLine]
+    }
+    @Published private var terrainReviewFrame: TerrainReviewFrame?
+
+    var visibleWalkedGround: [GroundHypothesisAtlasLine] {
+        guard let frame = terrainReviewFrame, let presentation = presentedIslandFrame,
+              frame.generation == currentStatusGeneration, let island = presentation.island,
+              island.id == frame.islandID, island.roomID == frame.roomID else { return [] }
+        let x = liveBounds.minX + (frame.camera.x - presentation.rawPose.x) * presentation.scale
+        let top = liveBounds.maxY + (frame.camera.y - presentation.rawPose.y) * presentation.scale
+        return frame.walked.map { floor in
+            let y = top - CGFloat(floor.row)
+            return .init(segmentID: LiveGroundLineEvidence.walkedSegmentID,
+                atlasStart: .init(x: x + CGFloat(floor.xRange.lowerBound), y: y),
+                atlasEnd: .init(x: x + CGFloat(floor.xRange.upperBound + 1), y: y))
+        }
+    }
+
+    func visualTerrainOverlay() -> LayerSceneFeatureReviewOverlay {
+        let empty = LayerSceneFeatureReviewOverlay(markers: [], lines: [])
+        guard groundHypothesesEnabled, let frame = terrainReviewFrame,
+              frame.generation == currentStatusGeneration, let image = liveImage,
+              let time = LivePresentationTiming.shared.timestamp(for: image), abs(time - frame.time) <= 0.25 else { return empty }
+        guard let presentation = presentedIslandFrame, presentation.island?.id == frame.islandID,
+              presentation.island?.roomID == frame.roomID || time == frame.time else { return empty }
+        let dx = (frame.camera.x - presentation.rawPose.x) * presentation.scale
+        let dy = (frame.camera.y - presentation.rawPose.y) * presentation.scale
+        return frame.detection.overlay { CGPoint(x: self.liveBounds.minX + dx + $0.x, y: self.liveBounds.maxY + dy - $0.y) }
+    }
+
     private struct VisionFrame {
         let presentationFrame: CGImage
         let solveWidth: CGFloat
@@ -394,6 +634,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         let generation: UInt64
         var hudStencil: HUDStencilResult? = nil
         var menuStencil: MenuStencilResult? = nil
+        var horizontalInput: VisualRoomDirection? = nil
+        var jumpHeld = false
         var enqueuedAt: Double = ProcessInfo.processInfo.systemUptime
     }
 
@@ -414,6 +656,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         /// presentation velocity is cleared as soon as ground is lost.
         var reliableGroundCameraVelocity: CGVector? = nil
         var reliableGroundVelocityTimestamp: TimeInterval? = nil
+        var islandCapture: LiveIslandCapture? = nil
     }
 
     private struct RenderFrame {
@@ -434,6 +677,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         var showsHUDStencil: Bool = false
         var menuStencil: MenuStencilResult? = nil
         var showsMenuStencil: Bool = false
+        var islandCapture: LiveIslandCapture? = nil
+        var islandWorldRevision: Int? = nil
     }
 
     private struct ObjectInferenceFrame {
@@ -443,14 +688,23 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         let sourceFrameIdentifier: UInt64
         let timestamp: Double
         let captureGeneration: UInt64
-        let extensionFraction: CGFloat
         let createsPixelDiagnostic: Bool
     }
 
     init(
         autoNavigateToGameplay: Bool = false,
-        gameMode: HollowKnightRuntimeMode = .normal
+        gameMode: HollowKnightRuntimeMode = .normal,
+        visualReplayMode: Bool = false,
+        gameplayGym: Bool = false,
+        worldRootOverride: URL? = nil
     ) {
+        precondition(!gameplayGym || visualReplayMode)
+        self.gameplayGym = gameplayGym
+        self.botPlayer = BotPlaybackController(loadModel: !visualReplayMode)
+        self.visualReplayMode = visualReplayMode
+        groundHypothesisTracker = GroundHypothesisTracker(
+            minimumObservationSeconds: 0.2, backgroundGlobalSearch: !visualReplayMode,
+            confirmedLossGraceSeconds: 3, productionCameraSolver: true)
         self.autoNavigateToGameplay = autoNavigateToGameplay
         self.gameMode = gameMode
         if UserDefaults.standard.object(
@@ -460,14 +714,58 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                 forKey: Self.randomizePlayerStateAfterLabelDefaultsKey
             )
         }
-        let worldRootURL = LiveWorldSessionStore.defaultRootURL()
+        let worldRootURL = worldRootOverride ?? LiveWorldSessionStore.defaultRootURL()
+        let storageRoot = worldRootURL.deletingLastPathComponent()
+        atlasStateStore = AtlasStateStore(rootURL: storageRoot.appendingPathComponent("atlas-states-v1", isDirectory: true))
+        let hackerRoot = HackerAtlasArchiveStore.rootURL(beside: worldRootURL)
+        hackerAtlasStateStore = AtlasStateStore(rootURL: hackerRoot.appendingPathComponent("states", isDirectory: true))
+        hackerAtlasActiveURL = hackerRoot.appendingPathComponent("active", isDirectory: true)
         roomTopologyURL = worldRootURL.appendingPathComponent("visual-rooms.json")
         atlasPipeline = LiveAtlasPipeline(
             context: GroundMetalResources.shared.makeImageContext(),
+            runsIntegrationSynchronously: visualReplayMode,
             worldRootURL: worldRootURL,
             restoresPersistedWorldOnInitialization: false
         )
         super.init()
+        atlasAutoSave = atlasPipeline.activeAutoSaveSummary()
+        // Construct before the capture and receiver workers can both use it.
+        _ = botHackerObservations
+        botDemonstrations.onStop = { [weak self] _ in
+            guard let self, self.isPathRecording, !self.isPathPlaybackActive else { return }
+            self.stopPathRecording()
+        }
+        botPlayer.configure(
+            canContinue: { [weak self] in self?.canStartBotPlayback ?? false },
+            begin: { [weak self] in self?.gameControlForwarder.beginBotControl() },
+            apply: { [weak self] action, deadline, sessionID in
+                self?.gameControlForwarder.applyBotAction(action, validUntil: deadline, sessionID: sessionID) ?? false
+            },
+            neutralize: { [weak self] sessionID in
+                self?.gameControlForwarder.neutralizeBotControl(sessionID: sessionID)
+            },
+            end: { [weak self] sessionID in self?.gameControlForwarder.endBotControl(sessionID: sessionID) }
+        )
+        botPlayer.onStarted = { [weak self] domain, policy in
+            guard let self, self.botEvaluation.start(domain: domain, model: policy, reference: self.botHumanGround.snapshot) else { return false }
+            self.gameControlForwarder.setRenderFrameMarkerEnabled(true)
+            return true
+        }
+        botPlayer.onActionApplied = { [weak self] action, time in self?.botEvaluation.action(action, at: time) }
+        botPlayer.onStopped = { [weak self] in
+            guard let self else { return }
+            self.botEvaluation.stop(atlasScore: self.botPlayer.atlasScore)
+            self.restoreRenderFrameMarkerPolicy()
+        }
+        botDemo.configure(
+            canContinue: { [weak self] in self?.canStartBotDemo ?? false },
+            begin: { [weak self] in self?.gameControlForwarder.beginBotControl() },
+            press: { [weak self] button, session in
+                self?.gameControlForwarder.pulseBotDemoButton(button, sessionID: session) ?? false
+            },
+            end: { [weak self] session in self?.gameControlForwarder.endBotControl(sessionID: session) },
+            botIsPlaying: { [weak self] in self?.botPlayer.isActive ?? false }
+        )
         // Compile the patch-search pipeline before capture begins. The first
         // gameplay frame should not pay runtime shader setup cost.
         _ = GroundPatchMatcher.shared.metalAvailable
@@ -478,11 +776,18 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         ) { [weak self] notification in
             self?.handleTerminatedApplication(notification)
         }
-        let restoredRoom = restoreRoomTopology(
-            worldSnapshot: atlasPipeline.currentWorldSnapshot()
-        )
+        let initialWorld = atlasPipeline.currentWorldSnapshot()
+        liveWorldSnapshot = initialWorld
+        publishedIslandProjection = LiveIslandWorldProjection(snapshot: initialWorld)
+        trackingIslandProjection = publishedIslandProjection
+        ownedGroundLines = initialWorld.ownedGroundLines
+        refreshOwnedWorldOverlays()
+        let restoredRoom = restoreRoomTopology(worldSnapshot: initialWorld)
         atlasPipeline.setRoomCompositionBoundsProvider { [weak visualRoomTracker] roomID in
             visualRoomTracker?.compositionBounds(for: roomID) ?? .unbounded
+        }
+        atlasPipeline.setIslandClosureSearchAllowed { [weak visualRoomTracker] in
+            visualRoomTracker?.snapshot.portals.isEmpty == true
         }
         activeRoomStatus = restoredRoom.statusText
         transitionPortals = restoredRoom.portals
@@ -510,14 +815,19 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async { [weak self] in
                     guard let self,
                           update.captureGeneration == self.worldBasis.snapshot.captureGeneration else { return }
+                    guard update.worldRevision >= (self.liveWorldSnapshot?.mapRevision ?? -1) else { return }
                     self.liveWorldReview = update.review
                     self.liveWorldSnapshot = update.snapshot
+                    self.publishedIslandProjection = LiveIslandWorldProjection(snapshot: update.snapshot)
+                    self.ownedGroundLines = update.snapshot.ownedGroundLines
                     self.publishAtlasTiles(update.atlasTiles)
+                    self.reprojectPresentedIslandFrame()
                 }
                 if let closure = update.acceptedClosure {
                     self.inputPathRecorder.recordLoopClosure(
                         update: update,
-                        closure: closure
+                        closure: closure,
+                        observedAt: self.visualReplayMode ? update.captureTimestamp : ProcessInfo.processInfo.systemUptime
                     )
                     self.performanceLog.info(
                         "globalLoopCorrection dx=\(update.correction.dx, privacy: .public) dy=\(update.correction.dy, privacy: .public) revision=\(update.worldRevision, privacy: .public) support=\(closure.support, privacy: .public)"
@@ -530,10 +840,12 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         // it synchronously here prevents AppKit from creating the first window
         // and makes a healthy running game look undiscovered. The existing
         // reload queue publishes the finished catalog onto the sample queue.
-        refreshMenuStencilCatalog()
-        reloadActiveObjectModels()
-        refreshAtlasSavedStates()
-        if gameMode == .normal {
+        if !visualReplayMode {
+            refreshMenuStencilCatalog()
+            reloadActiveObjectModels()
+            refreshAtlasSavedStates()
+        }
+        if !visualReplayMode && gameMode == .normal {
             inputControlStatus = visionText("nativeInputReady")
             applyLabelPauseState(.ready)
         }
@@ -546,6 +858,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func reloadActiveObjectModels() {
+        botDemonstrations.stop(reason: "detector-changed")
+        botPlayer.stop(reason: "Detector changed")
+        botDemo.stop(reason: "Detector changed")
         objectInferenceStateLock.lock()
         objectModelConfigurationID &+= 1
         let configurationID = objectModelConfigurationID
@@ -556,6 +871,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         latestRawObjectDetectionBatch = nil
         latestMaskDetectionBatch = nil
         previousMaskDetectionBatch = nil
+        botDetectionHistory = []
         objectDetectionTracker.reset()
         objectInferenceStateLock.unlock()
         objectInferencePump.invalidate(epoch: epoch)
@@ -710,6 +1026,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func stopCapture() {
+        botDemonstrations.stop(reason: "capture-stopped")
+        botPlayer.stop(reason: "Capture stopped")
+        botDemo.stop(reason: "Capture stopped")
         wantsCapture = false
         guard !operationInFlight else { return }
         guard let activeStream = stream else {
@@ -753,6 +1072,176 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         }
     }
 
+    func refreshHackerAtlasSavedStates() {
+        atlasManagementQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                let states = try self.hackerAtlasStateStore.list()
+                var summary = self.hackerAtlasQueue.sync { self.hackerAtlasPipeline.archive().autoSaveSummary }
+                if let bytes = try? AtlasDiskUsage.allocatedByteCount(at: self.hackerAtlasActiveURL) {
+                    summary = summary.withTotalByteCount(bytes)
+                }
+                DispatchQueue.main.async {
+                    self.hackerAtlasSavedStates = states
+                    self.hackerAtlasAutoSave = summary
+                }
+            } catch {
+                DispatchQueue.main.async { self.hackerAtlasManagementIssue = error.localizedDescription }
+            }
+        }
+    }
+
+    func saveHackerAtlasState(name: String) {
+        performHackerAtlasManagement { [self] archive in
+            _ = try hackerAtlasStateStore.save(name: name) { try HackerAtlasArchiveStore.write(archive, to: $0) }
+            return nil
+        }
+    }
+
+    func loadHackerAtlasState(_ state: AtlasSavedState) {
+        performHackerAtlasManagement(replacingActive: true) { [self] archive in
+            let loaded = try HackerAtlasArchiveStore.read(from: hackerAtlasStateStore.worldURL(for: state))
+            try savePreviousHackerAtlas(archive, action: "Load")
+            return loaded
+        }
+    }
+
+    func newHackerAtlas() {
+        performHackerAtlasManagement(replacingActive: true) { [self] archive in
+            try savePreviousHackerAtlas(archive, action: "New")
+            return archive.emptyForCurrentProfile
+        }
+    }
+
+    func deleteHackerAtlasState(_ state: AtlasSavedState) {
+        performHackerAtlasManagement { [self] _ in
+            try hackerAtlasStateStore.delete(state)
+            return nil
+        }
+    }
+
+    func deleteHackerAutoSave() {
+        performHackerAtlasManagement(replacingActive: true) { $0.emptyForCurrentProfile }
+    }
+
+    private func savePreviousHackerAtlas(_ archive: HackerAtlasArchive, action: String) throws {
+        guard archive.profile != nil || !archive.rooms.isEmpty else { return }
+        _ = try hackerAtlasStateStore.save(name: archive.profile?.name ??
+            "Atlas before \(action) · \(Date().formatted(date: .abbreviated, time: .shortened))", profile: archive.profile) {
+            try HackerAtlasArchiveStore.write(archive, to: $0)
+        }
+    }
+
+    private func performHackerAtlasManagement(
+        replacingActive: Bool = false, activateAfter: Bool? = nil, blocksGameplay: Bool = true,
+        completion: ((Error?) -> Void)? = nil,
+        _ operation: @escaping (HackerAtlasArchive) throws -> HackerAtlasArchive?
+    ) {
+        guard !hackerAtlasManagementBusy else {
+            completion?(BotRuntimeError.incompatible("Hacker Atlas is busy."))
+            return
+        }
+        hackerAtlasBlocksGameplay = blocksGameplay
+        hackerAtlasManagementBusy = true
+        hackerAtlasManagementIssue = nil
+        let reactivate = activateAfter ?? isHackerWorkspaceActive()
+        if replacingActive {
+            setHackerWorkspaceActive(false)
+            hackerWorkspaceWanted = reactivate
+        }
+        let positionOverrides = hackerRoomPositionOverrides
+        atlasManagementQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                var previous = self.hackerAtlasQueue.sync { self.hackerAtlasPipeline.archive() }
+                let ids = Set(previous.rooms.map(\.id))
+                previous.roomPositionOverrides = positionOverrides.filter { ids.contains($0.key) }
+                let loaded = try operation(previous)
+                if let loaded {
+                    try self.hackerAtlasQueue.sync { try self.hackerAtlasPipeline.restore(loaded) }
+                    do { try HackerAtlasArchiveStore.write(loaded, to: self.hackerAtlasActiveURL) }
+                    catch {
+                        try self.hackerAtlasQueue.sync { try self.hackerAtlasPipeline.restore(previous) }
+                        throw error
+                    }
+                    self.hackerPresentationQueue.sync { self.hackerFramePreparer.restoreAnchors(loaded.anchors) }
+                }
+                let output = loaded.map { _ in self.hackerAtlasQueue.sync {
+                    self.hackerAtlasPipeline.output(sceneName: "", unityFrame: 0)
+                } }
+                let states = try self.hackerAtlasStateStore.list()
+                var summary = (loaded ?? previous).autoSaveSummary
+                if let bytes = try? AtlasDiskUsage.allocatedByteCount(at: self.hackerAtlasActiveURL) {
+                    summary = summary.withTotalByteCount(bytes)
+                }
+                DispatchQueue.main.async {
+                    if let output {
+                        self.hackerPaths.reset()
+                        self.hackerAtlasTiles = output.atlasTiles
+                        self.hackerAtlasRooms = output.rooms
+                        self.refreshHackerPaths()
+                        self.hackerRoomConnections = output.connections
+                        self.hackerRoomLayout = HackerRoomLayout.make(rooms: output.rooms, connections: output.connections,
+                            floorAlignedConnectionIDs: output.floorAlignedConnectionIDs)
+                        self.hackerRoomPositionOverrides = loaded?.roomPositionOverrides ?? [:]
+                        self.hackerLiveImage = nil
+                        self.hackerLiveBounds = .zero
+                        self.hackerCameraTransform = nil
+                        self.hackerMapFocus = .zero
+                        self.updateHackerAtlasBounds()
+                        self.hackerAutoSaveAllowed = true
+                    }
+                    self.hackerAtlasSavedStates = states
+                    self.hackerAtlasAutoSave = summary
+                    self.hackerAtlasBlocksGameplay = false
+                    self.hackerAtlasManagementBusy = false
+                    if replacingActive && reactivate && self.hackerWorkspaceWanted { self.setHackerWorkspaceActive(true) }
+                    completion?(nil)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.hackerAtlasManagementIssue = error.localizedDescription
+                    self.hackerAtlasBlocksGameplay = false
+                    self.hackerAtlasManagementBusy = false
+                    // Preserve an unreadable Auto Save until the user explicitly
+                    // replaces it with New or a successfully loaded restore point.
+                    if activateAfter == true { self.hackerAutoSaveAllowed = false }
+                    if replacingActive && reactivate && self.hackerWorkspaceWanted { self.setHackerWorkspaceActive(true) }
+                    completion?(error)
+                }
+            }
+        }
+    }
+
+    private func scheduleHackerAutoSave() {
+        guard !hackerAutoSaveScheduled, hackerAutoSaveAllowed else { return }
+        hackerAutoSaveScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self else { return }
+            self.hackerAutoSaveScheduled = false
+            guard !self.hackerAtlasManagementBusy, self.hackerAutoSaveAllowed else { return }
+            // This copies a snapshot without replacing the live atlas. Its
+            // five-second cadence must not interrupt bot play or recording.
+            self.performHackerAtlasManagement(blocksGameplay: false) { archive in
+                try HackerAtlasArchiveStore.write(archive, to: self.hackerAtlasActiveURL)
+                return nil
+            }
+        }
+    }
+
+    func flushHackerAutoSave() {
+        guard hackerAtlasRestored, hackerAutoSaveAllowed else { return }
+        setHackerWorkspaceActive(false)
+        let positionOverrides = hackerRoomPositionOverrides
+        atlasManagementQueue.sync {
+            var archive = hackerAtlasQueue.sync { hackerAtlasPipeline.archive() }
+            let ids = Set(archive.rooms.map(\.id))
+            archive.roomPositionOverrides = positionOverrides.filter { ids.contains($0.key) }
+            do { try HackerAtlasArchiveStore.write(archive, to: self.hackerAtlasActiveURL) }
+            catch { hackerAtlasLog.error("Auto Save failed: \(error.localizedDescription, privacy: .public)") }
+        }
+    }
+
     private func refreshAtlasAutoSaveSize(for summary: AtlasAutoSaveSummary) {
         guard let rootURL = atlasPipeline.activeAutoSaveRootURL else { return }
         atlasMetadataQueue.async { [weak self] in
@@ -761,7 +1250,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             else { return }
             DispatchQueue.main.async {
                 guard self.atlasAutoSave.registrationCount == summary.registrationCount,
-                      self.atlasAutoSave.createdAt == summary.createdAt
+                      self.atlasAutoSave.createdAt == summary.createdAt, self.atlasAutoSave.profile == summary.profile
                 else { return }
                 self.atlasAutoSave = summary.withTotalByteCount(bytes)
             }
@@ -785,6 +1274,76 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                 importPreviousAtlasArchive(archiveURL, action: "Load")
             }
             return loaded
+        }
+    }
+
+    func switchToProfileAtlas(_ launch: ProfileLaunch) {
+        if !switchingProfileAtlas { resetLiveBlockades() }
+        switchingProfileAtlas = true
+        guard !atlasManagementBusy, !hackerAtlasManagementBusy else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.switchToProfileAtlas(launch) }
+            return
+        }
+        guard let root = atlasPipeline.activeAutoSaveRootURL else {
+            finishProfileAtlasSwitch(LiveAtlasStateError.activeWorldUnavailable)
+            return
+        }
+        // Read durable ownership once per launch, including when Vision has just opened.
+        do {
+            let current = try SaveProfileAtlas.read(from: root)
+            let saved = launch.isNew || current?.slot == launch.slot ? [] : try atlasStateStore.list()
+            let target = SaveProfileAtlas.target(for: launch, active: current, saved: saved)
+            let adoptingUnassigned = !launch.isNew && current == nil && !saved.contains { $0.profile == target }
+            if current == target {
+                switchHackerProfileAtlas(to: target, adoptingUnassigned: adoptingUnassigned)
+                return
+            }
+            performAtlasManagement(replacingActiveWorld: !adoptingUnassigned, { [self] in
+                let loaded = try atlasPipeline.activateProfile(target, in: atlasStateStore, adoptingUnassigned: adoptingUnassigned)
+                if let archive = loaded?.archivedPreviousWorldURL { importPreviousAtlasArchive(archive, action: target.name) }
+                return loaded
+            }) { [weak self] error in
+                guard let self else { return }
+                if let error { finishProfileAtlasSwitch(error) }
+                else {
+                    switchHackerProfileAtlas(to: target, adoptingUnassigned: adoptingUnassigned)
+                }
+            }
+        } catch { finishProfileAtlasSwitch(error) }
+    }
+
+    private func switchHackerProfileAtlas(to target: SaveProfileAtlas, adoptingUnassigned: Bool) {
+        guard !hackerAtlasManagementBusy else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.switchHackerProfileAtlas(to: target, adoptingUnassigned: adoptingUnassigned) }
+            return
+        }
+        let readFromDisk = !hackerAtlasRestored || !hackerAutoSaveAllowed
+        if !readFromDisk, hackerAtlasAutoSave.profile == target {
+            finishProfileAtlasSwitch(nil)
+            return
+        }
+        performHackerAtlasManagement(replacingActive: true, completion: { [weak self] error in
+            if error == nil { self?.hackerAtlasRestored = true }
+            self?.finishProfileAtlasSwitch(error)
+        }) { [self] memory in
+            let disk = self.hackerAtlasActiveURL
+            let previous = readFromDisk && FileManager.default.fileExists(atPath: disk.path)
+                ? try HackerAtlasArchiveStore.read(from: disk) : memory
+            return try previous.switching(to: target, library: hackerAtlasStateStore, adoptingUnassigned: adoptingUnassigned) ?? (readFromDisk ? previous : nil)
+        }
+    }
+
+    private func finishProfileAtlasSwitch(_ error: Error?) {
+        switchingProfileAtlas = false
+        if let error {
+            atlasManagementIssue = "Profile atlas: " + error.localizedDescription
+            botDemo.stop(reason: "Profile atlas unavailable", failed: true)
+        }
+        sampleQueue.async { [weak self] in
+            guard let self else { return }
+            profileLaunchPending = false
+            profileLaunchFailed = error != nil
+            profileAtlasGate.withLock { $0 = error != nil }
         }
     }
 
@@ -861,6 +1420,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             return
         }
         atlasManagementBusy = true
+        botDemonstrations.stop(reason: "atlas-changed")
+        botPlayer.stop(reason: "Atlas changed")
+        if !switchingProfileAtlas { botDemo.stop(reason: "Atlas changed") }
         atlasManagementIssue = nil
         if replacingActiveWorld {
             // Close the capture epoch before touching persistent storage. A
@@ -868,13 +1430,25 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             // check and atlas submission; invalidating its frame-pump ticket
             // here prevents that old pose becoming registration 1 in the new
             // atlas. Resetting after the disk operation is too late.
-            advanceGeneration(resetCamera: true)
+            advanceGeneration(resetCamera: true, preservingMenuNavigation: switchingProfileAtlas)
         }
+        let priorProfile = atlasAutoSave.profile
         atlasManagementQueue.async { [weak self] in
             guard let self else { return }
             do {
                 let loaded = try operation()
                 if let loaded {
+                    self.visionQueue.sync {
+                        self.trackingIslandCoordinator.reset(nextID:
+                            (loaded.snapshot.trackingIslands.map(\.id).max() ?? -1) + 1)
+                        self.trackingIslandCoordinator.applyWorldSnapshot(loaded.snapshot)
+                        self.walkedGroundMemory = WalkedGroundMemory(snapshot: loaded.snapshot)
+                        self.knightContactTracker = .init()
+                        self.trackingStateLock.lock()
+                        self.trackingIslandProjection = LiveIslandWorldProjection(snapshot: loaded.snapshot)
+                        self.trackingState.islandCapture = nil
+                        self.trackingStateLock.unlock()
+                    }
                     self.sampleQueue.sync {
                         _ = self.restoreRoomTopology(worldSnapshot: loaded.snapshot)
                     }
@@ -888,12 +1462,22 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                         self.atlasBounds = nil
                         self.atlasRevision = nil
                         self.atlasTiles = []
+                        self.visualPaths.reset()
+                        self.visualBaseRooms.removeAll()
+                        self.visualPathRoom = ""
+                        self.visualPathOffset = .zero
                         self.liveImage = nil
                         self.liveBounds = .zero
                         self.mapFocus = .zero
                         self.presentationCorrectionOffset = .zero
                         self.liveWorldReview = nil
+                        self.botAtlasCoverage = BotAtlasCoverage()
                         self.liveWorldSnapshot = loaded.snapshot
+                        self.publishedIslandProjection = LiveIslandWorldProjection(snapshot: loaded.snapshot)
+                        self.ownedGroundLines = loaded.snapshot.ownedGroundLines
+                        self.presentedIslandFrame = nil
+                        self.ownedGroundOverlayLines = []
+                        self.groundOverlayRevision = -1
                         self.localFeatureTracking = .empty
                         self.groundReference = nil
                         self.groundEdgeImage = nil
@@ -903,6 +1487,10 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                         self.groundHypothesisImage = nil
                         self.groundHypothesisTracking = .empty
                         self.publishAtlasTiles(loaded.atlasTiles)
+                        self.refreshOwnedWorldOverlays()
+                    }
+                    if loaded != nil || priorProfile != autoSave.profile {
+                        self.resetLiveBlockades()
                     }
                     self.atlasSavedStates = states
                     self.atlasAutoSave = autoSave
@@ -923,9 +1511,13 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
 
     func configureGameMode(_ mode: HollowKnightRuntimeMode) {
         guard gameMode != mode else { return }
+        botDemonstrations.stop(reason: "game-mode-changed")
+        botPlayer.stop(reason: "Game mode changed")
+        botDemo.stop(reason: "Game mode changed")
         gameControlForwarder.stop()
         gameMode = mode
         receiverCapabilities = []
+        updateAtlasPathEvidence { $0 = LiveAtlasPathFrameEvidence() }
         groundTruthCameraStateLock.lock()
         latestGroundTruthCameraSample = nil
         groundTruthCameraStateLock.unlock()
@@ -952,114 +1544,350 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         armQuitGameExitWatch()
     }
 
-    func stopGameControls() { gameControlForwarder.stop() }
+    func stopGameControls() {
+        botDemonstrations.stop(reason: "controls-stopped")
+        botPlayer.stop(reason: "Controls stopped")
+        botDemo.stop(reason: "Controls stopped")
+        gameControlForwarder.stop()
+    }
 
-    func setNativeReviewActive(_ active: Bool) { gameControlForwarder.setNativeReviewActive(active) }
+    func setNativeReviewActive(_ active: Bool) {
+        if active {
+            botDemonstrations.stop(reason: "workspace-changed")
+            botPlayer.stop(reason: "Workspace changed")
+            botDemo.stop(reason: "Workspace changed")
+        }
+        gameControlForwarder.setNativeReviewActive(active)
+    }
+
+    private var botGameplayReady: Bool {
+        isCapturing && (isHackerWorkspaceActive()
+            ? receiverCapabilities.contains(ReceiverControlProtocol.hackerActorsCapability)
+            : activeObjectModelSummary != nil) && labelPauseState == .ready
+            && !isPathRecording && !isPathPlaybackActive && !isPathCheckpointPending && !playerOpsBusy
+            && !atlasManagementBusy && !hackerAtlasBlocksGameplay && !profileAtlasGate.withLock({ $0 })
+            && liveGameStatus == "Gameplay"
+    }
+
+    var canCollectBotDemonstration: Bool { botGameplayReady && !botPlayer.isActive && !botDemo.isActive }
+
+    var canStartBotDemo: Bool {
+        isCapturing && gameMode == .modded && labelPauseState == .ready
+            && !isPathRecording && !isPathPlaybackActive && !isPathCheckpointPending && !playerOpsBusy
+            && ((!atlasManagementBusy && (!hackerAtlasBlocksGameplay || botDemo.isHandingOff))
+                || (switchingProfileAtlas && botDemo.isActive)) && !botDemonstrations.isRecording
+
+    }
+
+    func startBotDemo(inGameplay: Bool = false, domain: BotDomain = .hacker) {
+        if inGameplay && !botPlayer.hasModel(for: domain) {
+            botDemo.rejectStart("Train or select a \(domain.title) bot model first."); return
+        }
+        guard canStartBotDemo else { botDemo.rejectStart("Bot is not ready: check capture and recording or editing state."); return }
+        botPlayer.stop(reason: "Starting bot control")
+        botDemo.start(inGameplay: inGameplay, domain: domain)
+    }
+
+    func botDemoDiagnostic() -> String {
+        var result: [String: Any] = [
+            "active": botDemo.isActive, "phase": botDemo.phaseName, "status": botDemo.status,
+            "ready": canStartBotDemo, "applicationActive": NSApp.isActive,
+            "keyWindow": NSApp.keyWindow?.title ?? "none", "mainWindow": NSApp.mainWindow?.title ?? "none",
+            "capture": isCapturing, "pause": String(describing: labelPauseState),
+            "gameContext": liveGameContextIdentifier ?? "unknown", "selected": liveSelectedMenuOption ?? "none",
+            "menuDiagnostic": liveMenuStencilDiagnostic ?? "none",
+            "trialReturnPoint": botTrialReturnPoint != nil, "botActive": botPlayer.isActive, "botDecisions": botPlayer.decisionCount,
+            "botStatus": botPlayer.status, "botAction": botPlayer.lastAction.values,
+            "terrainSource": botTerrainSource, "humanTerrainSlots": botHumanTerrainCount,
+            "authoredGroundLines": botHumanGround.lineCount,
+            "botInputTerrainSource": botPlayer.lastDecisionTerrainSource,
+            "botInputHumanTerrainSlots": botPlayer.lastDecisionHumanTerrainCount,
+            "botPerception": botPlayer.perceptionDiagnostic,
+            "humanGroundDiagnostic": botHumanGround.diagnostic,
+            "hackerAtlasBusy": hackerAtlasManagementBusy,
+            "hackerAtlasBlocksGameplay": hackerAtlasBlocksGameplay,
+            "pathRecording": isPathRecording,
+            "learningRecording": botDemonstrations.isRecording,
+            "learningObservations": botDemonstrations.observationCount,
+            "learningUsable": botDemonstrations.usableCount,
+            "learningPath": botDemonstrations.lastSessionURL?.path ?? "none",
+            "botDomain": botPlayer.domain.rawValue,
+            "botEvaluationPath": botEvaluation.lastDirectory?.path ?? "none",
+            "lastReplayPath": lastRecordedPathURL?.path ?? "none",
+            "receiverCapabilities": receiverCapabilities.sorted(),
+        ]
+        if let issue = botDemo.issue { result["issue"] = issue }
+        groundTruthCameraStateLock.lock()
+        let pose = latestGroundTruthCameraSample
+        groundTruthCameraStateLock.unlock()
+        if let (sample, seen) = pose, ProcessInfo.processInfo.systemUptime - seen < 0.5, sample.heroAvailable {
+            result["evaluationPose"] = ["scene": sample.sceneName, "x": sample.heroX, "y": sample.heroY, "grounded": sample.grounded] as [String: Any]
+        }
+        if let url = botDemo.lastArchiveURL { result["archivePath"] = url.path }
+        if let observed = botDemo.lastObservation {
+            result["observedContext"] = observed.context?.storageIdentifier ?? "unknown"
+            result["observedSelection"] = observed.selectedIdentifier ?? "none"
+            result["observedOccupiedSlots"] = observed.occupiedSlots.sorted()
+            result["observedGameplay"] = observed.gameplay
+        }
+        return String(decoding: (try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])) ?? Data("{}".utf8), as: UTF8.self)
+    }
+
+    func setBotHumanGround(_ document: GroundTruthLineDocument) {
+        botHumanGround.update(document: document)
+        refreshHackerPaths()
+    }
+
+    private func publishBotObservation(_ observation: BotObservation, image: CGImage, hackerEpoch: UInt64? = nil,
+                                       hackerCamera: GroundTruthCameraTransform? = nil,
+                                       terrain: [BotTerrainSegment]? = nil, walls: [DetectedWall]? = nil,
+                                       pairedRun: UUID? = nil, atlasIsland: LiveIslandCapture? = nil,
+                                       solveWidth: Double? = nil, health: Int? = nil, drive: Int = 0,
+                                       detections: LiveObjectDetectionBatch? = nil,
+                                       pathFloors: [BotTerrainSegment]? = nil, observedFloorEdges: [BotTerrainSegment] = [],
+                                       walkedGround: WalkedGroundMemory? = nil, contactWall: BotWallSegment? = nil,
+                                       grounded: Bool? = nil,
+                                       visualDoors: [BotDoorSegment] = []) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            var observation = observation
+            guard !self.profileAtlasGate.withLock({ $0 }), pairedRun == self.botDemonstrations.pairedRecordingID else { return }
+            let foreground = self.isHackerWorkspaceActive() == (hackerEpoch != nil)
+            guard foreground || pairedRun != nil else { return }
+            if let hackerEpoch {
+                guard self.isHackerGenerationCurrent(hackerEpoch, requireActive: pairedRun == nil),
+                      self.hackerBotGate.accepts(observation, currentGeneration: self.currentStatusGeneration) else { return }
+                if let camera = hackerCamera {
+                    let room = self.hackerAtlasRooms.first { $0.sceneName == camera.sceneName }
+                    let document = self.botHumanGround.snapshot
+                    let calibration = room.flatMap { AtlasPathCalibration.hacker(room: $0, document: document, camera: camera) }
+                        ?? .init(scene: camera.sceneName, origin: .zero, scale: .init(x: camera.pixelsPerWorldUnitX, y: camera.pixelsPerWorldUnitY))
+                    let center = calibration.local(camera.cameraWorld)
+                    let local = CGPoint(x: center.x - camera.frameSize.width / 2, y: center.y - camera.frameSize.height / 2)
+                    if let room {
+                        observation.atlasView = room.botCoverage.view(camera:local,size:camera.frameSize,health:health)
+                    }
+                } else if !foreground, let pairedRun, let paired = self.pairedVisualAtlas, paired.recording == pairedRun,
+                          paired.frame.generation == observation.generation,
+                          (0...0.2).contains(observation.capturedAt - paired.frame.capturedAt),
+                          paired.frame.availableAt <= observation.availableAt {
+                    observation.atlasView = paired.frame.atlasView
+                }
+            } else {
+                guard self.visualBotGate.accepts(observation, currentGeneration: self.currentStatusGeneration) else { return }
+                observation = self.botVisualKnightMemory.resolve(observation,
+                    previousAction: self.gameplayGym ? self.gymPreviousAction : (self.botPlayer.isActive ? self.botPlayer.lastAction : nil),
+                    terrain: terrain, detections: detections)
+                observation.driveDirection = drive
+                if let atlasIsland, let solveWidth {
+                    observation.blockadePose = BotBlockadePose.visual(atlasIsland, width: solveWidth)
+                }
+                let wallSegments = walls.map { BotWallEvidence.segments(from: $0, height: image.height) }
+                let geometry = BotScreenTerrain(width:Double(image.width),height:Double(image.height),
+                    floors:terrain ?? [],walls:wallSegments ?? [], doors:visualDoors.isEmpty ? nil : visualDoors)
+                observation.detectedTerrain = geometry
+                var pathGeometry = geometry
+                if let pathFloors { pathGeometry.floors = pathFloors }
+                let width = CGFloat(image.width)
+                let island = atlasIsland
+                let scale = width / max(1,solveWidth ?? width)
+                let key = "room/" + String(observation.roomID)
+                let priorPathRoom = self.visualPathRoom
+                let continuousPath = self.visualPathHandoff.map { prior in
+                    prior.generation == observation.generation && prior.room == observation.roomID
+                        && (0...0.35).contains(observation.captureTimestamp - prior.timestamp)
+                } ?? false
+                func inheritDirection(into destination: String) {
+                    guard continuousPath,
+                          priorPathRoom == key || priorPathRoom.hasPrefix(key + "/") else { return }
+                    self.visualPaths.inheritAutomaticDirection(from: priorPathRoom, into: destination)
+                }
+                func prepareFrameChart(_ destination: String) {
+                    if !continuousPath { self.visualPaths.discardFrameChart(room: destination) }
+                    inheritDirection(into: destination)
+                }
+                var unplacedPath = true
+                if let island, let solveWidth {
+                    let pose = self.publishedIslandProjection?.worldPose(for:island) ?? island.worldPose
+                    let registered = island.placement == .reference || island.placement == .connected
+                    unplacedPath = !registered
+                    let position = registered ? pose : island.localPose
+                    let camera = CGPoint(x:position.x*scale,y:position.y*scale)
+                    let chartOrigin = CGPoint(x: pose.x - position.x, y: pose.y - position.y)
+                    let walked = walkedGround?.pathPlatforms(room: island.roomID, projection: self.publishedIslandProjection,
+                                                              scale: scale, anchor: chartOrigin)
+                    let islandKey = String(island.id) + "/" + String(island.startedAt.bitPattern)
+                    if registered {
+                        let translation = CGPoint(x:(pose.x-island.localPose.x)*scale,
+                                                  y:(pose.y-island.localPose.y)*scale)
+                        if PathPoint.supports(translation) {
+                            self.visualPaths.promote(from:key + "/" + islandKey, into:key,
+                                translation:PathPoint(translation))
+                        }
+                    }
+                    self.visualPathRoom = registered ? key : key + "/" + islandKey
+                    if !registered { inheritDirection(into: self.visualPathRoom) }
+                    let anchor = self.presentedIslandFrame?.anchor ?? self.liveWorldSnapshot?.observations.first(where: { $0.id == self.liveWorldSnapshot?.anchoredObservationID })?.optimizedPose ?? self.liveWorldSnapshot?.observations.first?.optimizedPose
+                    if registered, let anchor {
+                        self.visualPathOffset = .init(x:-anchor.x*scale,y:-anchor.y*scale)
+                    } else {
+                        self.visualPathOffset = .init(x:self.liveBounds.minX-camera.x,y:self.liveBounds.minY-camera.y)
+                    }
+                    let seams = self.visualPaths.handoffSeams(room: self.visualPathRoom, island: island,
+                        registered: registered, projection: self.publishedIslandProjection, scale: scale,
+                        generation: observation.generation, time: observation.captureTimestamp)
+                    self.visualPaths.observe(room:self.visualPathRoom,camera:camera,width:width,row:&observation,
+                        geometry:island.measured ? pathGeometry : nil,walked:walked,observedFloorEdges:observedFloorEdges,
+                        contactWall:contactWall,handoffSeams:seams,space:registered ? "registered" : islandKey,trackPosition:island.measured)
+                    if let map = self.liveWorldSnapshot {
+                        self.botAtlasCoverage.update(map) { self.visualRoomTracker.compositionBounds(for:$0) }
+                        observation.atlasView = self.botAtlasCoverage.view(pose:pose,width:solveWidth,
+                            height:solveWidth*Double(image.height)/Double(image.width),room:observation.roomID,health:health)
+                    }
+                    // Until the first measured ground is registered, use only the current frame.
+                    if observation.roadHint == nil, !island.measured, self.visualPaths.graph(room:self.visualPathRoom)?.floors.isEmpty != false {
+                        self.visualPathRoom += "/frame"
+                        prepareFrameChart(self.visualPathRoom)
+                        self.visualPathOffset = self.liveBounds.origin
+                        self.visualPaths.observe(room:self.visualPathRoom,camera:.zero,width:width,row:&observation,
+                            geometry:pathGeometry,trackPosition:false,replaceFrame:true)
+                    }
+                } else {
+                    self.visualPathRoom = key + "/frame"; self.visualPathOffset = self.liveBounds.origin
+                    prepareFrameChart(self.visualPathRoom)
+                    self.visualPaths.observe(room:self.visualPathRoom,camera:.zero,width:width,row:&observation,
+                        geometry:pathGeometry,trackPosition:false,replaceFrame:true)
+                }
+                if unplacedPath {
+                    self.visualPaths.limitUnplacedCredit(room:key, chart:self.visualPathRoom, row:&observation)
+                }
+                self.visualPathHandoff = (observation.generation, observation.roomID, observation.captureTimestamp)
+                let wallFeatures = BotWallEvidence.features(segments: observation.features[4] > 0 ? wallSegments : nil,
+                    knightX: observation.features[0], knightY: observation.features[1], width: Double(image.width))
+                observation.features.replaceSubrange(BotObservationContract.legacyFeatureCount..., with: wallFeatures)
+            }
+            // Visual paths above remain available for drawing, but policy and
+            // credit always use the exact matched Hacker planner sample.
+            let sharedPath = self.sharedHackerPath(for: observation)
+            observation.roadHint = sharedPath?.roadHint
+            observation.pathProgress = sharedPath?.pathProgress
+            observation.pathAlignment = sharedPath?.pathAlignment
+            observation.hackerPathVersion = 1
+            if hackerEpoch == nil, let pairedRun { self.pairedVisualAtlas = (pairedRun, observation) }
+            let domain = BotDomain.of(observation)
+            let projection = self.publishedIslandProjection
+            let commandedDirection = observation.driveDirection ?? 0
+            if domain == .gameplay, observation.blockadePose == nil, let camera = observation.visualContext?.camera {
+                observation.blockadePose = BotBlockadePose(space: "local/\(observation.generation)/\(observation.roomID)",
+                    x: camera.x, y: camera.y, width: 1)
+            }
+            if self.gameplayGym || observation.captureTimestamp > self.blockadeResetAt {
+                let previousRevision = self.blockadeVisits[domain]?.map.revision ?? 0
+                observation.blockade = self.blockadeVisits[domain, default: BotBlockadeVisit()].observe(
+                    observation, pose: observation.blockadePose, direction: commandedDirection,
+                    offset: { space in atlasIsland.flatMap { projection?.blockadeOffset(from: space, to: $0) } })
+                if !self.gameplayGym, previousRevision != self.blockadeVisits[domain]?.map.revision {
+                    self.objectWillChange.send()
+                }
+            }
+            if self.gameplayGym { self.gymObservation = observation; return }
+            if !foreground, let pairedRun {
+                self.botDemonstrations.recordPairedObservation(observation, image: image, run: pairedRun)
+                return
+            }
+            let terrainSource = observation.terrainSource ?? "detected"
+            let humanCount = observation.humanTerrainCount ?? 0
+            if self.botTerrainSource != terrainSource { self.botTerrainSource = terrainSource }
+            if self.botHumanTerrainCount != humanCount { self.botHumanTerrainCount = humanCount }
+            self.botDemonstrations.observe(observation, image: image)
+            if self.botPlayer.isActive { self.botEvaluation.observe(observation, image: image) }
+            self.botPlayer.observe(observation)
+        }
+    }
+
+    func stopBotDemo(reason: String = "Demo stopped") {
+        guard botDemo.isActive else { return }
+        botDemo.stop(reason: reason)
+        botPlayer.stop(reason: reason)
+    }
+
+    func completeBotDemoHandoff(_ request: UUID, deadline: Double? = nil) {
+        guard botDemo.isActive, botDemo.handoffRequest == request else { return }
+        guard botPlayer.hasModel(for: botDemo.domain) else {
+            botDemo.finishWithoutPolicy(request)
+            return
+        }
+        let deadline = deadline ?? ProcessInfo.processInfo.systemUptime + 15
+        guard ProcessInfo.processInfo.systemUptime < deadline else {
+            botDemo.stop(reason: "\(botDemo.domain.title) bot controls did not become ready", failed: true); return
+        }
+        guard canStartBotPlayback else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.completeBotDemoHandoff(request, deadline: deadline)
+            }
+            return
+        }
+        botDemo.completeHandoff(request) { [self] in
+            botPlayer.start(domain: botDemo.domain)
+            return botPlayer.isActive
+        }
+    }
+
+    var canStartBotPlayback: Bool {
+        botGameplayReady && gameMode == .modded && !botDemonstrations.isRecording
+            && botPlayer.hasModel(for: isHackerWorkspaceActive() ? .hacker : .gameplay)
+            && (!botDemo.isActive || botDemo.isHandingOff || botDemo.isPlaying)
+    }
+
+    func toggleBotPlayback() {
+        if botDemo.isActive { stopBotDemo(reason: "Stopped with B") }
+        else if botPlayer.isActive { botPlayer.stop() }
+        else if canStartBotPlayback { botPlayer.start(domain: isHackerWorkspaceActive() ? .hacker : .gameplay) }
+    }
+
+    func startBotDemonstration() {
+        guard canCollectBotDemonstration else { return }
+        gameControlForwarder.releaseForGroundLabeling()
+        botDemonstrations.start(gameMode: gameMode.rawValue,
+                                detectorVersion: activeObjectModelSummary ?? "unknown")
+    }
 
     func startGameControls() {
         configureGameMode(.modded)
         startGame()
     }
 
-    /// The sparse world and the room graph share one autosave directory. A
-    /// legacy two-room atlas has no graph file, so infer its one left/right
-    /// doorway from the first observation in the left room exactly once.
+    /// Room identity survives independently of adjacency. Saved rooms without
+    /// a measured portal remain disconnected; old placements are never moved
+    /// just because a session happens to contain two room IDs.
     @discardableResult
     private func restoreRoomTopology(
         worldSnapshot: LiveWorldSnapshot
     ) -> VisualRoomSnapshot {
-        let fileManager = FileManager.default
-        if fileManager.fileExists(atPath: roomTopologyURL.path),
-           var restored = try? visualRoomTracker.restoreTopology(from: roomTopologyURL),
-           !restored.portals.isEmpty
-                || Set(worldSnapshot.observations.map(\.roomID)).count < 2 {
+        roomTopologyWritesEnabled = true
+        do {
+            var restored = try visualRoomTracker.restoreOrImportDisconnectedRooms(
+                from: roomTopologyURL, world: worldSnapshot)
             let durableRoomIDs = Set(worldSnapshot.observations.map(\.roomID))
             if durableRoomIDs.count == 1,
                !durableRoomIDs.contains(restored.roomID),
-               let durableRoomID = durableRoomIDs.first {
+               let observation = worldSnapshot.observations.first {
                 restored = visualRoomTracker.restoreActiveRoomFromDurableEvidence(
-                    durableRoomID
+                    observation.roomID, entryWorldPose: observation.optimizedPose
                 )
             }
-            // Restore also rectifies older mismatched door-height diagnostics.
-            // Save that normalized geometry once so subsequent launches and
-            // atlas composition use the same portal representation.
-            persistRoomTopology()
             return publishRoomTopology(restored)
+        } catch {
+            // Continue with conservative in-memory ownership, but do not allow
+            // a later capture to overwrite a file whose preservation failed.
+            roomTopologyWritesEnabled = false
+            performanceLog.error("room topology import preserved on disk; writes disabled: \(error.localizedDescription, privacy: .public)")
+            return publishRoomTopology(visualRoomTracker.restoreDisconnectedRooms(from: worldSnapshot))
         }
-
-        var room = visualRoomTracker.reset()
-        let roomIDs = Set(worldSnapshot.observations.map(\.roomID))
-        if roomIDs.count == 2,
-           roomIDs == Set([0, 1]),
-           let evidence = atlasPipeline.boundaryEvidence(
-            leftRoomID: 1, rightRoomID: 0
-           ) {
-            let layout = VisualRoomPortalLayout.make(
-                direction: .left,
-                departureWorldPose: evidence.rightDepartureWorldPose,
-                solveWidth: evidence.solveWidth,
-                solveHeight: evidence.solveHeight,
-                sourceBand: evidence.rightRoomLeftBand,
-                targetBand: evidence.leftRoomRightBand,
-                measuredTravel: nil
-            )
-            let translation = CGVector(
-                dx: layout.targetEntryWorldPose.x
-                    - evidence.leftOriginalEntryWorldPose.x,
-                dy: layout.targetEntryWorldPose.y
-                    - evidence.leftOriginalEntryWorldPose.y
-            )
-            let didTranslate = atlasPipeline.translateRoom(
-                roomID: 1,
-                by: translation,
-                updatingComposer: false
-            )
-            let leftEntry = didTranslate
-                ? layout.targetEntryWorldPose : evidence.leftOriginalEntryWorldPose
-            let leftDoor = didTranslate
-                ? layout.targetDoorWorldX
-                : evidence.leftOriginalEntryWorldPose.x
-                    + evidence.solveWidth
-                    * (1 - (evidence.leftRoomRightBand?.widthFraction ?? 0))
-            let leftDoorRange = didTranslate
-                ? layout.targetDoorYRange
-                : Self.doorYRange(
-                    band: evidence.leftRoomRightBand,
-                    cameraY: evidence.leftOriginalEntryWorldPose.y,
-                    solveHeight: evidence.solveHeight
-                )
-            let activeRoomID = Dictionary(
-                grouping: worldSnapshot.observations, by: \.roomID
-            ).max(by: { $0.value.count < $1.value.count })?.key
-            room = visualRoomTracker.bootstrapTwoRoomTopology(
-                leftRoomID: 1,
-                rightRoomID: 0,
-                leftDoorWorldX: min(leftDoor, layout.sourceDoorWorldX),
-                rightDoorWorldX: layout.sourceDoorWorldX,
-                leftDoorYRange: leftDoorRange,
-                rightDoorYRange: layout.sourceDoorYRange,
-                leftEntryWorldPose: leftEntry,
-                rightEntryWorldPose: evidence.rightDepartureWorldPose,
-                activeRoomID: activeRoomID
-            )
-        }
-        persistRoomTopology()
-        return publishRoomTopology(room)
-    }
-
-    private static func doorYRange(
-        band: FrameEdgeBlackBand?,
-        cameraY: CGFloat,
-        solveHeight: CGFloat
-    ) -> ClosedRange<CGFloat> {
-        let normalized = band?.contentYRangeFraction ?? 0.38...0.68
-        let lower = cameraY + normalized.lowerBound * solveHeight
-        let upper = cameraY + normalized.upperBound * solveHeight
-        return lower...upper
     }
 
     private func persistRoomTopology() {
+        guard roomTopologyWritesEnabled else { return }
         do {
             try visualRoomTracker.saveTopology(to: roomTopologyURL)
         } catch {
@@ -1082,8 +1910,109 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         return room
     }
 
+    private var replaySceneRegions: SceneRegions? {
+        guard visualReplayMode, let input = visualReplayInput else { return nil }
+        return SceneRegions(knight: input.knightRect, health: .zero, geo: .zero, mana: .zero,
+            // Knight was already part of the archived exclusion array.
+            hudStencilRects: input.excludingRects.filter { $0 != input.knightRect })
+    }
+
+    func prepareVisualReplay(startTimestamp: Double, createdAt: Date, sourcePathID: UUID) {
+        precondition(visualReplayMode)
+        visualReplayLastJump = -.infinity
+        advanceGeneration(resetCamera: true)
+        sampleQueue.sync {}
+        visionQueue.sync {
+            gameStartupCoordinator.restoreGameplaySession()
+            trackingStateLock.withLock {
+                trackingState = TrackingState(cameraPosition: trackingState.cameraPosition,
+                    regions: trackingState.regions, poseTimestamp: trackingState.poseTimestamp,
+                    basisTicket: trackingState.basisTicket, groundAnchored: trackingState.groundAnchored,
+                    gameplayEnabled: true, generation: trackingState.generation)
+            }
+        }
+        if !gameplayGym { _ = inputPathRecorder.start(at: startTimestamp, createdAt: createdAt, sourcePathID: sourcePathID) }
+    }
+
+    func prepareGameplayGym(compiledDirectory: URL, confirmationURL: URL? = nil,
+                            knightURL: URL? = nil, depositURL: URL? = nil) throws -> (crawlid: Bool, knight: Bool, deposit: Bool) {
+        precondition(gameplayGym)
+        let artifacts = try modelVersionStore.activeModelArtifacts()
+        try objectDetector.load(artifacts, compiledDirectory: compiledDirectory, confirmationURL: confirmationURL,
+                                knightURL: knightURL, depositURL: depositURL)
+        guard !objectDetector.artifacts.isEmpty else { throw BotRuntimeError.incompatible("Gameplay requires a trained visual detector.") }
+        let language = UserDefaults.standard.string(forKey: "HollowKnightVision.initialization.language.v1") ?? "en"
+        let template = HUDStencilTemplate.captured(examples: try LabelingExampleStore().loadExamples(), languageIdentifier: language)
+        sampleQueue.sync { hudStencilTracker = HUDStencilTracker(template: template) }
+        return (objectDetector.usesCrawlidLocalizer, objectDetector.usesKnightLocalizer, objectDetector.usesDepositLocalizer)
+    }
+
+    /// Each request arrives after six simulation ticks. Compute the normal pixel refinement
+    /// before the camera samples the frame; an episode owns its map and its action history.
+    func observeGameplayGym(_ image: CGImage, ticks: Int, previous: BotAction) throws -> BotObservation? {
+        let t = 1 + Double(ticks) / 60
+        let generation = DispatchQueue.main.sync { () -> UInt64 in
+            gymPreviousAction = previous
+            gymObservation = nil
+            return currentStatusGeneration
+        }
+        let identifier = UInt64(ticks + 1)
+        let raw = try objectDetector.detect(in: image, sourceFrameIdentifier: identifier)
+        let refined = LiveObjectPixelRefiner.refine(raw, in: image, createsDiagnosticImage: false)
+        objectInferenceStateLock.withLock {
+            let batch = LiveObjectDetectionBatch(detections: refined.detections, sourceFrameIdentifier: identifier,
+                sourceTimestamp: t, captureGeneration: generation, inferenceDuration: 0)
+            previousMaskDetectionBatch = latestMaskDetectionBatch
+            latestMaskDetectionBatch = batch
+            latestObjectDetectionBatch = .init(detections: objectDetectionTracker.update(detections: refined.detections,
+                captureGeneration: generation), sourceFrameIdentifier: identifier, sourceTimestamp: t,
+                captureGeneration: generation, inferenceDuration: 0)
+            botDetectionHistory = [batch]
+        }
+        let record = VisualReplayFrame(index: ticks, captureTimestamp: t, capturedAt: t, captureGeneration: generation,
+            solveWidth: Double(image.width), width: image.width, height: image.height, renderedGameFrame: nil)
+        consumeVisualReplayFrame(image, record: record, input: nil,
+            direction: VisualRoomDirection(rawValue: Int(previous.previousFeatures[0])),
+            jumpInput: previous.buttons.contains(.actionZ), worldTimestamp: t)
+        return DispatchQueue.main.sync { gymObservation }
+    }
+
+    /// Called serially by the offline driver. The only frozen stage outputs are
+    /// visual masks/tuning. All camera estimates and room ownership are rerun.
+    func consumeVisualReplayFrame(_ image: CGImage, record: VisualReplayFrame,
+                                  input: VisualReplayGroundInput?,
+                                  direction: VisualRoomDirection?, jumpInput: Bool, worldTimestamp: Double) {
+        precondition(visualReplayMode)
+        visualReplayInput = input
+        visualReplayDirection = direction
+        if jumpInput { visualReplayLastJump = record.captureTimestamp }
+        visualReplayWorldTimestamp = worldTimestamp
+        if let input {
+            groundTuning = input.tuning
+            semanticGroundTuning = input.semanticTuning
+        }
+        sampleQueue.sync {
+            stageConvertedFrame(ConvertedCaptureFrame(image: image, solveWidth: CGFloat(record.solveWidth)),
+                timestamp: record.captureTimestamp, capturedAt: record.capturedAt)
+        }
+        // One bounded serial schedule; no wall-clock race decides which image
+        // or completed global search the next observation sees.
+        visionQueue.sync {}
+        atlasPipeline.drainVisualReplay()
+        visionQueue.sync {}
+    }
+
+    func finishVisualReplay(at timestamp: Double) -> (RecordedInputPath?, LiveWorldSnapshot) {
+        precondition(visualReplayMode)
+        visionQueue.sync {}
+        atlasPipeline.drainVisualReplay()
+        visionQueue.sync {}
+        return (inputPathRecorder.stop(at: timestamp), atlasPipeline.currentWorldSnapshot())
+    }
+
     var canStartPathRecording: Bool {
         labelPauseState == .ready && !isPathPlaybackActive && !isPathCheckpointPending
+            && !botDemonstrations.isRecording && !botPlayer.isActive && !botDemo.isActive
     }
 
     func togglePathRecording() {
@@ -1141,9 +2070,43 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         )
     }
 
+    var canResetRoom: Bool {
+        receiverCapabilities.contains(ReceiverControlProtocol.roomResetCapability)
+            && !playerOpsBusy && !atlasManagementBusy && !hackerAtlasManagementBusy
+            && !botDemonstrations.isRecording && !botPlayer.isActive && !botDemo.isActive
+            && !isPathRecording && !isPathPlaybackActive && !isPathCheckpointPending
+    }
+
+    var managedGameIsActive: Bool { gameControlForwarder.managedGameIsActive }
+
+    func resetRoom() {
+        guard canResetRoom else { return }
+        sendPlayerOps(status: "Resetting room…", command: { .resetRoom(sessionID: $0) }) { [weak self] ack in
+            guard let self else { return }
+            guard let scene = ack.resetScene, !scene.isEmpty else {
+                self.playerOpsStatus = "Room reset was not confirmed."
+                return
+            }
+            self.resetLiveBlockades()
+            var issues = [String]()
+            self.playerOpsBusy = true
+            self.playerOpsStatus = "Clearing Atlas…"
+            self.performAtlasManagement(replacingActiveWorld: true, { try self.purgeActiveAtlas() }) { error in
+                if let error { issues.append(error.localizedDescription) }
+                self.performHackerAtlasManagement(replacingActive: true, completion: { error in
+                    if let error { issues.append(error.localizedDescription) }
+                    self.playerOpsBusy = false
+                    self.playerOpsStatus = issues.isEmpty ? "" : "Room reset. " + issues.joined(separator: " ")
+                    self.applyQueuedPlayerStateIfNeeded()
+                }) { $0.emptyForCurrentProfile }
+            }
+        }
+    }
+
     private func sendPlayerOps(
         status: String,
-        command: @escaping (UUID) -> ReceiverPlayerOpsCommand
+        command: @escaping (UUID) -> ReceiverPlayerOpsCommand,
+        onSuccess: ((ReceiverPlayerOpsAcknowledgement) -> Void)? = nil
     ) {
         guard !playerOpsBusy else { return }
         playerOpsBusy = true
@@ -1166,8 +2129,13 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                 if let state = acknowledgement.state, !applyQueued {
                     self.playerTestDraft = state.normalized
                 }
-        if acknowledgement.enemiesRestored != nil {
-            self.playerOpsStatus = "Enemies restored."
+                if let onSuccess {
+                    onSuccess(acknowledgement)
+                    if !self.playerOpsBusy { self.applyQueuedPlayerStateIfNeeded() }
+                    return
+                }
+                if acknowledgement.enemiesRestored != nil {
+                    self.playerOpsStatus = "Enemies restored."
                 } else {
                     self.playerOpsStatus = ""
                 }
@@ -1187,8 +2155,13 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func stopPathRecording() {
+        guard !stoppingUnifiedRecording else { return }
+        stoppingUnifiedRecording = true
+        defer { stoppingUnifiedRecording = false }
+        botDemonstrations.stop()
         guard let path = inputPathRecorder.stop() else { return }
         isPathRecording = false
+        restoreRenderFrameMarkerPolicy()
         pathRecordingStartedAt = nil
         inputPathLog.notice(
             "stopped id=\(path.id.uuidString, privacy: .public) duration=\(path.duration, privacy: .public) events=\(path.events.count, privacy: .public) samples=\(path.trackingSamples.count, privacy: .public) unverified=\(path.unverifiedSampleCount, privacy: .public) corrections=\(path.globalCorrectionCount, privacy: .public)"
@@ -1206,9 +2179,48 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async {
                     self.pathRecordingIssue = "Path save failed: \(error.localizedDescription)"
                 }
-                self.inputPathLog.error("save failed error=\(error.localizedDescription, privacy: .public)")
+                self.inputPathLog.error("save failed error=\(String(describing: error), privacy: .public)")
             }
         }
+    }
+
+    private var botTrialReturnPoint: RecordedGameCheckpoint?
+
+    func markBotTrialReturnPoint() -> Bool {
+        guard botTrialReturnPoint == nil, canStartBotPlayback, !botPlayer.isActive, !botDemo.isActive else { return false }
+        isPathCheckpointPending = true
+        let accepted = gameControlForwarder.capturePlayerCheckpoint { [weak self] checkpoint, _ in
+            self?.botTrialReturnPoint = checkpoint
+            self?.isPathCheckpointPending = false
+        }
+        if !accepted { isPathCheckpointPending = false }
+        return accepted
+    }
+
+    func returnFromBotTrial() -> Bool {
+        guard let checkpoint = botTrialReturnPoint, canStartBotPlayback, !botPlayer.isActive, !botDemo.isActive else { return false }
+        return restoreBotTrialCheckpoint(checkpoint) { [weak self] in self?.botTrialReturnPoint = nil }
+    }
+
+    func restoreBotTrialStart(fileName: String) -> Bool {
+        guard !isHackerWorkspaceActive(), canStartBotPlayback, !botDemo.isActive, !botPlayer.isActive,
+              let command = GamePathPlaybackCommand(serialized: "replay-path:\(fileName):1"),
+              let path = try? inputPathStore.load(named: command.fileName),
+              let checkpoint = path.startCheckpoint else { return false }
+        return restoreBotTrialCheckpoint(checkpoint)
+    }
+
+    private func restoreBotTrialCheckpoint(_ checkpoint: RecordedGameCheckpoint, onRestored: (() -> Void)? = nil) -> Bool {
+        isPathCheckpointPending = true
+        let accepted = gameControlForwarder.restorePlayerCheckpoint(checkpoint) { [weak self] restored, failure in
+            guard let self else { return }
+            self.isPathCheckpointPending = false
+            self.pathRecordingIssue = restored ? nil : failure
+            self.botVisualKnightMemory.reset()
+            if restored { self.resetLiveBlockades(); onRestored?() }
+        }
+        if !accepted { isPathCheckpointPending = false }
+        return accepted
     }
 
     @discardableResult
@@ -1238,20 +2250,44 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         guard canStartPathRecording else { return }
         isPathCheckpointPending = true
         pathRecordingIssue = nil
+        // Manual runs need the same exact capture/telemetry identity as
+        // automated playback. Receipt timestamps alone cannot score shake.
+        gameControlForwarder.setRenderFrameMarkerEnabled(true)
         let accepted = gameControlForwarder.capturePlayerCheckpoint { [weak self] checkpoint, failure in
             guard let self else { return }
             self.isPathCheckpointPending = false
             guard let checkpoint else {
                 self.pathRecordingIssue = failure ?? "Start-position capture failed"
+                self.restoreRenderFrameMarkerPolicy()
                 return
             }
             let startedAt = ProcessInfo.processInfo.systemUptime
             let createdAt = Date()
+            let recordingID = UUID()
             guard self.inputPathRecorder.start(
                 at: startedAt,
                 createdAt: createdAt,
-                startCheckpoint: checkpoint
-            ) else { return }
+                id: recordingID,
+                startCheckpoint: checkpoint,
+                visualArchiveRootURL: self.inputPathStore.rootURL
+            ) else {
+                self.restoreRenderFrameMarkerPolicy()
+                return
+            }
+            let domain: BotDomain = self.canUseHacker ? .hacker : .gameplay
+            let visualDetector = self.activeObjectModelSummary ?? "visual"
+            guard self.botDemonstrations.start(gameMode: self.gameMode.rawValue,
+                detectorVersion: domain == .hacker ? "receiver-actors-v1" : visualDetector,
+                id: recordingID, at: startedAt, requiresUsableObservation: false,
+                domain: domain, pairedGameplayDetector: domain == .hacker ? visualDetector : nil) else {
+                self.inputPathRecorder.cancel()
+                self.pathRecordingIssue = self.botDemonstrations.issue ?? "Learning recording could not start"
+                self.restoreRenderFrameMarkerPolicy()
+                return
+            }
+            if self.isHackerWorkspaceActive() { self.botVisualKnightMemory.reset() }
+            self.botDemonstrations.attachEvidence(reference: self.botHumanGround.snapshot,
+                domain: domain, replayRoot: self.inputPathStore.rootURL)
             self.isPathRecording = true
             self.pathRecordingStartedAt = createdAt
             self.pathRecordingIssue = nil
@@ -1262,6 +2298,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         guard accepted else {
             isPathCheckpointPending = false
             pathRecordingIssue = "Updated game receiver is not ready"
+            restoreRenderFrameMarkerPolicy()
             return
         }
     }
@@ -1324,6 +2361,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             self.inputPathLog.notice(
                 "single restore source=\(path.id.uuidString, privacy: .public) iteration=\(iteration, privacy: .public) hero=\(checkpoint.heroX, privacy: .public),\(checkpoint.heroY, privacy: .public)"
             )
+            self.resetLiveBlockades()
             // The checkpoint receiver has positively restored a gameplay
             // scene. Serialize that fact with vision processing before waiting
             // for the freshly reset ground tracker to become ready.
@@ -1526,7 +2564,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             createdAt: createdAt,
             sourcePathID: path.id,
             replayIteration: iteration,
-            startCheckpoint: path.startCheckpoint
+            startCheckpoint: path.startCheckpoint,
+            visualArchiveRootURL: inputPathStore.rootURL
         ) else { return false }
         isPathRecording = true
         pathRecordingStartedAt = createdAt
@@ -1608,7 +2647,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
 
     private func restoreRenderFrameMarkerPolicy() {
         gameControlForwarder.setRenderFrameMarkerEnabled(
-            isHackerWorkspaceActive() || RenderedFrameMarker.enabled
+            isHackerWorkspaceActive() || isPathRecording || RenderedFrameMarker.enabled
         )
     }
 
@@ -1718,9 +2757,20 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         }
     }
 
-    func setSettingsDialogActive(_ active: Bool) { gameControlForwarder.setSettingsDialogActive(active) }
+    func setSettingsDialogActive(_ active: Bool) {
+        if active {
+            botDemonstrations.stop(reason: "settings-opened")
+            botPlayer.stop(reason: "Settings opened")
+            botDemo.stop(reason: "Settings opened")
+        }
+        gameControlForwarder.setSettingsDialogActive(active)
+    }
 
     func setModelReviewActive(_ active: Bool) {
+        if active {
+            botPlayer.stop(reason: "Model review opened")
+            botDemo.stop(reason: "Model review opened")
+        }
         gameControlForwarder.setReviewNavigationActive(active)
     }
 
@@ -1953,8 +3003,23 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         observedAt: TimeInterval
     ) {
         groundTruthCameraStateLock.lock()
+        let prior = latestGroundTruthCameraSample?.0
         latestGroundTruthCameraSample = (sample, observedAt)
         groundTruthCameraStateLock.unlock()
+        // Menus can stop producing camera matches while receiver state is
+        // still arriving. Apply that state independently of the camera join.
+        if let atlasGameplayActive = sample.atlasGameplayActive,
+           prior?.sessionID != sample.sessionID || prior?.atlasGameplayActive != atlasGameplayActive {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.canUseHacker else { return }
+                self.updateAtlasPathEvidence { $0.observeReceiver(gameplay: atlasGameplayActive, at: observedAt) }
+            }
+        }
+        if let prior, prior.sessionID != sample.sessionID || prior.sceneName != sample.sceneName
+            || (prior.heroAvailable && !sample.heroAvailable)
+            || ((prior.actors?.heroHealth ?? 0) > 0 && sample.actors?.heroHealth == 0) {
+            DispatchQueue.main.async { [weak self] in self?.resetLiveBlockades(at: observedAt) }
+        }
         let replayFrameSize = CGSize(
             width: CGFloat(HollowKnightCaptureConfiguration.outputWidth),
             height: CGFloat(HollowKnightCaptureConfiguration.outputWidth)
@@ -1967,7 +3032,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         ) {
             handlePlaybackDivergence(decision)
         }
-        guard isHackerWorkspaceActive(),
+        guard canUseHacker || inputPathRecorder.isRecording || botEvaluation.isRecording,
               let match = hackerFrameSynchronizer.append(
                 sample: sample,
                 observedAt: observedAt
@@ -1976,7 +3041,27 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func setHackerWorkspaceActive(_ active: Bool) {
+        if !active { botHumanGround.clearCameras() }
+        if !active { botHackerObservations.reset() }
+        if !active { botPlayer.stop(reason: "Left Hacker workspace") }
+        hackerWorkspaceWanted = active
         guard !active || canUseHacker else { return }
+        if active && !hackerAtlasRestored {
+            hackerAtlasRestored = true
+            if FileManager.default.fileExists(atPath: self.hackerAtlasActiveURL.path) || atlasAutoSave.profile != nil {
+                performHackerAtlasManagement(replacingActive: true, activateAfter: true) { [self] _ in
+                    let disk = self.hackerAtlasActiveURL
+                    let existing = FileManager.default.fileExists(atPath: disk.path)
+                        ? try HackerAtlasArchiveStore.read(from: disk) : .empty
+                    // The application may have closed between the two autosave writes.
+                    if let root = atlasPipeline.activeAutoSaveRootURL, let profile = try SaveProfileAtlas.read(from: root) {
+                        return try existing.switching(to: profile, library: hackerAtlasStateStore) ?? existing
+                    }
+                    return existing
+                }
+                return
+            }
+        }
         hackerStateLock.lock()
         guard hackerWorkspaceActive != active else {
             hackerStateLock.unlock()
@@ -2002,7 +3087,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             hackerPresentationWindowCount = 0
         }
         gameControlForwarder.setRenderFrameMarkerEnabled(
-            active || isPathPlaybackActive || RenderedFrameMarker.enabled
+            active || isPathRecording || isPathPlaybackActive || isPathCheckpointPending
+                || RenderedFrameMarker.enabled
         )
         hackerAtlasLog.notice("workspace active=\(active, privacy: .public)")
     }
@@ -2012,8 +3098,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         resetHackerAtlasWorkers(reactivate: reactivate)
         hackerAtlasTiles = []
         hackerAtlasRooms = []
+        hackerPaths.reset()
         hackerRoomConnections = []
-        hackerRoomOffsets = [:]
+        hackerRoomPositionOverrides = [:]
         hackerRoomLayout = .empty
         hackerAtlasBounds = nil
         hackerLiveImage = nil
@@ -2064,10 +3151,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
               abs(translation.dx) > 0.000_1 || abs(translation.dy) > 0.000_1,
               let room = hackerAtlasRooms.first(where: { $0.id == roomID })
         else { return }
-        var offset = hackerRoomOffsets[roomID] ?? .zero
-        offset.x += translation.dx
-        offset.y += translation.dy
-        hackerRoomOffsets[roomID] = offset
+        let position = hackerRoomPosition(room)
+        hackerRoomPositionOverrides[roomID] = CGPoint(
+            x: position.x + translation.dx, y: position.y + translation.dy)
         if hackerCameraTransform?.sceneName == room.sceneName {
             hackerLiveBounds = hackerLiveBounds.offsetBy(
                 dx: translation.dx,
@@ -2077,15 +3163,11 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             hackerMapFocus.y += translation.dy
         }
         updateHackerAtlasBounds()
+        scheduleHackerAutoSave()
     }
 
     func hackerRoomPosition(_ room: HackerAtlasRoom) -> CGPoint {
-        let offset = hackerRoomOffsets[room.id] ?? .zero
-        let layoutPosition = hackerRoomLayout.positions[room.id] ?? room.position
-        return CGPoint(
-            x: layoutPosition.x + offset.x,
-            y: layoutPosition.y + offset.y
-        )
+        hackerRoomPositionOverrides[room.id] ?? hackerRoomLayout.positions[room.id] ?? room.position
     }
 
     var hackerRoomConnectorSegments: [HackerRoomConnectorSegment] {
@@ -2143,14 +3225,18 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         _ image: CGImage,
         unityFrame: Int,
         capturedAt: TimeInterval,
-        integratesAtlas: Bool
+        integratesAtlas: Bool,
+        captureGeneration: UInt64,
+        pathState: HackerPathFrameState
     ) {
-        guard isHackerWorkspaceActive() else { return }
+        guard canUseHacker || inputPathRecorder.isRecording || botEvaluation.isRecording else { return }
         let capture = HackerCapturedFrame(
             unityFrame: unityFrame,
             image: image,
             capturedAt: capturedAt,
-            integratesAtlas: integratesAtlas
+            integratesAtlas: integratesAtlas,
+            captureGeneration: captureGeneration, horizontalInput: gameControlForwarder.currentHorizontalRoomDirection()?.rawValue ?? 0,
+            pathState: pathState
         )
         if let match = hackerFrameSynchronizer.append(capture: capture) {
             enqueueHackerMatch(match)
@@ -2158,10 +3244,30 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     private func enqueueHackerMatch(_ match: HackerMatchedFrame) {
+        sharedPathMatchLock.lock()
+        sharedPathMatches.append(match)
+        if sharedPathMatches.count > 60 { sharedPathMatches.removeFirst(sharedPathMatches.count - 60) }
+        sharedPathMatchLock.unlock()
         hackerStateLock.lock()
         let generation = hackerGeneration
         let active = hackerWorkspaceActive
         hackerStateLock.unlock()
+        if let transform = GroundTruthCameraTransform(sample: match.sample, observedAt: match.sampleObservedAt,
+            frameSize: CGSize(width: match.capture.image.width, height: match.capture.image.height)) {
+            botHumanGround.record(transform: transform, timestamp: match.capture.capturedAt,
+                generation: match.capture.captureGeneration)
+            let pairedRun = botDemonstrations.pairedRecordingID
+            if active || pairedRun != nil, botHackerObservations.beginSample(at: match.capture.capturedAt, epoch: generation) {
+                hackerBotQueue.async { [self] in
+                    defer { botHackerObservations.endSample() }
+                    guard isHackerGenerationCurrent(generation, requireActive: pairedRun == nil),
+                          botDemonstrations.pairedRecordingID == pairedRun,
+                          let frame = botHackerObservations.makeFrame(match, now: ProcessInfo.processInfo.systemUptime)
+                    else { return }
+                    publishBotObservation(frame.observation, image: frame.image, hackerEpoch: generation, hackerCamera: transform, pairedRun: pairedRun, health: match.sample.actors?.heroHealth, grounded: match.sample.grounded)
+                }
+            }
+        }
         guard active else { return }
         guard let ticket = hackerPresentationPump.submit(match, epoch: generation) else { return }
         hackerPresentationQueue.async { [weak self] in
@@ -2178,9 +3284,27 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         if completion.shouldAcceptResult,
            isHackerGenerationCurrent(ticket.epoch),
            let prepared {
+            // Atlas composition always receives the clean capture. Detection
+            // boxes and icons belong only to Hacker's current live preview.
             enqueueHackerAtlas(prepared, generation: ticket.epoch)
+            var liveImage = prepared.liveImage
+            if objectDetectionEnabled {
+                let generation = ticket.item.capture.captureGeneration
+                let tracked = currentObjectDetections(captureGeneration: generation,
+                    timestamp: prepared.capturedAt)
+                let detections = currentObjectDetectionOverlay(captureGeneration: generation,
+                    timestamp: prepared.capturedAt, tracked: tracked)
+                if !detections.isEmpty {
+                    liveImage = FrameRegionRenderer.annotatedFrame(from: liveImage,
+                        regions: .startup(in: prepared.liveBounds),
+                        objectDetections: detections, objectIcons: currentObjectDetectionIcons(),
+                        context: poseImageContext) ?? liveImage
+                }
+            }
+            let presentedImage = liveImage
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.isHackerGenerationCurrent(ticket.epoch) else { return }
+                guard let self, self.isHackerGenerationCurrent(ticket.epoch),
+                      ticket.item.capture.captureGeneration == self.currentStatusGeneration else { return }
                 let offset = self.hackerAtlasRooms.first {
                     $0.sceneName == prepared.sceneName
                 }.map { room -> CGPoint in
@@ -2191,9 +3315,11 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                     )
                 } ?? .zero
                 LivePresentationTiming.shared.register(
-                    prepared.liveImage, capturedAt: prepared.capturedAt
+                    presentedImage, capturedAt: prepared.capturedAt
                 )
-                self.hackerLiveImage = prepared.liveImage
+                self.atlasPathFrameEvidence.presentHackerFrame(at: prepared.capturedAt,
+                    gameplay: ticket.item.capture.pathState.admits(receiverGameplay: prepared.sample.atlasGameplayActive))
+                self.hackerLiveImage = presentedImage
                 self.hackerLiveBounds = prepared.liveBounds.offsetBy(
                     dx: offset.x,
                     dy: offset.y
@@ -2225,7 +3351,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     private func processHackerAtlas(
         _ ticket: LatestFramePump<HackerPreparedFrame>.Ticket
     ) {
-        let output = isHackerGenerationCurrent(ticket.epoch)
+        let output = isHackerGenerationCurrent(ticket.epoch) && !profileAtlasGate.withLock({ $0 })
             ? hackerAtlasPipeline.process(ticket.item) : nil
         let completion = hackerAtlasPump.complete(ticket)
         if completion.shouldAcceptResult,
@@ -2238,13 +3364,15 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                 }.map(self.hackerRoomPosition)
                 self.hackerAtlasTiles = output.atlasTiles
                 self.hackerAtlasRooms = output.rooms
+                self.refreshHackerPaths()
                 self.hackerRoomConnections = output.connections
                 self.hackerRoomLayout = HackerRoomLayout.make(
                     rooms: output.rooms,
-                    connections: output.connections
+                    connections: output.connections,
+                    floorAlignedConnectionIDs: output.floorAlignedConnectionIDs
                 )
                 let validRoomIDs = Set(output.rooms.map(\.id))
-                self.hackerRoomOffsets = self.hackerRoomOffsets.filter {
+                self.hackerRoomPositionOverrides = self.hackerRoomPositionOverrides.filter {
                     validRoomIDs.contains($0.key)
                 }
                 if let oldActivePosition,
@@ -2263,6 +3391,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
                     self.hackerMapFocus.y += delta.y
                 }
                 self.updateHackerAtlasBounds()
+                self.scheduleHackerAutoSave()
                 self.hackerAtlasFrameCount &+= 1
                 if self.hackerAtlasFrameCount == 1
                     || self.hackerAtlasFrameCount.isMultiple(of: 60) {
@@ -2301,9 +3430,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         hackerPresentationWindowCount = 1
     }
 
-    private func isHackerGenerationCurrent(_ generation: UInt64) -> Bool {
+    private func isHackerGenerationCurrent(_ generation: UInt64, requireActive: Bool = true) -> Bool {
         hackerStateLock.lock(); defer { hackerStateLock.unlock() }
-        return hackerWorkspaceActive && hackerGeneration == generation
+        return hackerGeneration == generation && (!requireActive || hackerWorkspaceActive)
     }
 
     func toggleLabelMode() {
@@ -2334,6 +3463,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func releaseControlsForGroundLabeling() {
+        botPlayer.stop(reason: "Ground or room editing")
+        botDemo.stop(reason: "Ground or room editing")
+        botDemonstrations.stop(reason: "ground-or-room-editing")
         gameControlForwarder.releaseForGroundLabeling()
     }
 
@@ -2344,6 +3476,11 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     private func applyLabelPauseState(_ state: GamePauseState) {
+        if state != .ready {
+            botDemonstrations.stop(reason: "gameplay-paused")
+            botPlayer.stop(reason: "Gameplay paused")
+            botDemo.stop(reason: "Gameplay paused")
+        }
         let completedLabelSession = state == .ready
             && (labelPauseState == .paused || labelPauseState == .resuming)
         labelPauseState = state
@@ -2557,7 +3694,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     /// Drop stale render work before resetting sample-queue tracking.
-    private func advanceGeneration(resetCamera: Bool) {
+    private func advanceGeneration(resetCamera: Bool, preservingMenuNavigation: Bool = false) {
         visionStateLock.lock()
         defer { visionStateLock.unlock() }
         renderGeneration &+= 1
@@ -2569,6 +3706,11 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.currentStatusGeneration = generation
+            self.updateAtlasPathEvidence { $0.resetVisualFrames() }
+            self.resetLiveBlockades()
+            self.botDemonstrations.stop(reason: "capture-generation-changed")
+            self.botPlayer.stop(reason: "Capture generation changed")
+            if !preservingMenuNavigation && !self.botDemo.isHandingOff { self.botDemo.stop(reason: "Capture generation changed") }
             self.gameStatusTracker.reset(preservingGameplay: true)
             self.liveGameStatus = self.gameStatusTracker.current?.displayText
             self.liveGameContextIdentifier = self.gameStatusTracker.current?
@@ -2600,6 +3742,15 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         trackingStateLock.unlock()
         visionQueue.async { [weak self] in
             guard let self else { return }
+            let currentWorld = self.atlasPipeline.currentWorldSnapshot()
+            self.trackingIslandCoordinator.reset(nextID:
+                (currentWorld.trackingIslands.map(\.id).max() ?? -1) + 1)
+            self.trackingIslandCoordinator.applyWorldSnapshot(currentWorld)
+            self.walkedGroundMemory = WalkedGroundMemory(snapshot: currentWorld)
+            self.knightContactTracker = .init()
+            self.trackingStateLock.lock()
+            self.trackingIslandProjection = LiveIslandWorldProjection(snapshot: currentWorld)
+            self.trackingStateLock.unlock()
             self.handledRoomRevision = 0
             if resetCamera { self.accumulator.reset() }
             // Creating a new atlas changes the coordinate epoch, not the game
@@ -2624,6 +3775,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             )
             if resetCamera { self.semanticGroundAtlas.reset() }
             self.transitionMotionBridge.reset()
+            self.calibratedSceneMotion.reset()
+            self.visualFallMotion.reset()
             self.groundPlacementRecovery.reset()
             self.pathPlaybackGroundReadiness = .empty
         }
@@ -2662,6 +3815,18 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     private func applyWorldUpdate(_ update: LiveWorldPipelineUpdate) {
+        walkedGroundMemory.acceptLatest(update.snapshot)
+        if update.snapshot.trackingIslands.contains(where: { $0.placement != .legacyUnknown }) {
+            // World closure never rebases the raw ground/masked/coarse solvers.
+            // They continue in immutable local coordinates; publication projects
+            // each capture through its own corrected island translation.
+            if trackingIslandCoordinator.applyWorldSnapshot(update.snapshot) {
+                trackingStateLock.lock()
+                trackingIslandProjection = LiveIslandWorldProjection(snapshot: update.snapshot)
+                trackingStateLock.unlock()
+            }
+            return
+        }
         // A pose-graph closure has already moved the committed atlas. Animate
         // that atlas change even if this local epoch ended while matching.
         if update.acceptedClosure != nil {
@@ -2737,6 +3902,69 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Main-thread publication uses the same immutable graph revision as atlas
+    /// tiles and owned ground, including a render queued before a loop closure.
+    private func reprojectPresentedIslandFrame() {
+        refreshOwnedWorldOverlays()
+        guard let frame = presentedIslandFrame else { return }
+        let worldPose: CGPoint
+        if let island = frame.island, let projection = publishedIslandProjection {
+            guard let projected = projection.worldPose(for: island) else { return }
+            worldPose = projected
+        } else { worldPose = frame.island?.worldPose ?? frame.rawPose }
+        let dx = (worldPose.x - frame.rawPose.x) * frame.scale
+        let dy = (worldPose.y - frame.rawPose.y) * frame.scale
+        let bounds = frame.rawBounds.offsetBy(dx: dx, dy: dy)
+        let focus = CGPoint(x: frame.rawFocus.x + dx, y: frame.rawFocus.y + dy)
+        if liveBounds != bounds { liveBounds = bounds }
+        if mapFocus != focus { mapFocus = focus }
+    }
+
+    /// Reopened atlases need the same overlays even before a new live capture.
+    private func refreshOwnedWorldOverlays() {
+        guard let snapshot = liveWorldSnapshot,
+              let first = snapshot.observations.first else {
+            ownedGroundOverlayLines = []
+            islandPlacementOverlay = LayerSceneFeatureReviewOverlay(markers: [], lines: [])
+            groundOverlayRevision = -1
+            return
+        }
+        let anchorObservation = snapshot.observations.first { $0.id == snapshot.anchoredObservationID } ?? first
+        let scale = presentedIslandFrame?.scale ?? CGFloat(first.sourceWidth) / first.solveWidth
+        let anchor = presentedIslandFrame?.anchor ?? anchorObservation.optimizedPose
+        if snapshot.mapRevision != groundOverlayRevision || scale != groundOverlayScale
+            || anchor != groundOverlayAnchor {
+            let frameHeight = CGFloat(first.sourceHeight) * first.solveWidth * scale / CGFloat(first.sourceWidth)
+            ownedGroundOverlayLines = LiveGroundOverlayGeometry.make(ownedGroundLines, scale: scale, anchor: anchor,
+                clearanceHeight: GroundClearance.height(frameHeight: frameHeight, knight: nil))
+            // Atlas graph coordinates are scaled world pixels. Anchor changes affect only display placement.
+            let walkID = LiveGroundLineEvidence.walkedSegmentID
+            let grouped = Dictionary(grouping: ownedGroundLines.filter {
+                $0.segmentID == walkID || $0.placement == .connected || $0.placement == .reference
+            }, by: \.roomID)
+            for id in visualBaseRooms.subtracting(grouped.keys) {
+                visualPaths.setBase(room:"room/" + String(id),floors:[],fallbackHeight:Int((frameHeight*0.12).rounded()))
+            }
+            visualBaseRooms = Set(grouped.keys)
+            for (id,lines) in grouped {
+                let key = "room/" + String(id)
+                let supported = LiveGroundOverlayGeometry.make(lines, scale: scale, anchor: .zero,
+                    clearanceHeight: GroundClearance.height(frameHeight: frameHeight, knight: nil))
+                let floors = supported.filter { $0.segmentID != walkID }.compactMap(PathPlatform.init(stroke:))
+                let walked = supported.filter { $0.segmentID == walkID }.compactMap(PathPlatform.init(stroke:))
+                visualPaths.setBase(room:key,floors:floors,walked:walked,fallbackHeight:Int((frameHeight*0.12).rounded()))
+            }
+            if visualPathRoom.isEmpty, let last = snapshot.observations.last {
+                visualPathRoom = "room/" + String(last.roomID)
+                visualPathOffset = .init(x:-anchor.x*scale,y:-anchor.y*scale)
+            }
+            islandPlacementOverlay = LiveIslandOverlayGeometry.make(snapshot: snapshot, scale: scale, anchor: anchor)
+            groundOverlayRevision = snapshot.mapRevision
+            groundOverlayScale = scale
+            groundOverlayAnchor = anchor
+        }
+    }
+
     private func publishAtlasTiles(_ tiles: [LiveAtlasOutput.AtlasLayer]) {
         guard !tiles.isEmpty else { return }
         if let incomingRevision = tiles.first?.revision,
@@ -2790,6 +4018,13 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
     }
 
     private func stageFrame(_ pixelBuffer: CVPixelBuffer, timestamp: Double, capturedAt: TimeInterval) {
+        guard !capturedFrameStateLock.withLock({ captureProcessingPaused || playbackPreparationCapturePaused }) else { return }
+        guard let converted = CaptureFrameConverter.convert(pixelBuffer, context: poseImageContext) else { return }
+        stageConvertedFrame(converted, timestamp: timestamp, capturedAt: capturedAt)
+    }
+
+    private func stageConvertedFrame(_ converted: ConvertedCaptureFrame,
+                                     timestamp: Double, capturedAt: TimeInterval) {
         capturedFrameStateLock.lock()
         let isFrozen = captureProcessingPaused
             || playbackPreparationCapturePaused
@@ -2797,7 +4032,6 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
         // A frozen editor already owns its screenshot. Do not convert, solve,
         // or publish background frames that invalidate its entire view graph.
         guard !isFrozen else { return }
-        guard let converted = CaptureFrameConverter.convert(pixelBuffer, context: poseImageContext) else { return }
         let frame = converted.image
         recordDirectPreviewFrame(at: timestamp)
         capturedFrameStateLock.lock()
@@ -2819,19 +4053,12 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
         let transitionDecision = transitionFrameGate.observe(signalProfile)
         sampleFrameCount += 1
         let hackerActive = isHackerWorkspaceActive()
-        let renderedGameFrame = hackerActive
-            || playbackDivergenceMonitor.isAcceptingSamples
+        let renderedGameFrame = canUseHacker || RenderedFrameMarker.enabled
+            || inputPathRecorder.isRecording || botEvaluation.isRecording || playbackDivergenceMonitor.isAcceptingSamples
             ? RenderedFrameMarker.decode(frame) : nil
-        if hackerActive, let renderedGameFrame {
-            recordHackerCapture(
-                frame,
-                unityFrame: renderedGameFrame,
-                capturedAt: timestamp,
-                integratesAtlas: sampleFrameCount.isMultiple(
-                    of: HollowKnightCaptureConfiguration.atlasSampleStride
-                )
-            )
-        }
+        inputPathRecorder.recordVisualFrame(frame, captureTimestamp: timestamp,
+            capturedAt: capturedAt, captureGeneration: sampleGeneration,
+            solveWidth: Double(converted.solveWidth), renderedGameFrame: renderedGameFrame)
         nextObjectSourceFrameIdentifier &+= 1
         let objectSourceFrameIdentifier = nextObjectSourceFrameIdentifier
         let captureGeneration = sampleGeneration
@@ -2861,11 +4088,6 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             captureGeneration: captureGeneration,
             timestamp: timestamp
         )
-        let menuObservation = menuStencilWorker.observe(
-            frame, timestamp: timestamp, asynchronously: hackerActive
-        )
-        let rawMenuStencil = menuObservation?.observation.result
-        let selectorCalibrationDiagnostic = menuObservation?.observation.diagnostic
         let hudStarted = ProcessInfo.processInfo.systemUptime
         let hudStencil = hudStencilTracker.observe(frame,
             // HUD evidence participates in opening the gameplay gate. Keeping
@@ -2874,6 +4096,13 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             gameplay: true,
             timestamp: timestamp, generation: captureGeneration)
         telemetry.record(.hudStencil, seconds: ProcessInfo.processInfo.systemUptime - hudStarted)
+        // Fresh HUD evidence suppresses menu lookalikes while the object
+        // model independently confirms the Knight for gameplay entry.
+        let menuObservation = hudStencil?.establishesGameplay == true ? nil : menuStencilWorker.observe(
+            frame, timestamp: timestamp, asynchronously: hackerActive
+        )
+        let rawMenuStencil = menuObservation?.observation.result
+        let selectorCalibrationDiagnostic = menuObservation?.observation.diagnostic
         let menuStencil = gameplayMenuEvidenceGate.admits(
             menuContext: rawMenuStencil?.isMatch == true
                 ? rawMenuStencil?.context : nil,
@@ -2887,9 +4116,28 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             hudStencil: hudStencil,
             creditsLikely: CreditsVisualSignature.isLikelyCredits(frame)
         )
+        let menuInput = BotDemoMenuObservation.make(menu: menuStencil,
+            freshGameplay: hudStencil?.establishesGameplay == true && recognizedGameStatus?.context.isGameplay == true,
+            frameTimestamp: timestamp, capturedAt: capturedAt,
+            availableAt: ProcessInfo.processInfo.systemUptime, generation: captureGeneration)
+        if !visualReplayMode, !profileLaunchPending {
+            if let launch = profileLaunchDetector.observe(menuInput) {
+                profileLaunchPending = true
+                DispatchQueue.main.async { [weak self] in self?.switchToProfileAtlas(launch) }
+            }
+            let hold = profileLaunchPending || profileLaunchFailed || profileLaunchDetector.awaitingGameplay
+            profileAtlasGate.withLock { $0 = hold }
+        }
+        let holdAtlas = profileAtlasGate.withLock { $0 }
+        if canUseHacker || inputPathRecorder.isRecording || botEvaluation.isRecording, let renderedGameFrame {
+            recordHackerCapture(frame, unityFrame: renderedGameFrame, capturedAt: timestamp,
+                integratesAtlas: sampleFrameCount.isMultiple(of: HollowKnightCaptureConfiguration.atlasSampleStride),
+                captureGeneration: captureGeneration, pathState: .init(
+                    hasSceneSignal: transitionDecision.admitsTracking && !holdAtlas, recognized: recognizedGameStatus?.context))
+        }
         let displayingMenu = recognizedGameStatus.map { !$0.context.isGameplay } ?? false
         let frameExtent = CGRect(x: 0, y: 0, width: frame.width, height: frame.height)
-        let transitionRegions = SceneRegions.atlasGameplay(
+        let transitionRegions = replaySceneRegions ?? SceneRegions.atlasGameplay(
             fromObjectDetections: objectDetections,
             in: frameExtent,
             knightMinimumConfidence:
@@ -2917,8 +4165,11 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 presentedAt: timestamp,
                 solveWidth: converted.solveWidth
             )
-        let horizontalInput = gameControlForwarder.currentHorizontalRoomDirection()
-        let room = solved.gameplayEnabled
+        let archivedInput = visualReplayMode && visualReplayInput?.captureTimestamp == timestamp ? visualReplayInput : nil
+        let horizontalInput: VisualRoomDirection?
+        if let drive = archivedInput?.horizontalDrive { horizontalInput = VisualRoomDirection(rawValue: drive) }
+        else { horizontalInput = visualReplayMode ? visualReplayDirection : gameControlForwarder.currentHorizontalRoomDirection() }
+        let room = solved.gameplayEnabled && !holdAtlas
             ? visualRoomTracker.observe(
                 profile: signalProfile,
                 baseDecision: transitionDecision,
@@ -2926,6 +4177,9 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 knightRect: transitionRegions.knight,
                 frameSize: CGSize(width: frame.width, height: frame.height),
                 currentWorldPose: roomCameraPosition,
+                completedPose: solved.poseTimestamp.map {
+                    VisualCameraPoseSample(timestamp: $0, cameraPosition: solved.cameraPosition)
+                },
                 reliableCameraVelocity: reliableCameraVelocity,
                 solveWidth: converted.solveWidth,
                 timestamp: timestamp,
@@ -2945,17 +4199,28 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
         if portalTopologyChanged {
             atlasPipeline.rebuildAtlasForRoomComposition()
         }
-        let presentationCameraPosition = room.coarseWorldPose
-            ?? room.transitionWorldPose
+        let controllingCoarsePose = room.coarseMotionIsControlling
+            ? room.coarseWorldPose ?? room.transitionWorldPose : nil
+        let presentationCameraPosition = controllingCoarsePose
             ?? (roomOwnershipChanged
                 ? room.activationWorldPose ?? room.entryWorldPose
                 : PresentationPosePrediction.position(solved.cameraPosition,
                     velocity: solved.cameraVelocity, measuredAt: solved.poseTimestamp,
                     presentedAt: timestamp))
+        let presentationIsland = roomOwnershipChanged ? nil : solved.islandCapture.map {
+            $0.advancing(by: CGVector(dx: presentationCameraPosition.x - solved.cameraPosition.x,
+                                     dy: presentationCameraPosition.y - solved.cameraPosition.y))
+        }
+        trackingStateLock.lock()
+        let captureProjection = trackingIslandProjection
+        trackingStateLock.unlock()
+        let projectedPresentationPosition = presentationIsland.flatMap {
+            captureProjection?.worldPose(for: $0) ?? $0.worldPose
+        } ?? presentationCameraPosition
         inputPathRecorder.recordCoarseMotion(
             captureTimestamp: timestamp,
             renderedGameFrame: renderedGameFrame,
-            presentedCameraPosition: presentationCameraPosition,
+            presentedCameraPosition: projectedPresentationPosition,
             coarseCameraPosition: room.coarseWorldPose ?? room.transitionWorldPose,
             estimate: room.coarseMotionEstimate,
             placeMatch: room.coarsePlaceMatch,
@@ -2974,14 +4239,17 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 velocityX: reliableCameraVelocity.map { Double($0.velocity.dx) },
                 velocityY: reliableCameraVelocity.map { Double($0.velocity.dy) },
                 velocityTimestamp: reliableCameraVelocity?.timestamp,
-                horizontalInput: horizontalInput?.rawValue
+                horizontalInput: horizontalInput?.rawValue,
+                completedPose: solved.poseTimestamp.map {
+                    VisualCameraPoseSample(timestamp: $0, cameraPosition: solved.cameraPosition)
+                }
             ),
             observedAt: capturedAt
         )
         if let renderedGameFrame,
            let decision = playbackDivergenceMonitor.appendVision(
             frameKey: renderedGameFrame,
-            cameraPosition: presentationCameraPosition,
+            cameraPosition: projectedPresentationPosition,
             observedAt: capturedAt,
             isTransitioning: room.isTransitioning
            ) {
@@ -3004,20 +4272,27 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                     gameplayEnabled: trackingState.gameplayEnabled,
                     generation: captureGeneration,
                     reliableGroundCameraVelocity: priorReliableVelocity,
-                    reliableGroundVelocityTimestamp: priorReliableTimestamp
+                    reliableGroundVelocityTimestamp: priorReliableTimestamp,
+                    islandCapture: presentationIsland
                 )
             }
             trackingStateLock.unlock()
         }
         if coarseMotionDiagnosticsEnabled,
            let grid = room.coarseMotionGrid {
+            let motion = coarseDiagnosticPrevious.flatMap { previous in
+                timestamp > previous.timestamp && timestamp - previous.timestamp <= 0.5
+                    ? LowResolutionRoomMotionTracker.translation(from: previous.grid, to: grid) : nil
+            }
+            coarseDiagnosticPrevious = (grid, timestamp)
             let diagnosticImage = LowResolutionMotionDiagnosticRenderer.image(
-                grid: grid,
-                estimate: room.coarseMotionEstimate,
+                motion: motion,
+                gridWidth: grid.width,
+                frameSize: CGSize(width: frame.width, height: frame.height),
                 isControlling: room.coarseMotionIsControlling
             )
             let diagnosticStatus = LowResolutionMotionDiagnosticPresentation.text(
-                estimate: room.coarseMotionEstimate,
+                motion: motion,
                 isControlling: room.coarseMotionIsControlling,
                 solveWidth: converted.solveWidth,
                 gridWidth: grid.width
@@ -3027,8 +4302,13 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 self?.coarseMotionDiagnosticImage = diagnosticImage
                 self?.coarseMotionDiagnosticStatus = diagnosticStatus
             }
+        } else {
+            coarseDiagnosticPrevious = nil
         }
-        let hasSignal = transitionDecision.admitsTracking && !room.isTransitioning
+        // A pending doorway changes ownership policy, not pixel visibility.
+        // Continue visual measurement until the signal gate detects blackout;
+        // processVision independently withholds committed atlas writes.
+        let hasSignal = transitionDecision.admitsTracking
         if room.statusText != lastPublishedRoomStatus {
             lastPublishedRoomStatus = room.statusText
             DispatchQueue.main.async { [weak self] in
@@ -3053,7 +4333,6 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 sourceFrameIdentifier: objectSourceFrameIdentifier,
                 timestamp: timestamp,
                 captureGeneration: captureGeneration,
-                extensionFraction: CGFloat(max(0, min(0.5, objectDetectionExtension))),
                 createsPixelDiagnostic: objectDetectionPixelsEnabled
             ))
         }
@@ -3061,24 +4340,37 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             enqueueVision(VisionFrame(
                 presentationFrame: frame,
                 solveWidth: converted.solveWidth,
-                hasGameplaySignal: hasSignal,
+                hasGameplaySignal: hasSignal && !holdAtlas,
                 resumedAfterTransition: transitionDecision.resumedAfterTransition || roomChanged,
                 signalProfile: signalProfile,
                 room: room,
                 timestamp: timestamp,
-                worldTimestamp: Date().timeIntervalSinceReferenceDate,
+                worldTimestamp: visualReplayWorldTimestamp ?? Date().timeIntervalSinceReferenceDate,
                 capturedAt: capturedAt,
                 generation: captureGeneration,
                 hudStencil: hudStencil,
-                menuStencil: menuStencil
+                menuStencil: menuStencil,
+                horizontalInput: horizontalInput,
+                jumpHeld: visualReplayMode
+                    ? (archivedInput?.recentJump ?? (timestamp - visualReplayLastJump <= GameControlForwarder.jumpContactCooldown))
+                    : gameControlForwarder.hasRecentJumpInput()
             ))
         }
+        // Offline replay exercises capture, motion, world persistence and
+        // atlas integration; it has no display or object-inference consumer.
+        if visualReplayMode { return }
         let extent = frameExtent
         let regions = solved.gameplayEnabled
             ? SceneRegions.atlasGameplay(fromObjectDetections: objectDetections,
                                          in: extent, hudStencil: hudStencil)
             : SceneRegions.startup(in: extent)
         let presentationRegions = displayingMenu ? SceneRegions.startup(in: extent) : regions
+        // The status label can retain Gameplay through missing cues. Paths
+        // require Gameplay recognition on the current frame.
+        let pathFrame = LiveAtlasPresentationPolicy.admitsPathFrame(
+            hasSceneSignal: hasSignal && !holdAtlas && !room.isTransitioning,
+            recognizedContext: recognizedGameStatus?.context
+        )
         DispatchQueue.main.async { [weak self] in
             guard let self, self.labelImage == nil,
                   captureGeneration == self.currentStatusGeneration else { return }
@@ -3086,7 +4378,15 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             self.updateQuitGameExitWatch(for: status)
             let context = status?.context.labelingContext?.storageIdentifier
             let gameplay = status?.context.isGameplay == true
+            self.updateAtlasPathEvidence { $0.observe(gameplay: pathFrame, at: timestamp) }
+            if !gameplay {
+                self.botDemonstrations.stop(reason: "gameplay-ended")
+                self.botPlayer.stop(reason: "Gameplay ended")
+            }
             if self.liveGameStatus != status?.displayText { self.liveGameStatus = status?.displayText }
+            if self.botDemo.isActive {
+                if !self.switchingProfileAtlas { self.botDemo.observe(menuInput) }
+            }
             if self.liveGameContextIdentifier != context { self.liveGameContextIdentifier = context }
             if self.liveSelectedMenuOption != status?.selectedMenuOption {
                 self.liveSelectedMenuOption = status?.selectedMenuOption
@@ -3132,7 +4432,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             cameraPosition: presentationCameraPosition,
             observationPoseTimestamp: solved.poseTimestamp == timestamp ? timestamp : nil,
             hasGameplaySignal: hasSignal && solved.gameplayEnabled && !displayingMenu,
-            allowAtlasWrite: hasSignal && solved.gameplayEnabled && !displayingMenu && sampleFrameCount.isMultiple(
+            allowAtlasWrite: !holdAtlas && hasSignal && solved.gameplayEnabled && !displayingMenu && sampleFrameCount.isMultiple(
                 of: HollowKnightCaptureConfiguration.atlasSampleStride
             ),
             objectDetections: objectDetectionEnabled
@@ -3148,8 +4448,22 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             hudStencil: displayingMenu ? nil : hudStencil,
             showsHUDStencil: stencilDetectionEnabled,
             menuStencil: menuStencil,
-            showsMenuStencil: stencilDetectionEnabled
+            showsMenuStencil: stencilDetectionEnabled,
+            islandCapture: presentationIsland,
+            islandWorldRevision: captureProjection?.revision
         ))
+    }
+
+    private func updateAtlasPathEvidence(_ update: (inout LiveAtlasPathFrameEvidence) -> Void) {
+        let timing = LivePresentationTiming.shared
+        let gameplayTimestamp = liveImage.flatMap { timing.timestamp(for: $0) }
+        let wasVisibleInGameplay = atlasPathFrameEvidence.admits(gameplayTimestamp)
+        let wasVisibleInHacker = hasHackerAtlasPathEvidence
+        update(&atlasPathFrameEvidence)
+        if wasVisibleInGameplay != atlasPathFrameEvidence.admits(gameplayTimestamp)
+            || wasVisibleInHacker != hasHackerAtlasPathEvidence {
+            objectWillChange.send()
+        }
     }
 
     private func enqueueVision(_ frame: VisionFrame) {
@@ -3159,6 +4473,14 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
 
     private func processVision(_ ticket: LatestFramePump<VisionFrame>.Ticket) {
         let snapshot = ticket.item
+        inputPathRecorder.recordVisualStage(.visionStarted,
+            captureTimestamp: snapshot.timestamp, captureGeneration: snapshot.generation)
+        botEvaluation.stage(.visionStarted, timestamp: snapshot.timestamp, generation: snapshot.generation)
+        defer {
+            inputPathRecorder.recordVisualStage(.visionCompleted,
+                captureTimestamp: snapshot.timestamp, captureGeneration: snapshot.generation)
+            botEvaluation.stage(.visionCompleted, timestamp: snapshot.timestamp, generation: snapshot.generation)
+        }
         let startedAt = ProcessInfo.processInfo.systemUptime
         telemetry.record(.motionQueueWait, seconds: startedAt - snapshot.enqueuedAt)
         defer {
@@ -3183,7 +4505,8 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             in: snapshot.presentationFrame,
             menuStencil: snapshot.menuStencil,
             hudStencil: snapshot.hudStencil,
-            gameplayIsLatched: startupPhaseBeforeObservation == .gameplay
+            gameplayIsLatched: startupPhaseBeforeObservation == .gameplay,
+            objectDetections: startupDetections
         )
         let startupDecision = gameStartupCoordinator.observe(startupEvidence)
         if lastStartupDiagnosticAt.map({ snapshot.timestamp - $0 >= 1 }) ?? true {
@@ -3290,6 +4613,8 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 y: activationPose.y * latestPresentationScale
             ))
             transitionMotionBridge.reset()
+            calibratedSceneMotion.reset()
+            visualFallMotion.reset()
             groundPlacementRecovery.reset()
             pathPlaybackGroundReadiness = .empty
             worldBasis.beginLocalEpoch()
@@ -3301,12 +4626,25 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             }
         }
 
-        if snapshot.room.isTransitioning {
+        // A suspected doorway is not evidence that every visible texture has
+        // vanished. Continue measured tracking while signal remains; only the
+        // actual blackout bypasses the ground/masked solvers. Pending topology
+        // still blocks committed atlas geometry until ownership is resolved.
+        if snapshot.room.isTransitioning && !snapshot.hasGameplaySignal {
             let transitionPose = snapshot.room.transitionWorldPose
                 ?? worldBasis.snapshot.latestWorldPose
                 ?? accumulator.position
+            let measured = snapshot.room.coarseMotionMeasured
+                && snapshot.room.coarseMeasurementTimestamp.map { abs($0 - snapshot.timestamp) <= 0.000001 } == true
+            let island = trackingIslandCoordinator.observe(timestamp: snapshot.timestamp,
+                roomID: snapshot.room.roomID, worldPose: transitionPose,
+                measured: measured, referenceTimestamp: snapshot.room.coarseReferenceTimestamp)
+            recordFloorlessTracking(snapshot, pose: transitionPose, island: island,
+                source: measured ? "transitionCoarse" : "transitionHeld")
             accumulator.applyGlobalCorrection(to: transitionPose)
             transitionMotionBridge.suspendForTransition()
+            calibratedSceneMotion.reset()
+            visualFallMotion.reset()
             groundPlacementRecovery.missingObservation()
             if TransitionPosePublication.replacesTrackingState(
                 roomOwnershipChanged: false,
@@ -3327,7 +4665,8 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                     gameplayEnabled: true,
                     generation: snapshot.generation,
                     reliableGroundCameraVelocity: priorReliableVelocity,
-                    reliableGroundVelocityTimestamp: priorReliableTimestamp
+                    reliableGroundVelocityTimestamp: priorReliableTimestamp,
+                    islandCapture: island
                 )
                 trackingStateLock.unlock()
             }
@@ -3345,6 +4684,11 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
         var cameraUpdate: CameraUpdate?
         var basisTicket: WorldBasisController.ObservationTicket?
         var worldCameraPosition = worldBasis.snapshot.latestWorldPose ?? accumulator.position
+        var islandCapture: LiveIslandCapture?
+        var capturedGroundGeometry: LiveWorldGroundGeometry?
+        var verifiedBootstrapWalk: VisualRoomDirection?
+        var observedFloorCandidates: LiveObservedFloorCandidates?
+        var observedPlayerBounds: CGRect?
         var groundForFrame = groundReferenceTracker.currentEstimate()
         var groundAnchoredPose = false
         var groundMotionMeasured = false
@@ -3375,15 +4719,26 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 width: snapshot.presentationFrame.width,
                 height: snapshot.presentationFrame.height
             )
-            regions = SceneRegions.atlasGameplay(
+            regions = replaySceneRegions ?? SceneRegions.atlasGameplay(
                 fromObjectDetections: objectDetections,
                 in: extent,
                 knightMinimumConfidence:
                     LiveObjectDetectionPostprocessor.groundKnightConfidenceThreshold,
                 hudStencil: snapshot.hudStencil
             )
+            if visualReplayMode && !gameplayGym {
+                observedPlayerBounds = visualReplayInput?.captureMatchedPlayerBounds(at: snapshot.timestamp)
+            } else {
+                objectInferenceStateLock.lock()
+                observedPlayerBounds = LiveObjectDetectionFreshness.captureMatchedKnightBounds(
+                    from: latestMaskDetectionBatch, captureGeneration: snapshot.generation,
+                    timestamp: snapshot.timestamp, width: snapshot.presentationFrame.width,
+                    height: snapshot.presentationFrame.height)
+                objectInferenceStateLock.unlock()
+            }
             let shouldShowGroundEdge = groundEdgeEnabled
             let shouldShowGroundDetect = groundDetectEnabled
+            let shouldShowGroundStage = groundStageEnabled
             let shouldShowCleaned = cleanedEnabled
             let shouldShowGroundHypotheses = groundHypothesesEnabled
             let tuning = groundTuning
@@ -3392,7 +4747,18 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             // overlay. Analyze every sampled Gameplay frame so known line IDs
             // can correct vertical placement before this observation reaches
             // the atlas.
-            let groundForegroundRects = regions?.omittedRects ?? []
+            let sceneForegroundRects = regions?.omittedRects ?? []
+            let groundForegroundRects = SceneRegions.groundOmittedRects(from: sceneForegroundRects, in: extent)
+            // Replay also uses these source regions for atlas masking.
+            var recordedGroundInput = VisualReplayGroundInput(
+                captureTimestamp: snapshot.timestamp, captureGeneration: snapshot.generation,
+                excludingRects: sceneForegroundRects, knightRect: regions?.knight,
+                tuning: tuning, semanticTuning: semanticGroundTuning,
+                observedPlayerBounds: observedPlayerBounds)
+            recordedGroundInput.horizontalDrive = snapshot.horizontalInput?.rawValue ?? 0
+            recordedGroundInput.recentJump = snapshot.jumpHeld
+            inputPathRecorder.recordGroundInput(recordedGroundInput)
+            botEvaluation.groundInput(recordedGroundInput)
             let trackerForegroundRects = groundForegroundRects.map { rect in
                 CGRect(
                     x: rect.minX,
@@ -3406,29 +4772,45 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 excluding: groundForegroundRects
             )
             let comparisonAnalysis = groundAnalysis.map(GroundLineDetector.compare)
-            let theoryAnalysis = comparisonAnalysis.flatMap {
-                GroundLineDetector.theory(from: $0, tuning: tuning)
-            }
-            let detectedFloorLines = theoryAnalysis.map(GroundLineDetector.cleanFloorLines) ?? []
-            let cleanFloorLines = GroundLineDetector.rejectingKnownForegroundLines(
-                detectedFloorLines,
-                imageHeight: snapshot.presentationFrame.height,
-                foregroundRects: groundForegroundRects,
-                knightRect: regions?.knight
-            )
             let semanticTuning = semanticGroundTuning
             let semanticTheoryAnalysis = comparisonAnalysis.flatMap {
-                GroundLineDetector.semanticTheory(from: $0, tuning: semanticTuning)
+                GroundLineDetector.semanticTheory(from: $0, tuning: semanticTuning,
+                    includeRunEvidence: shouldShowGroundStage)
             }
             let semanticDetectedLines = semanticTheoryAnalysis.map {
                 GroundLineDetector.cleanFloorLines(from: $0)
             } ?? []
-            let semanticFloorLines = GroundLineDetector.rejectingKnownForegroundLines(
+            let rawSemanticFloorLines = GroundLineDetector.gameplayFloors(
                 semanticDetectedLines,
                 imageHeight: snapshot.presentationFrame.height,
                 foregroundRects: groundForegroundRects,
                 knightRect: regions?.knight
             )
+            var semanticFloorLines = GroundStrokeGeometry.coalescedFloors(rawSemanticFloorLines,
+                frameWidth: snapshot.presentationFrame.width)
+            var cameraFloorLines = comparisonAnalysis.map {
+                GroundLineDetector.cameraFloors(from: $0, tuning: tuning, visibleFloors: semanticFloorLines,
+                    imageHeight: snapshot.presentationFrame.height, foregroundRects: groundForegroundRects,
+                    knightRect: regions?.knight)
+            } ?? []
+            let clearance = GroundClearance.height(frameHeight: CGFloat(snapshot.presentationFrame.height),
+                knight: observedPlayerBounds)
+            let prior = currentTrackingState(for: snapshot.generation)
+            if !snapshot.resumedAfterTransition, let island = prior.islandCapture, island.measured,
+               island.roomID == snapshot.room.roomID, let t = prior.poseTimestamp, (0...0.15).contains(snapshot.timestamp - t) {
+                let walked = walkedGroundMemory.visible(in: island, projection: trackingIslandProjection,
+                    pixelsPerSolve: CGFloat(snapshot.presentationFrame.width) / snapshot.solveWidth,
+                    width: snapshot.presentationFrame.width, height: snapshot.presentationFrame.height)
+                // The prior pose is approximate during movement. Trim only
+                // interior columns and retain the matching textured floor.
+                let margin = max(2, Int(ceil((snapshot.timestamp - t) * 480 * CGFloat(snapshot.presentationFrame.width) / 640)))
+                let interiors = walked.compactMap { floor -> CleanFloorLine? in
+                    let left = floor.xRange.lowerBound + margin, right = floor.xRange.upperBound - margin
+                    return left <= right ? CleanFloorLine(row: floor.row, xRange: left...right) : nil
+                }
+                let coverage = WalkedFloorCoverage(floors: interiors)
+                cameraFloorLines = coverage.filtered(cameraFloorLines, clearance: clearance, keepMatchingRows: 4)
+            }
             var semanticLineReviews = [GroundLinePresenceReview]()
             var hypothesisTracking: GroundHypothesisTrackingResult?
             let hypothesisImage: CGImage?
@@ -3440,11 +4822,13 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             hypothesisTracking = comparisonAnalysis.map { _ in
                 groundHypothesisTracker.update(
                     frame: snapshot.presentationFrame,
-                    floorLines: cleanFloorLines,
+                    floorLines: cameraFloorLines,
+                    visibleFloors: semanticFloorLines,
                     lineSeparation: tuning.lineSeparation,
                     occlusionMergeGap: tuning.occlusionMergeGap,
                     timestamp: snapshot.timestamp,
                     sourceLuma: groundAnalysis?.sourceLuma,
+                    knightRect: regions?.knight,
                     protectedOcclusions: trackerForegroundRects,
                     placementValidator: { proposal in
                         evaluatedPlacement = true
@@ -3477,6 +4861,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                         detectedFraction: 1
                     )
                 }
+                tracking.detectedFloorLines = semanticFloorLines
                 tracking.atlasLines = semanticGroundAtlas.update(
                     trackingLines: tracking.atlasLines,
                     semanticLines: semanticFloorLines,
@@ -3486,6 +4871,13 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                     poseVerified: tracking.poseVerified
                 )
                 hypothesisTracking = tracking
+            }
+            var botDetectedLines = semanticLineReviews.filter { $0.state == .confirmed }.flatMap { review in
+                review.line.evidenceRanges.map { span in
+                    BotTerrainSegment(minimumX: Double(span.lowerBound), maximumX: Double(span.upperBound + 1),
+                        y: Double(snapshot.presentationFrame.height - review.line.row),
+                        confidence: Double(min(1, max(0, review.detectedFraction))))
+                }
             }
             let groundTrackingSeconds = ProcessInfo.processInfo.systemUptime - groundTrackingStarted
             hadGlobalCorrection = hypothesisTracking?.globalCorrection != nil
@@ -3506,7 +4898,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                let tracking = hypothesisTracking {
                 audit.record(pixels: pixels, width: snapshot.presentationFrame.width,
                     height: snapshot.presentationFrame.height, timestamp: snapshot.timestamp,
-                    lines: cleanFloorLines, exclusions: trackerForegroundRects, tracking: tracking,
+                    lines: semanticFloorLines, exclusions: trackerForegroundRects, tracking: tracking,
                     featureBank: groundHypothesisTracker.auditGlobalFeatureBank())
             }
             if let tracking = hypothesisTracking {
@@ -3518,7 +4910,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 let pose = ground.cameraPosition.map { "\($0.x),\($0.y)" } ?? "none"
                 let delta = ground.cameraTranslation.map { "\($0.dx),\($0.dy)" } ?? "none"
                 let correction = ground.globalCorrection.map { "\($0.dx),\($0.dy)" } ?? "none"
-                let rows = cleanFloorLines.map { "\($0.row):\($0.xRange.lowerBound)-\($0.xRange.upperBound)" }.joined(separator: ",")
+                let rows = semanticFloorLines.map { "\($0.row):\($0.xRange.lowerBound)-\($0.xRange.upperBound)" }.joined(separator: ",")
                 let reviews = ground.lineReviews.map {
                     "\($0.id):\($0.line.row):\($0.state.rawValue):\(Int($0.detectedFraction * 100))"
                 }.joined(separator: ",")
@@ -3537,8 +4929,8 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             }
             groundAnchoredPose = false
             if lastAtlasAdmissionDiagnosticAt.map({ snapshot.timestamp - $0 >= 1 }) ?? true {
-                let raw = detectedFloorLines.map { "\($0.row):\($0.xRange)" }.joined(separator: ",")
-                let filtered = cleanFloorLines.map { String($0.row) }.joined(separator: ",")
+                let raw = semanticDetectedLines.map { "\($0.row):\($0.xRange)" }.joined(separator: ",")
+                let filtered = semanticFloorLines.map { String($0.row) }.joined(separator: ",")
                 let presence = hypothesisTracking?.lineReviews.map {
                     "\($0.id):\($0.state.rawValue):\(Int($0.detectedFraction * 100))%"
                 }.joined(separator: ",") ?? ""
@@ -3550,6 +4942,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             // pixels as opaque black over the live capture.
             hypothesisImage = nil
             var bridgeResultForRecording: TransitionMotionBridgeResult?
+            var fallPredictionForRecording: VisualFallMotionPrior.Prediction?
             var usedCoarseFloorlessPose = false
             var floorlessCoarseForRecording: CGPoint?
             var floorlessMaskedForRecording: CGPoint?
@@ -3564,6 +4957,25 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                     y: pose.y / latestPresentationScale
                 )
             }()
+            let sceneMotionStarted = ProcessInfo.processInfo.systemUptime
+            let sceneMotion: CalibratedSceneMotionTracker.Measurement? = {
+                guard let pixels = groundAnalysis?.sourceLuma,
+                      let grid = CalibratedSceneMotionTracker.grid(pixels: pixels,
+                        width: snapshot.presentationFrame.width, height: snapshot.presentationFrame.height,
+                        excluding: regions?.omittedRects ?? []) else { return nil }
+                var calibration: CalibratedSceneMotionTracker.GroundCalibration?
+                if let position = groundCandidate, let ground = hypothesisTracking,
+                   let reference = ground.localReferenceTimestamp,
+                   let displacement = ground.localProjectedImageDisplacement {
+                    calibration = .init(position: position, referenceTimestamp: reference,
+                        displacement: CGVector(dx: displacement.dx / latestPresentationScale,
+                                               dy: displacement.dy / latestPresentationScale))
+                }
+                return calibratedSceneMotion.observe(grid: grid, timestamp: snapshot.timestamp,
+                    solveWidth: snapshot.solveWidth, ground: calibration)
+            }()
+            let sceneMotionSeconds = ProcessInfo.processInfo.systemUptime - sceneMotionStarted
+            telemetry.record(.calibratedSceneMotion, seconds: sceneMotionSeconds)
             if let position = groundCandidate {
                 groundAnchoredPose = true
                 groundMotionMeasured = hypothesisTracking.map {
@@ -3615,6 +5027,33 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                     coarseFallbackPosition = coarsePosition
                     floorlessCoarseForRecording = coarsePosition
                     floorlessSelectionForRecording = "coarsePlaceMatch"
+                } else if let sceneMotion, sceneMotion.verticalMeasured {
+                    // Ground-calibrated vertical scenery carries floorless falls.
+                    // Horizontal-only calibration cannot constrain a fall and must
+                    // not override the established masked/coarse horizontal path.
+                    // Unknown X retains its estimate and cannot claim 2D lineage.
+                    let other = snapshot.room.coarseWorldPose ?? accumulator.position
+                    let position = CGPoint(
+                        x: sceneMotion.horizontalMeasured ? sceneMotion.position.x : other.x,
+                        y: sceneMotion.verticalMeasured ? sceneMotion.position.y : other.y)
+                    bridged = TransitionMotionBridgeResult(cameraPosition: position,
+                        cameraStep: CGVector(dx: position.x - accumulator.position.x,
+                                             dy: position.y - accumulator.position.y),
+                        confidence: Float(1 / (1 + max(sceneMotion.residualX, sceneMotion.residualY)
+                            / (snapshot.solveWidth / 640))), source: .calibratedScene,
+                        referenceTimestamp: sceneMotion.referenceTimestamp,
+                        horizontalMeasured: sceneMotion.horizontalMeasured,
+                        verticalMeasured: sceneMotion.verticalMeasured)
+                    floorlessSelectionForRecording = "calibratedScene"
+                    floorlessMaskedForRecording = position
+                    if let coarse = snapshot.room.coarseWorldPose {
+                        _ = visualRoomTracker.applyFloorlessCorrection(
+                            CGVector(dx: position.x - coarse.x, dy: position.y - coarse.y),
+                            roomID: snapshot.room.roomID, coarsePoseRevision: snapshot.room.coarsePoseRevision)
+                    }
+                    transitionMotionBridge.anchor(frame: snapshot.presentationFrame,
+                        excluding: regions?.omittedRects ?? [], cameraPosition: position,
+                        movingForegroundRect: regions?.knight, timestamp: snapshot.timestamp)
                 } else {
                     let bridgeMeasurement = transitionMotionBridge.track(
                         frame: snapshot.presentationFrame,
@@ -3627,7 +5066,8 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                         timestamp: snapshot.timestamp
                     )
                     let expectedDirection =
-                        gameControlForwarder.currentHorizontalRoomDirection()
+                        (visualReplayMode ? visualReplayDirection
+                            : gameControlForwarder.currentHorizontalRoomDirection())
                             ?? snapshot.room.coarseMotionEstimate?.direction
                     floorlessCoarseForRecording = snapshot.room.coarseWorldPose
                     floorlessMaskedForRecording = bridgeMeasurement?.cameraPosition
@@ -3730,6 +5170,21 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                         )
                     }
                 }
+                if bridged == nil, coarseFallbackPosition == nil,
+                   let prediction = visualFallMotion.predict(knight: regions?.knight,
+                    timestamp: snapshot.timestamp,
+                    frameSize: CGSize(width: snapshot.presentationFrame.width, height: snapshot.presentationFrame.height),
+                    solveWidth: snapshot.solveWidth) {
+                    // Only a short display prediction. No bridge flag, ground
+                    // reseeding, confidence promotion or trusted atlas write.
+                    let predicted = CGPoint(x: accumulator.position.x, y: prediction.cameraY)
+                    let step = CGVector(dx: 0, dy: predicted.y - accumulator.position.y)
+                    accumulator.applyGlobalCorrection(to: predicted)
+                    worldCameraPosition = predicted
+                    cameraUpdate = CameraUpdate(state: .accepted, rawStep: step, acceptedStep: step, position: predicted)
+                    basisTicket = worldBasis.observe(localPose: predicted, captureTimestamp: snapshot.timestamp)
+                    fallPredictionForRecording = prediction
+                }
                 // Keep private odometry in the same coordinate system as a
                 // measured fallback. Never seed a merely held/unobserved pose.
                 let measuredFallback = bridged != nil || usedCoarseFloorlessPose
@@ -3750,7 +5205,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                             y: accepted.y * latestPresentationScale
                         ),
                         frame: snapshot.presentationFrame,
-                        floorLines: cleanFloorLines,
+                        floorLines: cameraFloorLines,
                         timestamp: snapshot.timestamp,
                         sourceLuma: groundAnalysis?.sourceLuma,
                         protectedOcclusions: trackerForegroundRects,
@@ -3767,17 +5222,185 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             } else if usedCoarseFloorlessPose {
                 recordedPoseSource = "coarseMotion"
             } else if transitionBridgePose {
-                recordedPoseSource = "motionBridge"
+                recordedPoseSource = bridgeResultForRecording?.source == .calibratedScene
+                    ? "calibratedScene" : "motionBridge"
+            } else if fallPredictionForRecording != nil {
+                recordedPoseSource = "fallPrediction"
             } else if cameraUpdate?.state == .accepted {
                 recordedPoseSource = "unconfirmedGround"
             } else {
                 recordedPoseSource = "held"
             }
+            if groundMotionMeasured || (bridgeResultForRecording?.source == .calibratedScene
+                                        && bridgeResultForRecording?.verticalMeasured == true) {
+                visualFallMotion.observeMeasured(cameraY: worldCameraPosition.y, knight: regions?.knight,
+                    timestamp: snapshot.timestamp,
+                    frameSize: CGSize(width: snapshot.presentationFrame.width, height: snapshot.presentationFrame.height),
+                    solveWidth: snapshot.solveWidth)
+            }
+            // Broad image registration has no ground-plane scale proof. Retain
+            // its pose visibly as provisional; only observed ground or calibrated
+            // scenery can continue rigid 2D ownership through floor loss.
+            let islandMeasured = groundMotionMeasured
+                || (!usedCoarseFloorlessPose && transitionBridgePose
+                    && bridgeResultForRecording?.horizontalMeasured == true
+                    && bridgeResultForRecording?.verticalMeasured == true)
+            let islandReference = groundMotionMeasured ? hypothesisTracking?.localReferenceTimestamp
+                : (usedCoarseFloorlessPose ? snapshot.room.coarseReferenceTimestamp
+                    : bridgeResultForRecording?.referenceTimestamp)
+            let islandBreak = hypothesisTracking?.globalCorrection.flatMap {
+                hypot($0.dx, $0.dy) > 3 ? "ground-global-adjustment" : nil
+            } ?? (usedCoarseFloorlessPose && snapshot.room.coarsePlaceMatch != nil
+                ? "coarse-place-reacquisition" : nil)
+            islandCapture = trackingIslandCoordinator.observe(timestamp: snapshot.timestamp,
+                roomID: snapshot.room.roomID, worldPose: worldCameraPosition,
+                measured: islandMeasured, referenceTimestamp: islandReference,
+                discontinuity: islandBreak)
+            let pairedRun = botDemonstrations.pairedRecordingID
+            let botFrameDue = (pairedRun != nil || !isHackerWorkspaceActive())
+                && snapshot.timestamp - lastBotObservationTimestamp >= BotObservationContract.sampleInterval - 0.005
+            var botWalls: [DetectedWall]?
+            var contactWall: BotWallSegment?
+            // Only detector evidence accumulates in a path chart. Walked spans
+            // retain their island owners and are reprojected as a whole.
+            let observedFloorEdges = botDetectedLines
+            var pathFloors = observedFloorEdges
+            if let groundAnalysis {
+                var terrain = TerrainWallDetector.detect(groundAnalysis, floors: semanticFloorLines)
+                if snapshot.resumedAfterTransition || islandBreak != nil { knightContactTracker = .init() }
+                let scale = CGFloat(groundAnalysis.width) / snapshot.solveWidth
+                let pixelCamera = CGPoint(x: worldCameraPosition.x * scale, y: worldCameraPosition.y * scale)
+                let actor = knightFootLocator.locate(groundAnalysis, near: observedPlayerBounds ?? regions?.knight,
+                    direction: snapshot.horizontalInput?.rawValue ?? 0, time: snapshot.timestamp,
+                    room: snapshot.room.roomID, generation: snapshot.generation)
+                let support = knightContactTracker.observe(foot: actor?.foot, camera: islandMeasured ? pixelCamera : nil,
+                    direction: snapshot.horizontalInput?.rawValue ?? 0, time: snapshot.timestamp,
+                    room: snapshot.room.roomID, generation: snapshot.generation, width: groundAnalysis.width,
+                    height: groundAnalysis.height, walls: terrain.walls, partial: actor?.partial == true,
+                    jumpHeld: snapshot.jumpHeld, measuredIsland: islandCapture?.id)
+                terrain.apply(support, floors: semanticFloorLines, analysis: groundAnalysis)
+                if let wall = support.wall {
+                    contactWall = BotWallEvidence.segments(from: [wall], height: groundAnalysis.height).first
+                }
+                if let walk = terrain.walkedFloor, CGFloat(walk.xRange.count) >= clearance,
+                   let direction = snapshot.horizontalInput, let scenery = snapshot.room.coarseMotionEstimate,
+                   scenery.direction == direction, scenery.confidence >= 0.8,
+                   scenery.screenShift * direction.rawValue < 0 {
+                    verifiedBootstrapWalk = direction
+                }
+                botWalls = terrain.walls
+                var visibleWalk = [CleanFloorLine]()
+                if let capture = islandCapture {
+                    walkedGroundMemory.record(terrain.walkedFloor, capture: capture, pixelsPerSolve: scale, height: groundAnalysis.height)
+                    visibleWalk = walkedGroundMemory.visible(in: capture, projection: trackingIslandProjection, pixelsPerSolve: scale,
+                        width: groundAnalysis.width, height: groundAnalysis.height)
+                }
+                if !visibleWalk.isEmpty {
+                    let coverage = WalkedFloorCoverage(floors: visibleWalk)
+                    semanticFloorLines = coverage.filtered(semanticFloorLines, clearance: clearance, keepMatchingRows: 2)
+                    hypothesisTracking?.detectedFloorLines = semanticFloorLines
+                    let cleaned = GroundStrokeGeometry.coalescedFloors(coverage.filtered(semanticFloorLines, clearance: clearance) + visibleWalk,
+                        frameWidth: groundAnalysis.width)
+                    botDetectedLines = cleaned.map { line in
+                        BotTerrainSegment(minimumX: Double(line.xRange.lowerBound),
+                            maximumX: Double(line.xRange.upperBound+1),
+                            y: Double(groundAnalysis.height-line.row), confidence: 1)
+                    }
+                    terrain.supportedFloor = nil // The walked layer owns these columns.
+                }
+                if shouldShowGroundHypotheses {
+                    let review = TerrainReviewFrame(detection: terrain, time: snapshot.timestamp, generation: snapshot.generation,
+                        roomID: snapshot.room.roomID, camera: worldCameraPosition, islandID: islandCapture?.id, walked: visibleWalk)
+                    DispatchQueue.main.async { [weak self] in
+                        guard self?.currentStatusGeneration == review.generation else { return }
+                        self?.terrainReviewFrame = review
+                    }
+                }
+            }
+            let auditDue = snapshot.timestamp - lastBotAuditTimestamp >= BotObservationContract.sampleInterval - 0.005
+            if botFrameDue || auditDue {
+                func stitch(_ floors: [BotTerrainSegment]) -> [BotTerrainSegment] {
+                    BotScreenTerrain.stitchedFloors(floors, walls: botWalls ?? [],
+                        frameHeight: snapshot.presentationFrame.height, knightHeight: max(4, Int(clearance.rounded())),
+                        knightWidth: max(2, Int((observedPlayerBounds?.width ?? clearance / 2).rounded())),
+                        surfaces: rawSemanticFloorLines)
+                }
+                let sameFloors = pathFloors == botDetectedLines
+                botDetectedLines = stitch(botDetectedLines)
+                if botFrameDue { pathFloors = sameFloors ? botDetectedLines : stitch(pathFloors) }
+            }
+            if auditDue {
+                lastBotAuditTimestamp = snapshot.timestamp
+                let reference = botHumanGround.auditProjection(timestamp: snapshot.timestamp, generation: snapshot.generation,
+                    frameSize: CGSize(width: snapshot.presentationFrame.width, height: snapshot.presentationFrame.height))
+                let audit = BotTerrainAuditFrame(captureTimestamp: snapshot.timestamp, capturedAt: snapshot.capturedAt,
+                    captureGeneration: snapshot.generation, width: snapshot.presentationFrame.width, height: snapshot.presentationFrame.height,
+                    sceneName: reference.scene, referenceAvailable: reference.available, detected: botDetectedLines, authored: reference.lines)
+                botDemonstrations.recordTerrainAudit(audit)
+                botEvaluation.audit(audit, image: snapshot.presentationFrame, solveWidth: Double(snapshot.solveWidth))
+            }
+            if botFrameDue {
+                lastBotObservationTimestamp = snapshot.timestamp
+                if botObservationRoomID != snapshot.room.roomID {
+                    botObservationRoomID = snapshot.room.roomID
+                    botObservationRoomStartedAt = snapshot.timestamp
+                }
+                objectInferenceStateLock.lock()
+                let botBatch = botDetectionHistory.last {
+                    $0.captureGeneration == snapshot.generation && $0.sourceTimestamp <= snapshot.timestamp
+                        && $0.sourceTimestamp >= botObservationRoomStartedAt
+                }
+                objectInferenceStateLock.unlock()
+                let lines = botDetectedLines
+                let frameSize = CGSize(width: snapshot.presentationFrame.width, height: snapshot.presentationFrame.height)
+                let observation = BotObservationBuilder.make(captureTimestamp: snapshot.timestamp,
+                    capturedAt: snapshot.capturedAt, availableAt: gameplayGym ? snapshot.capturedAt : ProcessInfo.processInfo.systemUptime,
+                    generation: snapshot.generation, roomID: snapshot.room.roomID, roomRevision: snapshot.room.revision,
+                    frameSize: frameSize,
+                    detections: botBatch, terrain: lines,
+                    terrainValid: comparisonAnalysis != nil,
+                    transitioning: snapshot.room.isTransitioning,
+                    visualCameraPosition: hypothesisTracking.flatMap { $0.poseVerified ? $0.cameraPosition : nil })
+                groundTruthCameraStateLock.lock()
+                let blueSample = latestGroundTruthCameraSample
+                groundTruthCameraStateLock.unlock()
+                var observationWithOutcomes = observation
+                if let (sample, observedAt) = blueSample,
+                   (0...0.2).contains(snapshot.capturedAt - observedAt) {
+                    observationWithOutcomes.blueHealthOutcomes = sample.blueHealthOutcomes
+                }
+                let health = snapshot.hudStencil.flatMap { stencil -> Int? in
+                    guard !stencil.holdsHealthMask, snapshot.timestamp - stencil.sourceTimestamp <= 0.18,
+                          !stencil.health.isEmpty else { return nil }
+                    return stencil.health.filter { $0.kind == "full" || $0.kind == "lifeblood" }.count
+                }
+                let visualDoors: [BotDoorSegment]
+                if let islandCapture, islandCapture.roomID == snapshot.room.roomID, islandCapture.measured,
+                   islandCapture.placement == .reference || islandCapture.placement == .connected {
+                    visualDoors = BotVisualPortalProjection.doors(snapshot.room.portals, roomID: snapshot.room.roomID,
+                        camera: islandCapture.worldPose, solveWidth: snapshot.solveWidth, frameSize: frameSize)
+                } else { visualDoors = [] }
+                publishBotObservation(observationWithOutcomes, image: snapshot.presentationFrame, terrain: lines, walls: botWalls,
+                    pairedRun: pairedRun, atlasIsland: islandCapture, solveWidth: snapshot.solveWidth, health: health,
+                    drive: snapshot.horizontalInput?.rawValue ?? 0, detections: botBatch, pathFloors: pathFloors,
+                    observedFloorEdges: observedFloorEdges, walkedGround: walkedGroundMemory, contactWall: contactWall,
+                    visualDoors: visualDoors)
+            }
+            observedFloorCandidates = LiveObservedFloorCandidates.captured(detected: semanticFloorLines,
+                frameSize: CGSize(width: snapshot.presentationFrame.width,
+                                  height: snapshot.presentationFrame.height),
+                solveWidth: snapshot.solveWidth, measured: islandMeasured)
+            capturedGroundGeometry = LiveWorldGroundGeometry.captured(
+                reviews: hypothesisTracking?.lineReviews ?? [], detected: semanticFloorLines,
+                frameSize: CGSize(width: snapshot.presentationFrame.width,
+                                  height: snapshot.presentationFrame.height),
+                solveWidth: snapshot.solveWidth, measured: islandMeasured,
+                walkedIslands: islandMeasured ? walkedGroundMemory.pending(in: snapshot.room.roomID) : [])
             inputPathRecorder.recordTracking(
                 hypothesisTracking ?? .empty,
                 captureTimestamp: snapshot.timestamp,
                 groundTrackingMilliseconds: groundTrackingSeconds * 1_000,
-                publishedCameraPosition: worldCameraPosition,
+                publishedCameraPosition: islandCapture?.worldPose ?? worldCameraPosition,
                 poseSource: recordedPoseSource,
                 motionBridgeConfidence: bridgeResultForRecording.map {
                     Double($0.confidence)
@@ -3799,9 +5422,14 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 floorlessCoarsePosition: floorlessCoarseForRecording,
                 floorlessMaskedPosition: floorlessMaskedForRecording,
                 floorlessExpectedDirection: floorlessDirectionForRecording,
-                floorlessSelectionSource: floorlessSelectionForRecording
+                floorlessSelectionSource: floorlessSelectionForRecording,
+                island: islandCapture,
+                sceneMotion: sceneMotion,
+                sceneMotionMilliseconds: sceneMotionSeconds * 1_000,
+                fallPrediction: fallPredictionForRecording,
+                observedAt: visualReplayMode ? snapshot.capturedAt : ProcessInfo.processInfo.systemUptime
             )
-            if shouldShowGroundEdge || shouldShowGroundDetect
+            if shouldShowGroundEdge || shouldShowGroundDetect || shouldShowGroundStage
                 || shouldShowCleaned
                 || shouldShowGroundHypotheses {
                 let edgeImage = shouldShowGroundEdge
@@ -3810,51 +5438,49 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 let detectImage = shouldShowGroundDetect
                     ? comparisonAnalysis.flatMap(GroundLineDetector.groundDetectImage)
                     : nil
-                let groundStageImage = shouldShowGroundDetect
+                let groundStageImage = shouldShowGroundStage
                     ? semanticTheoryAnalysis.flatMap(GroundLineDetector.groundStageImage)
                     : nil
-                // Cleaned and Ground Features share this exact line image.
-                // Building one source prevents persistent-cell cleanup from
-                // shortening the visual ground line in hypothesis mode.
-                let lineReviews = hypothesisTracking?.poseVerified == true
-                    ? semanticLineReviews : []
                 let cleanedImage = shouldShowCleaned
-                    ? GroundLineDetector.presenceImage(
-                        from: lineReviews,
+                    ? GroundLineDetector.cleanedImage(
+                        from: semanticFloorLines,
                         width: snapshot.presentationFrame.width,
                         height: snapshot.presentationFrame.height
                     )
                     : nil
                 DispatchQueue.main.async { [weak self] in
+                    guard self?.currentStatusGeneration == snapshot.generation else { return }
                     if self?.groundEdgeEnabled == true {
                         self?.groundEdgeImage = edgeImage
                     }
                     if self?.groundDetectEnabled == true {
                         self?.groundDetectImage = detectImage
+                    }
+                    if self?.groundStageEnabled == true {
                         self?.groundStageImage = groundStageImage
                     }
                     if self?.cleanedEnabled == true {
                         self?.cleanedImage = cleanedImage
-                    } else if self?.groundHypothesesEnabled == true {
-                        self?.cleanedImage = nil
+
                     }
-                    if let hypothesisTracking {
-                        self?.groundHypothesisTracking = hypothesisTracking
+                    self?.groundHypothesisTracking = hypothesisTracking ?? .empty
+                    if hypothesisTracking != nil {
                         self?.groundHypothesisImage = self?.groundHypothesesEnabled == true
                             ? hypothesisImage : nil
                     }
                 }
             }
-            if cameraUpdate?.state == .accepted {
+            // A physics-only display prediction must not seed the retained
+            // ground-reference cache, even though its display step is accepted.
+            if cameraUpdate?.state == .accepted, fallPredictionForRecording == nil {
                 let ground = groundReferenceTracker.observe(
                     frame: snapshot.presentationFrame,
                     cameraPosition: worldCameraPosition,
                     solveWidth: snapshot.solveWidth,
                     knightRect: regions?.knight,
-                    excluding: regions?.omittedRects ?? [],
+                    excluding: groundForegroundRects,
                     edgeAnalysis: groundAnalysis,
                     comparisonAnalysis: comparisonAnalysis,
-                    theoryAnalysis: theoryAnalysis,
                     tuning: tuning
                 )
                 groundForFrame = ground
@@ -3863,12 +5489,22 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 }
             }
         } else {
+            islandCapture = trackingIslandCoordinator.observe(timestamp: snapshot.timestamp,
+                roomID: snapshot.room.roomID, worldPose: worldCameraPosition,
+                measured: false, referenceTimestamp: nil)
+            if let islandCapture {
+                recordFloorlessTracking(snapshot, pose: worldCameraPosition,
+                    island: islandCapture, source: "held")
+            }
             groundHypothesisTracker.reset(keepingGlobalFeatures: true)
             transitionMotionBridge.suspendForTransition()
+            calibratedSceneMotion.reset()
+            visualFallMotion.reset()
             groundPlacementRecovery.missingObservation()
             DispatchQueue.main.async { [weak self] in
                 self?.groundHypothesisImage = nil
                 self?.groundHypothesisTracking = .empty
+                self?.terrainReviewFrame = nil
             }
             if registrationContinuity.shouldEnterRecovery(
                 after: nil, hasGameplaySignal: false
@@ -3928,9 +5564,11 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 position: worldCameraPosition,
                 registrationAccepted: cameraUpdate?.state == .accepted,
                 groundVerified: groundAnchoredPose,
-                hasCommittedEvidence: atlasPipeline.hasCommittedWorldEvidence
+                hasCommittedEvidence: atlasPipeline.hasCommittedWorldEvidence,
+                verifiedWalk: verifiedBootstrapWalk
             )
             let allowAtlasWrite = worldLocated && bootstrapReady && groundPlacementRecovery.allowsAtlasWrite
+                && !snapshot.room.isTransitioning
             inputPathRecorder.recordAtlasAdmission(captureTimestamp: snapshot.timestamp,
                 allowed: snapshot.hasGameplaySignal && allowAtlasWrite && regions != nil && basisTicket != nil)
             if lastAtlasAdmissionDiagnosticAt.map({ snapshot.timestamp - $0 >= 1 }) ?? true {
@@ -3969,7 +5607,8 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                     : priorTrackingState.reliableGroundCameraVelocity,
                 reliableGroundVelocityTimestamp: hasMeasuredGroundVelocity
                     ? snapshot.timestamp
-                    : priorTrackingState.reliableGroundVelocityTimestamp
+                    : priorTrackingState.reliableGroundVelocityTimestamp,
+                islandCapture: islandCapture
             )
             trackingStateLock.unlock()
             if worldLocated {
@@ -3993,13 +5632,19 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                     allowAtlasWrite: true,
                     captureGeneration: snapshot.generation,
                     worldTimestamp: snapshot.worldTimestamp,
+                    submittedAt: visualReplayMode ? snapshot.timestamp : ProcessInfo.processInfo.systemUptime,
                     basisTicket: basisTicket,
                     groundAnchoredPose: groundAnchoredPose,
                     transitionBridgePose: transitionBridgePose,
                     alignmentExclusions: groundAlignmentExclusions,
                     compositionOmittedRects: roomCompositionOmittedRects
                         + transitionEdgeOmittedRects,
-                    roomID: snapshot.room.roomID
+                    roomID: snapshot.room.roomID,
+                    islandCapture: islandCapture,
+                    groundGeometry: capturedGroundGeometry,
+                    observedFloorCandidates: observedFloorCandidates,
+                    observedPlayerBounds: observedPlayerBounds,
+                    doorwayTransition: snapshot.room.doorwayTransition
                 )
             }
             // GroundHypothesisTracker owns feature tracking and loop matching.
@@ -4008,6 +5653,24 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
         if let next = completion.next {
             visionQueue.async { [weak self] in self?.processVision(next) }
         }
+    }
+
+    /// Keep error/coverage diagnostics through blackouts and pending doors.
+    /// Absence of a ground solve is explicit; it must not erase the difficult
+    /// portion of a replay's camera-error trace.
+    private func recordFloorlessTracking(_ frame: VisionFrame, pose: CGPoint,
+                                        island: LiveIslandCapture, source: String) {
+        inputPathRecorder.recordTracking(.empty, captureTimestamp: frame.timestamp,
+            publishedCameraPosition: island.worldPose, poseSource: source,
+            motionBridgeConfidence: frame.room.coarseMotionEstimate?.confidence,
+            motionBridgeSource: frame.room.coarseMotionIsControlling ? "coarse64x36" : nil,
+            signalMeanPeak: frame.signalProfile.meanPeak,
+            signalVisibleFraction: frame.signalProfile.visibleFraction,
+            roomID: frame.room.roomID, roomRevision: frame.room.revision,
+            renderedGameFrame: RenderedFrameMarker.decode(frame.presentationFrame),
+            island: island,
+            observedAt: visualReplayMode ? frame.capturedAt : ProcessInfo.processInfo.systemUptime)
+        inputPathRecorder.recordAtlasAdmission(captureTimestamp: frame.timestamp, allowed: false)
     }
 
     private func currentTrackingState(for generation: UInt64) -> TrackingState {
@@ -4065,7 +5728,6 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 refinement = LiveObjectPixelRefiner.refine(
                     detections,
                     in: frame.rawImage,
-                    extensionFraction: frame.extensionFraction,
                     createsDiagnosticImage: frame.createsPixelDiagnostic
                 )
             } else {
@@ -4101,6 +5763,10 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                     captureGeneration: frame.captureGeneration,
                     inferenceDuration: modelDuration
                 )
+                if let batch = latestMaskDetectionBatch {
+                    botDetectionHistory.append(batch)
+                    if botDetectionHistory.count > 16 { botDetectionHistory.removeFirst(botDetectionHistory.count - 16) }
+                }
                 latestRawObjectDetectionBatch = LiveObjectDetectionBatch(
                     detections: rawDetections,
                     sourceFrameIdentifier: frame.sourceFrameIdentifier,
@@ -4310,13 +5976,25 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 .captureToPublish,
                 seconds: ProcessInfo.processInfo.systemUptime - snapshot.capturedAt
             )
-            self.publishAtlasTiles(output.atlasTiles)
+            if let revision = snapshot.islandWorldRevision,
+               revision > (self.liveWorldSnapshot?.mapRevision ?? -1) { return }
+            if let island = snapshot.islandCapture, let projection = self.publishedIslandProjection,
+               projection.worldPose(for: island) == nil { return }
+            // A render may finish between atlas recomposition and publication
+            // of its owning graph. Never pair those pixels with an older world.
+            if output.worldRevision == self.liveWorldSnapshot?.mapRevision {
+                self.publishAtlasTiles(output.atlasTiles)
+            }
             self.hudStencilImage = stencilImage
             self.menuStencilImage = menuStencilImage
-            self.liveImage = output.liveImage
             LivePresentationTiming.shared.register(output.liveImage, capturedAt: snapshot.timestamp)
-            if self.liveBounds != output.liveBounds { self.liveBounds = output.liveBounds }
-            if self.mapFocus != output.focusPoint { self.mapFocus = output.focusPoint }
+            self.liveImage = output.liveImage
+            self.presentedIslandFrame = PresentedIslandFrame(rawBounds: output.liveBounds,
+                rawFocus: output.focusPoint, rawPose: snapshot.cameraPosition,
+                island: snapshot.islandCapture,
+                scale: CGFloat(snapshot.frame.width) / snapshot.solveWidth,
+                anchor: output.anchorPosition)
+            self.reprojectPresentedIslandFrame()
         }
     }
 

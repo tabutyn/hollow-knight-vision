@@ -24,6 +24,9 @@ struct LiveWorldSessionArchive {
 /// scene envelope; this wrapper gives that envelope a validated live-world
 /// model and stable room/visit IDs for the session lifetime.
 final class LiveWorldSessionStore {
+    private struct SnapshotSchema: Decodable {
+        let schemaVersion: Int
+    }
     let rootURL: URL
     private let sceneStore: SceneSessionStore
 
@@ -118,26 +121,47 @@ final class LiveWorldSessionStore {
         expectedRevision: Int,
         newRevision: Int
     ) throws -> Bool {
-        guard snapshot.mapRevision == newRevision else {
-            throw LiveWorldSessionStoreError.snapshotRevisionMismatch(
-                snapshot: snapshot.mapRevision,
-                disk: newRevision
+        // Foundation and ImageIO may return autoreleased temporary storage.
+        // This also bounds commits invoked synchronously by offline replay,
+        // which need not run on a queue with a per-work-item pool.
+        try autoreleasepool {
+            guard snapshot.mapRevision == newRevision else {
+                throw LiveWorldSessionStoreError.snapshotRevisionMismatch(
+                    snapshot: snapshot.mapRevision,
+                    disk: newRevision
+                )
+            }
+            try validateSourceReferences(in: snapshot)
+            // Preserve the original snapshot before the first commit in a newer schema.
+            // Source PNGs are already append-only and remain referenced unchanged.
+            if let original = try sceneStore.loadScene() {
+                // Decode only the header. Bridging the entire graph through
+                // JSONSerialization creates millions of temporary ObjC containers
+                // on large atlases, even when no migration is necessary.
+                let schema = try JSONDecoder().decode(SnapshotSchema.self, from: original).schemaVersion
+                if (1..<LiveWorldSnapshot.currentSchemaVersion).contains(schema) {
+                    let backup = rootURL.appendingPathComponent("legacy-world-schema-\(schema)-revision-\(sceneStore.sceneRevision).json")
+                    if !FileManager.default.fileExists(atPath: backup.path) {
+                        try original.write(to: backup, options: .withoutOverwriting)
+                    } else if try Data(contentsOf: backup) != original {
+                        throw LiveWorldSessionStoreError.corruptSnapshot
+                    }
+                }
+            }
+            let encoded = try JSONEncoder().encode(snapshot)
+            return try sceneStore.saveScene(
+                data: encoded,
+                expectedRevision: expectedRevision,
+                newRevision: newRevision
             )
         }
-        try validateSourceReferences(in: snapshot)
-        let encoded = try JSONEncoder().encode(snapshot)
-        return try sceneStore.saveScene(
-            data: encoded,
-            expectedRevision: expectedRevision,
-            newRevision: newRevision
-        )
     }
 
     /// Moves the complete current world aside before opening a newly empty
     /// session at the original root.  The archive is a sibling, never nested
     /// inside the fresh root, so source-path containment remains unambiguous.
     func archiveAndReset(
-        now: Date = Date(),
+        now: Date = Date(), profile: SaveProfileAtlas? = nil,
         makeFreshStore: (URL) throws -> LiveWorldSessionStore = { try LiveWorldSessionStore(rootURL: $0) }
     ) throws -> LiveWorldSessionArchive {
         let fileManager = FileManager.default
@@ -149,10 +173,9 @@ final class LiveWorldSessionStore {
         )
         try fileManager.moveItem(at: rootURL, to: archiveURL)
         do {
-            return LiveWorldSessionArchive(
-                archiveURL: archiveURL,
-                freshStore: try makeFreshStore(rootURL)
-            )
+            let fresh = try makeFreshStore(rootURL)
+            try profile?.write(to: fresh.rootURL)
+            return LiveWorldSessionArchive(archiveURL: archiveURL, freshStore: fresh)
         } catch let initializationError {
             // Fresh-store initialization may have partially recreated the
             // destination. Remove that partial tree before restoring the

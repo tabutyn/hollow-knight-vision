@@ -86,6 +86,10 @@ cp "$script_dir/Resources/HollowKnightVision.icns" \
   "$contents_dir/Resources/$icon_filename"
 rm -rf "$contents_dir/Resources/TrainingPython"
 cp -R "$script_dir/TrainingPython" "$contents_dir/Resources/TrainingPython"
+rm -rf "$contents_dir/Resources/BotPython"
+cp -R "$script_dir/BotPython" "$contents_dir/Resources/BotPython"
+# Keep the local interpreter outside the app bundle; only its location is bundled.
+print -r -- "$script_dir/.bot-venv/bin/python" > "$contents_dir/Resources/bot-training-environment.txt"
 cp "$script_dir/setup-incremental-trainer.sh" "$contents_dir/Resources/setup-incremental-trainer.sh"
 cp "$script_dir/Info.plist" "$contents_dir/Info.plist"
 plutil -replace CFBundleVersion -string "$build_version" "$contents_dir/Info.plist"

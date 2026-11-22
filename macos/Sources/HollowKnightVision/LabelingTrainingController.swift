@@ -53,6 +53,7 @@ struct LabelingTrainingRunSummary: Decodable, Equatable {
     var trainingDurationSeconds: Double? = nil
     var epochLosses: [Double]? = nil
     var classIdentifiers: [String]? = nil
+    var trainedClassIdentifiers: [String]? = nil
 }
 
 struct LabelingTrainingConfiguration: Equatable {

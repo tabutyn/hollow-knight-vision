@@ -38,7 +38,11 @@ if [ "$mode" = install ]; then
     cp "$target" "$backup_root/$stamp/HollowKnightVisionInputReceiver.dll"
     echo "Backed up previous receiver to $backup_root/$stamp"
   fi
-  cp "$receiver" "$target"
+  # The current game process may still have the earlier assembly memory-mapped.
+  staged=$(mktemp "$mod_dir/.receiver.XXXXXX")
+  trap 'rm -f "$staged"' EXIT
+  cp -p "$receiver" "$staged"
+  mv -f "$staged" "$target"
   echo "Installed receiver only: $target"
   exit 0
 fi

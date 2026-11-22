@@ -109,6 +109,43 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         XCTAssertEqual(snapshot.compositionBounds, tracker.snapshot.compositionBounds)
     }
 
+    func testRejectedTopologyIsPreservedBeforeDisconnectedImport() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("visual-rooms.json")
+        let original = Data("{invalid old topology".utf8)
+        try original.write(to: url)
+        let tracker = VisualRoomTransitionTracker()
+        let restored = try tracker.restoreOrImportDisconnectedRooms(from: url, world: LiveWorldSnapshot())
+        XCTAssertTrue(restored.portals.isEmpty)
+        let backups = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.contains(".rejected-") }
+        XCTAssertEqual(backups.count, 1)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(backups.first)), original)
+        _ = try VisualRoomTransitionTracker().restoreTopology(from: url)
+        _ = try tracker.restoreOrImportDisconnectedRooms(from: url, world: LiveWorldSnapshot())
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path).count, 2)
+    }
+
+    func testDuplicateTopologyKeysThrowWithoutCrashingAndPreserveOriginal() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("visual-rooms.json")
+        let tracker = VisualRoomTransitionTracker()
+        try tracker.saveTopology(to: url)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        json["appearances"] = [["roomID": 0, "value": "normal"], ["roomID": 0, "value": "dark"]]
+        let original = try JSONSerialization.data(withJSONObject: json)
+        try original.write(to: url)
+        XCTAssertThrowsError(try tracker.restoreTopology(from: url))
+        _ = try tracker.restoreOrImportDisconnectedRooms(from: url, world: LiveWorldSnapshot())
+        let backup = try XCTUnwrap(FileManager.default.contentsOfDirectory(at: directory,
+            includingPropertiesForKeys: nil).first { $0.lastPathComponent.contains(".rejected-") })
+        XCTAssertEqual(try Data(contentsOf: backup), original)
+    }
+
     func testCompositionMaskCropsPixelsAcrossDoorway() {
         let leftCrop = VisualRoomCompositionMask.omittedRects(
             bounds: .init(minimumWorldX: 0, maximumWorldX: nil),
@@ -125,6 +162,42 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
             frameSize: size
         )
         XCTAssertEqual(rightCrop, [CGRect(x: 500, y: 0, width: 140, height: 360)])
+    }
+
+    func testDarkLandingTracksTextureConfinedToBottomRows() throws {
+        func floor(shift: Int) -> LowResolutionMotionGrid {
+            let texture = motionGrid(shift: shift, width: 64, height: 36)
+            let pixels = texture.luma.enumerated().map { index, value in
+                index / 64 >= 31 ? value : UInt8(0)
+            }
+            return LowResolutionMotionGrid(width: 64, height: 36, luma: pixels)
+        }
+        let result = try XCTUnwrap(LowResolutionRoomMotionTracker.translation(
+            from: floor(shift: 0), to: floor(shift: -2)))
+        XCTAssertEqual(result.screenShiftX, -2, accuracy: 0.25)
+        XCTAssertEqual(result.screenShiftY, 0, accuracy: 0.25)
+    }
+
+    func testDarkBottomTextureDoesNotInventMotionWhenLightChanges() {
+        func floor(gain: Double) -> LowResolutionMotionGrid {
+            let texture = motionGrid(shift: 0, gain: gain, width: 64, height: 36)
+            return LowResolutionMotionGrid(width: 64, height: 36,
+                luma: texture.luma.enumerated().map { index, value in
+                    index / 64 >= 31 ? value : UInt8(0)
+                })
+        }
+        XCTAssertNil(LowResolutionRoomMotionTracker.translation(
+            from: floor(gain: 1), to: floor(gain: 0.6)))
+    }
+
+    func testBlackFrameAndTinyBottomRemnantCannotEstablishMotion() {
+        let empty = LowResolutionMotionGrid(width: 64, height: 36,
+            luma: [UInt8](repeating: 0, count: 64 * 36))
+        XCTAssertNil(LowResolutionRoomMotionTracker.translation(from: empty, to: empty))
+        var pixels = empty.luma
+        for x in 28..<32 { pixels[33 * 64 + x] = UInt8((x - 27) * 45) }
+        let remnant = LowResolutionMotionGrid(width: 64, height: 36, luma: pixels)
+        XCTAssertNil(LowResolutionRoomMotionTracker.translation(from: remnant, to: remnant))
     }
 
     func testLowResolutionImageTravelVotesForOppositeCameraDirection() {
@@ -281,6 +354,52 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
             from: reference,
             to: moved
         ))
+    }
+
+    func testCoarseMeasurementLineageIsIndependentFromVelocityPredictionNeeds() {
+        var odometry = LowResolutionTransitionOdometry()
+        odometry.arm(grid: fractionalMotionGrid(horizontalShift: 0), timestamp: 0)
+        odometry.primeHorizontalVelocity(
+            LowResolutionCameraVelocitySeed(velocity: CGVector(dx: 200, dy: -80), timestamp: 0),
+            expectedDirection: .right)
+        XCTAssertNotNil(odometry.observe(
+            grid: fractionalMotionGrid(horizontalShift: -1, verticalShift: -0.4),
+            timestamp: 0.05, solveWidth: 640, expectedDirection: .right))
+        XCTAssertTrue(odometry.lastEstimateIsMeasured)
+        XCTAssertEqual(odometry.lastReferenceTimestamp, 0)
+        XCTAssertNotNil(odometry.observe(
+            grid: insufficientOverlapMotionGrid(), timestamp: 0.10,
+            solveWidth: 640, expectedDirection: .right))
+        XCTAssertTrue(odometry.lastEstimateIsComplete)
+        XCTAssertFalse(odometry.lastHorizontalMeasured)
+        XCTAssertFalse(odometry.lastVerticalMeasured)
+        XCTAssertFalse(odometry.lastEstimateIsMeasured)
+        // A fresh full-image measurement restores measurement status, even
+        // though the resulting velocity can seed a later fallback prediction.
+        _ = odometry.observe(grid: fractionalMotionGrid(horizontalShift: -3),
+            timestamp: 0.15, solveWidth: 640, expectedDirection: .right)
+        XCTAssertNotNil(odometry.observe(grid: fractionalMotionGrid(horizontalShift: -4),
+            timestamp: 0.20, solveWidth: 640, expectedDirection: .right))
+        XCTAssertTrue(odometry.lastEstimateIsMeasured)
+        XCTAssertEqual(odometry.lastReferenceTimestamp, 0.15)
+        odometry.reset()
+        XCTAssertFalse(odometry.lastEstimateIsMeasured)
+        XCTAssertNil(odometry.lastReferenceTimestamp)
+    }
+
+    func testCoarseMixedAxisPredictionDoesNotBecomeMeasuredLineage() {
+        var odometry = LowResolutionTransitionOdometry()
+        odometry.arm(grid: fractionalMotionGrid(horizontalShift: 0), timestamp: 0)
+        odometry.primeHorizontalVelocity(
+            LowResolutionCameraVelocitySeed(velocity: CGVector(dx: 200, dy: 0), timestamp: 0),
+            expectedDirection: .right)
+        XCTAssertNotNil(odometry.observe(
+            grid: fractionalMotionGrid(horizontalShift: 2, verticalShift: 0.4),
+            timestamp: 0.05, solveWidth: 640, expectedDirection: .right))
+        XCTAssertTrue(odometry.lastEstimateIsComplete)
+        XCTAssertFalse(odometry.lastHorizontalMeasured)
+        XCTAssertTrue(odometry.lastVerticalMeasured)
+        XCTAssertFalse(odometry.lastEstimateIsMeasured)
     }
 
     func testFloorlessOdometryAccumulatesThroughMovingFadeCircle() {
@@ -1522,21 +1641,21 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         XCTAssertEqual(snapshot.coarseMotionGrid, motionGrid(shift: 2))
         XCTAssertEqual(snapshot.coarseMotionEstimate?.direction, .left)
         XCTAssertFalse(snapshot.coarseMotionIsControlling)
+        let motion = LowResolutionMotionVector(screenShiftX: 2, screenShiftY: -1, confidence: 0.8)
         let image = try XCTUnwrap(LowResolutionMotionDiagnosticRenderer.image(
-            grid: try XCTUnwrap(snapshot.coarseMotionGrid),
-            estimate: snapshot.coarseMotionEstimate,
+            motion: motion, gridWidth: 32, frameSize: CGSize(width: 640, height: 360),
             isControlling: false
         ))
-        XCTAssertEqual(image.width, 32)
-        XCTAssertEqual(image.height, 18)
+        XCTAssertEqual(image.width, 640)
+        XCTAssertEqual(image.height, 360)
         XCTAssertEqual(
             LowResolutionMotionDiagnosticPresentation.text(
-                estimate: snapshot.coarseMotionEstimate,
+                motion: motion,
                 isControlling: false,
                 solveWidth: 640,
                 gridWidth: 32
             ),
-            "Coarse Motion · ready · left 40 px · \(Int(((snapshot.coarseMotionEstimate?.confidence ?? 0) * 100).rounded()))%"
+            "Coarse Motion · ready · x -40 y -20 px · arrow ×8 · 80%"
         )
     }
 
@@ -1586,6 +1705,74 @@ final class VisualRoomTransitionTrackerTests: XCTestCase {
         XCTAssertNil(reacquired.coarseWorldPose)
         XCTAssertFalse(reacquired.coarseMotionIsControlling)
         XCTAssertEqual(reacquired.roomID, 0)
+    }
+
+    func testFloorlessReferenceUsesCompletedCapturePoseInsteadOfNewerPrediction() {
+        let tracker = VisualRoomTransitionTracker()
+        func observe(_ shift: Int, at time: Double, predictedX: CGFloat,
+                     completed: VisualCameraPoseSample?, reliable: Bool) -> VisualRoomSnapshot {
+            tracker.observe(profile: FrameSignalProfile(sampleCount: 1_000,
+                signaledCount: 800, visibleCount: 700, meanPeak: 80,
+                motionGrid: motionGrid(shift: shift)), baseDecision: admitted,
+                horizontalInput: .left, knightRect: nil, frameSize: size,
+                currentWorldPose: CGPoint(x: predictedX, y: 0), completedPose: completed,
+                solveWidth: 640, timestamp: time, groundTrackingReliable: reliable)
+        }
+        _ = observe(0, at: 1, predictedX: 100, completed: nil, reliable: true)
+        // Capture prediction already includes travel beyond the reference image.
+        // Adding the two-cell image displacement to that prediction doubles it.
+        let moved = observe(2, at: 1.05, predictedX: 20,
+            completed: VisualCameraPoseSample(timestamp: 1, cameraPosition: CGPoint(x: 100, y: 0)),
+            reliable: false)
+        XCTAssertTrue(moved.coarseMotionIsControlling)
+        XCTAssertEqual(moved.coarseWorldPose?.x ?? .nan, 60, accuracy: 0.001)
+        let continued = observe(4, at: 1.1, predictedX: -50,
+            completed: VisualCameraPoseSample(timestamp: 1.05, cameraPosition: CGPoint(x: 60, y: 0)),
+            reliable: false)
+        XCTAssertEqual(continued.coarseWorldPose?.x ?? .nan, 20, accuracy: 0.001)
+    }
+
+    func testFloorlessReferenceDoesNotDoubleVerticalFallPrediction() {
+        let tracker = VisualRoomTransitionTracker()
+        func profile(_ grid: LowResolutionMotionGrid) -> FrameSignalProfile {
+            FrameSignalProfile(sampleCount: 1_000, signaledCount: 800,
+                visibleCount: 700, meanPeak: 80, motionGrid: grid)
+        }
+        _ = tracker.observe(profile: profile(fractionalMotionGrid(horizontalShift: 0)),
+            baseDecision: admitted, horizontalInput: nil, knightRect: nil,
+            frameSize: size, currentWorldPose: .zero, solveWidth: 640,
+            timestamp: 1, groundTrackingReliable: true)
+        let falling = tracker.observe(profile: profile(fractionalMotionGrid(
+                horizontalShift: 0, verticalShift: -2)),
+            baseDecision: admitted, horizontalInput: nil, knightRect: nil,
+            frameSize: size, currentWorldPose: CGPoint(x: 0, y: -40),
+            completedPose: VisualCameraPoseSample(timestamp: 1, cameraPosition: .zero),
+            reliableCameraVelocity: LowResolutionCameraVelocitySeed(
+                velocity: CGVector(dx: 0, dy: -400), timestamp: 1),
+            solveWidth: 640, timestamp: 1.05, groundTrackingReliable: false)
+        XCTAssertTrue(falling.coarseMotionIsControlling)
+        XCTAssertTrue(falling.coarseMotionMeasured)
+        XCTAssertEqual(falling.coarseWorldPose?.x ?? .nan, 0, accuracy: 1)
+        XCTAssertEqual(falling.coarseWorldPose?.y ?? .nan, -20, accuracy: 1)
+    }
+
+    func testDelayedSolveUpdatesReferenceBeforeFirstEligibleCoarseComparison() {
+        let tracker = VisualRoomTransitionTracker()
+        func observe(_ shift: Int, at time: Double, predictedX: CGFloat,
+                     completed: VisualCameraPoseSample? = nil) -> VisualRoomSnapshot {
+            tracker.observe(profile: FrameSignalProfile(sampleCount: 1_000,
+                signaledCount: 800, visibleCount: 700, meanPeak: 80,
+                motionGrid: motionGrid(shift: shift)), baseDecision: admitted,
+                horizontalInput: .left, knightRect: nil, frameSize: size,
+                currentWorldPose: CGPoint(x: predictedX, y: 0), completedPose: completed,
+                solveWidth: 640, timestamp: time, groundTrackingReliable: time == 1)
+        }
+        _ = observe(0, at: 1, predictedX: 80)
+        XCTAssertFalse(observe(1, at: 1.02, predictedX: 20).coarseMotionIsControlling)
+        let corrected = observe(2, at: 1.04, predictedX: -20,
+            completed: VisualCameraPoseSample(timestamp: 1, cameraPosition: CGPoint(x: 100, y: 0)))
+        XCTAssertTrue(corrected.coarseMotionIsControlling)
+        XCTAssertEqual(corrected.coarseWorldPose?.x ?? .nan, 60, accuracy: 0.001)
     }
 
     func testStaleFloorlessPoseReleasesPresentationAndResumesFromAcceptedTracking() {

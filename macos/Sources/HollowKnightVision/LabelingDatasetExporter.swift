@@ -142,6 +142,11 @@ final class LabelingDatasetExporter {
         )
     }
 
+    func exportGameplayModel(examples: [SavedLabelingExample]) throws -> LabelingDatasetSnapshot {
+        try exportSharedModel(classIdentifiers: LabelingSharedModelPolicy.classIdentifiers,
+            examples: examples.filter { $0.manifest.contextIdentifier == LabelingContext.game.storageIdentifier })
+    }
+
     private func export(
         modelIdentifier: String,
         includedClassIdentifiers: Set<String>,
@@ -149,9 +154,15 @@ final class LabelingDatasetExporter {
         identifier: UUID,
         now: Date
     ) throws -> LabelingDatasetSnapshot {
-        let canonicalIncludedClassIdentifiers = Set(includedClassIdentifiers.map(
+        let requestedClassIdentifiers = Set(includedClassIdentifiers.map(
             LabelingClassIdentity.canonicalIdentifier
         ))
+        let positiveClassIdentifiers = Set(examples.flatMap { example in
+            example.manifest.annotations.filter { !$0.isHardNegative }.map {
+                LabelingClassIdentity.canonicalIdentifier($0.classIdentifier)
+            }
+        })
+        let canonicalIncludedClassIdentifiers = requestedClassIdentifiers.intersection(positiveClassIdentifiers)
         let candidates = examples.filter { example in
             if example.manifest.annotations.contains(where: {
                 canonicalIncludedClassIdentifiers.contains(

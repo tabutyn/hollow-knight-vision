@@ -82,12 +82,15 @@ enum LabelingContractEvaluator {
         catalog: LabelingContractCatalog = .bundled,
         exemptions: Set<String> = []
     ) -> [LabelingContractEvaluation] {
+        // Gameplay annotations are optional training examples, including the
+        // Knight. Occurrence/completeness contracts belong to stencils only.
+        let context = LabelingContext(storageIdentifier: example.manifest.contextIdentifier)
+        guard context != .game else { return [] }
         let counts = positiveCounts(example.manifest.annotations.filter {
             LabelingHUDStencilPolicy.isLabelable($0.classIdentifier,
                 in: LabelingContext(storageIdentifier: example.manifest.contextIdentifier))
         })
         var result = [LabelingContractEvaluation]()
-        let context = LabelingContext(storageIdentifier: example.manifest.contextIdentifier)
         let setContract = catalog.setContract(for: example.manifest.contextIdentifier)
         let setClassIdentifiers = Set(context?.labels.map {
             LabelingClassIdentity.canonicalIdentifier($0.id)

@@ -48,15 +48,12 @@ final class StencilGuidanceTests: XCTestCase {
         ).contains { $0.id == LabelingClassIdentity.mods })
     }
 
-    func testNegativeModeAndFreshProfileChoices() {
+    func testNegativeModeAndProfileChoices() {
         for context in LabelingContext.contractSetCases {
             XCTAssertEqual(LabelingEditorMode.available(in: context).contains(.negative), context == .game)
         }
-        XCTAssertFalse(StencilLabelSelectionPolicy.availableLabels(context: .selectProfile,
-            rectangles: [], mode: .normal, hidesCompleted: true).contains { $0.id == "select-profile.clear-save" })
         XCTAssertTrue(StencilLabelSelectionPolicy.availableLabels(context: .selectProfile,
-            rectangles: [], mode: .normal, hidesCompleted: true, includesDeferredLabels: true)
-            .contains { $0.id == "select-profile.clear-save" })
+            rectangles: [], mode: .normal, hidesCompleted: true).contains { $0.id == "select-profile.clear-save" })
         XCTAssertEqual(StencilInitializationPolicy.requiredContexts.prefix(3), [.mainTitle, .selectProfile, .gameplayHUD])
         XCTAssertEqual(StencilInitializationPolicy.requiredContexts.last, .clearSave)
     }
@@ -74,24 +71,33 @@ final class StencilGuidanceTests: XCTestCase {
             hidesCompleted: false).contains { $0.id == "game.health" })
     }
 
-    func testDeferredClearSaveDisappearsAfterOnePositiveBox() {
-        let identifier = StencilInitializationPolicy.deferredProfileClass
+    func testClearSaveDisappearsAfterOnePositiveBox() {
+        let identifier = StencilInitializationPolicy.profileClearSaveClass
         for negative in [false, true] {
             let available = StencilLabelSelectionPolicy.availableLabels(
                 context: .selectProfile, rectangles: [box(identifier, negative: negative)],
-                mode: .normal, hidesCompleted: true, includesDeferredLabels: true)
+                mode: .normal, hidesCompleted: true)
             XCTAssertEqual(available.contains { $0.id == identifier }, negative)
         }
     }
 
-    func testDeferredClearSaveFollowsPhaseTwoMenus() {
+    func testClearSaveIsRequiredDuringProfileSetupAndStaysAvailableInAdd() {
         let steps = StencilInitializationPolicy.missingSteps(examples: [], languageIdentifier: "en", mode: .normal)
-        let deferred = steps.firstIndex(where: StencilInitializationPolicy.isDeferred)!
+        let clearSave = steps.firstIndex { $0.classIdentifier == StencilInitializationPolicy.profileClearSaveClass }!
         let options = steps.lastIndex { $0.context == .options }!
         let confirm = steps.firstIndex { $0.context == .clearSave }!
-        XCTAssertLessThan(options, deferred)
-        XCTAssertLessThan(deferred, confirm)
-        XCTAssertFalse(StencilInitializationPolicy.isFirstPhaseStep(steps[deferred]))
+        XCTAssertLessThan(clearSave, options)
+        XCTAssertLessThan(clearSave, confirm)
+        XCTAssertTrue(StencilInitializationPolicy.isFirstPhaseStep(steps[clearSave]))
+        let boxes = StencilInitializationPolicy.requiredCounts(context: .selectProfile, mode: .normal)
+            .filter { $0.definition.id != StencilInitializationPolicy.profileClearSaveClass }
+            .flatMap { requirement in (0..<requirement.count).map { _ in box(requirement.definition.id) } }
+        XCTAssertEqual(StencilLabelSelectionPolicy.availableLabels(context: .selectProfile,
+            rectangles: boxes, mode: .normal, hidesCompleted: true).map(\.id),
+            [StencilInitializationPolicy.profileClearSaveClass])
+        XCTAssertTrue(StencilLabelSelectionPolicy.availableLabels(context: .selectProfile,
+            rectangles: boxes + [box(StencilInitializationPolicy.profileClearSaveClass)], mode: .normal,
+            hidesCompleted: false).contains { $0.id == StencilInitializationPolicy.profileClearSaveClass })
     }
 
     func testVisibleButtonsAndCampaignInstructionsHaveTranslations() {
@@ -99,7 +105,7 @@ final class StencilGuidanceTests: XCTestCase {
             "Free Fly", "Current", "Fit", "Object Detection", "Stencil Detection", "Left Select Decoration",
             "Right Select Decoration", "Summary", "Objects", "Screenshots", "Train", "Stop Training", "Recent Frames",
             "gameplayLabel", "profileClearSave", "modelLabelGameplay", "modelOpen", "modelReview", "modelTrain", "modelTraining", "modelReady",
-            "profilePhaseDone", "navigateHUD", "drawHealthFirst", "drawHealthSecond", "phase1", "phase2", "phase3",
+            "selectProfile", "Atlas", "System", "Estimated Room Outlines", "navigateHUD", "drawHealthFirst", "drawHealthSecond", "phase1", "phase2", "phase3",
             "stencilLocked", "modelLocked", "resumeStencil", "deleteScreenshot", "runtimeHelp", "Max Health"]
         for language in HollowKnightMenuLanguage.allCases {
             for key in keys {
@@ -231,7 +237,7 @@ final class StencilGuidanceTests: XCTestCase {
         try store.delete(example)
         coordinator.refresh(mode: .modded)
         XCTAssertEqual(coordinator.guidance(labelingContext: nil, selectedClassIdentifier: nil, navigationContext: .selectProfile),
-            "Select Start Game to navigate to Select Profile and press L.")
+            "Create a save if needed, return to Select Profile, and highlight it. Capture with L only when Clear Save is visible.")
     }
 
     @MainActor func testEmptySetupIncludesEveryRequiredScreen() throws {

@@ -20,6 +20,33 @@ final class GroundSubpixelRegistrationTests: XCTestCase {
         XCTAssertLessThanOrEqual(result.iterations, 6)
     }
 
+    func testNormalizedPatchJacobianRecoversMotionAcrossExposureChanges() throws {
+        // Broad illumination gradients dominate the raw image derivative but
+        // their patch means are removed from the residual. Differentiate the
+        // same normalized signal that is actually being minimized.
+        func pixels(offset: CGPoint, gain: Double, mean: Double) -> [UInt8] {
+            (0..<(width * height)).map { index in
+                let x = Double(index % width) - offset.x
+                let y = Double(index / width) - offset.y
+                let signal = 45 * sin(0.08 * x + 0.07 * y)
+                    + 35 * cos(0.04 * x - 0.08 * y)
+                    + 7 * sin(0.47 * x + 0.2 * y)
+                    + 6 * cos(0.17 * x - 0.31 * y)
+                return UInt8(clamping: Int((mean + gain * signal).rounded()))
+            }
+        }
+        let source = pixels(offset: .zero, gain: 1, mean: 110)
+        for gain in [0.55, 1.0, 1.3] {
+            let target = pixels(offset: CGPoint(x: 0.8, y: 0.7), gain: gain, mean: 120)
+            let result = try XCTUnwrap(GroundSubpixelRegistration.refine(
+                patches: patches(source), pixels: target,
+                width: width, height: height, dx: 0, dy: 0))
+            XCTAssertEqual(result.offset.dx, 0.8, accuracy: 0.07, "gain=\(gain)")
+            XCTAssertEqual(result.offset.dy, 0.7, accuracy: 0.07, "gain=\(gain)")
+            XCTAssertLessThanOrEqual(result.iterations, 6)
+        }
+    }
+
     func testIntegratedSolverPublishesFractionalTranslation() throws {
         let solver = GroundCameraSolver(subpixelEnabled: true)
         _ = solver.solve(
@@ -36,6 +63,70 @@ final class GroundSubpixelRegistrationTests: XCTestCase {
         XCTAssertEqual(result.imageTranslation.dy, 4.75, accuracy: 0.12)
         XCTAssertEqual(displacement.dx, -2.65, accuracy: 0.12)
         XCTAssertEqual(displacement.dy, 4.75, accuracy: 0.12)
+    }
+
+    func testProductionTrackerMeasuresFractionalMotionBetweenKeyframes() throws {
+        let tracker = GroundHypothesisTracker(minimumObservationSeconds: 0,
+            productionCameraSolver: true)
+        // A horizontal pan stays level even between reference promotions.
+        // Check actual movement too, so holding the pose cannot pass.
+        for index in 0...18 {
+            let movement = Double(index) * 0.35
+            let pixels = frame(offsetX: movement)
+            let provider = try XCTUnwrap(CGDataProvider(data: Data(pixels) as CFData))
+            let image = try XCTUnwrap(CGImage(width: width, height: height,
+                bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: width,
+                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: 0),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+            let result = tracker.update(frame: image, floorLines: lines(dx: 0, dy: 0),
+                timestamp: Double(index) / 60, sourceLuma: pixels)
+            guard index > 0 else { continue }
+            let camera = try XCTUnwrap(result.cameraPosition)
+            XCTAssertEqual(camera.x, -movement * GroundCameraSolver.hackerCalibratedAnchorScale.dx,
+                accuracy: 0.15, "capture \(index)")
+            XCTAssertEqual(camera.y, 0, accuracy: 0.12, "capture \(index)")
+            XCTAssertTrue(result.poseVerified, "capture \(index)")
+        }
+    }
+
+    func testSceneryCalibrationReceivesProjectedReferenceDisplacement() throws {
+        let solver = GroundCameraSolver(imageMotionScale: CGVector(dx: 0.8, dy: 1.2))
+        _ = solver.solve(pixels: frame(), width: width, height: height,
+            lines: lines(dx: 0, dy: 0), timestamp: 0, exclusions: [])
+        let moved = try XCTUnwrap(solver.solve(pixels: frame(dx: -4, dy: 5),
+            width: width, height: height, lines: lines(dx: -4, dy: 5),
+            timestamp: 1.0 / 60, exclusions: []))
+        let raw = try XCTUnwrap(moved.matchedImageDisplacement)
+        let projected = try XCTUnwrap(moved.projectedImageDisplacement)
+        XCTAssertEqual(raw.dx, -4, accuracy: 1e-8)
+        XCTAssertEqual(raw.dy, 5, accuracy: 1e-8)
+        XCTAssertEqual(projected.dx, -3.2, accuracy: 1e-8)
+        XCTAssertEqual(projected.dy, 6, accuracy: 1e-8)
+        XCTAssertEqual(moved.imageTranslation, projected)
+        XCTAssertEqual(moved.referenceTimestamp, 0)
+    }
+
+    func testRefinedProvisionalMotionRetainsCameraScaleWithoutIntegerPhaseAdjustment() throws {
+        for customScale in [false, true] {
+            let solver = GroundCameraSolver(keyframeSubpixelEnabled: true,
+                calibratedMotionEnabled: true,
+                imageMotionScale: customScale ? CGVector(dx: 0.9, dy: 0.8) : nil)
+            _ = solver.solve(pixels: [UInt8](repeating: 80, count: width * height),
+                width: width, height: height, lines: lines(dx: 0, dy: 0), timestamp: 0, exclusions: [])
+            solver.followMeasuredCamera(correction: .zero, pixels: frame(),
+                width: width, height: height, lines: lines(dx: 0, dy: 0), timestamp: 0.1, exclusions: [])
+            let moved = try XCTUnwrap(solver.solve(pixels: frame(dx: 16, offsetX: 0.4),
+                width: width, height: height, lines: lines(dx: 16, dy: 0), timestamp: 0.2, exclusions: []))
+            XCTAssertEqual(moved.matchSource, "provisional")
+            XCTAssertFalse(moved.referenceTrusted)
+            let raw = try XCTUnwrap(moved.matchedImageDisplacement)
+            XCTAssertEqual(raw.dx, 16.4, accuracy: 0.07)
+            // Fixture image displacement is 16.4 px; the frozen camera-plane
+            // projection is 16.28356 px. A refined match no longer has the
+            // integer-phase bias that the coarse recent-motion adjustment models.
+            let projected = try XCTUnwrap(moved.projectedImageDisplacement)
+            XCTAssertEqual(projected.dx, customScale ? 14.76 : 16.28356, accuracy: 0.10)
+        }
     }
 
     func testExactIntegerMotionStaysExactAndFlatFrameIsRejected() throws {

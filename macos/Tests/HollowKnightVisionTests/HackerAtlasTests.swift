@@ -91,7 +91,28 @@ final class HackerAtlasTests: XCTestCase {
         XCTAssertEqual(layout.positions[c.id], CGPoint(x: 124, y: 124))
     }
 
-    func testRoomLayoutFansOverlappingBranchIntoNewRectifiedIsland() throws {
+    func testMeasuredReturnFloorsTakePriorityOverEarlierEstimatedVerticalPacking() throws {
+        let a = room(name: "A", position: .zero, size: CGSize(width: 100, height: 100))
+        let b = room(name: "B", position: .zero, size: CGSize(width: 100, height: 100))
+        let c = room(name: "C", position: .zero, size: CGSize(width: 100, height: 100))
+        let d = room(name: "D", position: .zero, size: CGSize(width: 100, height: 100))
+        let ab = connection(from: a, to: b, fromSide: .right)
+        let bc = connection(from: b, to: c, fromSide: .bottom)
+        let cd = connection(from: c, to: d, fromSide: .left)
+        let da = connection(from: d, to: a, fromSide: .left)
+        let measured = [ab, cd, da]
+        let layout = HackerRoomLayout.make(rooms: [a, b, c, d], connections: [ab, bc, cd, da],
+            floorAlignedConnectionIDs: Set(measured.map(\.id)))
+        for edge in measured {
+            let from = try XCTUnwrap(layout.positions[edge.fromRoomID])
+            let to = try XCTUnwrap(layout.positions[edge.toRoomID])
+            XCTAssertEqual(from.y + edge.fromCoordinate, to.y + edge.toCoordinate, accuracy: 0.001)
+        }
+        XCTAssertTrue(layout.freeformConnectionIDs.contains(bc.id),
+                      "Unmeasured vertical spacing must yield to grounded floor evidence on the return loop")
+    }
+
+    func testRoomLayoutMovesOverlappingHorizontalBranchOutwardWithoutChangingFloorHeight() throws {
         let a = room(name: "A", position: .zero, size: CGSize(width: 100, height: 100))
         let b = room(name: "B", position: .zero, size: CGSize(width: 100, height: 100))
         let c = room(name: "C", position: .zero, size: CGSize(width: 100, height: 100))
@@ -103,14 +124,144 @@ final class HackerAtlasTests: XCTestCase {
         let cPosition = try XCTUnwrap(layout.positions[c.id])
 
         XCTAssertEqual(bPosition, CGPoint(x: 124, y: 0))
-        XCTAssertEqual(cPosition.x, 124)
-        XCTAssertNotEqual(cPosition.y, 0)
+        XCTAssertEqual(cPosition.x, 248)
+        XCTAssertEqual(cPosition.y, 0)
         XCTAssertTrue(layout.freeformConnectionIDs.contains(ac.id))
         XCTAssertFalse(
             b.bounds.offsetBy(dx: bPosition.x, dy: bPosition.y).intersects(
                 c.bounds.offsetBy(dx: cPosition.x, dy: cPosition.y)
             )
         )
+    }
+
+    func testHorizontalPassagesAlignGroundedHeightAfterAirborneArrivalInBothDirections() throws {
+        for right in [true, false] {
+            let preparer = HackerFramePreparer()
+            let pipeline = HackerAtlasPipeline(context: CIContext(options: [.useSoftwareRenderer: true]))
+            let image = try solidImage(width: 64, height: 36)
+            var output: HackerAtlasOutput?
+            func observe(_ frame: Int64, scene: String, x: Double, y: Double, grounded: Bool) throws {
+                let prepared = try XCTUnwrap(preparer.process(match(image: image,
+                    sample: sample(frame: frame, cameraX: scene == "A" ? 10 : 100,
+                        scene: scene, heroScreenX: x, heroScreenY: y,
+                        grounded: grounded, time: Double(frame) * 0.1))))
+                output = pipeline.process(prepared)
+            }
+            let exitX: Double = right ? 60 : 4
+            let entryX: Double = right ? 4 : 60
+            for frame in 1...3 { try observe(Int64(frame), scene: "A", x: exitX, y: 12, grounded: true) }
+            try observe(4, scene: "A", x: exitX, y: 20, grounded: false)
+            try observe(5, scene: "B", x: entryX, y: 24, grounded: false)
+            XCTAssertEqual(try XCTUnwrap(output).connections.first?.fromCoordinate, 20)
+            for frame in 6...8 { try observe(Int64(frame), scene: "B", x: entryX, y: 8, grounded: true) }
+            let aligned = try XCTUnwrap(output)
+            let connection = try XCTUnwrap(aligned.connections.first)
+            XCTAssertTrue(aligned.floorAlignedConnectionIDs.contains(connection.id))
+            XCTAssertEqual(connection.fromSide, right ? .right : .left)
+            XCTAssertEqual(connection.fromCoordinate, 12, accuracy: 0.001)
+            XCTAssertEqual(connection.toCoordinate, 8, accuracy: 0.001)
+            let layout = HackerRoomLayout.make(rooms: aligned.rooms, connections: aligned.connections)
+            let fromY = try XCTUnwrap(layout.positions[connection.fromRoomID]).y
+            let toY = try XCTUnwrap(layout.positions[connection.toRoomID]).y
+            XCTAssertEqual(fromY + 12, toY + 8, accuracy: 0.001)
+            try observe(9, scene: "A", x: exitX, y: 26, grounded: false)
+            XCTAssertEqual(try XCTUnwrap(output).connections.count, 1)
+            XCTAssertEqual(try XCTUnwrap(output).connections.first?.fromCoordinate, 12,
+                "An airborne revisit must preserve the grounded alignment.")
+        }
+    }
+
+    func testAirbornePassageDoesNotInventGroundedFloorEvidence() throws {
+        let preparer = HackerFramePreparer()
+        let pipeline = HackerAtlasPipeline(context: CIContext(options: [.useSoftwareRenderer: true]))
+        let image = try solidImage(width: 64, height: 36)
+        var output: HackerAtlasOutput?
+        for frame in 1...8 {
+            let prepared = try XCTUnwrap(preparer.process(match(image: image,
+                sample: sample(frame: Int64(frame), cameraX: frame < 5 ? 0 : 100,
+                    scene: frame < 5 ? "A" : "B", heroScreenX: frame < 5 ? 60 : 4,
+                    heroScreenY: frame < 5 ? 20 : 24, grounded: false, time: Double(frame) * 0.1))))
+            output = pipeline.process(prepared)
+        }
+        XCTAssertEqual(try XCTUnwrap(output).connections.first?.fromCoordinate, 20)
+        XCTAssertEqual(try XCTUnwrap(output).connections.first?.toCoordinate, 24)
+    }
+
+    func testHackerRestorePointKeepsPixelsRoomAnchorsAndContinuesInTheSameScene() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let preparer = HackerFramePreparer()
+        let pipeline = HackerAtlasPipeline(context: CIContext(options: [.useSoftwareRenderer: true]))
+        let image = try solidImage(width: 64, height: 36)
+        for frame in 1...3 {
+            let prepared = try XCTUnwrap(preparer.process(match(image: image,
+                sample: sample(frame: Int64(frame), cameraX: Double(frame) + 10))))
+            _ = try XCTUnwrap(pipeline.process(prepared))
+        }
+        var archive = pipeline.archive()
+        let manualPosition = CGPoint(x: 270, y: -33)
+        archive.roomPositionOverrides[try XCTUnwrap(archive.rooms.first).id] = manualPosition
+        let states = AtlasStateStore(rootURL: root.appendingPathComponent("states"))
+        let saved = try states.save(name: "Hacker route") { try HackerAtlasArchiveStore.write(archive, to: $0) }
+        let restored = try HackerAtlasArchiveStore.read(from: states.worldURL(for: saved))
+        XCTAssertEqual(restored.anchors, archive.anchors)
+        XCTAssertEqual(restored.roomPositionOverrides, archive.roomPositionOverrides)
+        let manifestURL = try states.worldURL(for: saved).appendingPathComponent("hacker.json")
+        let currentManifest = try Data(contentsOf: manifestURL)
+        var legacyManifest = try XCTUnwrap(JSONSerialization.jsonObject(with: currentManifest) as? [String: Any])
+        legacyManifest.removeValue(forKey: "roomPositionOverrides")
+        try JSONSerialization.data(withJSONObject: legacyManifest).write(to: manifestURL)
+        XCTAssertTrue(try HackerAtlasArchiveStore.read(from: states.worldURL(for: saved)).roomPositionOverrides.isEmpty)
+        try currentManifest.write(to: manifestURL)
+        XCTAssertEqual(restored.registrationCount, 3)
+        XCTAssertEqual(restored.rooms.map(\.id), archive.rooms.map(\.id))
+        XCTAssertEqual(restored.rooms.map(\.bounds), archive.rooms.map(\.bounds))
+        for (before, after) in zip(archive.rooms[0].atlasTiles, restored.rooms[0].atlasTiles) {
+            XCTAssertEqual(try rgbaPixels(before.image), try rgbaPixels(after.image))
+        }
+        let nextPipeline = HackerAtlasPipeline(context: CIContext(options: [.useSoftwareRenderer: true]))
+        try nextPipeline.restore(restored)
+        XCTAssertEqual(nextPipeline.archive().roomPositionOverrides, archive.roomPositionOverrides)
+        XCTAssertEqual(nextPipeline.archive().rooms.map(\.bounds), archive.rooms.map(\.bounds))
+        let nextPreparer = HackerFramePreparer()
+        nextPreparer.restoreAnchors(restored.anchors)
+        let continued = try XCTUnwrap(nextPreparer.process(match(image: image,
+            sample: sample(frame: 4, cameraX: 14))))
+        XCTAssertEqual(continued.liveBounds.minX, 3, accuracy: 0.001)
+        let next = try XCTUnwrap(nextPipeline.process(continued))
+        XCTAssertEqual(next.roomCount, 1)
+        XCTAssertEqual(next.rooms.first?.id, archive.rooms.first?.id)
+        XCTAssertEqual(nextPipeline.archive().registrationCount, 4)
+        XCTAssertEqual(try HackerAtlasArchiveStore.read(from: states.worldURL(for: saved)).registrationCount, 3,
+            "Continuing capture must not change the named restore point.")
+    }
+
+    func testHackerArchiveRejectsMissingPixelsAndEmptyReplacementClearsOnlyItsOwnDirectory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let preparer = HackerFramePreparer()
+        let pipeline = HackerAtlasPipeline(context: CIContext(options: [.useSoftwareRenderer: true]))
+        let prepared = try XCTUnwrap(preparer.process(match(image: solidImage(width: 64, height: 36),
+            sample: sample(frame: 1, cameraX: 10))))
+        _ = try XCTUnwrap(pipeline.process(prepared))
+        let pending = try XCTUnwrap(preparer.process(match(image: solidImage(width: 64, height: 36),
+            sample: sample(frame: 2, cameraX: 100, scene: "B"), integratesAtlas: false)))
+        XCTAssertNil(pipeline.process(pending))
+        let archive = pipeline.archive()
+        XCTAssertEqual(archive.rooms.count, 1, "A prepared scene without committed pixels is not a restore point.")
+        XCTAssertTrue(archive.connections.isEmpty)
+        let active = root.appendingPathComponent("active")
+        let saved = root.appendingPathComponent("saved")
+        try HackerAtlasArchiveStore.write(archive, to: active)
+        try HackerAtlasArchiveStore.write(archive, to: saved)
+        let png = try XCTUnwrap(FileManager.default.contentsOfDirectory(at: active,
+            includingPropertiesForKeys: nil).first { $0.pathExtension == "png" })
+        try FileManager.default.removeItem(at: png)
+        XCTAssertThrowsError(try HackerAtlasArchiveStore.read(from: active))
+        XCTAssertEqual(pipeline.archive().registrationCount, 1)
+        try HackerAtlasArchiveStore.write(.empty, to: active)
+        XCTAssertTrue(try HackerAtlasArchiveStore.read(from: active).rooms.isEmpty)
+        XCTAssertEqual(try HackerAtlasArchiveStore.read(from: saved).rooms.count, 1)
     }
 
     func testPipelineConnectsRoomsAndRestoresOriginalSceneAnchor() throws {
@@ -490,13 +641,15 @@ final class HackerAtlasTests: XCTestCase {
         scene: String = "A",
         heroAvailable: Bool = true,
         heroScreenX: Double? = nil,
-        heroScreenY: Double? = nil
+        heroScreenY: Double? = nil,
+        grounded: Bool = true,
+        time: Double? = nil
     ) -> ReceiverGroundTruthSample {
         ReceiverGroundTruthSample(
             version: 2, type: "groundTruth", sessionID: UUID(), sequence: UInt64(frame),
-            unityFrame: frame, unityRealtime: Double(frame), sceneName: scene,
+            unityFrame: frame, unityRealtime: time ?? Double(frame), sceneName: scene,
             heroAvailable: heroAvailable, heroX: 0, heroY: 0, heroZ: 0,
-            velocityX: 0, velocityY: 0, facingRight: true, grounded: true,
+            velocityX: 0, velocityY: 0, facingRight: true, grounded: grounded,
             cameraAvailable: true, cameraX: cameraX, cameraY: 4, cameraZ: -38,
             cameraTargetX: cameraX, cameraTargetY: 4, cameraTargetZ: 0,
             orthographicSize: 18,

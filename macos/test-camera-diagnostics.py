@@ -30,6 +30,21 @@ def recording(camera_errors=(0, 0, 0)):
 
 
 class ExactCameraTests(unittest.TestCase):
+    def test_nonfinite_diagnostics_stay_visible_without_discarding_valid_camera(self):
+        run = recording()
+        run['trackingSamples'][0]['residualRMS'] = 'Infinity'
+        run['trackingSamples'][1]['localTextureError'] = 'NaN'
+        run['trackingSamples'][2]['publishedCameraX'] = '-Infinity'
+        report = summarize_exact(run)
+        self.assertEqual(report['matchedSamples'], 2)
+        self.assertEqual(report['rejected'], {'publishedPoseUnavailable': 1})
+        self.assertEqual(report['nonFiniteNumbers']['count'], 3)
+        self.assertEqual(report['nonFiniteNumbers']['values'],
+                         {'Infinity': 1, 'NaN': 1, '-Infinity': 1})
+        self.assertEqual(report['nonFiniteNumbers']['examples'][2]['path'],
+                         '$.trackingSamples[2].publishedCameraX')
+        self.assertEqual(report['errorPixels']['max'], 0)
+
     def test_receipt_delay_has_no_effect_and_published_pose_is_used(self):
         run = recording()
         report = summarize_exact(run)
@@ -75,6 +90,39 @@ class ExactCameraTests(unittest.TestCase):
         report = summarize_exact(run)
         self.assertEqual(len(report['epochs']), 2)
         self.assertEqual(report['endErrorXY'], [0, 0])
+
+    def test_visual_room_or_island_split_cannot_hide_drift(self):
+        run = recording((0, 40, 80))
+        for i, tracking in enumerate(run['trackingSamples']):
+            tracking['roomID'] = i
+            tracking['islandID'] = i * 10
+        frames, coverage = exact_frames(run)
+        self.assertEqual([f['errorPixels'] for f in frames], [0, 40, 80])
+        self.assertEqual(len(coverage['epochs']), 1)
+
+    def test_return_to_scene_keeps_original_reference_origin(self):
+        run = recording((0, 200, 80))
+        run['groundTruthSamples'][1]['sample']['sceneName'] = 'adjacent'
+        run['trackingSamples'][2]['roomID'] = 7
+        frames, coverage = exact_frames(run)
+        self.assertEqual([f['epoch'] for f in frames], [0, 1, 0])
+        self.assertEqual(frames[-1]['errorPixels'], 80)
+        self.assertEqual(len(coverage['epochs']), 2)
+
+    def test_loop_correction_on_return_is_scored_against_original_origin(self):
+        run = recording((0, 200, 12))
+        run['groundTruthSamples'][1]['sample']['sceneName'] = 'adjacent'
+        run['trackingSamples'][2]['globalCorrectionX'] = -68
+        frames, _ = exact_frames(run)
+        self.assertEqual(frames[-1]['error'], [12, 0])
+
+    def test_return_to_original_projection_reuses_original_origin(self):
+        run = recording((0, 200, 12))
+        run['groundTruthSamples'][1]['sample']['pixelsPerWorldUnitX'] = 20
+        frames, coverage = exact_frames(run)
+        self.assertEqual([f['epoch'] for f in frames], [0, 1, 0])
+        self.assertEqual(frames[-1]['errorPixels'], 12)
+        self.assertEqual(len(coverage['epochs']), 2)
 
     def test_roundoff_scale_noise_does_not_reset_epoch(self):
         run = recording((0, 1, 2))

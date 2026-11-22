@@ -33,6 +33,7 @@ struct LabelingModelRestorePoint: Codable, Equatable, Identifiable {
     let createdAt: Date
     let modelFilename: String
     var checkpointFilename: String? = nil
+    var trainedClassIdentifiers: [String]? = nil
 
     var id: String { version.displayName }
 }
@@ -41,6 +42,8 @@ struct LabelingActiveModelArtifact: Equatable {
     let classIdentifier: String
     let version: LabelingModelSemanticVersion
     let modelURL: URL
+    var trainedClassIdentifiers: Set<String> = []
+    var sourceRunIdentifier: UUID? = nil
 }
 
 enum LabelingDevelopmentCandidatePolicy {
@@ -112,13 +115,17 @@ final class LabelingModelVersionStore {
     static let restoreManifestFilename = "restore-point.json"
 
     let rootURL: URL
+    private let trainingRootURL: URL
     private let fileManager: FileManager
 
     init(
         rootURL: URL = LabelingModelVersionStore.defaultRootURL(),
+        trainingRootURL: URL? = nil,
         fileManager: FileManager = .default
     ) {
         self.rootURL = rootURL.standardizedFileURL
+        self.trainingRootURL = trainingRootURL ?? rootURL.deletingLastPathComponent()
+            .appendingPathComponent("training-v1", isDirectory: true)
         self.fileManager = fileManager
     }
 
@@ -262,7 +269,10 @@ final class LabelingModelVersionStore {
             sourceRunIdentifier: candidate.id,
             createdAt: now,
             modelFilename: candidate.summary.modelFilename,
-            checkpointFilename: candidate.summary.checkpointFilename
+            checkpointFilename: candidate.summary.checkpointFilename,
+            trainedClassIdentifiers: (candidate.summary.trainedClassIdentifiers.map {
+                Set($0.map(LabelingClassIdentity.canonicalIdentifier))
+            } ?? LabelingTrainingEvidence.positiveClasses(in: candidate.datasetURL)).sorted()
         )
 
         try fileManager.createDirectory(at: objectURL, withIntermediateDirectories: true)
@@ -400,7 +410,12 @@ final class LabelingModelVersionStore {
                 modelURL: rootURL
                     .appendingPathComponent(classIdentifier, isDirectory: true)
                     .appendingPathComponent(restorePoint.version.displayName, isDirectory: true)
-                    .appendingPathComponent(restorePoint.modelFilename)
+                    .appendingPathComponent(restorePoint.modelFilename),
+                trainedClassIdentifiers: restorePoint.trainedClassIdentifiers.map {
+                    Set($0.map(LabelingClassIdentity.canonicalIdentifier))
+                } ?? LabelingTrainingEvidence.trainedClasses(runIdentifier: restorePoint.sourceRunIdentifier,
+                    trainingRootURL: trainingRootURL),
+                sourceRunIdentifier: restorePoint.sourceRunIdentifier
             )
         }
         .sorted { $0.classIdentifier < $1.classIdentifier }
@@ -415,7 +430,8 @@ final class LabelingModelVersionStore {
     func hasTrainedGameplayModel(exampleIDs: Set<UUID>, candidates: [LabelingModelCandidate]) throws -> Bool {
         guard !exampleIDs.isEmpty else { return false }
         return try activeModelArtifacts().contains { artifact in
-            guard fileManager.fileExists(atPath: artifact.modelURL.path),
+            guard !artifact.trainedClassIdentifiers.isEmpty,
+                  fileManager.fileExists(atPath: artifact.modelURL.path),
                   let point = try restorePoints(for: artifact.classIdentifier).first(where: { $0.version == artifact.version }),
                   let candidate = candidates.first(where: { $0.id == point.sourceRunIdentifier }) else { return false }
             return candidate.predictionReview?.examples.contains { exampleIDs.contains($0.exampleIdentifier) } == true

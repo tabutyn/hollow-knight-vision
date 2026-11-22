@@ -116,6 +116,22 @@ final class CameraSolverTests: XCTestCase {
             Int(FreshAtlasBootstrapGate.maximumBootstrapDisplacement) + 1
         )
     }
+    func testOnlyCorroboratedLevelWalkingCanBootstrapAMovingAtlas() {
+        func admits(_ direction: VisualRoomDirection?, dy: CGFloat = 0, verified: Bool = true) -> Bool {
+            var gate = FreshAtlasBootstrapGate()
+            for i in 0..<40 {
+                _ = gate.allowsFirstAtlasWrite(position: .init(x: CGFloat(i) * 2, y: CGFloat(i) * dy),
+                    registrationAccepted: true, groundVerified: verified, hasCommittedEvidence: false, verifiedWalk: direction)
+            }
+            return gate.isReady
+        }
+        XCTAssertTrue(admits(.right))
+        XCTAssertFalse(admits(nil))
+        XCTAssertFalse(admits(.left))
+        XCTAssertFalse(admits(.right, dy: 1))
+        XCTAssertFalse(admits(.right, verified: false))
+    }
+
     func testCommittedAtlasBypassesBootstrapDelay() {
         var gate = FreshAtlasBootstrapGate()
         XCTAssertTrue(gate.allowsFirstAtlasWrite(

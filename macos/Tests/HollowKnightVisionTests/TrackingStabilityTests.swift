@@ -18,10 +18,10 @@ final class TrackingStabilityTests: XCTestCase {
     }
 
     func testMaskUsesUnsmoothBodyAndCoversPredictedMotion() throws {
-        func batch(x: CGFloat, t: Double, generation: UInt64 = 1) -> LiveObjectDetectionBatch {
+        func batch(x: CGFloat, t: Double, generation: UInt64 = 1, confidence: Double = 0.9) -> LiveObjectDetectionBatch {
             .init(detections: [.init(classIdentifier: "game.playable-knight",
                 normalizedRect: CGRect(x: x, y: 0.5, width: 0.05, height: 0.1),
-                confidence: 0.9, sourceFrameIdentifier: 1,
+                confidence: confidence, sourceFrameIdentifier: 1,
                 modelVersion: .init(major: 1, minor: 0))], sourceFrameIdentifier: 1,
                 sourceTimestamp: t, captureGeneration: generation, inferenceDuration: 0.03)
         }
@@ -33,6 +33,16 @@ final class TrackingStabilityTests: XCTestCase {
         XCTAssertGreaterThan(mask.normalizedRect.maxX, 0.25)
         XCTAssertEqual(MovingObjectMask.detections(displayed: [], current: current,
             previous: prior, generation: 2, timestamp: 1.2), [])
+        let contact = try XCTUnwrap(LiveObjectDetectionFreshness.captureMatchedKnightBounds(
+            from: current, captureGeneration: 1, timestamp: 1.1, width: 640, height: 360))
+        XCTAssertEqual(contact, current.detections[0].imageRect(width: 640, height: 360))
+        XCTAssertNil(LiveObjectDetectionFreshness.captureMatchedKnightBounds(
+            from: current, captureGeneration: 1, timestamp: 1.2, width: 640, height: 360))
+        XCTAssertNil(LiveObjectDetectionFreshness.captureMatchedKnightBounds(
+            from: current, captureGeneration: 2, timestamp: 1.1, width: 640, height: 360))
+        XCTAssertNil(LiveObjectDetectionFreshness.captureMatchedKnightBounds(
+            from: batch(x: 0.15, t: 1.1, confidence: 0.05), captureGeneration: 1,
+            timestamp: 1.1, width: 640, height: 360))
     }
 
     func testLineIndexPreservesOffscreenEvidenceWithoutCountingMisses() {

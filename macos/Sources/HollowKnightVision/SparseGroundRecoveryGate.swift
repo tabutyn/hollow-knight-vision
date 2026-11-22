@@ -2,10 +2,11 @@ import CoreGraphics
 import Foundation
 import os
 
-/// A fallback may underestimate a fast vertical pan. Two independently
-/// verified sparse ground observations may recover that short gap, provided
-/// their measured vertical motion agrees with the direction of correction.
-/// This does not authorize stationary relocalization or a room-sized jump.
+/// A fallback may underestimate camera travel. Repeated verified sparse ground
+/// observations can recover a short gap when measured motion agrees with the
+/// correction. Horizontal recovery requires three moving observations; vertical
+/// recovery retains its two-observation policy. Neither permits a stationary
+/// relocalization or a room-sized jump.
 struct SparseGroundRecoveryGate {
     private static let traceLog = Logger(subsystem: "com.ballroller.hollow-knight-vision", category: "ground-trace")
     private let traceEnabled = ProcessInfo.processInfo.arguments.contains("--trace-ground-tracking")
@@ -13,7 +14,17 @@ struct SparseGroundRecoveryGate {
 
     private var broadPending: (position: CGPoint, current: CGPoint, timestamp: Double)?
 
-    mutating func reset() { pending = nil; broadPending = nil }
+    private struct HorizontalPending {
+        let firstPosition: CGPoint
+        let firstTimestamp: Double
+        let position: CGPoint
+        let correction: CGVector
+        let timestamp: Double
+        let count: Int
+    }
+    private var horizontalPending: HorizontalPending?
+
+    mutating func reset() { pending = nil; broadPending = nil; horizontalPending = nil }
 
     mutating func accepts(candidate: CGPoint, current: CGPoint,
                           solveWidth: CGFloat, timestamp: Double,
@@ -58,7 +69,12 @@ struct SparseGroundRecoveryGate {
                 return true
             }
         }
-        guard textureError <= 12 else { pending = nil; return false }
+        guard textureError <= 12 else { pending = nil; horizontalPending = nil; return false }
+        if acceptsHorizontal(candidate: candidate, current: current, scale: scale,
+                             timestamp: timestamp) {
+            reset()
+            return true
+        }
         let prior = pending
         pending = (candidate, timestamp)
         guard let prior else { return false }
@@ -73,4 +89,40 @@ struct SparseGroundRecoveryGate {
         reset()
         return true
     }
+
+    private mutating func acceptsHorizontal(candidate: CGPoint, current: CGPoint,
+                                            scale: CGFloat, timestamp: Double) -> Bool {
+        let correction = CGVector(dx: candidate.x - current.x, dy: candidate.y - current.y)
+        guard abs(correction.dx) >= 4 * scale,
+              abs(correction.dy) <= 4 * scale else {
+            horizontalPending = nil
+            return false
+        }
+        let prior = horizontalPending
+        func seed() -> HorizontalPending {
+            HorizontalPending(firstPosition: candidate, firstTimestamp: timestamp,
+                position: candidate, correction: correction, timestamp: timestamp, count: 1)
+        }
+        guard let prior else { horizontalPending = seed(); return false }
+        let dt = timestamp - prior.timestamp
+        let dx = candidate.x - prior.position.x
+        let dy = candidate.y - prior.position.y
+        // A stationary/repeated image is not another vote. Incoherent motion,
+        // opposite corrections or long gaps restart the proof from this image.
+        guard dt >= 0.008, dt <= 0.12,
+              abs(dx) >= scale, abs(dx) <= min(48, max(16, CGFloat(dt) * 960)) * scale,
+              abs(dy) <= 2 * scale, dx * correction.dx > 0,
+              correction.dx * prior.correction.dx > 0,
+              abs(correction.dx - prior.correction.dx) <= 12 * scale else {
+            horizontalPending = seed()
+            return false
+        }
+        let count = prior.count + 1
+        horizontalPending = HorizontalPending(firstPosition: prior.firstPosition,
+            firstTimestamp: prior.firstTimestamp, position: candidate,
+            correction: correction, timestamp: timestamp, count: count)
+        return count >= 3 && timestamp - prior.firstTimestamp >= 0.025
+            && abs(candidate.x - prior.firstPosition.x) >= 8 * scale
+    }
+
 }

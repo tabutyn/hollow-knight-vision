@@ -474,7 +474,6 @@ struct LabelingObjectSelectionControls: View {
     let rectangles: [LabelingDraftRectangle]
     let mode: HollowKnightRuntimeMode
     let hidesCompleted: Bool
-    let includesDeferredLabels: Bool
     @State private var customObjects = UserObjectCatalogStore.load().objects
 
     init(
@@ -482,14 +481,13 @@ struct LabelingObjectSelectionControls: View {
         selectedClassID: Binding<String>,
         rectangles: [LabelingDraftRectangle] = [],
         mode: HollowKnightRuntimeMode = .modded,
-        hidesCompleted: Bool = false, includesDeferredLabels: Bool = false
+        hidesCompleted: Bool = false
     ) {
         _context = context
         _selectedClassID = selectedClassID
         self.rectangles = rectangles
         self.mode = mode
         self.hidesCompleted = hidesCompleted
-        self.includesDeferredLabels = includesDeferredLabels
     }
 
     private var availableLabels: [LabelingClassDefinition] {
@@ -503,7 +501,7 @@ struct LabelingObjectSelectionControls: View {
         }.map { LabelingClassDefinition(id: $0.identifier, name: $0.name) }
         return StencilLabelSelectionPolicy.availableLabels(
             context: context, custom: custom, rectangles: rectangles,
-            mode: mode, hidesCompleted: hidesCompleted, includesDeferredLabels: includesDeferredLabels
+            mode: mode, hidesCompleted: hidesCompleted
         )
     }
 
@@ -974,7 +972,6 @@ struct LabelingEditorView: View {
     let onShowRecentFrames: () -> Void
     let onDraftCommit: (LabelingDraftState) -> Void
     let gameMode: HollowKnightRuntimeMode
-    let includesDeferredLabels: Bool
 
     @Binding var context: LabelingContext
     @Binding var draft: LabelingDraftState
@@ -1000,14 +997,13 @@ struct LabelingEditorView: View {
         draft: Binding<LabelingDraftState>,
         selectedClassID: Binding<String>,
         initialEditorMode: LabelingEditorMode = .add,
-        gameMode: HollowKnightRuntimeMode = .modded, includesDeferredLabels: Bool = false
+        gameMode: HollowKnightRuntimeMode = .modded
     ) {
         self.image = image
         self.objectAtlas = objectAtlas
         self.onShowRecentFrames = onShowRecentFrames
         self.onDraftCommit = onDraftCommit
         self.gameMode = gameMode
-        self.includesDeferredLabels = includesDeferredLabels
         _context = context
         _draft = draft
         _selectedClassID = selectedClassID
@@ -1105,7 +1101,7 @@ struct LabelingEditorView: View {
             LabelingObjectSelectionControls(
                 context: $context, selectedClassID: $selectedClassID,
                 rectangles: draft.rectangles, mode: gameMode,
-                hidesCompleted: editorMode == .add, includesDeferredLabels: includesDeferredLabels
+                hidesCompleted: editorMode == .add
             )
             StableSegmentedPicker(
                 label: "Editing mode", choices: LabelingEditorMode.available(in: context),
@@ -1159,7 +1155,7 @@ struct LabelingEditorView: View {
         if context != .game && editorMode == .negative { editorMode = .add }
         let available = StencilLabelSelectionPolicy.availableLabels(
             context: context, custom: UserObjectCatalogStore.definitions(for: context),
-            rectangles: draft.rectangles, mode: gameMode, hidesCompleted: editorMode == .add, includesDeferredLabels: includesDeferredLabels
+            rectangles: draft.rectangles, mode: gameMode, hidesCompleted: editorMode == .add
         )
         if !available.contains(where: { $0.id == selectedClassID }) {
             selectedClassID = available.first?.id ?? ""
@@ -1327,7 +1323,7 @@ struct LabelingEditorView: View {
                     case .add:
                         guard StencilLabelSelectionPolicy.availableLabels(
                             context: context, custom: UserObjectCatalogStore.definitions(for: context),
-                            rectangles: draft.rectangles, mode: gameMode, hidesCompleted: true, includesDeferredLabels: includesDeferredLabels
+                            rectangles: draft.rectangles, mode: gameMode, hidesCompleted: true
                         ).contains(where: { $0.id == selectedClassID }) else { return }
                         activeDrawingID = draft.beginRectangle(
                             classID: selectedClassID,
@@ -1479,7 +1475,7 @@ struct LabelingEditorView: View {
         guard context != .game else { return }
         let remaining = StencilLabelSelectionPolicy.availableLabels(
             context: context, rectangles: draft.rectangles,
-            mode: gameMode, hidesCompleted: true, includesDeferredLabels: includesDeferredLabels
+            mode: gameMode, hidesCompleted: true
         )
         selectedClassID = remaining.first?.id ?? ""
     }

@@ -16,11 +16,12 @@ struct LayerSceneDrawTile {
   let roomScale: Double
   let isLiveOverlay: Bool
   let opacity: Double
+  let coversSavedGround: Bool
 
   init(
     roomID: UUID, layerID: UUID, image: CGImage, bounds: CGRect, factor: Double,
     order: Int, roomPosition: CGPoint, roomScale: Double, isLiveOverlay: Bool = false,
-    opacity: Double = 1
+    opacity: Double = 1, coversSavedGround: Bool = false
   ) {
     self.roomID = roomID
     self.layerID = layerID
@@ -32,12 +33,31 @@ struct LayerSceneDrawTile {
     self.roomScale = roomScale
     self.isLiveOverlay = isLiveOverlay
     self.opacity = opacity
+    self.coversSavedGround = coversSavedGround
   }
 }
 
 enum LayerSceneViewMode: String, CaseIterable { case room, world }
 
-enum LayerSceneFramingMode: String, CaseIterable { case freeFly, fit, current }
+enum LayerSceneFramingMode: String, CaseIterable {
+  case freeFly, fit, current, currentNear, currentWide
+
+  var followsCurrent: Bool { self == .current || self == .currentNear || self == .currentWide }
+  var nextTabPreset: Self {
+    switch self {
+    case .currentNear: .currentWide
+    case .currentWide: .fit
+    default: .currentNear
+    }
+  }
+  var initialCurrentZoom: CGFloat {
+    switch self {
+    case .currentNear: 1 / 1.1
+    case .currentWide: 0.5
+    default: 1
+    }
+  }
+}
 
 enum LayerScenePointerPolicy {
   static func forwardsGamePointer(framingMode: LayerSceneFramingMode?) -> Bool {
@@ -165,11 +185,14 @@ struct LayerSceneTranslationSettler {
 enum LayerSceneFeatureReviewMarkerKind: CaseIterable, Equatable {
   case cameraConsistentGround, groundFeature, occludedGroundFeature
   case groundFeatureDepthError, selectedGroundFeature, transitionDoor
+  case positiveGroundTruthEndpoint, negativeGroundTruthEndpoint, spikeGroundTruthEndpoint, doorGroundTruthEndpoint, selectedGroundTruthEndpoint, joinedTerrainCorner, detectedTerrainCorner
 }
 
 enum LayerSceneFeatureReviewLineKind: CaseIterable, Equatable {
-  case currentGround, persistentGround, roomTransition, roomBoundary
-  case positiveGroundTruth, negativeGroundTruth, selectedGroundTruth
+  case currentGround, persistentGround, walkedGround, roomTransition, roomBoundary
+  case positiveGroundTruth, negativeGroundTruth, spikeGroundTruth, doorGroundTruth, selectedGroundTruth, selectedWallTruth
+  case provisionalIsland, doorwayFloor, detectedTerrain, blockedPassage, crossedPassage, atlasRoad
+  case atlasPathDoubleJump, atlasPathDrop, atlasPathObjective, atlasPathSelection
 }
 
 enum LayerSceneFeatureReviewCoordinateSpace: Equatable {
@@ -216,24 +239,41 @@ enum LayerSceneFeatureReviewPalette {
 
   static func rgba(for kind: LayerSceneFeatureReviewMarkerKind) -> SIMD4<Float> {
     switch kind {
+    case .detectedTerrainCorner: rgba(for: LayerSceneFeatureReviewLineKind.detectedTerrain)
     case .cameraConsistentGround: SIMD4<Float>(0.27, 1, 0.47, 0.95)
     case .groundFeature: SIMD4<Float>(0.75, 0.31, 1, 0.95)
     case .occludedGroundFeature: SIMD4<Float>(1, 0.50, 0, 0.95)
     case .groundFeatureDepthError: SIMD4<Float>(1, 0.24, 0.24, 0.95)
     case .selectedGroundFeature: SIMD4<Float>(1, 1, 1, 1)
     case .transitionDoor: SIMD4<Float>(0.12, 0.90, 1, 0.95)
+    case .positiveGroundTruthEndpoint, .joinedTerrainCorner: rgba(for: LayerSceneFeatureReviewLineKind.positiveGroundTruth)
+    case .negativeGroundTruthEndpoint: rgba(for: LayerSceneFeatureReviewLineKind.negativeGroundTruth)
+    case .spikeGroundTruthEndpoint: rgba(for: LayerSceneFeatureReviewLineKind.spikeGroundTruth)
+    case .doorGroundTruthEndpoint: rgba(for: LayerSceneFeatureReviewLineKind.doorGroundTruth)
+    case .selectedGroundTruthEndpoint: rgba(for: LayerSceneFeatureReviewLineKind.selectedGroundTruth)
     }
   }
 
   static func rgba(for kind: LayerSceneFeatureReviewLineKind) -> SIMD4<Float> {
     switch kind {
-    case .currentGround: SIMD4<Float>(0.27, 1, 0.47, 0.95)
-    case .persistentGround: SIMD4<Float>(0.75, 0.31, 1, 0.86)
+    case .currentGround, .persistentGround, .walkedGround: SIMD4<Float>(0.27, 1, 0.47, 0.95)
+    case .detectedTerrain: SIMD4<Float>(0.22, 0.85, 1, 0.88)
     case .roomTransition: SIMD4<Float>(1, 0.52, 0.12, 0.95)
     case .roomBoundary: SIMD4<Float>(0.12, 0.90, 1, 0.95)
-    case .positiveGroundTruth: SIMD4<Float>(0.27, 1, 0.47, 1)
+    case .positiveGroundTruth, .selectedWallTruth: SIMD4<Float>(0.27, 1, 0.47, 1)
     case .negativeGroundTruth: SIMD4<Float>(1, 0.18, 0.18, 1)
+    case .spikeGroundTruth: SIMD4<Float>(1, 0.38, 0.10, 1)
+    case .doorGroundTruth: SIMD4<Float>(0.12, 0.90, 1, 1)
     case .selectedGroundTruth: SIMD4<Float>(1, 1, 1, 1)
+    case .provisionalIsland: SIMD4<Float>(1, 0.70, 0.25, 0.70)
+    case .doorwayFloor: SIMD4<Float>(0.12, 0.90, 1, 0.95)
+    case .atlasRoad: SIMD4<Float>(1, 0.82, 0.16, 1)
+    case .atlasPathDoubleJump: SIMD4<Float>(1, 0.42, 0.72, 1)
+    case .atlasPathDrop: SIMD4<Float>(1, 0.48, 0.12, 1)
+    case .atlasPathObjective: SIMD4<Float>(1, 1, 1, 1)
+    case .atlasPathSelection: SIMD4<Float>(0.77, 0.34, 1, 1)
+    case .blockedPassage: SIMD4<Float>(1, 0.52, 0.12, 1)
+    case .crossedPassage: SIMD4<Float>(1, 0.65, 0.32, 0.65)
     }
   }
 }
@@ -300,6 +340,60 @@ enum LayerSceneFeatureReviewGeometry {
     return point.x.isFinite && point.y.isFinite ? point : nil
   }
 
+  /// Edge-only history yields to live detections. Verified walked floor stays visible.
+  /// The two layers can have different pans while an atlas correction is animating.
+  static func visibleAtlasLines(_ lines: [LayerSceneFeatureReviewOverlay.Line], liveFrame: CGRect?,
+                               zoom: CGFloat, livePan: CGPoint, atlasPan: CGPoint) -> [LayerSceneFeatureReviewOverlay.Line] {
+    let atlas = lines.filter { $0.coordinateSpace == .atlas }
+    guard let liveFrame, zoom > 0 else { return atlas }
+    let cover = liveFrame.offsetBy(dx: (livePan.x - atlasPan.x) / zoom,
+                                   dy: (livePan.y - atlasPan.y) / zoom)
+    return atlas.flatMap { line -> [LayerSceneFeatureReviewOverlay.Line] in
+      guard line.kind == .persistentGround, line.start.y >= cover.minY, line.start.y <= cover.maxY,
+            line.start.x < cover.maxX, line.end.x > cover.minX else { return [line] }
+      var visible = [LayerSceneFeatureReviewOverlay.Line]()
+      if line.start.x < cover.minX {
+        var left = line
+        left.end.x = cover.minX
+        visible.append(left)
+      }
+      if line.end.x > cover.maxX {
+        var right = line
+        right.start.x = cover.maxX
+        visible.append(right)
+      }
+      return visible
+    }
+  }
+
+  static func visibleLiveLines(_ lines: [LayerSceneFeatureReviewOverlay.Line], liveFrame: CGRect?,
+                               zoom: CGFloat, livePan: CGPoint, atlasPan: CGPoint) -> [LayerSceneFeatureReviewOverlay.Line] {
+    let live = lines.filter { $0.coordinateSpace == .live }
+    guard let liveFrame, zoom > 0, !live.isEmpty else { return live }
+    let dx = (atlasPan.x - livePan.x) / zoom, dy = (atlasPan.y - livePan.y) / zoom
+    let tolerance = GroundClearance.height(frameHeight: liveFrame.height, knight: nil).nextDown
+    let walked = lines.compactMap { line -> GroundHypothesisAtlasLine? in
+      guard line.kind == .walkedGround, line.coordinateSpace == .atlas else { return nil }
+      let y = line.start.y + dy
+      let left = line.start.x + dx, right = line.end.x + dx
+      guard y >= liveFrame.minY - tolerance, y <= liveFrame.maxY + tolerance,
+            left < liveFrame.maxX, right > liveFrame.minX else { return nil }
+      return .init(segmentID: LiveGroundLineEvidence.walkedSegmentID,
+        atlasStart: CGPoint(x: left, y: y), atlasEnd: CGPoint(x: right, y: y))
+    }
+    guard !walked.isEmpty else { return live }
+    let coverage = WalkedFloorCoverage(walked)
+    return live.flatMap { line -> [LayerSceneFeatureReviewOverlay.Line] in
+      guard line.kind == .currentGround, line.start.y == line.end.y, line.start.x < line.end.x else { return [line] }
+      return coverage.uncovered(line.start.x..<line.end.x, y: line.start.y, tolerance: tolerance).map { range in
+        var visible = line
+        visible.start.x = range.lowerBound
+        visible.end.x = range.upperBound
+        return visible
+      }
+    }
+  }
+
   static func markerQuads(
     _ overlay: LayerSceneFeatureReviewOverlay?, zoom: CGFloat, pan: CGPoint
   ) -> [LayerSceneOverlayQuad] {
@@ -313,9 +407,13 @@ enum LayerSceneFeatureReviewGeometry {
         ?? markerSize * 0.5
       let halfHeight = marker.worldSize.map { max(1, $0.height * zoom * 0.5) }
         ?? markerSize * 0.5
-      let thickness = marker.kind == .selectedGroundFeature ? lineWidth + 1 : lineWidth
+      let selected = marker.kind == .selectedGroundFeature || marker.kind == .selectedGroundTruthEndpoint
+      let thickness = selected ? lineWidth + 1 : lineWidth
       let left = center.x - halfWidth, right = center.x + halfWidth
       let bottom = center.y - halfHeight, top = center.y + halfHeight
+      if marker.kind == .joinedTerrainCorner || marker.kind == .detectedTerrainCorner {
+        return [markerQuad(marker.kind, marker.opacity, left, bottom, right, top)]
+      }
       return [
         markerQuad(marker.kind, marker.opacity, left, bottom, right, bottom + thickness),
         markerQuad(marker.kind, marker.opacity, left, top - thickness, right, top),
@@ -371,25 +469,64 @@ enum LayerSceneFeatureReviewGeometry {
     ], opacity: opacity)
   }
 
+  /// Clip before tessellation: invisible old islands must not consume the
+  /// shared quad budget, and enormous edges keep readable dashes at close zoom.
+  private static func clippedLine(_ a: CGPoint, _ b: CGPoint, to rect: CGRect) -> (CGPoint, CGPoint)? {
+    guard !rect.isNull, !rect.isInfinite, !rect.isEmpty else { return nil }
+    let dx = b.x - a.x, dy = b.y - a.y
+    guard dx.isFinite, dy.isFinite else { return nil }
+    var lower: CGFloat = 0, upper: CGFloat = 1
+    for (p, q) in [(-dx, a.x - rect.minX), (dx, rect.maxX - a.x),
+                   (-dy, a.y - rect.minY), (dy, rect.maxY - a.y)] {
+      if p == 0 { if q < 0 { return nil }; continue }
+      let t = q / p
+      if p < 0 { lower = max(lower, t) } else { upper = min(upper, t) }
+      if lower > upper { return nil }
+    }
+    return (CGPoint(x: a.x + lower * dx, y: a.y + lower * dy),
+            CGPoint(x: a.x + upper * dx, y: a.y + upper * dy))
+  }
+
   static func lineQuads(
-    _ overlay: LayerSceneFeatureReviewOverlay?, zoom: CGFloat, pan: CGPoint
+    _ overlay: LayerSceneFeatureReviewOverlay?, zoom: CGFloat, pan: CGPoint,
+    viewport: CGRect? = nil
   ) -> [LayerSceneOverlayQuad] {
     guard let overlay else { return [] }
-    return overlay.lines.lazy.compactMap { line in
-      guard let start = screenPoint(world: line.start, zoom: zoom, pan: pan),
-        let end = screenPoint(world: line.end, zoom: zoom, pan: pan)
-      else { return nil }
+    var result = [LayerSceneOverlayQuad]()
+    for line in overlay.lines {
+      guard result.count < maximumLines else { break }
+      guard var start = screenPoint(world: line.start, zoom: zoom, pan: pan),
+        var end = screenPoint(world: line.end, zoom: zoom, pan: pan)
+      else { continue }
+      if let viewport {
+        guard let clipped = clippedLine(start, end, to: viewport.insetBy(dx: -lineWidth, dy: -lineWidth)) else { continue }
+        start = clipped.0; end = clipped.1
+      }
       let dx = end.x - start.x, dy = end.y - start.y
       let length = hypot(dx, dy)
-      guard length.isFinite, length > .leastNonzeroMagnitude else { return nil }
+      guard length.isFinite, length > .leastNonzeroMagnitude else { continue }
       let offset = CGPoint(x: -dy / length * lineWidth * 0.5, y: dx / length * lineWidth * 0.5)
-      return LayerSceneOverlayQuad(kind: nil, lineKind: line.kind, points: [
-        CGPoint(x: start.x - offset.x, y: start.y - offset.y),
-        CGPoint(x: start.x + offset.x, y: start.y + offset.y),
-        CGPoint(x: end.x - offset.x, y: end.y - offset.y),
-        CGPoint(x: end.x + offset.x, y: end.y + offset.y),
-      ], opacity: 1)
-    }.prefix(maximumLines).map { $0 }
+      let dashed = line.kind == .provisionalIsland || line.kind == .doorwayFloor
+      // At most 64 dashes per edge, at most maximumLines quads overall. Zooming
+      // into an enormous saved atlas cannot create unbounded tessellation work.
+      let count = dashed ? max(1, Int(min(64, ceil(length / 12)))) : 1
+      let period = length / CGFloat(count)
+      let dashLength = dashed ? period * 0.6 : length
+      for index in 0..<count {
+        guard result.count < maximumLines else { break }
+        let distance = CGFloat(index) * period
+        let lower = distance / length, upper = min(length, distance + dashLength) / length
+        let a = CGPoint(x: start.x + dx * lower, y: start.y + dy * lower)
+        let b = CGPoint(x: start.x + dx * upper, y: start.y + dy * upper)
+        result.append(LayerSceneOverlayQuad(kind: nil, lineKind: line.kind, points: [
+          CGPoint(x: a.x - offset.x, y: a.y - offset.y),
+          CGPoint(x: a.x + offset.x, y: a.y + offset.y),
+          CGPoint(x: b.x - offset.x, y: b.y - offset.y),
+          CGPoint(x: b.x + offset.x, y: b.y + offset.y),
+        ], opacity: 1))
+      }
+    }
+    return result
   }
 }
 
@@ -464,6 +601,8 @@ struct LayerSceneViewport: NSViewRepresentable {
   var onGamePointerActivity: () -> Void = {}
   var onGamePointerEvent: (GamePointerEvent) -> Bool = { _ in false }
   var onGroundFeatureSelect: (LayerSceneGroundFeatureDetails) -> Void = { _ in }
+  /// Hit testing happens before the live game receives a click.
+  var onPathSelect: (CGPoint, CGFloat) -> Bool = { _, _ in false }
   var groundLabelEditingEnabled = false
   var onGroundLabelPointer: (LayerSceneGroundLabelPointerPhase, CGPoint, CGFloat) -> Void = {
     _, _, _ in
@@ -492,6 +631,7 @@ struct LayerSceneViewport: NSViewRepresentable {
     context.coordinator.onGamePointerActivity = onGamePointerActivity
     context.coordinator.onGamePointerEvent = onGamePointerEvent
     context.coordinator.onGroundFeatureSelect = onGroundFeatureSelect
+    context.coordinator.onPathSelect = onPathSelect
     context.coordinator.groundLabelEditingEnabled = groundLabelEditingEnabled
     context.coordinator.onGroundLabelPointer = onGroundLabelPointer
     context.coordinator.roomEditingEnabled = roomEditingEnabled
@@ -524,6 +664,7 @@ struct LayerSceneViewport: NSViewRepresentable {
     c.showsCheckerboardBackground = showsCheckerboardBackground
     c.groundLabelEditingEnabled = groundLabelEditingEnabled
     c.onGroundLabelPointer = onGroundLabelPointer
+    c.onPathSelect = onPathSelect
     c.roomEditingEnabled = roomEditingEnabled
     c.roomRegions = roomRegions
     c.onRoomPointer = onRoomPointer
@@ -607,6 +748,7 @@ struct LayerSceneViewport: NSViewRepresentable {
     var onGamePointerActivity: () -> Void = {}
     var onGamePointerEvent: (GamePointerEvent) -> Bool = { _ in false }
     var onGroundFeatureSelect: (LayerSceneGroundFeatureDetails) -> Void = { _ in }
+    var onPathSelect: (CGPoint, CGFloat) -> Bool = { _, _ in false }
     var groundLabelEditingEnabled = false
     var onGroundLabelPointer: (LayerSceneGroundLabelPointerPhase, CGPoint, CGFloat) -> Void = {
       _, _, _ in
@@ -668,7 +810,7 @@ struct LayerSceneViewport: NSViewRepresentable {
         return LayerSceneViewTransform(zoom: scale, pan: CGPoint(
           x: size.width * 0.5 - bounds.midX * scale,
           y: size.height * 0.5 - bounds.midY * scale))
-      case .current:
+      case .current, .currentNear, .currentWide:
         guard let focus = focusPoint, focus.x.isFinite, focus.y.isFinite,
           let bounds = followBounds, LayerSceneProjection.isFinite(bounds)
         else { return nil }
@@ -691,8 +833,8 @@ struct LayerSceneViewport: NSViewRepresentable {
       at timestamp: TimeInterval
     ) {
       let changed = framingMode != framing || framingRequest != request
-      if changed, framing == .current {
-        currentZoomMultiplier = 1
+      if changed, framing.followsCurrent {
+        currentZoomMultiplier = framing.initialCurrentZoom
         currentFocusAnchor = CGPoint(x: 0.5, y: 0.5)
       }
       framingMode = framing
@@ -750,7 +892,7 @@ struct LayerSceneViewport: NSViewRepresentable {
     /// Current remains attached to the moving live viewport. Scrolling changes
     /// zoom while the live-frame focus stays at the viewport center.
     func zoomCurrent(by factor: CGFloat, around screenPoint: CGPoint, in size: CGSize) {
-      guard framingMode == .current,
+      guard framingMode?.followsCurrent == true,
         let focus = focusPoint, focus.x.isFinite, focus.y.isFinite,
         let bounds = followBounds, LayerSceneProjection.isFinite(bounds),
         size.width > 0, size.height > 0
@@ -929,7 +1071,7 @@ final class LayerMetalView: MTKView, MTKViewDelegate {
     coordinator.cancelViewportTransition()
     let cursor = convert(event.locationInWindow, from: nil)
     let factor = pow(1.001, event.scrollingDeltaY)
-    if coordinator.framingMode == .current {
+    if coordinator.framingMode?.followsCurrent == true {
       coordinator.zoomCurrent(by: factor, around: cursor, in: bounds.size)
       coordinator.hasManualViewportTransform = false
     } else {
@@ -943,6 +1085,20 @@ final class LayerMetalView: MTKView, MTKViewDelegate {
   override func mouseDown(with event: NSEvent) {
     let location = convert(event.locationInWindow, from: nil)
     if !event.modifierFlags.contains(.shift) {
+      if let coordinator, coordinator.zoom.isFinite, coordinator.zoom > 0 {
+        let pan = coordinator.atlasPan(at: ProcessInfo.processInfo.systemUptime)
+        let point = CGPoint(x: (location.x - pan.x) / coordinator.zoom,
+                            y: (location.y - pan.y) / coordinator.zoom)
+        if coordinator.onPathSelect(point, 10 / coordinator.zoom) {
+          selectedGroundFeature = true
+          passingPrimaryMouse = false
+          drag = nil
+          dragStart = nil
+          dragged = false
+          needsDisplay = true
+          return
+        }
+      }
       if let coordinator, coordinator.roomEditingEnabled,
          coordinator.zoom.isFinite, coordinator.zoom > 0 {
         let pan = coordinator.atlasPan(at: ProcessInfo.processInfo.systemUptime)
@@ -1001,7 +1157,7 @@ final class LayerMetalView: MTKView, MTKViewDelegate {
       passingPrimaryMouse = forwardPointer(.leftDown, at: location, event: event)
       // The live frame owns ordinary clicks. The empty canvas owns drags,
       // so a panned-away game remains recoverable without a modifier key.
-      drag = passingPrimaryMouse && coordinator?.framingMode != .current ? nil : location
+      drag = passingPrimaryMouse && coordinator?.framingMode?.followsCurrent != true ? nil : location
       dragStart = drag
       dragged = false
       return
@@ -1035,7 +1191,7 @@ final class LayerMetalView: MTKView, MTKViewDelegate {
       needsDisplay = true
       return
     }
-    if passingPrimaryMouse, coordinator?.framingMode == .current, let start = dragStart {
+    if passingPrimaryMouse, coordinator?.framingMode?.followsCurrent == true, let start = dragStart {
       let location = convert(event.locationInWindow, from: nil)
       if hypot(location.x - start.x, location.y - start.y) > 4 {
         _ = forwardPointer(.leftUp, at: location, event: event)
@@ -1263,6 +1419,7 @@ private final class LayerMetalRenderer {
     }
     encoder.setRenderPipelineState(pipeline)
     let atlasPan = c.atlasPan(at: ProcessInfo.processInfo.systemUptime)
+    var liveFrame: CGRect?
     var liveCaptureTimestamp: Double?
     for tile in c.tiles.sorted(by: { $0.order < $1.order }) {
       guard let texture = texture(tile.image) else { continue }
@@ -1275,6 +1432,7 @@ private final class LayerMetalRenderer {
       let y0 = Float((r.minY * c.zoom + tilePan.y) / view.bounds.height * 2 - 1)
       let y1 = Float((r.maxY * c.zoom + tilePan.y) / view.bounds.height * 2 - 1)
       guard x0.isFinite, x1.isFinite, y0.isFinite, y1.isFinite else { continue }
+      if tile.coversSavedGround { liveFrame = r }
       if tile.isLiveOverlay, let captured = LivePresentationTiming.shared.timestamp(for: tile.image) {
         liveCaptureTimestamp = captured
       }
@@ -1295,19 +1453,21 @@ private final class LayerMetalRenderer {
     let worldLines = overlay.map {
       LayerSceneFeatureReviewOverlay(
         markers: [],
-        lines: $0.lines.filter { $0.coordinateSpace == .atlas }
+        lines: LayerSceneFeatureReviewGeometry.visibleAtlasLines($0.lines, liveFrame: liveFrame,
+          zoom: c.zoom, livePan: c.pan, atlasPan: atlasPan)
       )
     }
-    for quad in LayerSceneFeatureReviewGeometry.lineQuads(worldLines, zoom: c.zoom, pan: atlasPan) {
+    for quad in LayerSceneFeatureReviewGeometry.lineQuads(worldLines, zoom: c.zoom, pan: atlasPan, viewport: view.bounds) {
       drawSolid(quad, color: color(for: quad.lineKind!), in: view, encoder: encoder)
     }
     let liveLines = overlay.map {
       LayerSceneFeatureReviewOverlay(
         markers: [],
-        lines: $0.lines.filter { $0.coordinateSpace == .live }
+        lines: LayerSceneFeatureReviewGeometry.visibleLiveLines($0.lines, liveFrame: liveFrame,
+          zoom: c.zoom, livePan: c.pan, atlasPan: atlasPan)
       )
     }
-    for quad in LayerSceneFeatureReviewGeometry.lineQuads(liveLines, zoom: c.zoom, pan: c.pan) {
+    for quad in LayerSceneFeatureReviewGeometry.lineQuads(liveLines, zoom: c.zoom, pan: c.pan, viewport: view.bounds) {
       drawSolid(quad, color: color(for: quad.lineKind!), in: view, encoder: encoder)
     }
     let worldMarkers = overlay.map {

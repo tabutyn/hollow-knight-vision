@@ -221,7 +221,7 @@ final class LiveTiledAtlas {
         case cancelled
     }
 
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
     private let temporalLog = Logger(
         subsystem: "com.ballroller.hollow-knight-vision",
         category: "atlas-temporal"
@@ -297,6 +297,56 @@ final class LiveTiledAtlas {
     var retainedContributionTileLinkCount: Int {
         lock.lock(); defer { lock.unlock() }
         return contributionIDsByTile.values.reduce(0) { $0 + $1.count }
+    }
+
+    /// Stages image insertion and graph recomposition behind one lock. The caller
+    /// commits durable graph state only after every image operation succeeds.
+    /// Returning false or throwing restores pixels, placement, caches and temporal
+    /// history together. Value snapshots share immutable image storage; no image
+    /// bytes are copied merely to establish the transaction.
+    @discardableResult
+    func transaction(_ body: () throws -> Bool) rethrows -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        let savedSourceCache = sourceCache
+        let savedSourceCacheOrder = sourceCacheOrder
+        let savedDecodedSourceCache = decodedSourceCache
+        let savedDecodedSourceCacheOrder = decodedSourceCacheOrder
+        let savedContributions = contributions
+        let savedContributionIDsByTile = contributionIDsByTile
+        let savedAnchorPosition = anchorPosition
+        let savedNextInsertionOrder = nextInsertionOrder
+        let savedTemporalContext = temporalContext
+        let savedTemporalHistoryIDs = temporalHistoryIDs
+        let savedObservationIDByCaptureKey = observationIDByCaptureKey
+        let savedTemporalInsertCount = temporalInsertCount
+        let savedTemporalWork = temporalWork
+        let savedTemporalDiagnosticsValue = temporalDiagnosticsValue
+        let savedPublished = published
+        let savedLastRasterizedContributionCount = lastRasterizedContributionCount
+        var accepted = false
+        defer {
+            if !accepted {
+                sourceCache = savedSourceCache
+                sourceCacheOrder = savedSourceCacheOrder
+                decodedSourceCache = savedDecodedSourceCache
+                decodedSourceCacheOrder = savedDecodedSourceCacheOrder
+                contributions = savedContributions
+                contributionIDsByTile = savedContributionIDsByTile
+                anchorPosition = savedAnchorPosition
+                nextInsertionOrder = savedNextInsertionOrder
+                temporalContext = savedTemporalContext
+                temporalHistoryIDs = savedTemporalHistoryIDs
+                observationIDByCaptureKey = savedObservationIDByCaptureKey
+                temporalInsertCount = savedTemporalInsertCount
+                temporalWork = savedTemporalWork
+                temporalDiagnosticsValue = savedTemporalDiagnosticsValue
+                published = savedPublished
+                lastRasterizedContributionCount = savedLastRasterizedContributionCount
+            }
+        }
+        // temporalCandidateBuffers is scratch memory reset before every use.
+        accepted = try body()
+        return accepted
     }
 
     func reset(anchorPosition: CGPoint? = nil) {

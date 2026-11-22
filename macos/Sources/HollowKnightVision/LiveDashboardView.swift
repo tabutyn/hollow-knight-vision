@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 
@@ -23,8 +24,81 @@ enum LabelingTrainingNotificationPolicy {
 }
 
 enum LiveAtlasPresentationPolicy {
+    static func hackerFitBounds(mapped: CGRect?, live: CGRect, paths: CGRect) -> CGRect? {
+        let base = mapped ?? live
+        let bounds = (base.isEmpty ? CGRect.null : base).union(paths)
+        return bounds.isNull || bounds.isEmpty ? nil : bounds
+    }
+
     static func includesAtlas(hasGameplayStarted: Bool) -> Bool {
         hasGameplayStarted
+    }
+
+    static func admitsPathFrame(
+        hasSceneSignal: Bool,
+        recognizedContext: LiveGameStatus.Context?
+    ) -> Bool {
+        hasSceneSignal && recognizedContext == .gameplay
+    }
+
+    static func showsPaths(enabled: Bool, context: LabelingContext?, presentedGameplayFrame: Bool) -> Bool {
+        enabled && context == .game && presentedGameplayFrame
+    }
+}
+
+struct LiveAtlasPathFrameEvidence {
+    // Visual recognition and presentation publish asynchronously. Hacker carries
+    // its gameplay evidence alongside the matched image instead.
+    private static let capacity = 24
+    private var gameplayTimestamps = [TimeInterval]()
+    private var latestTimestamp: TimeInterval?
+    private var latestReceiverTimestamp = -Double.infinity
+    private var receiverGameplay = true
+    private var latestReceiverNonGameplay = -Double.infinity
+    private var receiverGameplayResumedAt = -Double.infinity
+    private var presentedHackerTimestamp: TimeInterval?
+
+    mutating func presentHackerFrame(at timestamp: TimeInterval, gameplay: Bool) {
+        presentedHackerTimestamp = gameplay ? timestamp : nil
+    }
+
+    var admitsHackerPreview: Bool { receiverAdmits(presentedHackerTimestamp) }
+
+    mutating func observe(gameplay: Bool, at timestamp: TimeInterval) {
+        guard timestamp.isFinite, timestamp >= (latestTimestamp ?? -.infinity) else { return }
+        latestTimestamp = timestamp
+        guard gameplay else {
+            gameplayTimestamps.removeAll(keepingCapacity: true)
+            return
+        }
+        guard gameplayTimestamps.last != timestamp else { return }
+        if gameplayTimestamps.count == Self.capacity { gameplayTimestamps.removeFirst() }
+        gameplayTimestamps.append(timestamp)
+    }
+
+    mutating func observeReceiver(gameplay: Bool, at timestamp: TimeInterval) {
+        guard timestamp.isFinite else { return }
+        if !gameplay { latestReceiverNonGameplay = max(latestReceiverNonGameplay, timestamp) }
+        guard timestamp >= latestReceiverTimestamp else { return }
+        if gameplay && !receiverGameplay { receiverGameplayResumedAt = timestamp }
+        latestReceiverTimestamp = timestamp
+        receiverGameplay = gameplay
+    }
+
+    mutating func resetVisualFrames() {
+        gameplayTimestamps.removeAll(keepingCapacity: true)
+        latestTimestamp = nil
+        presentedHackerTimestamp = nil
+    }
+
+    func admits(_ timestamp: TimeInterval?) -> Bool {
+        guard let timestamp else { return false }
+        return receiverAdmits(timestamp) && gameplayTimestamps.contains(timestamp)
+    }
+
+    private func receiverAdmits(_ timestamp: TimeInterval?) -> Bool {
+        guard let timestamp else { return false }
+        return receiverGameplay && timestamp > latestReceiverNonGameplay && timestamp >= receiverGameplayResumedAt
     }
 }
 
@@ -43,46 +117,28 @@ enum DashboardWorkspace: String, CaseIterable, Identifiable {
     case label = "Label"
     case stencils = "Stencil"
     case model = "Model"
+    case bot = "Bot"
     case hacker = "Hacker"
     case ops = "Ops"
 
     var id: Self { self }
     var shortcutCharacter: Character { rawValue.lowercased().first! }
-    var supportsGameplayExitShortcut: Bool { self == .label || self == .model || self == .stencils }
+    var supportsGameplayExitShortcut: Bool { self == .label || self == .model || self == .bot || self == .stencils }
 }
 
 enum DashboardControlVisibility {
     static func showsFraming(workspace: DashboardWorkspace, phaseOneComplete: Bool,
-                             recognizedContext: String?) -> Bool {
-        recognizedContext == "Gameplay"
-            && (workspace == .hacker || (workspace == .gameplay && phaseOneComplete))
+                             recognizedContext: String?, hackerGameplayFrame: Bool) -> Bool {
+        if workspace == .hacker { return hackerGameplayFrame }
+        return workspace == .gameplay && phaseOneComplete && recognizedContext == "Gameplay"
     }
     static func showsOps(workspace: DashboardWorkspace, mode: HollowKnightRuntimeMode,
                          recognizedContext: String?) -> Bool {
         workspace == .gameplay && mode == .modded && recognizedContext == "Gameplay"
     }
     static let workspaces = DashboardWorkspace.allCases.filter { $0 != .ops }
-}
-
-enum HackerInteractionMode: String, CaseIterable, Identifiable {
-    case ground = "Ground"
-    case rooms = "Rooms"
-    case fit = "Fit"
-    case freeFly = "Free Fly"
-    case current = "Current"
-
-    var id: Self { self }
-
-    var framingMode: LayerSceneFramingMode {
-        switch self {
-        case .fit:
-            return .fit
-        case .current:
-            return .current
-        case .ground, .rooms, .freeFly:
-            return .freeFly
-        }
-    }
+    // B is reserved for bot start/stop in Gameplay and Hacker.
+    static let shortcutWorkspaces = DashboardWorkspace.allCases.filter { $0 != .bot }
 }
 
 enum WorkspaceExitShortcutPolicy {
@@ -101,6 +157,13 @@ enum WorkspaceExitShortcutPolicy {
     }
 }
 
+enum RoomResetShortcut {
+    static func matches(_ event: NSEvent) -> Bool {
+        event.type == .keyDown && !event.isARepeat && event.charactersIgnoringModifiers?.lowercased() == "r"
+            && event.modifierFlags.intersection([.shift, .control, .option, .command]).isEmpty
+    }
+}
+
 struct RecentFramesPresentation: Identifiable {
     let id = UUID()
     let examples: [SavedLabelingExample]
@@ -112,28 +175,79 @@ struct RecentFramesPresentation: Identifiable {
 private struct WorkspaceExitKeyMonitor: NSViewRepresentable {
     let workspace: DashboardWorkspace
     let onExit: () -> Void
+    let onAtlasTab: (() -> Void)?
+    let onResetRoom: (() -> Void)?
+    let gameHasFocus: () -> Bool
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeNSView(context: Context) -> NSView {
-        context.coordinator.install()
-        return NSView(frame: .zero)
+    final class ShortcutView: NSView {
+        var reservesTab = false { didSet { panel?.atlasTabEnabled = reservesTab } }
+        private weak var panel: NormalVisionPanel?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            panel?.atlasTabEnabled = false
+            panel = window as? NormalVisionPanel
+            panel?.atlasTabEnabled = reservesTab
+        }
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
+    func makeNSView(context: Context) -> ShortcutView {
+        let view = ShortcutView(frame: .zero)
+        context.coordinator.view = view
+        context.coordinator.install()
+        return view
+    }
+
+    func updateNSView(_ nsView: ShortcutView, context: Context) {
         context.coordinator.workspace = workspace
         context.coordinator.onExit = onExit
+        context.coordinator.onAtlasTab = onAtlasTab
+        context.coordinator.gameHasFocus = gameHasFocus
+        context.coordinator.setRoomResetAction(onResetRoom)
+        nsView.reservesTab = onAtlasTab != nil
     }
 
     final class Coordinator {
         var workspace = DashboardWorkspace.gameplay
+        weak var view: NSView?
+        var onAtlasTab: (() -> Void)?
         var onExit: () -> Void = {}
         private var monitor: Any?
+        private var gameMonitor: Any?
+        private var onResetRoom: (() -> Void)?
+        var gameHasFocus: () -> Bool = { false }
+
+        func setRoomResetAction(_ action: (() -> Void)?) {
+            onResetRoom = action
+            if action == nil, let gameMonitor {
+                NSEvent.removeMonitor(gameMonitor)
+                self.gameMonitor = nil
+            } else if action != nil, gameMonitor == nil {
+                gameMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                    guard let self, RoomResetShortcut.matches(event), gameHasFocus(),
+                          let window = view?.window, window.attachedSheet == nil, NSApp.modalWindow == nil else { return }
+                    onResetRoom?()
+                }
+            }
+        }
 
         func install() {
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self, WorkspaceExitShortcutPolicy.shouldHandle(
+                guard let self else { return event }
+                if let onResetRoom, RoomResetShortcut.matches(event), let window = view?.window,
+                   event.window === window, window.isKeyWindow, window.attachedSheet == nil, NSApp.modalWindow == nil,
+                   !(window.firstResponder is NSTextView), !(window.firstResponder is NSTextField) {
+                    onResetRoom()
+                    return nil
+                }
+                if let onAtlasTab, let window = view?.window, event.window === window,
+                   AtlasTabShortcut.handles(event, in: window) {
+                    if !event.isARepeat { onAtlasTab() }
+                    return nil
+                }
+                guard WorkspaceExitShortcutPolicy.shouldHandle(
                     workspace: workspace,
                     eventType: event.type,
                     keyCode: event.keyCode,
@@ -148,6 +262,7 @@ private struct WorkspaceExitKeyMonitor: NSViewRepresentable {
 
         deinit {
             if let monitor { NSEvent.removeMonitor(monitor) }
+            if let gameMonitor { NSEvent.removeMonitor(gameMonitor) }
         }
     }
 }
@@ -171,6 +286,21 @@ enum DebugViewAvailabilityPolicy {
     }
 }
 
+enum DashboardSettingsSection: String, CaseIterable, Identifiable {
+    case atlas = "Atlas"
+    case debugView = "Debug View"
+    case system = "System"
+
+    var id: Self { self }
+    var symbol: String {
+        switch self {
+        case .atlas: "map"
+        case .debugView: "ladybug"
+        case .system: "gearshape"
+        }
+    }
+}
+
 private struct DebugView: View {
     @Environment(\.visionLanguage) private var visionLanguage
     private func visionText(_ key: String, _ values: [String: String] = [:]) -> String {
@@ -180,8 +310,12 @@ private struct DebugView: View {
     @ObservedObject var model: LiveCaptureModel
     let showsGroundTrackingTools: Bool
     @Binding var showsGameState: Bool
+    @Binding var showsGroundTrackingPatches: Bool
+    @Binding var showsRoad: Bool
+    @Binding var showsEstimatedPlacement: Bool
     let stencilReady: Bool
     let modelReady: Bool
+    let openGroundViewer: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -194,20 +328,23 @@ private struct DebugView: View {
             if !modelReady { Text(visionText("modelLocked")).font(.caption).foregroundStyle(.secondary) }
             Group {
                 Toggle(visionText("Raw Detection"), isOn: $model.objectDetectionRawEnabled)
-                HStack {
-                    Text(visionText("Detection Extend"))
-                    Slider(value: $model.objectDetectionExtension, in: 0...0.5)
-                    Text(model.objectDetectionExtension, format: .percent.precision(.fractionLength(0)))
-                        .monospacedDigit().frame(width: 38, alignment: .trailing)
-                }
                 Toggle(visionText("Detection Pixels"), isOn: $model.objectDetectionPixelsEnabled)
             }.disabled(!modelReady || !model.objectDetectionEnabled)
             Divider()
+            Toggle("Atlas paths", isOn: $showsRoad)
+            Toggle(visionText("Estimated Room Outlines"), isOn: $showsEstimatedPlacement)
             Group {
-                Toggle(visionText("Ground Features"), isOn: $model.groundHypothesesEnabled)
+                Toggle("Vertical Edges", isOn: $model.groundEdgeEnabled)
+                Toggle("Ground Filter Response", isOn: $model.groundDetectEnabled)
+                Toggle("Ground Candidate Runs", isOn: $model.groundStageEnabled)
+                Toggle("Clean Floor Lines", isOn: $model.cleanedEnabled)
+                Toggle(visionText("Ground Lines"), isOn: $model.groundHypothesesEnabled)
+                Toggle(visionText("Ground Tracking Patches"), isOn: $showsGroundTrackingPatches)
+                    .disabled(!model.groundHypothesesEnabled)
                 Toggle(visionText("Transitions"), isOn: $model.transitionDiagnosticsEnabled)
                 Toggle(visionText("Coarse Motion Overlay"), isOn: $model.coarseMotionDiagnosticsEnabled)
             }.disabled(!showsGroundTrackingTools)
+            Button("Ground Viewer", action: openGroundViewer)
         }.toggleStyle(.checkbox)
     }
 }
@@ -396,10 +533,20 @@ struct DashboardView: View {
     @State private var viewportTransformStore = LayerSceneViewportTransformStore()
     @State private var hackerFramingRequest = 0
     @State private var hackerViewportTransformStore = LayerSceneViewportTransformStore()
-    @State private var hackerInteractionMode = HackerInteractionMode.fit
+    @State private var hackerFramingMode = LayerSceneFramingMode.fit
+    @State private var hackerEditingTarget = HackerEditingTarget.defaultTarget
+    @StateObject private var pathEditor = AtlasPathConnectionStore()
+    @State private var pathTool = AtlasPathConnectionStore.Tool.jump
+    @State private var lastTerrainTarget = HackerEditingTarget.ground
+    @State private var objectiveRoom: String?
+    @AppStorage("HollowKnightVision.debug.atlasRoad") private var showsRoad = true
     @State private var hackerRoomDrag: (id: UUID, point: CGPoint)?
     @State private var showsGameState = true
     @State private var showingSettings = false
+    @State private var settingsSection = DashboardSettingsSection.atlas
+    @AppStorage("HollowKnightVision.debug.estimatedRoomOutlines") private var showsEstimatedPlacement = false
+    @AppStorage("HollowKnightVision.debug.groundTrackingPatches")
+    private var showsGroundTrackingPatches = false
     @State private var confirmsStencilReset = false
     @State private var confirmsFactoryReset = false
     @State private var initializationTargetContext: LabelingContext?
@@ -421,20 +568,19 @@ struct DashboardView: View {
     @State private var labelingObjectAtlas: LabelingObjectAtlasSnapshot?
     @State private var latestModelCandidate: LabelingModelCandidate?
     @State private var campaignCounts = [String: Int]()
-    @State private var campaignCompletedCounts = [String: Int]()
-    @State private var campaignHistoryUnavailable = false
     @State private var reviewingModelCandidate: LabelingModelCandidate?
     @State private var modelWorkspaceSelection = LabelingModelWorkspaceSelection()
     @State private var modelCandidates = [LabelingModelCandidate]()
     @State private var activeModelVersionName = "Default"
     @State private var trainedGameplayModelReady = false
+    @State private var appliedDefaultObjectDetection = false
     @State private var hasGameplayTrainingLabels = false
-    @State private var gameplayLabelBreaches = 0
     @State private var hasUntrainedLabelChanges = false
     @State private var untrainedLabeledImageCount = 0
     @State private var trainingAlertMessage: String?
     @State private var lockedWorkspaceMessage: String?
     @StateObject private var labelingTrainer = LabelingTrainingController()
+    @StateObject private var botTrainer = BotTrainingWorkspaceController()
     @StateObject private var initialization = StencilInitializationCoordinator()
     @StateObject private var groundFeatureWindowController = GroundFeatureWindowController()
     @StateObject private var groundTruthLabelController = GroundTruthLabelController()
@@ -470,14 +616,30 @@ struct DashboardView: View {
                 onExit: {
                     recentFramesPresentation = nil
                     selectWorkspace(.gameplay)
-                }
+                },
+                onAtlasTab: !showingSettings && showsFramingControls ? cycleAtlasFraming : nil,
+                onResetRoom: roomResetShortcutEnabled ? model.resetRoom : nil,
+                gameHasFocus: { model.managedGameIsActive }
             )
             .frame(width: 0, height: 0)
         }
         .onChange(of: workspace) { _, value in
-            model.setNativeReviewActive(value != .gameplay)
+            model.setNativeReviewActive(!BotControlPresentationPolicy.shows(in: value))
+            if groundFeatureWindowController.isOpen {
+                groundFeatureWindowController.changeScene(lines: groundViewerSceneLines, center: groundViewerCenter)
+            }
         }
         .onChange(of: showingSettings) { _, active in model.setSettingsDialogActive(active) }
+        .onReceive(model.botDemo.handoffRequests) { request in
+            selectWorkspace(model.botDemo.domain == .hacker ? .hacker : .gameplay)
+            model.completeBotDemoHandoff(request)
+        }
+        .onReceive(groundTruthLabelController.$document) { document in model.setBotHumanGround(document) }
+        .onReceive(model.objectWillChange.throttle(for: .milliseconds(300), scheduler: RunLoop.main, latest: true)) { _ in
+            if groundFeatureWindowController.isOpen {
+                groundFeatureWindowController.refreshScene(lines: groundViewerSceneLines, center: groundViewerCenter)
+            }
+        }
         .onChange(of: model.objectDetectionEnabled, initial: true) { _, enabled in
             if enabled { initialization.recordObjectDetectionEnabled() }
         }
@@ -495,12 +657,14 @@ struct DashboardView: View {
             model.stencilDetectionEnabled = ready
             if !ready {
                 model.objectDetectionEnabled = false
-                if workspace == .model { selectWorkspace(.gameplay) }
+                if workspace == .model || workspace == .bot { selectWorkspace(.gameplay) }
             }
+            enableDefaultObjectDetectionIfReady()
         }
         .onChange(of: initialization.examples) { _, _ in
             trainedGameplayModelReady = hasTrainedGameplayModel()
             if !trainedGameplayModelReady { model.objectDetectionEnabled = false }
+            enableDefaultObjectDetectionIfReady()
         }
         .overlay {
             if showingSettings {
@@ -580,6 +744,7 @@ struct DashboardView: View {
             rebuildLabelingObjectAtlas()
             initialization.refresh(mode: model.gameMode)
             model.stencilDetectionEnabled = initialization.isFirstPhaseComplete
+            enableDefaultObjectDetectionIfReady()
         }
         .onDisappear {
             model.setModelReviewActive(false)
@@ -638,33 +803,28 @@ struct DashboardView: View {
                 showingSettings = wasShowingSettings
             }
             model.stencilDetectionEnabled = initialization.isFirstPhaseComplete
-            model.objectDetectionEnabled = false
             model.refreshMenuStencilCatalog()
         }
         .onChange(of: labelingSelectedClassID) { _, _ in
             labelingSelectionPreferences.saveClassIdentifier(labelingSelectedClassID)
         }
-        .onChange(of: model.groundHypothesisTracking) { _, _ in
-            if workspace == .hacker {
-                groundTruthLabelController.enter(
-                    tracking: model.groundHypothesisTracking,
-                    transform: model.groundTruthCameraTransform,
-                    liveBounds: model.liveBounds
-                )
-            }
-            groundFeatureWindowController.refresh(
-                available: featureReviewOverlay.markers.filter {
-                    $0.coordinateSpace == .atlas
-                }.compactMap(\.groundFeatureDetails)
-            )
+        .onChange(of: showsRoad) { _, visible in
+            if !visible, hackerEditingTarget.editsPaths { selectHackerEditingTarget(lastTerrainTarget) }
         }
-        .onChange(of: model.liveBounds) { _, _ in
+        .onChange(of: atlasPathsVisible) { _, visible in
+            if !visible { pathEditor.cancelSelection() }
+            refreshGroundFeatureWindow()
+        }
+        .onChange(of: model.groundHypothesisTracking) { _, _ in
+            if showsGroundTrackingPatches { refreshGroundFeatureWindow() }
+        }
+        .onChange(of: model.hackerCameraTransform) { _, _ in
             guard workspace == .hacker else { return }
-            groundTruthLabelController.enter(
-                tracking: model.groundHypothesisTracking,
-                transform: model.groundTruthCameraTransform,
-                liveBounds: model.liveBounds
-            )
+            registerCurrentGroundRoom()
+        }
+        .onChange(of: model.hackerAtlasRooms.map(\.id)) { _, _ in
+            guard workspace == .hacker else { return }
+            registerCurrentGroundRoom()
         }
         .environment(\.visionLanguage, initialization.language)
     }
@@ -702,12 +862,15 @@ struct DashboardView: View {
                         } catch { labelingSaveError = error.localizedDescription }
                     }
                 )
+            } else if workspace == .bot {
+                BotModelWorkspaceView(controller: botTrainer, trainingAllowed: !labelingTrainer.isRunning,
+                                      reloadModel: { model.botPlayer.reloadModel() })
+                    .equatable()
             } else if workspace == .model {
                 LabelingModelWorkspaceView(
                     candidate: reviewingModelCandidate,
                     campaignProgress: campaignProgress,
                     campaignHistory: LabelingCampaignPolicy.history(modelCandidates),
-                    campaignHistoryUnavailable: campaignHistoryUnavailable,
                     context: $labelingContext,
                     selectedClassIdentifier: $labelingSelectedClassID,
                     activeVersionName: activeModelVersionName,
@@ -736,12 +899,12 @@ struct DashboardView: View {
                     draft: $labelingDraft,
                     selectedClassID: $labelingSelectedClassID,
                     initialEditorMode: labelingEditorMode,
-                    gameMode: model.gameMode, includesDeferredLabels: initialization.isFirstPhaseComplete
+                    gameMode: model.gameMode
                 )
                 .id(labelingEditorIdentity)
             } else if workspace == .hacker {
                 hackerCanvas
-            } else if model.liveImage != nil {
+            } else if model.liveImage != nil || !model.atlasTiles.isEmpty {
                 VStack(spacing: 0) {
                     LayerSceneViewport(
                         tiles: presentationTiles,
@@ -765,13 +928,17 @@ struct DashboardView: View {
                                 selected: feature,
                                 available: featureReviewOverlay.markers
                                     .filter(\.isVisible)
-                                    .compactMap(\.groundFeatureDetails)
+                                    .compactMap(\.groundFeatureDetails),
+                                sceneLines: groundViewerSceneLines
                             )
                         },
-                        featureReviewOverlay: model.groundReviewAvailable
-                            && (model.groundHypothesesEnabled
-                                || model.transitionDiagnosticsEnabled)
-                            ? featureReviewOverlay : nil,
+                        onPathSelect: { point, tolerance in
+                            guard atlasPathsVisible else { return false }
+                            let offset = model.visualPathOffset
+                            return model.visualPaths.selectObjective(room: model.visualPathRoom,
+                                point: CGPoint(x: point.x - offset.x, y: point.y - offset.y), tolerance: tolerance)
+                        },
+                        featureReviewOverlay: featureReviewOverlay,
                         showsCheckerboardBackground: menuObjectBackdropContext == nil,
                         worldBasisOffset: model.presentationCorrectionOffset
                     )
@@ -812,6 +979,24 @@ struct DashboardView: View {
                 .padding(8)
             }
         }
+        .overlay(alignment: .bottomTrailing) {
+            if workspace == .gameplay, model.labelImage == nil, reviewingModelCandidate == nil {
+                VStack(alignment: .trailing, spacing: 6) {
+                    if model.groundReviewAvailable && model.groundHypothesesEnabled && showsGroundTrackingPatches {
+                        featureHypothesisLegend
+                    }
+                    if showsEstimatedPlacement, model.hasEstimatedIslandPlacement,
+                       model.hasGameplayStarted || model.liveImage == nil {
+                        Text(visionText("estimatedIslandPlacement"))
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 7))
+                    }
+                }.padding(8).allowsHitTesting(false)
+            }
+        }
         .overlay(alignment: .bottomLeading) {
             if showsGameState && workspace == .gameplay
                 && model.labelImage == nil && reviewingModelCandidate == nil {
@@ -832,15 +1017,10 @@ struct DashboardView: View {
         }
         .overlay(alignment: .topLeading) {
             if workspace == .gameplay,
-               model.groundReviewAvailable
-                    && (model.groundHypothesesEnabled
-                        || model.coarseMotionDiagnosticsEnabled),
+               model.groundReviewAvailable && model.coarseMotionDiagnosticsEnabled,
                reviewingModelCandidate == nil,
                model.labelImage == nil {
                 VStack(alignment: .leading, spacing: 6) {
-                    if model.groundHypothesesEnabled {
-                        featureHypothesisLegend
-                    }
                     if model.coarseMotionDiagnosticsEnabled {
                         Text(model.coarseMotionDiagnosticStatus)
                             .font(.caption2.monospaced())
@@ -861,13 +1041,41 @@ struct DashboardView: View {
 
     private var hackerCanvas: some View {
         VStack(spacing: 0) {
-            if hackerInteractionMode == .ground {
-                GroundTruthLabelToolbar(
-                    controller: groundTruthLabelController,
-                    hasCameraTransform: model.hackerCameraTransform != nil
-                )
+            HStack(spacing: 8) {
+                Picker("Editing target", selection: Binding(get: { hackerEditingTarget }, set: selectHackerEditingTarget)) {
+                    ForEach(HackerEditingTarget.allCases) { target in
+                        Text(visionText(target.rawValue)).tag(target)
+                    }
+                }
+                .pickerStyle(.menu).labelsHidden().frame(width: 110)
+                .accessibilityLabel("Hacker editing target")
+                .padding(.leading, 10)
+                if hackerEditingTarget == .path {
+                    ForEach(AtlasPathConnectionStore.Tool.allCases) { tool in
+                        Button(tool.rawValue) {
+                            pathEditor.cancelSelection()
+                            pathTool = tool
+                        }
+                        .tint(pathTool == tool ? .accentColor : .secondary)
+                    }
+                    if let issue = pathEditor.issue { Text(issue).font(.caption).foregroundStyle(.red) }
+                    Spacer()
+                } else if hackerEditingTarget == .objective {
+                    Text(objectiveInstructions).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                } else if hackerEditingTarget != .rooms {
+                    GroundTruthLabelToolbar(controller: groundTruthLabelController,
+                        hasCameraTransform: model.hackerCameraTransform != nil,
+                        currentSceneName: model.hackerCameraTransform?.sceneName,
+                        targetName: hackerEditingTarget.rawValue)
+                } else {
+                    Text("Drag a room to align it with its neighbours.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                }
             }
-            if model.hackerLiveImage != nil {
+            .frame(minHeight: 38).background(.regularMaterial)
+            if model.hackerLiveImage != nil || !model.hackerAtlasRooms.isEmpty {
                 LayerSceneViewport(
                     tiles: hackerPresentationTiles,
                     mode: .world,
@@ -877,7 +1085,7 @@ struct DashboardView: View {
                     fitRequest: 0,
                     focusPoint: model.hackerMapFocus,
                     autoFollow: false,
-                    framingMode: hackerInteractionMode.framingMode,
+                    framingMode: hackerFramingMode,
                     framingRequest: hackerFramingRequest,
                     transformStore: hackerViewportTransformStore,
                     fitBounds: hackerViewportFitBounds,
@@ -885,17 +1093,28 @@ struct DashboardView: View {
                     onSelect: { _, _, _ in },
                     onInteraction: handleHackerViewportInteraction,
                     onGamePointerEvent: model.forwardGamePointer,
-                    groundLabelEditingEnabled: hackerInteractionMode == .ground,
+                    onPathSelect: { point, tolerance in
+                        guard hackerEditingTarget == .objective, atlasPathsVisible else { return false }
+                        return selectHackerPathObjective(point, tolerance: tolerance)
+                    },
+                    groundLabelEditingEnabled: hackerEditingTarget.editsTerrain || (hackerEditingTarget == .path && atlasPathsVisible),
                     onGroundLabelPointer: { phase, point, tolerance in
+                        if case .began = phase {
+                            registerCurrentGroundRoom()
+                            model.releaseControlsForGroundLabeling()
+                        }
+                        if hackerEditingTarget == .path {
+                            if atlasPathsVisible, case .ended = phase { editHackerPath(point, tolerance: tolerance) }
+                            return
+                        }
                         groundTruthLabelController.handle(
                             phase: phase,
                             atlasPoint: point,
                             atlasTolerance: tolerance,
-                            transform: model.hackerCameraTransform,
-                            liveBounds: model.hackerLiveBounds
+                            rooms: groundLabelRooms
                         )
                     },
-                    roomEditingEnabled: hackerInteractionMode == .rooms,
+                    roomEditingEnabled: hackerEditingTarget == .rooms,
                     roomRegions: hackerRoomRegions,
                     onRoomPointer: handleHackerRoomPointer,
                     featureReviewOverlay: hackerFeatureReviewOverlay,
@@ -912,30 +1131,115 @@ struct DashboardView: View {
         }
     }
 
+    private var objectiveInstructions: String {
+        if let key = objectiveRoom, model.hackerPaths.hasUnroutedObjective(room: key) {
+            return "No route from the Knight to this point. Click another path or click the target to clear it."
+        }
+        return "Click a path to highlight the route. Click the target again to resume automatic exploration."
+    }
+
+    private func selectHackerPathObjective(_ point: CGPoint, tolerance: CGFloat) -> Bool {
+        let placements = model.hackerAtlasRooms.reversed().map { ($0.id.uuidString, model.hackerRoomPosition($0)) }
+        guard let key = model.hackerPaths.selectObjective(at: point, tolerance: tolerance, in: placements) else { return false }
+        objectiveRoom = key
+        return true
+    }
+
+    private func editHackerPath(_ point: CGPoint, tolerance: CGFloat) {
+        for room in model.hackerAtlasRooms.reversed() {
+            let origin = model.hackerRoomPosition(room)
+            let local = CGPoint(x: point.x-origin.x, y: point.y-origin.y)
+            guard room.bounds.insetBy(dx: -tolerance, dy: -tolerance).contains(local),
+                  let graph = model.hackerPaths.graph(room: room.id.uuidString) else { continue }
+            if let links = pathEditor.click(room: room.id.uuidString, point: local, tolerance: tolerance,
+                                             graph: graph, tool: pathTool,
+                                             calibration: model.hackerPaths.calibration(room: room.id.uuidString)) {
+                model.hackerPaths.setConnections(links, room: room.id.uuidString)
+            }
+            return
+        }
+    }
+
+    private func selectHackerEditingTarget(_ target: HackerEditingTarget) {
+        hackerRoomDrag = nil
+        if target == .door { groundTruthLabelController.selectDoor() }
+        else if target == .spike { groundTruthLabelController.selectSpike() }
+        else { groundTruthLabelController.selectAxis(target == .wall ? .vertical : .horizontal) }
+        pathEditor.cancelSelection()
+        if target.editsPaths {
+            if !hackerEditingTarget.editsPaths { lastTerrainTarget = hackerEditingTarget }
+            showsRoad = true
+        }
+        pathTool = .jump
+        hackerEditingTarget = target
+    }
+
     private var hackerFeatureReviewOverlay: LayerSceneFeatureReviewOverlay {
-        switch hackerInteractionMode {
-        case .ground:
-            return hackerGroundLineOverlay
-        case .rooms:
-            return hackerRoomOverlay
-        case .fit, .freeFly, .current:
-            return LayerSceneFeatureReviewOverlay(markers: [], lines: [])
+        let computed = model.hackerAtlasRooms.flatMap { room in
+            model.hackerPaths.lines(room: room.id.uuidString, offset: model.hackerRoomPosition(room),
+                                    visible: atlasPathsVisible)
+        }
+        let blockades = atlasPathsVisible ? model.blockadeOverlay(.hacker) : []
+        var selection = [LayerSceneFeatureReviewOverlay.Line]()
+        if atlasPathsVisible, hackerEditingTarget == .path, let selected = pathEditor.selection,
+           let room = model.hackerAtlasRooms.first(where: { $0.id.uuidString == selected.room }) {
+            let o = model.hackerRoomPosition(room), floor = selected.floor
+            let h = model.hackerPaths.graph(room: selected.room)?.knightHeight ?? 0
+            selection.append(.init(start: CGPoint(x: o.x + CGFloat(floor.left), y: o.y + CGFloat(floor.y+h)),
+                                   end: CGPoint(x: o.x + CGFloat(floor.right), y: o.y + CGFloat(floor.y+h)),
+                                   kind: .atlasPathSelection))
+            selection.append(.init(start: CGPoint(x: o.x + CGFloat(floor.left), y: o.y + CGFloat(floor.y)),
+                                   end: CGPoint(x: o.x + CGFloat(floor.right), y: o.y + CGFloat(floor.y)),
+                                   kind: .atlasPathSelection))
+        }
+        if hackerEditingTarget.editsPaths {
+            let terrain = hackerGroundLineOverlay
+            return HackerTerrainOverlay.paths(terrain: terrain, computed: computed + blockades, selection: selection)
+        }
+        let ground = hackerGroundLineOverlay
+        return LayerSceneFeatureReviewOverlay(markers: ground.markers,
+            lines: ground.lines + computed + blockades + (hackerEditingTarget == .rooms ? hackerRoomOverlay.lines : []))
+    }
+
+    private var showsFramingControls: Bool {
+        DashboardControlVisibility.showsFraming(workspace: workspace,
+            phaseOneComplete: initialization.isFirstPhaseComplete, recognizedContext: model.liveGameStatus,
+            hackerGameplayFrame: model.isCapturing && model.hasHackerAtlasPathEvidence)
+    }
+
+    private func cycleAtlasFraming() {
+        if workspace == .hacker {
+            selectHackerFramingMode(hackerFramingMode.nextTabPreset)
+        } else {
+            viewportFraming = viewportFraming.nextTabPreset
+            framingRequest &+= 1
         }
     }
 
     private func handleHackerViewportInteraction() {
-        guard hackerInteractionMode == .fit || hackerInteractionMode == .current else { return }
-        selectHackerInteractionMode(.freeFly)
+        guard hackerFramingMode != .freeFly else { return }
+        selectHackerFramingMode(.freeFly)
     }
 
     private var hackerGroundLineOverlay: LayerSceneFeatureReviewOverlay {
-        LayerSceneFeatureReviewOverlay(
-            markers: [],
-            lines: groundTruthLabelController.overlayLines(
-                transform: model.hackerCameraTransform,
-                liveBounds: model.hackerLiveBounds
-            )
-        )
+        groundTruthLabelController.overlay(rooms: groundLabelRooms)
+    }
+
+    private var groundLabelRooms: [GroundTruthRoomPlacement] {
+        model.hackerAtlasRooms.map { room in
+            let position = model.hackerRoomPosition(room)
+            let bounds = HackerTerrainRoomGeometry.editingBounds(roomBounds: room.bounds, position: position,
+                isCurrent: room.sceneName == model.hackerCameraTransform?.sceneName, liveBounds: model.hackerLiveBounds,
+                pathBounds: hackerEditingTarget == .door ? model.hackerPaths.pathBounds(room: room.id.uuidString) : nil)
+            return .init(id: room.id, sceneName: room.sceneName, position: position, bounds: bounds)
+        }
+    }
+
+    private func registerCurrentGroundRoom() {
+        guard let transform = model.hackerCameraTransform,
+              let room = groundLabelRooms.first(where: { $0.sceneName == transform.sceneName }),
+              model.hackerLiveBounds.width > 0, model.hackerLiveBounds.height > 0 else { return }
+        groundTruthLabelController.registerRoom(room, transform: transform, liveBounds: model.hackerLiveBounds)
     }
 
     private var hackerRoomRegions: [LayerSceneRoomRegion] {
@@ -982,6 +1286,7 @@ struct DashboardView: View {
     ) {
         switch phase {
         case .began:
+            model.releaseControlsForGroundLabeling()
             hackerRoomDrag = (roomID, point)
         case .changed:
             guard let drag = hackerRoomDrag, drag.id == roomID else { return }
@@ -1032,32 +1337,96 @@ struct DashboardView: View {
                 isLiveOverlay: true
             ))
         }
+        if model.objectDetectionEnabled, model.objectDetectionPixelsEnabled,
+           let pixels = model.objectDetectionPixelImage {
+            tiles.append(LayerSceneDrawTile(
+                roomID: Self.hackerLiveID, layerID: Self.objectDetectionPixelsID,
+                image: pixels, bounds: model.hackerLiveBounds, factor: 1, order: 2,
+                roomPosition: .zero, roomScale: 1, isLiveOverlay: true, opacity: 0.5
+            ))
+        }
         return tiles
     }
 
     private var hackerViewportFitBounds: CGRect? {
-        let live = model.hackerLiveBounds
-        guard live.width > 0, live.height > 0 else { return model.hackerAtlasBounds }
-        guard let atlas = model.hackerAtlasBounds, atlas.width > 0, atlas.height > 0 else {
-            return live
+        // Once there is a map, a preview arriving between atlas inserts (or a
+        // menu camera) must not change the extent of the mapped world.
+        var paths = CGRect.null
+        if showsRoad && hackerEditingTarget.editsPaths {
+            for room in model.hackerAtlasRooms {
+                guard let path = model.hackerPaths.pathBounds(room: room.id.uuidString) else { continue }
+                let offset = model.hackerRoomPosition(room)
+                paths = paths.union(path.offsetBy(dx: offset.x, dy: offset.y))
+            }
         }
-        return atlas.union(live)
+        return LiveAtlasPresentationPolicy.hackerFitBounds(mapped: model.hackerAtlasBounds,
+            live: model.hackerLiveBounds, paths: paths)
     }
 
     private var featureReviewOverlay: LayerSceneFeatureReviewOverlay {
-        LiveFeatureReviewOverlay.make(
-            groundHypotheses: model.groundHypothesesEnabled
+        let showGround = model.groundReviewAvailable && model.groundHypothesesEnabled
+        let ownsGround = showGround && model.usesIslandGroundProjection
+        let debug = LiveFeatureReviewOverlay.make(
+            groundHypotheses: showGround
                 ? model.groundHypothesisTracking : nil,
-            transitionPortals: model.transitionDiagnosticsEnabled
+            transitionPortals: model.groundReviewAvailable && model.transitionDiagnosticsEnabled
                 ? model.transitionPortals : [],
+            showsTrackingPatches: showsGroundTrackingPatches,
             selectedGroundFeature: groundFeatureWindowController.selectedFeature,
-            liveBounds: model.liveBounds
+            persistentGroundLines: ownsGround ? model.ownedGroundOverlayLines : nil,
+            walkedGround: showGround ? model.visibleWalkedGround + (ownsGround ? [] :
+                model.visualPaths.walkedGround(room: model.visualPathRoom, offset: model.visualPathOffset)) : [],
+            liveBounds: model.liveImage == nil ? .zero : model.liveBounds
+        )
+        let placement = LiveIslandOverlayGeometry.visibleOverlay(model.islandPlacementOverlay,
+            showsEstimatedPlacement: showsEstimatedPlacement,
+            hasGameplayStarted: model.hasGameplayStarted || model.liveImage == nil)
+        let roads = model.visualPaths.lines(room: model.visualPathRoom, offset: model.visualPathOffset, visible: atlasPathsVisible)
+        let blockades = atlasPathsVisible ? model.blockadeOverlay(.gameplay) : []
+        let terrain = model.visualTerrainOverlay()
+        return LayerSceneFeatureReviewOverlay(markers: debug.markers + terrain.markers,
+            lines: roads + placement.lines + terrain.lines + debug.lines + blockades)
+    }
+
+    private var groundViewerSceneLines: [LayerSceneFeatureReviewOverlay.Line] {
+        if workspace == .hacker {
+            return model.hackerAtlasRooms.flatMap { room in
+                let key = room.id.uuidString, offset = model.hackerRoomPosition(room)
+                return model.hackerPaths.groundLines(room: key, offset: offset)
+                    + model.hackerPaths.spikeLines(room: key, offset: offset)
+                    + model.hackerPaths.lines(room: key, offset: offset, visible: atlasPathsVisible)
+            }
+        }
+        return model.visualPaths.groundLines(room: model.visualPathRoom, offset: model.visualPathOffset)
+            + model.visualPaths.lines(room: model.visualPathRoom, offset: model.visualPathOffset, visible: atlasPathsVisible)
+    }
+
+    private var groundViewerCenter: CGPoint { workspace == .hacker ? model.hackerMapFocus : model.mapFocus }
+
+    private func refreshGroundFeatureWindow() {
+        guard groundFeatureWindowController.isOpen else { return }
+        groundFeatureWindowController.refresh(
+            available: featureReviewOverlay.markers.filter { $0.coordinateSpace == .atlas }.compactMap(\.groundFeatureDetails),
+            sceneLines: groundViewerSceneLines
         )
     }
 
     private var recognizedLabelingContext: LabelingContext? {
         guard let identifier = model.liveGameContextIdentifier else { return nil }
         return LabelingContext(storageIdentifier: identifier)
+    }
+
+    private var atlasPathsVisible: Bool {
+        guard showsRoad, model.isCapturing,
+              model.labelPauseState != .pausing, model.labelPauseState != .paused,
+              model.labelPauseState != .resuming else { return false }
+        switch workspace {
+        case .gameplay:
+            return LiveAtlasPresentationPolicy.showsPaths(enabled: showsRoad, context: recognizedLabelingContext,
+                presentedGameplayFrame: model.hasAtlasPathEvidence(for: model.liveImage))
+        case .hacker: return model.hasHackerAtlasPathEvidence
+        default: return false
+        }
     }
 
     private var menuObjectBackdropContext: LabelingContext? {
@@ -1072,15 +1441,15 @@ struct DashboardView: View {
     private var featureHypothesisLegend: some View {
         VStack(alignment: .leading, spacing: 2) {
             legendRow("Green · camera-consistent ground", Color(red: 0.27, green: 1, blue: 0.47))
-            legendRow("Purple · persistent global match", Color(red: 0.75, green: 0.31, blue: 1))
+            legendRow("Purple · matched reference patch", Color(red: 0.75, green: 0.31, blue: 1))
             legendRow("Orange · occluded / waiting", .orange)
-            legendRow("Red · different depth or motion", .red)
+            legendRow("Red · disagrees with camera estimate", .red)
         }
         .font(.caption2.monospaced())
         .padding(.horizontal, 7)
         .padding(.vertical, 5)
         .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 7))
-        .accessibilityLabel(visionText("Ground Features color legend"))
+        .accessibilityLabel(visionText("Ground tracking patch colors"))
     }
 
     private func legendRow(_ label: String, _ color: Color) -> some View {
@@ -1093,7 +1462,7 @@ struct DashboardView: View {
     private var presentationTiles: [LayerSceneDrawTile] {
         var tiles = [LayerSceneDrawTile]()
         let includesAtlas = LiveAtlasPresentationPolicy.includesAtlas(
-            hasGameplayStarted: model.hasGameplayStarted
+            hasGameplayStarted: model.hasGameplayStarted || (model.liveImage == nil && !model.atlasTiles.isEmpty)
         )
         if includesAtlas, !model.atlasTiles.isEmpty {
             tiles.append(contentsOf: Self.presentationTiles(model.atlasTiles, atlasID: Self.atlasID))
@@ -1121,7 +1490,8 @@ struct DashboardView: View {
                 order: 1,
                 roomPosition: .zero,
                 roomScale: 1,
-                isLiveOverlay: true
+                isLiveOverlay: true,
+                coversSavedGround: true
             ))
         }
         if model.stencilDetectionEnabled, let stencil = model.hudStencilImage {
@@ -1206,7 +1576,7 @@ struct DashboardView: View {
                 opacity: 0.5
             ))
         }
-        if model.groundReviewAvailable, model.groundDetectEnabled,
+        if model.groundReviewAvailable, model.groundStageEnabled,
            let stages = model.groundStageImage {
             tiles.append(LayerSceneDrawTile(
                 roomID: Self.liveID,
@@ -1275,34 +1645,17 @@ struct DashboardView: View {
 
     private var campaignProgress: [LabelingCampaignProgress] {
         selectedTrainingClassIdentifiers.sorted().map {
-            LabelingCampaignProgress(id: $0, count: campaignCounts[$0, default: 0],
-                                     completedCount: campaignCompletedCounts[$0, default: 0])
+            LabelingCampaignProgress(id: $0, count: campaignCounts[$0, default: 0])
         }
-    }
-
-    private var campaignGuidance: String? {
-        if campaignHistoryUnavailable { return visionText("campaignMissingHistory") }
-        let identifier = selectedTrainingClassIdentifiers.contains(labelingSelectedClassID)
-            ? labelingSelectedClassID : "game.playable-knight"
-        guard let progress = campaignProgress.first(where: { $0.id == identifier }) else { return nil }
-        return visionText(progress.guidanceKey(labeling: workspace == .label, inModel: workspace == .model), [
-            "object": visionText(LabelingVisualIdentity.displayName(for: identifier)),
-            "count": String(progress.count), "target": String(progress.target),
-            "remaining": String(progress.remaining)
-        ])
     }
 
     private var controls: some View {
         HStack(spacing: 8) {
             workspaceSelector
-            if let guidance = (workspace == .label && labelingContext == .game ? campaignGuidance : nil) ?? initialization.guidance(
+            if let guidance = initialization.guidance(
                 labelingContext: workspace == .label ? labelingContext : nil,
                 selectedClassIdentifier: labelingSelectedClassID,
                 navigationContext: initializationTargetContext
-            ) ?? initialization.modelGuidance(
-                workspace: workspace, hasGameplayLabels: hasGameplayTrainingLabels,
-                breaches: gameplayLabelBreaches, modelReady: trainedGameplayModelReady,
-                training: labelingTrainer.isRunning, campaignGuidance: campaignGuidance
             ) {
                 Text(guidance)
                     .foregroundStyle(.blue)
@@ -1323,15 +1676,20 @@ struct DashboardView: View {
             ) && model.gameMode == .modded {
                 pathRecordingButton
             }
+            if BotControlPresentationPolicy.shows(in: workspace) {
+                BotControlsView(model: model, domain: workspace == .hacker ? .hacker : .gameplay,
+                    canStart: !labelingTrainer.isRunning && !botTrainer.isRunning
+                    && initialization.isFirstPhaseComplete && model.canStartBotDemo,
+                    action: toggleBotControl)
+            }
             if let issue = model.pathRecordingIssue {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red).help(issue)
             }
-            if DashboardControlVisibility.showsFraming(workspace: workspace,
-                phaseOneComplete: initialization.isFirstPhaseComplete, recognizedContext: model.liveGameStatus) {
+            if showsFramingControls {
                 if workspace == .hacker {
-                    hackerInteractionButton(.freeFly)
-                    hackerInteractionButton(.fit)
-                    hackerInteractionButton(.current)
+                    hackerFramingButton(.freeFly, title: "Free Fly")
+                    hackerFramingButton(.fit, title: "Fit")
+                    hackerFramingButton(.current, title: "Current")
                 } else {
                     framingButton(.freeFly, title: "Free Fly")
                     framingButton(.fit, title: "Fit")
@@ -1348,6 +1706,22 @@ struct DashboardView: View {
         .font(.caption)
         .buttonStyle(.bordered)
         .lineLimit(1)
+    }
+
+    private func toggleBotControl() {
+        if model.botDemo.isActive { model.stopBotDemo(reason: "Stopped with B"); return }
+        if model.botPlayer.isActive { model.botPlayer.stop(); return }
+        guard !labelingTrainer.isRunning && !botTrainer.isRunning else { model.botDemo.rejectStart("Wait for Model training to finish before starting the bot."); return }
+        guard initialization.isFirstPhaseComplete else { model.botDemo.rejectStart("Complete stencil setup before starting the bot."); return }
+        let inGameplay = model.liveGameStatus == "Gameplay"
+        let domain: BotDomain = workspace == .hacker ? .hacker : .gameplay
+        if !inGameplay { selectWorkspace(.gameplay) }
+        // An accessibility press or a click on an inactive window may arrive
+        // before AppKit has made the dashboard key. Acquire focus for this
+        // explicit user action, then start after activation has been delivered.
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first { $0.title == "Hollow Knight Vision" && $0.isVisible }?.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { model.startBotDemo(inGameplay: inGameplay, domain: domain) }
     }
 
     private func hasTrainedGameplayModel() -> Bool {
@@ -1370,42 +1744,67 @@ struct DashboardView: View {
                     .keyboardShortcut(.cancelAction)
             }.padding(20)
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    AtlasManagerView(model: model, workspace: workspace)
-                    if workspace == .hacker {
-                        Picker(visionText("Hacker"), selection: Binding(get: { hackerInteractionMode }, set: selectHackerInteractionMode)) {
-                            ForEach(HackerInteractionMode.allCases) { mode in Text(visionText(mode.rawValue)).tag(mode) }
+            HStack(alignment: .top, spacing: 0) {
+                VStack(spacing: 4) {
+                    ForEach(DashboardSettingsSection.allCases) { section in
+                        Button { settingsSection = section } label: {
+                            Label(visionText(section.rawValue), systemImage: section.symbol)
+                                .fontWeight(settingsSection == section ? .semibold : .regular)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                                .background(settingsSection == section ? Color.blue.opacity(0.24) : .clear,
+                                            in: RoundedRectangle(cornerRadius: 7))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(settingsSection == section ? .isSelected : [])
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(10)
+                .frame(width: 160)
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        Text(visionText(settingsSection.rawValue)).font(.headline)
+                        switch settingsSection {
+                        case .atlas:
+                            AtlasManagerView(model: model, workspace: workspace)
+                                .id(workspace == .hacker)
+                        case .debugView:
+                            DebugView(model: model,
+                                showsGroundTrackingTools: DebugViewAvailabilityPolicy.showsGroundTrackingTools(
+                                    workspace: workspace, recognizedContext: model.liveGameStatus),
+                                showsGameState: $showsGameState, showsGroundTrackingPatches: $showsGroundTrackingPatches,
+                                showsRoad: $showsRoad, showsEstimatedPlacement: $showsEstimatedPlacement,
+                                stencilReady: initialization.isFirstPhaseComplete,
+                                modelReady: initialization.isFirstPhaseComplete && trainedGameplayModelReady,
+                                openGroundViewer: {
+                                    groundFeatureWindowController.showScene(lines: groundViewerSceneLines, center: groundViewerCenter)
+                                })
+                        case .system:
+                            if model.canUseOps && model.liveGameStatus == "Gameplay" {
+                                PlayerOpsView(model: model)
+                                Divider()
+                            }
+                            Picker(initialization.text("language"), selection: $initialization.language) {
+                                ForEach(HollowKnightMenuLanguage.allCases, id: \.self) { language in
+                                    Text(language.nativeName).tag(language)
+                                }
+                            }
+                            Divider()
+                            Button(initialization.text("factory"), role: .destructive) {
+                                showingSettings = false
+                                confirmsFactoryReset = true
+                            }
                         }
                     }
-                    Divider()
-                    if model.canUseOps && model.liveGameStatus == "Gameplay" {
-                        Text(visionText("Ops")).font(.headline)
-                        PlayerOpsView(model: model)
-                        Divider()
-                    }
-                    Text(initialization.text("debugView")).font(.headline)
-                    DebugView(model: model,
-                        showsGroundTrackingTools: DebugViewAvailabilityPolicy.showsGroundTrackingTools(
-                            workspace: workspace, recognizedContext: model.liveGameStatus),
-                        showsGameState: $showsGameState, stencilReady: initialization.isFirstPhaseComplete,
-                        modelReady: initialization.isFirstPhaseComplete && trainedGameplayModelReady)
-                    Divider()
-                    Picker(initialization.text("language"), selection: $initialization.language) {
-                        ForEach(HollowKnightMenuLanguage.allCases, id: \.self) { language in
-                            Text(language.nativeName).tag(language)
-                        }
-                    }
-                    Divider()
-                    Button(initialization.text("factory"), role: .destructive) {
-                        showingSettings = false
-                        confirmsFactoryReset = true
-                    }
-                }.padding(20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
+                }
             }
         }
-        .frame(width: 620)
-        .frame(maxHeight: 760)
+        .frame(width: 660, height: 460)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.15)))
         .padding(24)
@@ -1414,20 +1813,22 @@ struct DashboardView: View {
     private func openGroundLabelContext() {
         model.groundHypothesesEnabled = true
         selectWorkspace(.hacker)
-        selectHackerInteractionMode(.ground)
-        groundTruthLabelController.enter(
-            tracking: model.groundHypothesisTracking,
-            transform: model.groundTruthCameraTransform,
-            liveBounds: model.liveBounds
-        )
+        selectHackerEditingTarget(.ground)
+        registerCurrentGroundRoom()
     }
 
     private var visibleWorkspaces: [DashboardWorkspace] {
         DashboardControlVisibility.workspaces.filter { destination in
-            if destination == .model { return initialization.isFirstPhaseComplete }
+            if destination == .model || destination == .bot { return initialization.isFirstPhaseComplete }
             if destination == .hacker { return model.canUseHacker && model.liveGameStatus == "Gameplay" }
             return true
         }
+    }
+
+    private var roomResetShortcutEnabled: Bool {
+        let inResetContext = showingSettings ? settingsSection == .system
+            : (BotControlPresentationPolicy.shows(in: workspace) || workspace == .ops)
+        return inResetContext && model.liveGameStatus == "Gameplay" && model.canUseOps && model.canResetRoom
     }
 
     private func workspaceTitle(_ destination: DashboardWorkspace) -> String {
@@ -1443,13 +1844,13 @@ struct DashboardView: View {
             label: "Workspace", choices: visibleWorkspaces,
             title: workspaceTitle, selection: workspaceSelection
         )
-        .frame(width: 410)
+        .frame(width: 480)
         .overlay(workspaceShortcuts)
     }
 
     private var workspaceShortcuts: some View {
         ZStack {
-            ForEach(DashboardWorkspace.allCases) { destination in
+            ForEach(DashboardControlVisibility.shortcutWorkspaces) { destination in
                 Button("Open \(destination.rawValue)") { performWorkspaceShortcut(destination) }
                     .keyboardShortcut(KeyEquivalent(destination.shortcutCharacter), modifiers: [])
             }
@@ -1482,25 +1883,31 @@ struct DashboardView: View {
             }
         }
         .keyboardShortcut("k", modifiers: [])
-        .accessibilityLabel(model.isPathRecording ? "Stop path recording" : "Record path")
+        .accessibilityLabel(model.isPathRecording ? "Stop replay and learning recording" : "Record replay and bot learning")
+        .accessibilityIdentifier("unified-recording-control")
         .disabled(
             model.isPathPlaybackActive
                 || model.isPathCheckpointPending
                 || (!model.isPathRecording
-                    && (!model.canStartPathRecording || labelingTrainer.isRunning))
+                    && (!model.canStartPathRecording || labelingTrainer.isRunning || botTrainer.isRunning))
         )
         .tint(
             model.isPathPlaybackActive ? .purple
                 : (model.isPathRecording ? .red : .accentColor)
         )
-        .help(model.lastRecordedPathURL.map {
-            "Last saved path: \($0.path)"
-        } ?? "Record forwarded gameplay input and tracking state")
+        .help(model.canUseHacker ? "K records one replay and both Hacker and Gameplay training clips."
+              : "K records a replay and a Gameplay training clip.")
+        .contextMenu {
+            Button("Show last replay recording") {
+                if let url = model.lastRecordedPathURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }.disabled(model.lastRecordedPathURL == nil)
+            Button("Show learning recordings") { NSWorkspace.shared.open(BotDemonstrationRecorder.defaultRootURL) }
+        }
     }
 
     private func selectWorkspace(_ destination: DashboardWorkspace) {
         guard !showingSettings, destination != workspace else { return }
-        guard destination != .model || initialization.isFirstPhaseComplete else { return }
+        guard (destination != .model && destination != .bot) || initialization.isFirstPhaseComplete else { return }
         if destination == .hacker && (!model.canUseHacker || model.liveGameStatus != "Gameplay") {
             lockedWorkspaceMessage = model.gameMode == .normal
                 ? "Start Vision in Modded mode to use Hacker. Gameplay recognition and the visual atlas remain available in Normal mode."
@@ -1511,7 +1918,7 @@ struct DashboardView: View {
             showingSettings = true
             return
         }
-        guard !labelingTrainer.isRunning,
+        guard !labelingTrainer.isRunning && !botTrainer.isRunning,
               !model.isPathRecording,
               !model.isPathCheckpointPending else { return }
         if destination == .label {
@@ -1520,7 +1927,7 @@ struct DashboardView: View {
         }
 
 
-        if workspace == .model || reviewingModelCandidate != nil {
+        if workspace == .model || workspace == .bot || reviewingModelCandidate != nil {
             closeModelReview()
         }
         if model.isLabelModeActive {
@@ -1538,11 +1945,8 @@ struct DashboardView: View {
             if destination == .stencils { initialization.refresh(mode: model.gameMode) }
         case .hacker:
             workspace = .hacker
-            groundTruthLabelController.enter(
-                tracking: model.groundHypothesisTracking,
-                transform: model.groundTruthCameraTransform,
-                liveBounds: model.liveBounds
-            )
+            if hackerEditingTarget.editsPaths { showsRoad = true }
+            registerCurrentGroundRoom()
             hackerFramingRequest &+= 1
         case .label:
             initialization.refresh(mode: model.gameMode)
@@ -1555,6 +1959,9 @@ struct DashboardView: View {
                 ?? labelingContext.labels.first?.id ?? ""
             workspace = .label
             model.toggleLabelMode()
+        case .bot:
+            workspace = .bot
+            model.setModelReviewActive(true)
         case .model:
             labelingContext = .game
             if !LabelingSharedModelPolicy.classIdentifiers.contains(labelingSelectedClassID) {
@@ -1579,29 +1986,28 @@ struct DashboardView: View {
             viewportFraming = mode
             framingRequest &+= 1
         }
-        .tint(viewportFraming == mode ? .cyan : .gray)
+        .tint((viewportFraming == mode || (mode == .current && viewportFraming.followsCurrent)) ? .cyan : .gray)
         .overlay(
             RoundedRectangle(cornerRadius: 6)
-                .stroke(viewportFraming == mode ? Color.cyan : .clear, lineWidth: 1.5)
+                .stroke((viewportFraming == mode || (mode == .current && viewportFraming.followsCurrent)) ? Color.cyan : .clear, lineWidth: 1.5)
                 .allowsHitTesting(false)
         )
     }
 
-    private func hackerInteractionButton(_ mode: HackerInteractionMode) -> some View {
-        Button(visionText(mode.rawValue)) {
-            selectHackerInteractionMode(mode)
+    private func hackerFramingButton(_ mode: LayerSceneFramingMode, title: String) -> some View {
+        Button(visionText(title)) {
+            selectHackerFramingMode(mode)
         }
-        .tint(hackerInteractionMode == mode ? .cyan : .gray)
+        .tint((hackerFramingMode == mode || (mode == .current && hackerFramingMode.followsCurrent)) ? .cyan : .gray)
         .overlay(
             RoundedRectangle(cornerRadius: 6)
-                .stroke(hackerInteractionMode == mode ? Color.cyan : .clear, lineWidth: 1.5)
+                .stroke((hackerFramingMode == mode || (mode == .current && hackerFramingMode.followsCurrent)) ? Color.cyan : .clear, lineWidth: 1.5)
                 .allowsHitTesting(false)
         )
     }
 
-    private func selectHackerInteractionMode(_ mode: HackerInteractionMode) {
-        hackerInteractionMode = mode
-        hackerRoomDrag = nil
+    private func selectHackerFramingMode(_ mode: LayerSceneFramingMode) {
+        hackerFramingMode = mode
         hackerFramingRequest &+= 1
     }
 
@@ -1768,7 +2174,7 @@ struct DashboardView: View {
 
     private var canTrainSelectedObject: Bool {
         let isLabeling = model.labelImage != nil && labelingContext == .game
-        guard !labelingTrainer.isRunning, gameplayLabelBreaches == 0,
+        guard !labelingTrainer.isRunning && !botTrainer.isRunning,
               isLabeling || workspace == .model else { return false }
         let saved = selectedTrainingClassIdentifiers.reduce(into: Set<UUID>()) {
             $0.formUnion(labelingSavedExampleIDsByClass[$1] ?? [])
@@ -1846,10 +2252,6 @@ struct DashboardView: View {
                 !$0.isHardNegative && selectedTrainingClassIdentifiers.contains($0.classIdentifier)
             }
         }
-        let exemptions = LabelingContractExemptionStore()
-        gameplayLabelBreaches = examples.filter {
-            LabelingContractEvaluator.evaluate($0, exemptions: exemptions.load(for: $0)).contains(where: \.isBreach)
-        }.count
         let modificationDates = examples.compactMap { example in
             try? example.directoryURL
                 .appendingPathComponent(LabelingExampleStore.manifestFilename)
@@ -1882,10 +2284,7 @@ struct DashboardView: View {
                 try persistCurrentLabelingExample()
             }
             let examples = try labelingExampleStore.loadTrainingExamples(in: .game)
-            let snapshot = try labelingDatasetExporter.exportSharedModel(
-                classIdentifiers: selectedTrainingClassIdentifiers,
-                examples: examples
-            )
+            let snapshot = try labelingDatasetExporter.exportGameplayModel(examples: examples)
             labelingSaveError = nil
             let configuration = LabelingTrainingConfiguration.forModel(
                 identifier: selectedModelIdentifier
@@ -1941,7 +2340,7 @@ struct DashboardView: View {
         }
         let remaining = StencilLabelSelectionPolicy.availableLabels(
             context: labelingContext, rectangles: labelingDraft.rectangles,
-            mode: model.gameMode, hidesCompleted: true, includesDeferredLabels: initialization.isFirstPhaseComplete
+            mode: model.gameMode, hidesCompleted: true
         )
         labelingSelectedClassID = remaining.first?.id ?? ""
     }
@@ -1952,6 +2351,7 @@ struct DashboardView: View {
             if workspace == .label || workspace == .model { selectWorkspace(.gameplay) }
             model.stencilDetectionEnabled = false
             model.objectDetectionEnabled = false
+            appliedDefaultObjectDetection = false
             initializationTargetContext = nil
             editingLabelingExample = nil
             reopenedLabelImage = nil
@@ -1980,15 +2380,6 @@ struct DashboardView: View {
             try labelingModelVersionStore.reconcileDevelopmentCandidates(candidates)
             modelCandidates = candidates
             latestModelCandidate = candidates.last { $0.summary.classIdentifier == selectedModelIdentifier }
-            do {
-                campaignCompletedCounts = try latestModelCandidate.map {
-                    try LabelingCampaignPolicy.completedCounts(datasetURL: $0.datasetURL)
-                } ?? [:]
-                campaignHistoryUnavailable = false
-            } catch {
-                campaignCompletedCounts = [:]
-                campaignHistoryUnavailable = true
-            }
             refreshActiveModelVersion()
             refreshTrainingNotification()
         } catch {
@@ -2000,6 +2391,7 @@ struct DashboardView: View {
 
     private func refreshActiveModelVersion() {
         trainedGameplayModelReady = hasTrainedGameplayModel()
+        enableDefaultObjectDetectionIfReady()
         do {
             activeModelVersionName = try labelingModelVersionStore.activeSelection(
                 for: selectedModelIdentifier
@@ -2008,6 +2400,12 @@ struct DashboardView: View {
             activeModelVersionName = "Default"
             labelingSaveError = "Model versions failed: \(error.localizedDescription)"
         }
+    }
+
+    private func enableDefaultObjectDetectionIfReady() {
+        guard !appliedDefaultObjectDetection, initialization.isFirstPhaseComplete, trainedGameplayModelReady else { return }
+        appliedDefaultObjectDetection = true
+        model.objectDetectionEnabled = true
     }
 
     private func autoPromoteLatestModelCandidate() {
@@ -2027,22 +2425,48 @@ struct DashboardView: View {
 /// Converts review evidence into the same atlas coordinates used by liveBounds.
 /// It has no view or model dependencies so coordinate and kind routing stay testable.
 enum LiveFeatureReviewOverlay {
+    static let showsTrackingPatchesByDefault = true
+
     static func make(
         groundHypotheses: GroundHypothesisTrackingResult? = nil,
         transitionPortals: [VisualRoomPortal] = [],
+        showsTrackingPatches: Bool = showsTrackingPatchesByDefault,
         selectedGroundFeature: LayerSceneGroundFeatureDetails? = nil,
+        persistentGroundLines: [GroundHypothesisAtlasLine]? = nil,
+        walkedGround: [GroundHypothesisAtlasLine] = [],
         liveBounds: CGRect
     ) -> LayerSceneFeatureReviewOverlay {
         var markers = [LayerSceneFeatureReviewOverlay.Marker]()
         var lines = [LayerSceneFeatureReviewOverlay.Line]()
 
-        appendGroundHypotheses(
-            groundHypotheses,
-            selectedGroundFeature: selectedGroundFeature,
-            liveBounds: liveBounds,
-            markers: &markers,
-            lines: &lines
-        )
+        let clearance = GroundClearance.height(frameHeight: liveBounds.height, knight: nil)
+        let archive = persistentGroundLines ?? GroundStrokeGeometry.coalesced(groundHypotheses?.atlasLines ?? [], clearanceHeight: clearance)
+        let saved: [GroundHypothesisAtlasLine]
+        if walkedGround.isEmpty { saved = archive }
+        else {
+            let id = LiveGroundLineEvidence.walkedSegmentID
+            let walk = GroundStrokeGeometry.coalesced(archive.filter { $0.segmentID == id } + walkedGround)
+            saved = walk + WalkedFloorCoverage(walk).filtered(archive.filter { $0.segmentID != id }, clearance: clearance)
+        }
+        lines = saved.map { .init(start: $0.atlasStart, end: $0.atlasEnd,
+            kind: $0.segmentID == LiveGroundLineEvidence.walkedSegmentID ? .walkedGround : .persistentGround) }
+        if let groundHypotheses {
+            if valid(liveBounds) {
+                let current = groundHypotheses.detectedFloorLines.enumerated().map { index, line in
+                    let y = liveBounds.maxY - CGFloat(line.row) - 0.5
+                    return GroundHypothesisAtlasLine(segmentID: index,
+                        atlasStart: CGPoint(x: liveBounds.minX + CGFloat(line.xRange.lowerBound), y: y),
+                        atlasEnd: CGPoint(x: liveBounds.minX + CGFloat(line.xRange.upperBound) + 1, y: y))
+                }
+                lines += GroundStrokeGeometry.coalesced(current).map {
+                    .init(start: $0.atlasStart, end: $0.atlasEnd, kind: .currentGround, coordinateSpace: .live)
+                }
+                if showsTrackingPatches {
+                    appendTrackingPatches(groundHypotheses, selectedGroundFeature: selectedGroundFeature,
+                        persistentGroundLines: persistentGroundLines, liveBounds: liveBounds, markers: &markers)
+                }
+            }
+        }
         appendTransitionPortals(
             transitionPortals,
             markers: &markers,
@@ -2097,14 +2521,13 @@ enum LiveFeatureReviewOverlay {
         }
     }
 
-    private static func appendGroundHypotheses(
-        _ hypotheses: GroundHypothesisTrackingResult?,
+    private static func appendTrackingPatches(
+        _ hypotheses: GroundHypothesisTrackingResult,
         selectedGroundFeature: LayerSceneGroundFeatureDetails?,
+        persistentGroundLines: [GroundHypothesisAtlasLine]?,
         liveBounds: CGRect,
-        markers: inout [LayerSceneFeatureReviewOverlay.Marker],
-        lines: inout [LayerSceneFeatureReviewOverlay.Line]
+        markers: inout [LayerSceneFeatureReviewOverlay.Marker]
     ) {
-        guard let hypotheses, valid(liveBounds) else { return }
         struct FeatureKey: Hashable {
             let segmentID: Int
             let sequenceIndex: Int
@@ -2113,12 +2536,26 @@ enum LiveFeatureReviewOverlay {
             FeatureKey(segmentID: $0.segmentID, sequenceIndex: $0.sequenceIndex)
         }
         var detailsByKey = [FeatureKey: LayerSceneGroundFeatureDetails]()
+        let visibleFeatures = Dictionary(hypotheses.features.map {
+            (FeatureKey(segmentID: $0.segmentID, sequenceIndex: $0.sequenceIndex), $0)
+        }, uniquingKeysWith: { _, last in last })
+        let savedBySegment = Dictionary(grouping: hypotheses.atlasLines, by: \.segmentID)
+        let patchWidth = CGFloat(GroundHypothesisTracker.featureWidth)
+        let patchHeight = CGFloat(GroundHypothesisTracker.featureHeight)
         for feature in hypotheses.atlasFeatures {
             let key = FeatureKey(
                 segmentID: feature.segmentID,
                 sequenceIndex: feature.sequenceIndex
             )
-            let position = feature.atlasPosition
+            let position: CGPoint
+            if persistentGroundLines != nil {
+                // Raw ground-bank anchors are local solver data. Keep current
+                // feature inspection, but never draw them as corrected world
+                // geometry after switching to island-owned ground publication.
+                guard let visible = visibleFeatures[key] else { continue }
+                position = CGPoint(x: liveBounds.minX + visible.imageRect.midX,
+                                   y: liveBounds.maxY - visible.imageRect.midY)
+            } else { position = feature.atlasPosition }
             guard isFinite(position) else { continue }
             let details = LayerSceneGroundFeatureDetails(
                 segmentID: feature.segmentID,
@@ -2129,7 +2566,12 @@ enum LiveFeatureReviewOverlay {
             )
             let isSelected = key == selectedKey
             detailsByKey[key] = details
-            markers.append(.init(
+            if persistentGroundLines == nil, !liveBounds.contains(position),
+               savedBySegment[feature.segmentID]?.contains(where: {
+                   abs($0.atlasStart.y - (position.y + patchHeight / 2)) <= 3
+                       && $0.atlasStart.x <= position.x - patchWidth / 2
+                       && $0.atlasEnd.x >= position.x + patchWidth / 2
+               }) == true { markers.append(.init(
                 worldPosition: position,
                 kind: isSelected ? .selectedGroundFeature : .groundFeature,
                 worldSize: CGSize(
@@ -2138,11 +2580,12 @@ enum LiveFeatureReviewOverlay {
                 ),
                 groundFeatureDetails: details,
                 opacity: isSelected ? 1 : featureOpacity(feature.referenceOpacity)
-            ))
+            )) }
         }
         // Draw live diagnostics as vector outlines. A transparent full-frame
         // raster texture could be interpreted as opaque black by the Metal
         // upload path and hide the current capture underneath it.
+        var occupied = [CGRect]()
         for feature in hypotheses.features {
             let key = FeatureKey(
                 segmentID: feature.segmentID,
@@ -2151,12 +2594,17 @@ enum LiveFeatureReviewOverlay {
             // Candidates are intentionally not presented. The Ground Features
             // legend describes only accepted, persistent, occluded, and
             // rejected motion/depth evidence.
-            guard feature.classification != .candidate else { continue }
+            let x = Int(feature.imageRect.minX), y = Int(feature.imageRect.minY)
+            guard feature.classification != .candidate,
+                  let floor = hypotheses.detectedFloorLines.filter({ $0.containsPatch(atX: x, row: y) })
+                    .min(by: { abs($0.row - y) < abs($1.row - y) }) else { continue }
+            let rect = CGRect(x: feature.imageRect.minX, y: CGFloat(floor.row), width: patchWidth, height: patchHeight)
+            occupied.append(rect)
             let details = detailsByKey[key]
             let isSelected = key == selectedKey
             let livePosition = CGPoint(
-                x: liveBounds.minX + feature.imageRect.midX,
-                y: liveBounds.maxY - feature.imageRect.midY
+                x: liveBounds.minX + rect.midX,
+                y: liveBounds.maxY - rect.midY
             )
             guard isFinite(livePosition) else { continue }
             markers.append(.init(
@@ -2174,32 +2622,17 @@ enum LiveFeatureReviewOverlay {
                 opacity: 1
             ))
         }
-        for review in GroundLineDetector.featureHypothesisPresenceReviews(
-            hypotheses.lineReviews
-        ) {
-            let y = liveBounds.maxY - CGFloat(review.line.row) - 0.5
-            let start = CGPoint(
-                x: liveBounds.minX + CGFloat(review.line.xRange.lowerBound),
-                y: y
-            )
-            let end = CGPoint(
-                x: liveBounds.minX + CGFloat(review.line.xRange.upperBound + 1),
-                y: y
-            )
-            guard isFinite(start), isFinite(end) else { continue }
-            lines.append(.init(
-                start: start,
-                end: end,
-                kind: .currentGround,
-                coordinateSpace: .live
-            ))
+
+        // Local texture matches are available before a newly visible platform
+        // earns a permanent atlas ID. Keep the inspectable atlas box at a shared location.
+        for rect in hypotheses.matchedPatchRects {
+            guard !occupied.contains(where: { $0.intersects(rect) && !$0.intersection(rect).isEmpty }) else { continue }
+            occupied.append(rect)
+            markers.append(.init(worldPosition: CGPoint(x: liveBounds.minX + rect.midX,
+                y: liveBounds.maxY - rect.midY), kind: .cameraConsistentGround,
+                worldSize: rect.size, coordinateSpace: .live))
         }
-        for line in hypotheses.atlasLines {
-            let start = line.atlasStart
-            let end = line.atlasEnd
-            guard isFinite(start), isFinite(end) else { continue }
-            lines.append(.init(start: start, end: end, kind: .persistentGround))
-        }
+
     }
 
     private static func markerKind(

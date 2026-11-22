@@ -19,6 +19,8 @@ enum ReceiverControlProtocol {
     static let playerCheckpointCapability = "player-checkpoint-v1"
     static let playerPosePlaybackCapability = "player-pose-playback-v1"
     static let groundTruthCapability = "ground-truth-telemetry-v1"
+    static let hackerActorsCapability = "hacker-actor-telemetry-v1"
+    static let roomResetCapability = "room-entrance-reset-v1"
     static let playerOpsCapability = "player-ops-v1"
 }
 
@@ -276,7 +278,7 @@ struct PlayerTestState: Codable, Equatable, Sendable {
     var mana: Int
     var extraManaSlots: Int
     var geo: Int
-    var invincible: Bool = true
+    var invincible: Bool = false
 
     static let defaults = Self(
         maxHealth: 5,
@@ -285,7 +287,7 @@ struct PlayerTestState: Codable, Equatable, Sendable {
         mana: 99,
         extraManaSlots: 0,
         geo: 0,
-        invincible: true
+        invincible: false
     )
 
     var normalized: Self {
@@ -304,7 +306,7 @@ struct PlayerTestState: Codable, Equatable, Sendable {
     }
 
     static func randomized(
-        invincible: Bool = true,
+        invincible: Bool = false,
         using generator: inout some RandomNumberGenerator
     ) -> Self {
         let maxHealth = Int.random(in: 1...9, using: &generator)
@@ -346,6 +348,11 @@ struct ReceiverPlayerOpsCommand: Codable, Equatable, Sendable {
              commandID: commandID, operation: "apply", state: state.normalized)
     }
 
+    static func resetRoom(sessionID: UUID, commandID: UUID = UUID()) -> Self {
+        Self(version: ReceiverControlProtocol.version, type: "playerOps", sessionID: sessionID,
+             commandID: commandID, operation: "resetRoom", state: nil)
+    }
+
     static func restoreEnemies(sessionID: UUID, commandID: UUID = UUID()) -> Self {
         Self(version: ReceiverControlProtocol.version, type: "playerOps", sessionID: sessionID,
              commandID: commandID, operation: "restoreEnemies", state: nil)
@@ -360,6 +367,7 @@ struct ReceiverPlayerOpsAcknowledgement: Codable, Equatable, Sendable {
     let accepted: Bool
     let state: PlayerTestState?
     let enemiesRestored: Int?
+    var resetScene: String? = nil
     let failure: String?
 }
 
@@ -396,6 +404,40 @@ struct ReceiverPlayerPoseCommand: Codable, Equatable, Sendable {
 /// Development-only measurements emitted after the modified game's camera
 /// update. They are an oracle for evaluating visual tracking, not an input the
 /// shipping visual solver requires.
+struct ReceiverActorState: Codable, Equatable, Sendable {
+    let id: Int
+    let name: String
+    let screenX: Double
+    let screenY: Double
+    let width: Double
+    let height: Double
+
+    var isValid: Bool {
+        [screenX, screenY, width, height].allSatisfy { $0.isFinite && abs($0) <= 1_000_000 }
+            && width >= 0 && height >= 0
+    }
+}
+
+struct BotEnemyOutcomes: Codable, Equatable, Sendable {
+    let epoch: UUID
+    let damage, kills: Int
+}
+
+struct BotBlueHealthOutcomes: Codable, Equatable, Sendable {
+    let epoch: UUID
+    let gained: Int
+}
+
+struct ReceiverActorTelemetry: Codable, Equatable, Sendable {
+    let version: Int
+    let hero: ReceiverActorState?
+    let enemies: [ReceiverActorState]
+    var geoCaches: [ReceiverActorState]? = nil
+    var lifebloodCocoons: [ReceiverActorState]? = nil
+    var enemyOutcomes: BotEnemyOutcomes? = nil
+    var heroHealth: Int? = nil
+}
+
 struct ReceiverGroundTruthSample: Codable, Equatable, Sendable {
     let version: Int
     let type: String
@@ -428,6 +470,9 @@ struct ReceiverGroundTruthSample: Codable, Equatable, Sendable {
     let projectionPixelHeight: Int?
     let screenWidth: Int
     let screenHeight: Int
+    var actors: ReceiverActorTelemetry? = nil
+    var blueHealthOutcomes: BotBlueHealthOutcomes? = nil
+    var atlasGameplayActive: Bool? = nil
 
     var hasFiniteCoordinates: Bool {
         let values = [

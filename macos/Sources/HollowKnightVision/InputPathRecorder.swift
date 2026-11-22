@@ -110,6 +110,16 @@ struct RecordedTrackingSample: Codable, Equatable, Sendable {
     var floorlessMaskedY: Double? = nil
     var floorlessExpectedDirection: Int? = nil
     var floorlessSelectionSource: String? = nil
+    var island: LiveIslandCapture? = nil
+    var sceneMotionSupport: Int? = nil
+    var sceneMotionMeasuredX: Bool? = nil
+    var sceneMotionMeasuredY: Bool? = nil
+    var sceneMotionResidualX: Double? = nil
+    var sceneMotionResidualY: Double? = nil
+    var sceneMotionMilliseconds: Double? = nil
+    var fallPredictionMinimumY: Double? = nil
+    var fallPredictionMaximumY: Double? = nil
+    var fallPredictionAge: Double? = nil
 }
 
 struct RecordedLoopClosureEvent: Codable, Equatable, Sendable {
@@ -153,6 +163,7 @@ struct RecordedCoarseMotionInput: Codable, Equatable, Sendable {
     let velocityY: Double?
     let velocityTimestamp: TimeInterval?
     let horizontalInput: Int?
+    var completedPose: VisualCameraPoseSample? = nil
 }
 
 /// Capture-rate trace of the inexpensive motion bridge. Unlike ground solves,
@@ -224,6 +235,7 @@ struct RecordedInputPath: Codable, Equatable, Sendable {
     /// events became part of the schema-one trace.
     let loopClosures: [RecordedLoopClosureEvent]?
     let runtimeMetadata: [String: String]?
+    let visualFrameArchive: RecordedVisualFrameArchive?
 
     init(
         schemaVersion: Int = currentSchemaVersion,
@@ -239,7 +251,8 @@ struct RecordedInputPath: Codable, Equatable, Sendable {
         coarseMotionSamples: [RecordedCoarseMotionSample] = [],
         lowResolutionFrames: [RecordedLowResolutionFrame] = [],
         loopClosures: [RecordedLoopClosureEvent] = [],
-        runtimeMetadata: [String: String]? = nil
+        runtimeMetadata: [String: String]? = nil,
+        visualFrameArchive: RecordedVisualFrameArchive? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
@@ -255,6 +268,7 @@ struct RecordedInputPath: Codable, Equatable, Sendable {
         self.lowResolutionFrames = lowResolutionFrames
         self.loopClosures = loopClosures
         self.runtimeMetadata = runtimeMetadata
+        self.visualFrameArchive = visualFrameArchive
     }
 
     var unverifiedSampleCount: Int {
@@ -290,6 +304,7 @@ final class InputPathRecorder: @unchecked Sendable {
         var metadata = url.flatMap { try? Data(contentsOf: $0) }.flatMap {
             try? JSONDecoder().decode([String: String].self, from: $0)
         } ?? [:]
+        metadata["diagnosticNumberEncoding"] = "ieee754-nonfinite-strings-v1"
         metadata["captureWidth"] = String(HollowKnightCaptureConfiguration.outputWidth)
         metadata["captureQueueDepth"] = String(HollowKnightCaptureConfiguration.queueDepth)
         metadata["capturePixelPath"] = "core-image"
@@ -298,21 +313,27 @@ final class InputPathRecorder: @unchecked Sendable {
         metadata["presentationDrawableCount"] = "2"
         metadata["captureTargetFPS"] = "native"
         metadata["renderFrameMarker"] = String(RenderedFrameMarker.enabled)
-        metadata["groundPlacementRecovery"] = "deferred-ground-corrections-v1"
+        metadata["groundPlacementRecovery"] = "deferred-ground-corrections-horizontal-recovery-v2"
         metadata["groundRelocalization"] =
             "floorless-background-search-continuity-v1"
-        metadata["groundTextureRegistration"] = "keyframe-subpixel-v1"
-        metadata["groundImageMotionScale"] = "hacker-cohort-v4-anchor-and-recent-distance"
+        metadata["groundTextureRegistration"] = "keyframe-subpixel-normalized-jacobian-v2"
+        metadata["groundPatchConsensus"] = "bounded-independent-floor-majority-verified-median-v3"
+        metadata["islandClosureRegistration"] = "feature-and-patch-ncc-bounded-probes-v3"
+        metadata["groundImageMotionScale"] = "cohort-v4-projection-refined-phase-separated-v5"
         metadata["lowResolutionMotionBridge"] =
-            "local-contrast-measured-ground-handoff-v22"
-        metadata["floorlessPosePriority"] = "place-match-masked-registration-coarse-rebase-v2"
+            "local-contrast-capture-reference-handoff-v23"
+        metadata["floorlessPosePriority"] = "place-calibrated-vertical-masked-coarse-fall-prior-v3"
+        metadata["sceneMotion"] = "ground-projected-160-ncc-metal-axis-consensus-v4"
+        metadata["islandLineage"] = "ground-plane-proof-provisional-parallax-v2"
+        metadata["doorwayFloor"] = "owned-three-frame-y-constraint-schema3-v1"
+        metadata["fallPrior"] = "separate-oct30-player-calibration-visible-knight-80ms-v1"
         metadata["lowResolutionPlaceMemory"] = "room-local-64x36-v1"
         metadata["lowResolutionFrameTrace"] = ReplayDiagnosticOptions.fullRateMotionTrace
             ? "64x36-capture-rate-measured-ground-reliability-v4"
             : "64x36-20hz-measured-ground-reliability-v3"
         metadata["replayDivergencePolicy"] = ReplayDiagnosticOptions.continueAfterDivergence
             ? "record-only-diagnostic" : "stop"
-        metadata["coarseMotionInputs"] = "capture-time-v1"
+        metadata["coarseMotionInputs"] = "capture-time-completed-pose-v2"
         metadata["localMatchDiagnostics"] = "reference-v1"
         metadata["playbackDivergenceGuard"] =
             "hacker-exact-frame-v2-\(Int(PlaybackDivergenceMonitor.thresholdPixels))px-\(PlaybackDivergenceMonitor.requiredConsecutiveSamples)samples-\(Int(PlaybackDivergenceMonitor.maximumVisionSilence * 1_000))ms-silence"
@@ -333,6 +354,7 @@ final class InputPathRecorder: @unchecked Sendable {
         let sourcePathID: UUID?
         let replayIteration: Int?
         let startCheckpoint: RecordedGameCheckpoint?
+        var visualArchive: VisualReplayArchiveWriter?
         var events = [RecordedInputPathEvent]()
         var trackingSamples = [RecordedTrackingSample]()
         var groundTruthSamples = [RecordedGroundTruthSample]()
@@ -358,7 +380,8 @@ final class InputPathRecorder: @unchecked Sendable {
         id: UUID = UUID(),
         sourcePathID: UUID? = nil,
         replayIteration: Int? = nil,
-        startCheckpoint: RecordedGameCheckpoint? = nil
+        startCheckpoint: RecordedGameCheckpoint? = nil,
+        visualArchiveRootURL: URL? = nil
     ) -> Bool {
         lock.withLock {
             guard session == nil else { return false }
@@ -368,10 +391,34 @@ final class InputPathRecorder: @unchecked Sendable {
                 startedAt: timestamp,
                 sourcePathID: sourcePathID,
                 replayIteration: replayIteration,
-                startCheckpoint: startCheckpoint
+                startCheckpoint: startCheckpoint,
+                visualArchive: visualArchiveRootURL.map {
+                    VisualReplayArchiveWriter(rootURL: $0, pathID: id, configuration: runtimeMetadata,
+                        maximumPendingImages: 12)
+                }
             )
             return true
         }
+    }
+
+    func recordVisualFrame(_ image: CGImage, captureTimestamp: TimeInterval,
+                           capturedAt: TimeInterval, captureGeneration: UInt64,
+                           solveWidth: Double, renderedGameFrame: Int?) {
+        let writer = lock.withLock { session?.visualArchive }
+        writer?.append(image, captureTimestamp: captureTimestamp, capturedAt: capturedAt,
+                       captureGeneration: captureGeneration, solveWidth: solveWidth,
+                       renderedGameFrame: renderedGameFrame)
+    }
+
+    func recordVisualStage(_ stage: VisualReplayStageEvent.Stage,
+                           captureTimestamp: TimeInterval, captureGeneration: UInt64) {
+        let writer = lock.withLock { session?.visualArchive }
+        writer?.recordStage(stage, captureTimestamp: captureTimestamp,
+                            captureGeneration: captureGeneration)
+    }
+
+    func recordGroundInput(_ input: VisualReplayGroundInput) {
+        lock.withLock { session?.visualArchive }?.recordGroundInput(input)
     }
 
     func recordInput(
@@ -413,6 +460,10 @@ final class InputPathRecorder: @unchecked Sendable {
         floorlessMaskedPosition: CGPoint? = nil,
         floorlessExpectedDirection: VisualRoomDirection? = nil,
         floorlessSelectionSource: String? = nil,
+        island: LiveIslandCapture? = nil,
+        sceneMotion: CalibratedSceneMotionTracker.Measurement? = nil,
+        sceneMotionMilliseconds: Double? = nil,
+        fallPrediction: VisualFallMotionPrior.Prediction? = nil,
         observedAt timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) {
         lock.withLock {
@@ -459,7 +510,17 @@ final class InputPathRecorder: @unchecked Sendable {
                 floorlessMaskedX: floorlessMaskedPosition.map { Double($0.x) },
                 floorlessMaskedY: floorlessMaskedPosition.map { Double($0.y) },
                 floorlessExpectedDirection: floorlessExpectedDirection?.rawValue,
-                floorlessSelectionSource: floorlessSelectionSource
+                floorlessSelectionSource: floorlessSelectionSource,
+                island: island,
+                sceneMotionSupport: sceneMotion?.supportedPatches,
+                sceneMotionMeasuredX: sceneMotion?.horizontalMeasured,
+                sceneMotionMeasuredY: sceneMotion?.verticalMeasured,
+                sceneMotionResidualX: sceneMotion.map { Double($0.residualX) },
+                sceneMotionResidualY: sceneMotion.map { Double($0.residualY) },
+                sceneMotionMilliseconds: sceneMotionMilliseconds,
+                fallPredictionMinimumY: fallPrediction.map { Double($0.cameraYRange.lowerBound) },
+                fallPredictionMaximumY: fallPrediction.map { Double($0.cameraYRange.upperBound) },
+                fallPredictionAge: fallPrediction?.age
             ))
             // This asynchronous solve belongs to one exact captured frame.
             // Never carry the prior frame's reliability into a newly dark or
@@ -587,37 +648,45 @@ final class InputPathRecorder: @unchecked Sendable {
     func stop(
         at timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) -> RecordedInputPath? {
-        lock.withLock {
-            guard var current = session else { return nil }
-            let duration = Self.offset(timestamp, from: current.startedAt)
-            for button in current.heldButtons.sorted(by: { $0.rawValue < $1.rawValue }) {
-                current.events.append(RecordedInputPathEvent(
-                    offset: duration,
-                    button: button,
-                    transition: .released
-                ))
-            }
+        guard let current = lock.withLock({ () -> Session? in
+            let result = session
             session = nil
-            return RecordedInputPath(
-                id: current.id,
-                createdAt: current.createdAt,
-                duration: duration,
-                sourcePathID: current.sourcePathID,
-                replayIteration: current.replayIteration,
-                startCheckpoint: current.startCheckpoint,
-                events: current.events,
-                trackingSamples: current.trackingSamples,
-                groundTruthSamples: current.groundTruthSamples,
-                coarseMotionSamples: current.coarseMotionSamples,
-                lowResolutionFrames: current.lowResolutionFrames,
-                loopClosures: current.loopClosures,
-                runtimeMetadata: runtimeMetadata
-            )
+            return result
+        }) else { return nil }
+        var completed = current
+        let duration = Self.offset(timestamp, from: current.startedAt)
+        for button in current.heldButtons.sorted(by: { $0.rawValue < $1.rawValue }) {
+            completed.events.append(RecordedInputPathEvent(
+                offset: duration,
+                button: button,
+                transition: .released
+            ))
         }
+        return RecordedInputPath(
+            id: current.id,
+            createdAt: current.createdAt,
+            duration: duration,
+            sourcePathID: current.sourcePathID,
+            replayIteration: current.replayIteration,
+            startCheckpoint: current.startCheckpoint,
+            events: completed.events,
+            trackingSamples: current.trackingSamples,
+            groundTruthSamples: current.groundTruthSamples,
+            coarseMotionSamples: current.coarseMotionSamples,
+            lowResolutionFrames: current.lowResolutionFrames,
+            loopClosures: current.loopClosures,
+            runtimeMetadata: runtimeMetadata,
+            visualFrameArchive: current.visualArchive?.finish()
+        )
     }
 
     func cancel() {
-        lock.withLock { session = nil }
+        let writer = lock.withLock { () -> VisualReplayArchiveWriter? in
+            let result = session?.visualArchive
+            session = nil
+            return result
+        }
+        _ = writer?.finish(cancelled: true)
     }
 
     private static func offset(_ timestamp: TimeInterval, from start: TimeInterval) -> TimeInterval {
@@ -661,16 +730,29 @@ final class InputPathStore {
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let name = "path-\(formatter.string(from: path.createdAt))-\(path.id.uuidString.lowercased()).json"
         let url = rootURL.appendingPathComponent(name, isDirectory: false)
+        let encoder = Self.diagnosticEncoder()
+        try encoder.encode(path).write(to: url, options: .atomic)
+        return url
+    }
+
+    /// A failed measurement must not destroy an otherwise complete recording.
+    /// Preserve IEEE special values explicitly instead of replacing them with
+    /// zero/nil or dropping their frames. Scorers must report these markers and
+    /// reject non-finite camera positions; they never constitute valid evidence.
+    static func diagnosticEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        try encoder.encode(path).write(to: url, options: .atomic)
-        return url
+        encoder.nonConformingFloatEncodingStrategy = .convertToString(
+            positiveInfinity: "Infinity", negativeInfinity: "-Infinity", nan: "NaN")
+        return encoder
     }
 
     func load(from url: URL) throws -> RecordedInputPath {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
+        decoder.nonConformingFloatDecodingStrategy = .convertFromString(
+            positiveInfinity: "Infinity", negativeInfinity: "-Infinity", nan: "NaN")
         return try decoder.decode(RecordedInputPath.self, from: Data(contentsOf: url))
     }
 

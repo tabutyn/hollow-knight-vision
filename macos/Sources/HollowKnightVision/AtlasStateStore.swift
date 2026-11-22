@@ -4,6 +4,7 @@ struct AtlasSavedState: Codable, Identifiable, Equatable {
     let id: UUID
     let name: String
     let createdAt: Date
+    var profile: SaveProfileAtlas? = nil
 }
 
 struct AtlasAutoSaveSummary: Identifiable, Equatable {
@@ -11,9 +12,11 @@ struct AtlasAutoSaveSummary: Identifiable, Equatable {
     let id = activeID
     let registrationCount: Int
     let createdAt: Date
+    let profile: SaveProfileAtlas?
     let totalByteCount: Int64?
 
-    init(registrationCount: Int, createdAt: Date, totalByteCount: Int64? = nil) {
+    init(registrationCount: Int, createdAt: Date, totalByteCount: Int64? = nil, profile: SaveProfileAtlas? = nil) {
+        self.profile = profile
         self.registrationCount = registrationCount
         self.createdAt = createdAt
         self.totalByteCount = totalByteCount
@@ -23,7 +26,7 @@ struct AtlasAutoSaveSummary: Identifiable, Equatable {
         AtlasAutoSaveSummary(
             registrationCount: registrationCount,
             createdAt: createdAt,
-            totalByteCount: byteCount
+            totalByteCount: byteCount, profile: profile
         )
     }
 }
@@ -97,13 +100,13 @@ final class AtlasStateStore {
     }
 
     func save(
-        name: String,
+        name: String, profile: SaveProfileAtlas? = nil,
         copyActiveWorld: (URL) throws -> Void
     ) throws -> AtlasSavedState {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw AtlasStateStoreError.emptyName }
         try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let state = AtlasSavedState(id: UUID(), name: trimmed, createdAt: Date())
+        let state = AtlasSavedState(id: UUID(), name: trimmed, createdAt: Date(), profile: profile)
         let stagingURL = rootURL.appendingPathComponent("staging-\(state.id.uuidString)")
         let stateURL = rootURL.appendingPathComponent(state.id.uuidString, isDirectory: true)
         try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: false)
@@ -143,7 +146,8 @@ final class AtlasStateStore {
             throw AtlasStateStoreError.missingState
         }
         try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let state = AtlasSavedState(id: UUID(), name: trimmed, createdAt: Date())
+        let profile = try SaveProfileAtlas.read(from: archiveURL)
+        let state = AtlasSavedState(id: UUID(), name: profile?.name ?? trimmed, createdAt: Date(), profile: profile)
         let stagingURL = rootURL.appendingPathComponent("staging-\(state.id.uuidString)")
         let stateURL = rootURL.appendingPathComponent(state.id.uuidString, isDirectory: true)
         let stagedWorldURL = stagingURL.appendingPathComponent("world", isDirectory: true)

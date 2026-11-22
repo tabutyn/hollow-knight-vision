@@ -58,6 +58,9 @@ final class TransitionMotionBridgeTests: XCTestCase {
         XCTAssertEqual(result.cameraPosition.y, 0, accuracy: 0.001)
         XCTAssertGreaterThanOrEqual(result.confidence, TransitionMotionBridge.minimumConfidence)
         XCTAssertEqual(result.source, .maskedRegistration)
+        // Even a clear pixel translation does not identify the ground plane.
+        XCTAssertFalse(result.horizontalMeasured)
+        XCTAssertFalse(result.verticalMeasured)
     }
 
     func testFallbackRecoversMeasuredMotionAcrossShortCaptureGap() throws {

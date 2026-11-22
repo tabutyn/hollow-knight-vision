@@ -13,8 +13,8 @@ final class GroundFrameAudit {
 
     static func launch(arguments: [String] = ProcessInfo.processInfo.arguments) -> GroundFrameAudit? {
         let prefix = "--ground-audit-directory="
-        guard let argument = arguments.last(where: { $0.hasPrefix(prefix) }) else { return nil }
-        let path = String(argument.dropFirst(prefix.count))
+        guard let path = arguments.last(where: { $0.hasPrefix(prefix) }).map({ String($0.dropFirst(prefix.count)) })
+            ?? ProcessInfo.processInfo.environment["HKV_GROUND_AUDIT_DIRECTORY"] else { return nil }
         guard path.hasPrefix("/") else { return nil }
         return GroundFrameAudit(directory: URL(fileURLWithPath: path, isDirectory: true))
     }
@@ -58,6 +58,7 @@ final class GroundFrameAudit {
                     "x0": $0.line.xRange.lowerBound, "x1": $0.line.xRange.upperBound,
                     "state": $0.state.rawValue, "visibleSeconds": $0.visibleSeconds,
                     "detectedFraction": $0.detectedFraction] as [String: Any] },
+                "matchedPatchRects": tracking.matchedPatchRects.map(rect),
                 "features": tracking.features.map { ["id": $0.id, "segment": $0.segmentID,
                     "index": $0.sequenceIndex, "rect": rect($0.imageRect),
                     "classification": String(describing: $0.classification)] as [String: Any] },

@@ -17,6 +17,7 @@ final class LiveWorldModelTests: XCTestCase {
         XCTAssertEqual(replaced.observations.map(\.localPose), original.observations.map(\.localPose))
         XCTAssertEqual(replaced.observations.map(\.localEpoch), original.observations.map(\.localEpoch))
         XCTAssertEqual(replaced.observations.map(\.sourceObservationID), original.observations.map(\.sourceObservationID))
+        XCTAssertEqual(replaced.observations.map(\.observedPlayerBounds), original.observations.map(\.observedPlayerBounds))
         XCTAssertEqual(replaced.keyframes, original.keyframes)
         XCTAssertEqual(replaced.landmarks.map(\.descriptor), original.landmarks.map(\.descriptor))
         XCTAssertEqual(replaced.landmarks[2].worldPoint, CGPoint(x: 40, y: 20))
@@ -37,6 +38,7 @@ final class LiveWorldModelTests: XCTestCase {
             observations[index].removeValue(forKey: "captureGeneration")
             observations[index].removeValue(forKey: "localEpoch")
             observations[index].removeValue(forKey: "basisRevision")
+            observations[index].removeValue(forKey: "observedPlayerBounds")
         }
         object["observations"] = observations
 
@@ -49,6 +51,7 @@ final class LiveWorldModelTests: XCTestCase {
         XCTAssertEqual(migrated.observations.map(\.captureGeneration), [0, 0])
         XCTAssertEqual(migrated.observations.map(\.localEpoch), [0, 0])
         XCTAssertEqual(migrated.observations.map(\.basisRevision), [0, 0])
+        XCTAssertTrue(migrated.observations.allSatisfy { $0.observedPlayerBounds == nil })
     }
 
     func testInvalidModelsAreRejected() throws {
@@ -166,7 +169,8 @@ final class LiveWorldModelTests: XCTestCase {
         LiveWorldObservation(
             id: id, sourceObservationID: sourceID, timestamp: Double(id),
             sourceWidth: 640, sourceHeight: 360, solveWidth: 640, sampleWidth: 240,
-            excludedRects: [CGRect(x: 1, y: 2, width: 3, height: 4)], rawPose: raw, optimizedPose: optimized
+            excludedRects: [CGRect(x: 1, y: 2, width: 3, height: 4)], rawPose: raw, optimizedPose: optimized,
+            observedPlayerBounds: CGRect(x: 100, y: 40, width: 20, height: 30)
         )
     }
 }

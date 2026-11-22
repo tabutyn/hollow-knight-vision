@@ -3,6 +3,18 @@ import XCTest
 @testable import HollowKnightVision
 
 final class LabelingReviewAnalysisTests: XCTestCase {
+    func testErrorBoxesMatchCountsAndIgnoreBelowThreshold() {
+        let example = example(id: UUID(), human: [box("target", x: 0.1), box("target", x: 0.5)],
+            predictions: [box("target", x: 0.1, confidence: 0.9),
+                          box("target", x: 0.1, confidence: 0.8),
+                          box("target", x: 0.8, confidence: 0.2)])
+        let errors = LabelingPredictionReviewAnalyzer.errors(in: example, classIdentifier: "target",
+            confidenceThreshold: 0.5, intersectionOverUnionThreshold: 0.5)
+        XCTAssertEqual(errors.overlaps.count, 1)
+        XCTAssertEqual(errors.falsePositives.map(\.x), [0.1])
+        XCTAssertEqual(errors.falseNegatives.map(\.x), [0.5])
+    }
+
     func testSummariesMatchByClassAndExposeFailureFrames() {
         let firstID = UUID()
         let secondID = UUID()

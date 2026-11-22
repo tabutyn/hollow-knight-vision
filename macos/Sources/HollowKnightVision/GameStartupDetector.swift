@@ -215,7 +215,8 @@ struct GameStartupDetector {
         in image: CGImage,
         menuStencil: MenuStencilResult? = nil,
         hudStencil: HUDStencilResult? = nil,
-        gameplayIsLatched: Bool = false
+        gameplayIsLatched: Bool = false,
+        objectDetections: [LiveObjectDetection] = []
     ) -> GameStartupEvidence {
         func menuEvidence() -> GameStartupEvidence? {
             guard menuStencil?.isMatch == true else { return nil }
@@ -242,35 +243,20 @@ struct GameStartupDetector {
             if let menu = menuEvidence() { return menu }
             return .unknown
         }
+        if LiveGameStatusEvidencePolicy.hasGameplayEntryEvidence(
+            objectDetections, hudStencil: hudStencil
+        ) {
+            // Verified HUD and Knight evidence can release a stale startup
+            // menu. Bright scenery alone cannot open the world-write gate.
+            return GameStartupEvidence(screen: nil, gameplayLikely: true)
+        }
+        if let menu = menuEvidence() { return menu }
         let sampleHeight = max(1, Int(
             (CGFloat(image.height) * CGFloat(Self.sampleWidth) / CGFloat(max(1, image.width))).rounded()
         ))
         guard let pixels = pixels(from: image, width: Self.sampleWidth, height: sampleHeight) else {
-            if let menu = menuEvidence() { return menu }
-            return GameStartupEvidence(
-                screen: nil,
-                gameplayLikely: hudStencil?.establishesGameplay == true
-            )
+            return .unknown
         }
-        let mana = brightBounds(
-            pixels: pixels,
-            sampleHeight: sampleHeight,
-            normalizedROI: CGRect(x: 0.045, y: 0.035, width: 0.085, height: 0.18),
-            minimumPixels: 8
-        )
-        let health = brightBounds(
-            pixels: pixels,
-            sampleHeight: sampleHeight,
-            normalizedROI: CGRect(x: 0.115, y: 0.045, width: 0.16, height: 0.11),
-            minimumPixels: 8
-        )
-        if hudStencil?.establishesGameplay == true || (mana != nil && health != nil) {
-            // A transitioning menu tracker can briefly retain its last scene.
-            // A verified health row is the primary gameplay cue; the coarse
-            // fallback still requires both bright health and Soul regions.
-            return GameStartupEvidence(screen: nil, gameplayLikely: true)
-        }
-        if let menu = menuEvidence() { return menu }
         if let profile = profileEvidence(pixels: pixels, sampleHeight: sampleHeight) {
             return profile
         }

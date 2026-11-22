@@ -119,16 +119,16 @@ struct GameplayMenuEvidenceGate {
         timestamp: TimeInterval
     ) -> Bool {
         guard timestamp.isFinite else { return false }
-        guard gameplayLatched else {
-            reset()
-            return menuContext != nil
-        }
         if hudHealthMatchCount >= 2 {
             lastHUDTimestamp = timestamp
             candidateContext = nil
             candidateCount = 0
             admittedContext = nil
             return false
+        }
+        guard gameplayLatched || lastHUDTimestamp.isFinite else {
+            reset()
+            return menuContext != nil
         }
         if timestamp - lastHUDTimestamp <= Self.hudHoldDuration {
             candidateContext = nil
@@ -158,6 +158,20 @@ struct GameplayMenuEvidenceGate {
 }
 
 enum LiveGameStatusEvidencePolicy {
+    /// Enter gameplay only when independent HUD and object-model evidence
+    /// agree. Held exclusion geometry and weak Knight masking boxes do not
+    /// prove that a cutscene has ended.
+    static func hasGameplayEntryEvidence(
+        _ detections: [LiveObjectDetection],
+        hudStencil: HUDStencilResult?
+    ) -> Bool {
+        hudStencil?.establishesGameplay == true && detections.contains {
+            $0.confidence.isFinite
+                && $0.confidence >= LiveObjectDetectionPostprocessor.confidenceThreshold
+                && LabelingClassIdentity.matches($0.classIdentifier, "game.playable-knight")
+        }
+    }
+
     /// Menu stencils are strong enough to suspend the slower object model.
     /// The coarse Credits signature is not: gameplay objects must remain able
     /// to disprove it, otherwise a false positive becomes self-sustaining.
@@ -174,7 +188,7 @@ enum LiveGameStatusResolver {
         hudStencil: HUDStencilResult? = nil,
         creditsLikely: Bool = false
     ) -> LiveGameStatus? {
-        if let menuStencil, menuStencil.isMatch {
+        if let menuStencil, menuStencil.isMatch, menuStencil.context != .game {
             let context: LiveGameStatus.Context
             let presentation: LiveGameStatus.SelectionPresentation
             switch menuStencil.context {
@@ -198,8 +212,9 @@ enum LiveGameStatusResolver {
                 selectionPresentation: presentation
             )
         }
-        if hudStencil?.establishesGameplay == true
-            || LiveLabelSetScorer.gameplayMatch(detections) != nil {
+        if LiveGameStatusEvidencePolicy.hasGameplayEntryEvidence(
+            detections, hudStencil: hudStencil
+        ) {
             return LiveGameStatus(
                 state: LabelingContext.game.rawValue,
                 context: .gameplay,

@@ -48,6 +48,20 @@ final class GlobalFeatureMatcher {
   private let ambiguityLimit = 0.80
   /// Advances only the bounded search window; it is never derived from a pose.
   private var referenceScanOffset = 0
+  private(set) var lastSearchedReferenceIDs = [UUID]()
+  private(set) var lastSearchWasAmbiguous = false
+
+  /// Patch proposals keep the same bounded reference coverage and the existing
+  /// repeated-pattern rejection. They cannot bypass an ambiguous feature scan.
+  func permittingPatchProposals(_ references: [GlobalFeatureReference]) -> [GlobalFeatureReference] {
+    references.filter { reference in
+      valid(reference) && !hasAmbiguousSelfPlacement(referenceID: reference.id,
+        features: reference.features.map {
+          Corner(point: $0.samplePoint, descriptor: $0.descriptor, strength: $0.strength)
+        })
+    }
+  }
+
   private struct AmbiguityCacheEntry {
     let fingerprint: UInt64
     let ambiguous: Bool
@@ -88,6 +102,7 @@ final class GlobalFeatureMatcher {
     currentSolveWidth: Double? = nil,
     excluding: [CGRect] = []
   ) -> GlobalFeatureMatch? {
+    lastSearchedReferenceIDs = []; lastSearchWasAmbiguous = false
     guard currentSolveWidth.map({ $0.isFinite && $0 > 0 }) ?? true else { return nil }
     guard let currentGrid = sample(frame) else { return nil }
     let currentFeatures = corners(in: currentGrid, allowed: { point in
@@ -96,14 +111,14 @@ final class GlobalFeatureMatcher {
         y: CGFloat(frame.height) - 1 - point.y * CGFloat(frame.height) / CGFloat(currentGrid.height))
       return !excluding.contains(where: { $0.insetBy(dx: -2, dy: -2).contains(sourcePoint) })
     })
-    guard currentFeatures.count >= 6 else { return nil }
-
     // Score every saved reference cheaply, then run full reciprocal matching
     // on a bounded, spatially diverse slice. Subsequent scans rotate through
     // the ranked list, so a UUID tie cannot permanently hide a distant room.
     let currentSignature = appearanceSignature(currentFeatures.map(\.descriptor))
     let selectedReferences = selectReferences(
       references, matching: currentSignature, preferredReferenceID: preferredReferenceID)
+    lastSearchedReferenceIDs = selectedReferences.map(\.id)
+    guard currentFeatures.count >= 6 else { return nil }
     var allCandidates = [Candidate]()
     for reference in selectedReferences {
       allCandidates.append(contentsOf: candidatePlacements(
@@ -124,7 +139,7 @@ final class GlobalFeatureMatcher {
       distance($0.camera, best.camera) > distinctPlacementDistance
     }
     let ambiguity = min(1, (runnerUp?.confidence ?? 0) / max(best.confidence, .leastNonzeroMagnitude))
-    guard ambiguity < ambiguityLimit else { return nil }
+    guard ambiguity < ambiguityLimit else { lastSearchWasAmbiguous = true; return nil }
     return GlobalFeatureMatch(
       referenceID: best.reference.id, proposedCameraPose: best.camera,
       measuredTranslation: best.translation,
@@ -149,11 +164,18 @@ final class GlobalFeatureMatcher {
   private func selectReferences(
     _ references: [GlobalFeatureReference], matching signature: [Int], preferredReferenceID: UUID?
   ) -> [GlobalFeatureReference] {
-    let ranked = references.filter(valid).sorted {
-      let left = signatureDistance(appearanceSignature($0.features.map(\.descriptor)), signature)
-      let right = signatureDistance(appearanceSignature($1.features.map(\.descriptor)), signature)
-      return left == right ? $0.id.uuidString < $1.id.uuidString : left < right
+    // Compute one appearance signature per reference, not twice for every
+    // sort comparison. The bounded match shortlist keeps identical ordering.
+    var scored = [(reference: GlobalFeatureReference, distance: Int)]()
+    for reference in references where valid(reference) {
+      let appearance = appearanceSignature(reference.features.map(\.descriptor))
+      scored.append((reference, signatureDistance(appearance, signature)))
     }
+    scored.sort { left, right in
+      if left.distance != right.distance { return left.distance < right.distance }
+      return left.reference.id.uuidString < right.reference.id.uuidString
+    }
+    let ranked: [GlobalFeatureReference] = scored.map { $0.reference }
     guard ranked.count > maximumReferences else { return ranked }
 
     // Reserve part of the budget for map coverage before filling the rest

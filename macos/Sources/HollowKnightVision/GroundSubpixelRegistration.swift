@@ -158,7 +158,23 @@ enum GroundSubpixelRegistration {
             let sourceEnergy = samples.reduce(0) { $0 + pow($1.source - sourceMean, 2) }
             let targetEnergy = samples.reduce(0) { $0 + pow($1.target - targetMean, 2) }
             guard targetEnergy >= max(96, sourceEnergy * 0.1) else { continue }
-            let gain = min(2, max(0.5, sqrt(sourceEnergy / targetEnergy)))
+            let unconstrainedGain = sqrt(sourceEnergy / targetEnergy)
+            let gain = min(2, max(0.5, unconstrainedGain))
+            // The residual subtracts each patch's mean and normalizes its
+            // contrast. Its Jacobian must differentiate those same operations:
+            // d(g * (target - mean)) = g * (gradient - meanGradient)
+            //                         + gainGradient * (target - mean).
+            // Otherwise illumination slopes dominate the update even though
+            // they were removed from the objective. Clamped gain is constant.
+            let meanGX = derivatives ? samples.reduce(0) { $0 + $1.gx } / 96 : 0
+            let meanGY = derivatives ? samples.reduce(0) { $0 + $1.gy } / 96 : 0
+            let variesGain = derivatives && unconstrainedGain > 0.5 && unconstrainedGain < 2
+            let gainDX = variesGain ? -gain / targetEnergy * samples.reduce(0) {
+                $0 + ($1.target - targetMean) * ($1.gx - meanGX)
+            } : 0
+            let gainDY = variesGain ? -gain / targetEnergy * samples.reduce(0) {
+                $0 + ($1.target - targetMean) * ($1.gy - meanGY)
+            } : 0
             var patchError = 0.0
             for value in samples {
                 let residual = (value.target - targetMean) * gain
@@ -169,8 +185,10 @@ enum GroundSubpixelRegistration {
                     ? residual * residual : 24 * magnitude - 144
                 patchError += magnitude
                 if derivatives {
-                    let gx = value.gx * gain
-                    let gy = value.gy * gain
+                    let gx = (value.gx - meanGX) * gain
+                        + (value.target - targetMean) * gainDX
+                    let gy = (value.gy - meanGY) * gain
+                        + (value.target - targetMean) * gainDY
                     result.g0 += weight * gx * residual
                     result.g1 += weight * gy * residual
                     result.h00 += weight * gx * gx

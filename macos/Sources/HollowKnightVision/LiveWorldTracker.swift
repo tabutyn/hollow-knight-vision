@@ -13,6 +13,8 @@ enum LiveWorldTrackerRejection: Equatable {
     case recentOrOverlappingReference
     case confirmationRequired
     case inconsistentConfirmation
+    case inconsistentIslandGeometry
+    case groundPlaneVerificationRejected
 }
 
 struct LiveWorldTrackerReviewPoint: Equatable {
@@ -96,7 +98,9 @@ final class LiveWorldTracker {
     }
 
     private struct PendingClosure {
+        let timestamp: Double
         let referenceKeyframeID: Int
+        let islandID: Int?
         /// Global drift inferred independently by two observations. Comparing
         /// this correction allows the camera to keep moving between scans.
         let correction: CGPoint
@@ -124,6 +128,7 @@ final class LiveWorldTracker {
     private var cumulativeTravel = [Int: CGFloat]()
     private var closedReferenceKeyframeIDs = Set<Int>()
     private var lastAcceptedClosureTravel: CGFloat?
+    private var lastAcceptedClosureIslandID: Int?
     /// Observations made since the current capture connection began. Saved
     /// observations are immediately searchable after a reopen, while motion
     /// edges are created only inside this visit.
@@ -141,12 +146,38 @@ final class LiveWorldTracker {
         try! self.init(snapshot: try! LiveWorldSnapshot())
     }
 
+    func layingOutNewRoom(_ transition: LiveDoorwayTransition,
+                          following previous: LiveWorldTrackerUpdate) throws -> LiveWorldTrackerUpdate? {
+        guard previous.snapshot == snapshot else { throw LiveWorldTrackerError.invalidSnapshot }
+        guard let placed = try LiveEstimatedRoomLayout.placingNewRoom(for: transition, in: snapshot) else { return nil }
+        snapshot = placed
+        pendingClosure = nil
+        pendingRecovery = nil
+        refreshReferences()
+        return update(correction: previous.correction, closure: previous.acceptedClosure,
+                      rejections: previous.review.rejections)
+    }
+
+    /// Keep the ingestion and measured doorway alignment in one pipeline commit.
+    /// References follow optimized placements; raw local motion remains unchanged.
+    func connectingDoorwayFloor(_ constraint: LiveDoorwayFloorConstraint,
+                                following previous: LiveWorldTrackerUpdate) throws -> LiveWorldTrackerUpdate {
+        guard previous.snapshot == snapshot else { throw LiveWorldTrackerError.invalidSnapshot }
+        snapshot = try snapshot.addingDoorwayFloorConstraint(constraint)
+        pendingClosure = nil
+        pendingRecovery = nil
+        refreshReferences()
+        return update(correction: previous.correction, closure: previous.acceptedClosure,
+                      rejections: previous.review.rejections)
+    }
+
     func beginVisit() {
         pendingClosure = nil
         beginRecoveryEpoch()
         currentVisitObservationIDs.removeAll(keepingCapacity: true)
         closedReferenceKeyframeIDs.removeAll(keepingCapacity: true)
         lastAcceptedClosureTravel = nil
+        lastAcceptedClosureIslandID = nil
         lastObservationID = nil
     }
 
@@ -232,22 +263,33 @@ final class LiveWorldTracker {
         return recoveryUpdate(reference: reference, placement: placement, rejections: [])
     }
 
+    var hasPendingClosure: Bool { pendingClosure != nil }
+
     func ingest(
         observationID: Int,
         sourceObservationID: Int? = nil,
         timestamp: Double,
+        captureTimestamp: Double? = nil,
         frame: CGImage,
         proposedCameraPose: CGPoint,
         solveWidth: Double,
         exclusions: [CGRect] = [],
         searchForClosure: Bool = true,
+        isClosureConfirmationProbe: Bool = false,
         localPose: CGPoint? = nil,
         captureGeneration: UInt64 = 0,
         localEpoch: UInt64 = 0,
         basisRevision: UInt64 = 0,
-        roomID: Int = 0
+        roomID: Int = 0,
+        islandCapture: LiveIslandCapture? = nil,
+        groundGeometry: LiveWorldGroundGeometry? = nil,
+        observedFloorCandidates: LiveObservedFloorCandidates? = nil,
+        observedPlayerBounds: CGRect? = nil,
+        verifyClosure: ((LiveWorldObservation, CGPoint) -> CGPoint?)? = nil,
+        proposePatchClosure: (([LiveWorldPatchReference]) -> GlobalFeatureMatch?)? = nil
     ) throws -> LiveWorldTrackerUpdate {
-        guard observationID >= 0, timestamp.isFinite, frame.width > 0, frame.height > 0,
+        guard observationID >= 0, timestamp.isFinite, captureTimestamp?.isFinite ?? true,
+              frame.width > 0, frame.height > 0,
               proposedCameraPose.x.isFinite, proposedCameraPose.y.isFinite,
               solveWidth.isFinite, solveWidth > 0,
               roomID >= 0, exclusions.allSatisfy(Self.isValid) else {
@@ -259,9 +301,28 @@ final class LiveWorldTracker {
         let sourceID = sourceObservationID ?? observationID
         guard sourceID >= 0 else { throw LiveWorldTrackerError.invalidScan }
 
+        var islands = snapshot.trackingIslands
+        var optimizedPose = proposedCameraPose
+        if let capture = islandCapture {
+            guard capture.roomID == roomID else { throw LiveWorldTrackerError.invalidScan }
+            if let index = islands.firstIndex(where: { $0.id == capture.id }) {
+                guard islands[index].roomID == roomID,
+                      islands[index].startedAt == capture.startedAt else { throw LiveWorldTrackerError.invalidScan }
+                // A queued frame retains local geometry even if its island
+                // moved after capture and before atlas integration.
+                optimizedPose = CGPoint(x: islands[index].worldFromLocal.x + capture.localPose.x,
+                                        y: islands[index].worldFromLocal.y + capture.localPose.y)
+                islands[index] = islands[index].adding(capture.member(observationID: observationID))
+            } else {
+                islands.append(capture.island(observationID: observationID))
+                optimizedPose = CGPoint(x: capture.worldFromLocal.x + capture.localPose.x,
+                                        y: capture.worldFromLocal.y + capture.localPose.y)
+            }
+        }
         let travel = nextCumulativeTravel(for: proposedCameraPose, roomID: roomID)
         let observation = LiveWorldObservation(
             id: observationID, sourceObservationID: sourceID, timestamp: timestamp,
+            captureTimestamp: captureTimestamp,
             sourceWidth: frame.width, sourceHeight: frame.height, solveWidth: solveWidth,
             sampleWidth: 160, excludedRects: exclusions,
             localPose: localPose ?? proposedCameraPose,
@@ -270,12 +331,33 @@ final class LiveWorldTracker {
             basisRevision: basisRevision,
             roomID: roomID,
             rawPose: proposedCameraPose,
-            optimizedPose: proposedCameraPose
+            optimizedPose: optimizedPose,
+            groundGeometry: islandCapture?.measured == true ? groundGeometry : nil,
+            observedFloorCandidates: islandCapture?.measured == true ? observedFloorCandidates : nil,
+            observedPlayerBounds: observedPlayerBounds
         )
-        try replaceSnapshot(observations: snapshot.observations + [observation])
+        if islandCapture == nil {
+            // Legacy callers have no proof of continuity; keep each as an
+            // explicit unknown component rather than inventing a rigid group.
+            let nextIslandID = (islands.map(\.id).max() ?? -1) + 1
+            let legacy = LiveTrackingIsland.legacy(observation)
+            islands.append(LiveTrackingIsland(id: nextIslandID, roomID: legacy.roomID,
+                startedAt: legacy.startedAt, worldFromLocal: legacy.worldFromLocal,
+                placement: legacy.placement, uncertainty: legacy.uncertainty,
+                breakReason: legacy.breakReason, members: legacy.members))
+        }
+        try replaceSnapshot(observations: snapshot.observations + [observation], islands: islands)
         currentVisitObservationIDs.insert(observationID)
         cumulativeTravel[observationID] = travel
         lastObservationID = observationID
+
+        if islandCapture?.measured == false {
+            // Retain pixels for provisional display, never as landmark/loop or
+            // trusted motion evidence. Local tracking may later reconnect a
+            // different measured island without promoting these captures.
+            pendingClosure = nil
+            return update(correction: .zero, closure: nil, rejections: [])
+        }
 
         if snapshot.keyframes.isEmpty {
             _ = try addKeyframe(observation, frame: frame)
@@ -290,6 +372,14 @@ final class LiveWorldTracker {
             return update(correction: .zero, closure: nil, rejections: [])
         }
 
+        // An extra probe between scheduled scans may be inconclusive because
+        // the floor is briefly occluded. Keep the original vote only within
+        // this short measured island; it still cannot accept any edge alone.
+        // Regular failed scans, stale probes, and ownership breaks clear it.
+        let retainVoteAfterInconclusiveProbe = isClosureConfirmationProbe
+            && islandCapture?.measured == true
+            && pendingClosure?.islandID == islandCapture?.id
+            && pendingClosure.map { timestamp > $0.timestamp && timestamp - $0.timestamp < 0.5 } == true
         var rejections = [LiveWorldTrackerRejection]()
         let eligible = eligibleReferences(for: observation, cumulativeTravel: travel)
         let allOlder = references.values.filter {
@@ -307,30 +397,60 @@ final class LiveWorldTracker {
         let preferredReferenceID = pendingClosure.map {
             Self.referenceID(for: $0.referenceKeyframeID)
         }
-        guard let match = matcher.match(
-                frame: frame,
-                references: eligible.map(\.reference),
-                preferredReferenceID: preferredReferenceID,
-                currentSolveWidth: solveWidth,
-                excluding: exclusions
-              ),
+        let featureMatch = matcher.match(frame: frame, references: eligible.map(\.reference),
+            preferredReferenceID: preferredReferenceID, currentSolveWidth: solveWidth, excluding: exclusions)
+        let patchMatch: GlobalFeatureMatch? = {
+            guard featureMatch == nil, verifyClosure != nil, !matcher.lastSearchWasAmbiguous,
+                  let proposePatchClosure else { return nil }
+            let searched = Set(matcher.lastSearchedReferenceIDs)
+            let selected = eligible.filter { searched.contains($0.reference.id) }
+            let permitted = Set(matcher.permittingPatchProposals(selected.map(\.reference)).map(\.id))
+            let observations = Dictionary(uniqueKeysWithValues: snapshot.observations.map { ($0.id, $0) })
+            let inputs = selected.compactMap { entry -> LiveWorldPatchReference? in
+                guard permitted.contains(entry.reference.id), let source = observations[entry.observationID],
+                      source.groundGeometry?.lines.isEmpty == false else { return nil }
+                return LiveWorldPatchReference(observation: source, reference: entry.reference)
+            }
+            return proposePatchClosure(inputs)
+        }()
+        guard let match = featureMatch ?? patchMatch,
               let reference = eligible.first(where: { $0.reference.id == match.referenceID }) else {
             rejections.append(.matcherRejected)
             if shouldCreateKeyframe(for: observation, cumulativeTravel: travel) {
                 _ = try addKeyframe(observation, frame: frame)
             }
-            pendingClosure = nil
+            if !retainVoteAfterInconclusiveProbe { pendingClosure = nil }
             return update(correction: .zero, closure: nil, rejections: rejections)
         }
 
+        // Scenery features propose displacement. Production callers can require
+        // independent camera-plane evidence before either confirmation vote.
+        // A failed scheduled verification clears the pending vote. An optional
+        // short probe may leave it pending, but never counts as a second vote.
+        let closurePose: CGPoint
+        if let verifyClosure {
+            guard let source = snapshot.observations.first(where: { $0.id == reference.observationID }),
+                  let verified = verifyClosure(source, match.proposedCameraPose),
+                  verified.x.isFinite, verified.y.isFinite else {
+                if !retainVoteAfterInconclusiveProbe { pendingClosure = nil }
+                if shouldCreateKeyframe(for: observation, cumulativeTravel: travel) {
+                    _ = try addKeyframe(observation, frame: frame)
+                }
+                return update(correction: .zero, closure: nil,
+                    rejections: [.groundPlaneVerificationRejected], match: (reference, match))
+            }
+            closurePose = verified
+        } else { closurePose = match.proposedCameraPose }
         let proposedCorrection = CGPoint(
-            x: match.proposedCameraPose.x - observation.rawPose.x,
-            y: match.proposedCameraPose.y - observation.rawPose.y
+            x: closurePose.x - observation.rawPose.x,
+            y: closurePose.y - observation.rawPose.y
         )
         let consistency = max(CGFloat(solveWidth) * 0.0125, 4)
         guard let pending = pendingClosure else {
             pendingClosure = PendingClosure(
+                timestamp: timestamp,
                 referenceKeyframeID: reference.keyframeID,
+                islandID: islandCapture?.id,
                 correction: proposedCorrection
             )
             rejections.append(.confirmationRequired)
@@ -339,10 +459,15 @@ final class LiveWorldTracker {
             }
             return update(correction: .zero, closure: nil, rejections: rejections, match: (reference, match))
         }
-        guard pending.referenceKeyframeID == reference.keyframeID,
+        guard (pending.referenceKeyframeID == reference.keyframeID
+                || (verifyClosure != nil && referenceKeyframesShareRigidIsland(
+                    pending.referenceKeyframeID, reference.keyframeID))),
+              pending.islandID == islandCapture?.id,
               Self.distance(pending.correction, proposedCorrection) <= consistency else {
             pendingClosure = PendingClosure(
+                timestamp: timestamp,
                 referenceKeyframeID: reference.keyframeID,
+                islandID: islandCapture?.id,
                 correction: proposedCorrection
             )
             rejections.append(.inconsistentConfirmation)
@@ -363,22 +488,49 @@ final class LiveWorldTracker {
             fromKeyframeID: reference.keyframeID,
             toKeyframeID: currentKeyframeID,
             landmarkIDs: match.inlierReferenceFeatureIDs,
-            deltaX: Double(match.proposedCameraPose.x - reference.reference.cameraPose.x),
-            deltaY: Double(match.proposedCameraPose.y - reference.reference.cameraPose.y),
+            deltaX: Double(closurePose.x - reference.reference.cameraPose.x),
+            deltaY: Double(closurePose.y - reference.reference.cameraPose.y),
             support: match.inlierReferenceFeatureIDs.count,
-            ambiguity: match.ambiguityRatio
+            ambiguity: match.ambiguityRatio,
+            residualPixels: match.residual * solveWidth / Double(reference.reference.sampleWidth)
         )
+        let beforeClosure = snapshot
+        let correction: CGPoint
+        do {
+            try replaceSnapshot(loopEdges: snapshot.loopClosureEdges + [closure])
+            correction = try optimize(afterAdding: observationID, closureID: closure.id)
+        } catch is LiveIslandCorrectionError {
+            // A plausible repeated match can still contradict known geometry.
+            // Reject just that constraint; retain the new capture/keyframe and
+            // leave the accepted graph, poses and closure cooldown untouched.
+            snapshot = beforeClosure
+            refreshReferences()
+            return update(correction: .zero, closure: nil,
+                          rejections: [.inconsistentIslandGeometry], match: (reference, match))
+        }
         closedReferenceKeyframeIDs.insert(reference.keyframeID)
         lastAcceptedClosureTravel = travel
-        try replaceSnapshot(loopEdges: snapshot.loopClosureEdges + [closure])
-        let correction = try optimize(afterAdding: observationID)
+        lastAcceptedClosureIslandID = island(containing: observationID)?.id
         return update(correction: correction, closure: closure, rejections: [], match: (reference, match))
+    }
+
+    /// Distinct views of the same proven rigid island can independently confirm
+    /// a moving revisit. Estimated spacing between different islands cannot.
+    private func referenceKeyframesShareRigidIsland(_ first: Int, _ second: Int) -> Bool {
+        guard let a = snapshot.keyframes.first(where: { $0.id == first }),
+              let b = snapshot.keyframes.first(where: { $0.id == second }),
+              let owner = island(containing: a.observationID),
+              owner.placement != .legacyUnknown,
+              island(containing: b.observationID)?.id == owner.id else { return false }
+        return true
     }
 
     private func eligibleReferences(for observation: LiveWorldObservation, cumulativeTravel travelDistance: CGFloat) -> [CachedReference] {
         let minimumTravel = max(CGFloat(observation.solveWidth) * minimumClosureTravelFraction, 1)
         let minimumTravelAfterClosure = max(CGFloat(observation.solveWidth) * keyframeTravelFraction, 1)
+        let currentIsland = island(containing: observation.id)
         if let lastAcceptedClosureTravel,
+           (currentIsland?.placement == .legacyUnknown || currentIsland?.id == lastAcceptedClosureIslandID),
            travelDistance - lastAcceptedClosureTravel < minimumTravelAfterClosure {
             return []
         }
@@ -388,15 +540,22 @@ final class LiveWorldTracker {
                   let keyframe = keyframes[candidate.keyframeID], keyframe.observationID == candidate.observationID,
                   referenceObservation.id < observation.id,
                   let referenceTravel = cumulativeTravel[candidate.observationID] else { return false }
+            let referenceIsland = island(containing: candidate.observationID)
+            let differentIsland = currentIsland?.placement != .legacyUnknown
+                && currentIsland?.id != referenceIsland?.id
             return candidate.roomID == observation.roomID
-                && !closedReferenceKeyframeIDs.contains(candidate.keyframeID)
-                && (!currentVisitObservationIDs.contains(candidate.observationID)
-                || travelDistance - referenceTravel >= minimumTravel
-                )
+                && (differentIsland || !closedReferenceKeyframeIDs.contains(candidate.keyframeID))
+                && (differentIsland || !currentVisitObservationIDs.contains(candidate.observationID)
+                    || travelDistance - referenceTravel >= minimumTravel)
         }.sorted { $0.keyframeID < $1.keyframeID }
     }
 
     private func shouldCreateKeyframe(for observation: LiveWorldObservation, cumulativeTravel: CGFloat) -> Bool {
+        if let owner = island(containing: observation.id), owner.placement != .legacyUnknown,
+           !snapshot.keyframes.contains(where: { keyframe in
+               keyframe.observationID != observation.id
+                   && owner.members.contains { $0.observationID == keyframe.observationID }
+           }) { return true }
         let roomObservationIDs = Set(snapshot.observations.lazy
             .filter { $0.roomID == observation.roomID }
             .map(\.id))
@@ -427,7 +586,8 @@ final class LiveWorldTracker {
            let priorObservation = snapshot.observations.first(where: { $0.id == prior.observationID }),
            priorObservation.roomID == observation.roomID,
            priorObservation.captureGeneration == observation.captureGeneration,
-           priorObservation.localEpoch == observation.localEpoch {
+           priorObservation.localEpoch == observation.localEpoch,
+           reliableMotionCanConnect(priorObservation.id, observation.id) {
             motionEdges.append(LiveWorldRelativeMotionEdge(
                 id: nextID(in: motionEdges.map(\.id)), fromObservationID: priorObservation.id,
                 toObservationID: observation.id,
@@ -438,7 +598,7 @@ final class LiveWorldTracker {
 
         var landmarks = snapshot.landmarks
         if let reference = matcher.makeReference(
-            id: Self.referenceID(for: keyframeID), frame: frame, cameraPose: observation.rawPose,
+            id: Self.referenceID(for: keyframeID), frame: frame, cameraPose: observation.optimizedPose,
             solveWidth: observation.solveWidth, excluding: observation.excludedRects
         ) {
             for feature in reference.features {
@@ -448,8 +608,8 @@ final class LiveWorldTracker {
                     id: landmarkID, keyframeID: keyframeID, sourceObservationID: observation.sourceObservationID,
                     samplePoint: feature.samplePoint,
                     worldPoint: CGPoint(
-                        x: observation.rawPose.x + feature.samplePoint.x * sampleScale,
-                        y: observation.rawPose.y
+                        x: observation.optimizedPose.x + feature.samplePoint.x * sampleScale,
+                        y: observation.optimizedPose.y
                             + (CGFloat(reference.sampleHeight) - feature.samplePoint.y) * sampleScale
                     ),
                     descriptor: feature.descriptor.map(Float.init), depth: feature.depth,
@@ -462,7 +622,32 @@ final class LiveWorldTracker {
         return keyframeID
     }
 
-    private func optimize(afterAdding observationID: Int) throws -> CGPoint {
+    private func island(containing observationID: Int) -> LiveTrackingIsland? {
+        snapshot.trackingIslands.first { $0.members.contains { $0.observationID == observationID } }
+    }
+
+    private func reliableMotionCanConnect(_ from: Int, _ to: Int) -> Bool {
+        let first = snapshot.trackingIslands.first { $0.members.contains { $0.observationID == from } }
+        let second = snapshot.trackingIslands.first { $0.members.contains { $0.observationID == to } }
+        if first?.placement == .legacyUnknown && second?.placement == .legacyUnknown { return true }
+        return first?.id == second?.id
+            && first?.members.first(where: { $0.observationID == from })?.measured == true
+            && second?.members.first(where: { $0.observationID == to })?.measured == true
+    }
+
+    private func optimize(afterAdding observationID: Int, closureID: Int) throws -> CGPoint {
+        if snapshot.trackingIslands.contains(where: { $0.placement != .legacyUnknown }) {
+            guard let before = snapshot.observations.first(where: { $0.id == observationID }) else {
+                throw LiveWorldTrackerError.invalidSnapshot
+            }
+            snapshot = try LiveIslandCorrection.applying(closureID, to: snapshot)
+            refreshReferences()
+            guard let after = snapshot.observations.first(where: { $0.id == observationID }) else {
+                throw LiveWorldTrackerError.invalidSnapshot
+            }
+            return CGPoint(x: after.optimizedPose.x - before.rawPose.x,
+                           y: after.optimizedPose.y - before.rawPose.y)
+        }
         guard let currentObservation = snapshot.observations.first(where: { $0.id == observationID })
         else { throw LiveWorldTrackerError.invalidSnapshot }
         let roomID = currentObservation.roomID
@@ -610,7 +795,8 @@ final class LiveWorldTracker {
         keyframes: [LiveWorldKeyframe]? = nil,
         landmarks: [LiveWorldLandmark]? = nil,
         relativeEdges: [LiveWorldRelativeMotionEdge]? = nil,
-        loopEdges: [LiveWorldLoopClosureEdge]? = nil
+        loopEdges: [LiveWorldLoopClosureEdge]? = nil,
+        islands: [LiveTrackingIsland]? = nil
     ) throws {
         snapshot = try LiveWorldSnapshot(
             schemaVersion: snapshot.schemaVersion, mapRevision: snapshot.mapRevision + 1,
@@ -618,7 +804,9 @@ final class LiveWorldTracker {
             observations: observations ?? snapshot.observations,
             keyframes: keyframes ?? snapshot.keyframes, landmarks: landmarks ?? snapshot.landmarks,
             relativeMotionEdges: relativeEdges ?? snapshot.relativeMotionEdges,
-            loopClosureEdges: loopEdges ?? snapshot.loopClosureEdges
+            loopClosureEdges: loopEdges ?? snapshot.loopClosureEdges,
+            trackingIslands: islands ?? snapshot.trackingIslands,
+            doorwayFloorConstraints: snapshot.doorwayFloorConstraints
         )
     }
 

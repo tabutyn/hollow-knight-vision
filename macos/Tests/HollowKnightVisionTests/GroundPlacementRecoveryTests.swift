@@ -86,6 +86,35 @@ final class GroundPlacementRecoveryTests: XCTestCase {
             solveWidth: 640, timestamp: 1.04, captureElapsed: 0.02))
     }
 
+    func testSparseHorizontalGroundCanRecoverAnUnderestimatedFallback() {
+        var gate = GroundPlacementRecovery()
+        XCTAssertTrue(gate.accepts(proposal(0, 0), current: .zero,
+            solveWidth: 640, timestamp: 1, captureElapsed: 0.02))
+        let samples: [(Double, CGFloat, CGFloat)] = [(1.02, 24, 4), (1.05, 31, 8), (1.08, 38, 12)]
+        for (index, sample) in samples.enumerated() {
+            XCTAssertEqual(gate.accepts(proposal(sample.1, 0, support: 4, error: 11),
+                current: CGPoint(x: sample.2, y: 0), solveWidth: 640,
+                timestamp: sample.0, captureElapsed: 0.02), index == 2)
+        }
+        XCTAssertTrue(gate.allowsAtlasWrite)
+    }
+
+    func testSparseHorizontalRecoveryRejectsStationaryOppositeWeakAndStaleEvidence() {
+        for mode in ["stationary", "opposite", "weak", "stale", "vertical", "duplicate", "missing"] {
+            var gate = GroundPlacementRecovery()
+            for index in 0..<3 {
+                if mode == "missing" && index == 1 { gate.missingObservation() }
+                let x: CGFloat = mode == "stationary" ? 24 : mode == "opposite" ? 38 - CGFloat(index) * 7 : 24 + CGFloat(index) * 7
+                let time = 1.02 + Double(index) * (mode == "stale" ? 0.2 : 0.03)
+                XCTAssertFalse(gate.accepts(proposal(x, mode == "vertical" ? 8 : 0,
+                    support: mode == "weak" && index == 1 ? 2 : 4, error: 11,
+                    distinct: mode != "duplicate" || index == 0),
+                    current: .zero, solveWidth: 640,
+                    timestamp: time, captureElapsed: 0.02), mode)
+            }
+        }
+    }
+
     func testNormalMotionAndResetDoNotRequireRecovery() {
         var gate = trusted()
         XCTAssertTrue(gate.accepts(proposal(1458, 510), current: CGPoint(x: 1454, y: 508),

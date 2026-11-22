@@ -54,6 +54,7 @@ class IncrementalTrainerTests(unittest.TestCase):
 
         retained_names = trainer.retained_previous_class_names({
             "class_names": list(previous_names),
+            "trained_class_names": list(previous_names),
         })
 
         self.assertEqual(
@@ -75,15 +76,29 @@ class IncrementalTrainerTests(unittest.TestCase):
             ["game.playable-knight"],
         )
 
-    def test_old_dataset_without_allowlist_retains_model_heads(self):
+    def test_legacy_head_presence_does_not_count_as_training_evidence(self):
         checkpoint = {"class_names": ["game.mana", "game.playable-knight"]}
 
         self.assertEqual(
             trainer.training_class_names(
                 {}, {"game.playable-knight"}, checkpoint
             ),
-            ["game.mana", "game.playable-knight"],
+            ["game.playable-knight"],
         )
+
+    def test_allowlisted_optional_classes_need_positive_training_evidence(self):
+        self.assertEqual(trainer.training_class_names(
+            {"classIdentifiers": ["game.playable-knight", "enemies.crawlid", "enemies.shade"]},
+            {"game.playable-knight", "enemies.crawlid"},
+            {"class_names": ["game.playable-knight", "enemies.shade"]}),
+            ["enemies.crawlid", "game.playable-knight"])
+
+    def test_certified_prior_learning_survives_without_reactivating_unknown_heads(self):
+        checkpoint = {"class_names": ["game.playable-knight", "enemies.crawlid", "enemies.shade"],
+                      "trained_class_names": ["game.playable-knight", "enemies.crawlid"]}
+        self.assertEqual(trainer.training_class_names(
+            {"classIdentifiers": checkpoint["class_names"]}, {"game.playable-knight"}, checkpoint),
+            ["enemies.crawlid", "game.playable-knight"])
 
     def test_migrated_class_reuses_legacy_output_head(self):
         old_names = ["main-title.options"]

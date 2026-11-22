@@ -190,7 +190,7 @@ enum GroundLabelEvaluator {
     }
     static func predictions(frame: PreparedFrame, parameters: GroundLabelParameters) -> [CleanFloorLine] {
         let document = frame.document
-        return GroundLineDetector.rejectingKnownForegroundLines(
+        return GroundLineDetector.gameplayFloors(
             GroundLineDetector.semanticFloorLines(from: frame.comparison, tuning: parameters.tuning), imageHeight: document.height,
             foregroundRects: document.runtimeForeground.map { $0.bottomLeft(imageHeight: document.height) },
             knightRect: document.runtimeKnight?.bottomLeft(imageHeight: document.height))

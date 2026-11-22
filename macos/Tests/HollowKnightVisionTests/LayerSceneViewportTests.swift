@@ -1,9 +1,115 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import XCTest
 @testable import HollowKnightVision
 
 final class LayerSceneViewportTests: XCTestCase {
+    @MainActor
+    func testHackerDoorDragRoutesThroughViewportToLiveRoomAndPersists() throws {
+        let store = GroundTruthLineStore(url: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let editor = GroundTruthLabelController(store: store)
+        let bounds = HackerTerrainRoomGeometry.editingBounds(roomBounds: CGRect(x: 0, y: 0, width: 50, height: 50),
+            position: .zero, isCurrent: true, liveBounds: CGRect(x: 0, y: 0, width: 200, height: 200))
+        let room = GroundTruthRoomPlacement(id: UUID(), sceneName: "room", position: .zero, bounds: bounds)
+        let camera = GroundTruthCameraTransform(sceneName: "room", cameraWorld: .zero,
+            pixelsPerWorldUnitX: 10, pixelsPerWorldUnitY: 10, frameSize: CGSize(width: 200, height: 200))
+        editor.registerRoom(room, transform: camera, liveBounds: bounds)
+        editor.selectDoor()
+        let coordinator = LayerSceneViewport.Coordinator()
+        coordinator.mode = .world
+        coordinator.groundLabelEditingEnabled = HackerEditingTarget.door.editsTerrain
+        coordinator.onGroundLabelPointer = { phase, point, tolerance in
+            editor.handle(phase: phase, atlasPoint: point, atlasTolerance: tolerance, rooms: [room])
+        }
+        let view = LayerMetalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200), device: nil)
+        view.coordinator = coordinator
+        func event(_ type: NSEvent.EventType, _ point: CGPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 1,
+                               windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        }
+        view.mouseDown(with: event(.leftMouseDown, CGPoint(x: 100, y: 100)))
+        view.mouseDragged(with: event(.leftMouseDragged, CGPoint(x: 150, y: 100)))
+        view.mouseUp(with: event(.leftMouseUp, CGPoint(x: 150, y: 100)))
+        XCTAssertEqual(editor.document.doors?.count, 1)
+        XCTAssertEqual(try store.load().doors?.first?.kind, .door)
+        XCTAssertEqual(editor.overlay(rooms: [room]).lines.last?.kind, .selectedGroundTruth)
+        editor.selectAxis(.horizontal)
+        XCTAssertEqual(editor.overlay(rooms: [room]).lines.last?.kind, .doorGroundTruth)
+        let exitBounds = HackerTerrainRoomGeometry.editingBounds(roomBounds: bounds, position: .zero, isCurrent: true,
+            liveBounds: bounds, pathBounds: CGRect(x: 30, y: 100, width: 240, height: 12))
+        let exitRoom = GroundTruthRoomPlacement(id: room.id, sceneName: room.sceneName, position: .zero, bounds: exitBounds)
+        editor.selectDoor()
+        coordinator.onGroundLabelPointer = { phase, point, tolerance in
+            editor.handle(phase: phase, atlasPoint: point, atlasTolerance: tolerance, rooms: [exitRoom])
+        }
+        view.mouseDown(with: event(.leftMouseDown, CGPoint(x: 270, y: 100)))
+        view.mouseDragged(with: event(.leftMouseDragged, CGPoint(x: 270, y: 140)))
+        view.mouseUp(with: event(.leftMouseUp, CGPoint(x: 270, y: 140)))
+        XCTAssertEqual(try store.load().doors?.map(\.kind), [.door, .doorVertical])
+    }
+
+    @MainActor
+    func testObjectiveViewportClickHitsPathBeyondVisitedImage() {
+        let paths = AtlasPathMap(store: .init(file: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
+        paths.setBase(room: "room", floors: [.init(left: 0, right: 300, y: 50)], fallbackHeight: 20)
+        let coordinator = LayerSceneViewport.Coordinator()
+        coordinator.mode = .world
+        var selected: String?
+        coordinator.onPathSelect = { point, tolerance in
+            selected = paths.selectObjective(at: point, tolerance: tolerance, in: [("room", .zero)])
+            return selected != nil
+        }
+        let view = LayerMetalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200), device: nil)
+        view.coordinator = coordinator
+        let click = NSEvent.mouseEvent(with: .leftMouseDown, location: CGPoint(x: 250, y: 70),
+            modifierFlags: [], timestamp: 1, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        view.mouseDown(with: click)
+        XCTAssertEqual(selected, "room")
+        XCTAssertTrue(paths.hasUnroutedObjective(room: "room"))
+    }
+
+    func testProvisionalLinesAreDashedInScreenSpaceAndBoundedAtExtremeZoom() {
+        let line = LayerSceneFeatureReviewOverlay.Line(start: .zero,
+            end: CGPoint(x: 120, y: 0), kind: .provisionalIsland)
+        let overlay = LayerSceneFeatureReviewOverlay(markers: [], lines: [line])
+        let quads = LayerSceneFeatureReviewGeometry.lineQuads(overlay, zoom: 1, pan: .zero)
+        XCTAssertEqual(quads.count, 10)
+        XCTAssertEqual(quads[0].points[2].x, 7.2, accuracy: 0.001)
+        XCTAssertEqual(quads[1].points[0].x, 12, accuracy: 0.001)
+        XCTAssertEqual(LayerSceneFeatureReviewGeometry.lineQuads(overlay, zoom: 2, pan: .zero).count, 20)
+        XCTAssertEqual(LayerSceneFeatureReviewGeometry.lineQuads(overlay, zoom: 1_000_000, pan: .zero).count, 64)
+        let many = LayerSceneFeatureReviewOverlay(markers: [], lines: Array(repeating: line, count: 10_000))
+        XCTAssertEqual(LayerSceneFeatureReviewGeometry.lineQuads(many, zoom: 1_000_000, pan: .zero).count,
+                       LayerSceneFeatureReviewGeometry.maximumLines)
+    }
+
+    func testInvisibleIslandsCannotExhaustVisibleOutlineBudget() {
+        let hidden = LayerSceneFeatureReviewOverlay.Line(start: CGPoint(x: -10_000, y: 40),
+            end: CGPoint(x: -8_000, y: 40), kind: .provisionalIsland)
+        let visible = LayerSceneFeatureReviewOverlay.Line(start: CGPoint(x: 10, y: 40),
+            end: CGPoint(x: 130, y: 40), kind: .doorwayFloor)
+        let overlay = LayerSceneFeatureReviewOverlay(markers: [], lines: Array(repeating: hidden, count: 200) + [visible])
+        let quads = LayerSceneFeatureReviewGeometry.lineQuads(overlay, zoom: 1, pan: .zero,
+            viewport: CGRect(x: 0, y: 0, width: 400, height: 300))
+        XCTAssertEqual(quads.count, 10)
+        XCTAssertTrue(quads.allSatisfy { $0.lineKind == .doorwayFloor })
+    }
+
+    func testHugeCrossingEdgeIsClippedBeforeDashGeneration() {
+        let crossing = LayerSceneFeatureReviewOverlay.Line(start: CGPoint(x: -1_000_000_000, y: 40),
+            end: CGPoint(x: 1_000_000_000, y: 40), kind: .provisionalIsland)
+        let missesCorner = LayerSceneFeatureReviewOverlay.Line(start: CGPoint(x: -100, y: 10),
+            end: CGPoint(x: 10, y: -100), kind: .doorwayFloor)
+        let overlay = LayerSceneFeatureReviewOverlay(markers: [], lines: [crossing, missesCorner])
+        let quads = LayerSceneFeatureReviewGeometry.lineQuads(overlay, zoom: 1, pan: .zero,
+            viewport: CGRect(x: 0, y: 0, width: 320, height: 180))
+        XCTAssertFalse(quads.isEmpty)
+        XCTAssertLessThanOrEqual(quads.count, 28)
+        XCTAssertTrue(quads.allSatisfy { $0.lineKind == .provisionalIsland })
+        XCTAssertTrue(quads.flatMap(\.points).allSatisfy { $0.x >= -2 && $0.x <= 322 })
+    }
+
     func testFreeFlyOwnsPointerDragInsteadOfForwardingItToGame() {
         XCTAssertFalse(LayerScenePointerPolicy.forwardsGamePointer(framingMode: .freeFly))
         XCTAssertTrue(LayerScenePointerPolicy.forwardsGamePointer(framingMode: .fit))
@@ -17,16 +123,15 @@ final class LayerSceneViewportTests: XCTestCase {
     }
     private func tile(factor: Double = 2, order: Int = 3, width: CGFloat = 100) -> LayerSceneDrawTile { LayerSceneDrawTile(roomID: UUID(), layerID: UUID(), image: CGImage(width: 1, height: 1, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: 1, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: [], provider: CGDataProvider(data: Data([255]) as CFData)!, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!, bounds: CGRect(x: 10,y:20,width:width,height:50), factor: factor, order: order, roomPosition: CGPoint(x: 200,y:300), roomScale: 2) }
     func testRoomProjectionUsesNegativeFactorCameraShift() { let t=tile(); XCTAssertEqual(LayerSceneProjection.project(t,mode:.room,camera:CGPoint(x:4,y:5)).origin,CGPoint(x:2,y:10)) }
-    func testGroundReviewPaletteUsesPurpleForPersistentTileAndLine() {
+    func testSavedAndCurrentFloorsShareGreenWhileReferencePatchesUsePurple() {
         let tile = LayerSceneFeatureReviewPalette.rgba(for: .groundFeature)
         let selection = LayerSceneFeatureReviewPalette.rgba(for: .selectedGroundFeature)
         let line = LayerSceneFeatureReviewPalette.rgba(for: .persistentGround)
         XCTAssertNotEqual(tile, selection)
         XCTAssertGreaterThan(tile.z, tile.x)
         XCTAssertGreaterThan(tile.x, tile.y)
-        XCTAssertEqual(tile.x, line.x)
-        XCTAssertEqual(tile.y, line.y)
-        XCTAssertEqual(tile.z, line.z)
+        XCTAssertEqual(line, LayerSceneFeatureReviewPalette.rgba(for: .currentGround))
+        XCTAssertGreaterThan(line.y, line.z)
     }
     func testLiveGroundReviewPaletteMatchesLegend() {
         let green = LayerSceneFeatureReviewPalette.rgba(for: .cameraConsistentGround)

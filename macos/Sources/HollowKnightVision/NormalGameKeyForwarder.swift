@@ -4,8 +4,18 @@ import CoreGraphics
 /// A nonactivating key panel lets Unity keep application focus while Vision
 /// owns keyboard focus. Ordinary windows make stock Unity discard our events.
 final class NormalVisionPanel: NSPanel {
+    var atlasTabEnabled = false
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+}
+
+enum AtlasTabShortcut {
+    static func handles(_ event: NSEvent, in window: NSWindow) -> Bool {
+        event.type == .keyDown && event.keyCode == 48 && window.isKeyWindow
+            && window.attachedSheet == nil
+            && !(window.firstResponder is NSTextView) && !(window.firstResponder is NSTextField)
+            && event.modifierFlags.intersection([.shift, .control, .command, .option]).isEmpty
+    }
 }
 
 struct NativeGameKeyState {
@@ -192,6 +202,7 @@ final class NormalGameKeyForwarder {
     private let gameURL: URL?
     private let activityHandler: () -> Void
     private let statusHandler: (String) -> Void
+    private let demonstrationInputHandler: (String, Bool, TimeInterval) -> Void
     private var monitor: Any?
     private var pointerMonitor: Any?
     private var observers: [NSObjectProtocol] = []
@@ -214,10 +225,12 @@ final class NormalGameKeyForwarder {
     private var suppressPointerClaimUntil: TimeInterval = 0
 
     init(gameURL: URL?, activityHandler: @escaping () -> Void,
-         statusHandler: @escaping (String) -> Void) {
+         statusHandler: @escaping (String) -> Void,
+         demonstrationInputHandler: @escaping (String, Bool, TimeInterval) -> Void = { _, _, _ in }) {
         self.gameURL = gameURL?.resolvingSymlinksInPath().standardizedFileURL
         self.activityHandler = activityHandler
         self.statusHandler = statusHandler
+        self.demonstrationInputHandler = demonstrationInputHandler
     }
 
     private var panel: NormalVisionPanel? {
@@ -454,6 +467,7 @@ final class NormalGameKeyForwarder {
         }
         guard started, let panel, panel.isKeyWindow, panel.attachedSheet == nil,
               event.window === panel else { return event }
+        if panel.atlasTabEnabled, AtlasTabShortcut.handles(event, in: panel) { return event }
         guard !keysAwaitingFreshPress.contains(event.keyCode) else { return nil }
         let textInput = panel.firstResponder is NSTextView || panel.firstResponder is NSTextField
         guard !textInput || (settings && NormalGameKeyPolicy.arrows.contains(event.keyCode)) else {
@@ -504,6 +518,8 @@ final class NormalGameKeyForwarder {
                          isRepeat: isRepeat) else { return true }
         pressFlags[keyCode] = flags
         if !alreadyForwarded { forwardedEvent.postToPid(game.processIdentifier) }
+        demonstrationInputHandler(BotObservationContract.button(keyCode: keyCode), true,
+                                  ProcessInfo.processInfo.systemUptime)
         statusHandler(visionText("nativeInputReady"))
         activityHandler()
         return true
@@ -606,6 +622,8 @@ final class NormalGameKeyForwarder {
             flags: flags
         ) else { return }
         event.postToPid(pid)
+        demonstrationInputHandler(BotObservationContract.button(keyCode: keyCode), false,
+                                  ProcessInfo.processInfo.systemUptime)
     }
 
     func releaseAll() {

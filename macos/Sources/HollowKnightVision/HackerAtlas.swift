@@ -2,11 +2,40 @@ import CoreGraphics
 import CoreImage
 import Foundation
 
+enum HackerPathFrameState {
+    case gameplay, unrecognized, hidden
+
+    init(hasSceneSignal: Bool, recognized: LiveGameStatus.Context?) {
+        if !hasSceneSignal { self = .hidden }
+        else if let recognized { self = recognized.isGameplay ? .gameplay : .hidden }
+        else { self = .unrecognized }
+    }
+
+    func admits(receiverGameplay: Bool?) -> Bool {
+        self != .hidden && (receiverGameplay ?? (self == .gameplay))
+    }
+}
+
 struct HackerCapturedFrame: @unchecked Sendable {
     let unityFrame: Int
     let image: CGImage
     let capturedAt: TimeInterval
     let integratesAtlas: Bool
+    let captureGeneration: UInt64
+    let horizontalInput: Int
+    let pathState: HackerPathFrameState
+
+    init(unityFrame: Int, image: CGImage, capturedAt: TimeInterval,
+         integratesAtlas: Bool, captureGeneration: UInt64 = 0, horizontalInput: Int = 0,
+         pathState: HackerPathFrameState = .unrecognized) {
+        self.unityFrame = unityFrame
+        self.image = image
+        self.capturedAt = capturedAt
+        self.integratesAtlas = integratesAtlas
+        self.captureGeneration = captureGeneration
+        self.horizontalInput = horizontalInput
+        self.pathState = pathState
+    }
 }
 
 struct HackerMatchedFrame: @unchecked Sendable {
@@ -113,9 +142,10 @@ struct HackerAtlasOutput: @unchecked Sendable {
     let unityFrame: Int
     let roomCount: Int
     let knownScenes: [String]
+    let floorAlignedConnectionIDs: Set<UUID>
 }
 
-enum HackerRoomSide: String, Sendable {
+enum HackerRoomSide: String, Codable, Sendable {
     case left, right, bottom, top
 
     var opposite: HackerRoomSide {
@@ -133,7 +163,7 @@ enum HackerRoomSide: String, Sendable {
 /// A doorway observed while moving between two playable scenes. Coordinates
 /// are room-local, so the connector remains attached while rooms are laid out
 /// automatically or dragged by hand.
-struct HackerRoomConnection: Identifiable, Sendable {
+struct HackerRoomConnection: Codable, Identifiable, Sendable {
     let id: UUID
     let fromRoomID: UUID
     let toRoomID: UUID
@@ -159,6 +189,10 @@ struct HackerAtlasRoom: Identifiable, @unchecked Sendable {
     let bounds: CGRect
     let atlasTiles: [LiveAtlasOutput.AtlasLayer]
 
+    var botCoverage = BotHackerAtlasCoverage()
+    var botCameraOrigin: CGPoint = .zero
+    var pathCalibration: AtlasPathCalibration? = nil
+
     var worldBounds: CGRect {
         bounds.offsetBy(dx: position.x, dy: position.y)
     }
@@ -173,10 +207,12 @@ struct HackerRoomLayout: Sendable {
 
     /// Builds the largest possible rectilinear forest. Tree edges keep their
     /// doorways exactly aligned with a small gap. A conflicting loop or an
-    /// overlap starts a fanned island, joined by a free-form cyan connector.
+    /// overlap moves the next room farther along the passage, preserving its
+    /// floor elevation rather than fanning a horizontal neighbor up or down.
     static func make(
         rooms: [HackerAtlasRoom],
         connections: [HackerRoomConnection],
+        floorAlignedConnectionIDs: Set<UUID> = [],
         gap: CGFloat = roomGap
     ) -> HackerRoomLayout {
         guard !rooms.isEmpty else { return .empty }
@@ -259,18 +295,17 @@ struct HackerRoomLayout: Sendable {
         ) -> CGPoint {
             guard collides(room, at: candidate) else { return candidate }
             let stride = connectionSide.isHorizontal
-                ? max(64, room.bounds.height + gap)
-                : max(64, room.bounds.width + gap)
+                ? max(64, room.bounds.width + gap)
+                : max(64, room.bounds.height + gap)
             for distance in 1...max(8, rooms.count * 2) {
-                for sign: CGFloat in [1, -1] {
-                    var shifted = candidate
-                    if connectionSide.isHorizontal {
-                        shifted.y += CGFloat(distance) * stride * sign
-                    } else {
-                        shifted.x += CGFloat(distance) * stride * sign
-                    }
-                    if !collides(room, at: shifted) { return shifted }
+                var shifted = candidate
+                let sign: CGFloat = connectionSide == .right || connectionSide == .top ? 1 : -1
+                if connectionSide.isHorizontal {
+                    shifted.x += CGFloat(distance) * stride * sign
+                } else {
+                    shifted.y += CGFloat(distance) * stride * sign
                 }
+                if !collides(room, at: shifted) { return shifted }
             }
             return candidate
         }
@@ -300,8 +335,28 @@ struct HackerRoomLayout: Sendable {
 
         while !pending.isEmpty {
             var progressed = false
-            var remainder = [HackerRoomConnection]()
-            for connection in pending {
+            let work: [HackerRoomConnection]
+            var remainder: [HackerRoomConnection]
+            if floorAlignedConnectionIDs.isEmpty {
+                work = pending
+                remainder = []
+            } else {
+                // Finish the reachable measured-floor component before any
+                // unmeasured vertical packing. Restart after each edge so a
+                // newly reachable return-floor link immediately takes priority.
+                let eligible = pending.indices.filter {
+                    positions[pending[$0].fromRoomID] != nil || positions[pending[$0].toRoomID] != nil
+                }
+                let preferred = eligible.first {
+                    floorAlignedConnectionIDs.contains(pending[$0].id)
+                        && pending[$0].fromSide.isHorizontal && pending[$0].toSide.isHorizontal
+                }
+                let selected = preferred ?? eligible.first ?? pending.startIndex
+                var remaining = pending
+                work = [remaining.remove(at: selected)]
+                remainder = remaining
+            }
+            for connection in work {
                 guard let fromRoom = roomsByID[connection.fromRoomID],
                       let toRoom = roomsByID[connection.toRoomID] else { continue }
                 let fromPlaced = positions[connection.fromRoomID] != nil
@@ -406,6 +461,11 @@ final class HackerFramePreparer: @unchecked Sendable {
 
     func reset() {
         anchorPositions.removeAll(keepingCapacity: true)
+        lastPlayableReference = nil
+    }
+
+    func restoreAnchors(_ anchors: [String: CGPoint]) {
+        anchorPositions = anchors
         lastPlayableReference = nil
     }
 
@@ -601,6 +661,22 @@ final class HackerFramePreparer: @unchecked Sendable {
 /// cadence frames and fade recovery references. Live presentation never waits
 /// for its masking or tile rasterization.
 final class HackerAtlasPipeline: @unchecked Sendable {
+    private struct GroundedReference {
+        let timestamp: TimeInterval
+        let localY: CGFloat
+        let screenPoint: CGPoint
+        let frameSize: CGSize
+    }
+
+    private struct PendingFloorAlignment {
+        let connectionID: UUID
+        let fromScene: String
+        let toScene: String
+        let fromSide: HackerRoomSide
+        let departure: TimeInterval
+        let arrival: TimeInterval
+    }
+
     private struct FadeReference {
         let prepared: HackerPreparedFrame
         let profile: FrameSignalProfile
@@ -608,18 +684,24 @@ final class HackerAtlasPipeline: @unchecked Sendable {
     }
 
     private final class RoomState {
-        let id = UUID()
+        let id: UUID
         let sceneName: String
         let position: CGPoint
+        let anchor: CGPoint
         let composer: LiveTiledAtlas
         var hudStencilTracker: HUDStencilTracker
         var fadeReference: FadeReference?
         var lastIntegratedUnityFrame: Int?
+        var botCoverage = BotHackerAtlasCoverage()
+        var pathCalibration: AtlasPathCalibration?
 
-        init(sceneName: String, position: CGPoint, context: CIContext, hudTemplate: HUDStencilTemplate?) {
+        init(id: UUID = UUID(), sceneName: String, position: CGPoint, anchor: CGPoint,
+             context: CIContext, hudTemplate: HUDStencilTemplate?) {
+            self.id = id
             hudStencilTracker = HUDStencilTracker(template: hudTemplate)
             self.sceneName = sceneName
             self.position = position
+            self.anchor = anchor
             composer = LiveTiledAtlas(
                 context: context,
                 anchorPosition: .zero,
@@ -633,9 +715,16 @@ final class HackerAtlasPipeline: @unchecked Sendable {
     private var hudTemplate: HUDStencilTemplate?
     private var rooms = [String: RoomState]()
     private var connections = [HackerRoomConnection]()
+    private var groundedReferences = [String: [GroundedReference]]()
+    private var pendingFloorAlignments = [PendingFloorAlignment]()
+    private var floorAlignedConnections = Set<UUID>()
     private var lastPlayableFrame: HackerPreparedFrame?
     private var nextObservationID = 0
     private var revision: UInt64 = 0
+    private var registrationCount = 0
+    private var archiveCreatedAt = Date()
+    private var archiveProfile: SaveProfileAtlas?
+    private var roomPositionOverrides = [UUID: CGPoint]()
 
     init(context: CIContext = CIContext(options: [.cacheIntermediates: false])) {
         self.context = context
@@ -651,8 +740,67 @@ final class HackerAtlasPipeline: @unchecked Sendable {
     func reset() {
         rooms.removeAll(keepingCapacity: true)
         connections.removeAll(keepingCapacity: true)
+        groundedReferences.removeAll(keepingCapacity: true)
+        pendingFloorAlignments.removeAll(keepingCapacity: true)
+        floorAlignedConnections.removeAll(keepingCapacity: true)
         lastPlayableFrame = nil
         nextObservationID = 0
+        registrationCount = 0
+        archiveCreatedAt = Date()
+        archiveProfile = nil
+        roomPositionOverrides = [:]
+        revision &+= 1
+    }
+
+    func archive() -> HackerAtlasArchive {
+        // A new scene may be prepared before its first cadenced atlas insert.
+        // Keep only committed room pixels in a durable restore point.
+        let retained = output(sceneName: "", unityFrame: 0).rooms.filter { !$0.atlasTiles.isEmpty }
+        let ids = Set(retained.map(\.id))
+        let edges = connections.filter { ids.contains($0.fromRoomID) && ids.contains($0.toRoomID) }
+        return .init(rooms: retained,
+            anchors: Dictionary(uniqueKeysWithValues: retained.compactMap { room in
+                rooms[room.sceneName].map { (room.sceneName, $0.anchor) }
+            }),
+            connections: edges, floorAlignedConnectionIDs: floorAlignedConnections.intersection(edges.map(\.id)),
+            registrationCount: registrationCount, createdAt: archiveCreatedAt, profile: archiveProfile,
+            roomPositionOverrides: roomPositionOverrides.filter { ids.contains($0.key) })
+    }
+
+    /// Stage all room pixels before swapping the running compositor. Failed
+    /// decoding or insertion cannot clear the current Hacker atlas.
+    func restore(_ archive: HackerAtlasArchive) throws {
+        var staged = [String: RoomState]()
+        var observationID = 0
+        for room in archive.rooms {
+            guard let anchor = archive.anchors[room.sceneName] else { throw AtlasStateStoreError.missingState }
+            let state = RoomState(id: room.id, sceneName: room.sceneName, position: room.position,
+                anchor: anchor, context: context, hudTemplate: hudTemplate)
+            state.pathCalibration = room.pathCalibration
+            for tile in room.atlasTiles {
+                let bounds = tile.bounds.intersection(room.bounds)
+                guard !bounds.isNull, !bounds.isEmpty else { continue }
+                let crop = CGRect(x: bounds.minX - tile.bounds.minX,
+                    y: tile.bounds.maxY - bounds.maxY, width: bounds.width, height: bounds.height)
+                guard let image = tile.image.cropping(to: crop), state.composer.insert(
+                    observationID: observationID, maskedImage: image, solveWidth: bounds.width,
+                    cameraPosition: bounds.origin) else { throw AtlasStateStoreError.missingState }
+                observationID += 1
+            }
+            state.botCoverage.update(state.composer.snapshot)
+            staged[room.sceneName] = state
+        }
+        rooms = staged
+        connections = archive.connections
+        floorAlignedConnections = archive.floorAlignedConnectionIDs
+        groundedReferences = [:]
+        pendingFloorAlignments = []
+        lastPlayableFrame = nil
+        nextObservationID = observationID
+        registrationCount = archive.registrationCount
+        archiveCreatedAt = archive.createdAt
+        archiveProfile = archive.profile
+        roomPositionOverrides = archive.roomPositionOverrides
         revision &+= 1
     }
 
@@ -675,6 +823,7 @@ final class HackerAtlasPipeline: @unchecked Sendable {
             let created = RoomState(
                 sceneName: prepared.sceneName,
                 position: prepared.liveBounds.origin,
+                anchor: prepared.anchorPosition,
                 context: context,
                 hudTemplate: hudTemplate
             )
@@ -682,6 +831,11 @@ final class HackerAtlasPipeline: @unchecked Sendable {
             state = created
         }
 
+        let camera = prepared.cameraTransform
+        state.pathCalibration = .init(scene: state.sceneName,
+            origin: CGPoint(x: camera.frameSize.width/2-state.anchor.x-state.position.x,
+                            y: camera.frameSize.height/2-state.anchor.y-state.position.y),
+            scale: CGPoint(x:camera.pixelsPerWorldUnitX,y:camera.pixelsPerWorldUnitY))
         if isFadeOrCutscene(
             prepared,
             profile: profile,
@@ -697,6 +851,7 @@ final class HackerAtlasPipeline: @unchecked Sendable {
             return integrate(reference.prepared, into: state)
         }
 
+        recordGroundedReference(prepared, room: state)
         if let previous = lastPlayableFrame,
            previous.sceneName != prepared.sceneName,
            let previousState = rooms[previous.sceneName] {
@@ -707,6 +862,7 @@ final class HackerAtlasPipeline: @unchecked Sendable {
                 to: prepared, room: state
             )
         }
+        refineHorizontalFloorAlignments(at: prepared.capturedAt)
         lastPlayableFrame = prepared
 
         updateFadeReference(
@@ -763,8 +919,14 @@ final class HackerAtlasPipeline: @unchecked Sendable {
             captureIdentity: Int64(prepared.unityFrame),
             timestamp: prepared.capturedAt
         ) else { return nil }
+        state.botCoverage.update(state.composer.snapshot, camera: localPosition, width: extent.width)
         state.lastIntegratedUnityFrame = prepared.unityFrame
+        registrationCount += 1
         revision &+= 1
+        return output(sceneName: prepared.sceneName, unityFrame: prepared.unityFrame)
+    }
+
+    func output(sceneName: String, unityFrame: Int) -> HackerAtlasOutput {
         let roomSnapshots = rooms.values
             .sorted { $0.sceneName < $1.sceneName }
             .map { room -> HackerAtlasRoom in
@@ -783,7 +945,8 @@ final class HackerAtlasPipeline: @unchecked Sendable {
                     sceneName: room.sceneName,
                     position: room.position,
                     bounds: snapshot.contentBounds,
-                    atlasTiles: layers
+                    atlasTiles: layers, botCoverage: room.botCoverage,
+                    botCameraOrigin: CGPoint(x: room.anchor.x + room.position.x, y: room.anchor.y + room.position.y), pathCalibration: room.pathCalibration
                 )
             }
         let atlasBounds = roomSnapshots.reduce(CGRect.null) {
@@ -809,10 +972,11 @@ final class HackerAtlasPipeline: @unchecked Sendable {
             atlasBounds: atlasBounds.isNull || atlasBounds.isEmpty ? nil : atlasBounds,
             rooms: roomSnapshots,
             connections: connections,
-            sceneName: prepared.sceneName,
-            unityFrame: prepared.unityFrame,
+            sceneName: sceneName,
+            unityFrame: unityFrame,
             roomCount: rooms.count,
-            knownScenes: rooms.keys.sorted()
+            knownScenes: rooms.keys.sorted(),
+            floorAlignedConnectionIDs: floorAlignedConnections.intersection(connections.map(\.id))
         )
     }
 
@@ -824,7 +988,7 @@ final class HackerAtlasPipeline: @unchecked Sendable {
     ) {
         let fromSide = transitionSide(from: previous, to: current)
         let toSide = fromSide.opposite
-        let duplicate = connections.contains { connection in
+        let duplicate = connections.first { connection in
             (connection.fromRoomID == previousRoom.id
                 && connection.toRoomID == currentRoom.id
                 && connection.fromSide == fromSide
@@ -834,9 +998,9 @@ final class HackerAtlasPipeline: @unchecked Sendable {
                 && connection.fromSide == toSide
                 && connection.toSide == fromSide)
         }
-        guard !duplicate else { return }
-        connections.append(HackerRoomConnection(
-            id: UUID(),
+        let connectionID = duplicate?.id ?? UUID()
+        if duplicate == nil { connections.append(HackerRoomConnection(
+            id: connectionID,
             fromRoomID: previousRoom.id,
             toRoomID: currentRoom.id,
             fromSide: fromSide,
@@ -847,7 +1011,68 @@ final class HackerAtlasPipeline: @unchecked Sendable {
             toCoordinate: doorwayCoordinate(
                 in: current, room: currentRoom, side: toSide
             )
-        ))
+        )) }
+        if fromSide.isHorizontal, !floorAlignedConnections.contains(connectionID) {
+            pendingFloorAlignments.removeAll { $0.connectionID == connectionID }
+            pendingFloorAlignments.append(.init(connectionID: connectionID,
+                fromScene: previous.sceneName, toScene: current.sceneName,
+                fromSide: fromSide, departure: previous.capturedAt, arrival: current.capturedAt))
+        }
+    }
+
+    private func recordGroundedReference(_ prepared: HackerPreparedFrame, room: RoomState) {
+        guard prepared.sample.grounded, abs(prepared.sample.velocityY) < 0.1,
+              let hero = heroScreenPoint(sample: prepared.sample, frameSize: prepared.liveBounds.size),
+              hero.x >= 0, hero.x <= prepared.liveBounds.width,
+              hero.y >= 0, hero.y <= prepared.liveBounds.height else { return }
+        var references = groundedReferences[prepared.sceneName, default: []]
+        references.append(.init(timestamp: prepared.capturedAt,
+            localY: prepared.liveBounds.minY + hero.y - room.position.y,
+            screenPoint: hero, frameSize: prepared.liveBounds.size))
+        groundedReferences[prepared.sceneName] = Array(references.suffix(180))
+    }
+
+    /// A grounded Knight has a fixed center-to-floor offset. Matching stable
+    /// centers cancels that offset without trusting an airborne doorway pose.
+    /// This uses exact-frame mod truth only in the independent Hacker atlas.
+    private func refineHorizontalFloorAlignments(at timestamp: TimeInterval) {
+        pendingFloorAlignments.removeAll { pending in
+            guard timestamp <= pending.arrival + 3 else { return true }
+            func stableHeight(scene: String, side: HackerRoomSide,
+                              start: TimeInterval, end: TimeInterval) -> CGFloat? {
+                let candidates = groundedReferences[scene, default: []].filter { reference in
+                    reference.timestamp >= start && reference.timestamp <= end
+                        && (side == .right
+                            ? reference.screenPoint.x >= reference.frameSize.width * 0.65
+                            : reference.screenPoint.x <= reference.frameSize.width * 0.35)
+                }
+                guard let last = candidates.last else { return nil }
+                let tolerance = 2 * last.frameSize.width / 640
+                let recent = candidates.filter {
+                    last.timestamp - $0.timestamp <= 0.5
+                        && abs($0.localY - last.localY) <= tolerance
+                }
+                guard recent.count >= 3, let first = recent.first,
+                      last.timestamp - first.timestamp >= 0.05,
+                      zip(recent, recent.dropFirst()).allSatisfy({ $1.timestamp - $0.timestamp <= 0.25 })
+                else { return nil }
+                let sorted = recent.map(\.localY).sorted()
+                return sorted[sorted.count / 2]
+            }
+            guard let from = stableHeight(scene: pending.fromScene, side: pending.fromSide,
+                      start: pending.departure - 1.5, end: pending.departure),
+                  let to = stableHeight(scene: pending.toScene, side: pending.fromSide.opposite,
+                      start: pending.arrival, end: pending.arrival + 3),
+                  let index = connections.firstIndex(where: { $0.id == pending.connectionID }) else { return false }
+            let old = connections[index]
+            // A revisit can observe the same edge in the reverse direction.
+            let forward = rooms[pending.fromScene]?.id == old.fromRoomID
+            connections[index] = .init(id: old.id, fromRoomID: old.fromRoomID, toRoomID: old.toRoomID,
+                fromSide: old.fromSide, toSide: old.toSide,
+                fromCoordinate: forward ? from : to, toCoordinate: forward ? to : from)
+            floorAlignedConnections.insert(old.id)
+            return true
+        }
     }
 
     private func transitionSide(

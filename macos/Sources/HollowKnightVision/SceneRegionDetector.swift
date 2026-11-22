@@ -105,13 +105,38 @@ struct SceneRegions: Equatable {
         in extent: CGRect,
         hudStencil: HUDStencilResult?
     ) -> [CGRect] {
-        let persistentFootprint = CGRect(
+        [atlasHUDShield(in: extent)] + (hudStencil?.omittedRects ?? [])
+    }
+
+    /// Ground tracking needs the fixed HUD decoration and capture marker
+    /// excluded, while the surrounding room remains available as edge evidence.
+    /// Frame-matched sprite and foreground exclusions still apply.
+    static func groundOmittedRects(from sceneRects: [CGRect], in extent: CGRect) -> [CGRect] {
+        let shield = atlasHUDShield(in: extent)
+        guard sceneRects.contains(shield) else { return sceneRects }
+        let scaleX = extent.width / 640
+        let scaleY = extent.height / 360
+        // Top-left capture coordinates at 640 × 360.
+        let footprints = [
+            CGRect(x: 0, y: 0, width: 120, height: 6),    // capture marker
+            CGRect(x: 29, y: 17, width: 83, height: 52),   // soul and Geo
+            CGRect(x: 72, y: 22, width: 164, height: 23),  // health row
+        ].map { rect in
+            CGRect(x: extent.minX + rect.minX * scaleX,
+                   y: extent.maxY - rect.maxY * scaleY,
+                   width: rect.width * scaleX, height: rect.height * scaleY)
+                .intersection(extent).integral
+        }
+        return sceneRects.filter { $0 != shield } + footprints
+    }
+
+    private static func atlasHUDShield(in extent: CGRect) -> CGRect {
+        CGRect(
             x: extent.minX,
             y: extent.minY + extent.height * 0.75,
             width: extent.width * 0.40,
             height: extent.height * 0.25
         ).intersection(extent).integral
-        return [persistentFootprint] + (hudStencil?.omittedRects ?? [])
     }
 
     var omittedRects: [CGRect] {
@@ -883,95 +908,70 @@ struct LowResolutionMotionGrid: Equatable, Sendable {
 }
 
 enum LowResolutionMotionDiagnosticPresentation {
+    static let vectorScale: CGFloat = 8
+
+    static func displacement(motion: LowResolutionMotionVector, solveWidth: CGFloat, gridWidth: Int) -> CGVector {
+        let scale = solveWidth / CGFloat(gridWidth)
+        return CGVector(dx: -motion.screenShiftX * scale, dy: motion.screenShiftY * scale)
+    }
+
     static func text(
-        estimate: LowResolutionRoomMotionEstimate?,
+        motion: LowResolutionMotionVector?,
         isControlling: Bool,
         solveWidth: CGFloat,
         gridWidth: Int
     ) -> String {
-        guard let estimate, solveWidth.isFinite, solveWidth > 0,
+        guard let motion, solveWidth.isFinite, solveWidth > 0,
               gridWidth > 0 else { return "Coarse Motion · ready · no reliable shift" }
-        let worldStep = abs(CGFloat(estimate.screenShift))
-            * solveWidth / CGFloat(gridWidth)
+        let delta = displacement(motion: motion, solveWidth: solveWidth, gridWidth: gridWidth)
         let mode = isControlling ? "controlling" : "ready"
-        let confidence = Int((estimate.confidence * 100).rounded())
-        return "Coarse Motion · \(mode) · \(estimate.direction.label) \(Int(worldStep.rounded())) px · \(confidence)%"
+        let confidence = Int((motion.confidence * 100).rounded())
+        return "Coarse Motion · \(mode) · x \(Int(delta.dx.rounded())) y \(Int(delta.dy.rounded())) px · arrow ×8 · \(confidence)%"
     }
 }
 
 enum LowResolutionMotionDiagnosticRenderer {
     static func image(
-        grid: LowResolutionMotionGrid,
-        estimate: LowResolutionRoomMotionEstimate?,
+        motion: LowResolutionMotionVector?,
+        gridWidth: Int,
+        frameSize: CGSize,
         isControlling: Bool
     ) -> CGImage? {
-        guard grid.width > 0, grid.height > 0,
-              grid.luma.count == grid.width * grid.height else { return nil }
-        let mean = Double(grid.luma.reduce(0) { $0 + Int($1) })
-            / Double(grid.luma.count)
-        var pixels = [UInt8](repeating: 0, count: grid.width * grid.height * 4)
-        for index in grid.luma.indices {
-            let contrast = min(255, max(0,
-                Int((128 + (Double(grid.luma[index]) - mean) * 2.2).rounded())
-            ))
-            let output = index * 4
-            pixels[output] = UInt8(contrast)
-            pixels[output + 1] = UInt8(contrast)
-            pixels[output + 2] = UInt8(contrast)
-            pixels[output + 3] = 255
-        }
-
-        let accent: (UInt8, UInt8, UInt8) = isControlling
-            ? (255, 132, 31) : estimate == nil
-                ? (150, 150, 150) : (30, 230, 255)
-        func paint(_ x: Int, _ y: Int, color: (UInt8, UInt8, UInt8)) {
-            guard (0..<grid.width).contains(x), (0..<grid.height).contains(y) else { return }
-            let index = (y * grid.width + x) * 4
-            pixels[index] = color.0
-            pixels[index + 1] = color.1
-            pixels[index + 2] = color.2
-            pixels[index + 3] = 255
-        }
-        for x in 0..<grid.width {
-            paint(x, 0, color: accent)
-            paint(x, grid.height - 1, color: accent)
-        }
-        for y in 0..<grid.height {
-            paint(0, y, color: accent)
-            paint(grid.width - 1, y, color: accent)
-        }
-        if let estimate {
-            let centerX = grid.width / 2
-            let centerY = grid.height / 2
-            let length = min(
-                max(2, abs(estimate.screenShift) * 2),
-                max(2, grid.width / 2 - 2)
-            )
-            let sign = estimate.direction.rawValue
-            let endX = min(grid.width - 2, max(1, centerX + sign * length))
-            let range = min(centerX, endX)...max(centerX, endX)
-            for x in range { paint(x, centerY, color: accent) }
-            paint(endX, centerY - 1, color: accent)
-            paint(endX, centerY + 1, color: accent)
-        }
-
-        let data = Data(pixels) as CFData
-        guard let provider = CGDataProvider(data: data) else { return nil }
-        return CGImage(
-            width: grid.width,
-            height: grid.height,
-            bitsPerComponent: 8,
-            bitsPerPixel: 32,
-            bytesPerRow: grid.width * 4,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGBitmapInfo(
-                rawValue: CGImageAlphaInfo.premultipliedLast.rawValue
-            ),
-            provider: provider,
-            decode: nil,
-            shouldInterpolate: false,
-            intent: .defaultIntent
-        )
+        guard let motion, gridWidth > 0, frameSize.width > 0, frameSize.height > 0,
+              frameSize.width.isFinite, frameSize.height.isFinite,
+              motion.screenShiftX.isFinite, motion.screenShiftY.isFinite else { return nil }
+        let width = Int(frameSize.width), height = Int(frameSize.height)
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        let delta = LowResolutionMotionDiagnosticPresentation.displacement(
+            motion: motion, solveWidth: frameSize.width, gridWidth: gridWidth)
+        let start = CGPoint(x: frameSize.width / 2, y: frameSize.height / 2)
+        let dx = delta.dx * LowResolutionMotionDiagnosticPresentation.vectorScale
+        let dy = delta.dy * LowResolutionMotionDiagnosticPresentation.vectorScale
+        let magnitude = hypot(dx, dy)
+        guard magnitude > 0.01 else { return nil }
+        // Keep long arrows in view without changing their direction.
+        let factor = min(1, min((frameSize.width * 0.46) / max(abs(dx), 0.01),
+                                (frameSize.height * 0.46) / max(abs(dy), 0.01)))
+        let end = CGPoint(x: start.x + dx * factor, y: start.y + dy * factor)
+        let ux = dx / magnitude, uy = dy / magnitude
+        let head = max(6, min(15, magnitude * factor * 0.35))
+        context.setStrokeColor(isControlling
+            ? CGColor(red: 1, green: 0.52, blue: 0.12, alpha: 1)
+            : CGColor(red: 0.12, green: 0.9, blue: 1, alpha: 1))
+        context.setLineWidth(max(2, frameSize.width / 320))
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        context.move(to: start)
+        context.addLine(to: end)
+        context.move(to: CGPoint(x: end.x - head * ux + head * 0.5 * uy,
+                                 y: end.y - head * uy - head * 0.5 * ux))
+        context.addLine(to: end)
+        context.addLine(to: CGPoint(x: end.x - head * ux - head * 0.5 * uy,
+                                   y: end.y - head * uy + head * 0.5 * ux))
+        context.strokePath()
+        return context.makeImage()
     }
 }
 

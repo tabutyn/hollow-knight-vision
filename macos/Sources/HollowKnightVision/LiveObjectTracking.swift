@@ -123,7 +123,6 @@ enum LiveObjectPixelRefiner {
     static func refine(
         _ detections: [LiveObjectDetection],
         in image: CGImage,
-        extensionFraction: CGFloat,
         createsDiagnosticImage: Bool = true
     ) -> LiveObjectPixelRefinement {
         guard !detections.isEmpty,
@@ -163,22 +162,13 @@ enum LiveObjectPixelRefiner {
 
         for detection in detections {
             let original = detection.normalizedRect.standardized.intersection(unit)
-            let dx = original.width * max(0, extensionFraction)
-            let dy = original.height * max(0, extensionFraction)
-            let search = original.insetBy(dx: -dx, dy: -dy).intersection(unit)
-            let extended = LiveObjectDetection(
-                classIdentifier: detection.classIdentifier,
-                normalizedRect: search,
-                confidence: detection.confidence,
-                sourceFrameIdentifier: detection.sourceFrameIdentifier,
-                modelVersion: detection.modelVersion
-            )
+            let search = original
             let minX = max(1, Int(floor(search.minX * CGFloat(width))))
             let maxX = min(width - 2, Int(ceil(search.maxX * CGFloat(width))))
             let minY = max(1, Int(floor(search.minY * CGFloat(height))))
             let maxY = min(height - 2, Int(ceil(search.maxY * CGFloat(height))))
             guard minX <= maxX, minY <= maxY else {
-                refined.append(extended)
+                refined.append(detection)
                 continue
             }
 
@@ -215,7 +205,7 @@ enum LiveObjectPixelRefiner {
 
             guard supportCount >= max(10, Int(search.width * search.height
                 * CGFloat(width * height) * 0.006)) else {
-                refined.append(extended)
+                refined.append(detection)
                 continue
             }
             let support = CGRect(
@@ -226,7 +216,7 @@ enum LiveObjectPixelRefiner {
             ).intersection(search)
             let intersection = support.intersection(original)
             guard !intersection.isNull, !intersection.isEmpty else {
-                refined.append(extended)
+                refined.append(detection)
                 continue
             }
             refined.append(LiveObjectDetection(

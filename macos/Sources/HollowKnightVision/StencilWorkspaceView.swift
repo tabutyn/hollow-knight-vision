@@ -6,7 +6,7 @@ enum StencilLabelSelectionPolicy {
     static func availableLabels(
         context: LabelingContext, custom: [LabelingClassDefinition] = [],
         rectangles: [LabelingDraftRectangle], mode: HollowKnightRuntimeMode,
-        hidesCompleted: Bool, includesDeferredLabels: Bool = false
+        hidesCompleted: Bool
     ) -> [LabelingClassDefinition] {
         var seen = Set<String>()
         let positives = Set(rectangles.filter { !$0.isNegative }.map {
@@ -17,15 +17,12 @@ enum StencilLabelSelectionPolicy {
             guard seen.insert(identifier).inserted,
                   LabelingHUDStencilPolicy.isLabelable(identifier, in: context) else { return false }
             if mode == .normal && identifier == LabelingClassIdentity.mods { return false }
+            if hidesCompleted && identifier == StencilInitializationPolicy.profileClearSaveClass {
+                return !positives.contains(identifier)
+            }
             if hidesCompleted && context == .controller
                 && !ControllerStencilPolicy.isAvailable(identifier, positiveIdentifiers: positives) {
                 return false
-            }
-            // Clear Save is absent on fresh profiles and never blocks the first campaign.
-            if hidesCompleted && identifier == StencilInitializationPolicy.deferredProfileClass {
-                return includesDeferredLabels && !rectangles.contains {
-                    !$0.isNegative && LabelingClassIdentity.canonicalIdentifier($0.classID) == identifier
-                }
             }
             guard hidesCompleted, context != .game else { return true }
             return !LabelingContractEvaluator.shouldAdvance(
@@ -86,6 +83,18 @@ struct StencilWorkspaceView: View {
             .frame(width: 240)
             Divider()
             VStack(alignment: .leading, spacing: 12) {
+                if selection == .selectProfile {
+                    Text(coordinator.text("selectProfile"))
+                        .foregroundStyle(.blue)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let example = coordinator.example(for: selection),
+                       StencilInitializationPolicy.positiveCounts(example)[StencilInitializationPolicy.profileClearSaveClass, default: 0] == 0 {
+                        Text(coordinator.text("profileClearSave"))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 if let issue = coordinator.issue {
                     Text(issue).foregroundStyle(.red)
                 } else if let example = coordinator.example(for: selection),

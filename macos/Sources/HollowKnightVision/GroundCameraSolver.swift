@@ -8,7 +8,8 @@ import OSLog
 /// promotions have more than twice the p95 handoff error of this subset.
 struct GroundReferencePromotionPolicy {
     static func permits(support: Int, error: CGFloat) -> Bool {
-        (support >= 6 && error <= 18) || (support >= 4 && error <= 10)
+        error.isFinite && error >= 0
+            && ((support >= 6 && error <= 18) || (support >= 4 && error <= 10))
     }
 }
 
@@ -23,7 +24,8 @@ struct GroundRecentReferenceCadence {
 
 struct GroundPoseAcceptancePolicy {
     static func rejects(support: Int, error: CGFloat) -> Bool {
-        (support <= 4 && error > 14)
+        !error.isFinite || error < 0
+            || (support <= 4 && error > 14)
             || (support < 8 && error > 18)
             || (support < 12 && error > 20)
     }
@@ -59,11 +61,13 @@ final class GroundCameraSolver {
     private let traceLog = Logger(subsystem: "com.ballroller.hollow-knight-vision", category: "ground-trace")
     private let subpixelEnabled: Bool
     private let keyframeSubpixelEnabled: Bool
+    private let independentPatchConsensusEnabled: Bool
     private let anchorImageMotionScale: CGVector
     private let recentImageMotionScale: CGVector
     private let usesAdaptiveRecentMotionScale: Bool
     private let matcherBackend: GroundComputeBackend
     private let maximumLocalSearchRadius: Int
+    private let collectsDebugEvidence: Bool
     private(set) var lastPatchSearchExecution: GroundPatchSearchExecution?
 
     static let hackerCalibratedAnchorScale = CGVector(dx: 0.9929, dy: 0.9947)
@@ -76,16 +80,19 @@ final class GroundCameraSolver {
         keyframeSubpixelEnabled: Bool = ProcessInfo.processInfo.arguments.contains(
             "--ground-keyframe-subpixel"
         ),
+        independentPatchConsensusEnabled: Bool = false,
         calibratedMotionEnabled: Bool = ProcessInfo.processInfo.arguments.contains(
             "--ground-hacker-calibrated-motion"
         ),
         imageMotionScale: CGVector? = nil,
         recentImageMotionScale: CGVector? = nil,
         matcherBackend: GroundComputeBackend = .cpu,
-        maximumLocalSearchRadius: Int = 96
+        maximumLocalSearchRadius: Int = 96,
+        collectsDebugEvidence: Bool = false
     ) {
         self.subpixelEnabled = subpixelEnabled
         self.keyframeSubpixelEnabled = keyframeSubpixelEnabled
+        self.independentPatchConsensusEnabled = independentPatchConsensusEnabled
         let calibrated = calibratedMotionEnabled
         usesAdaptiveRecentMotionScale = calibrated
             && imageMotionScale == nil && recentImageMotionScale == nil
@@ -95,6 +102,20 @@ final class GroundCameraSolver {
             ?? (calibrated ? Self.hackerCalibratedRecentScale : CGVector(dx: 1, dy: 1))
         self.matcherBackend = matcherBackend
         self.maximumLocalSearchRadius = max(16, maximumLocalSearchRadius)
+        self.collectsDebugEvidence = collectsDebugEvidence
+    }
+
+    struct DebugEvidence {
+        struct PatchPair {
+            let reference: CGRect
+            let target: CGRect
+            let inlier: Bool
+        }
+        let rowHypotheses: [Int]
+        let scores: [GroundPatchSearchResult]
+        let integerDisplacement: CGVector
+        let subpixelOffset: CGVector?
+        let patches: [PatchPair]
     }
 
     struct Solution {
@@ -111,7 +132,11 @@ final class GroundCameraSolver {
         var referenceTimestamp: Double? = nil
         var referencePosition: CGVector? = nil
         var matchedImageDisplacement: CGVector? = nil
+        /// Same reference pair after the visual ground motion scale. Scenery
+        /// calibration must use camera-plane units, not raw texture movement.
+        var projectedImageDisplacement: CGVector? = nil
         var matchSource: String? = nil
+        var debugEvidence: DebugEvidence? = nil
     }
 
     private struct Reference {
@@ -121,10 +146,12 @@ final class GroundCameraSolver {
         let timestamp: Double
         let position: CGVector
         let poseTrusted: Bool
+        let preferredLines: [CleanFloorLine]
 
         init(
             pixels: [UInt8], lines: [CleanFloorLine], exclusions: [CGRect],
-            timestamp: Double, position: CGVector, poseTrusted: Bool = true
+            timestamp: Double, position: CGVector, poseTrusted: Bool = true,
+            preferredLines: [CleanFloorLine] = []
         ) {
             self.pixels = pixels
             self.lines = lines
@@ -132,6 +159,7 @@ final class GroundCameraSolver {
             self.timestamp = timestamp
             self.position = position
             self.poseTrusted = poseTrusted
+            self.preferredLines = preferredLines
         }
     }
     private struct Patch {
@@ -392,6 +420,28 @@ final class GroundCameraSolver {
         spatialReferences = attempt.state.spatial
     }
 
+    /// Try motion-admitted rows first, retaining every raw reference row for
+    /// an ordinary, independently verified recovery attempt if those rows fail.
+    /// New platforms must remain recoverable when old ground leaves the view.
+    func prioritizeAdmittedReferenceRows(at timestamp: Double, lines admitted: [CleanFloorLine]) {
+        func prioritized(_ value: Reference) -> Reference {
+            guard value.timestamp == timestamp, value.poseTrusted else { return value }
+            let preferred = value.lines.filter { line in
+                admitted.contains { allowed in
+                    abs(allowed.row - line.row) <= 3
+                        && min(allowed.xRange.upperBound, line.xRange.upperBound)
+                            - max(allowed.xRange.lowerBound, line.xRange.lowerBound) + 1 >= 16
+                }
+            }
+            return Reference(pixels: value.pixels, lines: value.lines, exclusions: value.exclusions,
+                timestamp: value.timestamp, position: value.position, poseTrusted: value.poseTrusted,
+                preferredLines: preferred.count == value.lines.count ? [] : preferred)
+        }
+        reference = reference.map(prioritized)
+        recentReference = recentReference.map(prioritized)
+        spatialReferences = spatialReferences.map(prioritized)
+    }
+
     func solve(
         pixels: [UInt8], width: Int, height: Int,
         lines: [CleanFloorLine], timestamp: Double,
@@ -528,6 +578,28 @@ final class GroundCameraSolver {
     private func solveReference(
         pixels: [UInt8], width: Int, height: Int,
         lines: [CleanFloorLine], timestamp: Double,
+        exclusions: [CGRect], matchSource: String
+    ) -> Solution? {
+        let before = state
+        if let prior = reference, !prior.preferredLines.isEmpty {
+            reference = Reference(pixels: prior.pixels, lines: prior.preferredLines,
+                exclusions: prior.exclusions, timestamp: prior.timestamp,
+                position: prior.position, poseTrusted: prior.poseTrusted)
+            if let result = solveReferenceAllRows(pixels: pixels, width: width, height: height,
+                lines: lines, timestamp: timestamp, exclusions: exclusions, matchSource: matchSource) {
+                // A temporary search subset cannot rewrite the old capture.
+                if reference?.timestamp == prior.timestamp { reference = prior }
+                return result
+            }
+            state = before
+        }
+        return solveReferenceAllRows(pixels: pixels, width: width, height: height,
+            lines: lines, timestamp: timestamp, exclusions: exclusions, matchSource: matchSource)
+    }
+
+    private func solveReferenceAllRows(
+        pixels: [UInt8], width: Int, height: Int,
+        lines: [CleanFloorLine], timestamp: Double,
         exclusions: [CGRect],
         matchSource: String
     ) -> Solution? {
@@ -621,50 +693,62 @@ final class GroundCameraSolver {
         // patches to each proposed row pairing allowed a tiny accidental match
         // to beat the motion supported by the rest of the visible platforms.
         func makePatches() -> [Patch] {
-          var patchGroups = [[Patch]]()
-          for old in prior.lines {
-            guard old.row >= 0, old.row + 12 <= height else { continue }
-            let count = max(0, old.xRange.count / 16)
-            let strideCells = max(1, Int(ceil(Double(count) / 8)))
-            var group = [Patch]()
-            for cell in stride(from: 0, to: count, by: strideCells) {
-                let x = old.xRange.lowerBound + cell * 16
-                let rect = CGRect(x: x, y: old.row, width: 16, height: 12)
-                guard old.evidenceRanges.contains(where: { $0.overlaps(x...(x + 15)) }),
-                      !prior.exclusions.contains(where: { $0.intersects(rect) }),
-                      let values = GroundPixels.patch(prior.pixels, width: width, height: height,
-                                         x: x, y: old.row),
-                      (values.max() ?? 0) - (values.min() ?? 0) >= 12
-                else { continue }
-                group.append(Patch(x: x, y: old.row, pixels: values))
+            var groups = [[Patch]]()
+            for old in prior.lines {
+                guard old.row >= 0, old.row + 12 <= height else { continue }
+                let cellCount = old.xRange.count / GroundPixels.patchWidth
+                guard cellCount > 0 else { continue }
+                let sampleCount = min(8, cellCount)
+                let cells: [Int]
+                if longRowOnly {
+                    // Center each recovery sample in its part of the floor.
+                    // A cell at the very end can scroll off during a landing.
+                    cells = (0..<sampleCount).map { (2 * $0 + 1) * cellCount / (2 * sampleCount) }
+                } else {
+                    let step = (cellCount + sampleCount - 1) / sampleCount
+                    cells = Array(stride(from: 0, to: cellCount, by: step))
+                }
+                var group = [Patch]()
+                for cell in cells {
+                    let x = old.xRange.lowerBound + cell * GroundPixels.patchWidth
+                    let rect = CGRect(x: x, y: old.row, width: 16, height: 12)
+                    guard old.supportsPatch(atX: x, row: old.row),
+                          !prior.exclusions.contains(where: { $0.intersects(rect) }),
+                          let values = GroundPixels.patch(prior.pixels, width: width, height: height, x: x, y: old.row),
+                          (values.max() ?? 0) - (values.min() ?? 0) >= 12 else { continue }
+                    group.append(Patch(x: x, y: old.row, pixels: values))
+                }
+                if !group.isEmpty { groups.append(group) }
             }
-            if !group.isEmpty { patchGroups.append(group) }
-          }
-        // Balance rows before filling the budget. A long dominant floor must
-        // not crowd every smaller platform out of the vertical vote.
-          var patches = [Patch]()
-        var groupOffset = 0
-        while patches.count < 32 {
-            var added = false
-            for group in patchGroups where groupOffset < group.count {
-                patches.append(group[groupOffset])
-                added = true
-                if patches.count == 32 { break }
+            // Give every platform a vote before adding another cell from a long floor.
+            var sampled = [Patch]()
+            for offset in 0..<(groups.map(\.count).max() ?? 0) {
+                for group in groups where offset < group.count {
+                    sampled.append(group[offset])
+                    if sampled.count == 32 { return sampled }
+                }
             }
-            if !added { break }
-            groupOffset += 1
-        }
-          return patches
+            return sampled
         }
         let patches = makePatches()
         if diagnostics { traceDetail += " patches=\(patches.count)" }
         guard patches.count >= 3 else { return nil }
-        var searchableRows = [Bool](repeating: false, count: height)
+        // The detected edge can end a cell early as a platform scrolls or
+        // becomes occluded. Let previously tracked texture near that endpoint
+        // vote on camera motion. Displayed patches still need a whole cell
+        // within a detected floor.
+        let singleSurface = prior.lines.count == 1 && searchLines.count == 1
+        let patchWidth = GroundPixels.patchWidth
+        var floorOrigins = [[UInt8]?](repeating: nil, count: height)
         for line in searchLines {
-            let lower = max(0, line.row - 3)
-            let upper = min(height - 1, line.row + 3)
-            if lower <= upper {
-                for row in lower...upper { searchableRows[row] = true }
+            guard line.xRange.count >= patchWidth / 2 else { continue }
+            let first = max(0, line.xRange.lowerBound - 2 * patchWidth + 1)
+            let last = min(width - patchWidth, line.xRange.upperBound + patchWidth)
+            let low = max(0, line.row - 3), high = min(height - 1, line.row + 3)
+            guard first <= last, low <= high else { continue }
+            for row in low...high {
+                if floorOrigins[row] == nil { floorOrigins[row] = .init(repeating: 0, count: width) }
+                for x in first...last { floorOrigins[row]![x] = 1 }
             }
         }
         func scan(_ hypotheses: [Int], horizontalRange: ClosedRange<Int>) {
@@ -691,10 +775,8 @@ final class GroundCameraSolver {
                         guard x >= 0, x + 16 <= width, y >= 0, y + 12 <= height,
                               !exclusions.contains(where: { $0.intersects(rect) })
                         else { continue }
-                        // A partially detected row can still verify previously
-                        // observed ground texture beyond today's visible edge
-                        // islands. This never creates ground or features.
-                        let targetOffset = searchableRows[y] ? y * width + x : nil
+                        if !singleSurface, floorOrigins[y] != nil, floorOrigins[y]?[x] != 1 { continue }
+                        let targetOffset = floorOrigins[y]?[x] == 1 ? y * width + x : nil
                         samples.append(GroundPatchSearchSample(
                             sourceIndex: sourceIndex,
                             targetOffset: targetOffset
@@ -743,7 +825,38 @@ final class GroundCameraSolver {
             return best
         }
         scan(hypotheses, horizontalRange: (predictedX - radiusX)...(predictedX + radiusX))
-        guard let best = winner(requiringBroadSupport: longRowOnly) else { return nil }
+        guard var best = winner(requiringBroadSupport: longRowOnly) else { return nil }
+        // Challenge only an already acceptable population. Removing its worst
+        // patches must not rescue a weak match or manufacture a trusted anchor.
+        guard !GroundPoseAcceptancePolicy.rejects(support: best.support, error: best.error) else {
+            traceOutcome = "weak-high-error"
+            return nil
+        }
+        var refinementPatches = patches
+        // Keep the full-search ambiguity gate above. A bounded independent
+        // patch majority can refine an accepted pooled match; it cannot rescue
+        // a rejected one. Unsupported challenges retain the original result.
+        if independentPatchConsensusEnabled,
+           let consensus = GroundIndependentPatchConsensus.refine(
+               patches: patches.map { .init(x: $0.x, y: $0.y, pixels: $0.pixels) },
+               pixels: pixels, width: width, height: height,
+               dx: best.dx, dy: best.dy, exclusions: exclusions),
+           consensus.patches.allSatisfy({ patch in
+               searchLines.contains { abs($0.row - (patch.y + consensus.dy)) <= 3 }
+           }),
+           !longRowOnly || (consensus.patches.count >= 8 && consensus.error <= 6)
+               || (consensus.patches.count >= 12 && consensus.error <= 10) {
+            // The selected population verifies a coordinate, but cannot
+            // improve source ranking or reference admission by dropping the
+            // original population's disagreeing patches. Retain the stricter
+            // quality bound; the ordinary acceptance gate below still applies.
+            best = (dx: consensus.dx, dy: consensus.dy,
+                    error: max(best.error, consensus.error),
+                    support: min(best.support, consensus.patches.count))
+            refinementPatches = consensus.patches.map {
+                Patch(x: $0.x, y: $0.y, pixels: $0.pixels)
+            }
+        }
         // Exact-frame Hacker audits exposed rare large-displacement false
         // matches behind sparse three- and four-patch floors. Weak support
         // plus high population cost is not a verified camera pose. Broad
@@ -787,7 +900,7 @@ final class GroundCameraSolver {
         let subpixel = (subpixelEnabled
             || (keyframeSubpixelEnabled && promotesReference))
             ? GroundSubpixelRegistration.refine(
-            patches: patches.compactMap { source in
+            patches: refinementPatches.compactMap { source in
                 let x = source.x + best.dx
                 let y = source.y + best.dy
                 let margin = 5
@@ -800,7 +913,7 @@ final class GroundCameraSolver {
                 guard rect.minX >= 0, rect.minY >= 0,
                       rect.maxX < CGFloat(width), rect.maxY < CGFloat(height),
                       !exclusions.contains(where: { $0.intersects(rect) }),
-                      searchLines.contains(where: { abs($0.row - y) <= 3 }),
+                      floorOrigins[y]?[x] == 1,
                       let values = GroundPixels.patch(
                         pixels, width: width, height: height, x: x, y: y
                       ), Self.patchError(
@@ -828,7 +941,8 @@ final class GroundCameraSolver {
         // motion gain. Keep the raw match above for diagnostics, but express
         // the accepted camera coordinate in projected-ground pixels. The held
         // recent baseline has more integer-phase bias than a broad anchor.
-        let motionScale = motionScale(source: matchSource, displacement: matchedDisplacement)
+        let motionScale = motionScale(source: matchSource, displacement: matchedDisplacement,
+                                      subpixelRefined: subpixel != nil)
         let projectedDisplacement = CGVector(
             dx: matchedDisplacement.dx * motionScale.dx,
             dy: matchedDisplacement.dy * motionScale.dy
@@ -947,6 +1061,27 @@ final class GroundCameraSolver {
                 }
         }
         traceOutcome = "accepted"
+        var debugEvidence: DebugEvidence?
+        if collectsDebugEvidence {
+            let pairs = patches.map { source in
+                let x = source.x + best.dx, y = source.y + best.dy
+                let target = CGRect(x: x, y: y, width: GroundPixels.patchWidth, height: 12)
+                let reference = CGRect(x: source.x, y: source.y, width: GroundPixels.patchWidth, height: 12)
+                let inlier: Bool
+                if floorOrigins.indices.contains(y), (0..<width).contains(x), floorOrigins[y]?[x] == 1,
+                   searchLines.contains(where: { $0.containsPatch(atX: x, row: y) }),
+                   !exclusions.contains(where: { $0.intersects(target) }),
+                   let values = GroundPixels.patch(pixels, width: width, height: height, x: x, y: y) {
+                    inlier = Self.patchError(source, Patch(x: x, y: y, pixels: values)) <= 18
+                } else {
+                    inlier = false
+                }
+                return DebugEvidence.PatchPair(reference: reference, target: target, inlier: inlier)
+            }
+            debugEvidence = DebugEvidence(rowHypotheses: hypotheses,
+                scores: lastPatchSearchExecution?.results ?? [], integerDisplacement: coarseDisplacement,
+                subpixelOffset: subpixel?.offset, patches: pairs)
+        }
         return Solution(
             imageTranslation: translation,
             support: best.support,
@@ -955,15 +1090,22 @@ final class GroundCameraSolver {
             referenceTimestamp: prior.timestamp,
             referencePosition: prior.position,
             matchedImageDisplacement: matchedDisplacement,
-            matchSource: matchSource
+            projectedImageDisplacement: projectedDisplacement,
+            matchSource: matchSource,
+            debugEvidence: debugEvidence
         )
     }
 
-    private func motionScale(source: String, displacement: CGVector) -> CGVector {
+    private func motionScale(source: String, displacement: CGVector,
+                             subpixelRefined: Bool = false) -> CGVector {
         guard source == "recent" || source == "provisional" else {
             return anchorImageMotionScale
         }
         guard usesAdaptiveRecentMotionScale else { return recentImageMotionScale }
+        // Refined displacement retains the camera-plane projection, but no
+        // longer carries the integer-phase bias of a coarse recent match.
+        // Explicit caller-provided scales above remain authoritative.
+        if subpixelRefined { return anchorImageMotionScale }
         switch hypot(displacement.dx, displacement.dy) {
         case ..<8:
             return CGVector(dx: 0.9920, dy: 0.9982)

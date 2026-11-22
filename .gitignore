@@ -3,6 +3,8 @@
 **/bin/
 **/obj/
 **/.training-venv/
+**/.bot-venv/
+**/bot-v1/
 **/__pycache__/
 **/.pytest_cache/
 artifacts/

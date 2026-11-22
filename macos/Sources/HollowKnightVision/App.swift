@@ -274,6 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         automationController?.stop()
         model.stopGameControls()
+        model.flushHackerAutoSave()
     }
 
     // AppKit excludes panels from its last-window check. Closing the mode
@@ -344,7 +345,18 @@ final class GameAutomationController {
         ))
         let serialized = pasteboard.string(forType: .string)
         let reply: String
-        if serialized == "menu-calibration-status" {
+        if serialized == "bot-demo-status" {
+            reply = model?.botDemoDiagnostic() ?? "{}"
+        } else if serialized == "bot-mark-return" {
+            reply = model?.markBotTrialReturnPoint() == true ? "accepted" : "rejected"
+        } else if serialized == "bot-return" {
+            reply = model?.returnFromBotTrial() == true ? "accepted" : "rejected"
+        } else if let serialized, serialized.hasPrefix("bot-restore-start:") {
+            reply = model?.restoreBotTrialStart(fileName: String(serialized.dropFirst("bot-restore-start:".count))) == true ? "accepted" : "rejected"
+        } else if serialized == "bot-demo-stop" {
+            model?.stopBotDemo(reason: "Stopped by local control")
+            reply = "accepted"
+        } else if serialized == "menu-calibration-status" {
             reply = model?.menuStencilAutomationReply(capture: false).serialized
                 ?? MenuStencilAutomationReply(
                     ok: false, contextIdentifier: nil, selectedIdentifier: nil,
@@ -412,6 +424,83 @@ struct HollowKnightVisionApp: App {
         if let retired = HollowKnightVisionLaunchOptions.retiredArgument(in: CommandLine.arguments) {
             fputs("Retired option: \(retired). See RETIRED_FEATURES.md for supported workflows.\n", stderr)
             exit(64)
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--recover-bot-exit-path") {
+            do {
+                FileHandle.standardOutput.write(try BotRecordedAtlasPath.exitData(Array(CommandLine.arguments.dropFirst(index + 1))))
+                exit(0)
+            } catch { FileHandle.standardError.write(Data("\(error)\n".utf8)); exit(1) }
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--recover-bot-atlas-path") {
+            do {
+                guard CommandLine.arguments.count == index + 2 else {
+                    throw BotRuntimeError.incompatible("Expected a demonstration directory.")
+                }
+                let url = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+                FileHandle.standardOutput.write(try BotRecordedAtlasPath.data(directory: url))
+                exit(0)
+            } catch {
+                FileHandle.standardError.write(Data("\(error)\n".utf8))
+                exit(1)
+            }
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--inspect-atlas-road") {
+            do {
+                guard CommandLine.arguments.count == index + 2 else { throw BotRuntimeError.incompatible("Expected a saved Hacker world directory.") }
+                let url = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+                FileHandle.standardOutput.write(try AtlasRoadInspection.data(world: url))
+                exit(0)
+            } catch { FileHandle.standardError.write(Data("\(error)\n".utf8)); exit(1) }
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--gameplay-gym-observations") {
+            do {
+                try GameplayGymEncoder.run(Array(CommandLine.arguments.dropFirst(index + 1)))
+                exit(0)
+            } catch {
+                fputs("\(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--hacker-gym-observations") {
+            do {
+                try HackerGymEncoder.run(Array(CommandLine.arguments.dropFirst(index + 1)))
+                exit(0)
+            } catch {
+                fputs("\(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--recover-bot-blockades") {
+            do {
+                let recordReference = CommandLine.arguments.last == "--register-crossed"
+                guard CommandLine.arguments.count == index + (recordReference ? 3 : 2) else { throw BotRuntimeError.incompatible("Expected a clip directory.") }
+                let clip = try BotSnippet.load(URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+                if let issue = clip.error { throw BotRuntimeError.incompatible(issue) }
+                let result = try BotBlockadeReplay.recover(clip)
+                if recordReference {
+                    let folder = BotBlockadeMap.file(for: clip.domain).deletingPathExtension()
+                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    let crossed = result.map.marks.filter { $0.crossed && ($0.space.hasPrefix("hacker/") || $0.space.hasPrefix("visual/")) }
+                    try JSONEncoder().encode(crossed).write(to: folder.appendingPathComponent(clip.id.uuidString + ".json"), options: .atomic)
+                }
+                struct Report: Encodable { let id: UUID; let rows: [BotBlockadeReplay.Row]; let marks: [BotBlockadeMark] }
+                FileHandle.standardOutput.write(try JSONEncoder().encode(Report(id: clip.id, rows: result.rows, marks: result.map.marks)))
+                exit(0)
+            } catch { fputs("Blockade replay failed: \(error)\n", stderr); exit(1) }
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--recover-bot-walls") {
+            do {
+                guard CommandLine.arguments.count == index + 3 else {
+                    throw BotRuntimeError.incompatible("Expected a demonstration directory and its source-frame archive.")
+                }
+                let rows = try BotWallReplay.recover(clip: URL(fileURLWithPath: CommandLine.arguments[index + 1]),
+                    archive: URL(fileURLWithPath: CommandLine.arguments[index + 2], isDirectory: true))
+                FileHandle.standardOutput.write(try JSONEncoder().encode(rows))
+                exit(0)
+            } catch {
+                fputs("Wall replay failed: \(error)\n", stderr)
+                exit(1)
+            }
         }
         if CommandLine.arguments.contains("--export-gameplay-model-dataset") {
             do {
@@ -512,6 +601,36 @@ struct HollowKnightVisionApp: App {
                 exit(report.passed ? 0 : 2)
             } catch {
                 fputs("World replay failed: \(error)\n", stderr)
+                exit(1)
+            }
+        }
+        if CommandLine.arguments.contains("--replay-visual-archive") {
+            // Long-running diagnostic replays have no windows or Dock entry.
+            NSApplication.shared.setActivationPolicy(.prohibited)
+            do {
+                let report = try VisualProductionReplay.run(arguments: Array(CommandLine.arguments.dropFirst()))
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                print(String(decoding: try encoder.encode(report), as: UTF8.self))
+                exit(0)
+            } catch {
+                fputs("Production visual replay failed: \(error)\n", stderr)
+                exit(1)
+            }
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--inspect-visual-replay") {
+            do {
+                guard CommandLine.arguments.count == index + 2 else {
+                    throw VisualReplayArchiveError.invalidDirectory
+                }
+                let report = try VisualReplayArchiveReader.inspect(
+                    pathURL: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                print(String(decoding: try encoder.encode(report), as: UTF8.self))
+                exit(report.complete ? 0 : 2)
+            } catch {
+                fputs("Visual replay inspection failed: \(error)\n", stderr)
                 exit(1)
             }
         }

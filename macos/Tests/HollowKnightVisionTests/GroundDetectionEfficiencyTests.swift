@@ -86,6 +86,30 @@ final class GroundDetectionEfficiencyTests: XCTestCase {
         }
     }
 
+    func testGroundMaskKeepsHUDAndRecoversRoomInsideAtlasShield() throws {
+        let extent = CGRect(x: 0, y: 0, width: 640, height: 360)
+        let atlas = SceneRegions.atlasHUDMaskRects(in: extent, hudStencil: nil)
+        let knight = CGRect(x: 300, y: 50, width: 34, height: 52)
+        let extraHealth = CGRect(x: 245, y: 319, width: 12, height: 14)
+        let source = atlas + [knight, extraHealth]
+        let narrowed = SceneRegions.groundOmittedRects(from: source, in: extent)
+        XCTAssertEqual(SceneRegions.groundOmittedRects(from: [knight, extraHealth], in: extent),
+                       [knight, extraHealth])
+        XCTAssertTrue(narrowed.contains(knight))
+        XCTAssertTrue(narrowed.contains(extraHealth))
+
+        let frame = try image(width: 640, height: 360)
+        let before = try XCTUnwrap(GroundLineDetector.analyze(frame, excluding: source)?.validSourcePixels)
+        let after = try XCTUnwrap(GroundLineDetector.analyze(frame, excluding: narrowed)?.validSourcePixels)
+        func pixel(_ x: Int, _ row: Int) -> Int { row * frame.width + x }
+        for (x, row) in [(0, 1), (117, 4), (44, 33), (100, 60), (203, 33), (251, 30), (313, 280)] {
+            XCTAssertEqual(after[pixel(x, row)], 0)
+        }
+        XCTAssertEqual(before[pixel(204, 83)], 0)
+        XCTAssertEqual(after[pixel(204, 83)], 1)
+        XCTAssertFalse(zip(before, after).contains { $0.0 == 1 && $0.1 == 0 })
+    }
+
     func testPairedKernelIsPixelExactForNoiseAndBorders() {
         for (width, height) in [(8, 4), (32, 8), (33, 9), (97, 67), (640, 360)] {
             let pixels = (0..<(width * height)).map { UInt8(truncatingIfNeeded: $0 &* 1237 ^ ($0 >> 3)) }

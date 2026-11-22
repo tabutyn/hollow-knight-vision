@@ -67,9 +67,8 @@ struct LiveRegistrationContinuity {
 }
 
 /// A new atlas has no committed geometry capable of exposing a bad initial
-/// pose. Hold its first write until the ground solve has remained stationary
-/// for a rolling window. Continuity alone is insufficient: a slowly drifting
-/// startup solve can otherwise become permanent evidence before it settles.
+/// pose. Require a stationary window or a level walk corroborated by both
+/// foreground contact and the independent low-resolution scenery tracker.
 /// A relocalization jump or accumulated drift starts a fresh window at the new
 /// pose before any frame can enter the atlas.
 struct FreshAtlasBootstrapGate {
@@ -83,6 +82,7 @@ struct FreshAtlasBootstrapGate {
     private var stabilityOrigin: CGPoint?
     private var previousPosition: CGPoint?
     private var previousStep: CGVector?
+    private var walkStart: (direction: VisualRoomDirection, position: CGPoint)?
 
     mutating func reset() {
         stableSampleCount = 0
@@ -90,13 +90,15 @@ struct FreshAtlasBootstrapGate {
         stabilityOrigin = nil
         previousPosition = nil
         previousStep = nil
+        walkStart = nil
     }
 
     mutating func allowsFirstAtlasWrite(
         position: CGPoint?,
         registrationAccepted: Bool,
         groundVerified: Bool,
-        hasCommittedEvidence: Bool
+        hasCommittedEvidence: Bool,
+        verifiedWalk: VisualRoomDirection? = nil
     ) -> Bool {
         guard !hasCommittedEvidence else {
             isReady = true
@@ -123,6 +125,15 @@ struct FreshAtlasBootstrapGate {
         let continuousMotion = previousStep.map {
             hypot(step.dx - $0.dx, step.dy - $0.dy) <= Self.maximumStepChange
         } ?? true
+        if let direction = verifiedWalk, continuousPose, continuousMotion,
+           step.dx * CGFloat(direction.rawValue) >= 0.25, abs(step.dy) <= 1 {
+            if let start = walkStart, start.direction == direction, abs(start.position.y - position.y) <= 2.5 {
+                if abs(position.x - start.position.x) >= 16 {
+                    isReady = true
+                    return true
+                }
+            } else { walkStart = (direction, position) }
+        } else { walkStart = nil }
         let stayedNearOrigin = stabilityOrigin.map {
             hypot(position.x - $0.x, position.y - $0.y)
                 <= Self.maximumBootstrapDisplacement

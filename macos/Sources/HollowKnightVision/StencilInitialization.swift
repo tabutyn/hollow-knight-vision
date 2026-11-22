@@ -21,18 +21,14 @@ struct StencilInitializationStep: Identifiable, Equatable {
 }
 
 enum StencilInitializationPolicy {
-    static let deferredProfileClass = "select-profile.clear-save"
-
-    static func isDeferred(_ step: StencilInitializationStep) -> Bool {
-        step.classIdentifier == deferredProfileClass
-    }
+    static let profileClearSaveClass = "select-profile.clear-save"
 
     static func isFirstPhaseStep(_ step: StencilInitializationStep) -> Bool {
-        firstPhaseContexts.contains(step.context) && !isDeferred(step)
+        firstPhaseContexts.contains(step.context)
     }
 
     static func phase(for step: StencilInitializationStep) -> Int {
-        isDeferred(step) ? 3 : phase(for: step.context)
+        phase(for: step.context)
     }
 
     static let firstPhaseContexts: [LabelingContext] = [.mainTitle, .selectProfile, .gameplayHUD]
@@ -81,8 +77,9 @@ enum StencilInitializationPolicy {
                 return nil
             }
             let override = contract?.occurrenceOverrides?[identifier]
-            // Optional for a fresh-save recognition contract, required later in the campaign.
-            let minimum = identifier == deferredProfileClass ? 1
+            // Recognition accepts fresh profiles, but setup captures an occupied
+            // slot so Clear Save is available on the same reference screenshot.
+            let minimum = identifier == profileClearSaveClass ? 1
                 : override?.minimum ?? (contract?.requiresAllContextObjects == true ? 1 : 0)
             return minimum > 0 ? (definition, minimum) : nil
         }
@@ -270,6 +267,9 @@ final class StencilInitializationCoordinator: ObservableObject {
     func guidance(labelingContext: LabelingContext?, selectedClassIdentifier: String?,
                   navigationContext: LabelingContext? = nil) -> String? {
         if let issue { return issue }
+        guard !isComplete else { return nil }
+        if isFirstPhaseComplete, let context = labelingContext ?? navigationContext,
+           isScreenComplete(context) { return nil }
         if labelingContext == .game {
             let identifier = LabelingFrameOpeningPolicy.classIdentifierForOpening(
                 context: .game, annotationClassIdentifiers: [], preferredClassIdentifier: selectedClassIdentifier)
@@ -278,14 +278,7 @@ final class StencilInitializationCoordinator: ObservableObject {
         let words = StencilGuidanceText(language: language)
         if let context = labelingContext,
            contexts.contains(context) {
-            if context == .selectProfile && isFirstPhaseComplete && selectedClassIdentifier == "select-profile.clear-save",
-               let example = example(for: context),
-               StencilInitializationPolicy.positiveCounts(example)["select-profile.clear-save", default: 0] == 0 {
-                return text("draw", ["object": text("Clear Save")])
-            }
-            let remaining = steps.filter {
-                $0.context == context && (isFirstPhaseComplete || !StencilInitializationPolicy.isDeferred($0))
-            }
+            let remaining = steps.filter { $0.context == context }
             if context == .controller, let identifier = selectedClassIdentifier,
                identifier == ControllerStencilPolicy.diagram,
                let definition = context.labels.first(where: { $0.id == identifier }),
@@ -293,18 +286,19 @@ final class StencilInitializationCoordinator: ObservableObject {
                 return text("draw", ["object": text(definition.name)])
             }
             if let step = remaining.first(where: { $0.classIdentifier == selectedClassIdentifier }) ?? remaining.first {
+                if step.classIdentifier == StencilInitializationPolicy.profileClearSaveClass {
+                    return words.instruction(step) + " " + text("profileClearSave")
+                }
                 return words.instruction(step)
             }
             if context == .gameplayHUD && !hasUsableHUD { return text("invalidHUD") }
-            return context == .selectProfile && !isScreenComplete(context) ? text("profilePhaseDone")
-                : text("screenDone", ["screen": screenName(context)])
+            return text("screenDone", ["screen": screenName(context)])
         }
         if let context = navigationContext, contexts.contains(context),
            !steps.contains(where: { $0.context == context }) {
             return text("screenReady", ["screen": screenName(context)])
         }
         guard let next = navigationStep(context: navigationContext) else { return nil }
-        if StencilInitializationPolicy.isDeferred(next) { return text("profileClearSave") }
         if example(for: next.context) != nil {
             return text("resumeStencil", ["screen": screenName(next.context)])
         }
@@ -321,7 +315,7 @@ final class StencilInitializationCoordinator: ObservableObject {
 
     func navigationStep(context: LabelingContext? = nil) -> StencilInitializationStep? {
         if context == nil && !hasUsableHUD && !steps.contains(where: {
-            !StencilInitializationPolicy.isDeferred($0) && ($0.context == .mainTitle || $0.context == .selectProfile)
+            $0.context == .mainTitle || $0.context == .selectProfile
         }) {
             return steps.first(where: { $0.context == .gameplayHUD }) ?? StencilInitializationStep(
                 context: .gameplayHUD, classIdentifier: "game.health", className: "Health", occurrence: 1, requiredCount: 2)
@@ -337,12 +331,11 @@ final class StencilInitializationCoordinator: ObservableObject {
         return navigationStep(context: navigation)?.context ?? recognized ?? fallback
     }
 
-    func modelGuidance(workspace: DashboardWorkspace, hasGameplayLabels: Bool, breaches: Int,
+    func modelGuidance(workspace: DashboardWorkspace, hasGameplayLabels: Bool,
                        modelReady: Bool, training: Bool, campaignGuidance: String? = nil) -> String? {
         guard isComplete, workspace != .label else { return nil }
         if training { return text("modelTraining") }
         if !hasGameplayLabels { return campaignGuidance ?? text("modelLabelGameplay") }
-        if breaches > 0 { return text("modelReview", ["count": String(breaches)]) }
         if modelReady && !hasEnabledObjectDetection { return text("modelReady") }
         if let campaignGuidance { return campaignGuidance }
         return modelReady ? nil : text(workspace == .model ? "modelTrain" : "modelOpen")

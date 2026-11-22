@@ -38,7 +38,7 @@ struct GroundComparisonAnalysis {
     var validSourcePixels: [UInt8]? = nil
 }
 
-struct GroundTheoryTuning: Equatable {
+struct GroundTheoryTuning: Codable, Equatable, Sendable {
     var groundThreshold: Int
     var minimumSegmentLength: Int
     var lineSeparation: Int
@@ -113,6 +113,7 @@ fileprivate struct GroundCandidateRun {
 fileprivate struct GroundTheoryStages {
     let acceptedRunsByRow: [[GroundCandidateRun]]
     let selectedRows: [Int]
+    let eligibleRunsByRow: [[GroundCandidateRun]]?
 }
 
 /// One frame's line extraction, shared by tracking and all debug renderers.
@@ -135,6 +136,20 @@ struct CleanFloorLine: Equatable {
         self.row = row
         self.xRange = xRange
         self.evidenceRanges = evidenceRanges ?? [xRange]
+    }
+
+    func containsPatch(atX x: Int, row y: Int) -> Bool {
+        abs(row - y) <= 3 && xRange.contains(x) && xRange.contains(x + GroundPixels.patchWidth - 1)
+    }
+
+    func evidenceCount(in range: ClosedRange<Int>) -> Int {
+        evidenceRanges.reduce(0) {
+            $0 + max(0, min($1.upperBound, range.upperBound) - max($1.lowerBound, range.lowerBound) + 1)
+        }
+    }
+
+    func supportsPatch(atX x: Int, row y: Int) -> Bool {
+        containsPatch(atX: x, row: y) && evidenceRanges.contains { $0.overlaps(x...(x + GroundPixels.patchWidth - 1)) }
     }
 }
 
@@ -247,7 +262,7 @@ enum GroundLineDetector {
     }
 
     /// Progressive ground review. Cyan is raw threshold evidence and green is
-    /// evidence belonging to a contiguous island that survives Minimum Segment.
+    /// measured pixels from runs that pass the minimum-support gate.
     static func groundStageImage(
         from analysis: GroundComparisonAnalysis,
         tuning: GroundTheoryTuning
@@ -265,11 +280,14 @@ enum GroundLineDetector {
             where analysis.groundPixels[index] >= threshold {
             paint(&pixels, index: index, color: (0, 230, 255, 255))
         }
-        for row in stages.acceptedRunsByRow.indices {
+        let eligible = stages.eligibleRunsByRow ?? stages.acceptedRunsByRow
+        for row in eligible.indices {
             let offset = row * analysis.width
-            for run in stages.acceptedRunsByRow[row] {
-                for x in run.range where analysis.groundPixels[offset + x] >= threshold {
-                    paint(&pixels, index: offset + x, color: (70, 255, 120, 255))
+            for run in eligible[row] {
+                for range in run.evidenceRanges {
+                    for x in range where analysis.groundPixels[offset + x] >= threshold {
+                        paint(&pixels, index: offset + x, color: (70, 255, 120, 255))
+                    }
                 }
             }
         }
@@ -386,9 +404,9 @@ enum GroundLineDetector {
     }
 
     static func semanticTheory(
-        from analysis: GroundComparisonAnalysis, tuning: GroundTheoryTuning
+        from analysis: GroundComparisonAnalysis, tuning: GroundTheoryTuning, includeRunEvidence: Bool = false
     ) -> GroundTheoryAnalysis? {
-        theoryStages(in: analysis, tuning: tuning, validatesSurface: true).map {
+        theoryStages(in: analysis, tuning: tuning, validatesSurface: true, includeRunEvidence: includeRunEvidence).map {
             GroundTheoryAnalysis(comparison: analysis, tuning: tuning, stages: $0)
         }
     }
@@ -399,6 +417,37 @@ enum GroundLineDetector {
         guard let theory = semanticTheory(from: analysis, tuning: tuning)
         else { return [] }
         return cleanFloorLines(from: theory)
+    }
+
+    static func gameplayFloors(_ detected: [CleanFloorLine], imageHeight: Int,
+                               foregroundRects: [CGRect], knightRect: CGRect?) -> [CleanFloorLine] {
+        let visible = rejectingKnownForegroundLines(detected, imageHeight: imageHeight,
+            foregroundRects: foregroundRects, knightRect: knightRect)
+        return GroundClearance.floors(visible, imageHeight: imageHeight, knight: knightRect)
+    }
+
+    /// Camera references use the established high-confidence edge detector.
+    /// Require a shared patch-width of visible floor within one Knight height.
+    /// A longer floor disqualifies an enclosed row at a competing height.
+    static func cameraFloors(from comparison: GroundComparisonAnalysis, tuning: GroundTheoryTuning,
+                             visibleFloors: [CleanFloorLine], imageHeight: Int,
+                             foregroundRects: [CGRect], knightRect: CGRect?) -> [CleanFloorLine] {
+        let references = rejectingKnownForegroundLines(cleanFloorLines(from: comparison, tuning: tuning),
+            imageHeight: imageHeight, foregroundRects: foregroundRects, knightRect: knightRect)
+        let height = GroundClearance.height(frameHeight: CGFloat(imageHeight), knight: knightRect)
+        let surfaces = visibleFloors.map(GroundClearance.span)
+        return references.filter { line in
+            let candidate = GroundClearance.span(line)
+            let enclosed = surfaces.contains {
+                $0.excludes(candidate.extent, row: candidate.row, height: height, rowTolerance: 3)
+            }
+            guard !enclosed else { return false }
+            return surfaces.contains { floor in
+                abs(floor.row - candidate.row) < height
+                    && min(floor.extent.upperBound, candidate.extent.upperBound)
+                        - max(floor.extent.lowerBound, candidate.extent.lowerBound) >= CGFloat(GroundPixels.patchWidth)
+            }
+        }
     }
 
     /// Object boxes use bottom-left image coordinates; detector rows use a
@@ -640,7 +689,8 @@ enum GroundLineDetector {
     private static func theoryStages(
         in analysis: GroundComparisonAnalysis,
         tuning: GroundTheoryTuning,
-        validatesSurface: Bool = false
+        validatesSurface: Bool = false,
+        includeRunEvidence: Bool = false
     ) -> GroundTheoryStages? {
         guard analysis.width > 0, analysis.height > 0,
               analysis.groundPixels.count == analysis.width * analysis.height
@@ -650,6 +700,8 @@ enum GroundLineDetector {
         let minimumLength = max(1, tuning.minimumSegmentLength)
         let maximumOcclusionGap = max(0, tuning.occlusionMergeGap)
         let surface = validatesSurface ? GroundSurfaceEvidence(analysis) : nil
+        let hasLuma = analysis.sourceLuma?.count == analysis.groundPixels.count
+        let caption = validatesSurface && hasLuma ? GroundCaptionEvidence(analysis) : nil
         var accepted = Array(repeating: [GroundCandidateRun](), count: analysis.height)
 
         for row in 0..<analysis.height {
@@ -669,20 +721,37 @@ enum GroundLineDetector {
                 }
             }
             if start != nil { finishRun(at: analysis.width - 1) }
-            accepted[row] = mergeGroundRuns(
-                rawRuns,
-                maximumGap: maximumOcclusionGap
-            ).filter {
-                $0.range.count >= minimumLength
-                    && $0.evidenceRanges.reduce(0, { $0 + $1.count }) >= minimumLength
-                    && (!validatesSurface || $0.evidenceRanges.reduce(0, { total, range in
-                        total + range.reduce(0) { count, x in
-                            count + (Int(analysis.groundPixels[offset + x]) >= min(255, tuning.groundThreshold + 1) ? 1 : 0)
-                        }
-                    }) >= minimumLength)
-
+            if let caption, rawRuns.reduce(0, { $0 + $1.count }) >= minimumLength {
+                rawRuns = caption.removingText(from: rawRuns, row: row)
+            }
+            let merged = mergeGroundRuns(rawRuns, maximumGap: maximumOcclusionGap)
+            let separated = surface == nil ? merged : merged.flatMap { run -> [GroundCandidateRun] in
+                guard let surface, run.range.count >= minimumLength,
+                      run.evidenceRanges.count > 1,
+                      zip(run.evidenceRanges, run.evidenceRanges.dropFirst()).contains(where: {
+                          $1.lowerBound - $0.upperBound - 1 >= minimumLength
+                      }),
+                      !surface.supports(row: row, ranges: [run.range]) else { return [run] }
+                // Bright air between two ledges can fail the combined body vote.
+                // Test each bank on its own when the gap itself lacks a surface.
+                return mergeGroundRuns(run.evidenceRanges, maximumGap: maximumOcclusionGap) { gap in
+                    gap.count < minimumLength || surface.supports(row: row, ranges: [gap])
+                }
+            }
+            accepted[row] = separated.filter { run in
+                guard run.range.count >= minimumLength else { return false }
+                let evidence = run.evidenceRanges
+                guard evidence.reduce(0, { $0 + $1.count }) >= minimumLength else { return false }
+                guard validatesSurface else { return true }
+                let strongThreshold = UInt8(clamping: min(254, Int(threshold)) + 1)
+                let strongCount = evidence.reduce(0) { total, range in
+                    total + range.reduce(0) { $0 + (analysis.groundPixels[offset + $1] >= strongThreshold ? 1 : 0) }
+                }
+                return strongCount >= minimumLength
             }
         }
+
+        let eligibleRuns = includeRunEvidence ? accepted : nil
 
         // Non-maximum suppression is line-local rather than row-global. Raw
         // overlap handles ordinary duplicate edges. A dominant, bridged floor
@@ -721,6 +790,12 @@ enum GroundLineDetector {
             let candidateEvidence = candidate.run.evidenceRanges.reduce(0) { $0 + $1.count }
             let suppressed = surviving.contains { stronger in
                 guard abs(stronger.row - candidate.row) <= separation else { return false }
+                // Adjacent responses can describe the same ridge even when each
+                // one measures different fragments along its occluded footprint.
+                let shared = min(stronger.run.range.upperBound, candidate.run.range.upperBound)
+                    - max(stronger.run.range.lowerBound, candidate.run.range.lowerBound) + 1
+                if validatesSurface, abs(stronger.row - candidate.row) <= 3,
+                   shared * 2 >= min(stronger.run.range.count, candidate.run.range.count) { return true }
                 let directEvidenceOverlap = stronger.run.evidenceRanges.contains { strong in
                     candidate.run.evidenceRanges.contains { weak in
                         min(strong.upperBound, weak.upperBound)
@@ -743,6 +818,7 @@ enum GroundLineDetector {
             }
         }
         accepted = Array(repeating: [], count: analysis.height)
+        let extent = validatesSurface && hasLuma ? GroundEdgeExtent(analysis) : nil
         for candidate in surviving {
             // An observed lower surface inside an unsupported interval is a
             // step/gap, not an occluder over one continuous upper floor.
@@ -752,8 +828,9 @@ enum GroundLineDetector {
                 guard let first = group.first, let last = group.last else { return }
                 if surface?.supports(row: candidate.row,
                        ranges: [first.lowerBound...last.upperBound]) == false { return }
-                accepted[candidate.row].append(GroundCandidateRun(
-                    range: first.lowerBound...last.upperBound, evidenceRanges: group))
+                let localized = extent?.refined(group, row: candidate.row, threshold: Int(threshold)) ?? group
+                guard let start = localized.first?.lowerBound, let end = localized.last?.upperBound else { return }
+                accepted[candidate.row].append(GroundCandidateRun(range: start...end, evidenceRanges: localized))
             }
             for evidence in candidate.run.evidenceRanges {
                 if let prior = group.last {
@@ -779,20 +856,22 @@ enum GroundLineDetector {
         let selectedRows = accepted.indices.filter { !accepted[$0].isEmpty }
         return GroundTheoryStages(
             acceptedRunsByRow: accepted,
-            selectedRows: selectedRows
+            selectedRows: selectedRows,
+            eligibleRunsByRow: eligibleRuns
         )
     }
 
     private static func mergeGroundRuns(
         _ runs: [ClosedRange<Int>],
-        maximumGap: Int
+        maximumGap: Int,
+        bridgesGap: ((ClosedRange<Int>) -> Bool)? = nil
     ) -> [GroundCandidateRun] {
         guard var current = runs.first else { return [] }
         var currentEvidence = [current]
         var merged = [GroundCandidateRun]()
         for run in runs.dropFirst() {
             let gap = run.lowerBound - current.upperBound - 1
-            if gap <= maximumGap {
+            if gap <= maximumGap, gap == 0 || bridgesGap?((current.upperBound + 1)...(run.lowerBound - 1)) != false {
                 current = current.lowerBound...max(current.upperBound, run.upperBound)
                 currentEvidence.append(run)
             } else {

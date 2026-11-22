@@ -22,7 +22,6 @@ struct LabelingModelWorkspaceSelection: Equatable {
     var objectExampleIdentifier: UUID?
     var screenshotIdentifier: UUID?
     var screenshotGroup = "all"
-    var contractExampleIdentifier: UUID?
     var summaryReviewClassIdentifier: String?
     var summaryFailureIdentifier: UUID?
 }
@@ -42,7 +41,6 @@ struct LabelingModelWorkspaceView: View {
     let candidate: LabelingModelCandidate?
     let campaignProgress: [LabelingCampaignProgress]
     let campaignHistory: [LabelingCampaignPoint]
-    let campaignHistoryUnavailable: Bool
     @Binding var context: LabelingContext
     @Binding var selectedClassIdentifier: String
     let activeVersionName: String
@@ -60,15 +58,12 @@ struct LabelingModelWorkspaceView: View {
 
     @State private var examples = [SavedLabelingExample]()
     @State private var examplesError: String?
-    @State private var exemptions = [UUID: Set<String>]()
     @State private var referenceRevision = 0
     @State private var objectAtlas: LabelingObjectAtlasSnapshot?
     @State private var objectAtlasIsLoading = false
-    @State private var selectedContractDeletionIdentifiers = Set<UUID>()
     @State private var pendingDeletionIdentifiers = Set<UUID>()
 
     private let exampleStore = LabelingExampleStore()
-    private let exemptionStore = LabelingContractExemptionStore()
     private let referenceStore = LabelingObjectReferenceStore()
 
     var body: some View {
@@ -145,12 +140,8 @@ struct LabelingModelWorkspaceView: View {
                             Text(visionText("Train"))
                         }
                     }
-                    .disabled(!canTrain || !breachedExamples.isEmpty)
-                    .help(
-                        breachedExamples.isEmpty
-                            ? trainingHelp
-                            : visionText("fixLabels", ["count": String(breachedExamples.count)])
-                    )
+                    .disabled(!canTrain)
+                    .help(trainingHelp)
                 }
                 Text(visionText(activeVersionName))
                     .monospacedDigit()
@@ -191,8 +182,7 @@ struct LabelingModelWorkspaceView: View {
             switch selection.tab {
             case .summary:
                 VStack(spacing: 0) {
-                    LabelingCampaignView(progress: campaignProgress, history: campaignHistory,
-                                         historyUnavailable: campaignHistoryUnavailable)
+                    LabelingCampaignView(progress: campaignProgress, history: campaignHistory)
                     Divider()
                     summary
                 }
@@ -209,7 +199,7 @@ struct LabelingModelWorkspaceView: View {
                     .foregroundStyle(value.registrationCount == 0 ? .orange : .secondary)
             }
             priorityPanel(title: "Most Errors", values: mostErrors) { value in
-                Text("\(truePositiveCount(for: value.classIdentifier)) TP")
+                Text("\(value.falsePositives) FP · \(value.falseNegatives) FN")
                     .foregroundStyle(.secondary)
             }
             summaryPreview
@@ -258,107 +248,11 @@ struct LabelingModelWorkspaceView: View {
         .modelPanelBackground()
     }
 
-    private var contractBreachPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text(visionText("Contract Breach")).font(.headline)
-                Spacer()
-                Button(role: .destructive) {
-                    pendingDeletionIdentifiers = selectedContractDeletionIdentifiers
-                } label: {
-                    Label(
-                        "\(selectedContractDeletionIdentifiers.count)",
-                        systemImage: "trash"
-                    )
-                }
-                .disabled(selectedContractDeletionIdentifiers.isEmpty)
-                .help(visionText("Delete selected screenshots"))
-            }
-            Divider()
-            ScrollView {
-                LazyVStack(spacing: 4) {
-                    if breachedExamples.isEmpty {
-                        Text(visionText("No unexempted breaches."))
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 8)
-                    }
-                    ForEach(breachedExamples, id: \.example.id) { item in
-                        contractBreachRow(item, color: .red)
-                    }
-                    if !exemptedBreachExamples.isEmpty {
-                        Divider().padding(.vertical, 5)
-                        ForEach(exemptedBreachExamples, id: \.example.id) { item in
-                            contractBreachRow(item, color: .blue)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .modelPanelBackground()
-    }
-
-    private func contractBreachRow(
-        _ item: (example: SavedLabelingExample, evaluations: [LabelingContractEvaluation]),
-        color: Color
-    ) -> some View {
-        HStack(spacing: 6) {
-            Button {
-                if selectedContractDeletionIdentifiers.contains(item.example.id) {
-                    selectedContractDeletionIdentifiers.remove(item.example.id)
-                } else {
-                    selectedContractDeletionIdentifiers.insert(item.example.id)
-                }
-            } label: {
-                Image(systemName: selectedContractDeletionIdentifiers.contains(item.example.id)
-                    ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(
-                        selectedContractDeletionIdentifiers.contains(item.example.id)
-                            ? Color.accentColor : Color.secondary
-                    )
-                    .frame(width: 18, height: 18)
-            }
-            .buttonStyle(.plain)
-            .help(visionText("Select for deletion"))
-
-            Button {
-                selection.summaryReviewClassIdentifier = nil
-                selection.summaryFailureIdentifier = nil
-                selection.contractExampleIdentifier = item.example.id
-            } label: {
-                HStack(spacing: 8) {
-                    Text(contextName(item.example))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    Spacer()
-                    Text("\(item.evaluations.filter { !$0.isSatisfied }.count)")
-                        .foregroundStyle(color)
-                }
-                .font(.caption.monospacedDigit())
-                .padding(.horizontal, 6)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
-                .background(
-                    selection.contractExampleIdentifier == item.example.id
-                        ? Color.accentColor.opacity(0.18) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 6)
-                )
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
     private var summaryPreview: some View { priorityFailurePreview }
 
     private var priorityFailurePreview: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text(selection.summaryReviewClassIdentifier.map(objectName) ?? "Errors")
-                    .font(.headline)
-                    .lineLimit(1)
                 Spacer()
                 Button { moveSummaryFailure(by: -1) } label: {
                     Image(systemName: "chevron.left")
@@ -372,49 +266,25 @@ struct LabelingModelWorkspaceView: View {
                 }
                 .disabled(selectedFailureExamples.count < 2)
             }
-            if let example = selectedFailureExample,
+            if let example = selectedFailureExample, let errors = selectedFailureErrors,
                let image = try? exampleStore.loadImage(for: example) {
+                HStack(spacing: 14) {
+                    Label("\(errors.falsePositives.count) FP · false detection", systemImage: "square")
+                        .foregroundStyle(.red)
+                    Label("\(errors.falseNegatives.count) FN · missed object", systemImage: "square.dashed")
+                        .foregroundStyle(.orange)
+                }
+                .font(.caption)
                 reviewedImage(
                     image: image,
                     example: example,
                     maximumHeight: 390,
-                    predictions: selectedFailurePredictions
+                    errors: errors
                 ) {
                     openForRepair(example)
                 }
             } else {
                 Text(visionText("No failed screenshots for this object."))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .modelPanelBackground()
-    }
-
-    private var contractBreachPreview: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let example = selectedContractExample,
-               let image = try? exampleStore.loadImage(for: example) {
-                reviewedImage(image: image, example: example, maximumHeight: 330) {
-                    openForRepair(example)
-                }
-                Divider()
-                ScrollView {
-                    contractTermsGrid {
-                        ForEach(evaluations(for: example)) { evaluation in
-                            contractTerm(evaluation, example: example)
-                        }
-                    }
-                }
-                Divider()
-                Button(visionText("Delete Screenshot"), role: .destructive) {
-                    pendingDeletionIdentifiers = [example.id]
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            } else {
-                Text(visionText("Select a contract breach."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -568,7 +438,7 @@ struct LabelingModelWorkspaceView: View {
         HStack(spacing: 0) {
             screenshotList.frame(width: 270)
             Divider()
-            screenshotContracts
+            screenshotPreview
         }
         .overlay {
             ZStack {
@@ -656,23 +526,13 @@ struct LabelingModelWorkspaceView: View {
         }
     }
 
-    private var screenshotContracts: some View {
+    private var screenshotPreview: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let example = selectedScreenshot,
                let image = try? exampleStore.loadImage(for: example) {
-                reviewedImage(image: image, example: example, maximumHeight: 390) {
+                reviewedImage(image: image, example: example) {
                     openForRepair(example)
                 }
-                Divider()
-                Text(visionText("Contracts")).font(.headline)
-                ScrollView {
-                    contractTermsGrid {
-                        ForEach(evaluations(for: example)) { evaluation in
-                            contractTerm(evaluation, example: example)
-                        }
-                    }
-                }
-                Divider()
                 Button(visionText("Delete Screenshot"), role: .destructive) {
                     pendingDeletionIdentifiers = [example.id]
                 }
@@ -691,17 +551,17 @@ struct LabelingModelWorkspaceView: View {
         image: CGImage,
         example: SavedLabelingExample,
         maximumHeight: CGFloat = .infinity,
-        predictions: [LabelingReviewBox] = [],
+        errors: LabelingReviewErrors? = nil,
         onOpen: @escaping () -> Void
     ) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Button(action: onOpen) {
-                annotatedImage(image: image, example: example, predictions: predictions)
+                annotatedImage(image: image, example: example, errors: errors)
                     .frame(maxWidth: .infinity, maxHeight: maximumHeight)
             }
             .buttonStyle(.plain)
             .help(visionText("Open screenshot in Label"))
-            if !example.manifest.annotations.isEmpty {
+            if errors == nil && !example.manifest.annotations.isEmpty {
                 LabelingObjectLegend(
                     classIdentifiers: example.manifest.annotations.map(\.classIdentifier),
                     objectAtlas: objectAtlas
@@ -712,52 +572,10 @@ struct LabelingModelWorkspaceView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func contractTermsGrid<Content: View>(
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3),
-            alignment: .leading,
-            spacing: 3,
-            content: content
-        )
-    }
-
-    @ViewBuilder private func contractIcon(_ evaluation: LabelingContractEvaluation) -> some View {
-        if evaluation.isExempt {
-            Image(systemName: "doc.fill").foregroundStyle(.blue)
-        } else if evaluation.isSatisfied {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-        } else {
-            Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
-        }
-    }
-
-    private func contractTerm(
-        _ evaluation: LabelingContractEvaluation,
-        example: SavedLabelingExample
-    ) -> some View {
-        Button { toggleExemption(evaluation.id, for: example) } label: {
-            HStack(spacing: 7) {
-                contractIcon(evaluation)
-                Text(evaluation.title)
-                    .font(.caption)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Spacer()
-            }
-            .padding(.vertical, 4)
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(evaluation.isSatisfied && !evaluation.isExempt)
-    }
-
     private func annotatedImage(
         image: CGImage,
         example: SavedLabelingExample,
-        predictions: [LabelingReviewBox] = []
+        errors: LabelingReviewErrors? = nil
     ) -> some View {
         GeometryReader { proxy in
             let layout = LabelingImageLayout(
@@ -770,39 +588,42 @@ struct LabelingModelWorkspaceView: View {
                     .resizable()
                     .frame(width: layout.fittedRect.width, height: layout.fittedRect.height)
                     .position(x: layout.fittedRect.midX, y: layout.fittedRect.midY)
-                ForEach(example.manifest.annotations) { annotation in
-                    if let rect = layout.displayRect(for: annotation.normalizedRect) {
-                        Rectangle()
-                            .stroke(
-                                annotation.isHardNegative
-                                    ? Color.pink
-                                    : LabelingVisualIdentity.color(
-                                        for: annotation.classIdentifier
-                                    ),
-                                lineWidth: LabelingClassIdentity.matches(
-                                    annotation.classIdentifier,
-                                    selectedClassIdentifier
-                                ) ? 3 : 2
-                            )
-                            .frame(width: rect.width, height: rect.height)
-                            .position(x: rect.midX, y: rect.midY)
+                if let errors {
+                    ForEach(Array(errors.falsePositives.enumerated()), id: \.offset) { _, box in
+                        if let rect = layout.displayRect(for: box.normalizedRect) {
+                            errorBox("FP", rect: rect, color: .red, dashed: false)
+                        }
                     }
-                }
-                ForEach(Array(predictions.enumerated()), id: \.offset) { _, prediction in
-                    if let rect = layout.displayRect(for: prediction.normalizedRect) {
-                        Rectangle()
-                            .stroke(
-                                Color.yellow,
-                                style: StrokeStyle(lineWidth: 2, dash: [6, 4])
-                            )
-                            .frame(width: rect.width, height: rect.height)
-                            .position(x: rect.midX, y: rect.midY)
+                    ForEach(Array(errors.falseNegatives.enumerated()), id: \.offset) { _, box in
+                        if let rect = layout.displayRect(for: box.normalizedRect) {
+                            errorBox("FN", rect: rect, color: .orange, dashed: true)
+                        }
+                    }
+                } else {
+                    ForEach(example.manifest.annotations) { annotation in
+                        if let rect = layout.displayRect(for: annotation.normalizedRect) {
+                            Rectangle()
+                                .stroke(annotation.isHardNegative ? Color.pink : LabelingVisualIdentity.color(for: annotation.classIdentifier),
+                                    lineWidth: LabelingClassIdentity.matches(annotation.classIdentifier, selectedClassIdentifier) ? 3 : 2)
+                                .frame(width: rect.width, height: rect.height)
+                                .position(x: rect.midX, y: rect.midY)
+                        }
                     }
                 }
             }
             .clipped()
         }
         .aspectRatio(CGFloat(image.width) / CGFloat(image.height), contentMode: .fit)
+    }
+
+    private func errorBox(_ title: String, rect: CGRect, color: Color, dashed: Bool) -> some View {
+        ZStack(alignment: .topLeading) {
+            Rectangle().stroke(color, style: StrokeStyle(lineWidth: 2.5, dash: dashed ? [6, 4] : []))
+            Text(title).font(.caption2.bold()).foregroundStyle(.black)
+                .padding(.horizontal, 3).background(color)
+        }
+        .frame(width: rect.width, height: rect.height)
+        .position(x: rect.midX, y: rect.midY)
     }
 
     @ViewBuilder private func objectCatalogEntry(
@@ -864,14 +685,6 @@ struct LabelingModelWorkspaceView: View {
         LabelingObjectPriorityAnalyzer.mostErrors(priorities)
     }
 
-    private var reviewSummaries: [String: LabelingClassReviewSummary] {
-        guard let review = candidate?.predictionReview else { return [:] }
-        return Dictionary(uniqueKeysWithValues: LabelingPredictionReviewAnalyzer.summaries(
-            review: review,
-            classIdentifiers: Array(LabelingSharedModelPolicy.classIdentifiers)
-        ).map { ($0.classIdentifier, $0) })
-    }
-
     private var selectedFailureExampleIdentifiers: [UUID] {
         guard let classIdentifier = selection.summaryReviewClassIdentifier,
               let review = candidate?.predictionReview else { return [] }
@@ -894,16 +707,15 @@ struct LabelingModelWorkspaceView: View {
         return selectedFailureExamples.first
     }
 
-    private var selectedFailurePredictions: [LabelingReviewBox] {
+    private var selectedFailureErrors: LabelingReviewErrors? {
         guard let example = selectedFailureExample,
               let classIdentifier = selection.summaryReviewClassIdentifier,
               let review = candidate?.predictionReview,
               let reviewed = review.examples.first(where: { $0.id == example.id })
-        else { return [] }
-        return reviewed.predictions.filter {
-            LabelingClassIdentity.matches($0.label, classIdentifier)
-                && $0.confidence >= review.metrics.confidenceThreshold
-        }
+        else { return nil }
+        return LabelingPredictionReviewAnalyzer.errors(in: reviewed, classIdentifier: classIdentifier,
+            confidenceThreshold: review.metrics.confidenceThreshold,
+            intersectionOverUnionThreshold: review.metrics.intersectionOverUnionThreshold)
     }
 
     private var summaryFailurePositionText: String {
@@ -912,34 +724,6 @@ struct LabelingModelWorkspaceView: View {
                   $0.id == selectedFailureExample.id
               }) else { return "0 / 0" }
         return "\(index + 1) / \(selectedFailureExamples.count)"
-    }
-
-    private func truePositiveCount(for classIdentifier: String) -> Int {
-        reviewSummaries[LabelingClassIdentity.canonicalIdentifier(classIdentifier)]?.truePositives ?? 0
-    }
-
-    private var breachedExamples: [(example: SavedLabelingExample, evaluations: [LabelingContractEvaluation])] {
-        examples.compactMap { example in
-            let values = evaluations(for: example)
-            return values.contains(where: \.isBreach) ? (example, values) : nil
-        }.sorted { $0.example.manifest.createdAt > $1.example.manifest.createdAt }
-    }
-
-    private var exemptedBreachExamples: [(example: SavedLabelingExample, evaluations: [LabelingContractEvaluation])] {
-        examples.compactMap { example in
-            let values = evaluations(for: example)
-            let failed = values.filter { !$0.isSatisfied }
-            guard !failed.isEmpty, failed.allSatisfy(\.isExempt) else { return nil }
-            return (example, values)
-        }.sorted { $0.example.manifest.createdAt > $1.example.manifest.createdAt }
-    }
-
-    private var selectedContractExample: SavedLabelingExample? {
-        if let identifier = selection.contractExampleIdentifier,
-           let selected = examples.first(where: { $0.id == identifier }) {
-            return selected
-        }
-        return breachedExamples.first?.example ?? exemptedBreachExamples.first?.example
     }
 
     private var selectedObjectReferences: [LabelingObjectReference] {
@@ -987,7 +771,7 @@ struct LabelingModelWorkspaceView: View {
             case "other": return screenshotGroupIdentifier(for: example) == "other"
             default: return screenshotGroupIdentifier(for: example) == selection.screenshotGroup
             }
-        }.sorted { $0.manifest.createdAt < $1.manifest.createdAt }
+        }
     }
 
     private var selectedScreenshot: SavedLabelingExample? {
@@ -1033,34 +817,8 @@ struct LabelingModelWorkspaceView: View {
         return example.manifest.contextIdentifier
     }
 
-    private func evaluations(for example: SavedLabelingExample) -> [LabelingContractEvaluation] {
-        LabelingContractEvaluator.evaluate(
-            example,
-            exemptions: exemptions[example.id, default: []]
-        )
-    }
-
     private func screenshotOutline(_ example: SavedLabelingExample) -> Color {
-        let values = evaluations(for: example)
-        if values.contains(where: \.isBreach) { return .red }
-        if !exemptions[example.id, default: []].isEmpty { return .blue }
-        return selection.screenshotIdentifier == example.id ? .cyan : .clear
-    }
-
-    private func toggleExemption(_ ruleIdentifier: String, for example: SavedLabelingExample) {
-        var values = exemptions[example.id, default: []]
-        if values.contains(ruleIdentifier) {
-            values.remove(ruleIdentifier)
-        } else {
-            values.insert(ruleIdentifier)
-        }
-        do {
-            try exemptionStore.save(values, for: example)
-            exemptions[example.id] = values
-            onDatasetChanged()
-        } catch {
-            examplesError = "Exemption failed: \(error.localizedDescription)"
-        }
+        selection.screenshotIdentifier == example.id ? .cyan : .clear
     }
 
     private func deleteScreenshots(identifiers: Set<UUID>) {
@@ -1077,10 +835,6 @@ struct LabelingModelWorkspaceView: View {
             }
         }
         examples.removeAll { deleted.contains($0.id) }
-        for identifier in deleted {
-            exemptions.removeValue(forKey: identifier)
-        }
-        selectedContractDeletionIdentifiers.subtract(deleted)
         if !deleted.isEmpty { onDatasetChanged() }
         reconcileSelection()
         selectDefaultObjectReference()
@@ -1146,9 +900,6 @@ struct LabelingModelWorkspaceView: View {
                 $0.manifest.contextIdentifier == LabelingContext.game.storageIdentifier
             }
             selection.screenshotGroup = "all"
-            exemptions = Dictionary(uniqueKeysWithValues: examples.map {
-                ($0.id, exemptionStore.load(for: $0))
-            })
             examplesError = nil
             reconcileSelection()
             rebuildObjectAtlas()
@@ -1159,19 +910,11 @@ struct LabelingModelWorkspaceView: View {
     }
 
     private func reconcileSelection() {
-        selectedContractDeletionIdentifiers.formIntersection(
-            Set(examples.map(\.id))
-        )
         if selectedObjectExample == nil {
             selectDefaultObjectReference()
         }
         if !filteredScreenshots.contains(where: { $0.id == selection.screenshotIdentifier }) {
             selection.screenshotIdentifier = filteredScreenshots.first?.id
-        }
-        let contractExamples = breachedExamples.map(\.example)
-            + exemptedBreachExamples.map(\.example)
-        if !contractExamples.contains(where: { $0.id == selection.contractExampleIdentifier }) {
-            selection.contractExampleIdentifier = contractExamples.first?.id
         }
         if selection.summaryReviewClassIdentifier != nil,
            !selectedFailureExampleIdentifiers.contains(selection.summaryFailureIdentifier ?? UUID()) {

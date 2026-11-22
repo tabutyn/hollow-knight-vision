@@ -134,6 +134,42 @@ final class LiveWorldSessionStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("partial").path))
     }
 
+    func testLegacyCommitPreservesOriginalSnapshotAndSourceBytes() throws {
+        for schema in [1, 2] {
+            let root = try temporaryRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let writer = try LiveWorldSessionStore(rootURL: root)
+            let source = try writer.append(maskedImage: image(.red), timestamp: 1,
+                rawCameraPose: .zero, solveWidth: 32)
+            let world = try oneObservationWorld(source: source, revision: 1, optimized: CGPoint(x: 5, y: 2))
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(world)) as? [String: Any])
+            object["schemaVersion"] = schema
+            if schema == 1 { object.removeValue(forKey: "trackingIslands") }
+            object.removeValue(forKey: "doorwayFloorConstraints")
+            let original = try JSONSerialization.data(withJSONObject: object, options: .sortedKeys)
+            let originalPixels = try Data(contentsOf: root.appendingPathComponent(source.imagePath))
+            let legacyStore = try SceneSessionStore(rootURL: root)
+            XCTAssertTrue(try legacyStore.saveScene(data: original, expectedRevision: 0, newRevision: 1))
+            let migratedStore = try LiveWorldSessionStore(rootURL: root)
+            let migrated = try migratedStore.load().snapshot
+            XCTAssertEqual(migrated.schemaVersion, LiveWorldSnapshot.currentSchemaVersion)
+            XCTAssertEqual(migrated.observations, world.observations)
+            XCTAssertEqual(migrated.trackingIslands[0].placement, .legacyUnknown)
+            let moved = try migrated.translatingRoom(0, by: CGVector(dx: 7, dy: -1))
+            XCTAssertTrue(try migratedStore.commit(moved, expectedRevision: 1, newRevision: 2))
+            XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("legacy-world-schema-\(schema)-revision-1.json")), original)
+            XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent(source.imagePath)), originalPixels)
+            XCTAssertEqual(try LiveWorldSessionStore(rootURL: root).load().snapshot, moved)
+            let movedAgain = try moved.translatingRoom(0, by: CGVector(dx: 1, dy: 0))
+            XCTAssertTrue(try migratedStore.commit(movedAgain, expectedRevision: 2, newRevision: 3))
+            let backups = try FileManager.default.contentsOfDirectory(atPath: root.path)
+                .filter { $0.hasPrefix("legacy-world-schema-") }
+            XCTAssertEqual(backups, ["legacy-world-schema-\(schema)-revision-1.json"])
+            XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent(backups[0])), original)
+            XCTAssertEqual(try LiveWorldSessionStore(rootURL: root).load().snapshot, movedAgain)
+        }
+    }
+
     private func oneObservationWorld(source: StoredFrameObservation, revision: Int, optimized: CGPoint = .zero) throws -> LiveWorldSnapshot {
         try LiveWorldSnapshot(
             mapRevision: revision,

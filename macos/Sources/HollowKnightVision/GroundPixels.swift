@@ -2,6 +2,8 @@ import CoreGraphics
 
 /// Shared detector/tracker pixels: DeviceGray, no interpolation, original orientation.
 enum GroundPixels {
+    static let patchWidth = 16
+
     static func luma(_ image: CGImage, width: Int, height: Int) -> [UInt8]? {
         var pixels = [UInt8](repeating: 0, count: width * height)
         let drew = pixels.withUnsafeMutableBytes { bytes -> Bool in
@@ -18,12 +20,12 @@ enum GroundPixels {
     static func patch(_ pixels: [UInt8], width: Int, height: Int,
                       x: Int, y: Int) -> [UInt8]? {
         guard width > 0, height > 0, pixels.count >= width * height,
-              x >= 0, x + 16 <= width, y >= 0, y + 12 <= height else { return nil }
+              x >= 0, x + patchWidth <= width, y >= 0, y + 12 <= height else { return nil }
         var values = [UInt8]()
         values.reserveCapacity(192)
         for row in 0..<12 {
             let start = (y + row) * width + x
-            values.append(contentsOf: pixels[start..<(start + 16)])
+            values.append(contentsOf: pixels[start..<(start + patchWidth)])
         }
         return values
     }

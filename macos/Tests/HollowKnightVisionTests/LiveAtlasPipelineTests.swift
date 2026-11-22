@@ -8,6 +8,185 @@ final class LiveAtlasPipelineTests: XCTestCase {
         case append
     }
 
+    func testSweptKnightMaskCannotBecomeContactEvidenceAndMeasuredBoundsScaleToSolvePixels() throws {
+        let root = temporaryWorldRoot()
+        defer { removeTemporaryWorldRoot(root) }
+        let context = CIContext(options: [.useSoftwareRenderer: true])
+        let pipeline = LiveAtlasPipeline(context: context, atlasFramesPerSecond: 60,
+            runsIntegrationSynchronously: true, worldRootURL: root)
+        let frame = try image(color: .red, extent: CGRect(x: 0, y: 0, width: 320, height: 180), context: context)
+        let mask = CGRect(x: 20, y: 30, width: 40, height: 50)
+        let body = CGRect(x: 30, y: 35, width: 20, height: 30)
+        for index in 0..<2 {
+            XCTAssertTrue(pipeline.submitAtlasObservation(frame: frame,
+                regions: SceneRegions(knight: mask, health: .zero, geo: .zero, mana: .zero),
+                cameraPosition: .zero, solveWidth: 640, timestamp: Double(index),
+                observationPoseTimestamp: Double(index), hasGameplaySignal: true,
+                submittedAt: Double(index), observedPlayerBounds: index == 0 ? nil : body))
+        }
+        let observations = pipeline.currentWorldSnapshot().observations
+        XCTAssertEqual(observations.count, 2)
+        XCTAssertNil(observations[0].observedPlayerBounds)
+        XCTAssertEqual(observations[1].observedPlayerBounds, CGRect(x: 60, y: 70, width: 40, height: 60))
+    }
+
+    func testDoorwayFloorCommitFailureRollsBackAndNextCapturePublishesAlignedWorld() throws {
+        let root = temporaryWorldRoot()
+        defer { removeTemporaryWorldRoot(root) }
+        let context = CIContext(options: [.useSoftwareRenderer: true])
+        var attempts = 0
+        let pipeline = LiveAtlasPipeline(context: context, atlasFramesPerSecond: 60,
+            runsIntegrationSynchronously: true, worldRootURL: root,
+            persistentCommitter: { store, snapshot, expected, next in
+                attempts += 1
+                if attempts == 6 { return false }
+                return try store.commit(snapshot, expectedRevision: expected, newRevision: next)
+            })
+        let frame = try image(color: .red, extent: CGRect(x: 0, y: 0, width: 320, height: 180), context: context)
+        let transition = LiveDoorwayTransition(sourceRoomID: 0, targetRoomID: 1,
+            departureTimestamp: 0.45, arrivalTimestamp: 2, direction: .right)
+        var updates = [LiveWorldPipelineUpdate]()
+        pipeline.setWorldUpdateHandler { updates.append($0) }
+        for (index, time) in [0.0, 0.2, 0.4, 2, 2.2, 2.4, 2.5].enumerated() {
+            let room = index < 3 ? 0 : 1
+            let pose = CGPoint(x: room * 400, y: room == 0 ? 0 : -8)
+            let capture = LiveIslandCapture(id: room, roomID: room, startedAt: Double(room) * 2,
+                worldFromLocal: pose, localPose: .zero, placement: room == 0 ? .reference : .estimated,
+                uncertainty: room == 0 ? .reference : .unknown, breakReason: "cut", measured: true)
+            let groundY: CGFloat = room == 0 ? 20 : 48
+            let regions = SceneRegions(knight: CGRect(x: room == 0 ? 278 : 24,
+                y: groundY, width: 20, height: 20), health: .zero, geo: .zero, mana: .zero)
+            let ground = LiveWorldGroundGeometry(lines: [.init(segmentID: room,
+                start: CGPoint(x: 0, y: groundY), end: CGPoint(x: 320, y: groundY))])
+            XCTAssertTrue(pipeline.submitAtlasObservation(frame: frame, regions: regions,
+                cameraPosition: pose, solveWidth: 320, timestamp: time,
+                observationPoseTimestamp: time, hasGameplaySignal: true, captureGeneration: 1,
+                worldTimestamp: time + 100, submittedAt: time, groundAnchoredPose: true,
+                roomID: room, islandCapture: capture, groundGeometry: ground,
+                observedPlayerBounds: regions.knight,
+                doorwayTransition: room == 0 ? nil : transition))
+            if index == 5 {
+                XCTAssertEqual(updates.count, 5)
+                XCTAssertTrue(pipeline.currentWorldSnapshot().doorwayFloorConstraints.isEmpty)
+                XCTAssertEqual(pipeline.currentWorldSnapshot().observations.last?.optimizedPose.y, -8)
+            }
+        }
+        let result = try XCTUnwrap(updates.last)
+        XCTAssertEqual(result.snapshot.observations.count, 6)
+        for observation in result.snapshot.observations {
+            XCTAssertEqual(try XCTUnwrap(observation.captureTimestamp),
+                observation.timestamp - 100, accuracy: 1e-8)
+        }
+        XCTAssertEqual(result.snapshot.doorwayFloorConstraints.count, 1)
+        XCTAssertEqual(result.snapshot.observations.filter { $0.roomID == 1 }.map(\.optimizedPose.y), [-28, -28, -28])
+        XCTAssertEqual(result.snapshot.observations.filter { $0.roomID == 1 }.map(\.rawPose.y), [-8, -8, -8])
+        XCTAssertTrue(result.snapshot.ownedGroundLines.allSatisfy { $0.start.y == 20 })
+        XCTAssertEqual(try LiveWorldSessionStore(rootURL: root).load().snapshot, result.snapshot)
+        let output = try XCTUnwrap(pipeline.process(frame: frame,
+            regions: SceneRegions(knight: nil, health: .zero, geo: .zero, mana: .zero),
+            cameraPosition: .zero, solveWidth: 320, timestamp: 3, hasGameplaySignal: true,
+            allowAtlasWrite: false))
+        XCTAssertEqual(output.worldRevision, result.worldRevision)
+        XCTAssertFalse(result.atlasTiles.isEmpty)
+    }
+
+    func testGroundVerifiedClosurePersistsAndMovesAllIslandPixelsTogether() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let context = CIContext(options: [.useSoftwareRenderer: true])
+        let pipeline = LiveAtlasPipeline(context: context, atlasFramesPerSecond: 60,
+            runsIntegrationSynchronously: true, worldRootURL: root)
+        pipeline.setIslandClosureSearchAllowed { true }
+        let frame = try closureTexture()
+        let geometry = LiveWorldGroundGeometry(lines: [LiveGroundLineEvidence(segmentID: 0,
+            start: CGPoint(x: 0, y: 30), end: CGPoint(x: 320, y: 30))])
+        var updates = [LiveWorldPipelineUpdate]()
+        pipeline.setWorldUpdateHandler { updates.append($0) }
+        for index in 0..<3 {
+            let pose = CGPoint(x: index == 0 ? 0 : 8, y: 0)
+            let capture = LiveIslandCapture(id: index == 0 ? 0 : 1, roomID: 0,
+                startedAt: index == 0 ? 0 : 1, worldFromLocal: pose, localPose: .zero,
+                placement: index == 0 ? .reference : .estimated,
+                uncertainty: index == 0 ? .reference : .unknown, breakReason: "gap", measured: true)
+            XCTAssertTrue(pipeline.submitAtlasObservation(frame: frame,
+                regions: SceneRegions(knight: nil, health: .zero, geo: .zero, mana: .zero),
+                cameraPosition: pose, solveWidth: 320, timestamp: Double(index),
+                observationPoseTimestamp: Double(index), hasGameplaySignal: true,
+                captureGeneration: 1, submittedAt: Double(index),
+                groundAnchoredPose: true,
+                alignmentExclusions: [CGRect(x: 0, y: 40, width: 320, height: 140)],
+                islandCapture: capture, groundGeometry: geometry))
+        }
+        let result = try XCTUnwrap(updates.last)
+        XCTAssertNotNil(result.acceptedClosure)
+        XCTAssertEqual(result.snapshot.observations.count, 3)
+        for observation in result.snapshot.observations {
+            XCTAssertEqual(observation.optimizedPose.x, 0, accuracy: 0.01)
+            XCTAssertEqual(observation.optimizedPose.y, 0, accuracy: 0.01)
+        }
+        XCTAssertEqual(result.snapshot.observations.map(\.rawPose.x), [0, 8, 8])
+        let disk = try LiveWorldSessionStore(rootURL: root).load().snapshot
+        XCTAssertEqual(disk, result.snapshot)
+        XCTAssertEqual(disk.ownedGroundLines.map(\.start.y), [30, 30, 30])
+        XCTAssertFalse(result.atlasTiles.isEmpty)
+        XCTAssertNil(pipeline.worldPersistenceIssue)
+    }
+
+    func testInconclusiveEarlyProbesDoNotCancelOrPostponeScheduledConfirmation() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pipeline = LiveAtlasPipeline(context: CIContext(options: [.useSoftwareRenderer: true]),
+            atlasFramesPerSecond: 60, runsIntegrationSynchronously: true, worldRootURL: root)
+        pipeline.setIslandClosureSearchAllowed { true }
+        let frame = try closureTexture()
+        let sourceGround = LiveWorldGroundGeometry(lines: [.init(segmentID: 0,
+            start: CGPoint(x: 0, y: 30), end: CGPoint(x: 320, y: 30))])
+        let unavailableFloor = LiveObservedFloorCandidates(lines: [.init(segmentID: 0,
+            start: CGPoint(x: 0, y: 60), end: CGPoint(x: 320, y: 60))])
+        var updates = [LiveWorldPipelineUpdate]()
+        pipeline.setWorldUpdateHandler { updates.append($0) }
+        for (index, time) in [0.0, 1, 1.15, 1.3, 1.5].enumerated() {
+            let pose = CGPoint(x: index == 0 ? 0 : 8, y: 0)
+            let capture = LiveIslandCapture(id: index == 0 ? 0 : 1, roomID: 0,
+                startedAt: index == 0 ? 0 : 1, worldFromLocal: pose, localPose: .zero,
+                placement: index == 0 ? .reference : .estimated,
+                uncertainty: index == 0 ? .reference : .unknown, breakReason: "gap", measured: true)
+            XCTAssertTrue(pipeline.submitAtlasObservation(frame: frame,
+                regions: SceneRegions(knight: nil, health: .zero, geo: .zero, mana: .zero),
+                cameraPosition: pose, solveWidth: 320, timestamp: time,
+                observationPoseTimestamp: time, hasGameplaySignal: true,
+                captureGeneration: 1, submittedAt: time, groundAnchoredPose: true,
+                islandCapture: capture, groundGeometry: index == 0 ? sourceGround : nil,
+                observedFloorCandidates: [2, 3].contains(index) ? unavailableFloor
+                    : LiveObservedFloorCandidates(lines: sourceGround.lines)))
+            if index < 4 { XCTAssertTrue(pipeline.currentWorldSnapshot().loopClosureEdges.isEmpty) }
+        }
+        let result = try XCTUnwrap(updates.last)
+        XCTAssertNotNil(result.acceptedClosure)
+        XCTAssertEqual(result.snapshot.observations.count, 5)
+        XCTAssertTrue(result.snapshot.observations.allSatisfy { abs($0.optimizedPose.x) < 0.01 })
+        XCTAssertEqual(result.snapshot.ownedGroundLines.count, 1)
+        XCTAssertEqual(try LiveWorldSessionStore(rootURL: root).load().snapshot, result.snapshot)
+    }
+
+    private func closureTexture() throws -> CGImage {
+        let width = 320, height = 180
+        var bytes = [UInt8](repeating: 0, count: width * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                var value = UInt64(x / 4 + 1000) &* 0x9e3779b185ebca87
+                value ^= UInt64(y / 4 + 1000) &* 0xc2b2ae3d27d4eb4f
+                value ^= value >> 33; value = value &* 0xff51afd7ed558ccd
+                bytes[y * width + x] = UInt8(truncatingIfNeeded: value >> 24)
+            }
+        }
+        let provider = try XCTUnwrap(CGDataProvider(data: Data(bytes) as CFData))
+        return try XCTUnwrap(CGImage(width: width, height: height, bitsPerComponent: 8,
+            bitsPerPixel: 8, bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGBitmapInfo(rawValue: 0), provider: provider, decode: nil,
+            shouldInterpolate: false, intent: .defaultIntent))
+    }
+
     func testLiveRoomBoundaryAuditWhenRequested() throws {
         guard ProcessInfo.processInfo.environment["HKV_LIVE_ROOM_AUDIT"] == "1" else {
             throw XCTSkip("Live room audit is opt-in")
@@ -81,6 +260,12 @@ final class LiveAtlasPipelineTests: XCTestCase {
         let second = try XCTUnwrap(updates.last?.snapshot.observations.last)
         XCTAssertEqual(second.rawPose, CGPoint(x: 20, y: 10))
         XCTAssertEqual(second.localPose, CGPoint(x: 20, y: 10))
+
+        let published = try XCTUnwrap(pipeline.process(frame: frame, regions: regions,
+            cameraPosition: CGPoint(x: 20, y: 10), solveWidth: 40,
+            timestamp: 2, hasGameplaySignal: true, allowAtlasWrite: false))
+        XCTAssertEqual(published.worldRevision, updates.last?.snapshot.mapRevision)
+        XCTAssertFalse(published.atlasTiles.isEmpty)
     }
 
     func testCadencePresentsAtCaptureRateAndWritesAtlasAtFiveFPS() {
@@ -97,6 +282,83 @@ final class LiveAtlasPipelineTests: XCTestCase {
         let nextAtlasWrite = cadence.decision(at: 0.21, canIntegrate: true)
         XCTAssertTrue(nextAtlasWrite.present)
         XCTAssertTrue(nextAtlasWrite.integrate)
+    }
+
+    func testCompositionRebuildPublishesItsNewOriginWithAtlasPixels() throws {
+        let root = temporaryWorldRoot()
+        defer { removeTemporaryWorldRoot(root) }
+        let context = CIContext(options: [.useSoftwareRenderer: true])
+        let pipeline = LiveAtlasPipeline(context: context, atlasFramesPerSecond: 60,
+            runsIntegrationSynchronously: true, worldRootURL: root)
+        XCTAssertTrue(pipeline.reset(anchorPosition: .zero))
+        let frame = try image(color: .red, extent: CGRect(x: 0, y: 0, width: 80, height: 50), context: context)
+        let regions = SceneRegions(knight: nil, health: .zero, geo: .zero, mana: .zero)
+        let pose = CGPoint(x: 0, y: 49)
+        XCTAssertTrue(pipeline.submitAtlasObservation(frame: frame, regions: regions,
+            cameraPosition: pose, solveWidth: 80, timestamp: 1,
+            observationPoseTimestamp: 1, hasGameplaySignal: true, submittedAt: 1))
+        let before = try XCTUnwrap(pipeline.process(frame: frame, regions: regions,
+            cameraPosition: pose, solveWidth: 80, timestamp: 1, hasGameplaySignal: true))
+        XCTAssertEqual(before.liveBounds.minY, 49)
+        XCTAssertEqual(try XCTUnwrap(before.atlas).contentBounds, before.liveBounds)
+
+        pipeline.setRoomCompositionBoundsProvider { _ in .unbounded }
+        pipeline.drainVisualReplay()
+        let after = try XCTUnwrap(pipeline.process(frame: frame, regions: regions,
+            cameraPosition: pose, solveWidth: 80, timestamp: 2, hasGameplaySignal: true))
+        XCTAssertEqual(after.anchorPosition, pose)
+        XCTAssertEqual(after.liveBounds, CGRect(x: 0, y: 0, width: 80, height: 50))
+        let atlas = try XCTUnwrap(after.atlas)
+        XCTAssertEqual(atlas.contentBounds, after.liveBounds)
+        XCTAssertGreaterThan(rgba(in: atlas.image, at: CGPoint(x: 10, y: 10), context: context).red, 180)
+    }
+
+    func testFirstFailedSubmissionDoesNotOffsetLiveFrameFromCommittedAtlas() throws {
+        let context = CIContext(options: [.useSoftwareRenderer: true])
+        var cancel = true
+        let pipeline = LiveAtlasPipeline(context: context, atlasFramesPerSecond: 60,
+            runsIntegrationSynchronously: true, compositionShouldCancel: { cancel })
+        let frame = try image(color: .red, extent: CGRect(x: 0, y: 0, width: 80, height: 50), context: context)
+        let regions = SceneRegions(knight: nil, health: .zero, geo: .zero, mana: .zero)
+        XCTAssertTrue(pipeline.submitAtlasObservation(frame: frame, regions: regions,
+            cameraPosition: .zero, solveWidth: 80, timestamp: 0,
+            observationPoseTimestamp: 0, hasGameplaySignal: true, submittedAt: 0))
+        XCTAssertTrue(pipeline.currentWorldSnapshot().observations.isEmpty)
+        cancel = false
+        let committedPose = CGPoint(x: 12, y: 35)
+        XCTAssertTrue(pipeline.submitAtlasObservation(frame: frame, regions: regions,
+            cameraPosition: committedPose, solveWidth: 80, timestamp: 1,
+            observationPoseTimestamp: 1, hasGameplaySignal: true, submittedAt: 1))
+        let output = try XCTUnwrap(pipeline.process(frame: frame, regions: regions,
+            cameraPosition: committedPose, solveWidth: 80, timestamp: 1, hasGameplaySignal: true))
+        XCTAssertEqual(output.anchorPosition, committedPose)
+        XCTAssertEqual(output.liveBounds, CGRect(x: 0, y: 0, width: 80, height: 50))
+        XCTAssertEqual(try XCTUnwrap(output.atlas).contentBounds,
+                       CGRect(x: 0, y: 0, width: 80, height: 50))
+    }
+
+    func testAtlasAndLiveFrameShareVerticalPixelCoordinates() throws {
+        let context = CIContext(options: [.useSoftwareRenderer: true])
+        let pipeline = LiveAtlasPipeline(context: context, atlasFramesPerSecond: 60,
+            runsIntegrationSynchronously: true)
+        let extent = CGRect(x: 0, y: 0, width: 80, height: 50)
+        let bottom = CIImage(color: .red).cropped(to: extent)
+        let top = CIImage(color: .green).cropped(to: CGRect(x: 0, y: 25, width: 80, height: 25))
+        let frame = try XCTUnwrap(context.createCGImage(top.composited(over: bottom), from: extent))
+        let regions = SceneRegions(knight: nil, health: .zero, geo: .zero, mana: .zero)
+        let pose = CGPoint(x: 0, y: 30)
+        XCTAssertTrue(pipeline.submitAtlasObservation(frame: frame, regions: regions,
+            cameraPosition: pose, solveWidth: 80, timestamp: 0,
+            observationPoseTimestamp: 0, hasGameplaySignal: true, submittedAt: 0))
+        let output = try XCTUnwrap(pipeline.process(frame: frame, regions: regions,
+            cameraPosition: pose, solveWidth: 80, timestamp: 0, hasGameplaySignal: true))
+        let atlas = try XCTUnwrap(output.atlas)
+        for y in [10.0, 40.0] {
+            let current = rgba(in: output.liveImage, at: CGPoint(x: 10, y: y), context: context)
+            let saved = rgba(in: atlas.image, at: CGPoint(x: 10, y: y), context: context)
+            XCTAssertEqual(saved.red, current.red)
+            XCTAssertEqual(saved.green, current.green)
+        }
     }
 
     func testSolvedCameraPosePlacesCurrentFrameOverAtlas() throws {
@@ -814,6 +1076,77 @@ final class LiveAtlasPipelineTests: XCTestCase {
             timestamp: 2, hasGameplaySignal: true
         ))
         XCTAssertNil(output.atlas)
+    }
+
+    func testFailedCompositionCannotCommitGraphAndLaterFrameCanRecover() throws {
+        let context = CIContext(options: [.useSoftwareRenderer: true])
+        let root = temporaryWorldRoot()
+        defer { removeTemporaryWorldRoot(root) }
+        var cancelComposition = false
+        var commitAttempts = 0
+        var updates = [LiveWorldPipelineUpdate]()
+        let pipeline = LiveAtlasPipeline(context: context,
+            presentationFramesPerSecond: 60, atlasFramesPerSecond: 60,
+            runsIntegrationSynchronously: true,
+            compositionShouldCancel: { cancelComposition }, worldRootURL: root,
+            persistentCommitter: { store, snapshot, expected, next in
+                commitAttempts += 1
+                return try store.commit(snapshot, expectedRevision: expected, newRevision: next)
+            })
+        pipeline.setWorldUpdateHandler { updates.append($0) }
+        let frame = try image(color: .red, extent: CGRect(x: 0, y: 0, width: 40, height: 20), context: context)
+        let regions = SceneRegions(knight: nil, health: .zero, geo: .zero, mana: .zero)
+        for index in 1...3 {
+            cancelComposition = index == 2
+            XCTAssertTrue(pipeline.submitAtlasObservation(frame: frame, regions: regions,
+                cameraPosition: CGPoint(x: index * 40, y: 0), solveWidth: 40,
+                timestamp: Double(index), observationPoseTimestamp: Double(index),
+                hasGameplaySignal: true, submittedAt: Double(index)))
+            let expectedCount = index == 3 ? 2 : 1
+            let disk = try LiveWorldSessionStore(rootURL: root).load().snapshot
+            XCTAssertEqual(disk.observations.count, expectedCount)
+            XCTAssertEqual(commitAttempts, expectedCount)
+            XCTAssertEqual(updates.count, expectedCount)
+            let output = try XCTUnwrap(pipeline.process(frame: frame, regions: regions,
+                cameraPosition: .zero, solveWidth: 40, timestamp: Double(index),
+                hasGameplaySignal: true, allowAtlasWrite: false))
+            XCTAssertEqual(output.worldRevision, disk.mapRevision)
+        }
+        XCTAssertEqual(updates.last?.snapshot.observations.map(\.timestamp), [1, 3])
+    }
+
+    func testFailedCommitCannotLeakPixelsIntoLaterSuccessfulPublication() throws {
+        let context = CIContext(options: [.useSoftwareRenderer: true])
+        let root = temporaryWorldRoot()
+        defer { removeTemporaryWorldRoot(root) }
+        var commitAttempts = 0
+        let pipeline = LiveAtlasPipeline(context: context,
+            presentationFramesPerSecond: 60, atlasFramesPerSecond: 60,
+            runsIntegrationSynchronously: true, worldRootURL: root,
+            persistentCommitter: { store, snapshot, expected, next in
+                commitAttempts += 1
+                if commitAttempts == 2 { return false }
+                return try store.commit(snapshot, expectedRevision: expected, newRevision: next)
+            })
+        let red = try image(color: .red, extent: CGRect(x: 0, y: 0, width: 40, height: 20), context: context)
+        let green = try image(color: .green, extent: CGRect(x: 0, y: 0, width: 40, height: 20), context: context)
+        let regions = SceneRegions(knight: nil, health: .zero, geo: .zero, mana: .zero)
+        for index in 1...3 {
+            XCTAssertTrue(pipeline.submitAtlasObservation(frame: index == 2 ? green : red,
+                regions: regions, cameraPosition: CGPoint(x: index == 3 ? 80 : 0, y: 0), solveWidth: 40,
+                timestamp: Double(index), observationPoseTimestamp: Double(index),
+                hasGameplaySignal: true, submittedAt: Double(index)))
+        }
+        let disk = try LiveWorldSessionStore(rootURL: root).load().snapshot
+        XCTAssertEqual(disk.observations.map(\.timestamp), [1, 3])
+        let output = try XCTUnwrap(pipeline.process(frame: red, regions: regions,
+            cameraPosition: .zero, solveWidth: 40, timestamp: 4,
+            hasGameplaySignal: true, allowAtlasWrite: false))
+        XCTAssertEqual(output.worldRevision, disk.mapRevision)
+        let atlas = try XCTUnwrap(output.atlas)
+        let originalPixel = rgba(in: atlas.image, at: CGPoint(x: 10, y: 10), context: context)
+        XCTAssertGreaterThan(originalPixel.red, 180)
+        XCTAssertLessThan(originalPixel.green, 80)
     }
 
     func testDelayedWorldTimestampIsDiscardedWithoutRewindingTrackerVisit() throws {

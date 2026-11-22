@@ -1,8 +1,50 @@
+import AppKit
 import CoreGraphics
 import XCTest
 @testable import HollowKnightVision
 
 final class GroundViewerTests: XCTestCase {
+    @MainActor func testGroundViewerOpensWithoutPatchAndDrawsGroundAndPath() throws {
+        _ = NSApplication.shared
+        let controller = GroundFeatureWindowController()
+        defer { controller.close() }
+        let ground = LayerSceneFeatureReviewOverlay.Line(
+            start: CGPoint(x: -150, y: -30), end: CGPoint(x: 150, y: -30), kind: .positiveGroundTruth)
+        let path = LayerSceneFeatureReviewOverlay.Line(
+            start: CGPoint(x: -150, y: 30), end: CGPoint(x: 150, y: 30), kind: .atlasRoad)
+        controller.showScene(lines: [ground, path], center: .zero)
+        let panel = try XCTUnwrap(NSApplication.shared.windows.first { $0.title == "Ground Viewer" && $0.isVisible })
+        XCTAssertTrue(controller.isOpen)
+        XCTAssertNil(controller.selectedFeature)
+        XCTAssertEqual(controller.sceneLines.map(\.kind), [.positiveGroundTruth, .atlasRoad])
+        let view = try XCTUnwrap(panel.contentView)
+        view.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+        view.displayIfNeeded()
+        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        var green = 0
+        var yellow = 0
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                if color.greenComponent > 0.7 && color.greenComponent > color.redComponent * 1.3
+                    && color.greenComponent > color.blueComponent * 1.3 {
+                    green += 1
+                }
+                if color.redComponent > 0.8 && color.greenComponent > 0.6 && color.blueComponent < 0.4 {
+                    yellow += 1
+                }
+            }
+        }
+        XCTAssertGreaterThan(green, 20, "The merged ground line should be drawn in the native window")
+        XCTAssertGreaterThan(yellow, 20, "The Atlas path should be drawn in the native window")
+        if let path = ProcessInfo.processInfo.environment["HKV_GROUND_VIEWER_PREVIEW"],
+           let png = bitmap.representation(using: .png, properties: [:]) {
+            try png.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
     func testRowAssemblerStitchesFeaturesAndPreservesDeletedGap() {
         let features = [
             feature(sequence: 2, value: 20),

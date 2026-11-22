@@ -10,6 +10,30 @@ struct PlayerOpsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            Toggle(
+                visionText("Invincibility — ignore damage and phase through enemies"),
+                isOn: invincibility
+            )
+            .toggleStyle(.checkbox)
+            .disabled(model.playerOpsBusy)
+
+            HStack(spacing: 10) {
+                Button(action: model.resetRoom) {
+                    HStack {
+                        Text(visionText("Reset Room"))
+                        Text("R").foregroundStyle(.secondary)
+                    }
+                }
+                    .disabled(!model.canResetRoom)
+                    .help(visionText(model.receiverCapabilities.contains(ReceiverControlProtocol.roomResetCapability)
+                        ? "Return to the room entrance, restore its contents, and clear the active Atlas." : "Restart Hollow Knight with the updated receiver."))
+                Button(visionText("Restore Enemies")) { model.restoreEnemies() }
+                Spacer()
+            }
+            .disabled(model.playerOpsBusy)
+
+            Divider()
+            Text(visionText("Ops")).font(.headline)
             Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 12) {
                 integerRow("Max Health", value: maxHealth, range: 1...9)
                 integerRow("Health", value: health, range: 1...max(1, model.playerTestDraft.maxHealth))
@@ -23,16 +47,8 @@ struct PlayerOpsView: View {
                 integerRow("Geo", value: geo, range: 0...9_999_999)
             }
 
-            Toggle(
-                visionText("Invincibility — ignore damage and phase through enemies"),
-                isOn: invincibility
-            )
-            .toggleStyle(.checkbox)
-            .disabled(model.playerOpsBusy)
-
             HStack(spacing: 10) {
                 Button(visionText("Randomize Now")) { model.randomizePlayerTestState() }
-                Button(visionText("Restore Enemies")) { model.restoreEnemies() }
                 Spacer()
             }
             .disabled(model.playerOpsBusy)
@@ -51,8 +67,6 @@ struct PlayerOpsView: View {
                         || model.playerOpsStatus.contains("not ready") ? .red : .secondary)
             }
             HStack {
-                Button(visionText("Reload")) { model.resetPlayerTestState() }
-                    .disabled(model.playerOpsBusy)
                 if model.playerOpsBusy {
                     ProgressView().controlSize(.small)
                 }

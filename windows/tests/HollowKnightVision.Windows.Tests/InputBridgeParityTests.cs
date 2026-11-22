@@ -23,7 +23,10 @@ internal static class InputBridgeParityTests
         Check(normalized.Mana == 198);
         Check(normalized.ExtraManaSlots == 3);
         Check(normalized.Geo == 0);
-        Check(normalized.Invincible);
+        Check(!normalized.Invincible);
+        Check(!PlayerTestState.Default.Invincible);
+        Check(!PlayerTestState.Randomized().Invincible);
+        Check(PlayerTestState.Randomized(true).Invincible);
 
         var random = new Random(7);
         for (var index = 0; index < 100; index++)

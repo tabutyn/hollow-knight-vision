@@ -138,20 +138,41 @@ struct GroundViewerRowState: Equatable {
 final class GroundFeatureWindowController: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var selectedFeature: LayerSceneGroundFeatureDetails?
     @Published private(set) var rowSlots = [GroundViewerSlot]()
+    @Published private(set) var sceneLines = [LayerSceneFeatureReviewOverlay.Line]()
+    @Published private(set) var sceneCenter = CGPoint.zero
 
     private var panel: NSPanel?
     private var features = [LayerSceneGroundFeatureDetails]()
+    var isOpen: Bool { panel?.isVisible == true }
 
     func show(
         selected: LayerSceneGroundFeatureDetails,
-        available: [LayerSceneGroundFeatureDetails]
+        available: [LayerSceneGroundFeatureDetails],
+        sceneLines: [LayerSceneFeatureReviewOverlay.Line] = []
     ) {
         dispatchPrecondition(condition: .onQueue(.main))
         apply(GroundViewerRowState.refreshed(
             selected: selected,
             available: available
         ))
+        self.sceneLines = sceneLines
+        sceneCenter = selected.worldPosition
 
+        openPanel()
+    }
+
+    /// Open the path overview even when there are no tracking patches to select.
+    func showScene(lines: [LayerSceneFeatureReviewOverlay.Line], center: CGPoint) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        selectedFeature = nil
+        rowSlots = []
+        features = []
+        sceneLines = lines
+        sceneCenter = center
+        openPanel()
+    }
+
+    private func openPanel() {
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.contentView = NSHostingView(
@@ -162,13 +183,29 @@ final class GroundFeatureWindowController: NSObject, ObservableObject, NSWindowD
         panel.orderFrontRegardless()
     }
 
-    func refresh(available: [LayerSceneGroundFeatureDetails]) {
+    func refresh(available: [LayerSceneGroundFeatureDetails], sceneLines: [LayerSceneFeatureReviewOverlay.Line] = []) {
         dispatchPrecondition(condition: .onQueue(.main))
+        self.sceneLines = sceneLines
         guard let selectedFeature else { return }
         apply(GroundViewerRowState.refreshed(
             selected: selectedFeature,
             available: available
         ))
+    }
+
+    func refreshScene(lines: [LayerSceneFeatureReviewOverlay.Line], center: CGPoint) {
+        guard isOpen else { return }
+        sceneLines = lines
+        if selectedFeature == nil { sceneCenter = center }
+    }
+
+    func changeScene(lines: [LayerSceneFeatureReviewOverlay.Line], center: CGPoint) {
+        guard isOpen else { return }
+        selectedFeature = nil
+        features = []
+        rowSlots = []
+        sceneLines = lines
+        sceneCenter = center
     }
 
     func select(sequenceIndex: Int) {
@@ -206,7 +243,7 @@ final class GroundFeatureWindowController: NSObject, ObservableObject, NSWindowD
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: CGRect(x: 0, y: 0, width: 720, height: 255),
+            contentRect: CGRect(x: 0, y: 0, width: 720, height: 395),
             styleMask: [.titled, .closable, .utilityWindow],
             backing: .buffered,
             defer: false
@@ -248,18 +285,40 @@ private struct GroundViewerContent: View {
                     .foregroundStyle(.secondary)
             }
 
-            GroundStripScroller(
-                slots: controller.rowSlots,
-                selectedSequenceIndex: controller.selectedFeature?.sequenceIndex,
-                onSelect: { [weak controller] feature in
-                    controller?.select(sequenceIndex: feature.sequenceIndex)
+            if controller.selectedFeature != nil {
+                GroundStripScroller(
+                    slots: controller.rowSlots,
+                    selectedSequenceIndex: controller.selectedFeature?.sequenceIndex,
+                    onSelect: { [weak controller] feature in
+                        controller?.select(sequenceIndex: feature.sequenceIndex)
+                    }
+                )
+                .frame(height: 112)
+                .background(.black)
+                .overlay(Rectangle().stroke(.white.opacity(0.22)))
+            }
+
+            Canvas { context, size in
+                let scale = size.width / 480
+                let center = controller.selectedFeature?.worldPosition ?? controller.sceneCenter
+                func projected(_ p: CGPoint) -> CGPoint {
+                    CGPoint(x: size.width/2 + (p.x-center.x)*scale,
+                            y: size.height/2 - (p.y-center.y)*scale)
                 }
-            )
-            .frame(height: 112)
+                for line in controller.sceneLines where line.coordinateSpace == .atlas {
+                    var path = Path()
+                    path.move(to: projected(line.start))
+                    path.addLine(to: projected(line.end))
+                    context.stroke(path, with: .color(LayerSceneFeatureReviewPalette.color(for: line.kind)), lineWidth: 2)
+                }
+            }
+            .frame(height: controller.selectedFeature == nil ? 235 : 110)
             .background(.black)
             .overlay(Rectangle().stroke(.white.opacity(0.22)))
+            Text("Merged ground and path")
+                .font(.caption).foregroundStyle(.secondary)
 
-            HStack(alignment: .center) {
+            if controller.selectedFeature != nil { HStack(alignment: .center) {
                 Button {
                     controller.select(offset: -1)
                 } label: {
@@ -287,10 +346,10 @@ private struct GroundViewerContent: View {
                 }
                 .disabled(!hasNext)
                 .help("Next feature on this line")
-            }
+            } }
         }
         .padding(12)
-        .frame(width: 720, height: 255)
+        .frame(width: 720, height: 395)
     }
 
     private var selectedArrayIndex: Int? {

@@ -3,15 +3,6 @@ import Foundation
 struct LabelingCampaignProgress: Identifiable, Equatable {
     let id: String
     let count: Int
-    let completedCount: Int
-    var target: Int { max(10, (completedCount / 10 + 1) * 10) }
-    var remaining: Int { max(0, target - count) }
-    var needsTraining: Bool { count >= target }
-
-    func guidanceKey(labeling: Bool, inModel: Bool) -> String {
-        if needsTraining { return inModel ? "campaignTrainHere" : "campaignTrain" }
-        return labeling ? "campaignDraw" : "campaignCollect"
-    }
 }
 
 struct LabelingCampaignPoint: Identifiable, Equatable {
@@ -30,32 +21,6 @@ enum LabelingCampaignPolicy {
             for annotation in example.manifest.annotations where !annotation.isHardNegative {
                 let identifier = LabelingClassIdentity.canonicalIdentifier(annotation.classIdentifier)
                 groups[identifier, default: []].insert(example.manifest.captureGroupIdentifier)
-            }
-        }
-        return groups.mapValues(\.count)
-    }
-
-    /// Count the immutable dataset used by a completed run, never today's labels.
-    /// Both splits belong to the collection milestone; only the training split
-    /// is fitted by the trainer, and only validation metrics enter the chart.
-    static func completedCounts(datasetURL: URL) throws -> [String: Int] {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let manifest = try decoder.decode(LabelingDatasetManifest.self,
-            from: Data(contentsOf: datasetURL.appendingPathComponent(LabelingDatasetExporter.manifestFilename)))
-        var groups = [String: Set<UUID>]()
-        for split in [LabelingDatasetSplit.training, .validation] {
-            let items = manifest.items.filter { $0.split == split }
-            guard !items.isEmpty else { continue }
-            let images = try decoder.decode([CreateMLImageAnnotations].self, from: Data(contentsOf:
-                datasetURL.appendingPathComponent(split.rawValue).appendingPathComponent("annotations.json")))
-            let byName = Dictionary(uniqueKeysWithValues: items.map { ($0.imageFilename, $0) })
-            for image in images {
-                guard let item = byName[image.image] else { continue }
-                for annotation in image.annotations where annotation.isNegative != true {
-                    let identifier = LabelingClassIdentity.canonicalIdentifier(annotation.label)
-                    groups[identifier, default: []].insert(item.captureGroupIdentifier)
-                }
             }
         }
         return groups.mapValues(\.count)

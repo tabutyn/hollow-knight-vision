@@ -101,7 +101,7 @@ The Windows workflow is documented in
 Existing real-time replay clients continue using the original pose protocol.
 
 For repeatable experiments, receiver v0.9.1 exposes an **Invincibility** toggle
-in Vision's Ops context. While enabled, it suppresses Knight health damage and
+in Vision's Ops context. It starts off on each fresh launch. While enabled, it suppresses Knight health damage and
 ignores collision pairs between the Knight's terrain body and active enemy or
 `DamageHero` colliders. Disable it to restore normal damage and enemy/hazard
 collisions while capturing damaged HUD states. Terrain collision and the
@@ -223,3 +223,9 @@ For local restore diagnosis only, create `hkv-replay-diagnostics.enabled` in
 Unity's persistent data directory. The next restore writes camera, sprite,
 and mask-state snapshots during paused preparation. Remove that file afterward.
 No diagnostics run on scored frames when the preparation renders complete.
+
+## Enemy outcomes for bot training
+
+Receiver 0.9.8 adds optional `heroHealth` and `enemyOutcomes` fields to the frame-matched Hacker actor packet. The latter contains a room epoch, cumulative enemy HP removed by the Knight’s nail, and confirmed enemy kills. The receiver observes the nail hit request, the target’s resulting HP, and its death event. Blocked hits and enemies leaving the screen supply no credit. Restoring a scene starts a new epoch. Repeated packets carry the same totals until another outcome occurs, so the recorder can sample less frequently than the game renders.
+
+K captures these measurements as training labels. The Gameplay trainer can use a time-matched label from its paired Hacker clip. The gameplay actor receives enemy positions and chooses its own buttons. [Bot training and replay](../BOT_DEMONSTRATIONS.md)

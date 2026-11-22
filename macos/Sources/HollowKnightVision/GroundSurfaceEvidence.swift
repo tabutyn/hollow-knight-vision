@@ -1,7 +1,8 @@
 import Foundation
 
 /// Builds a horizontal prefix sum only for candidate rows. Each pixel below a
-/// row is sampled once, then every overlapping candidate is scored in O(1).
+/// row contributes once to the shallow body sum. A bright cap can also be
+/// supported by a darker silhouette farther below its edge.
 /// Missing or masked pixels are unknown, never votes for a dark surface.
 final class GroundSurfaceEvidence {
     private struct Band {
@@ -51,6 +52,26 @@ final class GroundSurfaceEvidence {
                 count += band.count[upper] - band.count[lower]
             }
         }
-        return count == 0 || sum <= maximumBodyLuma * count
+        if count == 0 || sum <= maximumBodyLuma * count { return true }
+        // Fog can brighten a platform cap. Verify the deeper silhouette
+        // against air in the same unmasked columns.
+        guard row >= 5, row + 24 < analysis.height else { return false }
+        let valid = analysis.validSourcePixels
+        var measuredColumns = 0
+        var solidColumns = 0
+        for range in ranges {
+            for x in stride(from: max(0, range.lowerBound), through: min(width - 1, range.upperBound), by: 3) {
+                let i = row * width + x
+                if let valid, valid[i] == 0 || valid[i - 5 * width] == 0 || valid[i - 2 * width] == 0
+                    || valid[i + 13 * width] == 0 || valid[i + 18 * width] == 0 || valid[i + 24 * width] == 0 {
+                    continue
+                }
+                measuredColumns += 1
+                let air = (Int(luma[i - 5 * width]) + Int(luma[i - 2 * width])) / 2
+                let deep = (Int(luma[i + 13 * width]) + Int(luma[i + 18 * width]) + Int(luma[i + 24 * width])) / 3
+                if deep <= maximumBodyLuma && air - deep >= 12 { solidColumns += 1 }
+            }
+        }
+        return solidColumns >= 8 && solidColumns * 2 >= measuredColumns
     }
 }

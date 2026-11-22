@@ -3,6 +3,15 @@ import XCTest
 @testable import HollowKnightVision
 
 final class LabelingContractsTests: XCTestCase {
+    func testGameplayHasNoContractsIncludingAbsentKnightAndRepeatedObjects() {
+        for labels in [[], ["world.sign"], ["enemies.crawlid", "enemies.crawlid"],
+                       ["game.playable-knight", "game.playable-knight"], ["world.custom-object"]] {
+            XCTAssertTrue(LabelingContractEvaluator.evaluate(savedExample(context: .game, classes: labels)).isEmpty)
+        }
+        XCTAssertTrue(LabelingContractEvaluator.evaluate(savedExample(context: .mainTitle, classes: [])).contains(where: \.isBreach),
+            "Menu stencil completeness remains independent from optional gameplay training labels.")
+    }
+
     func testGameplayContractsIgnoreRetiredHUDWithoutWeakeningHUDStencilRules() {
         for labels in [["game.playable-knight"], ["game.playable-knight", "game.health", "game.health", "game.mana", "game.mana", "game.geo", "game.geo"]] {
             let rules = LabelingContractEvaluator.evaluate(savedExample(context: .game, classes: labels))

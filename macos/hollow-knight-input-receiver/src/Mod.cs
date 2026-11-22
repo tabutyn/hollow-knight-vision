@@ -12,7 +12,7 @@ namespace HollowKnightVisionInputReceiver
     // API loader entry point. It owns only the local receiver and virtual device.
     public sealed class HollowKnightVisionInputReceiverMod : Mod
     {
-        public override string GetVersion() { return "0.9.5"; }
+        public override string GetVersion() { return "0.11.8"; }
 
         public override void Initialize(Dictionary<string, Dictionary<string, GameObject>> preloadedObjects)
         {
@@ -54,15 +54,23 @@ namespace HollowKnightVisionInputReceiver
         private float timeScaleBeforeVisionPause;
         private long pauseLeaseDeadline;
         private string pauseSession;
+        private readonly BlueHealthTracker blueHealthTracker = new BlueHealthTracker();
+        private PlayerData blueHealthPlayerData;
         private long groundTruthSequence;
         private int lastTruthFrame = -1;
+        private HealthManager[] telemetryEnemies = new HealthManager[0];
+        private HealthCocoon[] telemetryCocoons = new HealthCocoon[0];
+        private GeoRock[] telemetryGeoRocks = new GeoRock[0];
+        private string telemetryEnemyScene;
+        private float nextTelemetryEnemyScanAt;
         private Texture2D frameMarkerTexture;
         private readonly Color32[] frameMarkerPixels = new Color32[80];
         private readonly HashSet<int> ignoredEnemyColliderIDs = new HashSet<int>();
         private int collisionHeroInstanceID;
         private float nextEnemyCollisionScanAt;
         private bool damageHooksInstalled;
-        private bool invincibilityEnabled = true;
+        private bool nailHookInstalled;
+        private bool invincibilityEnabled;
         private List<EnemyCheckpoint> lastCapturedEnemies = new List<EnemyCheckpoint>();
         private PlayerTestState pendingPlayerOpsReconciliation;
         private float playerOpsDisplayRefreshAt;
@@ -77,6 +85,9 @@ namespace HollowKnightVisionInputReceiver
 
         private void Awake()
         {
+            ModHooks.HitInstanceHook += ObserveNailHit;
+            nailHookInstalled = true;
+            if (InitializeGymWorker()) return;
             frameTiming = new ReceiverFrameTiming(System.IO.Path.Combine(Application.persistentDataPath,
                 "hkv-receiver-timing-" + Process.GetCurrentProcess().Id + ".csv"));
             priorRunInBackground = Application.runInBackground;
@@ -107,6 +118,9 @@ namespace HollowKnightVisionInputReceiver
 
         private void Update()
         {
+            SampleBlueHealth();
+            RememberRoomEntrance();
+            if (gymDirectory != null) { TickGymWorker(); return; }
             frameTiming.Begin(Time.frameCount, Time.timeScale, server.RenderFrameMarker);
             if (pointerInput != null) pointerInput.BeginFrame();
             EnsureShortcutBindings();
@@ -128,6 +142,7 @@ namespace HollowKnightVisionInputReceiver
             while (server.TryTakePlayerOpsRequest(out playerOpsRequest)) ApplyPlayerOpsRequest(playerOpsRequest);
             MaintainPlayerOpsReconciliation();
             MaintainPendingEnemyReset();
+            MaintainRoomReset();
             MaintainEnemyCollisionBypass();
             if (cursorVisibilityOwned) Cursor.visible = true;
             if (visionOwnsPause && Stopwatch.GetTimestamp() >= pauseLeaseDeadline) ReleaseVisionPause();
@@ -135,8 +150,35 @@ namespace HollowKnightVisionInputReceiver
             frameTiming.EndUpdate();
         }
 
+        private void SampleBlueHealth()
+        {
+            var gm = GameManager.instance;
+            var hero = HeroController.SilentInstance;
+            var data = PlayerData.instance;
+            if (blueHealthPlayerData != data) {
+                blueHealthTracker.ResetBaseline();
+                blueHealthPlayerData = data;
+            }
+            var valid = gm != null && gm.gameState == GlobalEnums.GameState.PLAYING && !gm.IsInSceneTransition
+                && hero != null && hero.gameObject.activeInHierarchy && hero.acceptingInput
+                && data != null && data.health > 0 && !data.atBench
+                && pendingPlayerOpsReconciliation == null && pendingSceneRestoreRequest == null
+                && pendingEnemyResetCheckpoint == null && roomResetRequest == null;
+            ulong charms = 0;
+            if (data != null && data.equippedCharms != null) {
+                foreach (var charm in data.equippedCharms) {
+                    if (charm < 0 || charm >= 64) { valid = false; break; }
+                    charms |= 1UL << charm;
+                }
+            }
+            blueHealthTracker.Observe(valid, UnityEngine.SceneManagement.SceneManager.GetActiveScene().handle,
+                data == null ? 0 : data.healthBlue, gm == null ? -1 : gm.profileID, charms);
+        }
+
         private void LateUpdate()
         {
+            FinishNailContacts();
+            if (gymDirectory != null) { CompleteGymTick(); return; }
             frameTiming.BeginLate();
             MaintainPlayerOpsReconciliation();
             PlayerPoseRequest poseRequest;
@@ -174,6 +216,7 @@ namespace HollowKnightVisionInputReceiver
         // border at 640x360. Vision records it but never uses it for tracking.
         private void OnGUI()
         {
+            if (gymDirectory != null) return;
             if (server == null || !server.RenderFrameMarker
                 || Event.current.type != EventType.Repaint) return;
             var markerStarted = ReceiverFrameTiming.Now;
@@ -316,6 +359,17 @@ namespace HollowKnightVisionInputReceiver
         private void QueueGroundTruthTelemetry()
         {
             if (server == null) return;
+            var telemetry = CaptureGroundTruth();
+            var gm = GameManager.instance;
+            // Inventory pauses the game clock without always changing gameState.
+            telemetry.AtlasGameplayActive = gm != null && gm.gameState == GlobalEnums.GameState.PLAYING
+                && !gm.isPaused && TimeController.GenericTimeScale > 0f
+                && !gm.IsInSceneTransition && telemetry.HeroAvailable;
+            server.QueueGroundTruth(telemetry);
+        }
+
+        private GroundTruthTelemetry CaptureGroundTruth()
+        {
             var gameManager = GameManager.instance;
             var hero = HeroController.SilentInstance;
             var body = hero == null ? null : hero.GetComponent<Rigidbody2D>();
@@ -352,7 +406,9 @@ namespace HollowKnightVisionInputReceiver
                 ? Vector3.zero : unityCamera.WorldToScreenPoint(projectionProbe + Vector3.up);
             var heroScreenPosition = unityCamera == null || !heroAvailable
                 ? Vector3.zero : unityCamera.WorldToScreenPoint(heroPosition);
-            server.QueueGroundTruth(new GroundTruthTelemetry {
+            return new GroundTruthTelemetry {
+                BlueHealthEpoch = blueHealthTracker.Epoch,
+                BlueHealthGained = blueHealthTracker.Gained,
                 Sequence = groundTruthSequence++,
                 UnityFrame = Time.frameCount,
                 ControlledFrameID = completedControlledFrame,
@@ -383,8 +439,118 @@ namespace HollowKnightVisionInputReceiver
                 ProjectionPixelWidth = unityCamera == null ? 0 : unityCamera.pixelWidth,
                 ProjectionPixelHeight = unityCamera == null ? 0 : unityCamera.pixelHeight,
                 ScreenWidth = Screen.width,
-                ScreenHeight = Screen.height
+                ScreenHeight = Screen.height,
+                Actors = CaptureHackerActors(unityCamera, heroAvailable ? hero : null,
+                    gameManager == null ? "" : gameManager.sceneName)
+            };
+        }
+
+        private static int? RemainingGeoRockHits(GeoRock rock)
+        {
+            // The FSM owns the live count. GeoRockData is synchronized on save.
+            var fsm = rock.GetComponent<PlayMakerFSM>();
+            var hits = fsm == null ? null : fsm.FsmVariables.FindFsmInt("Hits");
+            return hits == null ? (int?)null : hits.Value;
+        }
+
+        private HackerActorTelemetry CaptureHackerActors(Camera camera, HeroController hero, string scene)
+        {
+            if (camera == null) return null;
+            if (!String.Equals(telemetryEnemyScene, scene, StringComparison.Ordinal)
+                || Time.unscaledTime >= nextTelemetryEnemyScanAt) {
+                telemetryEnemyScene = scene;
+                nextTelemetryEnemyScanAt = Time.unscaledTime + 0.25f;
+                var active = UnityEngine.Object.FindObjectsByType<HealthManager>(
+                    FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+                var hostile = new List<HealthManager>();
+                var enemyLayer = LayerMask.NameToLayer("Enemies");
+                foreach (var enemy in active) {
+                    if (enemy == null || enemy.hp < 1 || !enemy.gameObject.activeInHierarchy) continue;
+                    if (enemy.gameObject.layer == enemyLayer
+                        || enemy.GetComponentInChildren<DamageHero>(true) != null) hostile.Add(enemy);
+                }
+                telemetryEnemies = hostile.ToArray();
+                telemetryCocoons = UnityEngine.Object.FindObjectsByType<HealthCocoon>(
+                    FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+                telemetryGeoRocks = UnityEngine.Object.FindObjectsByType<GeoRock>(
+                    FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            }
+            SetOutcomeScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene().handle);
+            var result = new HackerActorTelemetry {
+                OutcomeEpoch = outcomeEpoch, EnemyDamage = enemyDamage, EnemyKills = enemyKills,
+                HeroHealth = hero == null || PlayerData.instance == null ? (int?)null :
+                    Math.Max(0, PlayerData.instance.health) + Math.Max(0, PlayerData.instance.healthBlue),
+                Hero = hero == null ? null : CaptureHackerActor(hero.gameObject, camera)
+            };
+            foreach (var enemy in telemetryEnemies) {
+                if (enemy == null || enemy.hp < 1 || !enemy.gameObject.activeInHierarchy) continue;
+                var actor = CaptureHackerActor(enemy.gameObject, camera);
+                if (actor == null || actor.ScreenX + actor.Width * 0.5 < 0
+                    || actor.ScreenX - actor.Width * 0.5 > camera.pixelWidth
+                    || actor.ScreenY + actor.Height * 0.5 < 0
+                    || actor.ScreenY - actor.Height * 0.5 > camera.pixelHeight) continue;
+                result.Enemies.Add(actor);
+            }
+            foreach (var rock in telemetryGeoRocks) {
+                if (rock == null || !rock.isActiveAndEnabled || rock.gameObject.scene.name != scene) continue;
+                if (RemainingGeoRockHits(rock).GetValueOrDefault() <= 0) continue;
+                var cache = CaptureHackerActor(rock.gameObject, camera);
+                if (cache != null && cache.ScreenX >= 0 && cache.ScreenX <= camera.pixelWidth
+                    && cache.ScreenY >= 0 && cache.ScreenY <= camera.pixelHeight) result.GeoCaches.Add(cache);
+            }
+            foreach (var cocoon in telemetryCocoons) {
+                if (cocoon == null || !cocoon.isActiveAndEnabled || cocoon.gameObject.scene.name != scene) continue;
+                // HealthCocoon.SetBroken disables the body's renderer immediately. The
+                // released Lifeseeds and the remains are separate scene objects.
+                var body = cocoon.GetComponent<MeshRenderer>();
+                if (body == null || !body.enabled) continue;
+                var bounds = body.bounds;
+                var min = camera.WorldToScreenPoint(bounds.min);
+                var max = camera.WorldToScreenPoint(bounds.max);
+                if (min.z <= 0 || max.z <= 0) continue;
+                var left = Mathf.Max(0, min.x);
+                var right = Mathf.Min(camera.pixelWidth, max.x);
+                var bottom = Mathf.Max(0, min.y);
+                var top = Mathf.Min(camera.pixelHeight, max.y);
+                if (!(left < right && bottom < top)) continue;
+                result.LifebloodCocoons.Add(new HackerActorState {
+                    ID = cocoon.GetInstanceID(), Name = cocoon.name,
+                    ScreenX = (left + right) / 2, ScreenY = (bottom + top) / 2,
+                    Width = right - left, Height = top - bottom
+                });
+            }
+            var heroX = result.Hero == null ? camera.pixelWidth * 0.5 : result.Hero.ScreenX;
+            var heroY = result.Hero == null ? camera.pixelHeight * 0.5 : result.Hero.ScreenY;
+            result.Enemies.Sort((a, b) => {
+                var da = (a.ScreenX - heroX) * (a.ScreenX - heroX) + (a.ScreenY - heroY) * (a.ScreenY - heroY);
+                var db = (b.ScreenX - heroX) * (b.ScreenX - heroX) + (b.ScreenY - heroY) * (b.ScreenY - heroY);
+                var comparison = da.CompareTo(db);
+                return comparison == 0 ? a.ID.CompareTo(b.ID) : comparison;
             });
+            if (result.Enemies.Count > 64) result.Enemies.RemoveRange(64, result.Enemies.Count - 64);
+            return result;
+        }
+
+        private static HackerActorState CaptureHackerActor(GameObject actor, Camera camera)
+        {
+            var point = camera.WorldToScreenPoint(actor.transform.position);
+            if (point.z < 0) return null;
+            var width = 0.0;
+            var height = 0.0;
+            var collider = actor.GetComponent<Collider2D>();
+            if (collider != null && collider.enabled) {
+                var bounds = collider.bounds;
+                var min = camera.WorldToScreenPoint(bounds.min);
+                var max = camera.WorldToScreenPoint(bounds.max);
+                width = Math.Abs(max.x - min.x);
+                height = Math.Abs(max.y - min.y);
+            }
+            if (Double.IsNaN(point.x) || Double.IsInfinity(point.x)
+                || Double.IsNaN(point.y) || Double.IsInfinity(point.y)
+                || Double.IsNaN(width) || Double.IsInfinity(width)
+                || Double.IsNaN(height) || Double.IsInfinity(height)) return null;
+            return new HackerActorState { ID = actor.GetInstanceID(), Name = actor.name,
+                ScreenX = point.x, ScreenY = point.y, Width = width, Height = height };
         }
 
         private void ApplyPointerRequest(PointerRequest request)
@@ -646,6 +812,7 @@ namespace HollowKnightVisionInputReceiver
 
         private void ApplyCheckpointRequest(CheckpointRequest request)
         {
+            if (request.Kind == CheckpointCommandKind.Restore) blueHealthTracker.ResetBaseline();
             if (request.Kind == CheckpointCommandKind.Restore
                 && BeginSceneRestoreIfNeeded(request)) return;
             PlayerCheckpoint checkpoint;
@@ -763,7 +930,7 @@ namespace HollowKnightVisionInputReceiver
         private static bool TryCaptureCheckpoint(
             out PlayerCheckpoint checkpoint,
             out string failure,
-            bool pausedBoundary = false)
+            bool pausedBoundary = false, bool includeRoomState = true)
         {
             checkpoint = null;
             failure = null;
@@ -799,7 +966,7 @@ namespace HollowKnightVisionInputReceiver
             var targetPosition = cameras.cameraTarget.transform.position;
             var playerData = PlayerData.instance;
             Newtonsoft.Json.Linq.JArray sceneMasks;
-            try { sceneMasks = CaptureSceneMasks(gameManager.sceneName); }
+            try { sceneMasks = includeRoomState ? CaptureSceneMasks(gameManager.sceneName) : null; }
             catch (Exception error) { failure = "Room mask capture failed: " + error.Message; return false; }
             checkpoint = new PlayerCheckpoint {
                 SceneName = gameManager.sceneName,
@@ -818,7 +985,7 @@ namespace HollowKnightVisionInputReceiver
                 CameraTargetX = targetPosition.x,
                 CameraTargetY = targetPosition.y,
                 CameraTargetZ = targetPosition.z,
-                Enemies = CaptureEnemies(),
+                Enemies = includeRoomState ? CaptureEnemies() : null,
                 SceneMasks = sceneMasks,
                 IsFirstGame = playerData == null ? (bool?)null : playerData.isFirstGame,
                 EnteredTutorialFirstTime = playerData == null
@@ -959,12 +1126,15 @@ namespace HollowKnightVisionInputReceiver
 
         private void ApplyPlayerOpsRequest(PlayerOpsRequest request)
         {
+            if (request.Kind != PlayerOpsKind.Query) blueHealthTracker.ResetBaseline();
             var accepted = false;
             var failure = (string)null;
             var state = (PlayerTestState)null;
             int? enemiesRestored = null;
             if (request.Kind == PlayerOpsKind.Query) {
                 accepted = TryReadPlayerTestState(out state, out failure);
+            } else if (request.Kind == PlayerOpsKind.ResetRoom) {
+                if (TryBeginRoomReset(request, out failure)) return;
             } else if (request.Kind == PlayerOpsKind.Apply) {
                 accepted = TryApplyPlayerTestState(request.State, out state, out failure);
             } else {
@@ -995,6 +1165,8 @@ namespace HollowKnightVisionInputReceiver
                     StringComparison.Ordinal)) return;
             string failure;
             if (!TryRestoreCheckpoint(checkpoint, out failure)) return;
+            if (roomEntrance != null && roomEntrance.SceneName == checkpoint.SceneName)
+                entranceSceneHandle = UnityEngine.SceneManagement.SceneManager.GetActiveScene().handle;
             pendingEnemyResetCheckpoint = null;
         }
 
@@ -1314,12 +1486,18 @@ namespace HollowKnightVisionInputReceiver
 
         private void StopReceiver()
         {
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnRoomResetLoaded;
             Camera.onPreRender -= OnCameraPreRender;
             if (frameMarkerTexture != null) { Destroy(frameMarkerTexture); frameMarkerTexture = null; }
             if (invincibilityEnabled) {
                 invincibilityEnabled = false;
                 nextEnemyCollisionScanAt = -1;
                 MaintainEnemyCollisionBypass();
+            }
+            if (nailHookInstalled) {
+                ModHooks.HitInstanceHook -= ObserveNailHit;
+                FinishNailContacts();
+                nailHookInstalled = false;
             }
             if (damageHooksInstalled) {
                 ModHooks.TakeHealthHook -= PreventHealthLoss;

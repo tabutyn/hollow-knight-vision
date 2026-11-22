@@ -69,12 +69,16 @@ struct TransitionFrameGate {
 struct TransitionMotionBridgeResult: Equatable {
     enum Source: String, Equatable {
         case maskedRegistration
+        case calibratedScene
     }
 
     let cameraPosition: CGPoint
     let cameraStep: CGVector
     let confidence: Float
     let source: Source
+    var referenceTimestamp: TimeInterval? = nil
+    var horizontalMeasured = true
+    var verticalMeasured = true
 }
 
 /// A secondary odometry source used only while confirmed ground is absent.
@@ -167,7 +171,8 @@ final class TransitionMotionBridge {
         let reference = masked(referenceFrame, excluding: comparisonExclusions)
         let current = masked(frame, excluding: comparisonExclusions)
         let priorMovingForegroundRect = previousMovingForegroundRect
-        let elapsed = previousFrameTimestamp.map { timestamp - $0 }
+        let referenceTimestamp = previousFrameTimestamp
+        let elapsed = referenceTimestamp.map { timestamp - $0 }
         previousFrameTimestamp = timestamp
         previousFrame = frame
         previousExclusions = excluding
@@ -211,7 +216,12 @@ final class TransitionMotionBridge {
                 cameraPosition: next,
                 cameraStep: step,
                 confidence: observation.confidence,
-                source: .maskedRegistration
+                source: .maskedRegistration,
+                referenceTimestamp: referenceTimestamp,
+                // Vision confidence measures image alignment, not whether the
+                // matched parallax layer shares the ground's motion scale.
+                horizontalMeasured: false,
+                verticalMeasured: false
             )
         } catch {
             return nil

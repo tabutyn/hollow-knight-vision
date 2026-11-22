@@ -34,6 +34,10 @@ struct VisualRoomSnapshot: Equatable, Sendable {
     let coarseMotionIsControlling: Bool
     let portals: [VisualRoomPortal]
     let compositionBounds: VisualRoomCompositionBounds
+    var coarseMotionMeasured: Bool = false
+    var coarseMeasurementTimestamp: Double? = nil
+    var coarseReferenceTimestamp: TimeInterval? = nil
+    var doorwayTransition: LiveDoorwayTransition? = nil
 
     var statusText: String {
         guard isTransitioning, let transitionDirection else { return roomName }
@@ -799,6 +803,12 @@ struct LowResolutionTransitionOdometry {
     /// rather than intervening captures below the sampling interval.
     private(set) var lastObservationTimestamp: TimeInterval?
     private(set) var lastEstimateIsComplete = false
+    private(set) var lastReferenceTimestamp: TimeInterval?
+    private(set) var lastHorizontalMeasured = false
+    private(set) var lastVerticalMeasured = false
+    var lastEstimateIsMeasured: Bool {
+        lastEstimateIsComplete && lastHorizontalMeasured && lastVerticalMeasured
+    }
     private var requiresHorizontalPrediction = false
     private var requiresVerticalPrediction = false
     /// Trust lineage for this floorless episode. Direction changes clear the
@@ -807,6 +817,7 @@ struct LowResolutionTransitionOdometry {
     private var hasReliableCameraVelocityLineage = false
 
     var isArmed: Bool { reference != nil }
+    var referenceTimestamp: TimeInterval? { reference?.timestamp }
 
     var travel: LowResolutionTransitionTravel {
         LowResolutionTransitionTravel(
@@ -832,7 +843,10 @@ struct LowResolutionTransitionOdometry {
         predictedVerticalSteps = 0
         hasReliableCameraVelocityLineage = false
         lastObservationTimestamp = nil
+        lastReferenceTimestamp = nil
         lastEstimateIsComplete = false
+        lastHorizontalMeasured = false
+        lastVerticalMeasured = false
         requiresHorizontalPrediction = false
         requiresVerticalPrediction = false
     }
@@ -899,7 +913,10 @@ struct LowResolutionTransitionOdometry {
         let age = timestamp - reference.timestamp
         guard age >= Self.minimumSampleAge else { return nil }
         lastObservationTimestamp = timestamp
+        lastReferenceTimestamp = reference.timestamp
         lastEstimateIsComplete = false
+        lastHorizontalMeasured = false
+        lastVerticalMeasured = false
         defer { self.reference = Sample(grid: grid, timestamp: timestamp) }
         guard age <= Self.maximumSampleAge else {
             clearVelocityPrediction()
@@ -972,6 +989,7 @@ struct LowResolutionTransitionOdometry {
             acceptedConfidence = predicted.confidence
             predictedSteps += 1
         } else {
+            lastHorizontalMeasured = true
             // A valid image observation can describe camera easing, stopping or
             // reversing while the same input remains held. Older velocity is
             // fallback evidence, not permission to replace that measurement.
@@ -990,6 +1008,7 @@ struct LowResolutionTransitionOdometry {
         )
         requiresHorizontalPrediction = abs(acceptedStepX) >= 0.25
         requiresVerticalPrediction = abs(stepY) >= 0.25
+        lastVerticalMeasured = true
         lastEstimateIsComplete = true
         return acceptedStepX
     }
@@ -1161,6 +1180,12 @@ struct LowResolutionRoomMotionTracker {
         let y: Int
     }
 
+    private static func precedes(_ a: TranslationKey, _ b: TranslationKey) -> Bool {
+        let da = abs(a.x) + abs(a.y), db = abs(b.x) + abs(b.y)
+        if da != db { return da < db }
+        return a.y == b.y ? a.x < b.x : a.y < b.y
+    }
+
     private struct Sample {
         let timestamp: TimeInterval
         let grid: LowResolutionMotionGrid
@@ -1309,7 +1334,16 @@ struct LowResolutionRoomMotionTracker {
                 requiredImprovement: requiredImprovement
             )
             : nil
-        guard let fallback = narrow.motion ?? wide?.motion else {
+        // A dark landing can leave texture only in the bottom rows, outside
+        // the ordinary fixed scoring band. Retry only rejected dark frames
+        // using the actual overlap for each candidate. No motion is invented
+        // if that visible remnant cannot provide enough texture.
+        let edge = narrow.motion == nil && wide?.motion == nil
+            && (requiresVisibilityMask(reference) || requiresVisibilityMask(current))
+            ? bestTranslationAttempt(from: reference, to: current,
+                verticalShiftLimit: wideLimit, requiredImprovement: requiredImprovement,
+                usesVisibleExtent: true) : nil
+        guard let fallback = narrow.motion ?? wide?.motion ?? edge?.motion else {
             return LowResolutionTranslationDiagnostic(
                 motion: nil,
                 narrowRejection: narrow.rejection,
@@ -1346,13 +1380,36 @@ struct LowResolutionRoomMotionTracker {
         from reference: LowResolutionMotionGrid,
         to current: LowResolutionMotionGrid,
         verticalShiftLimit: Int,
-        requiredImprovement: Double
+        requiredImprovement: Double,
+        usesVisibleExtent: Bool = false
     ) -> TranslationAttempt {
         guard reference.width == current.width,
               reference.height == current.height,
               reference.width > maximumShift * 2 + 4,
               reference.height > verticalShiftLimit * 2 + 1 else {
             return .rejected(.incompatibleGrid)
+        }
+        if usesVisibleExtent {
+            // Do not relax the ordinary overlap gate for a tiny actor/light
+            // halo. This retry is specifically for substantial scenery near
+            // an image edge, such as a floor confined to the final rows.
+            func support(_ grid: LowResolutionMotionGrid) -> (total: Int, edge: Int) {
+                var total = 0, edge = 0
+                for y in max(1, grid.height / 6)..<(grid.height - 1) {
+                    for x in 1..<(grid.width - 1) where grid.luma[y * grid.width + x] > 16 {
+                        total += 1
+                        if y >= grid.height * 5 / 6 || x < maximumShift
+                            || x >= grid.width - maximumShift { edge += 1 }
+                    }
+                }
+                return (total, edge)
+            }
+            let a = support(reference), b = support(current)
+            let minimum = max(96, reference.width * reference.height / 20)
+            guard min(a.total, b.total) >= minimum,
+                  max(a.edge, b.edge) >= reference.width else {
+                return .rejected(.insufficientOverlap)
+            }
         }
         // A shrinking gameplay visibility circle changes where darkness lies,
         // so whole-frame normalization cannot remove it. When either frame has
@@ -1372,13 +1429,12 @@ struct LowResolutionRoomMotionTracker {
             return .rejected(.insufficientTexture)
         }
 
-        let yStart = max(verticalShiftLimit, reference.height / 6)
-        let yEnd = min(
-            reference.height - verticalShiftLimit,
-            reference.height * 5 / 6
-        )
-        let xStart = maximumShift
-        let xEnd = reference.width - maximumShift
+        let yStart = usesVisibleExtent ? max(1, reference.height / 6)
+            : max(verticalShiftLimit, reference.height / 6)
+        let yEnd = usesVisibleExtent ? reference.height - 1 : min(
+            reference.height - verticalShiftLimit, reference.height * 5 / 6)
+        let xStart = usesVisibleExtent ? 1 : maximumShift
+        let xEnd = usesVisibleExtent ? reference.width - 1 : reference.width - maximumShift
         func score(
             shiftX: Int,
             shiftY: Int,
@@ -1389,8 +1445,14 @@ struct LowResolutionRoomMotionTracker {
             var available = 0
             for y in stride(from: yStart, to: yEnd, by: sampleStride) {
                 for x in stride(from: xStart, to: xEnd, by: sampleStride) {
-                    available += 1
                     let referenceIndex = y * reference.width + x
+                    // Count possible visible evidence, not black pixels. Bounds
+                    // depend on the candidate so edge scenery is not discarded
+                    // merely because another candidate would leave the frame.
+                    if usesVisibleExtent && normalizedReference.visible?[referenceIndex] == false { continue }
+                    available += 1
+                    guard x + shiftX >= 1, x + shiftX < current.width - 1,
+                          y + shiftY >= 1, y + shiftY < current.height - 1 else { continue }
                     let currentIndex = (y + shiftY) * current.width + x + shiftX
                     if let visible = normalizedReference.visible,
                        (!visible[referenceIndex]
@@ -1426,7 +1488,10 @@ struct LowResolutionRoomMotionTracker {
                 ))
             }
         }
-        coarseScores.sort { $0.score < $1.score }
+        coarseScores.sort {
+            if $0.score != $1.score { return $0.score < $1.score }
+            return precedes($0.key, $1.key)
+        }
         var fullKeys = Set(
             coarseScores.prefix(maximumFullScoreCandidates).map(\.key)
         )
@@ -1449,7 +1514,9 @@ struct LowResolutionRoomMotionTracker {
                 score(shiftX: key.x, shiftY: key.y, sampleStride: 1)
             )
         })
-        guard let best = scores.min(by: { $0.value < $1.value }),
+        guard let best = scores.min(by: {
+            $0.value == $1.value ? precedes($0.key, $1.key) : $0.value < $1.value
+        }),
               let zero = scores[zeroKey], zero.isFinite, zero > 0,
               best.value.isFinite else {
             return .rejected(.insufficientOverlap)
@@ -1462,8 +1529,8 @@ struct LowResolutionRoomMotionTracker {
             reference: normalizedReference.values,
             current: normalizedCurrent.values,
             width: reference.width,
-            xRange: xStart..<xEnd,
-            yRange: yStart..<yEnd,
+            xRange: max(xStart, 1 - best.key.x)..<min(xEnd, current.width - 1 - best.key.x),
+            yRange: max(yStart, 1 - best.key.y)..<min(yEnd, current.height - 1 - best.key.y),
             integerX: best.key.x,
             integerY: best.key.y,
             referenceVisible: normalizedReference.visible,
@@ -1777,6 +1844,8 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
     private var lastBoundary: TimedDirection?
     private var lastKnightObservation: TimedKnightObservation?
     private var pending: PendingTransition?
+    private var sceneDiscontinuityTracker = VisualSceneDiscontinuityTracker()
+    private var doorwayTransition: LiveDoorwayTransition?
     private var motionTracker = LowResolutionRoomMotionTracker()
     private var transitionOdometry = LowResolutionTransitionOdometry()
     private var floorlessOdometry = LowResolutionTransitionOdometry()
@@ -1787,6 +1856,7 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
     private var floorlessLastAcceptedAt: TimeInterval?
     private var floorlessPoseRevision: UInt64 = 0
     private var previousMotionSample: (grid: LowResolutionMotionGrid, timestamp: TimeInterval)?
+    private var motionPoseHistory = VisualMotionPoseHistory()
     private var previousEdgeBlackBands: FrameEdgeBlackBands?
     private var latestCoarseMotionGrid: LowResolutionMotionGrid?
     private var latestCoarseMotionEstimate: LowResolutionRoomMotionEstimate?
@@ -1839,6 +1909,10 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
               state.nextRoomID > state.activeRoomID,
               state.nextPortalID > 0,
               state.activeEntryX.isFinite, state.activeEntryY.isFinite,
+              Set(state.appearances.map(\.roomID)).count == state.appearances.count,
+              state.appearances.allSatisfy({ $0.roomID >= 0 && $0.roomID < state.nextRoomID }),
+              Set(state.connections.map(\.id)).count == state.connections.count,
+              Set(state.edges.map { "\($0.sourceRoomID):\($0.direction)" }).count == state.edges.count,
               state.edges.allSatisfy({ edge in
                   edge.sourceRoomID >= 0 && edge.targetRoomID >= 0
                       && VisualRoomDirection(rawValue: edge.direction) != nil
@@ -1902,11 +1976,14 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
             lastBoundary = nil
             lastKnightObservation = nil
             pending = nil
+            sceneDiscontinuityTracker.reset()
+            doorwayTransition = nil
             motionTracker.reset()
             transitionOdometry.reset()
             placeMemory.reset()
             resetFloorlessTraversal()
             previousMotionSample = nil
+            motionPoseHistory.reset()
             previousEdgeBlackBands = nil
             latestCoarseMotionGrid = nil
             latestCoarseMotionEstimate = nil
@@ -1914,6 +1991,24 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
             activationWorldPose = nil
             return snapshotLocked()
         }
+    }
+
+    /// Failed/older imports must never destroy the source file. Copy exact bytes
+    /// before rebuilding disconnected ownership; any backup failure aborts writes.
+    @discardableResult
+    func restoreOrImportDisconnectedRooms(from url: URL,
+                                           world: LiveWorldSnapshot) throws -> VisualRoomSnapshot {
+        if FileManager.default.fileExists(atPath: url.path) {
+            do { return try restoreTopology(from: url) }
+            catch {
+                let backup = url.deletingPathExtension()
+                    .appendingPathExtension("rejected-\(UUID().uuidString).json")
+                try FileManager.default.copyItem(at: url, to: backup)
+            }
+        }
+        let restored = restoreDisconnectedRooms(from: world)
+        try saveTopology(to: url)
+        return restored
     }
 
     func saveTopology(to url: URL) throws {
@@ -2015,6 +2110,8 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
                 departureWorldPose: leftEntryWorldPose,
                 portalID: portalID
             )
+            sceneDiscontinuityTracker.reset()
+            doorwayTransition = nil
             self.activeRoomID = activeRoomID == leftRoomID ? leftRoomID : rightRoomID
             activeEntryWorldPose = self.activeRoomID == leftRoomID
                 ? leftEntryWorldPose : rightEntryWorldPose
@@ -2039,13 +2136,18 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
     /// committed. After a restart, prefer the only room actually represented
     /// by durable evidence while retaining the portal for the next traversal.
     @discardableResult
-    func restoreActiveRoomFromDurableEvidence(_ roomID: Int) -> VisualRoomSnapshot {
+    func restoreActiveRoomFromDurableEvidence(_ roomID: Int,
+                                             entryWorldPose: CGPoint? = nil) -> VisualRoomSnapshot {
         lock.withLock {
             guard roomID >= 0, roomID != activeRoomID,
-                  let target = portals.values.first(where: { $0.roomID == roomID })
+                  let entry = portals.values.first(where: { $0.roomID == roomID })?.entryWorldPose
+                    ?? entryWorldPose, entry.x.isFinite, entry.y.isFinite
             else { return snapshotLocked() }
+            sceneDiscontinuityTracker.reset()
+            doorwayTransition = nil
             activeRoomID = roomID
-            activeEntryWorldPose = target.entryWorldPose
+            nextRoomID = max(nextRoomID, roomID + 1)
+            activeEntryWorldPose = entry
             activeAppearance = roomAppearances[roomID]
             pending = nil
             lastIntent = nil
@@ -2058,32 +2160,60 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
         }
     }
 
+    /// Import ownership without turning screen placement into graph evidence.
+    /// In particular, room IDs 0 and 1 say nothing about left/right adjacency.
+    @discardableResult
+    func restoreDisconnectedRooms(from world: LiveWorldSnapshot) -> VisualRoomSnapshot {
+        lock.withLock {
+            resetLocked()
+            guard let latest = world.observations.max(by: {
+                $0.timestamp == $1.timestamp ? $0.id < $1.id : $0.timestamp < $1.timestamp
+            }) else { return snapshotLocked() }
+            activeRoomID = latest.roomID
+            activeEntryWorldPose = world.observations.first(where: {
+                $0.roomID == latest.roomID
+            })?.optimizedPose ?? latest.optimizedPose
+            nextRoomID = (world.observations.map(\.roomID).max() ?? latest.roomID) + 1
+            revision &+= 1
+            return snapshotLocked()
+        }
+    }
+
     @discardableResult
     func reset() -> VisualRoomSnapshot {
         lock.withLock {
-            activeRoomID = 0
-            activeEntryWorldPose = .zero
-            revision = 0
-            nextRoomID = 1
-            nextPortalID = 1
-            portals.removeAll(keepingCapacity: true)
-            portalConnections.removeAll(keepingCapacity: true)
-            roomAppearances.removeAll(keepingCapacity: true)
-            activeAppearance = nil
-            lastIntent = nil
-            lastBoundary = nil
-            lastKnightObservation = nil
-            pending = nil
-            motionTracker.reset()
-            transitionOdometry.reset()
-            resetFloorlessTraversal()
-            previousMotionSample = nil
-            previousEdgeBlackBands = nil
-            latestCoarseMotionGrid = nil
-            latestCoarseMotionEstimate = nil
-            activationWorldPose = nil
+            resetLocked()
             return snapshotLocked()
         }
+    }
+
+    private func resetLocked() {
+        activeRoomID = 0
+        activeEntryWorldPose = .zero
+        revision = 0
+        nextRoomID = 1
+        nextPortalID = 1
+        portals.removeAll(keepingCapacity: true)
+        portalConnections.removeAll(keepingCapacity: true)
+        roomAppearances.removeAll(keepingCapacity: true)
+        activeAppearance = nil
+        lastIntent = nil
+        lastBoundary = nil
+        lastKnightObservation = nil
+        pending = nil
+        sceneDiscontinuityTracker.reset()
+        doorwayTransition = nil
+        motionTracker.reset()
+        transitionOdometry.reset()
+        placeMemory.reset()
+        resetFloorlessTraversal()
+        previousMotionSample = nil
+        motionPoseHistory.reset()
+        previousEdgeBlackBands = nil
+        latestCoarseMotionGrid = nil
+        latestCoarseMotionEstimate = nil
+        latestCoarsePlaceMatch = nil
+        activationWorldPose = nil
     }
 
     func observe(
@@ -2093,6 +2223,7 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
         knightRect: CGRect?,
         frameSize: CGSize,
         currentWorldPose: CGPoint,
+        completedPose: VisualCameraPoseSample? = nil,
         reliableCameraVelocity: LowResolutionCameraVelocitySeed? = nil,
         solveWidth: CGFloat,
         timestamp: TimeInterval,
@@ -2103,6 +2234,42 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
                   frameSize.width.isFinite, frameSize.width > 0,
                   frameSize.height.isFinite, frameSize.height > 0,
                   currentWorldPose.x.isFinite, currentWorldPose.y.isFinite else {
+                return snapshotLocked()
+            }
+            motionPoseHistory.record(timestamp: timestamp, estimatedPose: currentWorldPose,
+                                     completed: completedPose)
+            if let cut = sceneDiscontinuityTracker.observe(grid: profile.motionGrid,
+                timestamp: timestamp, direction: horizontalInput,
+                worldPose: currentWorldPose) {
+                // A complete loading cut with novel stable scenery changes
+                // ownership even without a trained Knight detector. Placement
+                // remains estimated: no portal or equal-camera-height constraint
+                // is fabricated from a blackout. Reset local image banks through
+                // the same room-revision transaction as an ordinary doorway.
+                doorwayTransition = LiveDoorwayTransition(sourceRoomID: activeRoomID,
+                    targetRoomID: nextRoomID, departureTimestamp: cut.departureTimestamp,
+                    arrivalTimestamp: cut.arrivalTimestamp, direction: cut.direction)
+                activeRoomID = nextRoomID
+                nextRoomID += 1
+                activeEntryWorldPose = currentWorldPose
+                activationWorldPose = currentWorldPose
+                activeAppearance = Self.initialAppearance(profile)
+                roomAppearances[activeRoomID] = activeAppearance
+                pending = nil
+                lastBoundary = nil
+                lastKnightObservation = nil
+                lastIntent = nil
+                motionTracker.reset()
+                transitionOdometry.reset()
+                placeMemory.reset()
+                resetFloorlessTraversal()
+                previousMotionSample = nil
+                motionPoseHistory.reset()
+                previousEdgeBlackBands = nil
+                latestCoarseMotionEstimate = nil
+                latestCoarseMotionGrid = profile.motionGrid
+                latestCoarsePlaceMatch = nil
+                revision &+= 1
                 return snapshotLocked()
             }
             let priorMotionSample = previousMotionSample
@@ -2448,9 +2615,9 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
             roomName: "Room \(activeRoomID + 1)",
             revision: revision,
             entryWorldPose: activeEntryWorldPose,
-            isTransitioning: pending != nil,
-            transitionDirection: pending?.direction,
-            transitionWorldPose: transitionWorldPose,
+            isTransitioning: pending != nil || sceneDiscontinuityTracker.isPending,
+            transitionDirection: pending?.direction ?? sceneDiscontinuityTracker.pendingDirection,
+            transitionWorldPose: transitionWorldPose ?? sceneDiscontinuityTracker.departureWorldPose,
             activationWorldPose: activationWorldPose,
             coarseWorldPose: floorlessPublishedPose,
             coarsePoseRevision: floorlessPoseRevision,
@@ -2460,7 +2627,14 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
             coarseMotionIsControlling: floorlessPublishedPose != nil
                 || (pending != nil && transitionOdometry.sampleCount > 0),
             portals: publicPortals,
-            compositionBounds: compositionBoundsLocked(for: activeRoomID)
+            compositionBounds: compositionBoundsLocked(for: activeRoomID),
+            coarseMotionMeasured: floorlessPublishedPose != nil
+                ? floorlessOdometry.lastEstimateIsMeasured : transitionOdometry.lastEstimateIsMeasured,
+            coarseMeasurementTimestamp: floorlessPublishedPose != nil
+                ? floorlessOdometry.lastObservationTimestamp : transitionOdometry.lastObservationTimestamp,
+            coarseReferenceTimestamp: floorlessPublishedPose != nil
+                ? floorlessOdometry.lastReferenceTimestamp : transitionOdometry.lastReferenceTimestamp,
+            doorwayTransition: doorwayTransition
         )
     }
 
@@ -2488,8 +2662,10 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
         }
         if floorlessAnchorWorldPose == nil {
             floorlessPoseRevision &+= 1
-            floorlessAnchorWorldPose = currentWorldPose
-            floorlessWorldPose = currentWorldPose
+            let referenceTime = priorMotionSample?.timestamp ?? timestamp
+            let referencePose = motionPoseHistory.pose(at: referenceTime) ?? currentWorldPose
+            floorlessAnchorWorldPose = referencePose
+            floorlessWorldPose = referencePose
             floorlessOdometry.arm(
                 grid: priorMotionSample?.grid ?? currentGrid,
                 timestamp: priorMotionSample?.timestamp ?? timestamp
@@ -2508,13 +2684,16 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
             floorlessPoseRevision &+= 1
         }
         if !floorlessPoseMeasured {
-            // While broad-image matching is unavailable, follow the accepted
-            // tracking stream's origin. A later coarse step resumes from that
-            // pose instead of resurrecting the frozen pre-gap trajectory.
-            floorlessAnchorWorldPose = CGPoint(
-                x: currentWorldPose.x - floorlessOdometry.worldDeltaX,
-                y: currentWorldPose.y - floorlessOdometry.worldDeltaY
-            )
+            // Displacement starts at the odometry reference image. Using the
+            // newer presentation prediction here counts part of that travel
+            // twice. A delayed completed solve may replace this exact origin;
+            // never apply a current-frame pose to an older reference image.
+            if let referencePose = motionPoseHistory.pose(at: floorlessOdometry.referenceTimestamp) {
+                floorlessAnchorWorldPose = CGPoint(
+                    x: referencePose.x - floorlessOdometry.worldDeltaX,
+                    y: referencePose.y - floorlessOdometry.worldDeltaY
+                )
+            }
         }
         // Camera travel continues during jumps, falls, and scripted pans when
         // neither horizontal key is held. Hacker truth on the one-way Tutorial
@@ -2757,6 +2936,9 @@ final class VisualRoomTransitionTracker: @unchecked Sendable {
                     portalID: portalID
                 )
         }
+        sceneDiscontinuityTracker.reset()
+        doorwayTransition = nil
+        motionPoseHistory.reset()
         activeRoomID = target.roomID
         activeEntryWorldPose = target.entryWorldPose
         activationWorldPose = continuousArrival ?? target.entryWorldPose

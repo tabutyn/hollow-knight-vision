@@ -3,6 +3,27 @@ import XCTest
 @testable import HollowKnightVision
 
 final class LabelingModelVersionStoreTests: XCTestCase {
+    func testPromotedModelPreservesEvidenceWhenTrainingFilesAreUnavailable() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runs = root.appendingPathComponent("runs")
+        try FileManager.default.createDirectory(at: runs, withIntermediateDirectories: true)
+        let base = try candidate(classIdentifier: LabelingModelIdentity.sharedObjectModel,
+            completedAt: Date(), modelContents: "model", runsRoot: runs)
+        var summary = base.summary
+        summary.trainedClassIdentifiers = ["enemies.crawlid", "game.playable-knight"]
+        let trained = LabelingModelCandidate(runURL: base.runURL, datasetURL: base.datasetURL,
+            summary: summary, predictionReview: nil)
+        let store = LabelingModelVersionStore(rootURL: root.appendingPathComponent("models"))
+        try store.synchronizeCandidates([trained])
+        let point = try store.promote(trained)
+        XCTAssertEqual(point.trainedClassIdentifiers, ["enemies.crawlid", "game.playable-knight"])
+        try FileManager.default.removeItem(at: runs)
+        let reloaded = LabelingModelVersionStore(rootURL: store.rootURL)
+        XCTAssertEqual(try reloaded.activeModelArtifacts().first?.trainedClassIdentifiers,
+                       ["enemies.crawlid", "game.playable-knight"])
+    }
+
     func testCandidatesPromoteIntoDurableRestorePointsAndCanRestoreDefault() throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("hkv-model-versions-\(UUID().uuidString)", isDirectory: true)
@@ -50,7 +71,7 @@ final class LabelingModelVersionStoreTests: XCTestCase {
             LabelingActiveModelArtifact(
                 classIdentifier: "game.mana",
                 version: LabelingModelSemanticVersion(major: 1, minor: 0),
-                modelURL: firstModelURL
+                modelURL: firstModelURL, sourceRunIdentifier: firstRestorePoint.sourceRunIdentifier
             )
         ])
         XCTAssertEqual(try String(contentsOf: firstModelURL, encoding: .utf8), "second")
@@ -278,7 +299,9 @@ final class LabelingModelVersionStoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let base = try candidate(classIdentifier: "shared-object-model", completedAt: Date(), modelContents: "model", runsRoot: root)
         let exampleID = UUID()
-        let trained = LabelingModelCandidate(runURL: base.runURL, datasetURL: base.datasetURL, summary: base.summary,
+        var summary = base.summary
+        summary.trainedClassIdentifiers = ["game.playable-knight"]
+        let trained = LabelingModelCandidate(runURL: base.runURL, datasetURL: base.datasetURL, summary: summary,
             predictionReview: .init(examples: [.init(exampleIdentifier: exampleID, imageFilename: "image.png",
                 split: "train", human: [], predictions: [])], metrics: .init(confidenceThreshold: 0.5,
                 intersectionOverUnionThreshold: 0.5, truePositives: 1, falsePositives: 0, falseNegatives: 0,

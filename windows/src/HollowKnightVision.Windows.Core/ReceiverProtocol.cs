@@ -308,9 +308,9 @@ public sealed record PlayerTestState(
     int Mana,
     int ExtraManaSlots,
     int Geo,
-    bool Invincible = true)
+    bool Invincible = false)
 {
-    public static PlayerTestState Default { get; } = new(5, 5, 0, 99, 0, 0, true);
+    public static PlayerTestState Default { get; } = new(5, 5, 0, 99, 0, 0, false);
 
     public PlayerTestState Normalized()
     {
@@ -328,7 +328,7 @@ public sealed record PlayerTestState(
     }
 
     public static PlayerTestState Randomized(
-        bool invincible = true,
+        bool invincible = false,
         Random? random = null)
     {
         random ??= Random.Shared;

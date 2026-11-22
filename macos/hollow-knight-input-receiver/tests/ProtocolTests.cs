@@ -39,6 +39,15 @@ namespace HollowKnightVisionInputReceiver
             TestPlayerPoseProtocolAndQueue();
             TestPlayerOpsProtocolAndQueue();
             TestGroundTruthProtocol();
+            var blue = new BlueHealthTracker();
+            blue.Observe(true, 1, 0, 1, 1UL); blue.Observe(true, 1, 2, 1, 1UL); blue.Observe(true, 1, 2, 1, 1UL);
+            blue.Observe(true, 1, 1, 1, 1UL); blue.Observe(true, 1, 2, 1, 1UL);
+            Assert("blue gains only", blue.Gained == 3);
+            blue.Observe(false, 1, 0, 1, 1UL); blue.Observe(true, 1, 4, 1, 1UL);
+            blue.Observe(true, 2, 7, 1, 1UL); blue.ResetBaseline(); blue.Observe(true, 2, 9, 1, 1UL);
+            blue.Observe(true, 2, 11, 1, 2UL);
+            blue.Observe(true, 2, 12, 2, 2UL);
+            Assert("blue boundaries do not reward restoration", blue.Gained == 3);
             TestControlledFrames();
             Console.WriteLine("Protocol and receiver-state tests passed");
             return 0;
@@ -296,12 +305,41 @@ namespace HollowKnightVisionInputReceiver
                 ProjectionPixelWidth = 1920, ProjectionPixelHeight = 1080,
                 ScreenWidth = 1920, ScreenHeight = 1080
             };
+            telemetry.BlueHealthEpoch = "blue-epoch";
+            telemetry.BlueHealthGained = 3;
             var json = telemetry.ToJson("test");
+            var blue = Newtonsoft.Json.Linq.JObject.Parse(json)["blueHealthOutcomes"];
+            Assert("blue health telemetry", blue.Value<string>("epoch") == "blue-epoch" && blue.Value<int>("gained") == 3);
             Assert("ground truth type", json.Contains("\"type\":\"groundTruth\""));
             Assert("ground truth scene", json.Contains("\"sceneName\":\"Tutorial_01\""));
             Assert("ground truth camera", json.Contains("\"cameraX\":37.25"));
             Assert("ground truth projection", json.Contains("\"pixelsPerWorldUnitY\":57.6")
                 && json.Contains("\"projectionPixelHeight\":1080"));
+            Assert("Gym telemetry omits live Atlas state", !json.Contains("\"atlasGameplayActive\""));
+            telemetry.AtlasGameplayActive = false;
+            Assert("live telemetry reports non-gameplay", telemetry.ToJson("test").Contains("\"atlasGameplayActive\":false"));
+            telemetry.AtlasGameplayActive = true;
+            Assert("live telemetry reports gameplay", telemetry.ToJson("test").Contains("\"atlasGameplayActive\":true"));
+            telemetry.Actors = new HackerActorTelemetry {
+                Hero = new HackerActorState { ID = 1, Name = "Knight", ScreenX = 1000, ScreenY = 420, Width = 20, Height = 40 }
+            };
+            telemetry.Actors.OutcomeEpoch = "room-epoch";
+            telemetry.Actors.EnemyKills = 1;
+            telemetry.Actors.EnemyDamage = 5;
+            telemetry.Actors.Enemies.Add(new HackerActorState { ID = 2, Name = "Crawler", ScreenX = 1100, ScreenY = 400, Width = 30, Height = 20 });
+            telemetry.Actors.LifebloodCocoons.Add(new HackerActorState { ID = 4, Name = "Health Cocoon", ScreenX = 320, ScreenY = 180 });
+            telemetry.Actors.GeoCaches.Add(new HackerActorState { ID = 3, Name = "Geo Rock", ScreenX = 800, ScreenY = 250 });
+            var actors = Newtonsoft.Json.Linq.JObject.Parse(telemetry.ToJson("test"))["actors"];
+            Assert("nail outcomes are cumulative", actors["enemyOutcomes"].Value<int>("kills") == 1 &&
+                actors["enemyOutcomes"].Value<int>("damage") == 5 && actors["enemyOutcomes"].Value<string>("epoch") == "room-epoch");
+            Assert("actor telemetry version", actors.Value<int>("version") == 1);
+            Assert("independent cocoon position", actors["lifebloodCocoons"][0].Value<double>("screenX") == 320);
+            telemetry.Actors.LifebloodCocoons.Clear();
+            Assert("no visible cocoon", !Newtonsoft.Json.Linq.JObject.Parse(telemetry.ToJson("test"))["actors"]["lifebloodCocoons"].HasValues);
+            Assert("geo cache position", actors["geoCaches"][0].Value<double>("screenX") == 800);
+            Assert("actor telemetry hero", actors["hero"].Value<double>("screenX") == 1000);
+            Assert("actor telemetry enemy", actors["enemies"][0].Value<string>("name") == "Crawler");
+            Assert("actor capability negotiated", CapabilityRequest.Ack("test").Contains("hacker-actor-telemetry-v1"));
         }
 
         private static void TestPlayerOpsProtocolAndQueue()
@@ -315,11 +353,42 @@ namespace HollowKnightVisionInputReceiver
                 "{\"version\":2,\"type\":\"playerOps\",\"sessionID\":\"test\",\"commandID\":\"two\",\"operation\":\"apply\",\"state\":" + state + "}", out request)
                 && request.State.Health == 4 && request.State.Mana == 120
                 && !request.State.Invincible);
-            Assert("legacy player ops defaults invincibility on", PlayerOpsRequest.TryParse(
+            Assert("legacy player ops defaults invincibility off", PlayerOpsRequest.TryParse(
                 "{\"version\":2,\"type\":\"playerOps\",\"sessionID\":\"test\",\"commandID\":\"legacy\",\"operation\":\"apply\",\"state\":" + state.Replace(",\"invincible\":false", "") + "}", out request)
-                && request.State.Invincible);
+                && !request.State.Invincible);
             Assert("player ops rejects invalid health", !PlayerOpsRequest.TryParse(
                 "{\"version\":2,\"type\":\"playerOps\",\"sessionID\":\"test\",\"commandID\":\"bad\",\"operation\":\"apply\",\"state\":" + state.Replace("\"health\":4", "\"health\":10") + "}", out request));
+            Assert("room reset parsed", PlayerOpsRequest.TryParse(
+                "{\"version\":2,\"type\":\"playerOps\",\"sessionID\":\"test\",\"commandID\":\"reset\",\"operation\":\"resetRoom\"}", out request)
+                && request.Kind == PlayerOpsKind.ResetRoom);
+            var entrance = new PlayerCheckpoint { SceneName = "Tutorial_01", Grounded = true,
+                HeroX = 34.5, HeroY = 11.41, CameraX = 35, CameraTargetX = 36, FacingRight = true, EntryGateName = "top1" };
+            var entrances = new RoomEntrances();
+            entrances.Remember(entrance);
+            entrances.Remember(new PlayerCheckpoint { SceneName = "Tutorial_01", Grounded = true, HeroX = 113.7 });
+            PlayerCheckpoint remembered;
+            Assert("room re-entry preserves its first entrance", entrances.TryGet("Tutorial_01", out remembered) && remembered == entrance);
+            entrances.Remember(new PlayerCheckpoint { SceneName = "Other", Grounded = true, HeroX = 5 });
+            Assert("room entrances are independent", entrances.TryGet("Other", out remembered) && remembered.HeroX == 5);
+            entrances.Clear();
+            Assert("room entrances clear for another save", !entrances.TryGet("Tutorial_01", out remembered));
+            var returnFromTown = new PlayerCheckpoint { SceneName = "Tutorial_01", Grounded = true,
+                HeroX = 113.7, HeroY = 9.4, CameraX = 114, CameraY = 10, EntryGateName = "right1" };
+            entrances.Remember(returnFromTown);
+            Assert("King's Pass uses fresh-game spawn after returning from Town",
+                entrances.TryGet("Tutorial_01", out remembered) && remembered.HeroX == 34.5
+                && remembered.HeroY == 11.41 && remembered.EntryGateName == "top1" && remembered.FacingRight);
+            var current = new PlayerCheckpoint { SceneName = "Tutorial_01", HeroX = 113.7, HeroY = 9.4,
+                VelocityX = 8, VelocityY = -3, OpenedTown = true };
+            Assert("room reset uses entrance position, camera and zero momentum", current.UseRoomEntrance(entrance)
+                && current.HeroX == 34.5 && current.HeroY == 11.41 && current.CameraX == 35 && current.CameraTargetX == 36
+                && current.VelocityX == 0 && current.VelocityY == 0 && current.Grounded && current.FacingRight
+                && current.EntryGateName == "top1" && current.OpenedTown == true);
+            entrance.SceneName = "Town";
+            Assert("room reset rejects another room entrance", !current.UseRoomEntrance(entrance) && current.HeroX == 34.5);
+            request.ResetScene = "Tutorial_01";
+            Assert("room reset confirmed only on success", PlayerOpsRequest.Ack(request, true, null, null, null).Contains("Tutorial_01")
+                && !PlayerOpsRequest.Ack(request, false, null, null, "failed").Contains("resetScene"));
             Assert("player ops restore enemies", PlayerOpsRequest.TryParse(
                 "{\"version\":2,\"type\":\"playerOps\",\"sessionID\":\"test\",\"commandID\":\"three\",\"operation\":\"restoreEnemies\"}", out request)
                 && request.Kind == PlayerOpsKind.RestoreEnemies);

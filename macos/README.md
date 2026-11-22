@@ -186,7 +186,7 @@ confirmed closure and an optimized endpoint residual of at most 12 px.
 
 ## Manual ground-edge labels
 
-Open **Hacker** or press `H` to build and edit a second atlas that is independent from Gameplay. Hacker joins each capture to the mod camera transform from the exact Unity frame, places it without the visual pose solver, seeds horizontal ground truth from the current green lines, and keeps edits fixed in world space while the live camera moves. Add/Modify/Delete/Negative, undo, and automatic saves share the compact Label-style workflow. **Debug View → Mark Ground…** opens the same workspace. See [Ground labeling](GROUND_LABELING.md).
+Open **Hacker** or press `H` to build a second atlas that is independent from Gameplay. Hacker joins each capture to the mod camera transform from the exact Unity frame and places it without the visual pose solver. Green ground lines are authored only by the user; detector output never creates saved labels. The top bar switches between **Ground** (Add/Modify/Delete, endpoint handles, undo, automatic saves) and **Rooms** (drag rooms into alignment), independently of the camera view. Labels remain attached to their owning room. The counter distinguishes the current room from all saved rooms. **Debug View → Mark Ground…** opens the same workspace. See [Ground labeling](GROUND_LABELING.md).
 
 ## Saved-input replay and checks
 
@@ -217,15 +217,26 @@ added report `evaluable: false` rather than an apparent zero-error result.
 
 ### Stencil walkthrough and model workspace
 
-The gear opens a centered, scrollable Settings dialog with atlas actions, Debug View, Game language, and Factory Reset. Language names use their native spelling. Navigate to the screen named by the blue guidance in the single bottom row, then press **L** or **Label**. Game State is an optional overlay under Debug View. Free Fly, Fit, and Current appear only after Phase 1 while Gameplay is recognized in the Gameplay workspace; Ops also requires Modded mode and a recognized gameplay state. Required menu labels follow menu order and disappear from Add after their required boxes are present (two for selection decorations); Modify/Delete keep them editable. Gameplay objects remain repeatable and alone expose **+ Object**.
+The gear opens a Settings dialog with an Atlas, Debug View, and System sidebar. Atlas holds save/load actions; System holds Game language, Ops, and Factory Reset. Language names use their native spelling. Navigate to the screen named by the blue guidance in the single bottom row, then press **L** or **Label**. Game State is an optional overlay under Debug View. Free Fly, Fit, and Current appear only after Phase 1 while Gameplay is recognized in the Gameplay workspace; Ops also requires Modded mode and a recognized gameplay state. Required menu labels follow menu order and disappear from Add after their required boxes are present (two for selection decorations); Modify/Delete keep them editable. Gameplay objects remain repeatable and alone expose **+ Object**.
 
-**Stencil** derives its checklist from the contracts: 26 required screens in Modded, 25 in Normal (excluding Mods). Phase 1 is Main Title, Select Profile without Clear Save, and a separately captured Gameplay HUD reference (two adjacent full health icons). It unlocks Model and Stencil Detection. Phase 2 contains the other menu/game screens; Phase 3 contains Clear Save, which requires an existing save and is dismissed with No. Credits has no required boxes. Each stencil category keeps one reference; gameplay model objects remain repeatable. Reset Stencils below the sidebar archives stencil references and calibration while preserving gameplay training examples. Factory Reset also removes stencils. The gear opens a centered, scrolling dialog with Save State, New, Delete, Load, all debug controls, language, and Factory Reset. Object Detection stays disabled until an active model has completed training and evaluation on current gameplay labels; bundled models and models from a cleared dataset do not unlock it. Framing controls require both Phase 1 readiness and recognized Gameplay in the Gameplay workspace.
+**Stencil** derives its checklist from the contracts: 26 required screens in Modded, 25 in Normal (excluding Mods). Phase 1 is Main Title, Select Profile including Clear Save, and a separately captured Gameplay HUD reference (two adjacent full health icons). Before capturing Select Profile, create a save if necessary, return to that screen and highlight the occupied slot so Clear Save is visible. Add offers Clear Save immediately and keeps it available until its positive box is drawn. It unlocks Model and Stencil Detection. Phase 2 contains the other menu/game screens; Phase 3 captures the Clear Save confirmation dialog and is dismissed with No. Credits has no required boxes. Each stencil category keeps one reference; gameplay model objects remain repeatable. Reset Stencils below the sidebar archives stencil references and calibration while preserving gameplay training examples. Factory Reset also removes stencils. The gear opens a sidebar Settings dialog: Atlas contains Save State, New, Delete, and Load; Debug View contains visual diagnostics; System contains language, available Ops, and Factory Reset. Estimated Room Outlines controls the orange dashed provisional-room borders and their legend, and defaults off. Its setting is retained across launches. Object Detection stays disabled until an active model has completed training and evaluation on current gameplay labels; bundled models and models from a cleared dataset do not unlock it. Framing controls require both Phase 1 readiness and recognized Gameplay in the Gameplay workspace.
 
 Localization coverage and remaining native-language/Windows UI checks are tracked in [TODO](../TODO.md).
 
 Existing partial references show **Click Stencil and Edit Labels** guidance. Each reference has **Edit Labels** and **Delete Screen Shot** actions, and label boxes show their localized class names without requiring captured icons. **L** selects Gameplay when gameplay is recognized; explicit Edit Labels still opens the selected stencil. The wider object selector sits above the editing controls to avoid overlap at small window sizes.
 
-Hacker is offered only for recognized gameplay with mod telemetry. Ops controls live in Settings and require recognized gameplay plus the player-ops capability. Clicking outside Settings closes it; arrow keys continue forwarding to the modded game. Dragging in Current camera mode switches to Free Fly while ordinary clicks retain game input.
+Hacker is offered only for recognized gameplay with mod telemetry. Its Atlas settings use the same Save State, New, Delete, and Load controls as Gameplay, backed by a separate Hacker state library. Hacker automatically saves room pixels, camera anchors and connections under `hacker-atlas-v1/`, and restores them on reopening. New and Load retain the previous Hacker atlas as a named restore point. Its separate settings view selector is removed; Free Fly, Fit, and Current remain in the bottom bar. The view starts with automatic framing and supports drag/zoom navigation. Ops controls live in System and require recognized gameplay plus the player-ops capability. Clicking outside Settings closes it; arrow keys continue forwarding to the modded game.
+
+**🤖 B** is the single bot control. During Gameplay it starts Hacker bot play in the current game; from menus it archives/resets slot 4, starts a fresh game using stencils, and hands off after Gameplay is detected. B stops either phase. Menu navigation works before bot training; when Gameplay is reached without a model, control returns to you with a training prompt. Hacker always uses frame-matched mod Knight/enemy positions and your green floors. **K** records manual input, replay checkpoints, and learning observations together under one recording ID. Press K again to save both. Right-click K to reveal the recordings. The separate Record and Demo buttons have been removed. Blue instructions disappear once required stencil setup is complete. See [Recording and bot controls](BOT_DEMONSTRATIONS.md).
+
+For left/right Hacker passages, three stable exact-frame grounded Knight samples near each doorway refine the room-height constraint. The fixed Knight-center-to-floor offset cancels across the passage, avoiding jump and entry-animation heights. Samples must be recent and near the corresponding exit/entry edge; an unsupported passage retains its initial placement. Once supported, airborne revisits preserve the floor alignment. Overlapping horizontal branches move farther sideways instead of being shifted vertically. Horizontal spacing remains a presentation layout; verify convincing joins with a recorded out-and-back run.
+
+Model → Screenshots reviews gameplay captures and their label boxes. Gameplay
+objects are all optional, including Hollow Knight; no completeness, occurrence,
+or exemption contracts block training. Model training exports only the Gameplay
+context and trainable gameplay classes. Menu and HUD stencil validation stays in
+the separate Stencil workflow. A dataset still needs at least one positive
+trainable object to start a run.
 
 ### Installed training runtime
 
@@ -247,3 +258,86 @@ registration. Workstation paths are never embedded in the app package.
 Training review also accepts older compact Python/Windows run UUIDs and checkpoint
 lineage. New Mac runs and restore-point identifiers use canonical UUIDs. This
 metadata compatibility does not convert Windows ONNX models to Core ML.
+
+
+### Complete visual evidence for tracking development
+
+For the recording → replay → diagnosis cycle, enter recognized Gameplay in
+Modded mode, press **K** to start a run, play through the problem, then press
+**K** again to stop and save. A 30–60 second run with a brief stationary start,
+the tracking failure, and a brief stationary finish gives useful comparisons.
+Mention the action or approximate moment where tracking looked wrong. Record
+before the failure so its preceding frames are available.
+
+Runs save under `~/Library/Application Support/HollowKnightVision/input-paths-v1/`.
+Keep the `path-*.json` and matching `frames-<path-id>/` directory together. After a
+run, inspect archive completeness, replay those images through the installed
+production tracker, and score the replay with the commands below. Report the
+first divergence, held/rejected camera estimates, recovery, room transitions,
+and reference coverage. Compare the same run before and after a tracking change;
+only diagnose measured errors where matching reference telemetry exists.
+
+Red Ground Features boxes mean a patch disagrees with the current camera-motion
+estimate. They can accompany bad matches, parallax, or an incorrect camera
+estimate; the color alone does not identify the cause. Keep them as diagnostic
+evidence and use the replay to correlate them with tracking loss.
+
+New path recordings also save a sibling `frames-<path-id>/` directory. It contains
+lossless PNG inputs for every staged capture (including dark/floorless frames),
+original timestamps and solve dimensions, exact frame markers when available,
+vision-stage ordering, and the masks/tuning consumed by ground extraction.
+Input events, checkpoint and reference telemetry remain in the path JSON.
+Copy both the JSON and its frame directory when sharing a recording.
+
+The writer retains at most four pending images. Disk overload or failure creates
+explicit missing-frame entries; capture never waits for PNG compression. The
+path's `visualFrameArchive` summary reports completeness and queue pressure.
+Older input-only paths remain readable and playable, but cannot supply a complete
+image replay. The production image-replay driver is available below. Tracking
+islands and measured doorway-floor correction are implemented; disconnected
+components remain explicitly provisional. See [FIRST_BENCH_TRACKING.md](FIRST_BENCH_TRACKING.md)
+for accuracy, coverage limits, reproducibility and Windows parity requirements.
+Nonfinite diagnostic numbers use explicit `Infinity`, `-Infinity` and `NaN` JSON
+strings, identified by `ieee754-nonfinite-strings-v1` metadata. They do not become
+valid camera poses or silently discard the recording.
+
+Validate the saved images, hashes, and ground-input associations without launching
+the game:
+
+```sh
+'/Applications/Hollow Knight Vision.app/Contents/MacOS/HollowKnightVision' \
+  --inspect-visual-replay '/absolute/path/to/path-recording.json'
+```
+
+Exit 0 means the image archive is complete. Exit 2 means missing/incomplete
+archive; exit 1 indicates corrupt evidence or an inspection error. Marker coverage
+is reported separately: missing truth cannot count as zero tracking error.
+
+
+Replay the exact captured images through the production capture, vision, ground,
+fallback and atlas stages, with a new isolated output directory:
+
+```sh
+'/Applications/Hollow Knight Vision.app/Contents/MacOS/HollowKnightVision' \
+  --replay-visual-archive '/absolute/path/to/path-recording.json' \
+  --visual-replay-output '/absolute/path/to/new-replay-directory'
+
+python3 macos/score-visual-replay.py \
+  --reference '/absolute/path/to/path-recording.json' \
+  --replay '/absolute/path/to/new-replay-directory'
+```
+
+Add `--visual-replay-frame-limit 600` for a short smoke check. The driver validates
+image hashes, starts a fresh tracker/atlas, freezes archived visual masks/tuning,
+and consumes recorded input directions. It never supplies recorded camera poses
+or mod telemetry to tracking. Reference-only scoring happens in the separate
+Python command. Add `--plot '/absolute/path/to/errors.png'` to export a plot
+(requires Matplotlib). Camera and saved-screenshot errors use fixed reference
+origins; missing exact matches are excluded explicitly.
+
+This adapter replays a gameplay recording from a cold tracker. It does not recreate
+pre-recording tracker history, rerun external stencil/model inference, or measure
+UI rendering performance. Global ground searches are synchronous during replay so
+worker scheduling cannot select different images. The live app keeps its bounded
+asynchronous searches. All output goes into the specified directory; the normal
+saved atlas and installed game are untouched.

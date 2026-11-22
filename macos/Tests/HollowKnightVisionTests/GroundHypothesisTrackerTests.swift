@@ -644,6 +644,49 @@ final class GroundHypothesisTrackerTests: XCTestCase {
         XCTAssertTrue(expired.features.isEmpty)
     }
 
+    func testMovingPlatformShowsMeasuredPatchesBeforeItIsAddedToTheAtlas() throws {
+        let tracker = GroundHypothesisTracker(minimumObservationSeconds: 2)
+        let standing = CleanFloorLine(row: 80, xRange: 0...159)
+        var trackedPlatform = false
+        for index in 0..<12 {
+            let x = 60 - 2 * index
+            // Small islands of measured edge still give textured 16-pixel patches.
+            let platform = CleanFloorLine(row: 40, xRange: x...(x + 39),
+                evidenceRanges: [x...(x + 7), (x + 16)...(x + 23), (x + 32)...(x + 39)])
+            let rejected = CleanFloorLine(row: 70, xRange: 50...100)
+            let floors = GroundClearance.floors([standing, platform, rejected], imageHeight: 100,
+                knight: CGRect(x: 0, y: 0, width: 10, height: 20))
+            let result = tracker.update(frame: try textureImage(width: 160, height: 100,
+                shiftX: -2 * index, shiftY: 0), floorLines: [standing], visibleFloors: floors, timestamp: Double(index) / 60)
+            XCTAssertTrue(result.atlasLines.isEmpty)
+            XCTAssertFalse(result.matchedPatchRects.contains { $0.minY == 70 })
+            XCTAssertTrue(result.matchedPatchRects.allSatisfy { rect in
+                floors.contains { $0.containsPatch(atX: Int(rect.minX), row: Int(rect.minY)) }
+            })
+            trackedPlatform = trackedPlatform || result.matchedPatchRects.contains { $0.minY == 40 }
+        }
+        XCTAssertTrue(trackedPlatform)
+    }
+
+    func testOnePatchLedgeNeedsConsecutiveUnmaskedTextureWithinItsEndpoints() throws {
+        var tracker = GroundPlatformPatches()
+        let pixels = try XCTUnwrap(GroundPixels.luma(textureImage(width: 96, height: 64,
+            shiftX: 0, shiftY: 0), width: 96, height: 64))
+        let ledge = CleanFloorLine(row: 24, xRange: 9...24)
+        let box = CGRect(x: 9, y: 24, width: 16, height: 12)
+        func observe(_ index: Int, floors: [CleanFloorLine], masks: [CGRect] = []) -> [CGRect] {
+            tracker.observe(pixels: pixels, width: 96, height: 64, floors: floors, masks: masks,
+                            camera: .zero, frameIndex: index)
+        }
+        XCTAssertTrue(observe(1, floors: [ledge]).isEmpty)
+        XCTAssertEqual(observe(2, floors: [ledge]), [box])
+        XCTAssertTrue(observe(3, floors: [ledge], masks: [box]).isEmpty)
+        XCTAssertTrue(observe(4, floors: [ledge]).isEmpty)
+        XCTAssertTrue(observe(5, floors: [.init(row: 24, xRange: 9...23)]).isEmpty)
+        XCTAssertTrue(observe(6, floors: [ledge]).isEmpty)
+        XCTAssertTrue(observe(8, floors: [ledge]).isEmpty)
+    }
+
     func testStableShortPlatformNeedsCameraConsistentMotionBeforeAtlasAdmission() throws {
         let tracker = GroundHypothesisTracker()
         let frame = try textureImage(width: 160, height: 100, shiftX: 0, shiftY: 0)

@@ -464,7 +464,12 @@ def make_model(class_names: list[str], base_checkpoint: dict | None) -> HKVDetec
 def retained_previous_class_names(base_checkpoint: dict | None) -> set[str]:
     if base_checkpoint is None:
         return set()
-    return set(base_checkpoint["class_names"]) - LEGACY_CLASS_IDENTIFIERS
+    # Older checkpoints included every catalog head, even without supervision.
+    # Head presence alone must never reactivate an untrained optional class.
+    return (
+        set(base_checkpoint.get("trained_class_names", []))
+        & set(base_checkpoint["class_names"])
+    ) - LEGACY_CLASS_IDENTIFIERS
 
 
 def training_class_names(
@@ -472,10 +477,11 @@ def training_class_names(
     annotated_names: set[str],
     base_checkpoint: dict | None,
 ) -> list[str]:
-    """Honor an exported model allowlist while retaining old-manifest behavior."""
+    """Enable only positive training evidence or explicitly certified prior learning."""
+    evidenced_names = annotated_names | retained_previous_class_names(base_checkpoint)
     configured = manifest.get("classIdentifiers")
     if configured is None:
-        return sorted(annotated_names | retained_previous_class_names(base_checkpoint))
+        return sorted(evidenced_names)
     configured_names = set(configured)
     if not configured_names:
         raise ValueError("Dataset classIdentifiers is empty.")
@@ -485,7 +491,7 @@ def training_class_names(
             "Dataset annotations are outside classIdentifiers: "
             + ", ".join(sorted(unexpected))
         )
-    return sorted(configured_names)
+    return sorted(configured_names & evidenced_names)
 
 
 def full_training_set(
@@ -772,6 +778,7 @@ def export_coreml(model: HKVDetector, class_names: list[str], destination: Path)
     core_model.short_description = "Incremental shared object detector"
     core_model.user_defined_metadata["hkv.algorithm"] = ALGORITHM
     core_model.user_defined_metadata["hkv.classNames"] = json.dumps(class_names)
+    core_model.user_defined_metadata["hkv.trainedClassNames"] = json.dumps(class_names)
     core_model.user_defined_metadata["hkv.boxFormat"] = "top-left-xywh"
     core_model.save(str(destination))
 
@@ -851,18 +858,20 @@ def run(arguments: argparse.Namespace) -> None:
             if base_checkpoint.get("algorithm") != ALGORITHM:
                 raise ValueError("Base checkpoint uses an incompatible trainer.")
 
+        training = [sample for sample in samples if sample.split == "training"]
+        validation = [sample for sample in samples if sample.split == "validation"]
         annotated_names = {
             item.label
-            for sample in samples
+            for sample in training
             for item in sample.annotations
             if not item.is_negative
         }
-        previous_names = retained_previous_class_names(base_checkpoint)
+        previous_names = retained_previous_class_names(base_checkpoint) | (
+            annotated_names & set(base_checkpoint["class_names"]) if base_checkpoint else set()
+        )
         class_names = training_class_names(manifest, annotated_names, base_checkpoint)
         if not class_names:
             raise ValueError("Dataset has no classes.")
-        training = [sample for sample in samples if sample.split == "training"]
-        validation = [sample for sample in samples if sample.split == "validation"]
         if not training:
             raise ValueError("Dataset has no training images.")
         previous_signatures = set(base_checkpoint.get("trained_signatures", [])) if base_checkpoint else set()
@@ -930,6 +939,7 @@ def run(arguments: argparse.Namespace) -> None:
             "run_identifier": run_identifier,
             "base_run_identifier": base_checkpoint.get("run_identifier") if base_checkpoint else None,
             "class_names": class_names,
+            "trained_class_names": class_names,
             "state_dict": {
                 name: value.detach().cpu() for name, value in model.state_dict().items()
             },
@@ -989,6 +999,7 @@ def run(arguments: argparse.Namespace) -> None:
             "trainingDurationSeconds": training_duration,
             "epochLosses": losses,
             "classIdentifiers": class_names,
+            "trainedClassIdentifiers": class_names,
             "predictionsFilename": "predictions.json",
             "trainingMetrics": metric_summary(training_examples, class_names),
             "validationMetrics": (

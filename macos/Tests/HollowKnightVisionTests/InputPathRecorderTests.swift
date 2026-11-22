@@ -3,6 +3,40 @@ import XCTest
 @testable import HollowKnightVision
 
 final class InputPathRecorderTests: XCTestCase {
+    func testPhysicsPredictionIntervalSurvivesRoundTripWithoutPromotingPose() throws {
+        let recorder = InputPathRecorder()
+        recorder.start(at: 10)
+        recorder.recordTracking(.empty, captureTimestamp: 10.1, poseSource: "fallPrediction",
+            fallPrediction: .init(cameraY: 20, cameraYRange: 17...23, age: 0.05), observedAt: 10.12)
+        let path = try XCTUnwrap(recorder.stop(at: 10.2))
+        let restored = try JSONDecoder().decode(RecordedInputPath.self, from: JSONEncoder().encode(path))
+        let sample = try XCTUnwrap(restored.trackingSamples.first)
+        XCTAssertEqual(sample.fallPredictionMinimumY, 17)
+        XCTAssertEqual(sample.fallPredictionMaximumY, 23)
+        XCTAssertEqual(sample.fallPredictionAge, 0.05)
+        XCTAssertFalse(sample.poseVerified)
+        XCTAssertNil(sample.publishedCameraY)
+    }
+
+    func testSceneMotionDiagnosticsKeepUnknownAxisAndMeasuredResidualSeparate() throws {
+        let recorder = InputPathRecorder()
+        _ = recorder.start(at: 10)
+        recorder.recordTracking(.empty, captureTimestamp: 10.1, poseSource: "calibratedScene",
+            sceneMotion: .init(position: CGPoint(x: 30, y: -20), referenceTimestamp: 10.05,
+                timestamp: 10.1, supportedPatches: 4, horizontalMeasured: false,
+                verticalMeasured: true, residualX: 0.8, residualY: 0.2),
+            sceneMotionMilliseconds: 3.5, observedAt: 10.12)
+        let path = try XCTUnwrap(recorder.stop(at: 10.2))
+        let decoded = try JSONDecoder().decode(RecordedInputPath.self, from: JSONEncoder().encode(path))
+        let sample = try XCTUnwrap(decoded.trackingSamples.first)
+        XCTAssertEqual(sample.sceneMotionSupport, 4)
+        XCTAssertEqual(sample.sceneMotionMeasuredX, false)
+        XCTAssertEqual(sample.sceneMotionMeasuredY, true)
+        XCTAssertEqual(sample.sceneMotionResidualY, 0.2)
+        XCTAssertEqual(sample.sceneMotionMilliseconds, 3.5)
+        XCTAssertNil(sample.publishedCameraX, "Diagnostic scene motion cannot overwrite the published pose")
+    }
+
     func testRecordsDeduplicatedTransitionsAndClosesHeldButtons() throws {
         let recorder = InputPathRecorder()
         let identifier = UUID(uuidString: "2B87556A-6D7A-4183-81A1-F93784E4290E")!
@@ -81,7 +115,7 @@ final class InputPathRecorderTests: XCTestCase {
         )
         XCTAssertEqual(
             path.runtimeMetadata?["lowResolutionMotionBridge"],
-            "local-contrast-measured-ground-handoff-v22"
+            "local-contrast-capture-reference-handoff-v23"
         )
         XCTAssertEqual(
             path.runtimeMetadata?["pathPlaybackPreparation"],
@@ -344,6 +378,46 @@ final class InputPathRecorderTests: XCTestCase {
             from: JSONSerialization.data(withJSONObject: legacy))
         XCTAssertNil(decoded.placementRecoveryState)
         XCTAssertNil(decoded.atlasWriteAllowed)
+    }
+
+    func testNonFiniteDiagnosticDoesNotDestroyRecordedRoute() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = InputPathRecorder()
+        recorder.start(at: 10, createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                       startCheckpoint: makeCheckpoint())
+        recorder.recordInput(button: .right, isPressed: true, at: 10.01)
+        var result = GroundHypothesisTrackingResult.empty
+        result.cameraPosition = CGPoint(x: 12, y: 3)
+        result.localTextureError = .infinity
+        recorder.recordTracking(result, captureTimestamp: 10.1,
+            publishedCameraPosition: CGPoint(x: 12, y: 3),
+            sceneMotion: .init(position: .zero, referenceTimestamp: 10,
+                timestamp: 10.1, supportedPatches: 0, horizontalMeasured: false,
+                verticalMeasured: false, residualX: -.infinity, residualY: .nan),
+            observedAt: 10.12)
+        recorder.recordGroundTruth(makeGroundTruth(sequence: 7), observedAt: 10.13)
+        let original = try XCTUnwrap(recorder.stop(at: 11))
+        let store = InputPathStore(rootURL: root)
+        let url = try store.save(original)
+        let restored = try store.load(from: url)
+        XCTAssertEqual(restored.events, original.events)
+        XCTAssertEqual(restored.groundTruthTrace, original.groundTruthTrace)
+        XCTAssertEqual(restored.startCheckpoint, original.startCheckpoint)
+        let sample = try XCTUnwrap(restored.trackingSamples.first)
+        XCTAssertEqual(sample.publishedCameraX, 12)
+        XCTAssertEqual(sample.localTextureError, .infinity)
+        XCTAssertTrue(try XCTUnwrap(sample.sceneMotionResidualY).isNaN)
+        XCTAssertEqual(sample.sceneMotionResidualX, -.infinity)
+        XCTAssertFalse(sample.poseVerified)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url))
+            as? [String: Any])
+        let raw = try XCTUnwrap((json["trackingSamples"] as? [[String: Any]])?.first)
+        XCTAssertEqual(raw["localTextureError"] as? String, "Infinity")
+        XCTAssertEqual(raw["sceneMotionResidualY"] as? String, "NaN")
+        XCTAssertEqual(raw["sceneMotionResidualX"] as? String, "-Infinity")
+        XCTAssertEqual(raw["publishedCameraX"] as? Double, 12)
     }
 
     func testStoreRoundTripsReplayReadyPath() throws {

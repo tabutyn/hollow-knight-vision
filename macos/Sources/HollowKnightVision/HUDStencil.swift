@@ -101,11 +101,10 @@ struct HUDStencilResult: Equatable {
     var omittedRects: [CGRect] { healthMasks + manaMasks + [geo] }
     var healthBounds: CGRect { healthMasks.reduce(CGRect.null) { $0.union($1) } }
     var manaBounds: CGRect { manaMasks.reduce(CGRect.null) { $0.union($1) } }
-    /// Two independently matched masks are enough to distinguish the fixed
-    /// HUD row from menu art. Matching already enforces its bounded top-left
-    /// position, texture, colour, and horizontal lattice. Soul animates and
-    /// may not match on the first gameplay frames, so it is supporting evidence
-    /// rather than a prerequisite for establishing gameplay.
+    /// Two independently matched masks provide the HUD side of gameplay
+    /// entry evidence. The state gates also require an object-model Knight
+    /// detection. Matching enforces the row's bounded top-left position,
+    /// texture, colour, and horizontal lattice. Soul is not a prerequisite.
     var establishesGameplay: Bool { health.count >= 2 }
 }
 
@@ -124,12 +123,26 @@ final class HUDStencilTracker {
 
     init(template: HUDStencilTemplate? = nil) {
         self.template = template?.isValid == true ? template : nil
-        healthKernels = self.template?.health.map { HUDStencilKernel($0) } ?? []
+        healthKernels = Self.healthVariants(self.template?.health ?? []).map { HUDStencilKernel($0) }
         manaMainKernels = self.template?.manaMain.map {
             HUDStencilKernel($0, mainManaOnly: true)
         } ?? []
         manaKernels = Self.reserveVariants(self.template?.manaReserves ?? []).flatMap {
             [HUDStencilKernel($0), HUDStencilKernel($0, opaqueManaOnly: true)]
+        }
+    }
+
+    /// The user labels filled white masks. Lifeblood keeps that same face
+    /// shape under a blue tint; derive its colour variant from those pixels.
+    private static func healthVariants(_ atoms: [HUDStencilTemplate.Atom]) -> [HUDStencilTemplate.Atom] {
+        guard !atoms.contains(where: { $0.kind == "lifeblood" }) else { return atoms }
+        return atoms + atoms.filter { $0.kind == "full" }.map { atom in
+            var rgb = [UInt8](atom.rgb)
+            for index in stride(from: 0, to: rgb.count, by: 3) {
+                rgb[index] = UInt8(Double(rgb[index]) * 0.45)
+                rgb[index + 1] = UInt8(Double(rgb[index + 1]) * 0.75)
+            }
+            return .init(kind: "lifeblood", rect: atom.rect, rgb: Data(rgb))
         }
     }
 
@@ -196,17 +209,26 @@ final class HUDStencilTracker {
         var offset = CGPoint.zero
         var health = [HUDStencilMatch]()
         var healthMasks = [CGRect]()
-        // Bounds are a safety limit only: the first nonmatching cell ends the row.
+        var misses = 0
+        // Empty masks are not part of a two-filled-mask capture. Keep the
+        // fixed lattice through gaps to find the blue masks after them. A gap
+        // is never counted as a recognized health icon.
         for index in 0..<32 {
             let center = firstCenter + CGFloat(index) * template.healthPitch + offset.x
             guard center < CGFloat(template.referenceWidth) - 8 else { break }
             let found = bestHealth(in: pixels, center: center, offsetY: offset.y,
                                    radius: index == 0 ? 7 : 2, verticalRadius: index == 0 ? 4 : 1)
-            guard let found, found.score >= threshold(for: found.atom.kind) else { break }
-            if index == 0 {
+            guard let found, found.score >= threshold(for: found.atom.kind) else {
+                misses += 1
+                if health.isEmpty || misses > (health.count < 2 ? 9 : 1) { break }
+                continue
+            }
+            misses = 0
+            if health.isEmpty {
                 offset = CGPoint(x: found.rect.midX - firstCenter,
                                  y: found.rect.minY - found.atom.bounds.minY)
             }
+            let previousIndex = health.last?.index
             health.append(HUDStencilMatch(index: index, kind: found.atom.kind,
                 rect: outputRect(found.rect), confidence: found.score))
             // The gap contains the connector between masks. Cover the whole
@@ -215,7 +237,12 @@ final class HUDStencilTracker {
             let cell = CGRect(x: cellCenter - template.healthPitch / 2,
                               y: found.rect.minY - 1,
                               width: template.healthPitch, height: found.rect.height + 2)
-            healthMasks.append(outputRect(cell, margin: 2))
+            // Include unclassified cells only in the exclusion mask, never in
+            // the health count, once a later icon confirms their lattice.
+            if let previous = healthMasks.last, let previousIndex, index - previousIndex > 1 {
+                let last = outputRect(cell, margin: 2)
+                healthMasks.append(previous.union(last))
+            } else { healthMasks.append(outputRect(cell, margin: 2)) }
         }
         let holdingHealth = healthMasks.count < previousHealthMasks.count
             && timestamp >= lastHealthSeen && timestamp - lastHealthSeen <= 0.5

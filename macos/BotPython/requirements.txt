@@ -1,0 +1,2 @@
+# Separate from the object detector's training environment.
+stable-baselines3==2.9.2

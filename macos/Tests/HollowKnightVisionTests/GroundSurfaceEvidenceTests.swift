@@ -2,6 +2,115 @@ import XCTest
 @testable import HollowKnightVision
 
 final class GroundSurfaceEvidenceTests: XCTestCase {
+    func testClearanceRejectsOnlyFullyEnclosedShorterFloorsWithinKnightHeight() {
+        let outer = CleanFloorLine(row: 100, xRange: 10...119)
+        let above = CleanFloorLine(row: 81, xRange: 10...40)
+        let below = CleanFloorLine(row: 119, xRange: 60...119)
+        let headroom = CleanFloorLine(row: 120, xRange: 10...40)
+        let offset = CleanFloorLine(row: 98, xRange: 120...170)
+        let knight = CGRect(x: 0, y: 0, width: 10, height: 20)
+        XCTAssertEqual(GroundClearance.floors([above, outer, below, headroom, offset], imageHeight: 360,
+            knight: knight), [outer, headroom, offset])
+        let bridge = CleanFloorLine(row: 100, xRange: 0...120, evidenceRanges: [0...20, 100...120])
+        let ledge = CleanFloorLine(row: 112, xRange: 40...75)
+        XCTAssertEqual(GroundClearance.floors([bridge, ledge], imageHeight: 360, knight: nil), [bridge, ledge])
+    }
+
+    func testTipsMeetWithoutDeletingEitherPlatformOrKeepingEvidenceBeyondTheCut() {
+        let a = CleanFloorLine(row: 80, xRange: 0...99)
+        let b = CleanFloorLine(row: 90, xRange: 90...189)
+        let cut = GroundClearance.floors([a, b], imageHeight: 360, knight: nil)
+        XCTAssertEqual(cut, [.init(row: 80, xRange: 0...94), .init(row: 90, xRange: 95...189)])
+        XCTAssertEqual(GroundClearance.floors([b, a], imageHeight: 360, knight: nil), cut.reversed())
+        let c = CleanFloorLine(row: 90, xRange: 50...149)
+        XCTAssertEqual(GroundClearance.floors([a, c], imageHeight: 360, knight: nil), [a, c])
+        let thinTip = CleanFloorLine(row: 80, xRange: 0...99, evidenceRanges: [0...89, 99...99])
+        let supported = GroundClearance.floors([thinTip, b], imageHeight: 360, knight: nil)
+        XCTAssertEqual(supported[0].evidenceRanges, [0...89])
+        XCTAssertEqual(supported[1], b)
+    }
+
+    func testNearbyRidgesWithInterleavedEvidenceProduceOneLine() {
+        let width = 350, height = 60
+        var response = [UInt8](repeating: 0, count: width * height)
+        for (row, spans) in [(20, [10...40, 110...150]), (22, [41...70, 140...169, 290...339])] {
+            for span in spans {
+                for x in span { response[row * width + x] = 80 }
+            }
+        }
+        let comparison = GroundComparisonAnalysis(width: width, height: height, groundPixels: response,
+            sourceLuma: [UInt8](repeating: 20, count: width * height))
+        let tuning = GroundTheoryTuning(groundThreshold: 8, minimumSegmentLength: 40,
+            lineSeparation: 40, occlusionMergeGap: 90)
+        XCTAssertEqual(GroundLineDetector.semanticFloorLines(from: comparison, tuning: tuning), [
+            CleanFloorLine(row: 20, xRange: 10...150, evidenceRanges: [10...40, 110...150]),
+            CleanFloorLine(row: 22, xRange: 290...339)
+        ])
+    }
+
+    func testCaptionStrokesCannotExtendAnAdjacentPlatform() {
+        let width = 240, height = 64, row = 22
+        var response = [UInt8](repeating: 0, count: width * height)
+        var luma = [UInt8](repeating: 20, count: width * height)
+        for x in 12...85 { response[row * width + x] = 100 }
+        for x in 140...203 { response[row * width + x] = 100 }
+        for x in stride(from: 140, through: 203, by: 5) {
+            for y in 21...27 { luma[y * width + x] = 210 }
+        }
+        let comparison = GroundComparisonAnalysis(width: width, height: height,
+            groundPixels: response, sourceLuma: luma)
+        let semantic = GroundLineDetector.semanticFloorLines(from: comparison, tuning: .semanticDefault)
+        XCTAssertEqual(semantic, [CleanFloorLine(row: row, xRange: 12...85)])
+        let tracking = GroundLineDetector.cleanFloorLines(from: comparison, tuning: .default)
+        XCTAssertEqual(tracking.first?.xRange, 12...203)
+    }
+
+    func testBrightOpeningSeparatesTwoPlatformsWithLitCaps() {
+        let width = 320, height = 80, row = 24
+        var response = [UInt8](repeating: 0, count: width * height)
+        var luma = [UInt8](repeating: 140, count: width * height)
+        for bank in [20...75, 216...271] {
+            for x in bank {
+                response[row * width + x] = 40
+                for y in (row + 1)..<height {
+                    luma[y * width + x] = y <= row + 12 ? 85 : 20
+                }
+            }
+        }
+        let comparison = GroundComparisonAnalysis(width: width, height: height,
+            groundPixels: response, sourceLuma: luma)
+        let lines = GroundLineDetector.semanticFloorLines(from: comparison, tuning: .semanticDefault)
+        XCTAssertEqual(lines.count, 2)
+        XCTAssertTrue(lines.contains { $0.row == row && $0.xRange.contains(45) })
+        XCTAssertTrue(lines.contains { $0.row == row && $0.xRange.contains(245) })
+        XCTAssertFalse(lines.contains { $0.xRange.contains(145) })
+
+        var valid = [UInt8](repeating: 1, count: width * height)
+        for y in (row + 13)...(row + 24) {
+            for x in 216...271 { valid[y * width + x] = 0 }
+        }
+        let masked = GroundComparisonAnalysis(width: width, height: height,
+            groundPixels: response, sourceLuma: luma, validSourcePixels: valid)
+        XCTAssertFalse(GroundLineDetector.semanticFloorLines(from: masked, tuning: .semanticDefault)
+            .contains { $0.xRange.contains(245) })
+    }
+
+    func testLocalKernelTrimsOverhangAndRecoversAnUnderestimatedEndpoint() throws {
+        let width = 150, height = 60, row = 20
+        var response = [UInt8](repeating: 0, count: width * height)
+        var luma = [UInt8](repeating: 125, count: width * height)
+        for x in 24...88 { response[row * width + x] = 50 }
+        for y in (row + 1)..<height {
+            for x in 35...100 { luma[y * width + x] = 12 }
+        }
+        let comparison = GroundComparisonAnalysis(width: width, height: height,
+            groundPixels: response, sourceLuma: luma)
+        let line = try XCTUnwrap(GroundLineDetector.semanticFloorLines(from: comparison, tuning: .semanticDefault).first)
+        XCTAssertLessThanOrEqual(abs(line.xRange.lowerBound - 35), 3)
+        XCTAssertLessThanOrEqual(abs(line.xRange.upperBound - 100), 3)
+        XCTAssertEqual(line.evidenceRanges, [line.xRange])
+    }
+
     func testStrongCoreKeepsWeakEndpointsButWeakOnlyLineIsRejected() {
         let width = 200, height = 100
         var pixels = [UInt8](repeating: 0, count: width * height)

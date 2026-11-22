@@ -28,6 +28,37 @@ def finite(*values):
     return all(isinstance(x, (int, float)) and math.isfinite(x) for x in values)
 
 
+def nonfinite_numbers(value):
+    """Count explicit JSON markers without treating failed numbers as zero.
+
+    Keep bounded examples; counts include invalid diagnostics even when their
+    camera pose is valid, and invalid poses even when no truth join is possible.
+    """
+    values, fields, examples = collections.Counter(), collections.Counter(), []
+
+    def visit(item, path, field):
+        marker = None
+        if isinstance(item, float) and not math.isfinite(item):
+            marker = 'NaN' if math.isnan(item) else ('Infinity' if item > 0 else '-Infinity')
+        elif isinstance(item, str) and item in ('Infinity', '-Infinity', 'NaN'):
+            marker = item
+        if marker is not None:
+            values[marker] += 1
+            fields[field] += 1
+            if len(examples) < 20:
+                examples.append({'path': path, 'value': marker})
+        elif isinstance(item, dict):
+            for key, child in item.items():
+                visit(child, f'{path}.{key}', f'{field}.{key}')
+        elif isinstance(item, list):
+            for index, child in enumerate(item):
+                visit(child, f'{path}[{index}]', f'{field}[]')
+
+    visit(value, '$', '$')
+    return {'count': sum(values.values()), 'values': dict(values),
+            'fields': dict(fields), 'examples': examples}
+
+
 def low_resolution_motion_demand(run, width=640, height=360,
                                  grid_width=64, grid_height=36,
                                  minimum_age=.025, maximum_age=.12,
@@ -202,7 +233,10 @@ def exact_frames(run, width=640, height=360):
     index = truth_index(run)
     rejected = collections.Counter()
     frames, epochs = [], []
-    anchor = None
+    # Only independent reference identity may create an origin. Visual room or
+    # island IDs are outputs under evaluation; reanchoring on those IDs would
+    # conceal the exact drift and false splits this report must measure.
+    anchors = collections.defaultdict(list)
     for tracking_index, tracking in enumerate(run.get('trackingSamples', [])):
         marker = tracking.get('renderedGameFrame')
         if marker is None:
@@ -228,12 +262,15 @@ def exact_frames(run, width=640, height=360):
             continue
         cx, cy, rx, ry, pw, ph = raw
         sx, sy = rx * width / pw, ry * height / ph
-        identity = (truth.get('sessionID'), truth.get('sceneName'), tracking.get('roomID'), pw, ph)
-        if (anchor is None or identity != anchor['identity']
-                or abs(sx / anchor['sx'] - 1) > .001
-                or abs(sy / anchor['sy'] - 1) > .001):
-            anchor = dict(identity=identity, x=x, y=y, cx=cx, cy=cy, sx=sx, sy=sy)
-            epochs.append({'epoch': len(epochs), 'trackingIndex': tracking_index,
+        identity = (truth.get('sessionID'), truth.get('sceneName'), pw, ph)
+        anchor = next((candidate for candidate in anchors[identity]
+                       if abs(sx / candidate['sx'] - 1) <= .001
+                       and abs(sy / candidate['sy'] - 1) <= .001), None)
+        if anchor is None:
+            anchor = dict(identity=identity, x=x, y=y, cx=cx, cy=cy, sx=sx, sy=sy,
+                          epoch=len(epochs))
+            anchors[identity].append(anchor)
+            epochs.append({'epoch': anchor['epoch'], 'trackingIndex': tracking_index,
                            'unityFrame': marker, 'sceneName': truth.get('sceneName'),
                            'publishedOrigin': [x, y], 'worldOrigin': [cx, cy],
                            'scale': [sx, sy]})
@@ -241,7 +278,7 @@ def exact_frames(run, width=640, height=360):
         expected_y = anchor['y'] + (cy - anchor['cy']) * sy
         error_x, error_y = x - expected_x, y - expected_y
         frames.append({'trackingIndex': tracking_index, 'unityFrame': marker,
-                       'epoch': len(epochs)-1, 'timestamp': tracking['captureTimestamp'],
+                       'epoch': anchor['epoch'], 'timestamp': tracking['captureTimestamp'],
                        'offset': tracking.get('captureOffset', tracking['offset']),
                        'published': [x, y], 'expected': [expected_x, expected_y],
                        'error': [error_x, error_y], 'errorPixels': math.hypot(error_x, error_y),
@@ -277,8 +314,8 @@ def error_spans(frames, threshold=16, maximum_gap=.1):
     return spans
 
 
-def summarize_exact(run, width=640, height=360):
-    frames, coverage = exact_frames(run, width, height)
+def summarize_exact(run, width=640, height=360, *, frames_and_coverage=None):
+    frames, coverage = frames_and_coverage if frames_and_coverage is not None else exact_frames(run, width, height)
     verified = [f for f in frames if f['tracking'].get('poseVerified')]
     steps, gaps, stationary, moving = [], [], [], []
     for before, after in zip(frames, frames[1:]):
@@ -326,7 +363,8 @@ def summarize_exact(run, width=640, height=360):
         previous_ids = ids
     return {
         'method': 'exact-rendered-frame', 'coordinateSource': 'publishedCamera',
-        'alignment': 'first exact matched sample per scene/room/session/projection epoch; no fit',
+        'nonFiniteNumbers': nonfinite_numbers(run),
+        'alignment': 'fixed first exact match per reference scene/session/projection; reused on return; visual room/island IDs ignored; no fit',
         'caveat': 'Relative drift after first matched frame; initial absolute offset is unobservable.',
         **coverage,
         'errorPixels': distribution([f['errorPixels'] for f in frames]),

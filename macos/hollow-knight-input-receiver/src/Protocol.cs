@@ -164,7 +164,7 @@ namespace HollowKnightVisionInputReceiver
                 ["version"] = ReceiverControlProtocol.Version,
                 ["type"] = "capabilitiesAck",
                 ["sessionID"] = session,
-                ["capabilities"] = new JArray("input-state-v1", "pause-lease-v1", "menu-shortcuts-v1", "pointer-events-v1", "player-checkpoint-v1", "player-pose-playback-v1", "ground-truth-telemetry-v1", "player-ops-v1", "render-frame-marker-v1", "controlled-frame-replay-v1", "scene-mask-checkpoint-v1"),
+                ["capabilities"] = new JArray("input-state-v1", "pause-lease-v1", "menu-shortcuts-v1", "pointer-events-v1", "player-checkpoint-v1", "player-pose-playback-v1", "ground-truth-telemetry-v1", "hacker-actor-telemetry-v1", "player-ops-v1", "room-reset-v1", "room-entrance-reset-v1", "geo-cache-telemetry-v1", "render-frame-marker-v1", "controlled-frame-replay-v1", "scene-mask-checkpoint-v1"),
                 ["pauseLeaseMilliseconds"] = ReceiverControlProtocol.PauseLeaseMilliseconds
             }.ToString(Formatting.None);
         }
@@ -291,10 +291,55 @@ namespace HollowKnightVisionInputReceiver
         }
     }
 
+    // The first observed entrance remains the reset point when revisiting a room.
+    internal sealed class RoomEntrances
+    {
+        private readonly Dictionary<string, PlayerCheckpoint> entrances =
+            new Dictionary<string, PlayerCheckpoint>(StringComparer.Ordinal);
+
+        internal void Remember(PlayerCheckpoint entrance)
+        {
+            if (entrance == null || !entrance.Grounded || String.IsNullOrEmpty(entrance.SceneName)
+                || entrances.ContainsKey(entrance.SceneName)) return;
+            // The fresh-game gym verifies this grounded King's Pass spawn. It is
+            // available even when the receiver first sees a return from Town.
+            if (String.Equals(entrance.SceneName, "Tutorial_01", StringComparison.Ordinal)) {
+                var dx = 34.5 - entrance.HeroX;
+                var dy = 11.41 - entrance.HeroY;
+                entrance.HeroX = 34.5; entrance.HeroY = 11.41;
+                entrance.CameraX += dx; entrance.CameraY += dy;
+                entrance.CameraTargetX += dx; entrance.CameraTargetY += dy;
+                entrance.EntryGateName = "top1";
+                entrance.FacingRight = true;
+            }
+            entrances.Add(entrance.SceneName, entrance);
+        }
+
+        internal bool TryGet(string sceneName, out PlayerCheckpoint entrance)
+        {
+            entrance = null;
+            return sceneName != null && entrances.TryGetValue(sceneName, out entrance);
+        }
+
+        internal void Clear() { entrances.Clear(); }
+    }
+
     internal sealed class PlayerCheckpoint
     {
         internal string SceneName;
         internal string EntryGateName;
+        internal bool UseRoomEntrance(PlayerCheckpoint entrance)
+        {
+            if (entrance == null || entrance.SceneName != SceneName || !entrance.Grounded) return false;
+            EntryGateName = entrance.EntryGateName;
+            HeroX = entrance.HeroX; HeroY = entrance.HeroY; HeroZ = entrance.HeroZ;
+            VelocityX = 0; VelocityY = 0;
+            Grounded = true; FacingRight = entrance.FacingRight;
+            CameraX = entrance.CameraX; CameraY = entrance.CameraY; CameraZ = entrance.CameraZ;
+            CameraTargetX = entrance.CameraTargetX; CameraTargetY = entrance.CameraTargetY; CameraTargetZ = entrance.CameraTargetZ;
+            return true;
+        }
+
         internal double HeroX;
         internal double HeroY;
         internal double HeroZ;
@@ -503,7 +548,7 @@ namespace HollowKnightVisionInputReceiver
                     Mana = value.Value<int>("mana"),
                     ExtraManaSlots = value.Value<int>("extraManaSlots"),
                     Geo = value.Value<int>("geo"),
-                    Invincible = value.Value<bool?>("invincible") ?? true
+                    Invincible = value.Value<bool?>("invincible") ?? false
                 };
                 if (parsed.MaxHealth < 1 || parsed.MaxHealth > 9
                     || parsed.Health < 1 || parsed.Health > parsed.MaxHealth
@@ -532,7 +577,7 @@ namespace HollowKnightVisionInputReceiver
         }
     }
 
-    internal enum PlayerOpsKind { Query, Apply, RestoreEnemies }
+    internal enum PlayerOpsKind { Query, Apply, RestoreEnemies, ResetRoom }
 
     internal sealed class PlayerOpsRequest
     {
@@ -540,6 +585,7 @@ namespace HollowKnightVisionInputReceiver
         internal string CommandID;
         internal PlayerOpsKind Kind;
         internal PlayerTestState State;
+        internal string ResetScene;
 
         internal static bool TryParse(string json, out PlayerOpsRequest request)
         {
@@ -555,6 +601,7 @@ namespace HollowKnightVisionInputReceiver
                 if (operation == "query") kind = PlayerOpsKind.Query;
                 else if (operation == "apply") kind = PlayerOpsKind.Apply;
                 else if (operation == "restoreEnemies") kind = PlayerOpsKind.RestoreEnemies;
+                else if (operation == "resetRoom") kind = PlayerOpsKind.ResetRoom;
                 else return false;
                 PlayerTestState state = null;
                 if (kind == PlayerOpsKind.Apply
@@ -583,15 +630,76 @@ namespace HollowKnightVisionInputReceiver
                 ["accepted"] = accepted
             };
             if (state != null) value["state"] = state.ToJson();
+            if (accepted && request.ResetScene != null) value["resetScene"] = request.ResetScene;
             if (enemiesRestored.HasValue) value["enemiesRestored"] = enemiesRestored.Value;
             if (!String.IsNullOrWhiteSpace(failure)) value["failure"] = failure;
             return value.ToString(Formatting.None);
         }
     }
 
+    internal sealed class HackerActorState
+    {
+        internal int ID;
+        internal string Name;
+        internal double ScreenX, ScreenY, Width, Height;
+
+        internal JObject ToJson()
+        {
+            return new JObject { ["id"] = ID, ["name"] = Name ?? "",
+                ["screenX"] = ScreenX, ["screenY"] = ScreenY,
+                ["width"] = Width, ["height"] = Height };
+        }
+    }
+
+    internal sealed class HackerActorTelemetry
+    {
+        internal int? HeroHealth;
+        internal string OutcomeEpoch;
+        internal int EnemyDamage, EnemyKills;
+        internal HackerActorState Hero;
+        internal readonly List<HackerActorState> LifebloodCocoons = new List<HackerActorState>();
+        internal readonly List<HackerActorState> GeoCaches = new List<HackerActorState>();
+        internal readonly List<HackerActorState> Enemies = new List<HackerActorState>();
+
+        internal JObject ToJson()
+        {
+            var enemies = new JArray();
+            foreach (var enemy in Enemies) enemies.Add(enemy.ToJson());
+            var caches = new JArray();
+            foreach (var cache in GeoCaches) caches.Add(cache.ToJson());
+            var cocoons = new JArray();
+            foreach (var cocoon in LifebloodCocoons) cocoons.Add(cocoon.ToJson());
+            return new JObject { ["version"] = 1,
+                ["lifebloodCocoons"] = cocoons, ["hero"] = Hero == null ? JValue.CreateNull() : (JToken)Hero.ToJson(),
+                ["enemies"] = enemies, ["geoCaches"] = caches, ["heroHealth"] = HeroHealth,
+                ["enemyOutcomes"] = OutcomeEpoch == null ? null : new JObject {
+                    ["epoch"] = OutcomeEpoch, ["damage"] = EnemyDamage, ["kills"] = EnemyKills } };
+        }
+    }
+
     /// Development-only truth sampled immediately before the gameplay camera renders.
     /// Vision records this beside its independent visual solve; production
     /// tracking never needs the modified game to provide it.
+    // Counts observed increases only across uninterrupted, live gameplay samples.
+    internal sealed class BlueHealthTracker
+    {
+        private int? previous, scene;
+        private ulong charms;
+        private int profile;
+        internal readonly string Epoch = Guid.NewGuid().ToString();
+        internal int Gained;
+        internal void ResetBaseline() { previous = scene = null; }
+        internal void Observe(bool valid, int sceneHandle, int blue, int profileID, ulong equippedCharmMask)
+        {
+            if (!valid || blue < 0) { ResetBaseline(); return; }
+            if (previous.HasValue && scene == sceneHandle && profile == profileID && charms == equippedCharmMask) Gained += Math.Max(0, blue - previous.Value);
+            previous = blue;
+            scene = sceneHandle;
+            profile = profileID;
+            charms = equippedCharmMask;
+        }
+    }
+
     internal sealed class GroundTruthTelemetry
     {
         internal long Sequence;
@@ -623,10 +731,14 @@ namespace HollowKnightVisionInputReceiver
         internal int ProjectionPixelHeight;
         internal int ScreenWidth;
         internal int ScreenHeight;
+        internal HackerActorTelemetry Actors;
+        internal string BlueHealthEpoch;
+        internal int BlueHealthGained;
+        internal bool? AtlasGameplayActive;
 
         internal string ToJson(string session)
         {
-            return new JObject {
+            var value = new JObject {
                 ["version"] = ReceiverControlProtocol.Version,
                 ["type"] = "groundTruth",
                 ["sessionID"] = session,
@@ -659,7 +771,11 @@ namespace HollowKnightVisionInputReceiver
                 ["projectionPixelHeight"] = ProjectionPixelHeight,
                 ["screenWidth"] = ScreenWidth,
                 ["screenHeight"] = ScreenHeight
-            }.ToString(Formatting.None);
+            };
+            if (Actors != null) value["actors"] = Actors.ToJson();
+            if (BlueHealthEpoch != null) value["blueHealthOutcomes"] = new JObject { ["epoch"] = BlueHealthEpoch, ["gained"] = BlueHealthGained };
+            if (AtlasGameplayActive.HasValue) value["atlasGameplayActive"] = AtlasGameplayActive.Value;
+            return value.ToString(Formatting.None);
         }
     }
 

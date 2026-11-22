@@ -15,6 +15,7 @@ final class FramePipelineTelemetry {
         case groundDetection
         case groundPatchSearch
         case groundTracking
+        case calibratedSceneMotion
         case globalSearch
         case objectModel
         case objectPixelRefinement
