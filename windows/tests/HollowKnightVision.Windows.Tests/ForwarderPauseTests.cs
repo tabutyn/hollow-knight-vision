@@ -135,12 +135,22 @@ internal static class ForwarderPauseTests
             Check(await forwarder.StartRecordingAsync());
             Check(await forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.ResetRoom) is null);
             Check(forwarder.StopRecording() is not null);
+            var recorded = new RecordedInputPath(RecordedInputPath.CurrentSchemaVersion,
+                Guid.NewGuid(), DateTimeOffset.UtcNow, .1, null, null, null, [], runtimeMetadata: null);
 
             var reset = forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.ResetRoom);
             var command = ReceiverWireCodec.DecodeLine<ReceiverPlayerOpsCommand>(await fixture.Next("playerOps"));
             Check(command.Operation == "resetRoom" && command.State is null);
             Check(await forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.Query) is null);
             Check(!await forwarder.StartRecordingAsync());
+            try
+            {
+                await forwarder.ReplayPathAsync(recorded, 0, restoreCheckpoint: false, _ => { });
+                throw new Exception("Replay started during room reset.");
+            }
+            catch (InvalidOperationException error) when (error.Message.Contains("stop recording before replaying"))
+            {
+            }
             await fixture.AcknowledgePlayerOps(command with { SessionId = Guid.NewGuid() }, "wrong");
             await fixture.AcknowledgePlayerOps(command, "Tutorial_01");
             var result = await reset.WaitAsync(TimeSpan.FromSeconds(4));
