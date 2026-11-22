@@ -1,6 +1,10 @@
+param(
+  [ValidateSet('Release', 'Debug')][string]$Configuration = 'Release',
+  [string]$CoverageDirectory,
+  [string]$Coverlet = 'coverlet'
+)
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-$configuration = "Release"
 $gitCommonDirectory = & git -C $root rev-parse --path-format=absolute --git-common-dir
 if ($LASTEXITCODE -eq 0 -and $gitCommonDirectory) {
   $repositoryRoot = Split-Path -Parent $gitCommonDirectory.Trim()
@@ -26,9 +30,37 @@ function Invoke-Dotnet {
 
 Invoke-Dotnet build "$root/src/HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj" -c $configuration
 Invoke-Dotnet build "$root/src/HollowKnightVision.Windows.App/HollowKnightVision.Windows.App.csproj" -c $configuration
-Invoke-Dotnet run --project "$root/tests/HollowKnightVision.Windows.Tests/HollowKnightVision.Windows.Tests.csproj" -c $configuration
-Invoke-Dotnet run --project "$root/tests/HollowKnightVision.Windows.UiTests/HollowKnightVision.Windows.UiTests.csproj" -c $configuration
-Invoke-Dotnet run --project "$root/../macos/hollow-knight-input-receiver/tests/HollowKnightVisionInputReceiver.ProtocolTests.csproj" -c $configuration --disable-build-servers
+if ($CoverageDirectory) {
+  $CoverageDirectory = (New-Item -ItemType Directory -Path $CoverageDirectory -Force).FullName
+  $Coverlet = (Get-Command $Coverlet -ErrorAction Stop).Source
+}
+
+function Invoke-TestProject($project, $framework, $report, [switch]$NoBuildServers) {
+  $serverArgs = @()
+  if ($NoBuildServers) { $serverArgs += '--disable-build-servers' }
+  if (-not $CoverageDirectory) {
+    Invoke-Dotnet run --project $project -c $configuration @serverArgs
+    return
+  }
+  Invoke-Dotnet build $project -c $configuration @serverArgs
+  $assemblyName = [IO.Path]::GetFileNameWithoutExtension($project)
+  $assembly = Join-Path (Split-Path -Parent $project) "bin/$configuration/$framework/$assemblyName.dll"
+  $coveragePath = Join-Path $CoverageDirectory "$report.info"
+  & $Coverlet $assembly --target $dotnet --targetargs ('"{0}"' -f $assembly) `
+    --include '[HollowKnightVision*]*' --include-test-assembly `
+    --format lcov --output $coveragePath
+  if ($LASTEXITCODE -ne 0) {
+    throw "Coverage run for $assemblyName failed with exit code $LASTEXITCODE."
+  }
+  if (-not (Test-Path -LiteralPath $coveragePath) -or
+      -not (Select-String -LiteralPath $coveragePath -Pattern '^DA:' -Quiet)) {
+    throw "No executable lines recorded for $assemblyName."
+  }
+}
+
+Invoke-TestProject "$root/tests/HollowKnightVision.Windows.Tests/HollowKnightVision.Windows.Tests.csproj" net8.0 desktop-core
+Invoke-TestProject "$root/tests/HollowKnightVision.Windows.UiTests/HollowKnightVision.Windows.UiTests.csproj" net8.0-windows10.0.19041.0 desktop-ui
+Invoke-TestProject "$root/../macos/hollow-knight-input-receiver/tests/HollowKnightVisionInputReceiver.ProtocolTests.csproj" net8.0 receiver -NoBuildServers
 # A dependency can be newer by assembly version but older by file timestamp
 # than an existing runtime DLL. PreserveNewest publication otherwise leaves
 # stale files (for example System.Text.Json 8 beside a version 9 deps manifest).

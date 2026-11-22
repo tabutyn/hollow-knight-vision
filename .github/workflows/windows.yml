@@ -19,10 +19,21 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - name: Build and test Windows app
+      - name: Build and measure Windows test coverage
         run: |
           dotnet --version
-          .\build-windows.ps1 -Configuration Release
+          $tools = Join-Path $env:RUNNER_TEMP 'hkv-coverage'
+          dotnet tool install --tool-path $tools coverlet.console --version 10.1.0
+          if ($LASTEXITCODE -ne 0) { throw 'Could not install Coverlet.' }
+          .\build-windows.ps1 -Configuration Release -CoverageDirectory artifacts/coverage `
+            -Coverlet (Join-Path $tools 'coverlet.exe')
+      - name: Publish measured Windows coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: HollowKnightVision-Windows-coverage
+          path: windows/artifacts/coverage/
+          if-no-files-found: error
       - name: Report remaining Mac parity obligations
         run: .\Test-MacParity.ps1
       - name: Install training dependencies
