@@ -16,6 +16,7 @@ public partial class MainWindow
     private string previousHackerTerrainTarget = "Objective";
     private bool EditsHackerPaths => hackerEditingTarget == "Path";
     private readonly Dictionary<string, HackerPathCache> hackerPathGraphs = new(StringComparer.Ordinal);
+    private readonly HackerAtlasRoute hackerPathRoute = new();
     private BotAtlasObjective? hackerObjective;
     private ViewportRect? hackerPathFitBounds;
     private HackerPipelinePublication? hackerPathPreview;
@@ -38,7 +39,10 @@ public partial class MainWindow
         if (showsPaths && HackerPathCanvas.Visibility != Visibility.Visible)
             RedrawHackerEdits();
         else if (!showsPaths)
+        {
+            if (HackerPathCanvas.Visibility == Visibility.Visible) hackerPathRoute.Interrupt();
             HackerPathCanvas.Visibility = Visibility.Collapsed;
+        }
         HackerCameraControlsPanel.Visibility = HasHackerPathPreview ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -146,7 +150,11 @@ public partial class MainWindow
         HackerPathCanvas.Width = AtlasCanvas.Width;
         HackerPathCanvas.Height = AtlasCanvas.Height;
         HackerPathCanvas.Visibility = ShowsHackerPaths ? Visibility.Visible : Visibility.Collapsed;
-        if (HackerPathCanvas.Visibility != Visibility.Visible) return;
+        if (HackerPathCanvas.Visibility != Visibility.Visible)
+        {
+            hackerPathRoute.Interrupt();
+            return;
+        }
 
         foreach (var room in rooms)
         {
@@ -159,17 +167,15 @@ public partial class MainWindow
                 : currentRoom ? graph.UpperRightObjective : null;
 
             IReadOnlyList<AtlasPathPoint> route = [];
-            if (target is { } endpoint && graph.NearestStroke(endpoint, 0) is { } goal)
+            if (currentRoom)
             {
-                if (currentRoom && hackerLivePrepared is { Sample.HeroAvailable: true } live
+                if (target is { } endpoint && hackerLivePrepared is { Sample.HeroAvailable: true } live
                     && AtlasPathPoint.TryQuantize(live.Sample.HeroX * paths.Scale.X,
-                        (live.Sample.HeroY + KnightWorldHeight / 2) * paths.Scale.Y, out var point)
-                    && graph.NearestStroke(point, 2 * graph.KnightHeight, walkOnly: live.Sample.Grounded) is { } start)
-                    route = AtlasPathRouting.FindRoute(graph, start, start.Closest(point), goal, endpoint);
-            }
-            else
-            {
-                target = null;
+                        (live.Sample.HeroY + KnightWorldHeight / 2) * paths.Scale.Y, out var point))
+                    route = hackerPathRoute.Observe(graph, point with { Y = point.Y - graph.KnightHeight },
+                        live.Sample.Grounded, endpoint, live.CapturedAt);
+                else
+                    hackerPathRoute.Interrupt();
             }
             if (AtlasPathPresentation.Draw(HackerPathCanvas, paths.Display, graph.KnightWidth,
                     new(offset.X - originX, -offset.Y - originY), target, route) is { } span)
@@ -183,6 +189,17 @@ public partial class MainWindow
             }
         }
         HackerPathActions.ToolTip = hackerPathLinks.Issue;
+    }
+
+    private void SetHackerPathPreview(HackerPipelinePublication publication)
+    {
+        if (hackerPathPreview is not { } previous
+            || previous.CaptureGeneration != publication.CaptureGeneration
+            || previous.WorkGeneration != publication.WorkGeneration
+            || previous.Prepared.Sample.SessionId != publication.Prepared.Sample.SessionId
+            || previous.Prepared.SceneName != publication.Prepared.SceneName)
+            hackerPathRoute.Interrupt();
+        hackerPathPreview = publication;
     }
 
     private static AtlasPathCalibration PathCalibration(TerrainRoom room) =>
