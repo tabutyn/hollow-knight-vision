@@ -946,6 +946,8 @@ var tests = new List<(string Name, Action Run)>
     ("ground truth add negative modify delete and undo stay horizontal", TestGroundTruthAddNegativeModifyDeleteAndUndoKeepHorizontalWorldLines),
     ("ground truth overlay uses positive negative and selected kinds", TestGroundTruthOverlayUsesPositiveNegativeAndSelectedKinds),
     ("Hacker ground overlay and editor use authored lines only", TestGroundTruthRequiresAuthoredLines),
+    ("ground clearance drops nearby enclosed shorter floors", GroundClearanceTests.TestGroundClearanceRejectsOnlyEnclosedShorterFloors),
+    ("ground clearance trims overlapping platform tips", GroundClearanceTests.TestGroundClearanceTrimsOnlyShortSharedTips),
     ("wall preview and persisted ground corners", HackerTerrainEditingTests.TestWallSnapsBothCornersAndCommitsOnRelease),
     ("wall and floor move on constrained axes after reload", HackerTerrainEditingTests.TestWallAndFloorMoveOnTheirOwnAxesAfterReload),
     ("wall tool modifies and attaches ground endpoints", HackerTerrainEditingTests.TestWallModifyCanAttachAGroundEndpoint),

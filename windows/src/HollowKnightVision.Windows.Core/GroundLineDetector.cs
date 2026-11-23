@@ -575,7 +575,7 @@ public static class GroundLineDetector
                 inferredHeight);
         }
 
-        return lines.Where(line =>
+        var visible = lines.Where(line =>
         {
             var row = line.Row + 0.5;
             var lower = line.XSpan.Start;
@@ -602,6 +602,7 @@ public static class GroundLineDetector
                 && Math.Max(0, Math.Min(upper, rect.Right) - Math.Max(lower, rect.X))
                     / (double)span >= 0.55);
         }).ToArray();
+        return GroundClearance.Filter(visible, imageHeight, knightRect);
     }
 
     public static GroundTheoryAnalysis Theory(

@@ -39,8 +39,8 @@ scripts.
 | Invincibility defaults off, object training uses available class evidence | Windows already uses the deployed receiver defaults and the shared incremental Python trainer. The default is covered. The current Windows detector's class filtering and native incremental training still need behavior-level comparison. |
 | Settings, Clear Save capture, local stencil search, and object detector controls | The draft requires Clear Save during Select Profile setup, offers it in Add until a positive box is present, and restores guidance when a reference is deleted. Eight focused Windows setup and selection tests passed. The rest of Windows settings, menu-locality, and detector parity remains open. |
 | Hacker terrain editing | The draft provides Ground, Wall, Spike, Door, and Rooms controls independently of the camera controls. Walls and floors share editable corners. Doors can be drawn along either axis and follow an attached floor. Terrain uses the room coordinate system, and the editor preserves the floor-only document format. Older detector records stay stored and excluded from the editor and overlay. The core tests cover corner movement, room isolation, reload, undo, both door axes, and save failures. Live game rendering and behavior after leaving and returning to a room still need verification. |
-| Atlas camera shortcuts | The Windows draft cycles both workspaces through Current at 1.1× zoomed out, Current at 2× zoomed out, and Fit. The viewport regression checks the requested scale and keeps the follow point centered in both Current presets. |
-| Game Play visual tracking | Walked-floor continuity, camera and patch tracking, corner detection, and the Game Play Atlas placement still need individual port and replay verification. |
+| Atlas camera shortcuts | The Windows draft cycles both workspaces through Current at 1.1× zoomed out, Current at 2× zoomed out, and Fit. The offscreen WPF viewport regression checks the requested scale and keeps the follow point centered in both Current presets. |
+| Game Play visual tracking | Windows now rejects fully enclosed shorter floor detections within the Knight’s height and trims a slight overlap at supported platform tips. The targeted tests cover measured headroom and preservation of a ledge under an unsupported bridge. Walked-floor continuity, patch persistence, corner detection, and the Game Play Atlas placement still need port and replay verification. |
 | Atlas objectives, jumps, one-way drops, and path display | The deployed Mac path editor and graph have no Windows equivalent in the inspected Windows source. |
 | Paired bot capture and runtime, human evidence, policy selection, and Gym PPO | Windows has no bot playback or Gym observation encoder in the inspected application. The bot Python package is not connected to the Windows application or trainer environment. |
 
@@ -62,3 +62,9 @@ python3 windows/audits/2026-11-22-deployment-parity/summarize-coverage.py \
 reports during the canonical build using Coverlet's custom-runner mode. The
 instrumented executables are run directly so they are not rebuilt before
 collecting counters. [Coverlet custom runner documentation](https://github.com/coverlet-coverage/coverlet/blob/master/Documentation/GlobalTool.md)
+
+[Native Windows terrain coverage](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45086876700)
+reached 423 of 438 changed executable lines in the Core terrain editor and room
+projection. The [Tab framing run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45087249498)
+reached 10 of 20 measured changed lines in the viewport policy. The live
+`MainWindow` handlers and XAML have no line counters in these runs.
