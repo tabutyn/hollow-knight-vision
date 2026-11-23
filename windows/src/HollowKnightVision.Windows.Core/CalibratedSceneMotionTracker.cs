@@ -1,7 +1,10 @@
 namespace HollowKnightVision.Windows.Core;
 
 public sealed record CalibratedSceneMotionEvidence(AtlasPoint Position, double ReferenceTimestamp, double Timestamp,
-    int SupportedPatches, bool HorizontalMeasured, bool VerticalMeasured, double ResidualX, double ResidualY);
+    int SupportedPatches, bool HorizontalMeasured, bool VerticalMeasured, double ResidualX, double ResidualY)
+{
+    public AtlasPoint? ReferencePosition { get; init; }
+}
 
 /// <summary>Estimates local camera displacement from scenery calibrated against observed ground.</summary>
 internal sealed partial class CalibratedSceneMotionTracker
@@ -127,7 +130,10 @@ internal sealed partial class CalibratedSceneMotionTracker
         UpdatePatches(source.Grid, grid, delta, agreeing, horizontalMeasured, verticalMeasured);
         position = nextPosition;
         reference = new Sample(grid, timestamp);
-        return new(nextPosition, source.Timestamp, timestamp, agreeing.Length, horizontalMeasured, verticalMeasured, residualX, residualY);
+        return new(nextPosition, source.Timestamp, timestamp, agreeing.Length, horizontalMeasured, verticalMeasured, residualX, residualY)
+        {
+            ReferencePosition = priorPosition
+        };
     }
 
     private bool Calibrate(Grid prior, Grid grid, double timestamp, double scale, GroundCalibration ground)

@@ -3195,14 +3195,14 @@ public partial class MainWindow : Window
             signal,
             motionBridgeActive);
         var gameplayAdmitted = !holdAtlas && admission.AllowsAtlasWrite
-            && visualObservation.AllowsAtlasWrite && tracked.RoomAllowsAtlasWrite;
+            && tracked.AllowsAtlasWrite && tracked.RoomAllowsAtlasWrite;
         WindowsLiveWorldPipelineResult? liveWorldResult = null;
         var liveWorldGeneration = captureGeneration > 0
             ? (ulong)captureGeneration
             : 0;
         if (gameMode == GameRuntimeMode.Modded
             && liveWorldPipeline is not null
-            && !visualObservation.AllowsAtlasWrite)
+            && (!tracked.AllowsAtlasWrite || !tracked.RoomAllowsAtlasWrite))
         {
             Interlocked.Exchange(ref pendingWorldTrackingLoss, (long)liveWorldGeneration);
         }

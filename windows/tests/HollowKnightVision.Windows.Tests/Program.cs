@@ -983,6 +983,7 @@ var tests = new List<(string Name, Action Run)>
     ("visual ground floorless reanchor clears stale texture", VisualGroundIntegrationTests.TestFloorlessReanchorClearsStaleTexture),
     ("coarse floorless handoff stays presentation-only through blackout", VisualGroundIntegrationTests.TestMeasuredCoarseFallbackDrivesPresentationWithoutWritingAtlas),
     ("scenery patch rejection handles ambiguity and foreground", CalibratedSceneMotionTests.TestBoundedPatchFitRejectsAmbiguityAndForeground),
+    ("durable scenery continuity requires the exact measured capture", CalibratedSceneMotionTests.TestMeasuredSceneContinuityRequiresTheSamePublishedReference),
     ("calibrated scenery tolerates exposure changes and expires across a gap", CalibratedSceneMotionTests.TestExposureChangeAndMissingFrames),
     ("distributed scenery motion survives moving occlusion", CalibratedSceneMotionTests.TestDistributedMotionSurvivesMovingOcclusion),
     ("horizontal scenery calibration cannot constrain a fall", CalibratedSceneMotionTests.TestHorizontalCalibrationCannotSupplyVerticalMotion),

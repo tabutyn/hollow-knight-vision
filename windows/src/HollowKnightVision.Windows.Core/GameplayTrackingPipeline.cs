@@ -15,6 +15,8 @@ public sealed record GameplayTrackedFrame(
     public bool MotionBridgeActive =>
         Observation.Source is "transition-bridge" or "calibrated-scene" or "coarse-presentation";
     public bool RoomAllowsAtlasWrite { get; init; } = true;
+    public bool AllowsAtlasWrite => Observation.AllowsAtlasWrite || HasMeasuredSceneryContinuity;
+    public bool HasMeasuredSceneryContinuity { get; init; }
     public VisualSceneDiscontinuityTracker.Cut? SceneCut { get; init; }
 }
 
@@ -30,6 +32,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
     private readonly WalkedGroundTracker walked = new();
     private readonly GroundPlatformPatches patches = new();
     private readonly NormalAtlasRoomIdentity roomIdentity = new();
+    private readonly MeasuredAtlasPoseLineage measuredAtlasPose = new();
     private bool needsCameraAnchor = true;
     private string? lastKnownRoom;
     private int frameWidth, frameHeight;
@@ -112,13 +115,23 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             Paths.Reset();
             camera.ResetFloorlessMotion();
         }
-        if (ground.GlobalCorrection is { } correction && correction.X * correction.X + correction.Y * correction.Y > 9)
+        var groundAdjusted = ground.GlobalCorrection is { } correction
+            && correction.X * correction.X + correction.Y * correction.Y > 9;
+        if (groundAdjusted)
         {
             if (resetWorldCoordinatesForCorrection) ResetWalkedCoordinateEpoch();
             else walked.BreakContinuity();
             patches.Reset();
             Paths.Reset();
         }
+        var selectedScene = observation.FloorlessEvidence is { SelectedSource: FloorlessPoseCandidateSource.CalibratedScene } evidence
+            ? evidence.Scene : null;
+        var canContinueAtlasPose = admission.AdmitsTracking && visualRoom.AllowsAtlasWrite
+            && measuredAtlasPose.Observe(generation, room, timestamp, localCamera,
+                observation.GroundVerified && GroundMotionEvidence.IsMeasured(ground), selectedScene,
+                groundAdjusted || admission.Transition.ResumedAfterTransition);
+        if (!admission.AdmitsTracking || !visualRoom.AllowsAtlasWrite)
+            measuredAtlasPose.Reset();
 
         var terrain = TerrainWallDetection.Empty;
         KnightTerrainContact contact = default;
@@ -133,10 +146,11 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             terrain = TerrainWallDetector.ApplyContact(terrain, contact, floors, edges);
             platformPatches = patches.Observe(edges, floors, prepared.ProtectedOcclusions, verifiedCamera, timestamp);
         }
-        return new(observation, ground, estimate, ground.CameraPosition ?? localCamera, room, terrain, contact,
+        return new(observation, ground, estimate, localCamera, room, terrain, contact,
             platformPatches, walked.InRoom(room), walkedCoordinateEpoch, cameraMilliseconds, atlasStarted)
         {
             RoomAllowsAtlasWrite = visualRoom.AllowsAtlasWrite,
+            HasMeasuredSceneryContinuity = canContinueAtlasPose && hasCommittedAtlas && camera.AllowsAtlasPlacement,
             SceneCut = visualRoom.Cut
         };
     }
@@ -151,6 +165,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         tracker.Reset();
         semanticAtlas.Reset();
         reference.Reset();
+        measuredAtlasPose.Reset();
         camera.ResetFloorlessMotion();
         roomIdentity.ResetObservation();
         lastKnownRoom = null;
@@ -162,6 +177,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
     {
         tracker.Reset(keepingGlobalFeatures: true);
         reference.Reset();
+        measuredAtlasPose.Reset();
         walked.BreakContinuity();
         patches.Reset();
         Paths.Suspend();
@@ -184,6 +200,12 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         bool transitionBridgeActive,
         GroundReferenceEstimate? trackedEstimate)
     {
+        // Calibrated scenery can continue the camera pose without supplying
+        // floor features for loop closures or future ground relocalization.
+        if (!observation.GroundVerified && observation.FloorlessEvidence is
+            { SelectedSource: FloorlessPoseCandidateSource.CalibratedScene })
+            return [new StencilRect(0, 0, frame.Width, frame.Height)];
+
         var existing = foregroundExclusions.Select(rectangle => new StencilRect(
             rectangle.X,
             frame.Height - rectangle.Bottom,

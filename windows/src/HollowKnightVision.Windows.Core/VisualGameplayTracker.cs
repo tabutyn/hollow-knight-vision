@@ -48,6 +48,7 @@ public sealed class VisualGameplayTracker
         confirmedLossGraceSeconds: 3, productionCameraSolver: true));
     public GroundPatchSearchExecution? LastPatchSearchExecution { get; private set; }
     public string PlacementRecoveryState => placement.State;
+    internal bool AllowsAtlasPlacement => placement.AllowsAtlasWrite;
     public AtlasPoint Position => new(camera.Position.X, -camera.Position.Y);
     private readonly FreshAtlasBootstrapGate bootstrap = new();
     private readonly TransitionMotionBridge transition = new();
@@ -115,8 +116,7 @@ public sealed class VisualGameplayTracker
         previousTimestamp = timestamp;
         var verified = tracking.PoseVerified && tracking.HasConfirmedGround
             && tracking.CameraPosition is not null;
-        var groundMeasured = verified && GroundMotionEvidence.IsMeasured(tracking.PoseVerified,
-            tracking.HasConfirmedGround, tracking.LocalTextureSupport, tracking.InlierCount, tracking.GlobalMatchCount);
+        var groundMeasured = verified && GroundMotionEvidence.IsMeasured(tracking);
         if (tracking.GlobalCorrection is not null) calibratedScene.Reset();
         var calibration = groundMeasured && tracking.GlobalCorrection is null
             && tracking.LocalReferenceTimestamp is { } reference

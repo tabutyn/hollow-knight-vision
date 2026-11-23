@@ -37,6 +37,10 @@ public static class PresentationPosePrediction
 
 public static class GroundMotionEvidence
 {
+    internal static bool IsMeasured(GroundHypothesisTrackingResult tracking) =>
+        IsMeasured(tracking.PoseVerified, tracking.HasConfirmedGround, tracking.LocalTextureSupport,
+            tracking.InlierCount, tracking.GlobalMatchCount);
+
     public static bool IsMeasured(
         bool poseVerified,
         bool hasConfirmedGround,

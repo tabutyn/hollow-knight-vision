@@ -164,9 +164,9 @@ internal static class VisualProductionReplay
                 var telemetry = observation.Telemetry;
                 var localCamera = new AtlasPoint(telemetry.CameraX, telemetry.CameraY);
                 if (observation.GroundVerified) groundVerified++;
-                lostTracking |= !observation.AllowsAtlasWrite || !tracked.RoomAllowsAtlasWrite;
+                lostTracking |= !tracked.AllowsAtlasWrite || !tracked.RoomAllowsAtlasWrite;
                 WindowsLiveWorldPipelineResult? placement = null;
-                if (admission.AllowsAtlasWrite && observation.AllowsAtlasWrite && tracked.RoomAllowsAtlasWrite)
+                if (admission.AllowsAtlasWrite && tracked.AllowsAtlasWrite && tracked.RoomAllowsAtlasWrite)
                 {
                     if (lostTracking) world.NotifyTrackingLoss(evidence.CaptureGeneration);
                     lostTracking = false;
@@ -222,11 +222,12 @@ internal static class VisualProductionReplay
                 var visual = new {
                     evidence.Index, evidence.CaptureTimestamp, evidence.CaptureGeneration, evidence.RenderedGameFrame,
                     admission.AdmitsTracking, admission.Transition.ResumedAfterTransition, observation.Source,
-                    observation.GroundVerified, observation.AllowsAtlasWrite,
+                    observation.GroundVerified, tracked.AllowsAtlasWrite, tracked.HasMeasuredSceneryContinuity,
                     trackerState = camera.PlacementRecoveryState, localCamera, tracked.RoomId,
                     floorless,
                     tracked.RoomAllowsAtlasWrite, tracked.SceneCut,
                     worldCamera = placement?.CameraPose, worldState = placement?.State.ToString(),
+                    worldDiagnostic = placement?.Diagnostic,
                     groundSupport = observation.GroundSupport, groundError = observation.GroundError,
                     tracked.Ground.HasConfirmedGround, tracked.Ground.InlierCount, tracked.Ground.ResidualRms,
                     tracked.Ground.GlobalCorrection,
