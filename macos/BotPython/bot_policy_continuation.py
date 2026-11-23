@@ -1,10 +1,10 @@
 """Carry an exported policy into the next demonstration update."""
 from contextlib import contextmanager
-import fcntl
 import hashlib
 import json
 from pathlib import Path
 
+from bot_training_ipc import exclusive_file_lock
 from hkv_bot_dataset import ACTION_SIZES, FEATURE_NAMES, HISTORY_LENGTH, SCHEMAS
 
 
@@ -12,8 +12,7 @@ from hkv_bot_dataset import ACTION_SIZES, FEATURE_NAMES, HISTORY_LENGTH, SCHEMAS
 def publication_lock(models):
     """Serialize same-domain demonstration updates and the final publication of Gym winners."""
     models.mkdir(parents=True, exist_ok=True)
-    with (models / ".publication.lock").open("a+") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
+    with exclusive_file_lock(models / ".publication.lock"):
         yield
 
 

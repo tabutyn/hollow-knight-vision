@@ -8,7 +8,6 @@ import json
 import math
 import os
 from pathlib import Path
-import selectors
 import subprocess
 import tempfile
 import time
@@ -18,6 +17,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from bot_training_ipc import EncoderReplies
 from hkv_bot_dataset import ACTION_SIZES, HELD_ATTACK_COST, HISTORY_LENGTH, SCHEMAS
 
 START = "Tutorial_01"
@@ -191,6 +191,7 @@ class HackerGym(gym.Env):
         self.action_space = spaces.MultiDiscrete(ACTION_SIZES)
         self.observation_space = spaces.Box(-4, 4, (len(SCHEMAS[version]) * HISTORY_LENGTH,), np.float32)
         self.worker = self.encoder = self.temp = None
+        self.encoder_replies = EncoderReplies()
         self.last_frame = None
         self.last_control_gap = 0
         self.path_progress = None
@@ -228,13 +229,11 @@ class HackerGym(gym.Env):
             message = dict(ticks=frame["ticks"], previous=previous, width=frame["pixelWidth"], height=frame["pixelHeight"], sample=frame)
         else:
             message = dict(sample=frame, ticks=frame["ticks"], health=frame["health"], previous=previous)
-        self.encoder.stdin.write(json.dumps(message).encode() + b"\n")
-        self.encoder.stdin.flush()
-        with selectors.DefaultSelector() as readable:
-            readable.register(self.encoder.stdout, selectors.EVENT_READ)
-            if not readable.select(timeout=45 if frame["step"] == 0 else 12):
-                raise TimeoutError(f"{self.domain} observation encoder timed out")
-        line = self.encoder.stdout.readline()
+        try:
+            line = self.encoder_replies.request(self.encoder, json.dumps(message).encode() + b"\n",
+                                                timeout=45 if frame["step"] == 0 else 12)
+        except TimeoutError:
+            raise TimeoutError(f"{self.domain} observation encoder timed out") from None
         if not line:
             raise RuntimeError(f"Installed Vision exited before encoding the {self.domain} frame")
         result = json.loads(line)
@@ -391,6 +390,7 @@ class HackerGym(gym.Env):
             if process.stdout:
                 process.stdout.close()
         self.worker = self.encoder = self.last_frame = None
+        self.encoder_replies.close()
         if self.temp is not None:
             self.temp.cleanup()
             self.temp = None

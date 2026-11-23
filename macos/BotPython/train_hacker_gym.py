@@ -4,9 +4,9 @@ from __future__ import annotations
 import argparse
 import copy
 from collections import Counter, deque
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import fcntl
 import gzip
 import hashlib
 import json
@@ -33,6 +33,7 @@ from gym_landing_rehearsal import (LandingRehearsal, MINIMUM_SAFE_CLIMB, missed_
                                    missed_ledge_takeoff, nearby_landings, save_landings)
 from gym_platform_teacher import reachable_platform
 from gym_general_training import train_batch
+from bot_training_ipc import exclusive_file_lock
 from bot_policy_continuation import gym_observations, playback_checkpoint, publication_lock, save_gym_observations
 from gym_policy_search import SampledFrontier, learn_from_returns
 from gym_route_rehearsal import (playable_arrivals, reached_king_pass_destination, route_examples, route_files,
@@ -1359,22 +1360,15 @@ def run(args):
     shared = args.support / "bot-v1/gym"
     shared.mkdir(parents=True, exist_ok=True)
     limit = time.monotonic() + args.hours * 3600
-    with (shared / "worker.lock").open("a+") as lock:
-        if getattr(args, "wait_for_worker", False):
-            def expired(*_):
-                raise TimeoutError("Gym worker wait reached the training time budget")
-            previous = signal.signal(signal.SIGALRM, expired)
-            try:
-                signal.setitimer(signal.ITIMER_REAL, args.hours * 3600)
-                fcntl.flock(lock, fcntl.LOCK_EX)
-            except TimeoutError:
-                print("The time budget expired while waiting for the Gym worker.", flush=True)
-                return
-            finally:
-                signal.setitimer(signal.ITIMER_REAL, 0)
-                signal.signal(signal.SIGALRM, previous)
-        else:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    wait = getattr(args, "wait_for_worker", False)
+    with ExitStack() as held:
+        try:
+            held.enter_context(exclusive_file_lock(shared / "worker.lock", wait=wait, deadline=limit if wait else None))
+        except TimeoutError:
+            if not wait:
+                raise
+            print("The time budget expired while waiting for the Gym worker.", flush=True)
+            return
         if time.monotonic() < limit:
             train_with_worker(args, shared, limit)
 

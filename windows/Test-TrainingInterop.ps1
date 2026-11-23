@@ -68,6 +68,8 @@ print('PASS Windows PNG/JSON -> shared Python reader, normalized coordinates, kn
   if ($LASTEXITCODE -ne 0) { throw 'Windows/Python dataset interchange assertions failed.' }
   $botFixture = Join-Path $fixtureRoot 'paired-captures'
   $botSource = Join-Path $repositoryRoot 'macos\BotPython'
+  & $Python -B -m unittest discover -s $botSource -p test_training_ipc.py
+  if ($LASTEXITCODE -ne 0) { throw 'Bot worker subprocess pipes or checkpoint locking failed.' }
   & $Dotnet $tests --export-bot-capture-probe $botFixture
   if ($LASTEXITCODE -ne 0) { throw 'Windows paired capture export failed.' }
   $botValidation = @'

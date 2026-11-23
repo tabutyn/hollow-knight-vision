@@ -1,6 +1,5 @@
 import base64
 from collections import Counter
-import fcntl
 import io
 import json
 import os
@@ -14,6 +13,7 @@ import numpy as np
 import torch
 
 from hacker_gym import EpisodeScore, HackerGym, buttons
+from bot_training_ipc import exclusive_file_lock
 from gym_authored_route import AuthoredRoute, PitJumpPractice, RoutePractice, Surface, connected_pit_exits
 from gym_blockade_response import confirmed_strikes, learn_blockade_response, learn_climb_response, opened_barriers, route_strike_edges, save_wall_strikes, stalled_strikes
 from gym_cache_teacher import CachePractice
@@ -445,8 +445,7 @@ class HackerGymTests(unittest.TestCase):
             arena = root / "bot-v1/gym"
             arena.mkdir(parents=True)
             args = SimpleNamespace(support=root, hours=.00004, wait_for_worker=True)
-            with (arena / "worker.lock").open("a+") as busy:
-                fcntl.flock(busy, fcntl.LOCK_EX)
+            with exclusive_file_lock(arena / "worker.lock"):
                 run(args)
                 train.assert_not_called()
                 args.wait_for_worker = False
@@ -1183,6 +1182,7 @@ class HackerGymTests(unittest.TestCase):
             values = env._encode(dict(step=1, ticks=6, pixelWidth=640, pixelHeight=360, health=4,
                                       heroX=34.5, actors={"enemies": []}, sceneName="Tutorial_01"), [2, 0, 0, 0])
             worker.join()
+            env.encoder_replies.close()
         self.assertTrue(env.usable)
         self.assertEqual(values.shape, env.observation_space.shape)
         self.assertEqual(env.perception["correctHealth"], 1)
