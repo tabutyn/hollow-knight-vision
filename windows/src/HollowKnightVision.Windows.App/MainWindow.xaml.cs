@@ -889,6 +889,13 @@ public partial class MainWindow : Window
     }
 
     public MainWindow(GameRuntimeMode gameMode, string? gamePath = null)
+        : this(gameMode, gamePath,
+            IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HollowKnightVision"),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments))
+    {
+    }
+
+    internal MainWindow(GameRuntimeMode gameMode, string? gamePath, string root, string documents)
     {
         this.gameMode = gameMode;
         this.gamePath = gamePath;
@@ -953,9 +960,6 @@ public partial class MainWindow : Window
         }
         ExamplesList.ItemsSource = examples;
         BoxesList.ItemsSource = boxes;
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-        var root = IOPath.Combine(local, "HollowKnightVision");
         activeAtlasDirectory = IOPath.Combine(root, "atlas-v1", "active");
         atlasStateStore = new AtlasStateStore(IOPath.Combine(root, "atlas-v1", "states"));
         groundTruthLabels = new GroundTruthLabelController();
@@ -5964,6 +5968,11 @@ public partial class MainWindow : Window
         var description = selected.State?.Name ?? "the current Auto Save";
         if (MessageBox.Show(this, $"Delete {description}? Its registered images will be permanently removed.",
             "Delete Atlas", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        await DeleteAtlasSelectionAsync(selected);
+    }
+
+    private async Task DeleteAtlasSelectionAsync(AtlasManagerItem selected)
+    {
         if (selected.State is not { } state)
         {
             if (selected.IsHacker)
@@ -7005,8 +7014,8 @@ public partial class MainWindow : Window
     private void ShowError(Exception error)
     {
         SetStatus(error.Message);
-        MessageBox.Show(this, error.Message, "Hollow Knight Vision", MessageBoxButton.OK,
-            MessageBoxImage.Error);
+        if (IsVisible)
+            MessageBox.Show(this, error.Message, "Hollow Knight Vision", MessageBoxButton.OK, MessageBoxImage.Error);
     }
 
     private sealed record AtlasManagerItem(

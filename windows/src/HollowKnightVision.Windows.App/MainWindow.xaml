@@ -484,7 +484,7 @@
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
                                 <StackPanel Margin="20,0,20,20">
                                     <StackPanel x:Name="AtlasManager">
-                                        <DockPanel><Button DockPanel.Dock="Right" Content="Save State" Click="AtlasSaveState_Click"/><TextBox x:Name="AtlasStateNameText"/></DockPanel>
+                                        <DockPanel><Button x:Name="AtlasSaveStateButton" DockPanel.Dock="Right" Content="Save State" Click="AtlasSaveState_Click"/><TextBox x:Name="AtlasStateNameText"/></DockPanel>
                                         <ListBox x:Name="AtlasStatesList" Height="180" Margin="0,12"
                                                  Background="#17181A" Foreground="#ECECEC" BorderBrush="#55585E" Padding="4"
                                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -524,7 +524,7 @@
                                                 </DataTemplate>
                                             </ListBox.ItemTemplate>
                                         </ListBox>
-                                        <DockPanel><Button Content="New" Click="AtlasNew_Click"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="AtlasDeleteStateButton" Content="Delete" Click="AtlasDeleteState_Click" IsEnabled="False"/><Button x:Name="AtlasLoadStateButton" Content="Load" Click="AtlasLoadState_Click" IsEnabled="False"/></StackPanel></DockPanel>
+                                        <DockPanel><Button x:Name="AtlasNewButton" Content="New" Click="AtlasNew_Click"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="AtlasDeleteStateButton" Content="Delete" Click="AtlasDeleteState_Click" IsEnabled="False"/><Button x:Name="AtlasLoadStateButton" Content="Load" Click="AtlasLoadState_Click" IsEnabled="False"/></StackPanel></DockPanel>
                                     </StackPanel>
                                 </StackPanel>
                             </ScrollViewer>

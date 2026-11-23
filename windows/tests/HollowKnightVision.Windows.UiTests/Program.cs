@@ -24,8 +24,8 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        // Plain offscreen WPF windows only: never instantiate MainWindow,
-        // launch Hollow Knight, or touch the user's labels/atlas/game saves.
+        // Tests use offscreen controls or an unshown Atlas window with temporary data.
+        // No test here starts Hollow Knight or connects a receiver.
         _ = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
         if (args.Contains("--input-only"))
@@ -94,6 +94,7 @@ internal static class Program
         TestNegativeModeAndFreshProfileChoices();
         TestModeSelection();
         TestSettingsSections();
+        AtlasWindowIntegrationTests.Run();
         TestBottomControlScope();
         TestFramingGroupsAreMutuallyExclusive();
         TestHackerTerrainControls();
@@ -126,7 +127,7 @@ internal static class Program
         GpuCaptureTests.TestMappedBounds();
         GpuCaptureTests.RunIfRequested();
         if (args.Contains("--input")) TestBackgroundKeyDelivery();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 75 : 74)}");
+        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 76 : 75)}");
         Application.Current.Shutdown();
     }
 
