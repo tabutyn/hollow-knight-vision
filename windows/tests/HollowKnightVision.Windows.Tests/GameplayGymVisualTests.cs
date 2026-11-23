@@ -50,8 +50,8 @@ internal static class GameplayGymVisualTests
 
         for (var i = 19; i < 28; i++)
             latest = source.Observe(Frame(pixels, i), i / 10d, InputButtons.None, frame => Detect(frame, true), hud: null);
-        if (latest?.Observation?.AtlasView is not { CoveredCells: > 0 } || latest.Observation.RoomId == visible.RoomId)
-            throw new InvalidOperationException("A recovered room must establish fresh coverage after the blackout.");
+        if (latest?.Observation?.AtlasView is not { CoveredCells: > 0 } || latest.Observation.RoomId != visible.RoomId)
+            throw new InvalidOperationException("A brief blackout followed by the same room must retain the episode Atlas.");
     }
 
     internal static void TestGymReportsCorrectionsOnlyForAnExistingVisualEstimate()
@@ -76,6 +76,55 @@ internal static class GameplayGymVisualTests
         var fresh = source.Observe(Frame(pixels, 12), 1.2, InputButtons.None, frame => Detect(frame, true), hud: null);
         if (fresh is not { WeakKnightCorrection: null, Observation.KnightSource: "visual" })
             throw new InvalidOperationException("A measured reacquisition is not a weak correction.");
+    }
+
+    internal static void TestGamePlayGymPublishesOnlyConfirmedRoomChanges()
+    {
+        var source = new BotVisualGymObservationSource();
+        var departure = TexturedRoom(1);
+        var arrival = TexturedRoom(2);
+        var black = new byte[departure.Length];
+        var rooms = new HashSet<int>();
+        var loading = 0;
+        for (var index = 0; index < 48; index++)
+        {
+            var pixels = index < 9 ? departure : index < 18 ? black : arrival;
+            var reading = source.Observe(Frame(pixels, index), index / 10d, InputButtons.Right,
+                frame => Detect(frame, index < 9 || index >= 27), hud: null);
+            if (index is >= 9 and < 18 && reading.Observation is not null)
+                throw new InvalidOperationException("A blackout cannot enter the Game Play policy history.");
+            if (index is >= 18 and < 27 && reading.Issues is ["room-transition"]) loading++;
+            if (reading.Observation is { } row)
+            {
+                rooms.Add(row.RoomId);
+                if (index < 18 && row.RoomId != 0)
+                    throw new InvalidOperationException("A room change appeared before the scene cut was confirmed.");
+                if (index >= 27 && (row.RoomId != 1 || row.RoomRevision != 1))
+                    throw new InvalidOperationException("The confirmed new room should remain stable after the Knight becomes visible.");
+            }
+        }
+        if (!rooms.SetEquals([0, 1]) || loading == 0)
+            throw new InvalidOperationException("The Gym encoder never published the confirmed room transition.");
+
+        static byte[] TexturedRoom(ulong state)
+        {
+            var luma = new byte[64 * 36];
+            for (var i = 0; i < luma.Length; i++)
+            {
+                state = unchecked(state * 6364136223846793005 + 1);
+                luma[i] = (byte)(20 + ((state >> 32) % 220));
+            }
+            var pixels = new byte[Width * Height * 4];
+            for (var y = 0; y < Height; y++)
+            for (var x = 0; x < Width; x++)
+            {
+                var offset = (y * Width + x) * 4;
+                var shade = luma[y / 10 * 64 + x / 10];
+                pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = shade;
+                pixels[offset + 3] = 255;
+            }
+            return pixels;
+        }
     }
 
     private static BgraFrame Frame(byte[] pixels, int index) =>

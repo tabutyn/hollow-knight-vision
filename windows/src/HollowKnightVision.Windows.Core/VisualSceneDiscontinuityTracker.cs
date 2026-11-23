@@ -34,6 +34,8 @@ public sealed class VisualSceneDiscontinuityTracker
     private (VisualRoomDirection Direction, double Timestamp)? intent;
 
     public bool IsPending => loading is not null;
+    internal VisualRoomDirection? PendingDirection => loading?.Source.Direction;
+    internal AtlasPoint? DepartureWorldPose => loading?.Source.WorldPose;
 
     public void Reset()
     {
