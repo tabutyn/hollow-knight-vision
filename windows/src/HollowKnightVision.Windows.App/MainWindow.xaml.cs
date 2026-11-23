@@ -722,6 +722,7 @@ public partial class MainWindow : Window
         HackerAtlasPublication? Atlas,
         long CaptureGeneration,
         long WorkGeneration,
+        bool PathSceneSignal,
         int ApplyAttempt = 0);
 
     private sealed record GroundTruthMatchedContext(long CaptureGeneration, long CaptureId);
@@ -784,6 +785,7 @@ public partial class MainWindow : Window
         public IReadOnlyList<PixelRect> MeasuredPlatformPatches { get; init; } = [];
         public TerrainWallDetection Terrain { get; init; } = TerrainWallDetection.Empty;
         public GameplayPathPresentation? PathPresentation { get; init; }
+        public AtlasPathFrameState AtlasPathState { get; init; }
     }
 
     private sealed class GameWindowLostException : Exception
@@ -1915,16 +1917,11 @@ public partial class MainWindow : Window
     {
         if (HackerWorkspaceButton is null || OpsWorkspaceButton is null) return;
         if (initialization is null) return;
-        HackerPathCanvas.Visibility = ShowsHackerPaths ? Visibility.Visible : Visibility.Collapsed;
-        UpdateGameplayPathVisibility();
+        RefreshAtlasPathVisibility();
         PresentLabelPauseControls(LabelPanel, LabelWorkspaceButton, labelCapture, gameControls.IsRecording || botCapture is not null);
         GameplayControlsPanel.Visibility = visionCancellation is not null
             && DashboardPresentationPolicy.ShowsGameplayFraming(
                 workspace, initialization.IsFirstPhaseComplete, recognizedMenuContext)
-            ? Visibility.Visible : Visibility.Collapsed;
-        HackerCameraControlsPanel.Visibility = visionCancellation is not null
-            && DashboardPresentationPolicy.ShowsHackerFraming(
-                workspace, recognizedMenuContext)
             ? Visibility.Visible : Visibility.Collapsed;
         BotPlaybackButton.Visibility = gameMode == GameRuntimeMode.Modded && visionCancellation is not null
             && workspace is "Gameplay" or "Hacker" ? Visibility.Visible : Visibility.Collapsed;
@@ -2547,7 +2544,9 @@ public partial class MainWindow : Window
                     var firstFreshGameFrame = !hasFreshGameFrame;
                     hasFreshGameFrame = true;
                     Interlocked.Exchange(ref latestPresentedCaptureId, frame.CaptureId);
-                    if (gameplayPathPresentation is { View.Camera: null }) UpdateGameplayPathVisibility();
+                    atlasPathEvidence.ObserveGameplayPreview(frame.CaptureId,
+                        workspace == "Gameplay" && FrameRegionRenderer.ContainsGameplaySignal(frame));
+                    UpdateGameplayPathVisibility();
                     GameplayImage.Source = bitmap;
                     if (firstFreshGameFrame)
                     {
@@ -2765,7 +2764,8 @@ public partial class MainWindow : Window
                 FrameBitmap(prepared.LiveImage),
                 stagedAtlas,
                 work.CaptureGeneration,
-                work.WorkGeneration);
+                work.WorkGeneration,
+                prepared.Sample.AtlasGameplayActive != false && FrameRegionRenderer.ContainsGameplaySignal(work.Match.Capture.Image));
             QueueHackerPublication(publication);
         }
     }
@@ -2971,6 +2971,10 @@ public partial class MainWindow : Window
         ReceiverGroundTruthSample sample,
         double observedAt)
     {
+        if (gameMode == GameRuntimeMode.Modded
+            && atlasPathEvidence.ObserveReceiver(sample.SessionId, sample.AtlasGameplayActive, observedAt)
+            && !Dispatcher.HasShutdownStarted)
+            _ = Dispatcher.BeginInvoke(RefreshAtlasPathVisibility, DispatcherPriority.Render);
         Volatile.Read(ref stepCapture)?.Trace("truth", -1, sample.UnityFrame, observedAt);
         if (Volatile.Read(ref replayVision) is { } replayFrame)
             ObserveReplayDecision(inputPathDivergenceMonitor.AppendGroundTruth(sample, observedAt, new PlaybackFrameSize(replayFrame.Width, replayFrame.Height)));
@@ -3285,9 +3289,12 @@ public partial class MainWindow : Window
             ? GroundStrokeGeometry.VisibleLines(groundHypotheses.AtlasLines, groundHypotheses.LineReviews,
                 localWalkedGround, groundDisplayCamera, frame.Height, masks.GroundKnight)
             : [];
+        var atlasPathState = AtlasPathFrameEvidence.Classify(signal.HasGameplaySignal && !holdAtlas,
+            recognition.RecognizedStatus?.ContextIdentifier);
         GameplayPathView? paths = null;
         if (workspace == "Gameplay" && admission.AdmitsTracking && tracked.RoomAllowsAtlasWrite
-            && recognition.Status?.ContextIdentifier is "game" or "Gameplay" && Volatile.Read(ref atlasPathsEnabled))
+            && atlasPathState != AtlasPathFrameState.Hidden && receiverTelemetry?.AtlasGameplayActive != false
+            && recognition.GameplayEnabled && Volatile.Read(ref atlasPathsEnabled))
         {
             var pathCamera = visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null;
             var registeredPath = tracked.RequiresWorldRecovery ? null : liveWorldResult?.RegisteredPath(walkedCoordinateEpoch);
@@ -3296,7 +3303,7 @@ public partial class MainWindow : Window
             var measuredLocal = usesDurableWorld && visualObservation.GroundVerified
                 && GroundMotionEvidence.IsMeasured(groundHypotheses.PoseVerified, groundHypotheses.HasConfirmedGround,
                     groundHypotheses.LocalTextureSupport, groundHypotheses.InlierCount, groundHypotheses.GlobalMatchCount);
-            paths = trackingPipeline.Paths.Observe(new(atlasRoomId, captureTimestamp, frame.Width, frame.Height,
+            var observedPaths = trackingPipeline.Paths.Observe(new(atlasRoomId, captureTimestamp, frame.Width, frame.Height,
                 pathCamera, groundDisplayLines, ground, terrain, terrainContact.MeasuredFoot, masks.GroundKnight,
                 terrainContact.Wall)
             {
@@ -3304,6 +3311,7 @@ public partial class MainWindow : Window
                 CaptureGeneration = captureGeneration,
                 LocalCamera = measuredLocal ? new(walkedCoordinateEpoch, groundDisplayCamera) : null
             });
+            if (atlasPathState == AtlasPathFrameState.Gameplay) paths = observedPaths;
         }
         else trackingPipeline.Paths.Suspend();
         var botGameplay = !holdAtlas && admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";
@@ -3435,9 +3443,11 @@ public partial class MainWindow : Window
                 GroundDisplayCamera = groundDisplayCamera,
                 MeasuredPlatformPatches = platformPatches,
                 Terrain = terrain,
+                AtlasPathState = atlasPathState,
                 PathPresentation = paths is null ? null : new(frame.CaptureId, frame.Width, frame.Height, paths)
                 {
-                    Tracker = trackingPipeline.Paths
+                    Tracker = trackingPipeline.Paths,
+                    CapturedAt = captureTimestamp
                 }
             };
     }
@@ -3470,6 +3480,12 @@ public partial class MainWindow : Window
         }
         var menuEvidenceIsCurrent = menuStencilRecognizer.IsCurrent(
             result.MenuGeneration);
+        if (menuEvidenceIsCurrent && workspace == "Hacker" && result.OwnsHackerWork
+            && result.HackerWorkGeneration == Interlocked.Read(ref hackerWorkGeneration))
+        {
+            atlasPathEvidence.ObserveHacker(result.CaptureGeneration, result.Frame.CaptureId, result.AtlasPathState);
+            RefreshAtlasPathVisibility();
+        }
         // A closure has already committed its optimized graph before it reaches
         // the dispatcher. Publish that rebuilt atlas even if unrelated async
         // menu evidence advanced meanwhile; never publish the stale menu result.
@@ -5970,6 +5986,7 @@ public partial class MainWindow : Window
         hackerOccupiedTileBounds.Clear();
         hackerAtlasMinimumTileX = hackerAtlasMinimumTileY = null;
         hackerLiveFrame = null;
+        hackerPathPreview = null;
         hackerPreviewActive = false;
         HackerLiveImage.Source = null;
         HackerLiveImage.Visibility = Visibility.Collapsed;
@@ -6124,7 +6141,8 @@ public partial class MainWindow : Window
         ApplyHackerPipelinePublication(retained with
         {
             CaptureGeneration = Interlocked.Read(ref recentCaptureGeneration),
-            WorkGeneration = Interlocked.Read(ref hackerWorkGeneration)
+            WorkGeneration = Interlocked.Read(ref hackerWorkGeneration),
+            PathSceneSignal = false
         });
         return hackerLivePrepared is not null;
     }
@@ -6140,6 +6158,7 @@ public partial class MainWindow : Window
 
         var restoresPreview = hackerPreviewActive;
         ActivateLiveHackerRegistry();
+        hackerPathPreview = publication;
         hackerLivePrepared = publication.Prepared;
         hackerLiveFrame = publication.Prepared.LiveImage;
         HackerLiveImage.Source = publication.LiveBitmap;
@@ -6153,6 +6172,7 @@ public partial class MainWindow : Window
             RenderHackerAtlasPublication(stagedAtlas);
         }
         RenderHackerAtlasLayout();
+        HackerCameraControlsPanel.Visibility = HasHackerPathPreview ? Visibility.Visible : Visibility.Collapsed;
         if (latestGroundTruthContext is { } context
             && context.CaptureGeneration == publication.CaptureGeneration
             && context.CaptureId == publication.Prepared.LiveImage.CaptureId)

@@ -28,7 +28,8 @@ public sealed record FrameSignalProfile(int SampleCount, int SignaledCount, int 
 {
     public double SignaledFraction => SampleCount > 0 ? (double)SignaledCount / SampleCount : 0;
     public double VisibleFraction => SampleCount > 0 ? (double)VisibleCount / SampleCount : 0;
-    public bool HasGameplaySignal => SignaledCount >= Math.Max(8, SampleCount / 20);
+    public bool HasGameplaySignal => SignaledCount >= RequiredSignalSamples(SampleCount);
+    internal static int RequiredSignalSamples(int sampleCount) => Math.Max(8, sampleCount / 20);
 }
 
 public readonly record struct TransitionFrameDecision(bool AdmitsTracking, bool ResumedAfterTransition);

@@ -18,12 +18,29 @@ public partial class MainWindow
     private readonly Dictionary<string, HackerPathCache> hackerPathGraphs = new(StringComparer.Ordinal);
     private BotAtlasObjective? hackerObjective;
     private ViewportRect? hackerPathFitBounds;
+    private HackerPipelinePublication? hackerPathPreview;
     private const double KnightWorldHeight = 1.28;
 
-    private bool ShowsHackerPaths => AtlasPathsCheck?.IsChecked == true && workspace == "Hacker"
-        && DashboardPresentationPolicy.ShowsHackerFraming(workspace, recognizedMenuContext)
-        && visionCancellation is not null && !hackerPreviewActive
-        && hackerLivePrepared is { RoomPlacementReady: true };
+    private bool HasHackerPathPreview => workspace == "Hacker" && visionCancellation is not null && !hackerPreviewActive
+        && hackerPathPreview is { Prepared.RoomPlacementReady: true } preview
+        && preview.CaptureGeneration == Interlocked.Read(ref recentCaptureGeneration)
+        && preview.WorkGeneration == Interlocked.Read(ref hackerWorkGeneration)
+        && atlasPathEvidence.AdmitsHacker(preview.CaptureGeneration, preview.Prepared.LiveImage.CaptureId,
+            preview.Prepared.CapturedAt, preview.Prepared.Sample.SessionId, preview.PathSceneSignal,
+            preview.Prepared.Sample.AtlasGameplayActive);
+
+    private bool ShowsHackerPaths => AtlasPathsCheck?.IsChecked == true && HasHackerPathPreview;
+
+    private void RefreshAtlasPathVisibility()
+    {
+        UpdateGameplayPathVisibility();
+        var showsPaths = ShowsHackerPaths;
+        if (showsPaths && HackerPathCanvas.Visibility != Visibility.Visible)
+            RedrawHackerEdits();
+        else if (!showsPaths)
+            HackerPathCanvas.Visibility = Visibility.Collapsed;
+        HackerCameraControlsPanel.Visibility = HasHackerPathPreview ? Visibility.Visible : Visibility.Collapsed;
+    }
 
     private HackerPathCache HackerPaths(TerrainRoom room)
     {
