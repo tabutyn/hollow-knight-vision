@@ -15,6 +15,7 @@ from hkv_bot_dataset import HISTORY_LENGTH, LANDING_GEOMETRY_POLICY_VERSION, SCH
 
 WIDTH, HEIGHT = 640, 360
 CLASSES = ["game.playable-knight", "enemies.crawlid", "world.geo-deposit"]
+TRAINED_CLASSES = ["game.playable-knight", "enemies.crawlid"]
 
 
 def fixture_detector(directory):
@@ -30,7 +31,7 @@ def fixture_detector(directory):
     save(helper.make_model(graph, ir_version=9, opset_imports=[helper.make_opsetid("", 17)]),
          directory / "Detector.onnx")
     (directory / "training.json").write_text(json.dumps(dict(modelFormat="onnx",
-        modelFilename="Detector.onnx", classIdentifiers=CLASSES)))
+        modelFilename="Detector.onnx", classIdentifiers=CLASSES, trainedClassIdentifiers=TRAINED_CLASSES)))
 
 
 def pixels():
@@ -107,6 +108,8 @@ def check(encoder_command, root):
             return np.frombuffer(base64.b64decode(row["input"], validate=True), dtype="<f4").reshape(HISTORY_LENGTH, -1)
         a, b = vector(left), vector(right)
         assert a.shape[1] == len(names)
+        assert not np.any(a[:, names.index("geo_cache_present")]), "An untrained Geo Deposit head entered the visual policy."
+        assert a[-1, names.index("enemy_0_present")] == 1, "A trained enemy head was lost during visual encoding."
         pixel_columns = [i for i, name in enumerate(names) if not name.startswith(route)]
         np.testing.assert_array_equal(a[:, pixel_columns], b[:, pixel_columns])
         compared += 1
