@@ -54,7 +54,9 @@ public sealed record HudStencilTemplate(int SchemaVersion, string SourceExampleI
         var atoms = boxes.Select(box => new HudStencilAtom("full", [box.X, box.Y, box.Width, box.Height], pixels.Reference(box))).ToArray();
         var template = new HudStencilTemplate(1, sourceExampleID, 640, 360, boxes[1].MidX - boxes[0].MidX,
             atoms, [], [0, 0, 0, 0], [], [0, 0, 0, 0]);
-        if (!template.IsValid || new HudStencilTracker(template).Observe(frame, true, 0, 0)?.EstablishesGameplay != true) return null;
+        if (!template.IsValid
+            || new HudStencilTracker(template).Observe(frame, true, 0, 0, allowRowRecovery: false)?.EstablishesGameplay != true)
+            return null;
         return template;
     }
 }
@@ -70,17 +72,22 @@ public sealed record HudStencilResult(IReadOnlyList<HudStencilMatch> Health, Hud
 
 public sealed class HudStencilTracker
 {
+    private const int LocalRowRadius = 4;
+    private const int MaximumRowOffset = 32;
+    private static readonly double[] ViewportScales = [1, .95, 1 / .95, .90, 1 / .90];
     private readonly HudStencilTemplate? template;
     private readonly HudStencilKernel[] healthKernels, mainKernels, reserveKernels;
     private long? generation;
     private IReadOnlyList<StencilRect> previousHealth = [], previousMana = [];
     private double lastHealthSeen = double.NegativeInfinity, lastManaSeen = double.NegativeInfinity;
+    private double viewportScale = 1, rowOffsetY, lastRowSearch = double.NegativeInfinity;
 
     public HudStencilTracker() : this(null) { }
     public HudStencilTracker(HudStencilTemplate? template)
     {
         this.template = template?.IsValid == true ? template : null;
-        healthKernels = this.template?.Health.Select(atom => new HudStencilKernel(atom)).ToArray() ?? [];
+        healthKernels = HealthVariants(this.template?.Health ?? [])
+            .Select(atom => new HudStencilKernel(atom)).ToArray();
         mainKernels = this.template?.ManaMain.Select(atom => new HudStencilKernel(atom, mainManaOnly: true)).ToArray() ?? [];
         reserveKernels = ReserveVariants(this.template?.ManaReserves ?? [])
             .SelectMany(atom => new[] { new HudStencilKernel(atom), new HudStencilKernel(atom, opaqueManaOnly: true) }).ToArray();
@@ -90,58 +97,55 @@ public sealed class HudStencilTracker
     {
         generation = null; previousHealth = []; previousMana = [];
         lastHealthSeen = double.NegativeInfinity; lastManaSeen = double.NegativeInfinity;
+        viewportScale = 1; rowOffsetY = 0; lastRowSearch = double.NegativeInfinity;
     }
 
-    public HudStencilResult? Observe(BgraFrame frame, bool gameplay, double timestamp, long generation)
+    public HudStencilResult? Observe(BgraFrame frame, bool gameplay, double timestamp, long generation,
+        bool allowRowRecovery = true)
     {
         if (!gameplay || template is null || !double.IsFinite(timestamp)) { Reset(); return null; }
         if (this.generation != generation) { Reset(); this.generation = generation; }
-        var pixels = new HudStencilPixels(frame, template.ReferenceWidth, template.ReferenceHeight);
+        var pixels = new HudStencilPixels(frame, template.ReferenceWidth, template.ReferenceHeight)
+            { ViewportScale = viewportScale };
         var sx = (double)frame.Width / template.ReferenceWidth;
         var sy = (double)frame.Height / template.ReferenceHeight;
         StencilRect Output(StencilRect rect, double margin = 0)
         {
-            rect = rect.Expand(margin);
+            rect = pixels.FrameRect(rect.Expand(margin));
             var x = Math.Clamp(rect.X * sx, 0, frame.Width);
             var y = Math.Clamp(rect.Y * sy, 0, frame.Height);
             return new(x, y, Math.Max(0, Math.Min(frame.Width, rect.Right * sx) - x),
                 Math.Max(0, Math.Min(frame.Height, rect.Bottom * sy) - y));
         }
         static StencilRect Rect(double[] values) => new(values[0], values[1], values[2], values[3]);
-        var firstCenter = template.Health[0].Bounds.MidX;
-        double offsetX = 0, offsetY = 0;
-        var health = new List<HudStencilMatch>();
-        IReadOnlyList<StencilRect> healthMasks;
-        var freshHealthMasks = new List<StencilRect>();
-        for (var index = 0; index < 32; index++)
+        var localLimit = MaximumRowOffset - LocalRowRadius;
+        var row = MatchHealthRow(pixels, template, Math.Clamp(rowOffsetY, -localLimit, localLimit),
+            LocalRowRadius, Output);
+        if (allowRowRecovery && row.Health.Count < 2 && timestamp - lastRowSearch >= .25)
         {
-            var center = firstCenter + index * template.HealthPitch + offsetX;
-            if (center >= template.ReferenceWidth - 8) break;
-            Candidate? best = null;
-            var radius = index == 0 ? 7 : 2;
-            var verticalRadius = index == 0 ? 4 : 1;
-            foreach (var atom in healthKernels)
-                for (var dy = -verticalRadius; dy <= verticalRadius; dy++)
-                    for (var dx = -radius; dx <= radius; dx++)
-                    {
-                        var bounds = new StencilRect(Round(center - atom.Bounds.Width / 2) + dx,
-                            atom.Bounds.Y + offsetY + dy, atom.Bounds.Width, atom.Bounds.Height);
-                        Best(ref best, atom, bounds, pixels);
-                    }
-            if (best is null || best.Score < (best.Kernel.Kind == "empty" ? .78 : .75)) break;
-            if (index == 0)
+            lastRowSearch = timestamp;
+            foreach (var scale in ViewportScales)
             {
-                offsetX = best.Rect.MidX - firstCenter;
-                offsetY = best.Rect.Y - best.Kernel.Bounds.Y;
+                pixels.ViewportScale = scale;
+                var candidate = MatchHealthRow(pixels, template, 0,
+                    scale >= 1 ? MaximumRowOffset : LocalRowRadius * 2, Output);
+                if (candidate.Health.Count < 2) continue;
+                // After a resize, a later mask can occupy the first mask's old position.
+                var precedingCenter = template.Health[0].Bounds.MidX + candidate.OffsetX - template.HealthPitch;
+                if (BestHealth(pixels, precedingCenter, candidate.OffsetY, 2, 1) is { } preceding
+                    && preceding.Score >= HealthThreshold(preceding.Kernel.Kind)) continue;
+                row = candidate;
+                if (viewportScale != scale) { previousHealth = []; previousMana = []; }
+                viewportScale = scale;
+                break;
             }
-            health.Add(new(index, best.Kernel.Kind, Output(best.Rect), best.Score));
-            var cellCenter = index == 0 ? best.Rect.MidX : center;
-            freshHealthMasks.Add(Output(new(cellCenter - template.HealthPitch / 2,
-                best.Rect.Y - 1, template.HealthPitch, best.Rect.Height + 2), 2));
+            pixels.ViewportScale = viewportScale;
         }
+        var (health, freshHealthMasks, offsetX, offsetY) = row;
+        if (health.Count >= 2) rowOffsetY = offsetY;
         var holding = freshHealthMasks.Count < previousHealth.Count && timestamp >= lastHealthSeen && timestamp - lastHealthSeen <= .5;
-        if (holding) healthMasks = previousHealth;
-        else { healthMasks = freshHealthMasks; previousHealth = healthMasks; lastHealthSeen = timestamp; }
+        var healthMasks = holding ? previousHealth : freshHealthMasks;
+        if (!holding) { previousHealth = healthMasks; lastHealthSeen = timestamp; }
 
         HudStencilMatch? main = null;
         if (template.ManaMain.FirstOrDefault() is { } mainAtom)
@@ -185,6 +189,67 @@ public sealed class HudStencilTracker
             geo.IsEmpty ? default : Output(geo.Offset(offsetX, offsetY), 1), holding, timestamp);
     }
 
+    private sealed record HealthRow(IReadOnlyList<HudStencilMatch> Health, IReadOnlyList<StencilRect> Masks,
+        double OffsetX, double OffsetY);
+
+    private HealthRow MatchHealthRow(HudStencilPixels pixels, HudStencilTemplate reference,
+        double searchOffsetY, int verticalRadius, Func<StencilRect, double, StencilRect> output)
+    {
+        var firstCenter = reference.Health[0].Bounds.MidX;
+        var pitch = reference.HealthPitch;
+        double offsetX = 0, offsetY = 0;
+        var health = new List<HudStencilMatch>();
+        var masks = new List<StencilRect>();
+        var misses = 0;
+        for (var index = 0; index < 32; index++)
+        {
+            var center = firstCenter + index * pitch + offsetX;
+            if (center >= reference.ReferenceWidth - 8) break;
+            var first = index == 0;
+            var best = BestHealth(pixels, center, first ? searchOffsetY : offsetY,
+                first ? 7 : 2, first ? verticalRadius : 1);
+            if (best is null || best.Score < HealthThreshold(best.Kernel.Kind))
+            {
+                misses++;
+                if (health.Count == 0 || misses > (health.Count < 2 ? 9 : 1)) break;
+                continue;
+            }
+            misses = 0;
+            if (first)
+            {
+                offsetX = best.Rect.MidX - firstCenter;
+                offsetY = best.Rect.Y - best.Kernel.Bounds.Y;
+            }
+            else if (pixels.ViewportScale != 1)
+            {
+                var measuredPitch = (best.Rect.MidX - firstCenter - offsetX) / index;
+                pitch = Math.Clamp(measuredPitch, reference.HealthPitch - 1, reference.HealthPitch + 1);
+            }
+            var cellCenter = first ? best.Rect.MidX : center;
+            var mask = output(new(cellCenter - pitch / 2, best.Rect.Y - 1, pitch, best.Rect.Height + 2), 2);
+            if (health.Count > 0 && index - health[^1].Index > 1) mask = masks[^1].Union(mask);
+            health.Add(new(index, best.Kernel.Kind, output(best.Rect, 0), best.Score));
+            masks.Add(mask);
+        }
+        return new(health, masks, offsetX, offsetY);
+    }
+
+    private Candidate? BestHealth(HudStencilPixels pixels, double center, double offsetY,
+        int radius, int verticalRadius)
+    {
+        Candidate? best = null;
+        foreach (var atom in healthKernels)
+        for (var dy = -verticalRadius; dy <= verticalRadius; dy++)
+        for (var dx = -radius; dx <= radius; dx++)
+        {
+            var bounds = new StencilRect(Round(center - atom.Bounds.Width / 2) + dx,
+                atom.Bounds.Y + offsetY + dy, atom.Bounds.Width, atom.Bounds.Height);
+            Best(ref best, atom, bounds, pixels);
+        }
+        return best;
+    }
+
+    private static double HealthThreshold(string kind) => kind == "empty" ? .78 : .75;
     private sealed record Candidate(HudStencilKernel Kernel, StencilRect Rect, double Score);
     private static void Best(ref Candidate? best, HudStencilKernel atom, StencilRect bounds, HudStencilPixels pixels)
     {
@@ -192,6 +257,23 @@ public sealed class HudStencilTracker
         if (score > (best?.Score ?? 0)) best = new(atom, bounds, score);
     }
     internal static double Round(double value) => Math.Round(value, MidpointRounding.AwayFromZero);
+
+    private static IEnumerable<HudStencilAtom> HealthVariants(HudStencilAtom[] atoms)
+    {
+        foreach (var atom in atoms) yield return atom;
+        if (atoms.Any(atom => atom.Kind == "lifeblood")) yield break;
+        // Lifeblood uses the same mask shape under a blue tint.
+        foreach (var atom in atoms.Where(atom => atom.Kind == "full"))
+        {
+            var rgb = atom.Rgb.ToArray();
+            for (var index = 0; index < rgb.Length; index += 3)
+            {
+                rgb[index] = (byte)(rgb[index] * .45);
+                rgb[index + 1] = (byte)(rgb[index + 1] * .75);
+            }
+            yield return new("lifeblood", atom.Rect, rgb);
+        }
+    }
 
     private static IEnumerable<HudStencilAtom> ReserveVariants(HudStencilAtom[] atoms)
     {
@@ -265,9 +347,20 @@ internal sealed class HudStencilKernel
 internal sealed class HudStencilPixels
 {
     private readonly ImageStencilPixels pixels;
+    private readonly int referenceHeight;
+    internal double ViewportScale { get; set; } = 1;
+
     internal HudStencilPixels(BgraFrame frame, int referenceWidth, int referenceHeight)
     {
+        this.referenceHeight = referenceHeight;
         pixels = new(frame, referenceWidth, referenceHeight, 0, Math.Min(referenceHeight, 80));
+    }
+
+    internal StencilRect FrameRect(StencilRect rect)
+    {
+        var scale = ViewportScale;
+        return new(rect.X * scale + pixels.Width * (1 - scale) / 2,
+            rect.Y * scale + referenceHeight * (1 - scale), rect.Width * scale, rect.Height * scale);
     }
 
     internal byte[] Reference(StencilRect rect)
@@ -277,6 +370,12 @@ internal sealed class HudStencilPixels
 
     internal double Score(HudStencilKernel kernel, StencilRect rect)
     {
+        if (ViewportScale != 1)
+        {
+            var target = FrameRect(rect);
+            rect = new(HudStencilTracker.Round(target.X), HudStencilTracker.Round(target.Y),
+                HudStencilTracker.Round(target.Width), HudStencilTracker.Round(target.Height));
+        }
         if (pixels.Compare(kernel.ImageKernel, rect) is not { SupportsCorrelation: true } comparison) return 0;
         var colorDifference = comparison.MeanBlue - comparison.MeanRed;
         if (kernel.Kind == "lifeblood" && colorDifference < 30 || kernel.Kind == "full" && colorDifference > 24) return 0;
