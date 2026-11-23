@@ -123,6 +123,7 @@ internal sealed class WindowsLiveWorldPipeline
     private bool canResumeLocalTracking;
     private (double First, double Last, int Count, long CoordinateEpoch)? recoverySamples;
     private long recoveryCoordinateEpoch;
+    private double lastPlacedVerticalBasis;
     private long lastCaptureId = -1;
     private double lastGlobalSearchAt = double.NegativeInfinity;
     private double lastPersistenceAt = double.NegativeInfinity;
@@ -332,6 +333,7 @@ internal sealed class WindowsLiveWorldPipeline
                 worldBasis = new WorldBasisController();
                 worldBasis.BeginCapture();
                 worldBasis.LoseLocalTracking();
+                lastPlacedVerticalBasis = 0;
                 roomId = null;
                 receiverRoomId = null;
                 placedRoomStartedAt = null;
@@ -514,6 +516,7 @@ internal sealed class WindowsLiveWorldPipeline
                     if (!worldBasis.ConfirmPlacement(basisTicket.Value, placement.CameraPose))
                         return Publish(PendingRecovery(request, activeTracker, "recovery basis expired"));
                     if (!IsWorkCurrent(processEpoch)) return Cancelled();
+                    lastPlacedVerticalBasis = worldBasis.Snapshot.WorldFromLocal.Y;
                     if (findSavedRoom)
                     {
                         placedRoomIds[requestedRoomId] = placement.RoomId;
@@ -696,6 +699,7 @@ internal sealed class WindowsLiveWorldPipeline
 
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 var basis = worldBasis.Snapshot.WorldFromLocal;
+                if (!placementPending) lastPlacedVerticalBasis = basis.Y;
                 LastError = null;
                 transactionObserver?.Invoke("publish");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
@@ -919,6 +923,7 @@ internal sealed class WindowsLiveWorldPipeline
             persistentGenerationBase = maximumGeneration;
             persistentCaptureGeneration = 0;
             worldBasis = new WorldBasisController();
+            lastPlacedVerticalBasis = 0;
             captureGeneration = null;
             roomId = null;
             receiverRoomId = null;
@@ -1004,7 +1009,8 @@ internal sealed class WindowsLiveWorldPipeline
         var worldX = cut.Direction == VisualRoomDirection.Right
             ? placed.Max(value => value.OptimizedPose.X + value.SolveWidth * .5) + margin + request.SolveWidth * .5
             : placed.Min(value => value.OptimizedPose.X - value.SolveWidth * .5) - margin - request.SolveWidth * .5;
-        var basis = new AtlasPoint(worldX - request.LocalPose.X, worldBasis.Snapshot.WorldFromLocal.Y);
+        // An unplaced component may rebase its own poses between doorway visits.
+        var basis = new AtlasPoint(worldX - request.LocalPose.X, lastPlacedVerticalBasis);
         if (!double.IsFinite(basis.X)) return false;
 
         worldBasis.BeginLocalEpoch(basis);

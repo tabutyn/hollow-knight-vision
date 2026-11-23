@@ -662,34 +662,7 @@ internal static class NativeAtlasImportTests
         {
             var pipeline = new WindowsLiveWorldPipeline(root.FullName);
             var store = new LiveWorldSessionStore(root.FullName);
-            WindowsLiveWorldFrame Measured(long id, double time, int texture, double x)
-            {
-                var request = FloorFrame(id, texture, true, 135, false, false);
-                return request with
-                {
-                    Timestamp = time,
-                    MonotonicTimestamp = time,
-                    LocalPose = new(x, 0),
-                    GroundAlignmentExclusions = [new(0, 0, request.Frame.Width, request.Frame.Height)],
-                    WorldEvidence = request.WorldEvidence! with { CaptureTimestamp = time, LocalReferenceTimestamp = time - .05 }
-                };
-            }
-
-            Check(pipeline.Process(Measured(1, .5, 71, 80)).AllowsAtlasComposition, "initial placed map");
-            pipeline.NotifyTrackingLoss(1);
-            _ = pipeline.Process(Measured(2, .7, 901, 220));
-            _ = pipeline.Process(Measured(3, .81, 901, 220));
-            Check(pipeline.Process(Measured(4, .95, 901, 220)).PlacementPending, "first unplaced section");
-            pipeline.NotifyTrackingLoss(1);
-            _ = pipeline.Process(Measured(5, 1.15, 901, 400));
-            _ = pipeline.Process(Measured(6, 1.28, 901, 400));
-            var firstVote = pipeline.Process(Measured(7, 1.42, 901, 400));
-            Check(firstVote.PlacementPending && firstVote.AcceptedClosure is null,
-                "one image in the second section must remain tentative");
-            var relative = pipeline.Process(Measured(8, 1.57, 901, 400));
-            Check(relative is { PlacementPending: true, AcceptedClosure: not null, RebuiltAtlas: null }
-                && !relative.AllowsAtlasComposition && relative.CameraPose == new AtlasPoint(220, 0),
-                $"two images link the unplaced sections without showing them ({relative.Diagnostic})");
+            LinkUnplacedSections(pipeline);
 
             var saved = store.LoadTracker();
             var before = saved.Snapshot;
@@ -704,9 +677,9 @@ internal static class NativeAtlasImportTests
             Check(source.OptimizedPose == arrival.OptimizedPose && before.Observations[0].OptimizedPose == new AtlasPoint(80, 0),
                 "the relative correction preserves the existing anchor");
 
-            var one = pipeline.Process(Measured(9, 1.72, 71, 410));
+            var one = pipeline.Process(MeasuredRecoveryFrame(9, 1.72, 71, new(410, 0)));
             Check(one.PlacementPending, "the anchored match needs a separate confirmation");
-            var placed = pipeline.Process(Measured(10, 1.87, 71, 410));
+            var placed = pipeline.Process(MeasuredRecoveryFrame(10, 1.87, 71, new(410, 0)));
             Check(placed is { AllowsAtlasComposition: true, AcceptedClosure: not null, RebuiltAtlas.TileCount: > 0 },
                 $"the anchored match publishes the whole linked component ({placed.Diagnostic})");
             var after = store.Load().Snapshot;
@@ -717,6 +690,62 @@ internal static class NativeAtlasImportTests
                 "the two unplaced sections move together to the placed map");
         }
         finally { root.Delete(recursive: true); }
+    }
+
+    internal static void TestDoorwayDoesNotInheritUnplacedVerticalCorrection()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-relative-doorway-height-");
+        try
+        {
+            var pipeline = new WindowsLiveWorldPipeline(root.FullName);
+            var relative = LinkUnplacedSections(pipeline, targetY: 60);
+            Check(relative.WorldBasisOffset.Y == -60, "the live relative coordinate system acquired a vertical correction");
+
+            var cut = new VisualSceneDiscontinuityTracker.Cut(1.62, 2.1, new(400, 60), VisualRoomDirection.Right);
+            WindowsLiveWorldFrame Arrival(long id, double time) => MeasuredRecoveryFrame(id, time, 191, new(80, 12))
+                with { RoomName = "Linked_section_next_room", DoorwayCut = cut };
+            Check(!pipeline.Process(Arrival(9, 2.24)).AllowsAtlasComposition, "the new doorway establishes a basis first");
+            var published = pipeline.Process(Arrival(10, 2.39));
+            Check(published.AllowsAtlasComposition && published.CameraPose.Y == 12,
+                $"the next room must use the last placed height ({published.CameraPose.Y})");
+            var world = new LiveWorldSessionStore(root.FullName).Load().Snapshot;
+            Check(world.UnplacedObservationIds().SetEquals([1, 2, 3]) && world.LoopClosureEdges.Count == 1,
+                "the relative link survives the transition without placing its component");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    private static WindowsLiveWorldPipelineResult LinkUnplacedSections(WindowsLiveWorldPipeline pipeline, double targetY = 0)
+    {
+        Check(pipeline.Process(MeasuredRecoveryFrame(1, .5, 71, new(80, 0))).AllowsAtlasComposition, "initial placed map");
+        pipeline.NotifyTrackingLoss(1);
+        _ = pipeline.Process(MeasuredRecoveryFrame(2, .7, 901, new(220, 0)));
+        _ = pipeline.Process(MeasuredRecoveryFrame(3, .81, 901, new(220, 0)));
+        Check(pipeline.Process(MeasuredRecoveryFrame(4, .95, 901, new(220, 0))).PlacementPending, "first unplaced section");
+        pipeline.NotifyTrackingLoss(1);
+        var local = new AtlasPoint(400, targetY);
+        _ = pipeline.Process(MeasuredRecoveryFrame(5, 1.15, 901, local));
+        _ = pipeline.Process(MeasuredRecoveryFrame(6, 1.28, 901, local));
+        var firstVote = pipeline.Process(MeasuredRecoveryFrame(7, 1.42, 901, local));
+        Check(firstVote.PlacementPending && firstVote.AcceptedClosure is null, "one image in the second section must remain tentative");
+        var relative = pipeline.Process(MeasuredRecoveryFrame(8, 1.57, 901, local));
+        Check(relative is { PlacementPending: true, AcceptedClosure: not null, RebuiltAtlas: null }
+            && !relative.AllowsAtlasComposition && relative.CameraPose == new AtlasPoint(220, 0),
+            $"two images link the unplaced sections without showing them ({relative.Diagnostic})");
+        return relative;
+    }
+
+    private static WindowsLiveWorldFrame MeasuredRecoveryFrame(long id, double time, int texture, AtlasPoint pose)
+    {
+        var request = FloorFrame(id, texture, true, 135, false, false);
+        return request with
+        {
+            Timestamp = time,
+            MonotonicTimestamp = time,
+            LocalPose = pose,
+            GroundAlignmentExclusions = [new(0, 0, request.Frame.Width, request.Frame.Height)],
+            WorldEvidence = request.WorldEvidence! with { CaptureTimestamp = time, LocalReferenceTimestamp = time - .05 }
+        };
     }
 
     internal static void TestAtlasLinksPreserveDoorwayAxesAndFixedPlacements()
