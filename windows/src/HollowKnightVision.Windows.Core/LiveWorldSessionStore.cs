@@ -218,10 +218,24 @@ public sealed class LiveWorldSessionStore
                 $"Stored source observation {observationId} does not exist.",
                 observationId: observationId);
         }
+        return ReadSource(current, observation);
+    }
+
+    public LiveWorldTracker LoadTracker()
+    {
+        using var lifecycleLock = AcquireLifecycleLock();
+        var current = OpenCurrentStoreUnderLock();
+        var snapshot = LoadCore(current).Snapshot;
+        if (!snapshot.UsesSwiftWireFormat) return new LiveWorldTracker(snapshot);
+
+        var sources = current.Manifest.Observations.ToDictionary(observation => observation.Id);
+        return new LiveWorldTracker(snapshot, id => ReadSource(current, sources[id]));
+    }
+
+    private BgraFrame ReadSource(SceneSessionStore current, StoredFrameObservation observation)
+    {
         var expectedPath = ContainedEvidencePath(observation.ImagePath);
-        return current.Source(
-            observation,
-            (handle, _) => ValidateOpenedHandlePath(handle, expectedPath));
+        return current.Source(observation, (handle, _) => ValidateOpenedHandlePath(handle, expectedPath));
     }
 
     public LiveWorldSessionState Load()

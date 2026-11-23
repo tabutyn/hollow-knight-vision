@@ -81,6 +81,7 @@ internal sealed class WindowsLiveWorldPipeline
     {
         None,
         SearchReference,
+        FindImportedRoom,
         AwaitSafeNewWorld,
         AwaitNewWorldBoundary
     }
@@ -93,6 +94,7 @@ internal sealed class WindowsLiveWorldPipeline
     private readonly Action<string>? transactionObserver;
     private readonly Func<string, bool>? transactionFault;
     private readonly Dictionary<int, string> roomNames = [];
+    private readonly Dictionary<int, int> importedRoomIds = [];
     private readonly Dictionary<int, IReadOnlyList<WorldRect>> compositionExclusions = [];
     private readonly Dictionary<int, IReadOnlyList<GroundHypothesisAtlasLine>> projectedWalkedGround = [];
     private (ulong Capture, int Room, long CoordinateEpoch)? walkedScope;
@@ -104,6 +106,7 @@ internal sealed class WindowsLiveWorldPipeline
     private ulong persistentGenerationBase;
     private ulong persistentCaptureGeneration;
     private int? roomId;
+    private int? receiverRoomId;
     private RecoveryDisposition recoveryDisposition;
     private long lastCaptureId = -1;
     private double lastGlobalSearchAt = double.NegativeInfinity;
@@ -115,6 +118,9 @@ internal sealed class WindowsLiveWorldPipeline
     // failure so Process can report (and retry) the real store error. Only an
     // explicit InvalidatePendingWork call closes admission until Reopen succeeds.
     private bool acceptsWork = true;
+    private bool importedAtlas;
+
+    internal bool HasImportedAtlas => Volatile.Read(ref importedAtlas);
 
     internal WindowsLiveWorldPipeline(string rootDirectory)
         : this(rootDirectory, transactionObserver: null, transactionFault: null) { }
@@ -271,16 +277,18 @@ internal sealed class WindowsLiveWorldPipeline
                 var result = Failed(request, diagnostic);
                 return IsWorkCurrent(processEpoch) ? result : Cancelled();
             }
-            int resolvedRoomId;
+            int requestedRoomId;
             try
             {
-                resolvedRoomId = RoomId(request.RoomName.Trim());
+                requestedRoomId = RoomId(request.RoomName.Trim());
             }
             catch (Exception error)
             {
                 RollBackTracker(activeTracker.Snapshot);
                 return Fail($"live-world room identity failed: {error.Message}");
             }
+            var hasImportedRoomId = importedRoomIds.TryGetValue(requestedRoomId, out var importedRoomId);
+            var resolvedRoomId = hasImportedRoomId ? importedRoomId : requestedRoomId;
             if (captureGeneration is { } currentGeneration
                 && request.CaptureGeneration < currentGeneration)
             {
@@ -311,28 +319,40 @@ internal sealed class WindowsLiveWorldPipeline
                 worldBasis.BeginCapture();
                 worldBasis.LoseLocalTracking();
                 roomId = null;
+                receiverRoomId = null;
                 recoveryDisposition = RecoveryDisposition.AwaitSafeNewWorld;
                 lastCaptureId = -1;
                 lastGlobalSearchAt = double.NegativeInfinity;
                 lastPersistenceAt = double.NegativeInfinity;
                 lastWorldTrackerTimestamp = double.NegativeInfinity;
             }
-            if (roomId != resolvedRoomId)
+            if (receiverRoomId != requestedRoomId)
             {
-                var changesRoom = roomId is not null;
+                var changesRoom = receiverRoomId is not null;
+                receiverRoomId = requestedRoomId;
                 roomId = resolvedRoomId;
                 activeTracker.BeginRecoveryEpoch();
                 if (changesRoom)
                 {
                     worldBasis.LoseLocalTracking();
                 }
-                recoveryDisposition = HasSearchableReference(
-                        activeTracker.Snapshot,
-                        resolvedRoomId)
-                    ? RecoveryDisposition.SearchReference
-                    : beginsCaptureGeneration || changesRoom
+                // Swift stores visual room IDs. Prove the receiver scene's location
+                // before adding a capture to a loaded Atlas.
+                if (activeTracker.Snapshot.UsesSwiftWireFormat && !hasImportedRoomId
+                    && activeTracker.Snapshot.Observations.Count != 0)
+                {
+                    recoveryDisposition = RecoveryDisposition.FindImportedRoom;
+                }
+                else if (HasSearchableReference(activeTracker, resolvedRoomId))
+                {
+                    recoveryDisposition = RecoveryDisposition.SearchReference;
+                }
+                else
+                {
+                    recoveryDisposition = beginsCaptureGeneration || changesRoom
                         ? RecoveryDisposition.AwaitSafeNewWorld
                         : RecoveryDisposition.AwaitNewWorldBoundary;
+                }
                 lastGlobalSearchAt = double.NegativeInfinity;
             }
             if (request.Frame.CaptureId <= lastCaptureId)
@@ -392,7 +412,8 @@ internal sealed class WindowsLiveWorldPipeline
 
             var globalSearchDue = request.MonotonicTimestamp - lastGlobalSearchAt
                 >= GlobalSearchIntervalSeconds;
-            if (recoveryDisposition == RecoveryDisposition.SearchReference)
+            var findImportedRoom = recoveryDisposition == RecoveryDisposition.FindImportedRoom;
+            if (findImportedRoom || recoveryDisposition == RecoveryDisposition.SearchReference)
             {
                 if (!globalSearchDue)
                 {
@@ -411,7 +432,7 @@ internal sealed class WindowsLiveWorldPipeline
                         request.LocalPose,
                         request.SolveWidth,
                         request.GroundAlignmentExclusions,
-                        resolvedRoomId);
+                        findImportedRoom ? null : resolvedRoomId);
                     if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 }
                 catch (Exception error)
@@ -444,6 +465,11 @@ internal sealed class WindowsLiveWorldPipeline
                         "recovery basis expired"));
                 }
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
+                if (findImportedRoom)
+                {
+                    importedRoomIds[requestedRoomId] = placement.RoomId;
+                    roomId = placement.RoomId;
+                }
                 recoveryDisposition = RecoveryDisposition.None;
                 LastError = null;
                 return Publish(ConfirmedRecovery(request, activeTracker, placement));
@@ -627,7 +653,7 @@ internal sealed class WindowsLiveWorldPipeline
             worldBasis.LoseLocalTracking();
             tracker.BeginRecoveryEpoch();
             recoveryDisposition = roomId is { } activeRoom
-                                  && HasSearchableReference(tracker.Snapshot, activeRoom)
+                                  && HasSearchableReference(tracker, activeRoom)
                 ? RecoveryDisposition.SearchReference
                 : tracker.Snapshot.Observations.Count == 0 ? RecoveryDisposition.AwaitSafeNewWorld
                 : RecoveryDisposition.AwaitNewWorldBoundary;
@@ -736,34 +762,38 @@ internal sealed class WindowsLiveWorldPipeline
         try
         {
             var reopened = new LiveWorldSessionStore(rootDirectory);
-            var state = reopened.Load();
+            var reopenedTracker = reopened.LoadTracker();
+            var snapshot = reopenedTracker.Snapshot;
             var manifest = new SceneSessionStore(reopened.RootDirectory).Manifest;
             var reopenedCompositionExclusions = manifest.Observations.ToDictionary(
                 observation => observation.Id,
                 observation => CompositionRects(observation.ExcludedRects));
             store = reopened;
-            tracker = new LiveWorldTracker(state.Snapshot);
+            tracker = reopenedTracker;
+            importedRoomIds.Clear();
             compositionExclusions.Clear();
             projectedWalkedGround.Clear();
             walkedScope = null;
             committedLocalWalk = [];
             foreach (var (observationId, exclusions) in reopenedCompositionExclusions)
                 compositionExclusions.Add(observationId, exclusions);
-            var maximumGeneration = state.Snapshot.Observations.Count == 0
+            var maximumGeneration = snapshot.Observations.Count == 0
                 ? 0
-                : state.Snapshot.Observations.Max(value => value.CaptureGeneration);
+                : snapshot.Observations.Max(value => value.CaptureGeneration);
             persistentGenerationBase = maximumGeneration;
             persistentCaptureGeneration = 0;
             worldBasis = new WorldBasisController();
             captureGeneration = null;
             roomId = null;
+            receiverRoomId = null;
             recoveryDisposition = RecoveryDisposition.None;
             lastCaptureId = -1;
             lastGlobalSearchAt = double.NegativeInfinity;
             lastPersistenceAt = double.NegativeInfinity;
-            lastWorldTrackerTimestamp = state.Snapshot.Observations.Count == 0
+            lastWorldTrackerTimestamp = snapshot.Observations.Count == 0
                 ? double.NegativeInfinity
-                : state.Snapshot.Observations.Max(value => value.Timestamp);
+                : snapshot.Observations.Max(value => value.Timestamp);
+            Volatile.Write(ref importedAtlas, snapshot.UsesSwiftWireFormat);
             LastError = null;
             return true;
         }
@@ -791,8 +821,11 @@ internal sealed class WindowsLiveWorldPipeline
         return identifier;
     }
 
-    private static bool HasSearchableReference(LiveWorldSnapshot snapshot, int roomId)
+    private static bool HasSearchableReference(LiveWorldTracker tracker, int roomId)
     {
+        var snapshot = tracker.Snapshot;
+        if (snapshot.UsesSwiftWireFormat) return tracker.HasRecoveryReference(roomId);
+
         var observations = snapshot.Observations
             .Where(value => value.RoomId == roomId)
             .Select(value => value.Id)

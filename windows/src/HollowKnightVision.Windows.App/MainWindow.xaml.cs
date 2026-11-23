@@ -3165,9 +3165,10 @@ public partial class MainWindow : Window
             ?? (gameMode == GameRuntimeMode.Normal ? RenderedFrameMarker.Decode(frame) : null);
         var receiverTelemetry = gameMode == GameRuntimeMode.Modded ? exactReceiverTelemetry : null;
         var receiverScene = receiverTelemetry?.SceneName?.Trim();
+        var usesDurableWorld = gameMode == GameRuntimeMode.Modded || liveWorldPipeline?.HasImportedAtlas == true;
         var tracked = trackingPipeline.Track(frame, prepared, masks.GroundKnight, admission, signal, captureTimestamp,
             captureGeneration, receiverScene, gameplayAtlas.TileCount > 0, movementButtons,
-            resetWorldCoordinatesForCorrection: gameMode == GameRuntimeMode.Modded,
+            resetWorldCoordinatesForCorrection: usesDurableWorld,
             visualRoomObservationEnabled: recognition.GameplayEnabled);
         var visualObservation = tracked.Observation;
         var ground = prepared.Terrain?.Floors ?? [];
@@ -3200,15 +3201,14 @@ public partial class MainWindow : Window
         var liveWorldGeneration = captureGeneration > 0
             ? (ulong)captureGeneration
             : 0;
-        if (gameMode == GameRuntimeMode.Modded
-            && liveWorldPipeline is not null
-            && tracked.RequiresWorldRecovery)
+        if (usesDurableWorld && liveWorldPipeline is not null && tracked.RequiresWorldRecovery)
         {
             Interlocked.Exchange(ref pendingWorldTrackingLoss, (long)liveWorldGeneration);
         }
-        if (gameMode == GameRuntimeMode.Modded)
+        if (usesDurableWorld)
         {
-            if (string.IsNullOrWhiteSpace(receiverScene) || liveWorldPipeline is null)
+            var worldRoom = gameMode == GameRuntimeMode.Modded ? receiverScene : atlasRoomId;
+            if (string.IsNullOrWhiteSpace(worldRoom) || liveWorldPipeline is null)
                 gameplayAdmitted = false;
             else if (gameplayAdmitted)
             {
@@ -3240,7 +3240,7 @@ public partial class MainWindow : Window
                     Exclusions: compositionExclusions,
                     GroundAlignmentExclusions: groundAlignmentExclusions,
                     CaptureGeneration: liveWorldGeneration,
-                    RoomName: receiverScene,
+                    RoomName: worldRoom,
                     AtlasPixelsPerWorldUnit: gameplayAtlas.PixelsPerWorldUnit,
                     AtlasTileSize: gameplayAtlas.TileSize, StableTrackingVerified: visualObservation.GroundVerified)
                 {
@@ -3248,9 +3248,9 @@ public partial class MainWindow : Window
                     WalkedCoordinateEpoch = walkedCoordinateEpoch
                 }, visualTelemetry, atlasCompositionExclusions, atlasRoomId, atlasCaptureIdentity);
             }
-            if (receiverScene is { Length: > 0 })
+            if (worldRoom is { Length: > 0 })
             {
-                liveWorldResult = CurrentWorldResult(liveWorldGeneration, receiverScene);
+                liveWorldResult = CurrentWorldResult(liveWorldGeneration, worldRoom);
                 var placed = liveWorldResult?.State is WindowsLiveWorldPipelineState.Committed
                     or WindowsLiveWorldPipelineState.Throttled;
                 gameplayAdmitted &= placed;
@@ -3321,7 +3321,7 @@ public partial class MainWindow : Window
         var resultGameplayAtlas = replacesGameplayAtlas
             ? liveWorldResult!.RebuiltAtlas!
             : gameplayAtlas;
-        var gameplayAccepted = gameplayAdmitted && gameMode != GameRuntimeMode.Modded
+        var gameplayAccepted = gameplayAdmitted && !usesDurableWorld
             && (replacesGameplayAtlas
                 || resultGameplayAtlas.AddFrame(
                     frame,
@@ -3360,7 +3360,7 @@ public partial class MainWindow : Window
             (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0), visualGameplayTracker.PlacementRecoveryState,
             visualObservation.FloorlessEvidence, visualObservation.SceneMotionMilliseconds,
             visualObservation.RecoveredAtlasReferenceTimestamp);
-        if ((gameMode == GameRuntimeMode.Modded && resultGameplayAtlas.Revision != Interlocked.Read(ref gameplayRenderedRevision))
+        if ((usesDurableWorld && resultGameplayAtlas.Revision != Interlocked.Read(ref gameplayRenderedRevision))
             || gameplayAccepted && (replacesGameplayAtlas
             || resultGameplayAtlas.AcceptedFrameCount == 1
             || resultGameplayAtlas.AcceptedFrameCount % 3 == 0))

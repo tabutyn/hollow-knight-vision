@@ -116,7 +116,24 @@ public sealed class GlobalFeatureMatcher
         IReadOnlyList<GlobalFeatureReference> references,
         Guid? preferredReferenceId = null,
         double? currentSolveWidth = null,
-        IReadOnlyList<StencilRect>? excluding = null)
+        IReadOnlyList<StencilRect>? excluding = null) =>
+        MatchReferences(frame, references, preferredReferenceId, currentSolveWidth, excluding, referenceRooms: null);
+
+    internal GlobalFeatureMatch? MatchAcrossRooms(
+        BgraFrame frame,
+        IReadOnlyList<GlobalFeatureReference> references,
+        double solveWidth,
+        IReadOnlyList<StencilRect> excluding,
+        IReadOnlyDictionary<Guid, int> referenceRooms) =>
+        MatchReferences(frame, references, null, solveWidth, excluding, referenceRooms);
+
+    private GlobalFeatureMatch? MatchReferences(
+        BgraFrame frame,
+        IReadOnlyList<GlobalFeatureReference> references,
+        Guid? preferredReferenceId,
+        double? currentSolveWidth,
+        IReadOnlyList<StencilRect>? excluding,
+        IReadOnlyDictionary<Guid, int>? referenceRooms)
     {
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(references);
@@ -158,8 +175,11 @@ public sealed class GlobalFeatureMatcher
         Candidate? runnerUp = null;
         for (var index = 1; index < candidates.Count; index++)
         {
-            if (Distance(candidates[index].Camera, best.Camera) <= distinctPlacementDistance) continue;
-            runnerUp = candidates[index];
+            var alternative = candidates[index];
+            var sameRoom = referenceRooms is null
+                || referenceRooms[alternative.Reference.Id] == referenceRooms[best.Reference.Id];
+            if (sameRoom && Distance(alternative.Camera, best.Camera) <= distinctPlacementDistance) continue;
+            runnerUp = alternative;
             break;
         }
         var ambiguity = Math.Min(

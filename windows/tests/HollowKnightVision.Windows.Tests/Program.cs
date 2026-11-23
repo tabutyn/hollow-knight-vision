@@ -393,6 +393,8 @@ var tests = new List<(string Name, Action Run)>
     ("Swift v3 live Atlas preserves rigid islands and doorway evidence after Windows capture", NativeAtlasImportTests.TestNativeAtlasPersistsMasksIslandsAndDoorway),
     ("Swift live Atlas rejects corrupt capture ownership and reads prior schema", NativeAtlasImportTests.TestCorruptNativeAtlasAndLegacyOwners),
     ("named Mac Atlas restore rebuilds Windows tiles and reopens the production world", NativeAtlasImportTests.TestNamedAtlasRestoreRebuildsTheWindowsMosaic),
+    ("imported Atlas resumes in the room confirmed by two images", NativeAtlasImportTests.TestImportedAtlasRequiresTwoMatchesInTheSameRoom),
+    ("imported Atlas holds identical scenery shared by different rooms", NativeAtlasImportTests.TestImportedAtlasRejectsIdenticalSceneryAcrossRooms),
     ("live world round trip and optimization preserve raw evidence", LiveWorldModelParityTests.TestRoundTripAndPoseReplacementPreserveRawEvidence),
     ("live world legacy observations preserve raw pose in epoch zero", LiveWorldModelParityTests.TestLegacyObservationDecodesIntoEpochZeroWithoutMovingItsWorldPose),
     ("live world invalid models are rejected", LiveWorldModelParityTests.TestInvalidModelsAreRejected),

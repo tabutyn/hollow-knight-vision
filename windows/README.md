@@ -518,7 +518,9 @@ For a version 2 or 3 Atlas, copy the named save directory with its `state.json` 
 `%LOCALAPPDATA%\HollowKnightVision\atlas-v1\states`. In Game Play, open Atlas
 settings, select the state, and choose **Load**. Windows rebuilds its tiles from
 the saved captures and preserves the original map, tracking islands, walked
-ground, and doorway evidence in the active copy.
+ground, and doorway evidence in the active copy. When you return to gameplay,
+Windows verifies two fresh images against the saved scenery before extending
+the map. Matching uses Windows tracking features built from the saved images.
 
 ## Label examples and dataset export from the CLI
 

@@ -56,7 +56,10 @@ public sealed record LiveWorldTrackerUpdate(
 public sealed record LiveWorldRecoveryPlacement(
     AtlasPoint CameraPose,
     AtlasPoint Correction,
-    IReadOnlyList<int> ConfirmationReferenceKeyframeIds);
+    IReadOnlyList<int> ConfirmationReferenceKeyframeIds)
+{
+    public int RoomId { get; init; }
+}
 
 public sealed record LiveWorldRecoveryUpdate(
     LiveWorldRecoveryPlacement? ConfirmedPlacement,
@@ -112,6 +115,7 @@ public sealed class LiveWorldTracker
     private sealed record PendingRecovery(
         int Epoch,
         int ReferenceKeyframeId,
+        int RoomId,
         AtlasPoint Correction,
         int MissedFrames);
 
@@ -122,6 +126,7 @@ public sealed class LiveWorldTracker
     private readonly GlobalFeatureMatcher matcher = new();
     private readonly Guid visitId = Guid.NewGuid();
     private readonly Dictionary<int, CachedReference> references = [];
+    private readonly Dictionary<int, CachedReference?> restoredRecoveryReferences = [];
     private readonly Dictionary<int, double> cumulativeTravel = [];
     private readonly HashSet<int> closedReferenceKeyframeIds = [];
     private readonly HashSet<int> currentVisitObservationIds = [];
@@ -134,14 +139,21 @@ public sealed class LiveWorldTracker
     public LiveWorldTracker()
         : this(new LiveWorldSnapshot()) { }
 
-    public LiveWorldTracker(LiveWorldSnapshot snapshot)
+    public LiveWorldTracker(LiveWorldSnapshot snapshot) : this(snapshot, loadSavedFrame: null) { }
+
+    internal LiveWorldTracker(LiveWorldSnapshot snapshot, Func<int, BgraFrame>? loadSavedFrame)
     {
         Snapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
         Snapshot.Validate();
         RestoreRuntimeState();
+        if (snapshot.UsesSwiftWireFormat && loadSavedFrame is not null)
+            RestoreRecoveryReferences(loadSavedFrame);
     }
 
     public LiveWorldSnapshot Snapshot { get; private set; }
+
+    public bool HasRecoveryReference(int roomId) =>
+        RecoveryReferences().Any(reference => reference.RoomId == roomId);
 
     public void BeginVisit()
     {
@@ -172,7 +184,7 @@ public sealed class LiveWorldTracker
         AtlasPoint proposedCameraPose,
         double solveWidth,
         IReadOnlyList<StencilRect>? exclusions = null,
-        int roomId = 0)
+        int? roomId = 0)
     {
         ArgumentNullException.ThrowIfNull(frame);
         var excluded = exclusions?.ToArray() ?? [];
@@ -183,20 +195,20 @@ public sealed class LiveWorldTracker
         {
             throw Error(LiveWorldTrackerError.InvalidScan, "Live-world recovery scan is invalid.");
         }
-        if (references.Count == 0)
+        if (roomId < 0)
+            throw Error(LiveWorldTrackerError.InvalidScan, "Live-world recovery room is invalid.");
+
+        var eligible = RecoveryReferences()
+            .Where(reference => roomId is null || reference.RoomId == roomId)
+            .OrderBy(reference => reference.KeyframeId)
+            .ToArray();
+        if (eligible.Length == 0)
         {
             pendingRecovery = null;
-            return RecoveryUpdate(
-                null,
-                null,
-                [LiveWorldTrackerRejection.NoEligibleReference]);
-        }
-        if (roomId < 0)
-        {
-            throw Error(LiveWorldTrackerError.InvalidScan, "Live-world recovery room is invalid.");
+            return RecoveryUpdate(null, null, [LiveWorldTrackerRejection.NoEligibleReference]);
         }
 
-        var candidate = RecoveryMatch(frame, solveWidth, excluded, roomId);
+        var candidate = RecoveryMatch(frame, solveWidth, excluded, eligible, searchAcrossRooms: roomId is null);
         if (candidate is null)
         {
             if (pendingRecovery is { } pending
@@ -227,10 +239,7 @@ public sealed class LiveWorldTracker
             || confirmation.Epoch != recoveryEpoch)
         {
             pendingRecovery = new PendingRecovery(
-                recoveryEpoch,
-                reference.KeyframeId,
-                correction,
-                0);
+                recoveryEpoch, reference.KeyframeId, reference.RoomId, correction, 0);
             return RecoveryUpdate(
                 reference,
                 null,
@@ -243,13 +252,10 @@ public sealed class LiveWorldTracker
             reference.KeyframeId,
             correction,
             consistency);
-        if (confirmationReferenceIds is null)
+        if (confirmationReferenceIds is null || confirmation.RoomId != reference.RoomId)
         {
             pendingRecovery = new PendingRecovery(
-                recoveryEpoch,
-                reference.KeyframeId,
-                correction,
-                0);
+                recoveryEpoch, reference.KeyframeId, reference.RoomId, correction, 0);
             return RecoveryUpdate(
                 reference,
                 null,
@@ -262,7 +268,7 @@ public sealed class LiveWorldTracker
             new LiveWorldRecoveryPlacement(
                 match.ProposedCameraPose,
                 correction,
-                confirmationReferenceIds),
+                confirmationReferenceIds) { RoomId = reference.RoomId },
             []);
     }
 
@@ -785,21 +791,22 @@ public sealed class LiveWorldTracker
             new LiveWorldTrackerReview(points, lines, rejections.ToArray()));
     }
 
+    private IEnumerable<CachedReference> RecoveryReferences() =>
+        restoredRecoveryReferences.Values.OfType<CachedReference>().Concat(
+            references.Values.Where(value => !restoredRecoveryReferences.ContainsKey(value.KeyframeId)));
+
     private (CachedReference Reference, GlobalFeatureMatch Match)? RecoveryMatch(
         BgraFrame frame,
         double solveWidth,
         IReadOnlyList<StencilRect> exclusions,
-        int roomId)
+        IReadOnlyList<CachedReference> eligible,
+        bool searchAcrossRooms)
     {
-        var eligible = references.Values
-            .Where(value => value.RoomId == roomId)
-            .OrderBy(value => value.KeyframeId)
-            .ToArray();
-        var match = matcher.Match(
-            frame,
-            eligible.Select(value => value.Reference).ToArray(),
-            currentSolveWidth: solveWidth,
-            excluding: exclusions);
+        var features = eligible.Select(value => value.Reference).ToArray();
+        var match = searchAcrossRooms
+            ? matcher.MatchAcrossRooms(frame, features, solveWidth, exclusions,
+                eligible.ToDictionary(value => value.Reference.Id, value => value.RoomId))
+            : matcher.Match(frame, features, currentSolveWidth: solveWidth, excluding: exclusions);
         var reference = match is null
             ? null
             : eligible.FirstOrDefault(value => value.Reference.Id == match.ReferenceId);
@@ -857,6 +864,27 @@ public sealed class LiveWorldTracker
         }
         lastObservationId = null;
         RefreshReferences();
+    }
+
+    private void RestoreRecoveryReferences(Func<int, BgraFrame> loadSavedFrame)
+    {
+        var observations = Snapshot.Observations.ToDictionary(value => value.Id);
+        foreach (var keyframe in Snapshot.Keyframes)
+        {
+            var observation = observations[keyframe.ObservationId];
+            var frame = loadSavedFrame(observation.SourceObservationId);
+            if (frame.Width != observation.SourceWidth || frame.Height != observation.SourceHeight)
+                throw Error(LiveWorldTrackerError.InvalidSnapshot, "Saved keyframe dimensions have changed.", observation.Id);
+
+            // Swift descriptors use Core Graphics sampling. Derive Windows features
+            // for recovery only, so the original landmark IDs and closures stay intact.
+            var masks = observation.ExcludedRects.Select(rectangle =>
+                new StencilRect(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height)).ToArray();
+            var reference = matcher.MakeReference(
+                ReferenceId(keyframe.Id), frame, observation.OptimizedPose, observation.SolveWidth, excluding: masks);
+            restoredRecoveryReferences[keyframe.Id] = reference is null ? null
+                : new CachedReference(keyframe.Id, observation.Id, observation.RoomId, reference);
+        }
     }
 
     private void RefreshReferences()

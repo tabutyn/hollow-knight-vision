@@ -140,6 +140,111 @@ internal static class NativeAtlasImportTests
         });
     }
 
+    internal static void TestImportedAtlasRequiresTwoMatchesInTheSameRoom()
+    {
+        WithRecoveryFixture(identicalRooms: false, (root, before) =>
+        {
+            var pipeline = new WindowsLiveWorldPipeline(root);
+            Check(pipeline.HasImportedAtlas, "Normal gameplay can recognize a restored Swift world");
+            var unknown = pipeline.Process(ResumeFrame(1, 901));
+            Check(unknown.State == WindowsLiveWorldPipelineState.PendingRecovery && !unknown.AllowsAtlasWrite,
+                "unrelated scenery leaves the restored map pending");
+            var first = pipeline.Process(ResumeFrame(2, 71));
+            var switched = pipeline.Process(ResumeFrame(3, 191));
+            Check(first.ConfirmedRecoveryPose is null && switched.ConfirmedRecoveryPose is null,
+                "two matches in different Atlas rooms cannot confirm a scene");
+            var confirmed = pipeline.Process(ResumeFrame(4, 191));
+            Check(confirmed.ConfirmedRecoveryPose == new AtlasPoint(100, 20) && !confirmed.AllowsAtlasWrite,
+                "a verified second frame places the camera without writing recovery evidence");
+            var afterRecovery = new LiveWorldSessionStore(root).Load().Snapshot;
+            Check(afterRecovery.MapRevision == before.MapRevision && afterRecovery.Observations.Count == 2
+                && afterRecovery.Landmarks.Count == 0, "regenerated descriptors stay outside the graph");
+
+            var next = pipeline.Process(ResumeFrame(5, 191, localX: 84));
+            var persisted = new LiveWorldSessionStore(root).Load().Snapshot;
+            Check(next.State == WindowsLiveWorldPipelineState.Committed
+                && persisted.Observations[^1].RoomId == TargetRoom
+                && persisted.Observations[^1].OptimizedPose == new AtlasPoint(104, 20),
+                "the next frame continues inside the matched room in Atlas coordinates");
+
+            pipeline.NotifyTrackingLoss(1);
+            Check(pipeline.Process(ResumeFrame(6, 191)).ConfirmedRecoveryPose is null
+                && pipeline.Process(ResumeFrame(7, 191)).ConfirmedRecoveryPose == new AtlasPoint(100, 20),
+                "local loss uses the recovered room's regenerated reference");
+        });
+    }
+
+    internal static void TestImportedAtlasRejectsIdenticalSceneryAcrossRooms()
+    {
+        WithRecoveryFixture(identicalRooms: true, (root, before) =>
+        {
+            var pipeline = new WindowsLiveWorldPipeline(root);
+            var first = pipeline.Process(ResumeFrame(1, 71));
+            var second = pipeline.Process(ResumeFrame(2, 71));
+            Check(first.ConfirmedRecoveryPose is null && second.ConfirmedRecoveryPose is null
+                && second.Diagnostic.Contains("MatcherRejected", StringComparison.Ordinal),
+                "the same image and camera pose in two rooms cannot identify an imported room");
+            Check(new LiveWorldSessionStore(root).Load().Snapshot.MapRevision == before.MapRevision
+                && new SceneSessionStore(root).Manifest.Observations.Count == 2,
+                "ambiguous frames cannot overwrite tiles or append evidence");
+        });
+    }
+
+    private static void WithRecoveryFixture(bool identicalRooms, Action<string, LiveWorldSnapshot> body)
+    {
+        var directory = Directory.CreateTempSubdirectory("hkv-import-recovery-");
+        try
+        {
+            var root = directory.FullName;
+            WriteEmptySwiftManifest(root);
+            var store = new LiveWorldSessionStore(root);
+            var pose = new AtlasPoint(100, 20);
+            var observations = new List<LiveWorldObservation>();
+            var keyframes = new List<LiveWorldKeyframe>();
+            foreach (var (room, seed) in new[] { (SourceRoom, 71), (TargetRoom, identicalRooms ? 71 : 191) })
+            {
+                var frame = RecoveryTexture(seed, room);
+                var timestamp = SwiftDateSeconds + room;
+                var saved = store.Append(frame, timestamp, pose, 320);
+                observations.Add(LiveWorldObservation.Create(saved.Id, saved.Id, timestamp,
+                    frame.Width, frame.Height, 320, 160, [], pose, pose, roomId: room));
+                keyframes.Add(new LiveWorldKeyframe(saved.Id, saved.Id, saved.Id));
+            }
+            var graph = new LiveWorldSnapshot(schemaVersion: 3, mapRevision: 1, anchoredObservationId: 0,
+                observations: observations, keyframes: keyframes);
+            Check(store.Commit(graph, 0, 1), "publish Swift recovery fixture");
+            body(root, graph);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    private static WindowsLiveWorldFrame ResumeFrame(long id, int seed, double localX = 80)
+    {
+        var frame = RecoveryTexture(seed, id);
+        return new WindowsLiveWorldFrame(frame, frame, id * .3, id * .3, new(localX, 0), 320,
+            [], [], 1, "Tutorial_After_Load", 1, 256);
+    }
+
+    private static BgraFrame RecoveryTexture(int seed, long id)
+    {
+        const int width = 320, height = 180;
+        var pixels = new byte[width * height * BgraFrame.BytesPerPixel];
+        var state = unchecked((uint)seed);
+        for (var i = 0; i < pixels.Length; i += BgraFrame.BytesPerPixel)
+        {
+            state = unchecked(state * 1_664_525u + 1_013_904_223u);
+            var value = (byte)(state >> 24);
+            pixels[i] = value;
+            pixels[i + 1] = value;
+            pixels[i + 2] = value;
+            pixels[i + 3] = byte.MaxValue;
+        }
+        return new BgraFrame(width, height, width * BgraFrame.BytesPerPixel, pixels, id, DateTimeOffset.UnixEpoch);
+    }
+
     private static void Reject(JsonNode payload, LiveWorldModelError expected)
     {
         try
@@ -161,11 +266,7 @@ internal static class NativeAtlasImportTests
             // The fixture uses Swift's wire names and arrays independently of the Windows snapshot writer.
             var root = Path.Combine(temporary.FullName, "world");
             Directory.CreateDirectory(root);
-            File.WriteAllText(Path.Combine(root, "manifest.json"),
-                """
-                {"schemaVersion":1,"sessionID":"C14FB382-EF87-4797-8624-FBEE1DD4B0DA",
-                 "observations":[],"nextObservationID":0}
-                """);
+            WriteEmptySwiftManifest(root);
             var store = new LiveWorldSessionStore(root);
             Check(store.Load().Snapshot.UsesSwiftWireFormat, "empty Swift manifest");
             var rows = Enumerable.Range(0, 6).Select(id =>
@@ -248,6 +349,13 @@ internal static class NativeAtlasImportTests
             temporary.Delete(recursive: true);
         }
     }
+
+    private static void WriteEmptySwiftManifest(string root) =>
+        File.WriteAllText(Path.Combine(root, "manifest.json"),
+            """
+            {"schemaVersion":1,"sessionID":"C14FB382-EF87-4797-8624-FBEE1DD4B0DA",
+             "observations":[],"nextObservationID":0}
+            """);
 
     private static BgraFrame Frame()
     {
