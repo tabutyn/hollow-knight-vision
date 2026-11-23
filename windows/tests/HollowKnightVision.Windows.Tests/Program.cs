@@ -39,8 +39,15 @@ if (args is ["--export-hacker-gym-probe", var gymRoot])
     return;
 }
 
+if (args is ["--train-bot-probe", var installedVision])
+{
+    await BotTrainingTests.TrainFromWindowsCaptures(installedVision);
+    return;
+}
+
 var tests = new List<(string Name, Action Run)>
 {
+    ("bot training admits separate published clips in the selected domain", BotTrainingTests.TestTrainingPlanSeparatesDomains),
     ("labeling campaign batches and honest validation history", LabelingCampaignTests.TestBatchesAndValidationHistory),
     ("labeling campaign counts distinct positive captures", LabelingCampaignTests.TestCaptureCountsAndTrainingSnapshot),
     ("warmed CUDA search reuses large host staging arrays", GroundComputeProcessingTests.TestCudaHostStagingAllocation),

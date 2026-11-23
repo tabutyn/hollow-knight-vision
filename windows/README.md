@@ -697,6 +697,15 @@ Pass `-BaseCheckpoint C:\path\to\Detector.pt` for an incremental run. The
 wrapper forces `--device cpu` and hides CUDA devices. The WPF Model workspace
 drives the same validator and trainer.
 
+### Train a bot from captures
+
+Record separate runs with **K**, then open **Bot**, choose **Game Play** or
+**Hacker**, and press **Train**. Vision sets up the CPU bot environment when
+needed. It keeps one or more complete clips for validation and verifies the
+export through the installed native policy host before selecting the newest
+checkpoint. A routine update uses at least two new clips so the active policy
+can be compared on recordings it has never trained on.
+
 ### Live Gym PPO from an installed build
 
 Run the launcher against a modded Hollow Knight executable and a verified bot

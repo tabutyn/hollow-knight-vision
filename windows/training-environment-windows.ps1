@@ -1,3 +1,11 @@
+function Wait-HkvTrainingStartSignal {
+  if (-not $env:HKV_TRAINER_START_SIGNAL) { return }
+  $signal = [Threading.EventWaitHandle]::OpenExisting($env:HKV_TRAINER_START_SIGNAL)
+  try {
+    if (-not $signal.WaitOne(30000)) { throw 'Vision did not release the training start gate.' }
+  } finally { $signal.Dispose() }
+}
+
 function Get-HkvTrainingEnvironment {
   param([Parameter(Mandatory = $true)][string]$WindowsRoot)
 

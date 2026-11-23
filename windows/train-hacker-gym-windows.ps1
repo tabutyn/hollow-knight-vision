@@ -15,5 +15,5 @@ if (-not (Test-Path -LiteralPath $trainer -PathType Leaf)) {
 }
 $vision = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\HollowKnightVision.Windows.Host.exe'
 if (-not (Test-Path -LiteralPath $vision -PathType Leaf)) { throw 'Install the current Windows build of Hollow Knight Vision.' }
-& $Python -B $trainer --game $Game @args
+& $Python -X utf8 -B $trainer --game $Game @args
 exit $LASTEXITCODE

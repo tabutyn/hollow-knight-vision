@@ -31,7 +31,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-    <Content Include="../../setup-bot-trainer-windows.ps1;../../train-hacker-gym-windows.ps1">
+    <Content Include="../../setup-bot-trainer-windows.ps1;../../train-hacker-gym-windows.ps1;../../train-bot-windows.ps1">
       <Link>training/%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

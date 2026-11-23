@@ -1056,10 +1056,12 @@ public partial class MainWindow : Window
 
     private async Task PrepareShutdownAsync()
     {
-        if (!StopTrainingForShutdown(out var trainingShutdownError) && factoryResetRequested)
+        var botTrainingShutdownError = await StopBotTrainingForShutdownAsync();
+        if ((!StopTrainingForShutdown(out var trainingShutdownError) || botTrainingShutdownError is not null) && factoryResetRequested)
         {
             factoryResetRequested = false;
-            MessageBox.Show("Factory reset was not performed because training could not finish shutting down. " + trainingShutdownError,
+            MessageBox.Show("Factory reset was not performed because training could not finish shutting down. "
+                + (trainingShutdownError ?? botTrainingShutdownError),
                 "Factory reset cancelled", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         // Capture owns every live-world and atlas mutation. Cancel it before

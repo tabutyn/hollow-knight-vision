@@ -522,7 +522,7 @@ def examples(manifest, observations, inputs, action_delay=0.0, *, compact=False,
         rows.append({"observation": stacked, "action": action, "timestamp": time,
                      "continuedAttack": bool(action[3] and not boundary and
                          timeline.continued_attack(previous[1] + action_delay + 0.1, action_start, action_start + 0.1)),
-                     "segment": segment, "session": manifest["id"]})
+                     "segment": segment, "session": manifest["id"].upper()})
         previous = (identity, time)
     credit_blue_health_outcomes(rows, blue_outcomes)
     exploration_weights(rows, atlas_views, path_progress, path_alignment)
