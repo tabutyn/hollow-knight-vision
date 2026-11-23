@@ -110,6 +110,96 @@ internal static class AtlasPlatformGraphTests
             "The saved King's Pass descent should be able to drift back over the lower wall cap.");
     }
 
+    internal static void TestFallUsesFirstLandingAndRespectsWallsAtTheLip()
+    {
+        AtlasPathPlatform[] floors = [new(0, 100, 0), new(10, 80, 100), new(25, 75, 200)];
+        var blocked = new AtlasPlatformGraph(floors, [new(21, 110, 200, 1)], height: 20, width: 10);
+        Require(Reachable(blocked, new(75, 220), new(80, 120))
+            && !blocked.Strokes.Any(stroke => stroke.Kind == Drop && stroke.Contains(new(25, 220))),
+            "The exposed lip should reach the first landing and the obstructed lip should remain closed.");
+
+        Require(LeftFall(new(25, 30, 200, 1)) && LeftFall(new(21, 30, 190, 1))
+            && !LeftFall(new(21, 30, 200, 1)) && !LeftFall(new(22, 200, 220, 1)),
+            "A tangent ledge and a lower face can be passed, while a face at the lip or in the exit blocks the fall.");
+
+        bool LeftFall(AtlasPathWall wall) => new AtlasPlatformGraph([floors[0], floors[2]], [wall], height: 20, width: 10)
+            .Strokes.Any(stroke => stroke.Kind == Drop && stroke.Contains(new(25, 220)));
+    }
+
+    internal static void TestNavigationKeepsAOneWayDescentAndSteersDuringTheFall()
+    {
+        var graph = new AtlasPlatformGraph([new(0, 100, 0), new(25, 75, 200)], [], height: 20, width: 10);
+        var navigator = new AtlasPathNavigator();
+        var above = navigator.Follow(graph, new(50, 200), true, true, null, []);
+        Require(above is { Objective.Y: 20 }, "An automatic route can select a lower reachable platform.");
+        Require(navigator.Follow(graph, new(80, 100), false, true, null, [],
+            fixedObjective: new(80, 160), fixedObjectiveOnGround: false) is null,
+            "An objective partway up the same drop must not reverse it.");
+        Require(navigator.Follow(graph, new(80, 100), false, true, null, [],
+            fixedObjective: new(80, 60), fixedObjectiveOnGround: false) is { Next.Y: < 120 },
+            "A lower objective on the same drop must remain available.");
+        Require(navigator.Follow(graph, new(80, 0), true, true, null, [],
+            fixedObjective: new(50, 220)) is null, "The landing cannot route back up the drop.");
+
+        var offset = new AtlasPlatformGraph([new(0, 30, 200), new(65, 90, 0)], [], height: 20, width: 10);
+        var steer = new AtlasPathNavigator();
+        var target = new AtlasPathPoint(80, 20);
+        steer.Follow(offset, new(30, 200), true, true, null, [], fixedObjective: target);
+        var falling = steer.Follow(offset, new(35, 175), false, true, null, [], fixedObjective: target);
+        Require(falling is { FallSteering: 1 }, "Guidance should steer toward the offset landing during the actual descent.");
+    }
+
+    internal static void TestHackerRouteKeepsJumpAcrossFramesAndRejectsAnOldCrossing()
+    {
+        var graph = new AtlasPlatformGraph([new(0, 100, 0), new(112, 225, 25)], [], height: 20, width: 10,
+            connections: [new(new(95, 0), new(117, 25), true)]);
+        var target = new AtlasPathPoint(205, 45);
+        var route = new HackerAtlasRoute();
+        var takeoff = route.Observe(graph, new(94, 0), true, target, 1);
+        Require(takeoff.FirstOrDefault() == new AtlasPathPoint(94, 20) && takeoff.LastOrDefault() == target,
+            "The authored goal should resolve through the entire jump before takeoff.");
+
+        var highFeet = new AtlasPathPoint(106, 110);
+        Require(graph.NearestStroke(highFeet with { Y = highFeet.Y + graph.KnightHeight },
+            2 * graph.KnightHeight) is null, "The high jump fixture must defeat frame-local route picking.");
+        var airborne = route.Observe(graph, highFeet, false, target, 1.1);
+        Require(airborne.Count >= 3 && airborne.FirstOrDefault() == new AtlasPathPoint(106, 50)
+            && airborne.LastOrDefault() == target, "The route should remain visible from the planned crossing in the air.");
+        var landed = route.Observe(graph, new(142, 25), true, target, 1.2);
+        Require(landed.FirstOrDefault() == new AtlasPathPoint(142, 45) && landed.LastOrDefault() == target,
+            "After landing, the route should advance onto the destination platform.");
+
+        route.Observe(graph, new(94, 0), true, target, 1.3);
+        Require(route.Observe(graph, highFeet, false, target, 1.9).Count == 0,
+            "A stale crossing cannot survive a capture interruption.");
+        route.Observe(graph, new(94, 0), true, target, 2);
+        Require(route.Observe(graph, highFeet, false, new(190, 45), 2.1).Count == 0,
+            "Changing objectives in midair should discard the old crossing.");
+        route.Observe(graph, new(94, 0), true, target, 2.2);
+        Require(route.Observe(graph, highFeet, false, target, double.NaN).Count == 0
+            && route.Observe(graph, highFeet, false, target, 2.3).Count == 0,
+            "An invalid reading must not leave a cached crossing available.");
+    }
+
+    internal static void TestAutomaticGuidanceCrossesShelfAfterAnEarlyTakeoff()
+    {
+        var graph = new AtlasPlatformGraph([new(0, 100, 0), new(112, 225, 25)], [], height: 20, width: 10);
+        var navigator = new AtlasPathNavigator();
+        Require(Follow(15, 0, true) is { Objective: { X: 225, Y: 45 }, Next.X: > 15 },
+            "The initial route should aim through the shelf toward the upper landing.");
+        Require(Follow(98, 0, true) is { Current.Y: 20, Next.Y: > 20 },
+            "Taking off just beyond the drawn shelf departure should still advise a jump.");
+        var flight = Follow(106, 58, false);
+        Require(flight is { Objective: { X: 225, Y: 45 } } && flight.Value.Next.X > flight.Value.Current.X,
+            "The arrow should move along the shelf as the Knight passes above it.");
+        Require(Follow(124, 25, true) is { Current.Y: 45, Next.X: > 124 },
+            "On landing, the arrow must advance along the newly reached platform.");
+        Require(Follow(225, 25, true)?.Objective != new AtlasPathPoint(225, 45),
+            "The automatic objective should finish once that destination is visited.");
+
+        AtlasPathHint? Follow(int x, int y, bool grounded) => navigator.Follow(graph, new(x, y), grounded, true, null, []);
+    }
+
     internal static void TestDoorsSpikesAndManualConnectionsConstrainTravel()
     {
         AtlasPathPlatform[] floors = [new(0, 100, 0), new(25, 75, 200)];

@@ -1172,7 +1172,20 @@ internal static class Program
             "A shared drop shaft should have one downward arrow.");
         Check(bounds is { Right: >= 367 } && lines.All(line => !line.IsHitTestVisible),
             "Fit should include authored paths outside the capture while leaving the pointer available.");
-        Console.WriteLine("PASS Hacker displays the full objective route and one arrow on a shared fall");
+
+        var graph = new AtlasPlatformGraph([new(0, 100, 0), new(112, 225, 25)], [], height: 20, width: 10,
+            connections: [new(new(95, 0), new(117, 25), true)]);
+        var goal = new AtlasPathPoint(205, 45);
+        var tracker = new HackerAtlasRoute();
+        tracker.Observe(graph, new(94, 0), true, goal, 1);
+        var airborne = tracker.Observe(graph, new(106, 110), false, goal, 1.1);
+        canvas.Children.Clear();
+        AtlasPathPresentation.Draw(canvas, graph.Strokes, 10, new(7, 130), goal, airborne);
+        var flight = canvas.Children.OfType<Line>().Where(line => line.Stroke == Brushes.White).ToArray();
+        Check(flight.Any(line => line.X1 == 113 && line.Y1 == 80 && line.X2 == 124 && line.Y2 == 80)
+            && flight.Any(line => line.X1 == 124 && line.Y1 == 85 && line.X2 == 212 && line.Y2 == 85),
+            "The white route should follow the active jump and continue to the target beyond the image.");
+        Console.WriteLine("PASS Hacker draws the objective through a jump and one arrow on a shared fall");
     }
 
     private static void TestGameplayPathsFollowTheImageAndRespectMenuContext()

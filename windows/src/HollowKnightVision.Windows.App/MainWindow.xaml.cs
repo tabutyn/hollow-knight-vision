@@ -5988,6 +5988,7 @@ public partial class MainWindow : Window
         hackerAtlasMinimumTileX = hackerAtlasMinimumTileY = null;
         hackerLiveFrame = null;
         hackerPathPreview = null;
+        hackerPathRoute.Interrupt();
         hackerPreviewActive = false;
         HackerLiveImage.Source = null;
         HackerLiveImage.Visibility = Visibility.Collapsed;
@@ -6159,7 +6160,7 @@ public partial class MainWindow : Window
 
         var restoresPreview = hackerPreviewActive;
         ActivateLiveHackerRegistry();
-        hackerPathPreview = publication;
+        SetHackerPathPreview(publication);
         hackerLivePrepared = publication.Prepared;
         hackerLiveFrame = publication.Prepared.LiveImage;
         HackerLiveImage.Source = publication.LiveBitmap;

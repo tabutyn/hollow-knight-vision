@@ -70,6 +70,44 @@ internal static class GameplayPathTests
             "A verified open crossing should retire the standing wall portion.");
     }
 
+    internal static void TestWalkedCrossingRemovesFalseWallButPreservesNextGap()
+    {
+        var tracker = new GameplayPathTracker();
+        var first = Floor(275, 485, 93);
+        var next = Floor(540, 600, 93);
+        var wall = new DetectedWall(460, Height - 125, Height - 83, true);
+        var observed = new GameplayPathFrame("room", .1, Width, Height, default(AtlasPoint),
+            [first, next], [Line(330, 445, 106)], new([wall], []), new(330, Height - 93),
+            new(322, Height - 128, 17, 35), null);
+        for (var i = 1; i <= 4; i++) tracker.Observe(observed with { Time = i * .1 });
+        var divided = tracker.Observe(observed with { Time = .56 });
+        Require(divided?.Graph?.Strokes.Any(stroke => stroke.Kind == Jump && stroke.Horizontal
+            && stroke.A.X < 460 && stroke.B.X > 460) == true,
+            "The corroborated short wall should initially make a jump across that column.");
+
+        var walked = Floor(275, 485, 93, walked: true);
+        var crossing = observed with { Time = .75, Ground = [next, walked] };
+        CheckRoad(tracker.Observe(crossing));
+        CheckRoad(new GameplayPathTracker().Observe(crossing with { VisibleFloors = [], Terrain = TerrainWallDetection.Empty }));
+        CheckRoad(tracker.Observe(crossing with
+        {
+            Time = .95, VerifiedCamera = new(490, 0), VisibleFloors = [], Terrain = TerrainWallDetection.Empty
+        }));
+
+        var corrected = tracker.Observe(observed with { Time = 1.15, Ground = [first, next, Floor(275, 400, 93, walked: true)] });
+        Require(corrected?.Graph?.Floors.Any(floor => floor.Y == 93 && floor.Left < 460 && floor.Right > 460) == false,
+            "A corrected placement that ends before the wall must revive the real obstruction.");
+
+        static void CheckRoad(GameplayPathView? view)
+        {
+            Require(view?.Graph?.Floors.SequenceEqual([new(275, 485, 93), new(540, 600, 93)]) == true,
+                "A verified crossing should leave two floors with the real gap between them.");
+            var jumps = view!.Graph!.Strokes.Where(stroke => stroke.Kind == Jump && stroke.Horizontal).ToArray();
+            Require(jumps.Length == 1 && jumps[0].A.X < 485 && jumps[0].B.X > 540,
+                "Only the real gap should retain a jump connection.");
+        }
+    }
+
     internal static void TestFrameLocalPathsAndOtherRoomsDoNotPolluteRegisteredTerrain()
     {
         var tracker = new GameplayPathTracker();
@@ -128,6 +166,25 @@ internal static class GameplayPathTests
         tracker.Observe(top with { Time = .42, VerifiedCamera = new(0, 650), KnightFoot = null });
         var registered = tracker.Observe(top with { Time = .56 });
         Require(registered?.Hint is { Objective.Y: 20 }, "Once the whole descent is observed the lower landing should be reachable.");
+    }
+
+    internal static void TestRegisteredLandingsCanUseSchematicJumpHeadroom()
+    {
+        var start = new GameplayPathFrame("room", 1, Width, Height, new(0, -297),
+            [Floor(0, 100, 15), Floor(112, 225, 40)], [], TerrainWallDetection.Empty,
+            new(15, 48), new(10, 28, 10, 20), null);
+        var route = new GameplayPathTracker().Observe(start);
+        Require(route?.Strokes.Any(stroke => stroke.Kind == Jump && stroke.Horizontal && stroke.A.Y == 65) == true
+            && route.Hint is { Objective: { X: 225, Y: 60 } },
+            "The drawn shelf may sit above the covered viewport when both actual landings are registered.");
+
+        var unvisited = start with
+        {
+            Ground = [Floor(0, 100, 30), Floor(112, 225, 55)],
+            KnightFoot = new(15, 33), KnightSize = new(10, 13, 10, 20)
+        };
+        Require(new GameplayPathTracker().Observe(unvisited)?.Hint is { Objective: { X: 100, Y: 50 } },
+            "The headroom allowance must not permit an unregistered landing.");
     }
 
     internal static void TestSavedFloorKeepsAContinuousWorldPathAcrossReloadAndCorrection()
