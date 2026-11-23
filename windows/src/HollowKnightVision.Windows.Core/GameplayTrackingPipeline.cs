@@ -142,16 +142,20 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         }
         var groundAdjusted = ground.GlobalCorrection is { } correction
             && correction.X * correction.X + correction.Y * correction.Y > 9;
+        var measuredGround = observation.GroundVerified && GroundMotionEvidence.IsMeasured(ground);
         if (groundAdjusted)
         {
+            var sourceEpoch = walkedCoordinateEpoch;
             if (resetWorldCoordinatesForCorrection) ResetWalkedCoordinateEpoch();
             else walked.BreakContinuity();
             patches.Reset();
-            Paths.Reset();
+            if (resetWorldCoordinatesForCorrection && measuredGround)
+                Paths.RecoverMeasuredBasis(room, generation, sourceEpoch, walkedCoordinateEpoch, timestamp, ground);
+            else
+                Paths.Reset();
         }
         var selectedScene = observation.FloorlessEvidence is { SelectedSource: FloorlessPoseCandidateSource.CalibratedScene } evidence
             ? evidence.Scene : null;
-        var measuredGround = observation.GroundVerified && GroundMotionEvidence.IsMeasured(ground);
         var canContinueAtlasPose = admission.AdmitsTracking && visualRoom.AllowsAtlasWrite
             && measuredAtlasPose.Observe(generation, room, timestamp, localCamera,
                 measuredGround, selectedScene,
