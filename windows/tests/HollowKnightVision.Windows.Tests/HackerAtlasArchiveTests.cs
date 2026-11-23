@@ -133,6 +133,50 @@ internal static class HackerAtlasArchiveTests
             "A fresh Gameplay Atlas must not destroy the previous Hacker data.");
     }
 
+    public static void TestNamedStatesPreserveCurrentAndOriginalPlaythroughs()
+    {
+        using var workspace = new Fixture();
+        var originalOwner = new SaveProfileAtlas(1, Guid.NewGuid());
+        var currentOwner = new SaveProfileAtlas(2, Guid.NewGuid());
+        var original = new HackerAtlasPipeline();
+        var current = new HackerAtlasPipeline();
+        _ = Integrate(original, "Tutorial_01", 30, 1);
+        _ = Integrate(current, "Town", -40, 1);
+        var offsets = new Dictionary<string, AtlasPoint>();
+        var originalArchive = original.CaptureArchive(offsets).Archive;
+        var currentArchive = current.CaptureArchive(offsets).Archive;
+        workspace.Archives.Write(originalOwner, originalArchive);
+        workspace.Archives.Write(currentOwner, currentArchive);
+        var snapshot = workspace.Archives.SaveState("  Before Dirtmouth  ", originalOwner, originalArchive);
+        Check(workspace.Archives.ListStates().Single().Id == snapshot.Id && snapshot.Profile == originalOwner
+            && snapshot.Name == "Before Dirtmouth", "The named library must preserve the snapshot's owner and name.");
+        Check(workspace.Archives.NamedBytes(snapshot) > 0 && workspace.Archives.ActiveBytes(currentOwner) > 0
+            && workspace.Archives.ActiveBytes(new SaveProfileAtlas(3, Guid.NewGuid())) == 0,
+            "The named and active archive sizes must describe their own files.");
+
+        var loaded = workspace.Archives.LoadState(snapshot);
+        var backup = workspace.Archives.Replace(currentOwner, currentArchive, loaded, "Before load");
+        Check(backup is not null && backup.Profile == currentOwner
+            && workspace.Archives.LoadState(backup).Rooms.Single().SceneName == "Town",
+            "Load must keep the current autosave as a named restore point.");
+        Check(Read(workspace.Archives, currentOwner).Rooms.Single().SceneName == "Tutorial_01"
+            && Read(workspace.Archives, originalOwner).Rooms.Single().Id == loaded.Rooms.Single().Id,
+            "The selected snapshot is copied to the current playthrough.");
+        Check(workspace.Archives.LoadState(snapshot).Rooms.Single().Id == loaded.Rooms.Single().Id,
+            "Loading must preserve the immutable snapshot.");
+
+        var empty = new HackerAtlasPipeline().CaptureArchive(offsets).Archive;
+        var beforeNew = workspace.Archives.Replace(currentOwner, loaded, empty, "Before New");
+        Check(Read(workspace.Archives, currentOwner).Rooms.Count == 0 && beforeNew is not null
+            && workspace.Archives.LoadState(beforeNew).Rooms.Count == 1,
+            "New must preserve the previous active raster and start with empty data.");
+        workspace.Archives.DeleteState(snapshot);
+        Check(!workspace.Archives.ListStates().Any(state => state.Id == snapshot.Id)
+            && workspace.Archives.ListStates().Any(state => state.Id == beforeNew!.Id), "Delete must remove only the selected named snapshot.");
+        Check(Read(workspace.Archives, originalOwner).Rooms.Count == 1 && Read(workspace.Archives, currentOwner).Rooms.Count == 0,
+            "A named delete must preserve both active archives.");
+    }
+
     private static HackerAtlasArchive Read(HackerAtlasArchiveStore store, SaveProfileAtlas profile) =>
         store.Read(profile) ?? throw new InvalidOperationException("The profile's archive is missing.");
 

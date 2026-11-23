@@ -98,6 +98,16 @@ internal static class VisionResetController
         return new(profile, replacement);
     }
 
+    internal static ActiveAtlasReplacement<ValidatedPersistedAtlas> LoadNamedAtlasForCurrentProfile(
+        AtlasStateStore states, AtlasSavedState state, string active, Action<string>? activateWorld = null) =>
+        ReplaceActiveAtlas(states, state, active, ReadPersistedAtlas,
+            copyDirectory: (source, staging) =>
+            {
+                CopyDirectoryDurably(source, staging);
+                SaveProfileAtlas.PreserveOwner(active, staging);
+            },
+            activateWorld: activateWorld);
+
     internal static void WritePersistedAtlasMetadata(string directory, PersistedAtlasMetadata metadata)
     {
         var encoded = JsonSerializer.SerializeToUtf8Bytes(metadata, new JsonSerializerOptions { WriteIndented = true });

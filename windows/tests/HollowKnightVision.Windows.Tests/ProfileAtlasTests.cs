@@ -123,6 +123,33 @@ internal static class ProfileAtlasTests
             "A mismatched archive must leave the active Atlas unchanged.");
     }
 
+    public static void TestNamedGameplayLoadPreservesCurrentOwner()
+    {
+        using var workspace = new Fixture();
+        var older = workspace.Switch(new(1, true)).Profile;
+        var tile = new AtlasTileCoordinate(1, -3);
+        workspace.AddTile(tile, 107);
+        var saved = workspace.States.Save("Earlier map",
+            destination => VisionResetController.CopyValidatedAtlas(workspace.Active, destination));
+        var current = workspace.Switch(new(2, true)).Profile;
+
+        var loaded = VisionResetController.LoadNamedAtlasForCurrentProfile(workspace.States, saved, workspace.Active);
+        Check(workspace.ReadTile(tile) == 107 && SaveProfileAtlas.Read(workspace.Active) == current,
+            "Loading a named snapshot must restore its tiles within the current playthrough.");
+        Check(SaveProfileAtlas.Read(workspace.States.WorldPath(saved)) == older && saved.Profile == older,
+            "Loading must preserve the source snapshot's ownership.");
+        Check(loaded.ArchivedPreviousAtlasDirectory is { } backup && SaveProfileAtlas.Read(backup) == current,
+            "The departing autosave must keep its owner.");
+
+        using var legacy = new Fixture();
+        var legacySource = legacy.States.Save("Earlier map",
+            destination => VisionResetController.CopyValidatedAtlas(workspace.States.WorldPath(saved), destination));
+        _ = VisionResetController.LoadNamedAtlasForCurrentProfile(legacy.States, legacySource, legacy.Active);
+        Check(SaveProfileAtlas.Read(legacy.Active) is null
+            && VisionResetController.ReadPersistedAtlas(legacy.Active).Mosaic.Snapshot().Count == 1,
+            "Loading from an unassigned autosave must keep it unassigned until profile selection is confirmed.");
+    }
+
     private static MenuStencilResult Card(double time, int slot, int[] checkedSlots, int[] occupiedSlots)
     {
         MenuStencilMatch[] pair = [new("selector", "Selector", new(10, 20, 8, 8), 1, null), new("selector", "Selector", new(50, 20, 8, 8), 1, null)];

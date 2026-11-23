@@ -966,6 +966,14 @@ internal static class Program
             && (string?)estimated.Attribute("Unchecked") == "EstimatedRoomConnections_Changed",
             "Estimated connections need a default-off debug toggle.");
 
+        var atlas = tabs[0].Descendants(ns + "StackPanel")
+            .Single(item => (string?)item.Attribute(x + "Name") == "AtlasManager");
+        Check(atlas.Descendants(ns + "Button").Select(item => (string?)item.Attribute("Click"))
+                .SequenceEqual(["AtlasSaveState_Click", "AtlasNew_Click", "AtlasDeleteState_Click", "AtlasLoadState_Click"]),
+            "Gameplay and Hacker must share one set of Atlas controls.");
+        Check(!tabs[0].Descendants(ns + "Button").Any(item => (string?)item.Attribute("Click") == "HackerDeleteAtlas_Click"),
+            "A separate Hacker delete control would shadow the shared Atlas manager.");
+
         // The standalone test loads the production template without window-bound event handlers.
         var markup = new System.Xml.Linq.XElement(root);
         var events = new HashSet<string>(StringComparer.Ordinal)

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Windows;
 using HollowKnightVision.Windows.Core;
 
 namespace HollowKnightVision.Windows.App;
@@ -10,6 +11,7 @@ public partial class MainWindow
     private readonly HackerAtlasArchiveStore hackerArchiveStore;
     private SaveProfileAtlas? hackerArchiveProfile;
     private bool hackerArchiveReady;
+    private bool hackerArchiveOwnerKnown;
     private Task? hackerArchiveWrite;
     private ulong hackerSavedRasterRevision;
     private long hackerLayoutRevision;
@@ -26,11 +28,12 @@ public partial class MainWindow
 
     private async Task InitializeHackerArchiveAsync()
     {
-        if (gameMode != GameRuntimeMode.Modded || activeAtlasPersistenceBlocked) return;
+        if (gameMode != GameRuntimeMode.Modded) return;
         try
         {
             var profile = await Task.Run(() => SaveProfileAtlas.Read(activeAtlasDirectory));
             hackerArchiveProfile = profile;
+            hackerArchiveOwnerKnown = true;
             var loaded = await Task.Run(() =>
             {
                 var archive = hackerArchiveStore.Read(profile);
@@ -113,6 +116,7 @@ public partial class MainWindow
             latestStagedHackerAtlas = loaded.Publication;
         }
         hackerArchiveProfile = loaded.Profile;
+        hackerArchiveOwnerKnown = true;
         hackerArchiveReady = true;
         hackerSavedRasterRevision = loaded.Pipeline.Revision;
         hackerSavedLayoutRevision = hackerLayoutRevision;
@@ -123,18 +127,42 @@ public partial class MainWindow
         RenderHackerAtlasLayout();
     }
 
-    private async Task ClearHackerAtlasAsync()
+    private Task ClearHackerAtlasAsync() => ReplaceHackerArchiveAsync(state: null, keepPrevious: false);
+
+    private async Task ReplaceHackerArchiveAsync(AtlasSavedState? state, bool keepPrevious)
     {
+        if (!hackerArchiveOwnerKnown)
+            throw new InvalidOperationException("The current Hacker Atlas profile could not be identified.");
         if (hackerArchiveWrite is { IsCompleted: false } pending) await pending;
-        var empty = CreateHackerArchivePresentation(hackerArchiveProfile, null);
-        var canWrite = hackerArchiveReady || gameMode == GameRuntimeMode.Modded && !activeAtlasPersistenceBlocked;
-        if (canWrite)
+        var profile = hackerArchiveProfile;
+        var previous = keepPrevious && hackerArchiveReady
+            ? hackerAtlasPipeline.CaptureArchive(CaptureHackerRoomOffsets()).Archive : null;
+        var prepared = await Task.Run(() =>
         {
-            var state = empty.Pipeline.CaptureArchive(empty.Offsets).Archive;
-            await Task.Run(() => hackerArchiveStore.Write(empty.Profile, state));
-        }
-        InstallHackerArchive(empty);
-        hackerArchiveReady = canWrite;
-        PersistHackerEdits();
+            var next = state is null ? null : hackerArchiveStore.LoadState(state);
+            var presentation = CreateHackerArchivePresentation(profile, next);
+            var newArchive = next ?? presentation.Pipeline.CaptureArchive(presentation.Offsets).Archive;
+            var backupName = keepPrevious
+                ? profile?.Name ?? $"Before {(state is null ? "reset" : "load")} {DateTime.Now:g}" : null;
+            var backup = hackerArchiveStore.Replace(profile, previous, newArchive, backupName);
+            return (Presentation: presentation, Backup: backup);
+        });
+        InstallHackerArchive(prepared.Presentation);
+        if (state is not null) SettingsOverlay.Visibility = Visibility.Collapsed;
+        var status = state is null ? "Active Hacker Atlas cleared." : $"Loaded {state.Name}.";
+        if (prepared.Backup is { } saved) status += $" Previous Auto Save is available as {saved.Name}.";
+        SetStatus(status);
+    }
+
+    private async Task SaveHackerAtlasStateAsync(string name)
+    {
+        if (!hackerArchiveReady)
+            throw new InvalidOperationException("The current Hacker Atlas is unavailable.");
+        await FlushHackerAtlasAsync();
+        var profile = hackerArchiveProfile;
+        var archive = hackerAtlasPipeline.CaptureArchive(CaptureHackerRoomOffsets()).Archive;
+        var saved = await Task.Run(() => hackerArchiveStore.SaveState(name, profile, archive));
+        AtlasStateNameText.Clear();
+        SetStatus($"Saved immutable atlas state {saved.Name}.");
     }
 }

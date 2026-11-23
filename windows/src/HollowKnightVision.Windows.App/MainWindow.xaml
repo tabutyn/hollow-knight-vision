@@ -483,7 +483,7 @@
                         <TabItem x:Name="SettingsAtlasTab" Header="Atlas">
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
                                 <StackPanel Margin="20,0,20,20">
-                                    <StackPanel x:Name="GameplayAtlasManager">
+                                    <StackPanel x:Name="AtlasManager">
                                         <DockPanel><Button DockPanel.Dock="Right" Content="Save State" Click="AtlasSaveState_Click"/><TextBox x:Name="AtlasStateNameText"/></DockPanel>
                                         <ListBox x:Name="AtlasStatesList" Height="180" Margin="0,12"
                                                  Background="#17181A" Foreground="#ECECEC" BorderBrush="#55585E" Padding="4"
@@ -525,10 +525,6 @@
                                             </ListBox.ItemTemplate>
                                         </ListBox>
                                         <DockPanel><Button Content="New" Click="AtlasNew_Click"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="AtlasDeleteStateButton" Content="Delete" Click="AtlasDeleteState_Click" IsEnabled="False"/><Button x:Name="AtlasLoadStateButton" Content="Load" Click="AtlasLoadState_Click" IsEnabled="False"/></StackPanel></DockPanel>
-                                    </StackPanel>
-                                    <StackPanel x:Name="HackerAtlasManager" Visibility="Collapsed" Margin="0,20,0,0">
-                                        <Button Content="Delete Hacker Atlas" HorizontalAlignment="Left"
-                                                Foreground="#FF6868" Click="HackerDeleteAtlas_Click"/>
                                     </StackPanel>
                                 </StackPanel>
                             </ScrollViewer>

@@ -42,6 +42,12 @@ public sealed record SaveProfileAtlas(int Slot, Guid Id)
         }
     }
 
+    public static void PreserveOwner(string currentWorld, string stagedWorld)
+    {
+        if (Read(currentWorld) is { } owner) owner.Write(stagedWorld);
+        else File.Delete(Path.Combine(stagedWorld, Filename));
+    }
+
     public static SaveProfileAtlas Target(ProfileLaunch launch, SaveProfileAtlas? active, IReadOnlyList<AtlasSavedState> saved)
     {
         if (!launch.IsNew && active?.Slot == launch.Slot) return active;

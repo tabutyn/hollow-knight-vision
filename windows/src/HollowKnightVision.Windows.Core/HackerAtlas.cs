@@ -769,6 +769,11 @@ public sealed class HackerAtlasPipeline
 
     public ulong Revision { get { lock (gate) return revision; } }
 
+    public (long RegistrationCount, DateTimeOffset CreatedAt) SaveSummary
+    {
+        get { lock (gate) return (registrationCount, createdAt); }
+    }
+
     public (HackerAtlasArchive Archive, ulong Revision) CaptureArchive(IReadOnlyDictionary<string, AtlasPoint> offsets)
     {
         lock (gate)

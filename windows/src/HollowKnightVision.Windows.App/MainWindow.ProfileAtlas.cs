@@ -24,7 +24,7 @@ public partial class MainWindow
             if (modded) await FlushHackerAtlasAsync();
             var previousProfile = hackerArchiveProfile;
             var hackerWasReady = hackerArchiveReady;
-            var previousHacker = modded && hackerWasReady && previousProfile is null
+            var previousHacker = modded && hackerWasReady
                 ? hackerAtlasPipeline.CaptureArchive(CaptureHackerRoomOffsets()).Archive
                 : null;
             LoadedHackerArchive? switchedHacker = null;
@@ -66,10 +66,14 @@ public partial class MainWindow
             {
                 if (hackerWasReady && previousProfile == profile) return;
                 var archive = hackerArchiveStore.Read(profile);
-                if (archive is null && adoptUnassigned && previousHacker is not null)
+                if (archive is null && adoptUnassigned && previousProfile is null && previousHacker is not null)
                 {
                     hackerArchiveStore.Write(profile, previousHacker);
                     archive = previousHacker;
+                }
+                else if (previousHacker is not null && (previousProfile is not null || previousHacker.Rooms.Count > 0))
+                {
+                    _ = hackerArchiveStore.SaveState(previousProfile?.Name ?? $"Atlas before {profile.Name}", previousProfile, previousHacker);
                 }
                 switchedHacker = CreateHackerArchivePresentation(profile, archive);
             }

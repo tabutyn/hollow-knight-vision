@@ -1006,7 +1006,7 @@ public partial class MainWindow : Window
         Loaded += async (_, _) =>
         {
             atlasOperationInProgress = true;
-            GameplayAtlasManager.IsEnabled = false;
+            AtlasManager.IsEnabled = false;
             try
             {
                 var initializationTask = InitializeAtlasesAsync();
@@ -1017,7 +1017,7 @@ public partial class MainWindow : Window
             {
                 persistentWorldInitialization = null;
                 atlasOperationInProgress = false;
-                GameplayAtlasManager.IsEnabled = true;
+                AtlasManager.IsEnabled = true;
             }
             if (isClosing) return;
             if (gameMode == GameRuntimeMode.Modded)
@@ -2082,7 +2082,6 @@ public partial class MainWindow : Window
         ReleaseForwardedInput();
         await RefreshAtlasManagerAsync();
         if (CanUseOps()) RefreshOps();
-        HackerAtlasManager.Visibility = workspace == "Hacker" ? Visibility.Visible : Visibility.Collapsed;
         SettingsOverlay.Visibility = SettingsOverlay.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
     }
 
@@ -5799,32 +5798,44 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool ManagesHackerAtlas => workspace == "Hacker";
+
     private async Task RefreshAtlasManagerAsync()
     {
-        var acceptedFrameCount = gameplayAtlas.AcceptedFrameCount;
-        var createdAt = activeAtlasCreatedAt;
+        var isHacker = ManagesHackerAtlas;
+        var hackerProfile = hackerArchiveProfile;
+        var (acceptedFrameCount, createdAt) = isHacker
+            ? hackerAtlasPipeline.SaveSummary : (gameplayAtlas.AcceptedFrameCount, activeAtlasCreatedAt);
         var items = await Task.Run(() =>
         {
-            var collected = new List<AtlasManagerItem>();
-            var age = DateTimeOffset.UtcNow - createdAt;
-            var bytes = Directory.Exists(activeAtlasDirectory)
-                ? AtlasStateStore.FileByteCount(activeAtlasDirectory) : 0;
-            collected.Add(new AtlasManagerItem(
-                null,
-                "Auto Save",
-                $"{acceptedFrameCount} registrations  •  {FormatBytes(bytes)}  •  {FormatAge(age)} old"));
-            foreach (var state in atlasStateStore.List())
+            var profile = hackerProfile;
+            if (!isHacker)
             {
-                var world = atlasStateStore.WorldPath(state);
-                collected.Add(new AtlasManagerItem(
-                    state,
-                    state.Name,
-                    $"{FormatBytes(AtlasStateStore.FileByteCount(world))}  •  "
-                    + $"{FormatAge(DateTimeOffset.UtcNow - state.CreatedAt)} old"));
+                try { profile = SaveProfileAtlas.Read(activeAtlasDirectory); }
+                catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException or JsonException)
+                {
+                    profile = null;
+                }
+            }
+            var age = DateTimeOffset.UtcNow - createdAt;
+            var bytes = isHacker ? hackerArchiveStore.ActiveBytes(profile) :
+                Directory.Exists(activeAtlasDirectory) ? AtlasStateStore.FileByteCount(activeAtlasDirectory) : 0;
+            var title = profile is null ? "Auto Save" : $"{profile.Name} · Auto Save";
+            var collected = new List<AtlasManagerItem>
+            {
+                new(null, title, $"{acceptedFrameCount} registrations  •  {FormatBytes(bytes)}  •  {FormatAge(age)} old", isHacker)
+            };
+            var states = isHacker ? hackerArchiveStore.ListStates() : atlasStateStore.List();
+            foreach (var state in states)
+            {
+                var storedBytes = isHacker ? hackerArchiveStore.NamedBytes(state)
+                    : AtlasStateStore.FileByteCount(atlasStateStore.WorldPath(state));
+                collected.Add(new AtlasManagerItem(state, state.Name,
+                    $"{FormatBytes(storedBytes)}  •  {FormatAge(DateTimeOffset.UtcNow - state.CreatedAt)} old", isHacker));
             }
             return collected;
         });
-        if (isClosing) return;
+        if (isClosing || isHacker != ManagesHackerAtlas) return;
         AtlasStatesList.Items.Clear();
         foreach (var item in items) AtlasStatesList.Items.Add(item);
         AtlasStatesList.SelectedIndex = 0;
@@ -5833,6 +5844,7 @@ public partial class MainWindow : Window
     private void AtlasStatesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         var selected = AtlasStatesList.SelectedItem as AtlasManagerItem;
+        if (selected?.IsHacker != ManagesHackerAtlas) selected = null;
         var saved = selected?.State is not null;
         AtlasDeleteStateButton.IsEnabled = selected is not null;
         AtlasDeleteStateButton.Content = initialization.Text("Delete");
@@ -5843,6 +5855,11 @@ public partial class MainWindow : Window
     private async void AtlasSaveState_Click(object sender, RoutedEventArgs e)
     {
         var name = AtlasStateNameText.Text;
+        if (ManagesHackerAtlas)
+        {
+            await RunAtlasOperationAsync(() => SaveHackerAtlasStateAsync(name), flushGameplayAtlas: false);
+            return;
+        }
         await RunAtlasOperationAsync(async () =>
         {
             var saved = await Task.Run(() => atlasStateStore.Save(
@@ -5855,7 +5872,12 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void AtlasNew_Click(object sender, RoutedEventArgs e) => await ResetActiveAtlasAsync(retainPrevious: true);
+    private async void AtlasNew_Click(object sender, RoutedEventArgs e)
+    {
+        if (ManagesHackerAtlas)
+            await RunAtlasOperationAsync(() => ReplaceHackerArchiveAsync(state: null, keepPrevious: true), flushGameplayAtlas: false);
+        else await ResetActiveAtlasAsync(retainPrevious: true);
+    }
 
     private Task ResetActiveAtlasAsync(bool retainPrevious) =>
         RunAtlasOperationAsync(() => ReplaceActiveAtlasWithEmptyAsync(retainPrevious),
@@ -5938,26 +5960,33 @@ public partial class MainWindow : Window
 
     private async void AtlasDeleteState_Click(object sender, RoutedEventArgs e)
     {
-        if (AtlasStatesList.SelectedItem is not AtlasManagerItem selected) return;
+        if (AtlasStatesList.SelectedItem is not AtlasManagerItem selected || selected.IsHacker != ManagesHackerAtlas) return;
+        var description = selected.State?.Name ?? "the current Auto Save";
+        if (MessageBox.Show(this, $"Delete {description}? Its registered images will be permanently removed.",
+            "Delete Atlas", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
         if (selected.State is not { } state)
         {
-            if (MessageBox.Show(this,
-                    "Delete the current Auto Save atlas?\n\nThis clears its captured world, including old menu images. "
-                    + "Auto Save will start fresh without saving a copy. This cannot be undone. "
-                    + "Stencil labels, training data, saved states, and game saves are kept.",
-                    "Delete Active Atlas", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
-            await ResetActiveAtlasAsync(retainPrevious: false);
+            if (selected.IsHacker)
+                await RunAtlasOperationAsync(ClearHackerAtlasAsync, flushGameplayAtlas: false);
+            else await ResetActiveAtlasAsync(retainPrevious: false);
             return;
         }
-        await RunAtlasOperationAsync(async () =>
+        await RunAtlasOperationAsync(() => Task.Run(() =>
         {
-            await Task.Run(() => atlasStateStore.Delete(state));
-        });
+            if (selected.IsHacker) hackerArchiveStore.DeleteState(state);
+            else atlasStateStore.Delete(state);
+        }), flushGameplayAtlas: !selected.IsHacker);
     }
 
     private async void AtlasLoadState_Click(object sender, RoutedEventArgs e)
     {
-        if (AtlasStatesList.SelectedItem is not AtlasManagerItem { State: { } state }) return;
+        if (AtlasStatesList.SelectedItem is not AtlasManagerItem { State: { } state } selected
+            || selected.IsHacker != ManagesHackerAtlas) return;
+        if (selected.IsHacker)
+        {
+            await RunAtlasOperationAsync(() => ReplaceHackerArchiveAsync(state, keepPrevious: true), flushGameplayAtlas: false);
+            return;
+        }
         await RunAtlasOperationAsync(async () =>
         {
             var loaded = await Task.Run(() =>
@@ -5966,11 +5995,10 @@ public partial class MainWindow : Window
                     VisionResetController.ValidatedPersistedAtlas> replacement;
                 try
                 {
-                    replacement = VisionResetController.ReplaceActiveAtlas(
+                    replacement = VisionResetController.LoadNamedAtlasForCurrentProfile(
                         atlasStateStore,
                         state,
                         activeAtlasDirectory,
-                        VisionResetController.ReadPersistedAtlas,
                         activateWorld: _ =>
                         {
                             liveWorldPipeline ??= new WindowsLiveWorldPipeline(
@@ -6038,7 +6066,8 @@ public partial class MainWindow : Window
         Func<Task> operation,
         bool canReplaceFaultedActive = false,
         bool invalidateLiveWorld = false,
-        bool suspendCapture = true)
+        bool suspendCapture = true,
+        bool flushGameplayAtlas = true)
     {
         if (atlasOperationInProgress || inputPathReplayCancellation is not null || isClosing || gameLostCountdownStarted) return false;
         var resume = suspendCapture && visionCancellation is not null;
@@ -6046,7 +6075,7 @@ public partial class MainWindow : Window
             TaskCreationOptions.RunContinuationsAsynchronously);
         atlasOperationCompletion = completion.Task;
         atlasOperationInProgress = true;
-        GameplayAtlasManager.IsEnabled = false;
+        AtlasManager.IsEnabled = false;
 
         if (suspendCapture) StopVision();
         try
@@ -6058,7 +6087,7 @@ public partial class MainWindow : Window
             if (invalidateLiveWorld) liveWorldPipeline?.InvalidatePendingWork();
             try
             {
-                await FlushActiveAtlasAsync();
+                if (flushGameplayAtlas) await FlushActiveAtlasAsync();
             }
             catch when (canReplaceFaultedActive)
             {
@@ -6079,7 +6108,7 @@ public partial class MainWindow : Window
         finally
         {
             atlasOperationInProgress = false;
-            GameplayAtlasManager.IsEnabled = true;
+            AtlasManager.IsEnabled = true;
             completion.TrySetResult();
             if (ReferenceEquals(atlasOperationCompletion, completion.Task))
                 atlasOperationCompletion = null;
@@ -6141,12 +6170,6 @@ public partial class MainWindow : Window
         GameplayGroundCanvas.Children.Clear();
         ResetGameplayPaths();
         gameplayAtlasMinimumTileX = gameplayAtlasMinimumTileY = null;
-    }
-
-    private async void HackerDeleteAtlas_Click(object sender, RoutedEventArgs e)
-    {
-        SettingsOverlay.Visibility = Visibility.Collapsed;
-        await RunAtlasOperationAsync(ClearHackerAtlasAsync);
     }
 
     private void ClearHackerPresentation()
@@ -6989,7 +7012,8 @@ public partial class MainWindow : Window
     private sealed record AtlasManagerItem(
         AtlasSavedState? State,
         string Name,
-        string Detail)
+        string Detail,
+        bool IsHacker)
     {
         public override string ToString() => $"{Name}\n{Detail}";
     }

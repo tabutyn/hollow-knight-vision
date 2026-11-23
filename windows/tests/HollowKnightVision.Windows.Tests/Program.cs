@@ -822,6 +822,8 @@ var tests = new List<(string Name, Action Run)>
     ("Hacker Atlas restores rooms, doorways and raster and continues compositing", HackerAtlasArchiveTests.TestRestoresPlaythroughAndContinuesCompositing),
     ("Hacker Atlas archive rejects damaged tiles and preserves prior generation", HackerAtlasArchiveTests.TestArchiveWriteAndReadFailurePreserveLastGoodVersion),
     ("Hacker Atlas profile preflight preserves both previous writers on failure", HackerAtlasArchiveTests.TestProfilePreflightKeepsBothWritersOnFailure),
+    ("Hacker named Atlas Save, Load, New and Delete preserve playthroughs", HackerAtlasArchiveTests.TestNamedStatesPreserveCurrentAndOriginalPlaythroughs),
+    ("Gameplay named Atlas load keeps the active save profile", ProfileAtlasTests.TestNamedGameplayLoadPreservesCurrentOwner),
     ("atlas replacement validates staging before active mutation", ActiveAtlasReplacementTests.TestValidatesStagingBeforeReplacingActive),
     ("atlas replacement returns the previous active archive", ActiveAtlasReplacementTests.TestSuccessfulSwapReturnsPreviousArchive),
     ("atlas pipeline load restores saved snapshot without mutating state", ActiveAtlasReplacementTests.TestPipelineLoadRestoresSavedSnapshotAndLeavesStateImmutable),

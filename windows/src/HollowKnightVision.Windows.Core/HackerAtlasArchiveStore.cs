@@ -48,17 +48,42 @@ public sealed class HackerAtlasArchiveStore(string root)
         StencilRect ContentBounds,
         AtlasTileCoordinate[] Tiles);
 
+    private readonly AtlasStateStore namedStates = new(Path.Combine(root, "states"));
+    private const string NamedArchiveFilename = "hacker.zip";
+
+    public IReadOnlyList<AtlasSavedState> ListStates() => namedStates.List();
+    public long NamedBytes(AtlasSavedState state) => AtlasStateStore.FileByteCount(namedStates.WorldPath(state));
+    public long ActiveBytes(SaveProfileAtlas? profile) =>
+        new FileInfo(ArchivePath(profile)) is { Exists: true } file ? file.Length : 0;
+
+    public AtlasSavedState SaveState(string name, SaveProfileAtlas? profile, HackerAtlasArchive archive) =>
+        namedStates.Save(name, world =>
+        {
+            Directory.CreateDirectory(world);
+            WriteArchive(Path.Combine(world, NamedArchiveFilename), profile, archive);
+            profile?.Write(world);
+        });
+
+    public HackerAtlasArchive LoadState(AtlasSavedState state)
+    {
+        var world = namedStates.WorldPath(state);
+        if (SaveProfileAtlas.Read(world) != state.Profile)
+            throw new InvalidDataException("The archived Hacker Atlas belongs to a different playthrough.");
+        return ReadArchive(Path.Combine(world, NamedArchiveFilename), state.Profile);
+    }
+
+    public void DeleteState(AtlasSavedState state) => namedStates.Delete(state);
+
     public HackerAtlasArchive? Read(SaveProfileAtlas? profile)
     {
-        FileStream stream;
-        try
-        {
-            stream = File.OpenRead(ArchivePath(profile));
-        }
+        try { return ReadArchive(ArchivePath(profile), profile); }
         catch (FileNotFoundException) { return null; }
         catch (DirectoryNotFoundException) { return null; }
+    }
 
-        using (stream)
+    private static HackerAtlasArchive ReadArchive(string path, SaveProfileAtlas? profile)
+    {
+        using var stream = File.OpenRead(path);
         using (var zip = new ZipArchive(stream, ZipArchiveMode.Read))
         {
             var entries = zip.Entries.ToLookup(entry => entry.FullName, StringComparer.Ordinal);
@@ -93,9 +118,20 @@ public sealed class HackerAtlasArchiveStore(string root)
         }
     }
 
-    public void Write(SaveProfileAtlas? profile, HackerAtlasArchive archive)
+    public void Write(SaveProfileAtlas? profile, HackerAtlasArchive archive) =>
+        WriteArchive(ArchivePath(profile), profile, archive);
+
+    public AtlasSavedState? Replace(SaveProfileAtlas? profile, HackerAtlasArchive? previous,
+        HackerAtlasArchive next, string? backupName)
     {
-        var destination = ArchivePath(profile);
+        var backup = previous is not null && backupName is not null && (profile is not null || previous.Rooms.Count > 0)
+            ? SaveState(backupName, profile, previous) : null;
+        Write(profile, next);
+        return backup;
+    }
+
+    private static void WriteArchive(string destination, SaveProfileAtlas? profile, HackerAtlasArchive archive)
+    {
         var manifest = new Manifest(Version, profile,
             archive.Rooms.Select(room => new Room(room.Id, room.SceneName, room.Position, room.CameraAnchor,
                 room.TerrainProjection, room.ContentBounds, room.Tiles.Select(tile => tile.Coordinate).ToArray())).ToArray(),
@@ -103,7 +139,7 @@ public sealed class HackerAtlasArchiveStore(string root)
             new Dictionary<string, AtlasPoint>(archive.RoomOffsets, StringComparer.Ordinal),
             archive.RegistrationCount, archive.CreatedAt);
         Validate(manifest, profile);
-        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         var staging = destination + $".{Guid.NewGuid():N}.tmp";
         try
         {
