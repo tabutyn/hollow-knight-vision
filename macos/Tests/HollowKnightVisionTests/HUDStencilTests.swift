@@ -2,6 +2,7 @@ import CoreGraphics
 import CoreImage
 import Foundation
 import ImageIO
+import ScreenCaptureKit
 import XCTest
 @testable import HollowKnightVision
 
@@ -249,6 +250,116 @@ final class HUDStencilTests: XCTestCase {
         XCTAssertEqual(counts(two), fixture.health)
         XCTAssertEqual(two.geo.width, one.geo.width * 2, accuracy: 0.01)
         XCTAssertEqual(two.geo.minY, one.geo.minY * 2, accuracy: 0.01)
+    }
+
+    func testReacquiresHealthAfterChangingDisplayDuringCapture() throws {
+        let fixture = try XCTUnwrap(fixtures().first { $0.health == [9, 0, 0] })
+        let reference = try frame(fixture)
+        let template = try HUDStencilTestReference.load()
+        let tracker = HUDStencilTracker(template: template)
+        let ci = CIContext()
+        // Each source contains a 640px-wide game. On a 4:3 projector the
+        // game centers its 640x400 viewport inside a 640x480 window.
+        // Independently, the stream can leave padding outside that window.
+        let layouts: [(height: Int, fit: CGFloat)] = [(360, 1), (402, 1), (480, 1), (480, 0.75), (360, 1)]
+        for (step, layout) in layouts.enumerated() {
+            let (height, fit) = layout
+            let windowTop = 12
+            let windowLeft = 8
+            let bufferHeight = 504
+            let viewportTop = max(0, (height - 400) / 2)
+            let game = CIImage(cgImage: reference)
+                .transformed(by: CGAffineTransform(scaleX: fit, y: fit))
+                .transformed(by: CGAffineTransform(translationX: CGFloat(windowLeft),
+                    y: CGFloat(bufferHeight - windowTop) - CGFloat(viewportTop + 360) * fit))
+            var optionalBuffer: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(nil, 656, bufferHeight, kCVPixelFormatType_32BGRA,
+                [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &optionalBuffer), kCVReturnSuccess)
+            let buffer = try XCTUnwrap(optionalBuffer)
+            ci.render(game.composited(over: CIImage(color: .black)), to: buffer,
+                      bounds: CGRect(x: 0, y: 0, width: 656, height: bufferHeight),
+                      colorSpace: CGColorSpaceCreateDeviceRGB())
+            let scale: CGFloat = step.isMultiple(of: 2) ? 2 : 1
+            let rect = CGRect(x: CGFloat(windowLeft) / scale, y: CGFloat(windowTop) / scale,
+                              width: 640 * fit / scale, height: CGFloat(height) * fit / scale)
+            let converted = try XCTUnwrap(CaptureFrameConverter.convert(buffer, info: [
+                .contentRect: rect.dictionaryRepresentation, .scaleFactor: NSNumber(value: Double(scale))
+            ], context: ci))
+            XCTAssertEqual(converted.image.width, 640)
+            XCTAssertEqual(converted.image.height, 360)
+            let hud = try XCTUnwrap(tracker.observe(converted.image, gameplay: true,
+                                                    timestamp: Double(step), generation: 1))
+            if fit == 1 { XCTAssertEqual(counts(hud), [9, 0, 0], "Window height \(height)") }
+            XCTAssertTrue(hud.establishesGameplay)
+            XCTAssertNil(LiveGameStatusResolver.resolve([], hudStencil: hud))
+        }
+    }
+
+    func testUltrawideWindowReacquiresInsetHealthRowAndRestoresOriginalLayout() throws {
+        let template = try HUDStencilTestReference.load()
+        let reference = try frame(XCTUnwrap(fixtures().first { $0.health == [9, 0, 0] }))
+        let tracker = HUDStencilTracker(template: template)
+        let original = try XCTUnwrap(tracker.observe(reference, gameplay: true, timestamp: 0, generation: 1))
+        // In the 2688×1152 window test, chrome occupied 17 of the 360
+        // presentation pixels. The game is bottom aligned and centered.
+        let scale: CGFloat = 343.0 / 360
+        let left = 640 * (1 - scale) / 2
+        let c = try context()
+        c.interpolationQuality = .high
+        c.draw(reference, in: CGRect(x: left, y: 0, width: 640 * scale, height: 360 * scale))
+        let wide = try XCTUnwrap(c.makeImage())
+        for time in [1.0, 1.05] {
+            let recovered = try XCTUnwrap(tracker.observe(wide, gameplay: true, timestamp: time, generation: 1))
+            XCTAssertEqual(recovered.health.map(\.index), Array(0..<9))
+            XCTAssertEqual(counts(recovered), [9, 0, 0])
+            for (match, expected) in zip(recovered.health, original.health) {
+                XCTAssertEqual(match.rect.midX, left + expected.rect.midX * scale, accuracy: 2)
+                XCTAssertEqual(match.rect.midY, expected.rect.midY * scale, accuracy: 2)
+            }
+            XCTAssertNil(LiveGameStatusResolver.resolve([], hudStencil: recovered))
+        }
+        let restored = try XCTUnwrap(tracker.observe(reference, gameplay: true, timestamp: 2, generation: 1))
+        XCTAssertEqual(restored.health, original.health)
+
+        // A player can also save their two labels while the game is ultrawide.
+        // Returning to 16:9 must still start at mask zero, even though mask one
+        // now falls near the original first label.
+        let pixels = try XCTUnwrap(ImageStencilPixels(wide, referenceWidth: 640, referenceHeight: 360, band: 0..<80))
+        let atoms = try original.health.prefix(2).map { match -> HUDStencilTemplate.Atom in
+            let box = CGRect(x: left + match.rect.minX * scale, y: 360 - match.rect.maxY * scale,
+                             width: match.rect.width * scale, height: match.rect.height * scale).integral
+            return .init(kind: "full", rect: [box.minX, box.minY, box.width, box.height],
+                         rgb: try XCTUnwrap(pixels.reference(in: box)).rgb)
+        }
+        let wideTemplate = HUDStencilTemplate(schemaVersion: 1, sourceExampleID: "windowed-calibration",
+            referenceWidth: 640, referenceHeight: 360, healthPitch: atoms[1].bounds.midX - atoms[0].bounds.midX,
+            health: atoms, manaMain: [], manaContainer: [0, 0, 0, 0], manaReserves: [], geo: [0, 0, 0, 0])
+        let wideTracker = HUDStencilTracker(template: wideTemplate)
+        let normal = try XCTUnwrap(wideTracker.observe(reference, gameplay: true, timestamp: 1, generation: 1))
+        XCTAssertEqual(normal.health.map(\.index), Array(0..<9))
+        XCTAssertEqual(try XCTUnwrap(normal.health.first).rect.midX,
+                       try XCTUnwrap(original.health.first).rect.midX, accuracy: 2)
+        let tall = try context()
+        tall.draw(reference, in: CGRect(x: 0, y: 21, width: 640, height: 360))
+        let fromWideToTall = try XCTUnwrap(wideTracker.observe(try XCTUnwrap(tall.makeImage()),
+                                                               gameplay: true, timestamp: 2, generation: 1))
+        XCTAssertEqual(fromWideToTall.health.map(\.index), Array(0..<9))
+    }
+
+    func testSingleDisplacedIconCannotEstablishNewRow() throws {
+        let fixture = try XCTUnwrap(fixtures().first { $0.health == [9, 0, 0] })
+        let reference = try frame(fixture)
+        let template = try HUDStencilTestReference.load()
+        let firstMask = template.health[0].bounds
+        let icon = try XCTUnwrap(reference.cropping(to: firstMask))
+        let c = try context()
+        c.draw(icon, in: CGRect(x: firstMask.minX, y: 360 - firstMask.maxY - 20,
+                                width: firstMask.width, height: firstMask.height))
+        let tracker = HUDStencilTracker(template: template)
+        let result = try XCTUnwrap(tracker.observe(try XCTUnwrap(c.makeImage()), gameplay: true,
+                                                   timestamp: 1, generation: 1))
+        XCTAssertTrue(result.health.isEmpty)
+        XCTAssertFalse(result.establishesGameplay)
     }
 
     func testGameplayGateAndGenerationResetNeverReuseOldStencil() throws {

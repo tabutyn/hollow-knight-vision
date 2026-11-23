@@ -45,7 +45,7 @@ struct HUDStencilTemplate: Decodable {
             referenceWidth: 640, referenceHeight: 360, healthPitch: boxes[1].midX - boxes[0].midX,
             health: atoms, manaMain: [], manaContainer: [0, 0, 0, 0], manaReserves: [], geo: [0, 0, 0, 0])
         guard atoms.count == 2 && result.isValid,
-              HUDStencilTracker(template: result).observe(image, gameplay: true, timestamp: 0, generation: 0)?.establishesGameplay == true
+              HUDStencilTracker(template: result).observe(image, gameplay: true, timestamp: 0, generation: 0, allowRowRecovery: false)?.establishesGameplay == true
         else { return nil }
         return result
     }
@@ -111,6 +111,8 @@ struct HUDStencilResult: Equatable {
 /// All matching uses the original capture, before ground intensity correction.
 /// The bounded top-left HUD search never consults gameplay/player-state telemetry.
 final class HUDStencilTracker {
+    private static let localRowRadius = 4
+    private static let maximumRowOffset = 32
     private let template: HUDStencilTemplate?
     private let healthKernels: [HUDStencilKernel]
     private let manaMainKernels: [HUDStencilKernel]
@@ -118,6 +120,9 @@ final class HUDStencilTracker {
     private var generation: UInt64?
     private var previousHealthMasks = [CGRect]()
     private var previousManaMasks = [CGRect]()
+    private var confirmedViewportScale: CGFloat = 1
+    private var confirmedRowOffsetY: CGFloat = 0
+    private var lastRowSearch: Double = -.infinity
     private var lastHealthSeen: Double = -.infinity
     private var lastManaSeen: Double = -.infinity
 
@@ -177,26 +182,31 @@ final class HUDStencilTracker {
     func reset() {
         generation = nil
         previousHealthMasks = []
+        confirmedViewportScale = 1
+        confirmedRowOffsetY = 0
+        lastRowSearch = -.infinity
         previousManaMasks = []
         lastHealthSeen = -.infinity
         lastManaSeen = -.infinity
     }
 
     func observe(_ image: CGImage, gameplay: Bool, timestamp: Double,
-                 generation: UInt64) -> HUDStencilResult? {
+                 generation: UInt64, allowRowRecovery: Bool = true) -> HUDStencilResult? {
         guard gameplay, let template, template.isValid else { reset(); return nil }
         if self.generation != generation { reset(); self.generation = generation }
-        guard let pixels = ImageStencilPixels(
+        guard let band = ImageStencilPixels(
             image,
             referenceWidth: template.referenceWidth,
             referenceHeight: template.referenceHeight,
             band: 0..<min(template.referenceHeight, 80)
         ) else { return nil }
+        var pixels = HUDPixels(band: band, referenceHeight: CGFloat(template.referenceHeight),
+                               scale: confirmedViewportScale)
         let scaleX = CGFloat(image.width) / CGFloat(template.referenceWidth)
         let scaleY = CGFloat(image.height) / CGFloat(template.referenceHeight)
         let extent = CGRect(x: 0, y: 0, width: image.width, height: image.height)
         func outputRect(_ rect: CGRect, margin: CGFloat = 0) -> CGRect {
-            let expanded = rect.insetBy(dx: -margin, dy: -margin)
+            let expanded = pixels.frameRect(rect.insetBy(dx: -margin, dy: -margin))
             return CGRect(x: expanded.minX * scaleX,
                           y: CGFloat(image.height) - expanded.maxY * scaleY,
                           width: expanded.width * scaleX, height: expanded.height * scaleY)
@@ -205,45 +215,43 @@ final class HUDStencilTracker {
         func rect(_ values: [Double]) -> CGRect {
             CGRect(x: values[0], y: values[1], width: values[2], height: values[3])
         }
-        let firstCenter = template.health[0].bounds.midX
-        var offset = CGPoint.zero
-        var health = [HUDStencilMatch]()
-        var healthMasks = [CGRect]()
-        var misses = 0
-        // Empty masks are not part of a two-filled-mask capture. Keep the
-        // fixed lattice through gaps to find the blue masks after them. A gap
-        // is never counted as a recognized health icon.
-        for index in 0..<32 {
-            let center = firstCenter + CGFloat(index) * template.healthPitch + offset.x
-            guard center < CGFloat(template.referenceWidth) - 8 else { break }
-            let found = bestHealth(in: pixels, center: center, offsetY: offset.y,
-                                   radius: index == 0 ? 7 : 2, verticalRadius: index == 0 ? 4 : 1)
-            guard let found, found.score >= threshold(for: found.atom.kind) else {
-                misses += 1
-                if health.isEmpty || misses > (health.count < 2 ? 9 : 1) { break }
-                continue
+        let localLimit = CGFloat(Self.maximumRowOffset - Self.localRowRadius)
+        let localCenter = min(localLimit, max(-localLimit, confirmedRowOffsetY))
+        var row = matchHealthRow(in: pixels, template: template, offsetY: localCenter,
+                                 verticalRadius: Self.localRowRadius, outputRect: outputRect)
+        if allowRowRecovery, row.health.count < 2, timestamp - lastRowSearch >= 0.25 {
+            lastRowSearch = timestamp
+            // A title bar inside a wide capture scales the game about the
+            // bottom center of the presentation. Fit both axes and icon pitch
+            // together. The inverse layouts also handle a windowed reference.
+            for scale: CGFloat in [1, 0.95, 1 / 0.95, 0.90, 1 / 0.90] {
+                pixels.scale = scale
+                // Returning from a windowed reference to a tall display can
+                // also remove rows from the top of the presentation.
+                let radius = scale >= 1 ? Self.maximumRowOffset : Self.localRowRadius * 2
+                let candidate = matchHealthRow(in: pixels, template: template, offsetY: 0,
+                                               verticalRadius: radius, outputRect: outputRect)
+                guard candidate.health.count >= 2 else { continue }
+                // After a resize the second mask can land where the first
+                // used to be. Reject that alignment before caching the row.
+                let precedingCenter = template.health[0].bounds.midX + candidate.offset.x - template.healthPitch
+                if let preceding = bestHealth(in: pixels, center: precedingCenter, offsetY: candidate.offset.y,
+                                              radius: 2, verticalRadius: 1),
+                   preceding.score >= threshold(for: preceding.atom.kind) { continue }
+                row = candidate
+                if confirmedViewportScale != scale {
+                    previousHealthMasks = []
+                    previousManaMasks = []
+                }
+                confirmedViewportScale = scale
+                break
             }
-            misses = 0
-            if health.isEmpty {
-                offset = CGPoint(x: found.rect.midX - firstCenter,
-                                 y: found.rect.minY - found.atom.bounds.minY)
-            }
-            let previousIndex = health.last?.index
-            health.append(HUDStencilMatch(index: index, kind: found.atom.kind,
-                rect: outputRect(found.rect), confidence: found.score))
-            // The gap contains the connector between masks. Cover the whole
-            // lattice cell plus glow, rather than just the bright icon core.
-            let cellCenter = index == 0 ? found.rect.midX : center
-            let cell = CGRect(x: cellCenter - template.healthPitch / 2,
-                              y: found.rect.minY - 1,
-                              width: template.healthPitch, height: found.rect.height + 2)
-            // Include unclassified cells only in the exclusion mask, never in
-            // the health count, once a later icon confirms their lattice.
-            if let previous = healthMasks.last, let previousIndex, index - previousIndex > 1 {
-                let last = outputRect(cell, margin: 2)
-                healthMasks.append(previous.union(last))
-            } else { healthMasks.append(outputRect(cell, margin: 2)) }
+            pixels.scale = confirmedViewportScale
         }
+        let health = row.health
+        var healthMasks = row.masks
+        let offset = row.offset
+        if health.count >= 2 { confirmedRowOffsetY = offset.y }
         let holdingHealth = healthMasks.count < previousHealthMasks.count
             && timestamp >= lastHealthSeen && timestamp - lastHealthSeen <= 0.5
         if holdingHealth { healthMasks = previousHealthMasks }
@@ -313,6 +321,79 @@ final class HUDStencilTracker {
             holdsHealthMask: holdingHealth, sourceTimestamp: timestamp)
     }
 
+    private func matchHealthRow(in pixels: HUDPixels, template: HUDStencilTemplate,
+                                offsetY: CGFloat, verticalRadius: Int,
+                                outputRect: (CGRect, CGFloat) -> CGRect)
+        -> (health: [HUDStencilMatch], masks: [CGRect], offset: CGPoint) {
+        let firstCenter = template.health[0].bounds.midX
+        var offset = CGPoint.zero
+        var pitch = template.healthPitch
+        var health = [HUDStencilMatch]()
+        var healthMasks = [CGRect]()
+        var misses = 0
+        // Empty masks are not part of a two-filled-mask capture. Keep the
+        // fixed lattice through gaps to find the blue masks after them. A gap
+        // is never counted as a recognized health icon.
+        for index in 0..<32 {
+            let center = firstCenter + CGFloat(index) * pitch + offset.x
+            guard center < CGFloat(template.referenceWidth) - 8 else { break }
+            let found = bestHealth(in: pixels, center: center, offsetY: index == 0 ? offsetY : offset.y,
+                                   radius: index == 0 ? 7 : 2, verticalRadius: index == 0 ? verticalRadius : 1)
+            guard let found, found.score >= threshold(for: found.atom.kind) else {
+                misses += 1
+                if health.isEmpty || misses > (health.count < 2 ? 9 : 1) { break }
+                continue
+            }
+            misses = 0
+            if health.isEmpty {
+                offset = CGPoint(x: found.rect.midX - firstCenter,
+                                 y: found.rect.minY - found.atom.bounds.minY)
+            } else if pixels.scale != 1 {
+                // A pair labeled on integer pixels can round its spacing by
+                // one pixel. Average over the verified slots to avoid
+                // accumulating that error toward the far end of a long row.
+                let observedPitch = (found.rect.midX - firstCenter - offset.x) / CGFloat(index)
+                pitch = min(template.healthPitch + 1, max(template.healthPitch - 1, observedPitch))
+            }
+            let previousIndex = health.last?.index
+            health.append(HUDStencilMatch(index: index, kind: found.atom.kind,
+                rect: outputRect(found.rect, 0), confidence: found.score))
+            // The gap contains the connector between masks. Cover the whole
+            // lattice cell plus glow, rather than just the bright icon core.
+            let cellCenter = index == 0 ? found.rect.midX : center
+            let cell = CGRect(x: cellCenter - pitch / 2,
+                              y: found.rect.minY - 1,
+                              width: pitch, height: found.rect.height + 2)
+            // Include unclassified cells only in the exclusion mask, never in
+            // the health count, once a later icon confirms their lattice.
+            if let previous = healthMasks.last, let previousIndex, index - previousIndex > 1 {
+                let last = outputRect(cell, 2)
+                healthMasks.append(previous.union(last))
+            } else { healthMasks.append(outputRect(cell, 2)) }
+        }
+        return (health, healthMasks, offset)
+    }
+
+    private struct HUDPixels {
+        let band: ImageStencilPixels
+        let referenceHeight: CGFloat
+        var scale: CGFloat
+
+        func frameRect(_ rect: CGRect) -> CGRect {
+            guard scale != 1 else { return rect }
+            return CGRect(x: rect.minX * scale + CGFloat(band.width) * (1 - scale) / 2,
+                          y: rect.minY * scale + referenceHeight * (1 - scale),
+                          width: rect.width * scale, height: rect.height * scale)
+        }
+
+        func compare(_ kernel: ImageStencilKernel, at rect: CGRect) -> ImageStencilComparison? {
+            guard scale != 1 else { return band.compare(kernel, at: rect) }
+            let target = frameRect(rect)
+            return band.compare(kernel, at: CGRect(x: target.minX.rounded(), y: target.minY.rounded(),
+                                                   width: target.width.rounded(), height: target.height.rounded()))
+        }
+    }
+
     private struct Candidate {
         let atom: HUDStencilKernel
         let rect: CGRect
@@ -320,7 +401,7 @@ final class HUDStencilTracker {
     }
     private func threshold(for kind: String) -> Double { kind == "empty" ? 0.78 : 0.75 }
 
-    private func bestHealth(in pixels: ImageStencilPixels, center: CGFloat, offsetY: CGFloat,
+    private func bestHealth(in pixels: HUDPixels, center: CGFloat, offsetY: CGFloat,
                             radius: Int, verticalRadius: Int) -> Candidate? {
         var best: Candidate?
         for atom in healthKernels {
@@ -337,7 +418,7 @@ final class HUDStencilTracker {
 
     private func score(
         _ atom: HUDStencilKernel,
-        in pixels: ImageStencilPixels,
+        in pixels: HUDPixels,
         at rect: CGRect
     ) -> Double {
         guard let comparison = pixels.compare(atom.stencil, at: rect) else { return 0 }

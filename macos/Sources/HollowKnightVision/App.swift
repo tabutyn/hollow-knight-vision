@@ -6,6 +6,11 @@ import SwiftUI
 final class VisionPanel: NSWindow {}
 
 enum DashboardWindowLayout {
+    static func accessibilityFrame(for visibleFrame: CGRect, primaryScreen: CGRect) -> CGRect {
+        CGRect(x: visibleFrame.minX, y: primaryScreen.maxY - visibleFrame.maxY,
+               width: visibleFrame.width, height: visibleFrame.height)
+    }
+
     static func initialFrame(visibleFrame: CGRect) -> CGRect {
         guard visibleFrame.origin.x.isFinite, visibleFrame.origin.y.isFinite,
               visibleFrame.width.isFinite, visibleFrame.height.isFinite,

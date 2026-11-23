@@ -230,4 +230,14 @@ final class NormalGameKeyForwarderTests: XCTestCase {
             visible
         )
     }
+
+    func testGamePlacementUsesPrimaryScreenOriginForStackedProjector() {
+        let primary = CGRect(x: 0, y: 0, width: 1470, height: 956)
+        let above = CGRect(x: -200, y: 956, width: 1024, height: 744)
+        XCTAssertEqual(DashboardWindowLayout.accessibilityFrame(for: above, primaryScreen: primary),
+                       CGRect(x: -200, y: -744, width: 1024, height: 744))
+        let below = CGRect(x: 120, y: -768, width: 1024, height: 744)
+        XCTAssertEqual(DashboardWindowLayout.accessibilityFrame(for: below, primaryScreen: primary),
+                       CGRect(x: 120, y: 980, width: 1024, height: 744))
+    }
 }

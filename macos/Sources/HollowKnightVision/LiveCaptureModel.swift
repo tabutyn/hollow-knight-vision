@@ -3511,18 +3511,12 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func positionWindows() {
-        guard let screen = NSScreen.main else { return }
-        let visible = screen.visibleFrame
         guard let viewer = NSApp.windows.first(where: {
             ($0 is VisionPanel || $0 is NormalVisionPanel) && $0.isVisible
-        }) else { return }
+        }), let screen = viewer.screen ?? NSScreen.main,
+           let primary = NSScreen.screens.first else { return }
         tileGameWindow(
-            frame: CGRect(
-                x: visible.minX,
-                y: screen.frame.maxY - visible.maxY,
-                width: visible.width,
-                height: visible.height
-            ),
+            frame: DashboardWindowLayout.accessibilityFrame(for: screen.visibleFrame, primaryScreen: primary.frame),
             viewer: viewer
         )
     }
@@ -4003,9 +3997,10 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
               sampleBuffer.isValid,
               let pixelBuffer = sampleBuffer.imageBuffer,
               acceptedSampleStreamID == ObjectIdentifier(stream) else { return }
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
-            as? [[SCStreamFrameInfo: Any]],
-           let status = attachments.first?[.status] as? Int,
+        let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
+            as? [[SCStreamFrameInfo: Any]]
+        let info = attachments?.first
+        if let status = info?[.status] as? Int,
            SCFrameStatus(rawValue: status) != .complete {
             captureIncompleteFrames &+= 1
             return
@@ -4014,12 +4009,13 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
         let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
         let capturedAt = ProcessInfo.processInfo.systemUptime
         telemetry.record(.captureDelivery, seconds: capturedAt - timestamp)
-        autoreleasepool { stageFrame(pixelBuffer, timestamp: timestamp, capturedAt: capturedAt) }
+        autoreleasepool { stageFrame(pixelBuffer, info: info, timestamp: timestamp, capturedAt: capturedAt) }
     }
 
-    private func stageFrame(_ pixelBuffer: CVPixelBuffer, timestamp: Double, capturedAt: TimeInterval) {
+    private func stageFrame(_ pixelBuffer: CVPixelBuffer, info: [SCStreamFrameInfo: Any]?,
+                            timestamp: Double, capturedAt: TimeInterval) {
         guard !capturedFrameStateLock.withLock({ captureProcessingPaused || playbackPreparationCapturePaused }) else { return }
-        guard let converted = CaptureFrameConverter.convert(pixelBuffer, context: poseImageContext) else { return }
+        guard let converted = CaptureFrameConverter.convert(pixelBuffer, info: info, context: poseImageContext) else { return }
         stageConvertedFrame(converted, timestamp: timestamp, capturedAt: capturedAt)
     }
 
@@ -4518,8 +4514,9 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             let screen = String(describing: startupEvidence.screen)
             let phase = String(describing: startupDecision.phase)
             let selected = startupEvidence.selectedOption ?? "none"
+            let health = snapshot.hudStencil.map { String($0.health.count) } ?? "unavailable"
             atlasAdmissionLog.info(
-                "startup phase=\(phase, privacy: .public) screen=\(screen, privacy: .public) selected=\(selected, privacy: .public) gameplayLikely=\(startupEvidence.gameplayLikely, privacy: .public) detections=\(detections, privacy: .public)"
+                "startup phase=\(phase, privacy: .public) screen=\(screen, privacy: .public) selected=\(selected, privacy: .public) gameplayLikely=\(startupEvidence.gameplayLikely, privacy: .public) healthMatches=\(health, privacy: .public) detections=\(detections, privacy: .public)"
             )
         }
         if let action = startupDecision.action {
