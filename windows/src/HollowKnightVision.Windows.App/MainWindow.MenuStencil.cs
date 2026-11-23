@@ -10,6 +10,8 @@ public partial class MainWindow
 {
     private static void DrawMenuStencil(Canvas canvas, MenuStencilResult result)
     {
+        if (!result.IsMatch) return;
+
         void Stroke(StencilRect area, Color color, double thickness = 1, bool dashed = false)
         {
             if (!area.IsFinite || area.IsEmpty) return;

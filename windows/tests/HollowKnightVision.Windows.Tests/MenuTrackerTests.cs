@@ -197,6 +197,33 @@ internal static class MenuTrackerTests
         Near(32, result.Anchors.Single().Rect.Y);
     }
 
+    internal static void TestTrackingStaysNearCapturedPositions()
+    {
+        var titleVariant = Variant();
+        var rowVariant = Variant(ForeignPattern);
+        foreach (var context in new[] { "brightness", "clear-save", "quit-game", "quit-to-menu" })
+        {
+            var title = new Anchor($"{context}.title", "Title", new(24, 24, 4, 4), null, [titleVariant], titleVariant);
+            var yes = new Anchor("shared.yes", "Yes", new(70, 48, 4, 4), null, [rowVariant], rowVariant);
+            var no = new Anchor("shared.no", "No", new(70, 64, 4, 4), null, [rowVariant], rowVariant);
+            var scene = new Scene(context, 160, 120, title, [title, yes, no], [],
+                new Dictionary<string, IReadOnlyList<Variant>>(), null);
+            var catalog = new MenuStencilCatalog([scene], 160, 120, 0, 120, []);
+            foreach (var horizontal in new[] { true, false })
+            {
+                var tracker = new MenuStencilTracker(catalog);
+                BgraFrame Shifted(int x, int y) => Frame(160, 120, (24 + x, 24 + y, Pattern),
+                    (70 + x, 48 + y, ForeignPattern), (70 + x, 64 + y, ForeignPattern));
+                Check(tracker.Observe(Shifted(0, 0), 0)?.IsMatch == true, $"{context} did not match its captured frame.");
+                MenuStencilResult? result = null;
+                for (var step = 1; step <= 22; step++)
+                    result = tracker.Observe(Shifted(horizontal ? 2 * step : 0, horizontal ? 0 : 2 * step), step / 10d);
+                Check(result?.IsMatch != true, $"{context} followed a series of displacements away from its reference.");
+                Check(tracker.Observe(Shifted(2, 2), 3)?.IsMatch == true, $"{context} failed to reacquire after small capture jitter.");
+            }
+        }
+    }
+
     internal static void TestDialogPoseUsesStableRows()
     {
         var variant = Variant(); var foreign = Variant(ForeignPattern);

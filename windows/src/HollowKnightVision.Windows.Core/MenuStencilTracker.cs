@@ -87,8 +87,8 @@ public sealed partial class MenuStencilTracker
                 }
                 trackedOffset = parentOffset;
             }
-            var probe = BestScore(VariantsFor(scene.Probe.SearchProbeVariants, trackedLanguage), pixels,
-                scene.Probe.Bounds.Offset(trackedOffset.X, trackedOffset.Y), 4, 6, scene.Probe.Bounds);
+            // Reuse the captured positions so successive small false matches cannot move the search.
+            var probe = ReacquisitionProbes(scene, pixels, trackedLanguage).MaxBy(score => score.Confidence);
             if (probe is not null && IsDialog(context) && Validate(scene, probe, pixels, image, timestamp, MenuStencilPhase.Tracking) is { } dialogResult)
             {
                 missingProbeFrames = 0; trackedLanguage = probe.Language ?? trackedLanguage;

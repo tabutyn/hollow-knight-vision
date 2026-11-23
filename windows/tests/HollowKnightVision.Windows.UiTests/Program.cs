@@ -52,6 +52,7 @@ internal static class Program
         }
         InputPathReplayIntegrationTests.Run();
         MenuParticleTests.Run();
+        TestRejectedMenuDoesNotDrawStencils();
         ControlledStepCaptureTests.Run();
         ReplayLifecycleTests.Run();
         TestWorldReplayRequiresExplicitReturningIntent();
@@ -1950,6 +1951,23 @@ internal static class Program
                 RegexOptions.Singleline),
             "The main window does not expose the Hollow Knight Vision product name.");
         Console.WriteLine("PASS main window exposes product title");
+    }
+
+    private static void TestRejectedMenuDoesNotDrawStencils()
+    {
+        var canvas = new Canvas();
+        var anchor = new MenuStencilMatch("brightness.title", "Brightness", new(12, 10, 80, 8), .9, null);
+        var region = new MenuStencilSelectorSearchRegion("shared.back", "Back", MenuSelectorSide.Left,
+            new(8, 32, 12, 12), false);
+        var result = new MenuStencilResult("brightness", false, .9, null, [anchor], [], [region], 0, 0, 0,
+            MenuStencilPhase.Searching, 1, 1, "en");
+        var draw = typeof(MainWindow).GetMethod("DrawMenuStencil", BindingFlags.Static | BindingFlags.NonPublic)!;
+        draw.Invoke(null, [canvas, result]);
+        if (canvas.Children.Count != 0)
+            throw new InvalidOperationException("Rejected menu candidates must not draw anchor or selector overlays.");
+        draw.Invoke(null, [canvas, result with { IsMatch = true }]);
+        if (canvas.Children.Count != 3)
+            throw new InvalidOperationException("A matching menu should draw the anchor and selector region.");
     }
 
     private static void TestGroundFeatureOverlayStartsVisible()

@@ -8,7 +8,11 @@ public sealed partial class MenuStencilTracker
     {
         var scored = new List<(Anchor Anchor, Score Score)>();
         var threshold = ValidationThresholdFor(scene.ContextIdentifier);
-        var dx = IsDialog(scene.ContextIdentifier) ? 8 : 4; var dy = IsDialog(scene.ContextIdentifier) ? 12 : 6;
+        var dialog = IsDialog(scene.ContextIdentifier);
+        var dx = dialog ? 8 : 4;
+        var dy = dialog ? 12 : 6;
+        // The Yes and No rows establish the dialog's pose independently of its heading.
+        var anchorOffset = dialog ? default : trackedOffset;
         foreach (var anchor in scene.Anchors)
         {
             if (anchor.ClassIdentifier == scene.Probe.ClassIdentifier)
@@ -16,15 +20,15 @@ public sealed partial class MenuStencilTracker
                 if (BestScore(VariantsFor(anchor.Variants, probe.Language), pixels, probe.Rect, 2, 2) is { } fullProbe) scored.Add((anchor, fullProbe));
                 continue;
             }
-            var score = BestScore(VariantsFor(anchor.Variants, probe.Language), pixels, anchor.Bounds.Offset(trackedOffset.X, trackedOffset.Y), dx, dy, anchor.Bounds);
+            var score = BestScore(VariantsFor(anchor.Variants, probe.Language), pixels, anchor.Bounds.Offset(anchorOffset.X, anchorOffset.Y), dx, dy, anchor.Bounds);
             if ((score?.Confidence ?? double.NegativeInfinity) < AnchorThreshold && anchor.CalibratedBounds is { } calibratedBounds)
             {
-                var calibrated = BestScore(VariantsFor(anchor.Variants, probe.Language), pixels, calibratedBounds.Offset(trackedOffset.X, trackedOffset.Y), dx, dy, anchor.Bounds);
+                var calibrated = BestScore(VariantsFor(anchor.Variants, probe.Language), pixels, calibratedBounds.Offset(anchorOffset.X, anchorOffset.Y), dx, dy, anchor.Bounds);
                 if (calibrated is not null && calibrated.Confidence > (score?.Confidence ?? double.NegativeInfinity)) score = calibrated;
             }
             if (score is not null) scored.Add((anchor, score));
         }
-        if (IsDialog(scene.ContextIdentifier))
+        if (dialog)
         {
             var stableRows = scored.Where(item => item.Anchor.ClassIdentifier is "shared.yes" or "shared.no" && item.Score.Confidence >= threshold).ToArray();
             if (stableRows.Length == 2)
