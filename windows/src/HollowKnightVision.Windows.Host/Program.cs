@@ -188,6 +188,34 @@ internal static class Program
                 return Task.FromResult(1);
             }
         }
+        if (arguments.FirstOrDefault() is "--recover-bot-atlas-path" or "--recover-bot-exit-path")
+        {
+            var errors = standardError ?? Console.Error;
+            try
+            {
+                object result;
+                if (arguments is ["--recover-bot-atlas-path", var clip])
+                    result = BotRecordedAtlasPath.Recover(clip);
+                else if (arguments is ["--recover-bot-exit-path", var folder, var replay, var labels, var links, var x, var y]
+                    && double.TryParse(x, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var exitX)
+                    && double.TryParse(y, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var exitY)
+                    && double.IsFinite(exitX) && double.IsFinite(exitY))
+                    result = BotRecordedExitPath.Recover(folder, replay, labels, links, new(exitX, exitY));
+                else
+                {
+                    errors.WriteLine("Expected --recover-bot-atlas-path CLIP or --recover-bot-exit-path CLIP REPLAY LABELS LINKS X Y.");
+                    return Task.FromResult(64);
+                }
+                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(result, WorldReplayJsonOptions));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                or JsonException or ArgumentException or InvalidOperationException or KeyNotFoundException)
+            {
+                errors.WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
         if (arguments is ["--bot-playback-checkpoint", var botRoot, ("gameplay" or "hacker") and var botDomain])
         {
             try

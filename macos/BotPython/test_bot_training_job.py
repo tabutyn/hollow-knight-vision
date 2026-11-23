@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import uuid
 
 from train_bot_job import promotion_check, split_blockade_clips, used_sessions
@@ -38,6 +39,38 @@ class PromotionTests(unittest.TestCase):
 
 @unittest.skipUnless(importlib.util.find_spec('stable_baselines3'), 'Requires bot training environment')
 class TrainingJobTests(unittest.TestCase):
+    def test_job_reconstructs_recorded_paths_with_windows_native_host(self):
+        from test_bot_dataset import event, manifest, observation
+        from train_bot_job import run_job
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            selected = []
+            for _ in range(2):
+                session = str(uuid.uuid4())
+                selected.append(session)
+                clip = root / 'demonstrations' / ('demo-' + session)
+                clip.mkdir(parents=True)
+                header = dict(manifest(), id=session, botDomain='gameplay',
+                              observationCount=1, usableObservationCount=1, inputEventCount=1)
+                (clip / 'manifest.json').write_text(json.dumps(header))
+                rows = [event(100, 'right'), dict(observation(100.1), driveDirection=1)]
+                (clip / 'events.jsonl').write_text(''.join(json.dumps(row) + '\n' for row in rows))
+            selection = root / 'selection.json'
+            selection.write_text(json.dumps(selected))
+            identifier = str(uuid.uuid4())
+            verifier = str(root / 'HollowKnightVision.Windows.Host.exe')
+            with patch('train_bot_job.export_dataset', side_effect=RuntimeError('export intercepted')) as export:
+                with self.assertRaisesRegex(RuntimeError, 'export intercepted'):
+                    run_job(root, selection, identifier, None, domain='gameplay', native_verifier=verifier)
+            args, = export.call_args.args
+            snapshots = root / 'training-runs' / identifier / 'demonstrations'
+            self.assertEqual(Path(args[1]), snapshots)
+            self.assertEqual(args[args.index('--path-extractor') + 1], verifier)
+            for clip in snapshots.iterdir():
+                self.assertEqual((clip / 'events.jsonl').read_bytes(),
+                                 (root / 'demonstrations' / clip.name / 'events.jsonl').read_bytes())
+
     def test_job_snapshots_holds_out_sessions_exports_and_preserves_active_model(self):
         import gymnasium as gym
         import numpy as np

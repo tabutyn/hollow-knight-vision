@@ -29,9 +29,11 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
         public AtlasPathNavigator Navigation { get; } = new();
         public HashSet<(int X, int Y)> Covered { get; } = [];
         public AtlasPoint? CoverageOrigin { get; set; }
+        public AtlasPathPoint? Goal { get; set; }
+        public int? BestRemaining { get; set; }
     }
 
-    private sealed record RouteSample(AtlasPathHint Path, AtlasPathPoint Knight, double Time, int Best, BotRoadHint Road);
+    private sealed record RouteSample(AtlasPathHint Path, AtlasPathPoint Knight, double Time, BotRoadHint Road);
 
     public BotCaptureObservation? Observe(WorldSize size, int? renderedFrame, ReceiverGroundTruthSample? sample,
         BotCaptureTiming timing, InputButtons? input, int revision, int? health = null,
@@ -113,25 +115,29 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
             }
             goal = target.Closest(gate);
         }
+        if (room.Goal != goal)
+        {
+            room.Goal = goal;
+            room.BestRemaining = null;
+            previous = null;
+            room.Navigation.Interrupt();
+        }
         var path = goal is null ? null : room.Navigation.Follow(graph, feet, sample.Grounded, measured: true,
             admitted: null, walked: [], fixedObjective: goal, fixedObjectiveOnGround: objective is null);
         ObjectiveReachable |= path.HasValue;
         if (path is not { } next)
         {
             previous = null;
+            if (room.Navigation.HasStartProjection) room.BestRemaining = null;
             room.Navigation.Interrupt();
             return result;
         }
 
-        var dx = next.FallSteering ?? next.Next.X - next.Current.X;
-        var dy = next.FallSteering.HasValue ? -1 : next.Next.Y - next.Current.Y;
-        var magnitude = Math.Max(1, Math.Sqrt((double)dx * dx + (double)dy * dy));
-        var road = new BotRoadHint(dx / magnitude, dy / magnitude,
-            Math.Min(1, graph.KnightHeight / size.Width), Math.Min(1, next.Remaining / (4 * size.Width)), Frontier: false);
+        var road = BotPathMotion.Road(next, graph.KnightHeight, size.Width, frontier: false);
         var knight = new AtlasPathPoint(feet.X, feet.Y + graph.KnightHeight);
-        var (progress, alignment) = Score(graph.KnightHeight, next, knight, row.CaptureTimestamp);
-        var best = previous is { } prior && prior.Path.Objective == next.Objective ? Math.Min(prior.Best, next.Remaining) : next.Remaining;
-        previous = new(next, knight, row.CaptureTimestamp, best, road);
+        var (progress, alignment) = Score(graph.KnightHeight, next, knight, row.CaptureTimestamp, room.BestRemaining);
+        room.BestRemaining = Math.Min(room.BestRemaining ?? next.Remaining, next.Remaining);
+        previous = new(next, knight, row.CaptureTimestamp, road);
         return result with { RoadHint = road, PathProgress = progress, PathAlignment = alignment };
     }
 
@@ -161,6 +167,7 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
             if (room.LinkRevision != revision)
             {
                 previous = null;
+                room.BestRemaining = null;
                 room.Navigation.Interrupt();
             }
             room.LinkRevision = revision;
@@ -168,22 +175,20 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
         return room;
     }
 
-    private (double Progress, double? Alignment) Score(int height, AtlasPathHint next, AtlasPathPoint knight, double time)
+    private (double Progress, double? Alignment) Score(int height, AtlasPathHint next, AtlasPathPoint knight, double time, int? best)
     {
         if (previous is not { } old || time - old.Time is <= 0 or >= .45
             || old.Knight.DistanceTo(knight) > 3 * height)
             return (0, null);
         var motionX = knight.X - old.Knight.X;
         var motionY = knight.Y - old.Knight.Y;
-        var alignment = (motionX * old.Road.Dx + motionY * old.Road.Dy) / height;
-        if (next.PriorRemaining is not { } remaining || remaining >= old.Best) return (0, alignment);
+        var alignment = old.Road.Dx == 0 && old.Road.Dy == 0
+            ? (double?)null : (motionX * old.Road.Dx + motionY * old.Road.Dy) / height;
+        if (best is not { } baseline || next.PriorRemaining is not { } remaining || remaining >= baseline)
+            return (0, alignment);
 
-        var horizontal = old.Path.Next.X != old.Path.Current.X;
-        var direction = horizontal ? Math.Sign(old.Path.Next.X - old.Path.Current.X) : Math.Sign(old.Path.Next.Y - old.Path.Current.Y);
-        var oldAxis = horizontal ? old.Path.Current.X : old.Path.Current.Y;
-        var newAxis = horizontal ? next.Projection.X : next.Projection.Y;
-        var physical = horizontal ? motionX : motionY;
-        var count = Math.Max(0, Math.Min(old.Best - remaining, Math.Min((newAxis - oldAxis) * direction, physical * direction)));
+        var count = BotPathMotion.ForwardPixels(old.Path, old.Knight, baseline, knight, next.Projection,
+            remaining);
         return (count / (double)height, alignment);
     }
 

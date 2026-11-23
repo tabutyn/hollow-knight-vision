@@ -104,7 +104,10 @@ internal sealed class GymHackerRoute
         visit = new BotHackerVisit(new GroundTruthLineStore(labelsPath).Load(), links, fixedObjective);
     }
 
-    internal BotCaptureObservation? Observe(ReceiverGroundTruthSample sample, int ticks, int? health, BotPolicyAction previous)
+    internal void Interrupt() => visit.Interrupt();
+
+    internal BotCaptureObservation? Observe(ReceiverGroundTruthSample sample, int ticks, int? health,
+        BotPolicyAction previous, WorldSize? frameSize = null)
     {
         if (sample.ProjectionPixelWidth is not (>= 2 and <= 8192)
             || sample.ProjectionPixelHeight is not (>= 2 and <= 8192) || string.IsNullOrWhiteSpace(sample.SceneName))
@@ -113,7 +116,7 @@ internal sealed class GymHackerRoute
             return null;
         }
         var now = ticks / 60d;
-        var size = new WorldSize(sample.ProjectionPixelWidth.Value, sample.ProjectionPixelHeight.Value);
+        var size = frameSize ?? new WorldSize(sample.ProjectionPixelWidth.Value, sample.ProjectionPixelHeight.Value);
         if (!rooms.TryGetValue(sample.SceneName, out var room)) rooms[sample.SceneName] = room = rooms.Count + 1;
         var timing = new BotCaptureTiming(now, now, 1, room, 0);
         return visit.Observe(size, HackerFrameSynchronizer.Key(sample.UnityFrame), sample, timing, previous.Buttons, ticks, health);

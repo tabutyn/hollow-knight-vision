@@ -116,7 +116,7 @@ public sealed class GameplayPathTracker
         var walked = geometry[true].Distinct().OrderBy(LineOrder).ToArray();
         var floors = geometry[false];
         var current = ProjectFloors(sample, camera, exposed: false);
-        registered.Visible = Extend(registered.Visible, current);
+        registered.Visible = AtlasPathFloorGeometry.Extend(registered.Visible, current, knightHeight);
         var visibleEdges = ProjectFloors(sample, camera, exposed: true);
         var faces = ProjectWalls(sample, camera);
         var history = registered.Witnesses;
@@ -126,7 +126,8 @@ public sealed class GameplayPathTracker
         registered.RememberedWalls = RetainWalls(retained, observed);
 
         if (visibleEdges.Length > 0)
-            registered.Exposed = Extend(registered.Exposed, history.ExposedFloors(knightHeight, knightWidth));
+            registered.Exposed = AtlasPathFloorGeometry.Extend(registered.Exposed,
+                history.ExposedFloors(knightHeight, knightWidth), knightHeight);
         var supported = registered.RememberedWalls.Length == 0 ? []
             : AtlasPathFloorGeometry.StitchDetected(registered.Exposed, [], [], knightHeight, knightWidth,
                 registered.Visible, maximumSupportedGap: knightHeight, requireWitness: true);
@@ -195,15 +196,7 @@ public sealed class GameplayPathTracker
         chart.LastBuild = time;
     }
 
-    private IReadOnlyList<AtlasPathPlatform> Extend(IReadOnlyList<AtlasPathPlatform> current, IEnumerable<AtlasPathPlatform> samples)
-    {
-        var dy = Math.Clamp(knightHeight / 5, 2, 6);
-        var additions = samples.Where(sample => !current.Any(span =>
-            Math.Abs(span.Y - sample.Y) <= dy && span.Left <= sample.Left + 1 && span.Right >= sample.Right - 1)).ToArray();
-        return additions.Length == 0 ? current : AtlasPathFloorGeometry.Merge(current.Concat(additions), knightHeight, bridgeSeams: false);
-    }
-
-    private static AtlasPathWall[] RetainWalls(IEnumerable<AtlasPathWall> current, IReadOnlyList<AtlasPathWall> observed)
+    internal static AtlasPathWall[] RetainWalls(IEnumerable<AtlasPathWall> current, IReadOnlyList<AtlasPathWall> observed)
     {
         var result = current.ToList();
         foreach (var wall in observed)

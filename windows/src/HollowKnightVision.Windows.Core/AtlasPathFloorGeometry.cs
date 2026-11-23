@@ -37,6 +37,15 @@ internal static class AtlasPathFloorGeometry
         return bands.Select(band => band.Span).OrderBy(span => (span.Left, span.Y, span.Right)).ToArray();
     }
 
+    internal static IReadOnlyList<AtlasPathPlatform> Extend(IReadOnlyList<AtlasPathPlatform> current,
+        IEnumerable<AtlasPathPlatform> samples, int height)
+    {
+        var dy = Math.Clamp(height / 5, 2, 6);
+        var additions = samples.Where(sample => !current.Any(span =>
+            Math.Abs(span.Y - sample.Y) <= dy && span.Left <= sample.Left + 1 && span.Right >= sample.Right - 1)).ToArray();
+        return additions.Length == 0 ? current : Merge(current.Concat(additions), height, bridgeSeams: false);
+    }
+
     internal static IReadOnlyList<AtlasPathPlatform> StitchDetected(IReadOnlyList<AtlasPathPlatform> raw,
         IReadOnlyList<AtlasPathPlatform> walked, IReadOnlyList<AtlasPathWall> walls, int height, int width,
         IReadOnlyList<AtlasPathPlatform> witnesses, int? maximumSupportedGap = null, bool requireWitness = false)
