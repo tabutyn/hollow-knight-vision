@@ -874,6 +874,7 @@ public partial class MainWindow : Window
         public bool OwnsHackerWork { get; init; }
         public bool IntegratesHackerAtlas { get; init; }
         public long HackerWorkGeneration { get; init; }
+        public ProfileLaunch? ProfileLaunch { get; init; }
         public GroundHypothesisTrackingResult GroundHypotheses { get; init; } =
             GroundHypothesisTrackingResult.Empty;
         public IReadOnlyList<GroundHypothesisAtlasLine> GroundDisplayLines { get; init; } = [];
@@ -2788,7 +2789,14 @@ public partial class MainWindow : Window
                     () => ApplyVisionAnalysis(result),
                     DispatcherPriority.Render,
                     cancellationToken);
-                // World integration and snapshot swaps share worldWorker; camera analysis never waits on disk.
+                if (result.ProfileLaunch is { } launch)
+                {
+                    var activation = await Dispatcher.InvokeAsync(
+                        () => ActivateGameplayProfileAtlasAsync(launch), DispatcherPriority.Normal, cancellationToken);
+                    profileAtlasSwitchFailed = !await activation.ConfigureAwait(false);
+                    Volatile.Write(ref profileAtlasHeld, profileAtlasSwitchFailed);
+                }
+                // World integration and snapshot swaps share worldWorker during ordinary tracking.
             }
         }
         finally
@@ -2818,7 +2826,7 @@ public partial class MainWindow : Window
             HackerAtlasOutput? output;
             lock (hackerAtlasGate)
             {
-                if (work.WorkGeneration != hackerWorkGeneration) continue;
+                if (work.WorkGeneration != hackerWorkGeneration || Volatile.Read(ref profileAtlasHeld)) continue;
                 prepared = hackerFramePreparer.Process(work.Match);
                 hackerAtlasPipeline.ConfigureHudTemplate(menuStencilRecognizer.CapturedHudTemplate);
                 output = prepared is null ? null : hackerAtlasPipeline.Process(prepared);
@@ -3228,6 +3236,14 @@ public partial class MainWindow : Window
                 ObserveTrackingStep(frame, masks, admission.AdmitsTracking, captureTimestamp, stepTruth, stepFrame);
             return null;
         }
+        var profileTimestamp = (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds;
+        var profileMenu = recognition.Menu is { } currentMenu && profileTimestamp - currentMenu.SourceTimestamp is >= 0 and <= .3
+            ? currentMenu : null;
+        var freshProfileHud = recognition.HasFreshGameplayEvidence
+            && hudStencil is { EstablishesGameplay: true, HoldsHealthMask: false }
+            && profileTimestamp - hudStencil.SourceTimestamp is >= 0 and <= .25;
+        var profileLaunch = ObserveProfileAtlas(profileMenu, freshProfileHud, captureTimestamp, captureGeneration);
+        var holdAtlas = Volatile.Read(ref profileAtlasHeld);
         var atlasExclusions = masks.AtlasExclusions;
         var groundExclusions = masks.GroundExclusions;
         IReadOnlyList<DetectedFloorLine> ground = [];
@@ -3346,7 +3362,7 @@ public partial class MainWindow : Window
             frame.Height,
             signal,
             motionBridgeActive);
-        var gameplayAdmitted = admission.AllowsAtlasWrite
+        var gameplayAdmitted = !holdAtlas && admission.AllowsAtlasWrite
             && visualObservation.AllowsAtlasWrite;
         WindowsLiveWorldPipelineResult? liveWorldResult = null;
         var liveWorldGeneration = captureGeneration > 0
@@ -3437,7 +3453,7 @@ public partial class MainWindow : Window
                 terrainContact.Wall));
         }
         else groundHypothesisState.Paths.Suspend();
-        var botGameplay = admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";
+        var botGameplay = !holdAtlas && admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";
         var activeBot = Volatile.Read(ref botPlayback) is null ? null
             : ObserveBotStartup(frame, captureGeneration, captureTimestamp, botGameplay, receiverTelemetry, recognition.Menu, hudStencil);
         if (botGameplay)
@@ -3577,6 +3593,7 @@ public partial class MainWindow : Window
                 OwnsHackerWork = ownsHackerWork,
                 IntegratesHackerAtlas = integratesHackerAtlas,
                 HackerWorkGeneration = pendingHackerWorkGeneration,
+                ProfileLaunch = profileLaunch,
                 GroundHypotheses = groundHypotheses,
                 GroundDisplayLines = groundDisplayLines,
                 GroundDisplayCamera = groundDisplayCamera,
@@ -5681,22 +5698,10 @@ public partial class MainWindow : Window
                         IOPath.Combine(staging,
                             $"tile_{tile.Coordinate.X}_{tile.Coordinate.Y}.bmp"));
                 }
-                var encoded = JsonSerializer.SerializeToUtf8Bytes(
-                    metadata,
-                    new JsonSerializerOptions { WriteIndented = true });
-                using (var stream = new FileStream(
-                           IOPath.Combine(staging, "atlas.json"),
-                           FileMode.Create,
-                           FileAccess.Write,
-                           FileShare.None,
-                           4096,
-                           FileOptions.WriteThrough))
-                {
-                    stream.Write(encoded);
-                    stream.Flush(flushToDisk: true);
-                }
+                VisionResetController.WritePersistedAtlasMetadata(staging, metadata);
                 if (!copyActiveWorld)
                 {
+                    SaveProfileAtlas.Read(activeAtlasDirectory)?.Write(staging);
                     _ = new LiveWorldSessionStore(
                         IOPath.Combine(staging, "live-world")).Load();
                 }
@@ -6021,25 +6026,26 @@ public partial class MainWindow : Window
         }, canReplaceFaultedActive: true, invalidateLiveWorld: true);
     }
 
-    private async Task RunAtlasOperationAsync(
+    private async Task<bool> RunAtlasOperationAsync(
         Func<Task> operation,
         bool canReplaceFaultedActive = false,
-        bool invalidateLiveWorld = false)
+        bool invalidateLiveWorld = false,
+        bool suspendCapture = true)
     {
-        if (atlasOperationInProgress || inputPathReplayCancellation is not null || isClosing || gameLostCountdownStarted) return;
-        var resume = visionCancellation is not null;
+        if (atlasOperationInProgress || inputPathReplayCancellation is not null || isClosing || gameLostCountdownStarted) return false;
+        var resume = suspendCapture && visionCancellation is not null;
         var completion = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         atlasOperationCompletion = completion.Task;
         atlasOperationInProgress = true;
         GameplayAtlasManager.IsEnabled = false;
 
-        StopVision();
+        if (suspendCapture) StopVision();
         try
         {
             // Drain capture/analysis and disk writes before moving the active
             // directory. No pre-reset result may resurrect tiles afterwards.
-            if (visionRunCompletion is { } captureFinished) await captureFinished;
+            if (suspendCapture && visionRunCompletion is { } captureFinished) await captureFinished;
             await worldWorker.DrainAsync();
             if (invalidateLiveWorld) liveWorldPipeline?.InvalidatePendingWork();
             try
@@ -6052,11 +6058,16 @@ public partial class MainWindow : Window
                 // now replace that damaged active revision; Save may not.
                 atlasPersistTask = null;
             }
-            if (isClosing || gameLostCountdownStarted) return;
+            if (isClosing || gameLostCountdownStarted) return false;
             await operation();
             await RefreshAtlasManagerAsync();
+            return true;
         }
-        catch (Exception error) { ShowError(error); }
+        catch (Exception error)
+        {
+            ShowError(error);
+            return false;
+        }
         finally
         {
             atlasOperationInProgress = false;

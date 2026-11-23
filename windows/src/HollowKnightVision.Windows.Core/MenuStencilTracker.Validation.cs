@@ -55,9 +55,11 @@ public sealed partial class MenuStencilTracker
         if (scene.ContextIdentifier == "inventory" && scored.Count(item =>
             item.Anchor.ClassIdentifier.StartsWith(InventoryCornerPrefix, StringComparison.Ordinal)
             && item.Score.Confidence >= InventoryCornerThreshold) < 2) return null;
+        var checkedSlots = new List<int>();
+        var occupiedSlots = new List<int>();
         var anchors = WithRepeatedProfileActions(scene, pixels, image, probe.Language,
             scored.Select(item => new MenuStencilMatch(item.Anchor.ClassIdentifier, item.Anchor.Name,
-                OutputRect(item.Score.Rect, image, scene), item.Score.Confidence, item.Score.Reference)).ToArray());
+                OutputRect(item.Score.Rect, image, scene), item.Score.Confidence, item.Score.Reference)).ToArray(), checkedSlots, occupiedSlots);
         var currentBounds = scored.ToDictionary(item => item.Anchor.ClassIdentifier,
             item => item.Score.Reference.VerifiedBounds(item.Score.Rect), StringComparer.Ordinal);
         verifiedAnchorBounds[scene.ContextIdentifier] = currentBounds;
@@ -71,7 +73,12 @@ public sealed partial class MenuStencilTracker
         }
         return new(scene.ContextIdentifier, true, confidence, selection.Name, anchors, selection.Matches, selection.Regions,
             selection.LanguageEvidence, selection.ForegroundEvidence, (double)accepted / Math.Max(1, scored.Count), phase,
-            comparisons, timestamp, probe.Language ?? trackedLanguage);
+            comparisons, timestamp, probe.Language ?? trackedLanguage)
+        {
+            SelectedOptionIdentifier = FindSelectedIdentifier(scene, selection.Name),
+            CheckedProfileSlots = checkedSlots,
+            OccupiedProfileSlots = occupiedSlots
+        };
     }
 
     private MenuStencilResult? TrackedResult(Scene scene, Score probe, ImageStencilPixels pixels, BgraFrame image, double timestamp)
@@ -80,12 +87,20 @@ public sealed partial class MenuStencilTracker
         if (verifiedAnchorBounds.TryGetValue(scene.ContextIdentifier, out var bounds))
             bounds[scene.Probe.ClassIdentifier] = probe.Reference.VerifiedBounds(probe.Rect);
         var selection = DetectSelection(scene, trackedLanguage, pixels, image, timestamp, true);
+        var checkedSlots = new List<int>();
+        var occupiedSlots = new List<int>();
         var anchors = WithRepeatedProfileActions(scene, pixels, image, trackedLanguage,
             previous.Anchors.Select(match => match.ClassIdentifier == scene.Probe.ClassIdentifier
-                ? match with { Rect = OutputRect(probe.Rect, image, scene), Confidence = probe.Confidence, Reference = probe.Reference } : match).ToArray());
+                ? match with { Rect = OutputRect(probe.Rect, image, scene), Confidence = probe.Confidence, Reference = probe.Reference } : match).ToArray(),
+            checkedSlots, occupiedSlots);
         var result = new MenuStencilResult(scene.ContextIdentifier, true, probe.Confidence, selection.Name, anchors,
             selection.Matches, selection.Regions, selection.LanguageEvidence, selection.ForegroundEvidence, previous.SceneEvidenceRatio,
-            MenuStencilPhase.Tracking, comparisons, timestamp, trackedLanguage);
+            MenuStencilPhase.Tracking, comparisons, timestamp, trackedLanguage)
+        {
+            SelectedOptionIdentifier = FindSelectedIdentifier(scene, selection.Name),
+            CheckedProfileSlots = checkedSlots,
+            OccupiedProfileSlots = occupiedSlots
+        };
         lastValidated = result; return result;
     }
 

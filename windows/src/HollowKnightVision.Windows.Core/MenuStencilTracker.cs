@@ -13,6 +13,9 @@ public sealed record MenuStencilResult(string ContextIdentifier, bool IsMatch, d
     double SourceTimestamp, string? LanguageIdentifier)
 {
     public bool SelectedPairAccepted => SelectedOption is not null && SelectorCandidates.Count == 2;
+    public string? SelectedOptionIdentifier { get; init; }
+    public IReadOnlyList<int> CheckedProfileSlots { get; init; } = [];
+    public IReadOnlyList<int> OccupiedProfileSlots { get; init; } = [];
 }
 
 public sealed class MenuStencilSearchCadence(double minimumInterval)
@@ -119,6 +122,8 @@ public sealed partial class MenuStencilTracker
                 var result = previous with
                 {
                     IsMatch = true, Confidence = probe?.Confidence ?? 0, SelectedOption = selection.Name ?? previous.SelectedOption,
+                    SelectedOptionIdentifier = FindSelectedIdentifier(scene, selection.Name) ?? previous.SelectedOptionIdentifier,
+                    CheckedProfileSlots = [], OccupiedProfileSlots = [],
                     SelectorCandidates = selection.Matches.Count == 0 ? previous.SelectorCandidates : selection.Matches,
                     SelectorSearchRegions = selection.Regions, SelectorLanguageEvidenceCount = selection.LanguageEvidence,
                     SelectorForegroundEvidenceCount = selection.Name is null ? previous.SelectorForegroundEvidenceCount : selection.ForegroundEvidence,

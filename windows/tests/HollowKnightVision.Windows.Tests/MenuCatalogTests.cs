@@ -147,6 +147,9 @@ internal static class MenuCatalogTests
         var tracker = new MenuStencilTracker(catalog);
         var result = tracker.Observe(fixture.Images[labeled.ImagePath], 0);
         Check(result?.IsMatch == true, "Profile not recognized.");
+        Equal("select-profile.slot-2", result!.SelectedOptionIdentifier);
+        Check(result.CheckedProfileSlots.SequenceEqual([1, 2, 3, 4]), "Every visible card should be checked.");
+        Check(result.OccupiedProfileSlots.SequenceEqual([2, 3, 4]), "Only cards with Clear Save should be occupied.");
         var matches = result!.Anchors.Where(match => match.ClassIdentifier == clear).OrderBy(match => match.Rect.Y).ToArray();
         Equal(3, matches.Length);
         Check(matches.All(match => match.Rect.Width == 16 && match.Rect.Height == 6), "Repeated text crops were shrunk to fractional annotation dimensions.");
@@ -155,6 +158,7 @@ internal static class MenuCatalogTests
         var twoRows = fixture.Example("select-profile", annotations, paint: [.. annotations, threeRows[0], threeRows[2]]);
         var changed = tracker.Observe(fixture.Images[twoRows.ImagePath], 1.0 / 30)!;
         Equal(2, changed.Anchors.Count(match => match.ClassIdentifier == clear));
+        Check(changed.OccupiedProfileSlots.SequenceEqual([2, 4]), "The tracked pass must refresh occupancy.");
     }
 
     internal static void TestClearSaveMovesBetweenSlots()

@@ -42,6 +42,64 @@ internal static class VisionResetController
         GroundTruthAtlasMosaic Mosaic,
         PersistedAtlasMetadata Metadata);
 
+    internal sealed record ProfileAtlasActivation(
+        SaveProfileAtlas Profile,
+        ActiveAtlasReplacement<ValidatedPersistedAtlas>? Replacement);
+
+    internal static ProfileAtlasActivation ActivateProfileAtlas(
+        AtlasStateStore states,
+        string activeDirectory,
+        ProfileLaunch launch,
+        int tileSize,
+        double pixelsPerWorldUnit,
+        Action<string>? activateWorld = null)
+    {
+        if (launch.Slot is < 1 or > 4) throw new ArgumentOutOfRangeException(nameof(launch));
+        var active = ValidatedActiveAtlasPath(states, activeDirectory);
+        RecoverInterruptedActiveAtlasPublication(states, active, ReadPersistedAtlas);
+        var previous = SaveProfileAtlas.Read(active);
+        var saved = launch.IsNew || previous?.Slot == launch.Slot ? [] : states.List();
+        var profile = SaveProfileAtlas.Target(launch, previous, saved);
+        if (previous == profile) return new(profile, null);
+        var restore = saved.FirstOrDefault(state => state.Profile == profile);
+        if (restore is null && previous is null && !launch.IsNew
+            && File.Exists(Path.Combine(active, "atlas.json")))
+        {
+            _ = ReadPersistedAtlas(active);
+            profile.Write(active);
+            return new(profile, null);
+        }
+
+        void ActivateProfileWorld(string world)
+        {
+            if (SaveProfileAtlas.Read(world) != profile)
+                throw new InvalidDataException("The saved Atlas belongs to a different playthrough.");
+            activateWorld?.Invoke(world);
+        }
+        if (restore is not null && SaveProfileAtlas.Read(states.WorldPath(restore)) != profile)
+            throw new InvalidDataException("The saved Atlas belongs to a different playthrough.");
+        var replacement = restore is not null
+            ? ReplaceActiveAtlas(states, restore, active, ReadPersistedAtlas, activateWorld: ActivateProfileWorld)
+            : PublishActiveAtlasGeneration(states, active, copyActiveWorld: false, retainPrevious: true,
+                staging =>
+                {
+                    WritePersistedAtlasMetadata(staging, new(0, DateTimeOffset.UtcNow, tileSize, pixelsPerWorldUnit));
+                    profile.Write(staging);
+                    _ = new LiveWorldSessionStore(Path.Combine(staging, "live-world")).Load();
+                },
+                ReadPersistedAtlas, activateWorld: ActivateProfileWorld);
+        return new(profile, replacement);
+    }
+
+    internal static void WritePersistedAtlasMetadata(string directory, PersistedAtlasMetadata metadata)
+    {
+        var encoded = JsonSerializer.SerializeToUtf8Bytes(metadata, new JsonSerializerOptions { WriteIndented = true });
+        using var stream = new FileStream(Path.Combine(directory, "atlas.json"),
+            FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
+        stream.Write(encoded);
+        stream.Flush(flushToDisk: true);
+    }
+
     internal sealed class PreviousActiveAtlasImportException(
         string recoverableArchiveDirectory,
         Exception innerException) : IOException(
