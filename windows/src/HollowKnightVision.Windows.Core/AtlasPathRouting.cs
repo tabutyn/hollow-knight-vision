@@ -43,11 +43,18 @@ internal sealed class AtlasPathSearch
         Func<AtlasPathPoint, AtlasPathPoint, bool>? admits = null, AtlasPathStroke? targetStroke = null,
         AtlasPathPoint? target = null, bool stopAtTarget = false)
     {
-        // Splitting a stroke at an exact cursor position leaves the cached graph unchanged.
-        var incoming = targetStroke is { } goal && target is { } endpoint
-            ? graph.Vertices(goal).Where(point => goal.AllowsTraversal(point, endpoint)).ToHashSet()
-            : [];
-        var outgoing = graph.Vertices(startStroke).Where(point => startStroke.AllowsTraversal(start, point)).ToArray();
+        // Only new positions split a stroke. An existing node can be the end of
+        // a different jump shelf that crosses this one without a transfer.
+        var attachments = new Dictionary<AtlasPathPoint, List<AtlasPathPoint>>();
+        Attach(startStroke, start);
+        if (targetStroke is { } goal && target is { } endpoint)
+        {
+            Attach(goal, endpoint);
+            var (left, right) = start.CompareTo(endpoint) < 0 ? (start, endpoint) : (endpoint, start);
+            if (goal == startStroke && start != endpoint && goal.AllowsTraversal(start, endpoint)
+                && !graph.Vertices(goal).Any(point => left.CompareTo(point) < 0 && point.CompareTo(right) < 0))
+                Connect(start, endpoint);
+        }
         var pending = new PriorityQueue<AtlasPathPoint, (int Cost, AtlasPathPoint Point)>();
         costs[start] = 0;
         pending.Enqueue(start, (0, start));
@@ -57,13 +64,8 @@ internal sealed class AtlasPathSearch
             if (stopAtTarget && point == target) return;
             if (graph.Nodes.TryGetValue(point, out var neighbors))
                 foreach (var next in neighbors) Visit(next);
-            if (point == start)
-            {
-                foreach (var next in outgoing) Visit(next);
-                if (startStroke == targetStroke && target is { } here && startStroke.AllowsTraversal(start, here))
-                    Visit(here);
-            }
-            if (target is { } destination && incoming.Contains(point)) Visit(destination);
+            if (attachments.TryGetValue(point, out var adjacent))
+                foreach (var next in adjacent) Visit(next);
 
             void Visit(AtlasPathPoint next)
             {
@@ -74,6 +76,33 @@ internal sealed class AtlasPathSearch
                 predecessors[next] = point;
                 pending.Enqueue(next, (cost, next));
             }
+        }
+
+        void Attach(AtlasPathStroke stroke, AtlasPathPoint point)
+        {
+            if (graph.Nodes.ContainsKey(point) || attachments.ContainsKey(point)) return;
+            AtlasPathPoint? lower = null;
+            foreach (var vertex in graph.Vertices(stroke))
+            {
+                var side = vertex.CompareTo(point);
+                if (side < 0) lower = vertex;
+                if (side <= 0) continue;
+                AddNeighbor(vertex);
+                break;
+            }
+            if (lower is { } prior) AddNeighbor(prior);
+
+            void AddNeighbor(AtlasPathPoint vertex)
+            {
+                if (stroke.AllowsTraversal(point, vertex)) Connect(point, vertex);
+                if (stroke.AllowsTraversal(vertex, point)) Connect(vertex, point);
+            }
+        }
+
+        void Connect(AtlasPathPoint from, AtlasPathPoint to)
+        {
+            if (!attachments.TryGetValue(from, out var neighbors)) attachments[from] = neighbors = [];
+            neighbors.Add(to);
         }
     }
 

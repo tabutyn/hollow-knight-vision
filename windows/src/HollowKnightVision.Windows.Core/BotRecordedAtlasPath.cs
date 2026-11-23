@@ -162,8 +162,8 @@ public static class BotRecordedAtlasPath
         internal (BotRoadHint? Hint, double? Progress) Observe(BotCaptureObservation row, BotScreenTerrain terrain,
             AtlasPoint camera, AtlasPathPoint feet, double scale)
         {
-            var width = graph?.KnightWidth ?? Math.Max(3, AtlasPathPoint.Round(terrain.Width * .028));
-            var height = graph?.KnightHeight ?? Math.Max(5, AtlasPathPoint.Round(terrain.Width * .055));
+            var width = graph?.KnightWidth ?? Math.Max(3, (int)(terrain.Width * .028));
+            var height = graph?.KnightHeight ?? Math.Max(5, (int)(terrain.Width * .055));
             if (!measuredSize && row.Features[2] is >= .006 and <= .15 && row.Features[3] is >= .014 and <= .22)
             {
                 width = Math.Max(3, AtlasPathPoint.Round(terrain.Width * row.Features[2]));
