@@ -50,7 +50,7 @@ extension ThinkingClient {
         let data: Data
         do {
             data = try await OllamaHTTP.post(server.appendingPathComponent("generate"), body: [
-                "model": model.rawValue, "stream": false, "keep_alive": keepAlive, "options": ["num_ctx": 2048]])
+                "model": model.rawValue, "stream": false, "keep_alive": keepAlive, "options": ["num_ctx": ThinkingModel.policyContextLength]])
         } catch let error as URLError where server == compatible && error.code == .cannotConnectToHost {
             throw Failure.server("Couldn’t reach the local Ollama service for Llama Vision. Check that it is running and has access to the external model drive, then retry.")
         }
@@ -131,11 +131,9 @@ final class ThinkingModelSession: ObservableObject {
         guard isReady else { throw ThinkingClient.Failure.unavailable }
     }
 
-    func answer(model requested: ThinkingModel, image: CGImage?, history: [ThinkingTurn], question: String,
-                evidence: String, planning: Bool) async throws -> String {
+    func answer(model requested: ThinkingModel, image: CGImage, context: ThinkingContext) async throws -> String {
         func submit() async throws -> String {
-            try await ThinkingClient.answer(model: requested, image: image, history: history, question: question,
-                                            evidence: evidence, planning: planning)
+            try await ThinkingClient.answer(model: requested, image: image, context: context)
         }
         do { return try await submit() }
         catch let failure as ThinkingClient.Failure where failure.shouldReload {

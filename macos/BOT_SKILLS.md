@@ -1,14 +1,16 @@
 # Playing policies for a first ending
 
-The long-term goal is to complete the Atlas, including the progression required to beat the game. With no other objective, explore unmapped territory and measure newly mapped ground or rooms. Send “Set bot goal: read the sign” in **Thinking** to turn an objective into a bot proposal. **Use Atlas goal** returns to exploration.
+The long-term goal is to complete the Atlas, including the progression required to beat the game. With no other objective, explore unmapped territory and measure newly mapped ground or rooms. **Use Atlas goal** clears a previously saved objective.
 
-Press **T** to capture the current frame. For a bot goal, the selected Ollama model receives that frame, Atlas observations, OCR and earlier readings from this playthrough. It returns an objective and a list of policy/control pairs with points and required screen cues. Thinking checks which choices match current evidence. **Queue for B** remembers the goal and queues the proposal. Return to **Gameplay** or **Hacker** and press **B**. To try a human-written proposal or one from another model, paste its JSON in the question field and send it.
+Press **T** to inspect the latest timed capture, the exact context, the response schema and the latest JSON proposal. Once a minute, the selected Ollama model receives a captured frame, the current goal and the options Vision has prepared for that screen. Atlas observations, OCR, earlier readings and saved quest notes help the model rank those options. In a ready Gameplay or Hacker workspace Vision immediately runs the highest eligible choice from each fresh reply. The inspector displays the result. **Automatic policies** pauses future dispatch, and **B** can stop an active session.
+
+The [Gemma context design](../docs/playing-policies/README.md#how-gemma-uses-the-notebook) traces the playthrough notebook, evidence-backed quest notes and the separate JSON decision request.
 
 [Architecture slides](../docs/playing-policies/playing-policies.pptx) · [Selection diagram](../docs/playing-policies/policy-selection.png) · [Control diagram](../docs/playing-policies/policy-controls.png)
 
 ## Initialized policies
 
-These starting points guide the planner. Each proposal supplies its own scores from 1 through 100. At execution the agent checks the capture generation, room or menu, required literal text and receiver capabilities. It picks the highest-scoring eligible choice. An expired queued plan returns control. During ordinary playback an English INSPECT or LISTEN prompt can also start the reading routine.
+These starting points guide the planner. Each proposal supplies its own scores from 1 through 100. At execution the agent checks the capture generation, room or menu, required literal text and receiver capabilities. It picks the highest-scoring eligible choice. Vision discards an expired plan. During ordinary playback an English INSPECT or LISTEN prompt can also start the reading routine.
 
 | Policy | Starting points | First training task | Evidence for scoring the outcome |
 | --- | ---: | --- | --- |
@@ -19,29 +21,31 @@ These starting points guide the planner. Each proposal supplies its own scores f
 | Traverse | 55 | Cross one named obstacle using the available jump, dash, wall jump, pogo or crystal dash. | Landing on the intended platform, elapsed time, damage and stalls. |
 | Explore | 40 | Take a reachable unexplored exit, then choose another exit when the first is blocked. | A new room or connection, repeat visits, damage and stalls. |
 
-A queued `native` choice gets up to two seconds. With a compatible motor and learned skill head, the motor supplies the base action and the head adds a demonstrated ability. Without the head, the policy runs its deterministic starter. Without the motor, the starter supplies the base action and any compatible head can still add an ability. An ordinary, unqueued **B** uses the domain motor when available or the Explore starter otherwise. Direct maneuvers own the same input lease and release their buttons on completion, stale capture, interruption or loss of focus. Longer goals need a new observation and another decision. The stated success condition is a hypothesis. Reaching the end of a dash timer only establishes that the dash command was attempted. The sign routine explicitly verifies storage.
+Vision maps a movement option to its corresponding policy and gives it up to two seconds. With a compatible motor and learned skill head, the motor supplies the base action and the head adds a demonstrated ability. Without the head, the policy runs its deterministic starter. Without the motor, the starter supplies the base action and any compatible head can still add an ability. An ordinary bot session uses the domain motor when available or the Explore starter otherwise. Direct maneuvers own the same input lease and release their buttons on completion, stale capture, interruption or loss of focus. A traversal choice uses existing route and geometry inputs. Reaching a new area needs further decisions and verified route progress. The sign routine explicitly verifies storage.
 
 ## Controls and shopping
 
 In modded gameplay the recording controls include arrows, **Z** jump, **X** attack, **A** Focus/cast, **F** quick cast, **C** dash, **E** crystal dash, **D** Dream Nail, **I** inventory and **P** pause. Hold Focus or charge crystal dash. Aim up or down with quick cast to select the corresponding unlocked spell. Jump twice for Monarch Wings and jump against a wall for Mantis Claw. Casting and movement upgrades require the corresponding in-game resources or unlocks.
 
-Inspect and listen use Up at a visible prompt. Advance uses Z when a specified dialogue line is visible. In recognized inventory and pause menus the player can move the selection, confirm the named selected entry, or cancel. For an inspected tablet, the reader waits for two matching transcriptions of the new page and writes the joined passage to the local notebook. Thinking can retrieve it in another room after restart. The built-in English prompts supplement model-supplied cues in the current game language.
+Vision offers `readPrompt` on a recognized visible INSPECT or LISTEN prompt and `resumeGame` when Continue is selected in the pause menu. Vision binds the exact OCR cue or selected menu identifier, then rechecks it before execution. For an inspected tablet, the reader waits for two matching transcriptions of the new page and writes the joined passage to the local notebook. Thinking can retrieve it in another room after restart.
 
-A shopping wish records an item, desire, maximum price and minimum Geo to keep. When the model can read a wallet and offers, Thinking checks the proposed item, price and wallet against OCR. It ranks affordable items by desire. For example, with 100 Geo and a 30-Geo reserve, a 200-Geo compass is ineligible and a desired 30-Geo map is affordable. These readings produce a recommendation. The current shop workflow leaves checkout to the player. Recording the inventory change and actual Geo delta would supply the purchase outcome for training.
+A shopping wish records an item, desire, maximum price and minimum Geo to keep. The reply accepts wishes and an optional price snapshot. A tested Swift helper can check OCR, price, wallet and reserve, but the production selector does not call it. No current Gemma option buys an item. A future Buy executor would need a bound offer and verification of both inventory and Geo after a purchase.
 
-A minimal plan that can be pasted into Thinking follows.
+A minimal example of the policy output follows.
 
 ```json
 {
-  "objective": "Read the King's Pass tablet",
-  "success": "A new passage appears in the notebook",
   "choices": [
-    {"policy": "interact", "control": "inspect", "points": 85, "cue": "INSPECT"},
-    {"policy": "explore", "control": "native", "points": 30, "cue": ""}
+    {"option": "readPrompt", "points": 85},
+    {"option": "explore", "points": 30}
   ],
   "shopping": []
 }
 ```
+
+The installed contract accepts only IDs from the current request. Gemma can
+return an empty `choices` array. A future destination option needs a route that
+Vision can resolve and a target identifier it can verify before execution.
 
 ## Training and evaluation
 
@@ -84,7 +88,7 @@ For a runtime under development, use `--stage train` to save both branches, `--s
 1. **Collect expert clips.** In the modded game record with **K**. For each skill collect both successful uses and comparable situations where the player withholds the ability. Keep the raw key edges, chosen direction, screenshots and eventual game outcome. Group clips from the same source run together. Use separate datasets for Gameplay and Hacker. Extended export accepts clips recorded with the new receiver so an unrecorded ability cannot become a false release label.
 2. **Fit the ability decisions.** The extended exporter preserves short taps, holds, directional inputs and simultaneous button labels. The trainer fits a 32-unit hidden layer with cross-entropy loss. Each class gets a weight proportional to the inverse square root of its observed frequency, so release frames cannot overwhelm rare casts. The classifier trains on single-ability or release decisions for the chosen skill. It learns when to add Focus, quick cast, dash, crystal dash or Dream Nail to the existing movement actor. Use recovery demonstrations of held Focus when training the shared A key. The interaction policy starts with the tested prompt-and-read routine. Menu and dialogue training needs its own UI-state examples because ordinary gameplay clips require Knight and terrain observations.
 3. **Compare on unseen runs.** The trainer splits by whole source replay and writes the held-out confusion matrix, dataset hash, seed and example counts in the candidate JSON. Compare against the initialized policy in paired, save-disabled episodes. Measure the outcomes in the table, including false activations and stalls. A model assigning a large number of points is not evidence of success.
-4. **Select a candidate deliberately.** The runtime looks up a learned head by domain, skill and observation schema when a queued plan selects `native`. To use a tested traversal candidate, place it at `~/Library/Application Support/HollowKnightVision/bot-v1/skill-actors/gameplay/traverse.json`. Keep an experiment output separate while evaluating it. Playback evaluations record the proposed choices, winning points, context, timestamps and end reason in `skill-events.jsonl` beside the actual button events. They can be compared to human ratings and verified outcomes when calibrating planner points. The planner sets decision priorities at runtime. Weight fitting happens offline in the trainer.
+4. **Select a candidate deliberately.** The runtime looks up a learned head by domain, skill and observation schema when a dispatched choice runs a movement policy. To use a tested traversal candidate, place it at `~/Library/Application Support/HollowKnightVision/bot-v1/skill-actors/gameplay/traverse.json`. Keep an experiment output separate while evaluating it. Playback evaluations record the proposed choices, winning points, context, timestamps and end reason in `skill-events.jsonl` beside the actual button events. They can be compared to human ratings and verified outcomes when calibrating planner points. The planner sets decision priorities at runtime. Weight fitting happens offline in the trainer.
 
 From the repository root, export a curated directory of **K** clips, then fit a candidate. Replace the validation clip ID with one of the held-out recordings. Match the observation version to the playing actor.
 

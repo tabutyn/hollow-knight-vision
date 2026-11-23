@@ -1867,9 +1867,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func toggleBotPlayback() {
-        if botDemo.isActive { stopBotDemo(reason: "Stopped with B") }
-        else if botPlayer.isActive { botPlayer.stop() }
-        else if canStartBotPlayback { botPlayer.start(domain: isHackerWorkspaceActive() ? .hacker : .gameplay) }
+        if botDemo.isActive { botPlayer.automaticPoliciesEnabled = false; stopBotDemo(reason: "Stopped with B") }
+        else if botPlayer.isActive { botPlayer.automaticPoliciesEnabled = false; botPlayer.stop() }
+        else if canStartBotPlayback { botPlayer.automaticPoliciesEnabled = true; botPlayer.start(domain: isHackerWorkspaceActive() ? .hacker : .gameplay) }
     }
 
     func startBotDemonstration() {

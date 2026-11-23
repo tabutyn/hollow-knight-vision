@@ -173,10 +173,6 @@ final class GameTextReaderTests: XCTestCase {
         let found = try await GameTextCleanup.resident(preferred: model)
         let resident = try XCTUnwrap(found)
         XCTAssertEqual(resident.model, model)
-        let reply = try await ThinkingClient.answer(model: model, image: nil, history: [],
-            question: "Reply with only the word Knight.", evidence: "", planning: false)
-        print("Local text-only answer: " + reply)
-        XCTAssertTrue(reply.localizedCaseInsensitiveContains("Knight"), reply)
         let row = RememberedGameText(id: "tablet", text: raw, context: "King's Pass tablet", language: "en", date: Date(), isPassage: true)
         let cleaned = try await GameTextCleanup.correct([row], with: resident)
         let value = try XCTUnwrap(cleaned["tablet"])
@@ -185,13 +181,6 @@ final class GameTextReaderTests: XCTestCase {
         XCTAssertTrue(value.text.contains("SOUL"))
         XCTAssertTrue(value.text.contains("enemies"))
         XCTAssertEqual(value.label, .tutorial)
-        let screenshot = URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent("tablet.png")
-        let file = try XCTUnwrap(CGImageSourceCreateWithURL(screenshot as CFURL, nil))
-        let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(file, 0, nil))
-        let answer = try await ThinkingClient.answer(model: model, image: image, history: [],
-            question: "Quote the first line of the tablet.", evidence: "", planning: false)
-        print("Local screenshot answer: " + answer)
-        XCTAssertTrue(answer.localizedCaseInsensitiveContains("Higher beings"), answer)
         let credit = RememberedGameText(id: "credit", text: "Composer: Christopher Larkin",
             context: "Credits", language: "en", date: Date())
         let credits = try await GameTextCleanup.correct([credit], with: resident)

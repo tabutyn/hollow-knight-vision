@@ -2,6 +2,56 @@ import XCTest
 @testable import HollowKnightVision
 
 final class BotStarterPolicyTests: XCTestCase {
+    func testAutomaticDispatchRejectsLostCueStaleFrameAndPausedPlayback() {
+        let bot = BotPlaybackController(loadModel: false, now: { 10 }, hasFocus: { true })
+        var leases = 0, pressed = [InputBridgeButtons]()
+        var cue = [String](), capture = 10.0
+        bot.skillSight = { SkillSight(context: "Pass", capturedAt: capture, generation: 3, gameplay: true,
+            menu: nil, selected: nil, lines: cue, hasAbilityControls: false) }
+        bot.configure(canContinue: { true }, begin: { leases += 1; return UUID() },
+            apply: { a, _, _ in pressed.append(a.buttons); return true }, neutralize: { _ in }, end: { _ in })
+        let plan = BotSkillPlan(objective: "Read", success: "Passage", choices: [
+            .init(policy: .interact, control: .inspect, points: 90, cue: "INSPECT")], shopping: [])
+        func send(_ generation: UInt64 = 3) { _ = bot.dispatch(plan, context: "Pass", generation: generation, domain: .gameplay) }
+        send()
+        cue = ["INSPECT"]; capture = 9; send()
+        capture = 10; send(2)
+        bot.automaticPoliciesEnabled = false; send()
+        XCTAssertEqual(leases, 0)
+        bot.automaticPoliciesEnabled = true; send(); send()
+        XCTAssertEqual(leases, 1)
+        XCTAssertEqual(pressed, [.up])
+        bot.stop()
+    }
+
+    func testAutomaticManeuverReturnsToAnExistingMotorLease() {
+        var time = 10.0, acquired = 0, released = 0
+        let bot = BotPlaybackController(loadModel: false, now: { time }, hasFocus: { true })
+        bot.skillSight = { SkillSight(context: "Pass", capturedAt: time, generation: 3, gameplay: true,
+            menu: nil, selected: nil, lines: [], hasAbilityControls: false) }
+        bot.configure(canContinue: { true }, begin: { acquired += 1; return UUID() },
+            apply: { _, _, _ in true }, neutralize: { _ in }, end: { _ in released += 1 })
+        bot.start(domain: .gameplay)
+        let plan = BotSkillPlan(objective: "Cross", success: "Landing", choices: [
+            .init(policy: .traverse, control: .jumpRight, points: 65, cue: "")], shopping: [])
+        var events = [String]()
+        let ended = expectation(description: "Bounded maneuver completes")
+        bot.onSkillEvent = { _, _, _, event, _ in
+            events.append(event)
+            if event.contains("maneuver finished") { ended.fulfill() }
+        }
+        _ = bot.dispatch(plan, context: "Pass", generation: 3, domain: .gameplay)
+        XCTAssertEqual(bot.lastAction.buttons, [.right, .actionZ])
+        time += 0.3
+        wait(for: [ended], timeout: 2)
+        XCTAssertEqual(events.first, "selected")
+        XCTAssertTrue(bot.isActive)
+        XCTAssertEqual(acquired, 1)
+        XCTAssertEqual(released, 0)
+        bot.stop()
+        XCTAssertEqual(released, 1)
+    }
+
     func testAllSixPoliciesExecuteWithoutWeightsThroughPlayback() throws {
         let expected: [BotSkill: InputBridgeButtons] = [.explore: .left, .traverse: .left,
             .fight: [.left, .actionX], .recover: .right, .progress: [.right, .actionX], .interact: .up]
@@ -18,9 +68,8 @@ final class BotStarterPolicyTests: XCTestCase {
                 bot.configure(canContinue: { true }, begin: { UUID() }, apply: { action, _, _ in
                     sent.append(action.buttons); return true
                 }, neutralize: { _ in }, end: { _ in released = true })
-                bot.queue(.init(objective: "Test", success: "Control observed", choices: [choice], shopping: []),
-                          context: sight.context, generation: sight.generation)
-                bot.start(domain: domain)
+                _ = bot.dispatch(.init(objective: "Test", success: "Control observed", choices: [choice], shopping: []),
+                          context: sight.context, generation: sight.generation, domain: domain)
                 XCTAssertTrue(bot.isActive)
                 if let width = widths[skill] {
                     XCTAssertEqual(try BotSkillInputLayout(skill: skill, schema: 14).columns.count, width)

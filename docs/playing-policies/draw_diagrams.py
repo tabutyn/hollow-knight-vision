@@ -36,14 +36,14 @@ def save(fig, name):
 
 def selection():
     fig, ax = canvas()
-    ax.text(0.25, 5.64, "How a queued goal selects a policy", fontsize=25, weight="bold", color=INK)
-    ax.text(0.26, 5.22, "A proposal can include several choices. Each has a policy, a control, points and an optional visible cue.",
+    ax.text(0.25, 5.64, "How Vision selects a playing policy", fontsize=25, weight="bold", color=INK)
+    ax.text(0.26, 5.22, "Gemma scores options offered for a captured frame. Vision binds their controls and checks the current screen.",
             color=MUTED, fontsize=13)
     box(ax, .25, 3.05, 3.4, 1.65, "Goal and evidence",
         "Atlas exploration by default\nor a player objective\nFrame, Atlas, OCR and notebook")
-    box(ax, 4.32, 3.05, 3.8, 1.65, "Queue a proposal",
-        "Thinking or pasted plan JSON\nValidate allowed policy/control pairs\nRemember room and capture generation")
-    box(ax, 8.79, 3.05, 3.95, 1.65, "Press B on the target screen",
+    box(ax, 4.32, 3.05, 3.8, 1.65, "Rank offered options",
+        "Use only offered IDs and points\nReject invalid IDs and duplicates\nAllow an empty ranking")
+    box(ax, 8.79, 3.05, 3.95, 1.65, "Dispatch on reply",
         "Check freshness and context\nCheck cue, menu and controls\nChoose the highest eligible score")
     arrow(ax, (3.65, 3.87), (4.32, 3.87))
     arrow(ax, (8.12, 3.87), (8.79, 3.87))
@@ -53,7 +53,7 @@ def selection():
     ax.text(.26, 2.45, "Starting points for the planner", fontsize=15, color=TEAL, weight="bold")
     ax.text(.26, 1.92, "Recover  95     Fight  85     Interact  80", fontsize=16, color=INK)
     ax.text(.26, 1.45, "Progress  65    Traverse  55    Explore  40", fontsize=16, color=INK)
-    ax.text(.26, .54, "An expired queue or a proposal with no eligible choice returns control to the player.",
+    ax.text(.26, .54, "A stale reply or a reply with no eligible choice issues no new maneuver.",
             color=MUTED, fontsize=13)
     save(fig, "policy-selection.png")
 

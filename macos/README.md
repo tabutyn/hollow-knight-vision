@@ -13,9 +13,72 @@ Win32 capture/normalization bootstrap and Windows CI; the feature-complete app i
 still macOS-only. See [WINDOWS_PORT.md](WINDOWS_PORT.md) for the dependency audit
 and ordered port gates.
 
-## Playing policies
+## Thinking
 
-Use **T** to open Thinking, enter a goal, and choose **Queue for B**. Back in Gameplay or Hacker, **B** runs the eligible policy with the highest proposed score. The default goal is mapping new Atlas territory. The [policy guide](BOT_SKILLS.md) describes all six policies and their compact inputs. The [architecture diagrams and slides](../docs/playing-policies/README.md) show how the planner reaches game controls.
+Click **Thinking** between Bot and Hacker, or press **T** in the Vision dashboard.
+Vision samples the first available game frame and then a frame every minute.
+Thinking displays that screenshot, the exact system and user messages generated
+by Vision, and the latest JSON reply from the selected model. Each panel shows
+the capture time so a reply from an earlier frame is identifiable during the
+next review. The timer runs across dashboard workspaces.
+
+Launching Vision starts loading Gemma in the background. Choosing another model
+immediately shows its load status and elapsed time. When the local Ollama log
+reports weight mapping, GPU placement or warm-up, the status shows that stage.
+It keeps the reported GPU layer count and CPU/Metal mapped buffer sizes visible
+once available. Ollama confirms when the model can process a request. Its load
+API does not supply a running count of bytes processed.
+
+**Ollama** uses the installed Gemma 3 4B, Qwen 2.5 VL 7B and Llama 3.2 Vision
+11B weights. Gemma is the default. The primary local service uses port 11434.
+When configured, a second local Ollama version serves Llama on port 11435. The app asks
+Ollama to keep the chosen model warm for thirty minutes. Llama 11B can exceed 8 GB.
+On another Mac, set the server’s `OLLAMA_MODELS` directory to the desired drive
+and pull the model tags `gemma3:4b`, `qwen2.5vl:7b` and `llama3.2-vision:11b`.
+
+### Reading signs and dialogue
+
+Open **Thinking → Log** for the latest corrected reading and its heading.
+The **On screen** tab shows the exact game frame that Apple Vision read, with
+numbered boxes and recognition confidence. **Read game text** enables background
+OCR and proofreading.
+
+Select a save in Hollow Knight with capture running. **Notebook** shows the
+recognized slot. Capture logs text as soon as frames arrive, including credits
+and opening narration. When a save is confirmed, its opening-cutscene readings
+move into its log. Starting a new game creates a fresh log even in a reused
+slot. Resuming a playthrough restores its readings. Each playthrough has a file under
+`~/Library/Application Support/HollowKnightVision/Notebooks/`. The old
+`game-text-v1.json` stays in place because its rows have no save identity.
+
+The reader accepts clear opening subtitles and credits from one sample. In
+ordinary gameplay it waits for stable lines. A bot-inspected sign is recorded as a single
+passage once its text settles. A separate background task sends small batches
+of saved text to the loaded local model. It stores the likely transcription, a
+category, and a short heading such as “Composer credit”. Duplicate readings and
+revisions of the same fact appear as one entry. An inspected English passage
+with an explicit press or hold instruction takes the Tutorial label. **Original OCR** reveals the
+source and the model used. When the model is unavailable, raw readings remain
+readable and pending work resumes when a model is available. Thinking can
+recall interpretations from the current playthrough. Gameplay and Hacker display
+recent corrected and saved entries in four small orange lines at the lower right.
+The Notebook keeps the complete passages. Bot action and price checks
+continue to use the visible OCR.
+
+### Policies for a first ending
+
+The long-term goal is to complete the Atlas and beat the game. With no stated
+goal, the planner seeks unmapped territory. Vision supplies the current goal
+and the available options for each timed frame. The model ranks those options
+using the screenshot, OCR, game state and playthrough notebook. The **Response
+schema** in Thinking shows the permitted option IDs. **Use Atlas goal** clears
+a previously saved objective. In Gameplay or Hacker, Vision automatically dispatches an eligible reply against a fresh live screen. Thinking shows the disposition of each reply. The **Automatic policies** switch pauses future dispatch.
+The six initialized policies cover exploration, traversal,
+interaction, combat, recovery and progression. The player can Focus, cast
+spells, use movement abilities, and operate dialogue and in-game menus. The
+guide and training workflow are in [Playing policies for a first ending](BOT_SKILLS.md).
+The [architecture diagrams and slides](../docs/playing-policies/README.md) show how the planner reaches game controls.
+The exploration and combat priorities draw on the [spoiler-free beginner guide](https://www.reddit.com/r/HollowKnight/comments/1ihu3q2/updated_hollow_knight_beginner_guide_spoiler_free/).
 
 ## Build, capture, and dashboard
 
