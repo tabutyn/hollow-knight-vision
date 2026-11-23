@@ -26,16 +26,19 @@ if (Test-Path -LiteralPath $install) {
 }
 
 $installedExecutable = Join-Path $install 'HollowKnightVision.Windows.exe'
-$running = @(Get-CimInstance Win32_Process -Filter "Name='HollowKnightVision.Windows.exe'" |
+$hostName = 'HollowKnightVision.Windows.Host.exe'
+$installedHost = Join-Path $install $hostName
+if (-not (Test-Path -LiteralPath (Join-Path $source $hostName) -PathType Leaf)) {
+  throw 'The published app is missing its native Gym observation host.'
+}
+$running = @(Get-CimInstance Win32_Process -Filter "Name='HollowKnightVision.Windows.exe' OR Name='HollowKnightVision.Windows.Host.exe'" |
   Where-Object {
     $_.ExecutablePath -and
-    [IO.Path]::GetFullPath($_.ExecutablePath).Equals(
-      $installedExecutable,
-      [StringComparison]::OrdinalIgnoreCase)
+    ([IO.Path]::GetFullPath($_.ExecutablePath) -in @($installedExecutable, $installedHost))
   })
 if ($running.Count -gt 0) {
   $processIDs = ($running.ProcessId | Sort-Object) -join ', '
-  throw "Close the installed Hollow Knight Vision before building (process $processIDs). The build will not leave the Start Menu installation stale."
+  throw "Close the installed Hollow Knight Vision and finish any Gym training before building (process $processIDs)."
 }
 
 New-Item -ItemType Directory -Path $install -Force | Out-Null

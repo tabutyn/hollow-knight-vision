@@ -171,7 +171,7 @@ class HackerGym(gym.Env):
 
     def __init__(self, *, game, vision, labels, version, domain="hacker", supports_masked=False, max_steps=1200, stall_steps=100, deadline=math.inf,
                  visual_confirmation=None, training_render_hz=60, knight_confirmation=None, deposit_confirmation=None,
-                 path_connections=None, exit_path_objective=None):
+                 path_connections=None, exit_path_objective=None, visual_support_root=None):
         if training_render_hz not in (60, 120):
             raise ValueError("Training render rate must be 60 or 120 Hz")
         self.training_render_hz = training_render_hz
@@ -183,6 +183,7 @@ class HackerGym(gym.Env):
         self.visual_confirmation = visual_confirmation
         self.knight_confirmation = knight_confirmation
         self.deposit_confirmation = deposit_confirmation
+        self.visual_support_root = visual_support_root
         self.path_connections = Path(path_connections) if path_connections is not None else None
         if exit_path_objective is not None and (len(exit_path_objective) != 2 or not all(math.isfinite(v) for v in exit_path_objective)):
             raise ValueError("Invalid fixed exit objective")
@@ -320,6 +321,8 @@ class HackerGym(gym.Env):
             encoder_temp = self.directory / "encoder-tmp"
             encoder_temp.mkdir()
             encoder_env = dict(os.environ, TMPDIR=str(encoder_temp), HKV_GYM_LABELS=str(self.labels))
+            if self.visual_support_root is not None:
+                encoder_env["HKV_GYM_VISUAL_SUPPORT_ROOT"] = str(self.visual_support_root)
             if self.path_connections is not None:
                 encoder_env["HKV_ATLAS_PATH_CONNECTIONS"] = str(self.path_connections)
             if self.exit_path_objective is not None:
@@ -327,7 +330,8 @@ class HackerGym(gym.Env):
             self.encoder = subprocess.Popen(encoder_args, env=encoder_env,
                                             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
             self.worker = subprocess.Popen([self.game, "-batchmode", *([] if render_pixels else ["-nographics"]), "-screen-width", "960",
-                "-screen-height", "540", "-logFile", self.directory / "unity.log"], cwd=self.directory,
+                "-screen-height", "540", "-logFile", self.directory / "unity.log"],
+                cwd=self.game.parent if os.name == "nt" else self.directory,
                 env=dict(os.environ, HKV_GYM_DIRECTORY=str(self.directory), SteamAppId="367520", SteamGameId="367520"),
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             frame = self._receive(0)

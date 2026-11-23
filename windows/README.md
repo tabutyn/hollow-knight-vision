@@ -697,6 +697,24 @@ Pass `-BaseCheckpoint C:\path\to\Detector.pt` for an incremental run. The
 wrapper forces `--device cpu` and hides CUDA devices. The WPF Model workspace
 drives the same validator and trainer.
 
+### Live Gym PPO from an installed build
+
+Run the launcher against a modded Hollow Knight executable and a verified bot
+checkpoint for the selected domain. Game Play also uses an active Windows ONNX
+detector and the local HUD stencils. The trainer validates the installed native
+encoders and receiver before launching a private no-save game process.
+
+```powershell
+$training = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\training'
+& (Join-Path $training 'setup-bot-trainer-windows.ps1')
+& (Join-Path $training 'train-hacker-gym-windows.ps1') -Game 'C:\Games\Hollow Knight\hollow_knight.exe' --domain hacker --hours 1
+```
+
+Use `--domain gameplay` for visual training or `--help` for shared Gym options.
+The launcher resumes the latest compatible checkpoint for that domain or accepts
+`--base` to select one explicitly. PPO proposals pass the shared comparison and
+native inference checks before the trainer publishes a new policy.
+
 Windows has implementations for atlas persistence, state management,
 ground/room editing, input-path recording, training and player operations.
 These surfaces do not establish full Mac parity: menu calibration, model review,

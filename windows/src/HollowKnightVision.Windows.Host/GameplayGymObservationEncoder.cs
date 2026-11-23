@@ -19,12 +19,8 @@ public static class GameplayGymObservationEncoder
     {
         if (BotPolicyContract.Names(version) is null || localizerDirectories?.Count > LocalizerClasses.Length)
             throw new InvalidDataException("Unknown observation schema or visual model configuration.");
-        var artifacts = detectorDirectory is null
-            ? new LabelingModelVersionStore(Path.Combine(supportRoot, "models-v1")).ActiveModelArtifacts() : [];
-        var directories = detectorDirectory is not null ? [detectorDirectory]
-            : artifacts.Select(artifact => Path.GetDirectoryName(artifact.ModelPath)!).ToArray();
+        var (directories, artifacts) = DetectorRuns(supportRoot, detectorDirectory);
         using var detector = new OnnxObjectDetectorSet(directories, artifacts);
-        if (!detector.HasModels) throw new InvalidDataException("Game Play Gym requires a trained Windows ONNX detector.");
         using var localizers = new Localizers(localizerDirectories);
         var stencils = AutoNavigationRunner.CreateGymStencilSource(supportRoot);
         var visual = new BotVisualGymObservationSource();
@@ -65,6 +61,16 @@ public static class GameplayGymObservationEncoder
 
         IReadOnlyList<ObjectDetection> Detect(BgraFrame frame) =>
             localizers.ReplaceClasses(detector.Detect(frame), frame);
+    }
+
+    internal static (IReadOnlyList<string> Directories, IReadOnlyList<LabelingActiveModelArtifact> Artifacts)
+        DetectorRuns(string supportRoot, string? detectorDirectory)
+    {
+        if (detectorDirectory is not null) return ([detectorDirectory], []);
+        var artifacts = new LabelingModelVersionStore(Path.Combine(supportRoot, "models-v1")).ActiveModelArtifacts();
+        if (artifacts.Count == 0)
+            throw new InvalidDataException("Game Play Gym requires an active Windows ONNX detector.");
+        return (artifacts.Select(artifact => Path.GetDirectoryName(artifact.ModelPath)!).ToArray(), artifacts);
     }
 
     internal static BgraFrame ReadFrame(string path, int ticks, double now)

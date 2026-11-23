@@ -128,6 +128,22 @@ internal static class Program
         TextWriter? standardError = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
+        if (arguments is ["--gym-runtime-info", var domain, var gamePath, var supportPath])
+        {
+            try
+            {
+                var info = GymRuntimeInfo.Read(domain, gamePath, supportPath,
+                    Environment.GetEnvironmentVariable("HKV_GYM_VISUAL_MODEL_DIR"));
+                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(info, WorldReplayJsonOptions));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                or JsonException or ArgumentException or InvalidOperationException or KeyNotFoundException)
+            {
+                (standardError ?? Console.Error).WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
         if (arguments is ["--hacker-gym-observations", "verify", var checkpoint, var fixture])
         {
             try

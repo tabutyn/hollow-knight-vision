@@ -3,9 +3,9 @@ name: Windows
 on:
   push:
     branches: [main]
-    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", "global.json", ".github/workflows/windows.yml"]
+    paths: ["windows/**", "macos/BotPython/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", "global.json", ".github/workflows/windows.yml"]
   pull_request:
-    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", "global.json", ".github/workflows/windows.yml"]
+    paths: ["windows/**", "macos/BotPython/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", "global.json", ".github/workflows/windows.yml"]
 
 jobs:
   build-test:
@@ -40,6 +40,11 @@ jobs:
         run: .\setup-training-windows.ps1
       - name: Verify shared trainer and Windows dataset interchange
         run: .\Test-TrainingInterop.ps1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify installed Windows Gym trainer
+        run: .\Test-BotGymTrainer.ps1
       - name: Publish
         run: dotnet publish src/HollowKnightVision.Windows.App/HollowKnightVision.Windows.App.csproj -c Release -r win-x64 --self-contained false -o artifacts/publish
       - uses: actions/upload-artifact@v4

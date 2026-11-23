@@ -195,7 +195,7 @@ for version in (bot.SCHEMA_VERSION, bot.GROUND_CONTACT_POLICY_VERSION, bot.LANDI
 '@
   & $Python -B -c $botValidation $botSource $botFixture
   if ($LASTEXITCODE -ne 0) { throw 'Windows bot capture interoperability failed.' }
-  $nativeVerifier = Join-Path $PSScriptRoot 'artifacts\win-x64\HollowKnightVision.Windows.Host.exe'
+  $nativeVerifier = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\HollowKnightVision.Windows.Host.exe'
   & $nativeVerifier --hacker-gym-observations verify-inputs (Join-Path $botFixture 'native-input-fixtures.json')
   if ($LASTEXITCODE -ne 0) { throw 'Windows native observation history differs from shared trainer inputs.' }
   $policyFixtures = Get-ChildItem -LiteralPath (Join-Path $botFixture 'policy-fixtures') -Directory

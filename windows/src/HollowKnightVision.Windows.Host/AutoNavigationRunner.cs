@@ -287,7 +287,10 @@ public static class AutoNavigationRunner
     }
 
     internal static Func<BgraFrame, StartupStencilEvidence> CreateGymStencilSource(string supportRoot) =>
-        LiveStartupStencilEvidenceProvider.CreateDefault(supportRoot, allowFallback: false).Observe;
+        LiveStartupStencilEvidenceProvider.CreateDefault(supportRoot, allowFallback: false, allowCalibrationWrites: false).Observe;
+
+    internal static IEnumerable<string> GymStencilInputs(string supportRoot) =>
+        LiveStartupStencilEvidenceProvider.StencilInputs(supportRoot);
 
     private sealed class LiveStartupStencilEvidenceProvider : IStartupStencilEvidenceProvider
     {
@@ -309,7 +312,8 @@ public static class AutoNavigationRunner
 
         internal string Diagnostic { get; }
 
-        internal static LiveStartupStencilEvidenceProvider CreateDefault(string? supportRoot, bool allowFallback = true)
+        internal static LiveStartupStencilEvidenceProvider CreateDefault(
+            string? supportRoot, bool allowFallback = true, bool allowCalibrationWrites = true)
         {
             supportRoot ??= Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -319,8 +323,9 @@ public static class AutoNavigationRunner
             var calibrationPath = MenuStencilCalibration.WritablePath(examplesRoot);
             var calibration = new MenuSelectorCalibrationTracker(
                 calibrationPath,
-                MenuStencilCalibration.ProjectMirrorPath(Environment.GetCommandLineArgs()),
-                fallbackCalibration: MenuStencilCalibration.LoadDefault(calibrationPath));
+                allowCalibrationWrites ? MenuStencilCalibration.ProjectMirrorPath(Environment.GetCommandLineArgs()) : null,
+                fallbackCalibration: MenuStencilCalibration.LoadDefault(calibrationPath),
+                allowWrites: allowCalibrationWrites);
 
             IReadOnlyList<MenuStencilLiveSource> liveCaptures = [];
             try
@@ -365,6 +370,33 @@ public static class AutoNavigationRunner
                 new HudStencilTracker(capturedHud),
                 allowGeometryFallback,
                 diagnostic);
+        }
+
+        internal static IEnumerable<string> StencilInputs(string supportRoot)
+        {
+            var examplesRoot = Path.Combine(supportRoot, "labeling-v1", "examples");
+            var screenIds = LabelingContractCatalog.ScreenContexts.Select(context => context.Identifier).ToHashSet();
+            foreach (var example in LoadExamples(examplesRoot))
+            {
+                var context = example.Manifest.ContextIdentifier;
+                if (context != "gameplay-hud" && !screenIds.Contains(context)) continue;
+                yield return Path.Combine(example.DirectoryPath, LabelingExampleStore.ManifestFilename);
+                yield return example.ImagePath;
+            }
+            var captures = MenuStencilLiveCaptureStore.RootForExamples(examplesRoot);
+            if (Directory.Exists(captures))
+            {
+                foreach (var capture in new MenuStencilLiveCaptureStore(captures).Load())
+                {
+                    yield return Path.Combine(Path.GetDirectoryName(capture.ImagePath)!, MenuStencilLiveCaptureStore.ManifestFilename);
+                    yield return capture.ImagePath;
+                }
+            }
+            foreach (var path in new[] { MenuStencilCalibration.WritablePath(examplesRoot),
+                Path.Combine(supportRoot, "initialization-language-v1.txt") })
+            {
+                if (File.Exists(path)) yield return path;
+            }
         }
 
         public StartupStencilEvidence Observe(BgraFrame frame)
