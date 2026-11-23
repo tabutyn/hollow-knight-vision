@@ -45,6 +45,22 @@ internal static class LiveTrackingTimingParityTests
             == FloorlessPoseCandidateSource.CoarseCaptureRate);
     }
 
+    public static void TestFloorlessSelectorKeepsFineVerticalMotionWhenHorizontalTravelAgrees()
+    {
+        var result = FloorlessPoseCandidateSelector.Select(default, new(-5.1, 0),
+            new(-5, -30), VisualRoomDirection.Left, coarseIsPlaceMatch: false);
+        Check(result == new FloorlessPoseCandidate(new(-5, -30), FloorlessPoseCandidateSource.MaskedRegistration));
+    }
+
+    public static void TestFloorlessSelectorAllowsVerticalCameraChangeAgainstHorizontalInput()
+    {
+        var result = FloorlessPoseCandidateSelector.Select(default, null,
+            new(-3, -60), VisualRoomDirection.Right, coarseIsPlaceMatch: false);
+        Check(result == new FloorlessPoseCandidate(new(-3, -60), FloorlessPoseCandidateSource.MaskedRegistration));
+        Check(FloorlessPoseCandidateSelector.Select(default, null, new(-20, 0),
+            VisualRoomDirection.Right, coarseIsPlaceMatch: false) is null);
+    }
+
     public static void TestGroundMotionEvidenceRejectsCoordinateSeedWithoutPixelMeasurement()
     {
         Check(!GroundMotionEvidence.IsMeasured(true, true, 0, 0, 0));

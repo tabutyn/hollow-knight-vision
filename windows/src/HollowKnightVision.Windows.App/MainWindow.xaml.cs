@@ -3351,15 +3351,14 @@ public partial class MainWindow : Window
             InputPathTrackingObservation.FromGround(groundHypotheses),
             publishedCameraPosition,
             visualObservation.Source,
-            motionBridgeActive ? motion?.Motion?.Confidence : null,
+            visualObservation.MaskedMotionConfidence,
             motionBridgeActive ? visualObservation.Source : null,
             signal.MeanPeak,
             signal.VisibleFraction,
             renderedGameFrame,
             gameplayAdmitted, groundMilliseconds, WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId),
             (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0), visualGameplayTracker.PlacementRecoveryState,
-            motionBridgeActive ? new AtlasPoint(visualObservation.Telemetry.CameraX, visualObservation.Telemetry.CameraY) : null,
-            motionBridgeActive ? coarseMotion?.Direction : null);
+            visualObservation.FloorlessEvidence);
         if ((gameMode == GameRuntimeMode.Modded && resultGameplayAtlas.Revision != Interlocked.Read(ref gameplayRenderedRevision))
             || gameplayAccepted && (replacesGameplayAtlas
             || resultGameplayAtlas.AcceptedFrameCount == 1

@@ -76,9 +76,14 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
     {
         var groundStarted = Stopwatch.GetTimestamp();
         var terrainAnalysis = prepared.Terrain;
+        var drive = KnightLevelWalk.Direction(buttons ?? InputButtons.None);
+        VisualRoomDirection? direction = drive < 0 ? VisualRoomDirection.Left : drive > 0 ? VisualRoomDirection.Right : null;
+        var hasKnownRoom = !string.IsNullOrWhiteSpace(knownRoom);
+        var sceneGrid = !hasKnownRoom && roomIdentity.HasUnresolvedLoading ? null : signal.MotionGrid;
         var observation = terrainAnalysis?.Edges.SourceLuma is { } sourceLuma
             ? camera.ObserveGroundAnchored(frame, prepared.Motion, sourceLuma,
-                terrainAnalysis.CameraReferences, prepared.ProtectedOcclusions, hasCommittedAtlas, knight, tracker, timestamp)
+                terrainAnalysis.CameraReferences, prepared.ProtectedOcclusions, hasCommittedAtlas, knight, tracker, timestamp,
+                sceneGrid, direction)
             : camera.ObserveUnverified(frame, prepared.Motion);
         if (!admission.AdmitsTracking) camera.PauseGroundVerification();
         var cameraMilliseconds = Stopwatch.GetElapsedTime(groundStarted).TotalMilliseconds;
@@ -95,7 +100,6 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             estimate = reference.Observe(frame, localCamera, frame.Width, knight,
                 prepared.GroundExclusions, terrainAnalysis.Theory);
 
-        var hasKnownRoom = !string.IsNullOrWhiteSpace(knownRoom);
         var visualRoom = roomIdentity.Observe(generation, visualRoomObservationEnabled && !hasKnownRoom,
             admission.Transition, signal.MotionGrid, timestamp, buttons, localCamera);
         var room = hasKnownRoom ? knownRoom! : visualRoom.Id;
@@ -105,6 +109,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             walked.BreakContinuity();
             patches.Reset();
             Paths.Reset();
+            camera.ResetFloorlessMotion();
         }
         if (ground.GlobalCorrection is { } correction && correction.X * correction.X + correction.Y * correction.Y > 9)
         {
@@ -145,6 +150,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         tracker.Reset();
         semanticAtlas.Reset();
         reference.Reset();
+        camera.ResetFloorlessMotion();
         roomIdentity.ResetObservation();
         lastKnownRoom = null;
         frameWidth = 0;
@@ -253,6 +259,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         private long roomEpoch;
         private bool transitionResumeActive;
         private bool loadingOwnsResume;
+
+        internal bool HasUnresolvedLoading => cuts.IsPending;
 
         internal (string Id, bool AllowsAtlasWrite, VisualSceneDiscontinuityTracker.Cut? Cut) Observe(
             long currentCaptureGeneration, bool enabled, TransitionFrameDecision transition, LowResolutionMotionGrid? grid,

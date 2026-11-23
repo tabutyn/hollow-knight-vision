@@ -162,15 +162,18 @@ public static class FloorlessPoseCandidateSelector
             }
             return maskedCandidate ?? coarseCandidate;
         }
-        var directional = new[] { coarseCandidate, maskedCandidate }
-            .Where(value => value is not null)
-            .Select(value => value!.Value)
-            .Where(value => Agrees(Step(current, value.Position).X,
-                expectedDirection.Value))
-            .OrderByDescending(value => Math.Abs(Step(current, value.Position).X))
-            .ToArray();
-        if (directional.FirstOrDefault() is { } strongest && directional.Length > 0)
-            return strongest;
+        var coarseX = coarseCandidate is { } coarseStep ? coarseStep.Position.X - current.X : 0;
+        var maskedX = maskedCandidate is { } maskedStep ? maskedStep.Position.X - current.X : 0;
+        var coarseAgrees = Agrees(coarseX, expectedDirection.Value);
+        var maskedAgrees = Agrees(maskedX, expectedDirection.Value);
+        if (maskedAgrees && (!coarseAgrees || Math.Abs(coarseX) - Math.Abs(maskedX) <= StationaryTolerance))
+            return maskedCandidate;
+        if (coarseAgrees) return coarseCandidate;
+
+        // A near tie in horizontal travel preserves the masked measurement
+        // above. A vertical camera-zone change may also ease against input.
+        if (IsVerticalDominant(maskedCandidate, current)) return maskedCandidate;
+        if (IsVerticalDominant(coarseCandidate, current)) return coarseCandidate;
         if (maskedCandidate is { } stoppedMasked
             && Math.Abs(Step(current, stoppedMasked.Position).X) <= StationaryTolerance)
             return stoppedMasked;
@@ -191,6 +194,11 @@ public static class FloorlessPoseCandidateSelector
 
     private static CameraVector Step(AtlasPoint current, AtlasPoint candidate) =>
         new(candidate.X - current.X, candidate.Y - current.Y);
+
+    private static bool IsVerticalDominant(FloorlessPoseCandidate? candidate, AtlasPoint current) =>
+        candidate is { } value
+        && Math.Abs(value.Position.Y - current.Y) >= VerticalPreferenceThreshold
+        && Math.Abs(value.Position.Y - current.Y) > Math.Abs(value.Position.X - current.X);
 
     private static bool Agrees(double step, VisualRoomDirection direction) =>
         direction == VisualRoomDirection.Left

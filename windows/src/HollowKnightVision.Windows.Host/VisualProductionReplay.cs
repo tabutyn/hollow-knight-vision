@@ -201,13 +201,17 @@ internal static class VisualProductionReplay
                 var publishedCamera = new AtlasPoint(localCamera.X + basis.X, localCamera.Y + basis.Y);
                 var roomId = WindowsLiveWorldPipeline.RoomIdentifier(tracked.RoomId);
                 var revision = (ulong)Math.Max(0, placement?.Revision ?? 0);
+                var floorless = observation.FloorlessEvidence;
                 replayTrace.RecordTracking(InputPathTrackingObservation.FromGround(tracked.Ground), evidence.CaptureTimestamp,
                     publishedCameraPosition: publishedCamera, poseSource: observation.Source,
-                    motionBridgeConfidence: tracked.MotionBridgeActive ? prepared.Motion?.Motion?.Confidence : null,
+                    motionBridgeConfidence: observation.MaskedMotionConfidence,
                     motionBridgeSource: tracked.MotionBridgeActive ? observation.Source : null,
                     signalMeanPeak: signal.MeanPeak, signalVisibleFraction: signal.VisibleFraction,
                     roomId: roomId, roomRevision: revision, renderedGameFrame: evidence.RenderedGameFrame,
-                    placementRecoveryState: camera.PlacementRecoveryState, observedAt: evidence.CapturedAt);
+                    placementRecoveryState: camera.PlacementRecoveryState,
+                    floorlessCoarsePosition: floorless?.CoarsePosition, floorlessMaskedPosition: floorless?.MaskedPosition,
+                    floorlessExpectedDirection: floorless?.ExpectedDirection, floorlessSelectionSource: floorless?.SelectionName,
+                    observedAt: evidence.CapturedAt);
                 replayTrace.RecordAtlasAdmission(evidence.CaptureTimestamp, placement?.AllowsAtlasWrite == true);
                 replayTrace.RecordCoarseMotion(evidence.CaptureTimestamp, evidence.RenderedGameFrame, publishedCamera,
                     tracked.MotionBridgeActive ? publishedCamera : null, coarse, tracked.MotionBridgeActive,
@@ -219,6 +223,7 @@ internal static class VisualProductionReplay
                     admission.AdmitsTracking, admission.Transition.ResumedAfterTransition, observation.Source,
                     observation.GroundVerified, observation.AllowsAtlasWrite,
                     trackerState = camera.PlacementRecoveryState, localCamera, tracked.RoomId,
+                    floorless,
                     tracked.RoomAllowsAtlasWrite, tracked.SceneCut,
                     worldCamera = placement?.CameraPose, worldState = placement?.State.ToString(),
                     groundSupport = observation.GroundSupport, groundError = observation.GroundError,
