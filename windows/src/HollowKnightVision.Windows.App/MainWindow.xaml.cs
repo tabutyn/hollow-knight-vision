@@ -557,7 +557,7 @@ public partial class MainWindow : Window
     private const int HackerPublicationRetryLimit = 3;
     private readonly object hackerAtlasGate = new();
     private readonly HackerFramePreparer hackerFramePreparer = new();
-    private readonly HackerAtlasPipeline hackerAtlasPipeline = new();
+    private HackerAtlasPipeline hackerAtlasPipeline = new();
     private readonly VisualGameplayTracker visualGameplayTracker = new();
     private readonly GameplayPresentationState gameplayPresentation = new();
     private DateTimeOffset lastGpuDiagnosticAt;
@@ -964,6 +964,7 @@ public partial class MainWindow : Window
         customObjectChoices.AddRange(objectCatalog.Load().Select(item =>
             new ClassChoice(item.Name, item.Identifier)));
         hackerEditPath = IOPath.Combine(root, "atlas-v1", "hacker-edits.json");
+        hackerArchiveStore = new(IOPath.Combine(root, "hacker-atlas-v1"));
         ExamplesRootText.Text = IOPath.Combine(root, "labeling-v1", "examples");
         initialization = new StencilInitializationCoordinator(
             new LabelingExampleStore(ExamplesRootText.Text), gameMode);
@@ -1008,7 +1009,7 @@ public partial class MainWindow : Window
             GameplayAtlasManager.IsEnabled = false;
             try
             {
-                var initializationTask = InitializePersistentWorldAsync();
+                var initializationTask = InitializeAtlasesAsync();
                 persistentWorldInitialization = initializationTask;
                 await initializationTask;
             }
@@ -1025,7 +1026,7 @@ public partial class MainWindow : Window
                 inputHeartbeat.Start();
             }
 
-            if (latestAtlas is not null)
+            if (latestAtlas is not null && hackerAtlasOutput is null && hackerArchiveProfile is null)
             {
                 try
                 {
@@ -1095,6 +1096,7 @@ public partial class MainWindow : Window
             else
             {
                 await FlushActiveAtlasAsync();
+                await FlushHackerAtlasAsync();
                 PersistHackerEdits();
             }
         }
@@ -1732,10 +1734,13 @@ public partial class MainWindow : Window
         }
         if (activeRoom is not null && roomDragStart is not null)
         {
+            if (activeRoom.OffsetX != roomOriginalOffsetX || activeRoom.OffsetY != roomOriginalOffsetY)
+                hackerLayoutRevision++;
             activeRoom = null;
             roomDragStart = null;
             Mouse.Capture(null);
             PersistHackerEdits();
+            _ = PersistHackerAtlasPeriodicallyAsync();
             e.Handled = true;
             return;
         }
@@ -2811,8 +2816,6 @@ public partial class MainWindow : Window
         ChannelReader<HackerPipelineWork> frames,
         long captureGeneration)
     {
-        HackerAtlasPublication? stagedAtlas;
-        lock (hackerAtlasGate) stagedAtlas = latestStagedHackerAtlas;
         await foreach (var work in frames.ReadAllAsync().ConfigureAwait(false))
         {
             if (!work.OwnsHackerWork
@@ -2833,14 +2836,13 @@ public partial class MainWindow : Window
             }
             if (prepared is null) continue;
 
-            if (output is not null)
+            var staged = output is null ? null : StageHackerAtlas(output);
+            HackerAtlasPublication? stagedAtlas;
+            lock (hackerAtlasGate)
             {
-                stagedAtlas = StageHackerAtlas(output);
-                lock (hackerAtlasGate)
-                {
-                    if (work.WorkGeneration != hackerWorkGeneration) continue;
-                    latestStagedHackerAtlas = stagedAtlas;
-                }
+                if (work.WorkGeneration != hackerWorkGeneration) continue;
+                if (staged is not null) latestStagedHackerAtlas = staged;
+                stagedAtlas = latestStagedHackerAtlas;
             }
 
             var publication = new HackerPipelinePublication(
@@ -5124,7 +5126,7 @@ public partial class MainWindow : Window
                 var errors = new List<string>();
                 try { await ReplaceActiveAtlasWithEmptyAsync(retainPrevious: false); }
                 catch (Exception error) { errors.Add(error.Message); }
-                try { ClearHackerAtlas(); }
+                try { await ClearHackerAtlasAsync(); }
                 catch (Exception error) { errors.Add(error.Message); }
                 var result = initialization.Text("Room reset.");
                 OpsStatusText.Text = errors.Count == 0 ? result : result + " " + string.Join(" ", errors);
@@ -5710,6 +5712,12 @@ public partial class MainWindow : Window
             activateWorld: activateWorld);
     }
 
+    private async Task InitializeAtlasesAsync()
+    {
+        await InitializePersistentWorldAsync();
+        if (!isClosing) await InitializeHackerArchiveAsync();
+    }
+
     private async Task InitializePersistentWorldAsync()
     {
         var emptyMetadata = new VisionResetController.PersistedAtlasMetadata(
@@ -6138,20 +6146,19 @@ public partial class MainWindow : Window
     private async void HackerDeleteAtlas_Click(object sender, RoutedEventArgs e)
     {
         SettingsOverlay.Visibility = Visibility.Collapsed;
-        await RunAtlasOperationAsync(() =>
-        {
-            ClearHackerAtlas();
-            return Task.CompletedTask;
-        });
+        await RunAtlasOperationAsync(ClearHackerAtlasAsync);
     }
 
-    private void ClearHackerAtlas()
+    private void ClearHackerPresentation()
     {
         Volatile.Write(ref hackerObjective, null);
         Interlocked.Increment(ref botRouteEpoch);
         hackerPathLinks.CancelSelection();
         hackerPathGraphs.Clear();
         CancelGroundTruthGesture();
+        if (roomDragStart.HasValue) Mouse.Capture(null);
+        activeRoom = null;
+        roomDragStart = null;
         InvalidatePendingHackerWork(resetCore: true);
         foreach (var image in hackerTileImages.Values)
             AtlasCanvas.Children.Remove(image);
@@ -6176,7 +6183,6 @@ public partial class MainWindow : Window
         groundTruthLabels.ClearSelection();
         rooms.Clear();
         roomConnections.Clear();
-        PersistHackerEdits();
         AtlasEmptyPanel.Visibility = Visibility.Visible;
         RedrawHackerEdits();
     }
@@ -6368,6 +6374,7 @@ public partial class MainWindow : Window
         {
             latestHackerPublication = publication;
         }
+        _ = PersistHackerAtlasPeriodicallyAsync();
     }
 
     private void RenderHackerAtlasPublication(HackerAtlasPublication publication)
@@ -6420,6 +6427,11 @@ public partial class MainWindow : Window
                     -room.Bounds.MaxY,
                     room.Bounds.MaxX,
                     -room.Bounds.MinY);
+                if (archivedHackerOffsets.TryGetValue(room.SceneName, out var offset))
+                {
+                    edit.OffsetX = offset.X;
+                    edit.OffsetY = offset.Y;
+                }
                 rooms.Add(room.SceneName, edit);
             }
             edit.Left = room.Bounds.MinX;

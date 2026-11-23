@@ -20,12 +20,21 @@ public partial class MainWindow
     private Task<bool> ActivateGameplayProfileAtlasAsync(ProfileLaunch launch) =>
         RunAtlasOperationAsync(async () =>
         {
+            var modded = gameMode == GameRuntimeMode.Modded;
+            if (modded) await FlushHackerAtlasAsync();
+            var previousProfile = hackerArchiveProfile;
+            var hackerWasReady = hackerArchiveReady;
+            var previousHacker = modded && hackerWasReady && previousProfile is null
+                ? hackerAtlasPipeline.CaptureArchive(CaptureHackerRoomOffsets()).Archive
+                : null;
+            LoadedHackerArchive? switchedHacker = null;
             var activated = await Task.Run(() =>
             {
                 try
                 {
                     return VisionResetController.ActivateProfileAtlas(atlasStateStore, activeAtlasDirectory, launch,
-                        gameplayAtlas.TileSize, gameplayAtlas.PixelsPerWorldUnit, _ => ReopenActiveLiveWorld());
+                        gameplayAtlas.TileSize, gameplayAtlas.PixelsPerWorldUnit, _ => ReopenActiveLiveWorld(),
+                        prepareProfile: modded ? PrepareHacker : null);
                 }
                 catch (Exception replacementError)
                 {
@@ -40,17 +49,29 @@ public partial class MainWindow
                 atlasPersistTask = null;
                 PublishPersistentAtlas(replacement.ValidatedWorld, explicitlyRequested: true, reopenLiveWorld: false);
                 Interlocked.Increment(ref botRouteEpoch);
-                InvalidatePendingHackerWork();
-                if (replacement.ArchivedPreviousAtlasDirectory is { } archive)
-                {
-                    try
-                    {
-                        await Task.Run(() => VisionResetController.ImportPreviousActiveAtlas(
-                            atlasStateStore, archive, SaveProfileAtlas.Read(archive)?.Name ?? $"Atlas before {activated.Profile.Name}"));
-                    }
-                    catch (VisionResetController.PreviousActiveAtlasImportException error) { ShowError(error); }
-                }
             }
-            SetStatus($"Gameplay Atlas uses {activated.Profile.Name}.");
+            if (switchedHacker is not null) InstallHackerArchive(switchedHacker);
+            if (activated.Replacement?.ArchivedPreviousAtlasDirectory is { } archive)
+            {
+                try
+                {
+                    await Task.Run(() => VisionResetController.ImportPreviousActiveAtlas(
+                        atlasStateStore, archive, SaveProfileAtlas.Read(archive)?.Name ?? $"Atlas before {activated.Profile.Name}"));
+                }
+                catch (VisionResetController.PreviousActiveAtlasImportException error) { ShowError(error); }
+            }
+            SetStatus($"Atlas uses {activated.Profile.Name}.");
+
+            void PrepareHacker(SaveProfileAtlas profile, bool adoptUnassigned)
+            {
+                if (hackerWasReady && previousProfile == profile) return;
+                var archive = hackerArchiveStore.Read(profile);
+                if (archive is null && adoptUnassigned && previousHacker is not null)
+                {
+                    hackerArchiveStore.Write(profile, previousHacker);
+                    archive = previousHacker;
+                }
+                switchedHacker = CreateHackerArchivePresentation(profile, archive);
+            }
         }, suspendCapture: false);
 }

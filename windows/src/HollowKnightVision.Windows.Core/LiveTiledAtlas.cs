@@ -302,6 +302,30 @@ public sealed class LiveTiledAtlas
         get { lock (gate) return CloneSnapshot(published); }
     }
 
+    // Compositing always publishes new tile buffers. The archive writer reads
+    // these buffers without making a second full copy of the composed map.
+    internal LiveTiledAtlasSnapshot PublishedForArchive
+    {
+        get { lock (gate) return published; }
+    }
+
+    internal void RestoreHackerTiles(IReadOnlyList<HackerAtlasArchivedTile> tiles, StencilRect contentBounds)
+    {
+        lock (gate)
+        {
+            if (pixelPolicy != LiveTiledAtlasPixelPolicy.NewestQuilted
+                || anchorPosition != new AtlasPoint(0, 0) || contributions.Count != 0 || published.Tiles.Count != 0)
+                throw new InvalidOperationException("Hacker Atlas tiles require an empty room composer.");
+            var restored = tiles.Select(tile =>
+            {
+                var id = StableId(tile.Coordinate);
+                return new LiveTiledAtlasTile(id, id, tile.Coordinate.X, tile.Coordinate.Y, tile.Image, TileBounds(tile.Coordinate), []);
+            }).ToArray();
+            restoredContentBounds = contentBounds;
+            Publish(restored, unchecked(published.Revision + 1));
+        }
+    }
+
     public IReadOnlyList<LiveTiledAtlasTile> Tiles => Snapshot.Tiles;
     public ulong Revision { get { lock (gate) return published.Revision; } }
     public StencilRect TotalBounds { get { lock (gate) return published.TotalBounds; } }
@@ -335,6 +359,7 @@ public sealed class LiveTiledAtlas
             temporalDiagnostics = default;
             this.anchorPosition = IsFinite(anchorPosition) ? anchorPosition : null;
             nextInsertionOrder = 0;
+            restoredContentBounds = default;
             lastRasterizedContributionCount = 0;
             published = new([], unchecked(published.Revision + 1), default, default);
         }
@@ -2004,11 +2029,13 @@ public sealed class LiveTiledAtlas
         return new(minX, minY, maxX - minX, maxY - minY);
     }
 
+    private StencilRect restoredContentBounds;
+
     private StencilRect RegisteredContentBounds()
     {
-        if (anchorPosition is not { } anchor || contributions.Count == 0) return default;
-        var hasBounds = false;
-        var result = default(StencilRect);
+        if (anchorPosition is not { } anchor || contributions.Count == 0) return restoredContentBounds;
+        var result = restoredContentBounds;
+        var hasBounds = !result.IsEmpty;
         foreach (var contribution in contributions.Values)
         {
             var placement = PlacementBounds(contribution, anchor);
