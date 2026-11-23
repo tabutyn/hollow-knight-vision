@@ -6,6 +6,55 @@ internal static class HackerTerrainEditingTests
     private const string OtherRoom = "Tutorial_02";
     private static readonly AtlasPoint Scale = new(1, 1);
 
+    public static void TestMacRoomCalibrationsSurviveTerrainEditAndUndo()
+    {
+        WithStore((store, _) =>
+        {
+            const string input = """
+                {
+                  "schemaVersion": 2, "seededScenes": [], "lines": [],
+                  "roomProjections": {
+                    "Tutorial_01": {
+                      "roomID": "B29F0F1D-D208-4130-BE90-21ED38976D83",
+                      "pixelsPerWorldUnitX": 21.75, "pixelsPerWorldUnitY": 22.5,
+                      "localOrigin": [-30.25, 14.5]
+                    },
+                    "Tutorial_02": {
+                      "roomID": "1976C33E-5E02-4398-A19A-7F37C233D464",
+                      "pixelsPerWorldUnitX": 20, "pixelsPerWorldUnitY": 20,
+                      "localOrigin": [1, -2]
+                    }
+                  }
+                }
+                """;
+            File.WriteAllText(store.FilePath, input);
+            var editor = new GroundTruthLabelController(store);
+            var original = editor.Document.Clone();
+            Check(original.RoomProjections?[Room] is { PixelsPerWorldUnitX: 21.75, PixelsPerWorldUnitY: 22.5 }
+                && original.RoomProjections[Room].LocalOrigin == new AtlasPoint(-30.25, 14.5),
+                "Windows could not read the Mac room calibration.");
+
+            Drag(editor, 20, 60, 90, 60);
+            using var saved = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(store.FilePath));
+            using var source = System.Text.Json.JsonDocument.Parse(input);
+            var actual = saved.RootElement.GetProperty("roomProjections");
+            var expected = source.RootElement.GetProperty("roomProjections");
+            foreach (var room in new[] { Room, OtherRoom })
+            {
+                var before = expected.GetProperty(room);
+                var after = actual.GetProperty(room);
+                Check(before.GetProperty("roomID").GetGuid() == after.GetProperty("roomID").GetGuid()
+                    && before.GetProperty("pixelsPerWorldUnitX").GetDouble() == after.GetProperty("pixelsPerWorldUnitX").GetDouble()
+                    && before.GetProperty("pixelsPerWorldUnitY").GetDouble() == after.GetProperty("pixelsPerWorldUnitY").GetDouble()
+                    && before.GetProperty("localOrigin").EnumerateArray().Select(value => value.GetDouble())
+                        .SequenceEqual(after.GetProperty("localOrigin").EnumerateArray().Select(value => value.GetDouble())),
+                    "Editing a floor changed the room's cross-platform calibration.");
+            }
+            editor.Undo();
+            Check(store.Load().Equals(original), "Undo did not preserve all calibrations.");
+        });
+    }
+
     public static void TestWallSnapsBothCornersAndCommitsOnRelease()
     {
         WithStore((store, editor) =>

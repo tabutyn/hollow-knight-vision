@@ -971,6 +971,7 @@ var tests = new List<(string Name, Action Run)>
     ("the Knight foot locator measures current mask pixels", WalkedGroundTests.TestFootUsesCurrentPixelsAndRejectsAmbiguousFaces),
     ("walked ground matches observed elevation and owns its columns", WalkedGroundTests.TestWalkSnapsToAnObservedFloorAndReplacesOverlappingStrokes),
     ("ground clearance trims overlapping platform tips", GroundClearanceTests.TestGroundClearanceTrimsOnlyShortSharedTips),
+    ("terrain edits preserve shared Mac room calibrations", HackerTerrainEditingTests.TestMacRoomCalibrationsSurviveTerrainEditAndUndo),
     ("wall preview and persisted ground corners", HackerTerrainEditingTests.TestWallSnapsBothCornersAndCommitsOnRelease),
     ("wall and floor move on constrained axes after reload", HackerTerrainEditingTests.TestWallAndFloorMoveOnTheirOwnAxesAfterReload),
     ("wall tool modifies and attaches ground endpoints", HackerTerrainEditingTests.TestWallModifyCanAttachAGroundEndpoint),

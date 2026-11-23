@@ -167,6 +167,40 @@ public sealed record GroundTruthWorldLine(
     }
 }
 
+/// <summary>Room-local calibration in the shared macOS and Windows terrain document.</summary>
+public sealed record GroundTruthRoomProjection(
+    [property: JsonPropertyName("roomID"), JsonRequired] Guid RoomId,
+    [property: JsonRequired] double PixelsPerWorldUnitX,
+    [property: JsonRequired] double PixelsPerWorldUnitY,
+    [property: JsonRequired, JsonConverter(typeof(GroundTruthLocalOriginConverter))] AtlasPoint LocalOrigin)
+{
+    internal bool IsValid => double.IsFinite(PixelsPerWorldUnitX) && PixelsPerWorldUnitX > 0
+        && double.IsFinite(PixelsPerWorldUnitY) && PixelsPerWorldUnitY > 0
+        && double.IsFinite(LocalOrigin.X) && double.IsFinite(LocalOrigin.Y);
+}
+
+internal sealed class GroundTruthLocalOriginConverter : JsonConverter<AtlasPoint>
+{
+    public override AtlasPoint Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        // Swift's CGPoint stores two unkeyed coordinates in this field.
+        if (reader.TokenType != JsonTokenType.StartArray
+            || !reader.Read() || reader.TokenType != JsonTokenType.Number || !reader.TryGetDouble(out var x)
+            || !reader.Read() || reader.TokenType != JsonTokenType.Number || !reader.TryGetDouble(out var y)
+            || !reader.Read() || reader.TokenType != JsonTokenType.EndArray)
+            throw new JsonException("Invalid ground-truth room origin");
+        return new(x, y);
+    }
+
+    public override void Write(Utf8JsonWriter writer, AtlasPoint value, JsonSerializerOptions options)
+    {
+        writer.WriteStartArray();
+        writer.WriteNumberValue(value.X);
+        writer.WriteNumberValue(value.Y);
+        writer.WriteEndArray();
+    }
+}
+
 public sealed partial class GroundTruthLineDocument : IEquatable<GroundTruthLineDocument>
 {
     public const int CurrentSchemaVersion = 2;
@@ -179,6 +213,9 @@ public sealed partial class GroundTruthLineDocument : IEquatable<GroundTruthLine
 
     [JsonRequired]
     public List<GroundTruthWorldLine> Lines { get; set; } = [];
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, GroundTruthRoomProjection>? RoomProjections { get; set; }
 
     // Optional v2 collections preserve the floor-only contract used by replay tools.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -203,6 +240,9 @@ public sealed partial class GroundTruthLineDocument : IEquatable<GroundTruthLine
             || (Spikes ?? []).Any(line => line?.Kind != GroundTruthLineKind.Spike)
             || (Doors ?? []).Any(line => line?.Kind is not (GroundTruthLineKind.Door or GroundTruthLineKind.DoorVertical)))
             throw new GroundTruthLineStoreException("Invalid ground-label document");
+
+        if (RoomProjections?.Any(entry => entry.Key.Length == 0 || entry.Value is not { IsValid: true }) == true)
+            throw new GroundTruthLineStoreException("Invalid room projection");
 
         var ids = new HashSet<Guid>();
         foreach (var line in AllLines)
@@ -249,6 +289,7 @@ public sealed partial class GroundTruthLineDocument : IEquatable<GroundTruthLine
         SchemaVersion = SchemaVersion,
         SeededScenes = new HashSet<string>(SeededScenes, StringComparer.Ordinal),
         Lines = [.. Lines],
+        RoomProjections = RoomProjections is null ? null : new(RoomProjections, StringComparer.Ordinal),
         Walls = Walls is null ? null : [.. Walls],
         Spikes = Spikes is null ? null : [.. Spikes],
         Doors = Doors is null ? null : [.. Doors]
@@ -257,7 +298,11 @@ public sealed partial class GroundTruthLineDocument : IEquatable<GroundTruthLine
     public bool Equals(GroundTruthLineDocument? other) => other is not null
         && SchemaVersion == other.SchemaVersion && SeededScenes.SetEquals(other.SeededScenes)
         && Lines.SequenceEqual(other.Lines) && (Walls ?? []).SequenceEqual(other.Walls ?? [])
-        && (Spikes ?? []).SequenceEqual(other.Spikes ?? []) && (Doors ?? []).SequenceEqual(other.Doors ?? []);
+        && (Spikes ?? []).SequenceEqual(other.Spikes ?? []) && (Doors ?? []).SequenceEqual(other.Doors ?? [])
+        && SortedRoomProjections().SequenceEqual(other.SortedRoomProjections());
+
+    private IEnumerable<KeyValuePair<string, GroundTruthRoomProjection>> SortedRoomProjections() =>
+        RoomProjections is null ? [] : RoomProjections.OrderBy(entry => entry.Key, StringComparer.Ordinal);
 
     public override bool Equals(object? obj) => Equals(obj as GroundTruthLineDocument);
 
@@ -267,6 +312,7 @@ public sealed partial class GroundTruthLineDocument : IEquatable<GroundTruthLine
         hash.Add(SchemaVersion);
         foreach (var scene in SeededScenes.Order(StringComparer.Ordinal)) hash.Add(scene);
         foreach (var line in AllLines) hash.Add(line);
+        foreach (var projection in SortedRoomProjections()) hash.Add(projection);
         return hash.ToHashCode();
     }
 }
