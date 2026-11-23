@@ -52,6 +52,9 @@ public sealed partial class MenuStencilTracker
         var confidence = weighted.Sum(item => item.Value) / Math.Max(1, weighted.Sum(item => item.Weight));
         var required = Math.Min(scene.ContextIdentifier == "options" ? 4 : 2, scene.Anchors.Count);
         if (confidence < threshold || accepted < required) return null;
+        if (scene.ContextIdentifier == "inventory" && scored.Count(item =>
+            item.Anchor.ClassIdentifier.StartsWith(InventoryCornerPrefix, StringComparison.Ordinal)
+            && item.Score.Confidence >= InventoryCornerThreshold) < 2) return null;
         var anchors = WithRepeatedProfileActions(scene, pixels, image, probe.Language,
             scored.Select(item => new MenuStencilMatch(item.Anchor.ClassIdentifier, item.Anchor.Name,
                 OutputRect(item.Score.Rect, image, scene), item.Score.Confidence, item.Score.Reference)).ToArray());

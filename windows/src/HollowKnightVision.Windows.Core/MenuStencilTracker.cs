@@ -38,7 +38,8 @@ public sealed partial class MenuStencilTracker
         SelectorSearchRadiusX = 4, SelectorSearchRadiusY = 4,
         SelectorRecoveryRadiusX = MenuSelectorPlacement.MaximumOffsetX, SelectorRecoveryRadiusY = MenuSelectorPlacement.MaximumOffsetY,
         ValidationInterval = 8, LossGraceFrames = 2, SceneChallengeCandidateLimit = 16;
-    private const double SelectorMaximumPairRowDelta = 5, SceneChallengeWinningMargin = .12;
+    private const double SelectorMaximumPairRowDelta = 5, SceneChallengeWinningMargin = .12, InventoryCornerThreshold = .65;
+    private const string InventoryCornerPrefix = "inventory.corner.";
     private sealed record Score(double Confidence, int Foreground, int BrightForeground, StencilRect Rect,
         ImageStencilReference Reference, string? Language, StencilRect? NominalBounds);
     private sealed record Candidate(Scene Scene, Score Score);
@@ -167,6 +168,8 @@ public sealed partial class MenuStencilTracker
             {
                 var candidate = bounds.Offset(x, y); if (accepts?.Invoke(candidate) == false) continue;
                 comparisons++; if (pixels.Compare(variant.Kernel, candidate) is not { } comparison) continue;
+                if (variant.Kernel.Kind.StartsWith(InventoryCornerPrefix, StringComparison.Ordinal)
+                    && (!comparison.SupportsCorrelation || comparison.NormalizedCorrelation < InventoryCornerThreshold)) continue;
                 var confidence = comparison.Confidence(.82, 105);
                 if (confidence > (best?.Confidence ?? double.NegativeInfinity))
                     best = new(confidence, 0, 0, candidate, variant.Reference, variant.LanguageIdentifier, variant.NominalBounds);

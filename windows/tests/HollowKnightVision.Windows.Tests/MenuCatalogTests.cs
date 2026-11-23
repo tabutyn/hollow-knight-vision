@@ -287,22 +287,53 @@ internal static class MenuCatalogTests
         Equal(4, result.SelectorSearchRegions.Count);
     }
 
-    // Fixture-adapted port of the unavailable human Inventory capture.
     internal static void TestHumanInventoryCaptureBuildsStaticSceneWithoutSelectors()
     {
         var fixture = new Fixture();
-        (string Id, string Name, StencilRect Bounds)[] labels =
-        [ ("inventory.inventory", "Inventory", new(50, 40, 50, 8)) ];
-        var source = fixture.Example("inventory", Plain(labels));
-        var catalog = fixture.Builder(Context("inventory", labels)).Build([source], null);
+        (string Id, StencilRect Bounds)[] labels =
+        [
+            ("inventory.inventory", new(50, 40, 50, 8)),
+            ("inventory.corner", new(15, 15, 12, 12)),
+            ("inventory.corner", new(125, 15, 12, 12)),
+            ("inventory.corner", new(15, 88, 12, 12)),
+            ("inventory.corner", new(125, 88, 12, 12))
+        ];
+        var context = new MenuStencilContext("inventory",
+            [new("inventory.inventory", "Inventory"), new("inventory.corner", "Inventory Corner")]);
+        var source = fixture.Example("inventory", labels);
+        var catalog = fixture.Builder(context).Build([source], null);
         var scene = catalog.Scenes.Single();
         Equal("inventory.inventory", scene.Probe.ClassIdentifier);
         Equal(0, scene.Options.Count);
-        var result = new MenuStencilTracker(catalog).Observe(fixture.Images[source.ImagePath], 0);
-        Check(result?.IsMatch == true, "Synthetic Inventory capture did not match production tracker.");
+        Equal(4, scene.Anchors.Count(anchor => anchor.ClassIdentifier.StartsWith("inventory.corner.", StringComparison.Ordinal)));
+
+        var tracker = new MenuStencilTracker(catalog);
+        var complete = fixture.Images[source.ImagePath];
+        var result = tracker.Observe(complete, 0);
+        Check(result?.IsMatch == true, "The heading and four Inventory corners should match.");
         Equal("inventory", result!.ContextIdentifier);
         Equal<string?>(null, result.SelectedOption);
         Equal(0, result.SelectorSearchRegions.Count);
+
+        BgraFrame WithVisibleCorners(int count) =>
+            fixture.Images[fixture.Example("inventory", labels, paint: labels.Take(1 + count).ToArray()).ImagePath];
+        Check(new MenuStencilTracker(catalog).Observe(WithVisibleCorners(2), 0)?.IsMatch == true,
+            "Two clear corners should admit Inventory when the other corners are occluded.");
+        Check(new MenuStencilTracker(catalog).Observe(WithVisibleCorners(1), 0)?.IsMatch != true,
+            "A single corner should not establish Inventory.");
+
+        var headingOnly = WithVisibleCorners(0);
+        Check(new MenuStencilTracker(catalog).Observe(headingOnly, 0)?.IsMatch != true,
+            "The heading alone should not establish Inventory.");
+        for (var i = 1; i <= MenuStencilTracker.ValidationInterval; i++)
+            result = tracker.Observe(headingOnly, i * .1);
+        Check(result?.IsMatch != true, "Revalidation should release a stale Inventory match after the corners disappear.");
+        Check(tracker.Observe(complete, 2)?.IsMatch == true, "Restoring the corners should allow Inventory to be reacquired.");
+
+        var legacy = fixture.Example("inventory", labels.Take(1).ToArray());
+        var legacyCatalog = fixture.Builder(context).Build([legacy], null);
+        Check(new MenuStencilTracker(legacyCatalog).Observe(headingOnly, 0)?.IsMatch != true,
+            "An older heading-only reference must not establish Inventory.");
     }
 
     // Fixture-adapted port: fixed IDs exercise the real focused-draft variant path.

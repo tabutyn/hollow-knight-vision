@@ -86,7 +86,8 @@ public sealed partial class MenuStencilCatalogBuilder
             }
         }
         var identifiers = compatible.SelectMany(example => example.Manifest.Annotations).Where(annotation => !annotation.IsHardNegative)
-            .Select(annotation => Canonical(annotation.ClassIdentifier)).Distinct(StringComparer.Ordinal).Where(id => id != SelectorId);
+            .Select(annotation => Canonical(annotation.ClassIdentifier)).Distinct(StringComparer.Ordinal)
+            .Where(id => id != SelectorId && (context.Identifier != "inventory" || id != "inventory.corner"));
         var medianBounds = new Dictionary<string, StencilRect>(StringComparer.Ordinal);
         foreach (var identifier in identifiers)
         {
@@ -186,6 +187,21 @@ public sealed partial class MenuStencilCatalogBuilder
             }
             anchors.Add(new(identifier, definitions.GetValueOrDefault(identifier, identifier), anchorBounds, calibratedBounds, variants, probe, probes));
         }
+        if (context.Identifier == "inventory")
+        {
+            var source = sources[0];
+            var corners = source.Manifest.Annotations
+                .Where(annotation => !annotation.IsHardNegative && Canonical(annotation.ClassIdentifier) == "inventory.corner")
+                .OrderBy(annotation => annotation.Y).ThenBy(annotation => annotation.X);
+            foreach (var (corner, index) in corners.Select((corner, index) => (corner, index)))
+            {
+                var bounds = PixelBounds(corner, width, height);
+                if (sourcePixels[source.Id].Reference(bounds) is not { } reference) continue;
+                var identifier = $"inventory.corner.{index}";
+                var variant = MakeVariant(identifier, reference, sampleStride: 2);
+                anchors.Add(new(identifier, "Inventory Corner", bounds, null, [variant], variant));
+            }
+        }
         var sceneProbe = anchors.FirstOrDefault(anchor => anchor.ClassIdentifier == probeIdentifier);
         if (sceneProbe is null) return null;
         var verifiedBounds = anchors.ToDictionary(anchor => anchor.ClassIdentifier, anchor => anchor.Bounds, StringComparer.Ordinal);
@@ -204,8 +220,9 @@ public sealed partial class MenuStencilCatalogBuilder
             }
             selectorVariants[side] = variants;
         }
-        var options = BuildOptions(context, compatible, sources, width, height, calibration, referenceCalibration, anchors,
-            verifiedBounds, geometry, selectorVariants, selectedIds, allPixels, liveBySelection, allLiveBySelection);
+        var options = context.Identifier == "inventory" ? [] : BuildOptions(context, compatible, sources, width, height,
+            calibration, referenceCalibration, anchors, verifiedBounds, geometry, selectorVariants, selectedIds, allPixels,
+            liveBySelection, allLiveBySelection);
         return new(context.Identifier, width, height, sceneProbe, anchors, options, selectorVariants, geometry);
     }
 
