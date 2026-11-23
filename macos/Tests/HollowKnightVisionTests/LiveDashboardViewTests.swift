@@ -53,7 +53,7 @@ final class LiveDashboardViewTests: XCTestCase {
     }
 
     func testBottomBarControlsAreScopedToGameplayAndModdedGameState() {
-        XCTAssertEqual(DashboardControlVisibility.workspaces, [.gameplay, .label, .stencils, .model, .bot, .hacker])
+        XCTAssertEqual(DashboardControlVisibility.workspaces, [.gameplay, .label, .stencils, .model, .bot, .thinking, .hacker])
         XCTAssertFalse(DashboardControlVisibility.shortcutWorkspaces.contains(.bot), "B must remain bot start/stop")
         for workspace in DashboardWorkspace.allCases {
             for complete in [false, true] {
@@ -97,15 +97,18 @@ final class LiveDashboardViewTests: XCTestCase {
 
     func testDashboardWorkspacesUseFirstLetterShortcuts() {
         XCTAssertEqual(DashboardWorkspace.allCases.map(\.rawValue), [
-            "Gameplay", "Label", "Stencil", "Model", "Bot", "Hacker", "Ops",
+            "Gameplay", "Label", "Stencil", "Model", "Bot", "Thinking", "Hacker", "Ops",
         ])
         XCTAssertEqual(DashboardWorkspace.allCases.map(\.shortcutCharacter), [
-            "g", "l", "s", "m", "b", "h", "o",
+            "g", "l", "s", "m", "b", "t", "h", "o",
         ])
         XCTAssertFalse(DashboardWorkspace.gameplay.supportsGameplayExitShortcut)
         XCTAssertTrue(DashboardWorkspace.label.supportsGameplayExitShortcut)
         XCTAssertTrue(DashboardWorkspace.model.supportsGameplayExitShortcut)
         XCTAssertTrue(DashboardWorkspace.bot.supportsGameplayExitShortcut)
+        XCTAssertTrue(DashboardWorkspace.thinking.supportsGameplayExitShortcut)
+        XCTAssertFalse(WorkspaceExitShortcutPolicy.shouldHandle(workspace: .thinking, eventType: .keyDown,
+            keyCode: 7, modifierFlags: [], isRepeat: false, isEditingText: true))
         XCTAssertFalse(DashboardWorkspace.hacker.supportsGameplayExitShortcut)
         XCTAssertFalse(DashboardWorkspace.ops.supportsGameplayExitShortcut)
     }

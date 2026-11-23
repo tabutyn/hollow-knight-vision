@@ -24,7 +24,7 @@ namespace Modding {
     }
 }
 namespace InControl {
-    public enum InputControlType { DPadLeft, DPadRight, DPadUp, DPadDown, Action1, Action2, Action3, Button28, Button29 }
+    public enum InputControlType { DPadLeft, DPadRight, DPadUp, DPadDown, Action1, Action2, Action3, Button22, Button23, Button24, Button25, Button28, Button29 }
     public class BindingSource { }
     public class DeviceBindingSource : BindingSource { public DeviceBindingSource(InputControlType type) { } }
     public class PlayerAction {
@@ -46,6 +46,10 @@ namespace InControl {
     }
 }
 public class HeroActions {
+    public InControl.PlayerAction quickCast = new InControl.PlayerAction();
+    public InControl.PlayerAction dash = new InControl.PlayerAction();
+    public InControl.PlayerAction superDash = new InControl.PlayerAction();
+    public InControl.PlayerAction dreamNail = new InControl.PlayerAction();
     public InControl.PlayerAction openInventory = new InControl.PlayerAction();
     public InControl.PlayerAction pause = new InControl.PlayerAction();
 }

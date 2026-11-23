@@ -1,10 +1,22 @@
 import CoreGraphics
 import CoreImage
+import ScreenCaptureKit
 import XCTest
 
 @testable import HollowKnightVision
 
 final class GameplayFrameProcessorTests: XCTestCase {
+    func testWindowExtentIgnoresMissingAndInvalidCaptureMetadata() {
+        let buffer = CGRect(x: 0, y: 0, width: 640, height: 360)
+        XCTAssertEqual(CaptureFrameConverter.windowExtent(in: buffer, info: nil), buffer)
+        let rect = CGRect(x: 0, y: 0, width: 650, height: 400)
+        for scale in [1.0, 0, .nan] {
+            XCTAssertEqual(CaptureFrameConverter.windowExtent(in: buffer, info: [
+                .contentRect: rect.dictionaryRepresentation, .scaleFactor: NSNumber(value: scale)
+            ]), buffer)
+        }
+    }
+
     func testObjectDetectionIconSitsOutsideBoxLikeLabelMode() throws {
         let extent = CGRect(x: 0, y: 0, width: 640, height: 360)
         let box = CGRect(x: 120, y: 100, width: 80, height: 40)

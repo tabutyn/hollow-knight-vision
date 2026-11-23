@@ -23,6 +23,7 @@ struct BotDemonstrationManifest: Codable {
     var usableObservationCount: Int
     var inputEventCount: Int
     var imageCount: Int
+    var recordedSkillControls: Bool? = nil
     var botDomain: BotDomain? = nil
     var replayID: UUID? = nil
     var pairedClipID: UUID? = nil
@@ -67,7 +68,7 @@ final class BotDemonstrationRecorder {
     @discardableResult
     func start(gameMode: String, detectorVersion: String, id: UUID = UUID(),
                at timestamp: Double = ProcessInfo.processInfo.systemUptime, domain: BotDomain? = nil,
-               replayID: UUID? = nil, pairedClipID: UUID? = nil, forTraining: Bool = false) throws -> URL {
+               replayID: UUID? = nil, pairedClipID: UUID? = nil, forTraining: Bool = false, skillControls: Bool = false) throws -> URL {
         try queue.sync {
             guard manifest == nil else { throw CocoaError(.fileWriteFileExists) }
             let destination = rootURL.appendingPathComponent("demo-\(id.uuidString.lowercased())", isDirectory: true)
@@ -110,7 +111,7 @@ final class BotDemonstrationRecorder {
                 featureNames: BotObservationContract.featureNames, actionSizes: BotObservationContract.actionSizes,
                 historyLength: BotObservationContract.historyLength, sampleInterval: BotObservationContract.sampleInterval,
                 status: "recording", duration: 0, observationCount: 0, usableObservationCount: 0,
-                inputEventCount: 0, imageCount: 0, botDomain: domain, replayID: replayID, pairedClipID: pairedClipID, terrainAuditCount: 0, terrainPairedFrameCount: 0)
+                inputEventCount: 0, imageCount: 0, recordedSkillControls: skillControls, botDomain: domain, replayID: replayID, pairedClipID: pairedClipID, terrainAuditCount: 0, terrainPairedFrameCount: 0)
             try writeManifest()
             trainingDestination = forTraining ? destination : nil
             started = true
@@ -337,18 +338,18 @@ final class BotDemonstrationController: ObservableObject {
     func start(gameMode: String, detectorVersion: String, id: UUID = UUID(),
                at timestamp: Double = ProcessInfo.processInfo.systemUptime,
                requiresUsableObservation: Bool = true, domain: BotDomain? = nil,
-               pairedGameplayDetector: String? = nil) -> Bool {
+               pairedGameplayDetector: String? = nil, skillControls: Bool = false) -> Bool {
         refresh()
         guard !isRecording, !requiresUsableObservation || canRecord else { return false }
         do {
             let visualID = domain == .hacker && pairedGameplayDetector != nil ? UUID() : nil
             lastSessionURL = try lock.withLock {
                 let primary = try recorder.start(gameMode: gameMode, detectorVersion: detectorVersion, id: id,
-                    at: timestamp, domain: domain, replayID: visualID == nil ? nil : id, pairedClipID: visualID, forTraining: true)
+                    at: timestamp, domain: domain, replayID: visualID == nil ? nil : id, pairedClipID: visualID, forTraining: true, skillControls: skillControls)
                 if let visualID, let pairedGameplayDetector {
                     do {
                         try gameplayRecorder.start(gameMode: gameMode, detectorVersion: pairedGameplayDetector,
-                            id: visualID, at: timestamp, domain: .gameplay, replayID: id, pairedClipID: id, forTraining: true)
+                            id: visualID, at: timestamp, domain: .gameplay, replayID: id, pairedClipID: id, forTraining: true, skillControls: skillControls)
                     } catch {
                         _ = try recorder.stop(reason: "paired-start-failed", at: timestamp)
                         throw error

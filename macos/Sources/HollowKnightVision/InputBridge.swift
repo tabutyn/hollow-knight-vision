@@ -526,6 +526,12 @@ struct InputBridgeButtons: OptionSet, Codable, Equatable, Hashable, Sendable {
     static let inventory = Self(rawValue: 1 << 7)
     static let pauseMenu = Self(rawValue: 1 << 8)
 
+    static let quickCast = Self(rawValue: 1 << 9)
+    static let dash = Self(rawValue: 1 << 10)
+    static let superDash = Self(rawValue: 1 << 11)
+    static let dreamNail = Self(rawValue: 1 << 12)
+    static let skillAbilities: Self = [.dash, .superDash, .quickCast, .dreamNail]
+
     static let directional: Self = [.left, .right, .down, .up]
 }
 

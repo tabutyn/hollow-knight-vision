@@ -38,7 +38,11 @@ namespace HollowKnightVisionInputReceiver
         ActionX = 1 << 6,
         Inventory = 1 << 7,
         PauseMenu = 1 << 8,
-        All = Left | Right | Down | Up | ActionA | ActionZ | ActionX | Inventory | PauseMenu
+        QuickCast = 1 << 9,
+        Dash = 1 << 10,
+        SuperDash = 1 << 11,
+        DreamNail = 1 << 12,
+        All = QuickCast | Dash | SuperDash | DreamNail | Left | Right | Down | Up | ActionA | ActionZ | ActionX | Inventory | PauseMenu
     }
 
     // Separates a newly assigned state from the recurring InControl updates
@@ -164,7 +168,7 @@ namespace HollowKnightVisionInputReceiver
                 ["version"] = ReceiverControlProtocol.Version,
                 ["type"] = "capabilitiesAck",
                 ["sessionID"] = session,
-                ["capabilities"] = new JArray("input-state-v1", "pause-lease-v1", "menu-shortcuts-v1", "pointer-events-v1", "player-checkpoint-v1", "player-pose-playback-v1", "ground-truth-telemetry-v1", "hacker-actor-telemetry-v1", "player-ops-v1", "room-reset-v1", "room-entrance-reset-v1", "geo-cache-telemetry-v1", "render-frame-marker-v1", "controlled-frame-replay-v1", "scene-mask-checkpoint-v1"),
+                ["capabilities"] = new JArray("input-state-v1", "pause-lease-v1", "menu-shortcuts-v1", "skill-controls-v1", "pointer-events-v1", "player-checkpoint-v1", "player-pose-playback-v1", "ground-truth-telemetry-v1", "hacker-actor-telemetry-v1", "player-ops-v1", "room-reset-v1", "room-entrance-reset-v1", "geo-cache-telemetry-v1", "render-frame-marker-v1", "controlled-frame-replay-v1", "scene-mask-checkpoint-v1"),
                 ["pauseLeaseMilliseconds"] = ReceiverControlProtocol.PauseLeaseMilliseconds
             }.ToString(Formatting.None);
         }

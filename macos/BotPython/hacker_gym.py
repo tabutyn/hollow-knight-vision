@@ -5,6 +5,7 @@ import base64
 from collections import Counter
 from contextlib import suppress
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -23,6 +24,7 @@ from hkv_bot_dataset import ACTION_SIZES, HELD_ATTACK_COST, HISTORY_LENGTH, SCHE
 START = "Tutorial_01"
 SUPPORTED_SCENES = {START, "Town", ""}
 NEUTRAL = [0, 0, 0, 0]
+SPAWN_ATTEMPTS = 3
 
 
 def buttons(action):
@@ -290,65 +292,74 @@ class HackerGym(gym.Env):
         self.last_control_gap = 0
         self.perception = Counter()
         self.close()
-        self.temp = tempfile.TemporaryDirectory(prefix="hkv-gym-")
-        self.directory = Path(self.temp.name)
-        self.episode = str(uuid.uuid4())
-        self.last_frame = None
+        episode_seed = int(self.np_random.integers(0, 2**31 - 1) if seed is None else seed % (2**31))
+        preferred_render_hz = (options or {}).get("render_hz", self.training_render_hz)
+        if preferred_render_hz not in (60, 120):
+            raise ValueError("Training render rate must be 60 or 120 Hz")
+        # Verification starts always use the reference display rate.
+        render_hz = preferred_render_hz if 100_000 <= episode_seed < 1_000_000 else 60
         try:
-            episode_seed = int(self.np_random.integers(0, 2**31 - 1) if seed is None else seed % (2**31))
-            # Verification starts always use the reference display rate.
-            preferred_render_hz = (options or {}).get("render_hz", self.training_render_hz)
-            if preferred_render_hz not in (60, 120):
-                raise ValueError("Training render rate must be 60 or 120 Hz")
-            self.render_hz = preferred_render_hz if 100_000 <= episode_seed < 1_000_000 else 60
-            visual = self.domain == "gameplay"
-            # Gameplay needs RGB frames. Hacker paths use authored terrain and
-            # frame-matched mod positions, including for older policy schemas.
-            render_pixels = visual
-            capture_domain = "gameplay" if render_pixels else "hacker"
-            save_json(self.directory / "episode.json", dict(episode=self.episode, domain=capture_domain, policyDomain=self.domain, seed=episode_seed,
-                                                            renderHz=self.render_hz))
-            encoder_args = ([self.vision, "--gameplay-gym-observations", str(self.version), self.directory / "frame.rgb",
-                             str(self.supports_masked).lower()] if visual else
-                            [self.vision, "--hacker-gym-observations", str(self.version), self.labels])
-            if render_pixels and not visual:
-                encoder_args.append(self.directory / "frame.rgb")
-            if visual:
-                overrides = [self.visual_confirmation, self.knight_confirmation, self.deposit_confirmation]
-                while overrides and overrides[-1] is None:
-                    overrides.pop()
-                encoder_args.extend(path or "-" for path in overrides)
-            encoder_temp = self.directory / "encoder-tmp"
-            encoder_temp.mkdir()
-            encoder_env = dict(os.environ, TMPDIR=str(encoder_temp), HKV_GYM_LABELS=str(self.labels))
-            if self.visual_support_root is not None:
-                encoder_env["HKV_GYM_VISUAL_SUPPORT_ROOT"] = str(self.visual_support_root)
-            if self.path_connections is not None:
-                encoder_env["HKV_ATLAS_PATH_CONNECTIONS"] = str(self.path_connections)
-            if self.exit_path_objective is not None:
-                encoder_env.update(HKV_GYM_EXIT_X=str(self.exit_path_objective[0]), HKV_GYM_EXIT_Y=str(self.exit_path_objective[1]))
-            self.encoder = subprocess.Popen(encoder_args, env=encoder_env,
-                                            stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-            self.worker = subprocess.Popen([self.game, "-batchmode", *([] if render_pixels else ["-nographics"]), "-screen-width", "960",
-                "-screen-height", "540", "-logFile", self.directory / "unity.log"],
-                cwd=self.game.parent if os.name == "nt" else self.directory,
-                env=dict(os.environ, HKV_GYM_DIRECTORY=str(self.directory), SteamAppId="367520", SteamGameId="367520"),
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            frame = self._receive(0)
-            if (frame["sceneName"] != START or frame["gameState"] != "PLAYING" or not frame["grounded"]
-                    or frame["ticks"] or frame["damage"] or frame["health"] != 5
-                    or abs(frame["heroX"] - 34.5) > 0.25 or abs(frame["heroY"] - 11.41) > 0.5):
-                raise RuntimeError("Worker did not reach a fresh King's Pass spawn")
+            for attempt in range(1, SPAWN_ATTEMPTS + 1):
+                self._launch_episode(episode_seed, render_hz)
+                frame = self._receive(0)
+                if (frame["sceneName"] == START and frame["gameState"] == "PLAYING"
+                        and frame["heroAvailable"] and frame["grounded"] and frame["ticks"] == 0
+                        and frame["damage"] == 0 and frame["health"] == 5
+                        and abs(frame["heroX"] - 34.5) <= 0.25 and abs(frame["heroY"] - 11.41) <= 0.5):
+                    break
+                fields = ("sceneName", "gameState", "heroAvailable", "grounded", "heroX", "heroY",
+                          "health", "damage", "ticks")
+                details = {key: frame[key] for key in fields}
+                message = (f"Worker did not reach a fresh King's Pass spawn for seed {episode_seed} "
+                           f"at {self.render_hz} Hz (attempt {attempt}/{SPAWN_ATTEMPTS}). Observed {details}.")
+                if attempt == SPAWN_ATTEMPTS or time.monotonic() >= self.deadline:
+                    raise RuntimeError(message)
+                logging.getLogger(__name__).warning("%s Relaunching with the same seed.", message)
+                self.close()
+
             self.score = EpisodeScore(frame)
             obs = self._encode(frame, NEUTRAL)
             if self.exit_path_objective is not None and not self.path_reachable:
                 raise RuntimeError("The fixed King’s Pass exit objective is not reachable on the authored Atlas path")
-            if not self.usable and not visual:
+            if not self.usable and self.domain == "hacker":
                 raise RuntimeError(f"Opening Hacker observation unusable: {self.issues}")
             return obs, self.score.metrics()
         except BaseException:
             self.close()
             raise
+
+    def _launch_episode(self, seed, render_hz):
+        self.temp = tempfile.TemporaryDirectory(prefix="hkv-gym-")
+        self.directory = Path(self.temp.name)
+        self.episode = str(uuid.uuid4())
+        self.render_hz = render_hz
+        # Gameplay needs RGB frames. Hacker uses authored terrain and mod positions.
+        visual = self.domain == "gameplay"
+        save_json(self.directory / "episode.json", dict(episode=self.episode, domain=self.domain,
+                  policyDomain=self.domain, seed=seed, renderHz=render_hz))
+        encoder_args = ([self.vision, "--gameplay-gym-observations", str(self.version), self.directory / "frame.rgb",
+                         str(self.supports_masked).lower()] if visual else
+                        [self.vision, "--hacker-gym-observations", str(self.version), self.labels])
+        if visual:
+            overrides = [self.visual_confirmation, self.knight_confirmation, self.deposit_confirmation]
+            while overrides and overrides[-1] is None:
+                overrides.pop()
+            encoder_args.extend(path or "-" for path in overrides)
+        encoder_temp = self.directory / "encoder-tmp"
+        encoder_temp.mkdir()
+        encoder_env = dict(os.environ, TMPDIR=str(encoder_temp), HKV_GYM_LABELS=str(self.labels))
+        if self.visual_support_root is not None:
+            encoder_env["HKV_GYM_VISUAL_SUPPORT_ROOT"] = str(self.visual_support_root)
+        if self.path_connections is not None:
+            encoder_env["HKV_ATLAS_PATH_CONNECTIONS"] = str(self.path_connections)
+        if self.exit_path_objective is not None:
+            encoder_env.update(HKV_GYM_EXIT_X=str(self.exit_path_objective[0]), HKV_GYM_EXIT_Y=str(self.exit_path_objective[1]))
+        self.encoder = subprocess.Popen(encoder_args, env=encoder_env, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        self.worker = subprocess.Popen([self.game, "-batchmode", *([] if visual else ["-nographics"]), "-screen-width", "960",
+            "-screen-height", "540", "-logFile", self.directory / "unity.log"],
+            cwd=self.game.parent if os.name == "nt" else self.directory,
+            env=dict(os.environ, HKV_GYM_DIRECTORY=str(self.directory), SteamAppId="367520", SteamGameId="367520"),
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def step(self, action):
         if self.last_frame is None or self.ended or not self.action_space.contains(action):

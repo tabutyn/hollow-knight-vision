@@ -6,6 +6,11 @@ import SwiftUI
 final class VisionPanel: NSWindow {}
 
 enum DashboardWindowLayout {
+    static func accessibilityFrame(for visibleFrame: CGRect, primaryScreen: CGRect) -> CGRect {
+        CGRect(x: visibleFrame.minX, y: primaryScreen.maxY - visibleFrame.maxY,
+               width: visibleFrame.width, height: visibleFrame.height)
+    }
+
     static func initialFrame(visibleFrame: CGRect) -> CGRect {
         guard visibleFrame.origin.x.isFinite, visibleFrame.origin.y.isFinite,
               visibleFrame.width.isFinite, visibleFrame.height.isFinite,
@@ -110,6 +115,7 @@ struct HollowKnightVisionLaunchOptions: Equatable {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let model: LiveCaptureModel
+    @MainActor private lazy var thinkingSession = ThinkingModelSession()
     private let automationControlEnabled: Bool
     private var requestedGamePath: String?
     private let requestedGameMode: HollowKnightRuntimeMode?
@@ -166,6 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
            let icon = NSImage(contentsOf: resourceURL.appendingPathComponent(iconFilename)) {
             NSApp.applicationIconImage = icon
         }
+        thinkingSession.select(.startup)
         NSApp.setActivationPolicy(.regular)
         // Make per-launch mode selection the first visible app UI. Showing the
         // dashboard first can leave its modal alert on another Space or hidden
@@ -196,7 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.startCapture()
     }
 
-    private func showDashboard() {
+    @MainActor private func showDashboard() {
         let visibleFrame = NSScreen.main?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 1_200, height: 800)
         let initialFrame = DashboardWindowLayout.initialFrame(
@@ -221,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.contentMinSize = CGSize(width: 720, height: 560)
-        panel.contentView = NSHostingView(rootView: DashboardView(model: model))
+        panel.contentView = NSHostingView(rootView: DashboardView(model: model, thinkingSession: thinkingSession))
         panel.acceptsMouseMovedEvents = true
         panel.delegate = self
         // contentRect construction can add title-bar geometry. Set the outer

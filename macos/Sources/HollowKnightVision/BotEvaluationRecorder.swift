@@ -29,16 +29,18 @@ final class BotEvaluationRecorder: @unchecked Sendable {
     init(root: URL = BotModelStore.defaultRoot.appendingPathComponent("evaluations")) { self.root = root }
     var isRecording: Bool { lock.withLock { session != nil } }
     private(set) var lastDirectory: URL?
-    @discardableResult func start(domain: BotDomain, model: BotNativePolicy, reference: GroundTruthLineDocument) -> Bool {
+    @discardableResult func start(domain: BotDomain, model: BotNativePolicy?, reference: GroundTruthLineDocument) -> Bool {
         stop()
         let id = UUID(), startedAt = ProcessInfo.processInfo.systemUptime
         let recorder = BotDemonstrationRecorder(rootURL: root.appendingPathComponent(domain.rawValue))
+        let name = model?.document.modelName ?? "Built-in playing policies"
         do {
-            let directory = try recorder.start(gameMode: "modded", detectorVersion: model.document.modelName, id: id, at: startedAt, domain: domain)
+            let directory = try recorder.start(gameMode: "modded", detectorVersion: name, id: id, at: startedAt, domain: domain)
             recorder.attachEvidence(reference: reference, domain: domain, kind: "bot-evaluation")
-            let metadata: [String: Any] = ["kind": "bot-evaluation", "domain": domain.rawValue,
-                "modelName": model.document.modelName, "modelSHA256": model.document.sourceCheckpointSHA256,
-                "actionSource": "general-policy", "expertDemonstration": false]
+            var metadata: [String: Any] = ["kind": "bot-evaluation", "domain": domain.rawValue,
+                "modelName": name,
+                "actionSource": model == nil ? "starter-policy" : "general-policy", "expertDemonstration": false]
+            if let model { metadata["modelSHA256"] = model.document.sourceCheckpointSHA256 }
             try JSONSerialization.data(withJSONObject: metadata, options: [.prettyPrinted, .sortedKeys])
                 .write(to: directory.appendingPathComponent("evaluation.json"), options: .atomic)
             let frames = VisualReplayArchiveWriter(rootURL: directory, pathID: id,
@@ -59,10 +61,38 @@ final class BotEvaluationRecorder: @unchecked Sendable {
         _ = prior.frames.finish()
         try? prior.recorder.stop(reason: "user-stop", at: now)
     }
+    func recordSkill(_ plan: BotSkillPlan, choice: BotSkillChoice, context: String, event: String, at time: Double) {
+        struct Entry: Encodable {
+            let plan: BotSkillPlan
+            let choice: BotSkillChoice
+            let context: String
+            let event: String
+            let timestamp: Double
+        }
+        guard let directory = lock.withLock({ session?.directory }) else { return }
+        let url = directory.appendingPathComponent("skill-events.jsonl")
+        do {
+            var line = try JSONEncoder().encode(Entry(plan: plan, choice: choice, context: context, event: event, timestamp: time))
+            line.append(0x0A)
+            if !FileManager.default.fileExists(atPath: url.path) {
+                try line.write(to: url, options: .atomic)
+                let metadata = directory.appendingPathComponent("evaluation.json")
+                if var info = try JSONSerialization.jsonObject(with: Data(contentsOf: metadata)) as? [String: Any] {
+                    info["actionSource"] = "skill-plan"
+                    info["skillEvents"] = url.lastPathComponent
+                    try JSONSerialization.data(withJSONObject: info, options: [.sortedKeys, .prettyPrinted]).write(to: metadata, options: .atomic)
+                }
+                return
+            }
+            let handle = try FileHandle(forWritingTo: url)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: line)
+        } catch { NSLog("Could not record bot skill event: %@", error.localizedDescription) }
+    }
+
     func action(_ action: BotAction, at time: Double) {
-        let next = Set(zip(["left", "right", "up", "down", "z", "x"],
-            [action.values[0] == 1, action.values[0] == 2, action.values[1] == 1,
-             action.values[1] == 2, action.values[2] == 1, action.values[3] == 1]).filter { $0.1 }.map { $0.0 })
+        let next = Set(RecordedGameButton.allCases.filter { action.buttons.contains($0.bridgeButton) }.map(\.rawValue))
         lock.withLock {
             guard var value = session else { return }
             for button in value.held.subtracting(next) { value.recorder.recordInput(button: button, isPressed: false, at: time) }

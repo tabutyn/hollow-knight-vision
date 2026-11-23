@@ -11,14 +11,22 @@ enum BotRuntimeError: LocalizedError {
 
 struct BotAction: Equatable, Codable {
     let values: [Int]
+    private var extraButtons: InputBridgeButtons?
     static let neutral = try! BotAction(values: [0, 0, 0, 0])
     init(values: [Int]) throws {
         guard values.count == 4, zip(values, BotObservationContract.actionSizes).allSatisfy({ $0.0 >= 0 && $0.0 < $0.1 })
         else { throw BotRuntimeError.incompatible("Invalid bot action.") }
         self.values = values
     }
+    init(buttons: InputBridgeButtons) {
+        let move = buttons.contains(.left) ? 1 : buttons.contains(.right) ? 2 : 0
+        let aim = buttons.contains(.up) ? 1 : buttons.contains(.down) ? 2 : 0
+        values = [move, aim, buttons.contains(.actionZ) ? 1 : 0, buttons.contains(.actionX) ? 1 : 0]
+        let extra = buttons.subtracting([.directional, .actionX, .actionZ])
+        extraButtons = extra.isEmpty ? nil : extra
+    }
     var buttons: InputBridgeButtons {
-        var result = InputBridgeButtons()
+        var result = extraButtons ?? InputBridgeButtons()
         if values[0] == 1 { result.insert(.left) }
         if values[0] == 2 { result.insert(.right) }
         if values[1] == 1 { result.insert(.up) }
@@ -37,6 +45,7 @@ struct BotAction: Equatable, Codable {
         if values[1] != 0 { parts.append(values[1] == 1 ? "Up" : "Down") }
         if values[2] != 0 { parts.append("Jump") }
         if values[3] != 0 { parts.append("Attack") }
+        if let extraButtons { parts += RecordedGameButton.allCases.filter { extraButtons.contains($0.bridgeButton) }.map(\.rawValue) }
         return parts.isEmpty ? "Neutral" : parts.joined(separator: " + ")
     }
 }
@@ -63,19 +72,21 @@ struct BotRuntimePolicyDocument: Codable {
     var pitPolicy: BotPitPolicy? = nil
     var atlasPolicy: BotAtlasDirectionPolicy? = nil
     var trainedOnCombat: Bool? = nil
+    var inputColumns: [Int]? = nil
 }
 
 struct BotNativePolicy {
     let document: BotRuntimePolicyDocument
     init(document: BotRuntimePolicyDocument) throws {
-        guard document.schemaVersion == 1,
-              let names = BotObservationContract.policyNames(for: document.observationSchemaVersion),
+        guard let names = BotObservationContract.policyNames(for: document.observationSchemaVersion),
               document.featureNames == names,
               document.historyLength == BotObservationContract.historyLength,
               document.actionSizes == BotObservationContract.actionSizes,
               (1...4).contains(document.layers.count)
         else { throw BotRuntimeError.incompatible("The bot model uses a different observation contract.") }
-        try Self.validate(document.layers, inputs: names.count * BotObservationContract.historyLength,
+        let inputs = try Self.inputWidth(version: document.schemaVersion, columns: document.inputColumns,
+                                         rawWidth: names.count * document.historyLength)
+        try Self.validate(document.layers, inputs: inputs,
                           outputs: BotObservationContract.actionSizes.reduce(0, +),
                           maximumWidth: document.observationSchemaVersion == BotObservationContract.landingGeometryPolicyVersion
                             ? 512 + BotLandingGeometry.names.count : 512)
@@ -92,7 +103,17 @@ struct BotNativePolicy {
         self.document = document
     }
 
-    private static func validate(_ layers: [BotRuntimeLayer], inputs: Int, outputs: Int, maximumWidth: Int = 512) throws {
+    static func inputWidth(version: Int, columns: [Int]?, rawWidth: Int) throws -> Int {
+        if version == 1, columns == nil { return rawWidth }
+        guard version == 2, let columns, !columns.isEmpty,
+              columns.allSatisfy({ (0..<rawWidth).contains($0) }),
+              zip(columns, columns.dropFirst()).allSatisfy({ $0 < $1 }) else {
+            throw BotRuntimeError.incompatible("Invalid policy input layout.")
+        }
+        return columns.count
+    }
+
+    static func validate(_ layers: [BotRuntimeLayer], inputs: Int, outputs: Int, maximumWidth: Int = 512) throws {
         guard (1...4).contains(layers.count) else { throw BotRuntimeError.incompatible("Invalid bot network depth.") }
         var expected = inputs
         for (index, layer) in layers.enumerated() {
@@ -168,7 +189,8 @@ struct BotNativePolicy {
         let vector = input.count == width * history ? input : (0..<history).flatMap { step in
             input[(step * BotObservationContract.featureCount)...].prefix(width)
         }
-        return try Self.forward(vector, layers: document.layers)
+        let features = document.inputColumns.map { columns in columns.map { vector[$0] } } ?? vector
+        return try Self.forward(features, layers: document.layers)
     }
 
     static func forward(_ input: [Float], layers: [BotRuntimeLayer]) throws -> [Float] {
@@ -223,6 +245,24 @@ struct BotObservationHistory {
     private var timestamp: Double?
 
     mutating func reset() { history = []; generation = nil; roomID = nil; timestamp = nil }
+
+    mutating func input(_ observation: BotObservation, previousAction: BotAction, now: Double,
+                        schema: Int, maskedKnightDeadline: Double? = nil) -> [Float]? {
+        input(observation, previousAction: previousAction, now: now,
+              maskedKnightDeadline: maskedKnightDeadline,
+              includeScreenTerrain: schema >= BotObservationContract.screenPolicyVersion,
+              includeBlockade: schema >= BotObservationContract.blockadePolicyVersion,
+              includeGeoCaches: schema >= BotObservationContract.geoPolicyVersion,
+              includeAtlas: schema >= BotObservationContract.generalPolicyVersion,
+              includeAtlasMap: schema >= BotObservationContract.atlasMapVersion,
+              includeRoad: schema >= BotObservationContract.roadVersion,
+              includePickup: schema >= BotObservationContract.pickupVersion,
+              includeCocoons: schema >= BotObservationContract.cocoonVersion,
+              includeDoors: schema >= BotObservationContract.doorVersion,
+              includeSharedPath: schema >= BotObservationContract.sharedPathVersion,
+              includeCompactGeometry: schema >= BotObservationContract.compactGeometryPolicyVersion,
+              compactGeometryVersion: schema)
+    }
 
     mutating func input(_ observation: BotObservation, previousAction: BotAction, now: Double,
                         maskedKnightDeadline: Double? = nil, includeScreenTerrain: Bool = false, includeBlockade: Bool = false,

@@ -169,6 +169,8 @@ final class GameControlForwarder {
         subsystem: "com.ballroller.hollow-knight-vision", category: "game-pointer"
     )
     static let gameplayKeyCodes: Set<UInt16> = [0, 6, 7, 123, 124, 125, 126]
+    // C, E, F and D mirror dash, crystal dash, quick cast and dream nail.
+    static let abilityKeyCodes: Set<UInt16> = [8, 14, 3, 2]
     static let menuShortcutKeyCodes: Set<UInt16> = [34, 35] // I, P
     static let supportedKeyCodes = gameplayKeyCodes.union(menuShortcutKeyCodes)
     // Model owns the arrow keys for review navigation and X for returning to
@@ -222,6 +224,7 @@ final class GameControlForwarder {
     private var controlSessionID: UUID?
     private var pauseLeaseMilliseconds = 0
     private var pauseCapabilityAvailable = false
+    private var skillControlsAvailable = false
     private var menuShortcutsCapabilityAvailable = false
     private var pointerCapabilityAvailable = false
     private var playerCheckpointCapabilityAvailable = false
@@ -241,6 +244,7 @@ final class GameControlForwarder {
     private var nextPointerSequence: UInt64 = 0
     private var nextPlayerPoseSequence: UInt64 = 0
     private var reviewNavigationActive = false
+    private var reviewReservesAllKeys = false
     private var settingsDialogActive = false
     private var pauseDesired = false
     private var pauseConfirmed = false
@@ -403,6 +407,7 @@ final class GameControlForwarder {
             guard started, transportReady, !pauseDesired, !pauseConfirmed,
                   !settingsDialogActive, !reviewNavigationActive,
                   pendingCheckpointCommands.isEmpty, pendingPlayerOpsCommands.isEmpty,
+                  (skillControlsAvailable || action.buttons.intersection(.skillAbilities).isEmpty),
                   botLease.renew(sessionID: sessionID, until: validUntil,
                                  now: ProcessInfo.processInfo.systemUptime) else { return false }
             sendLocked(sender.beginFreshPress(action.buttons))
@@ -467,11 +472,12 @@ final class GameControlForwarder {
         }
     }
 
-    func setReviewNavigationActive(_ active: Bool) {
+    func setReviewNavigationActive(_ active: Bool, reservesAllKeys: Bool = false) {
         stateQueue.async { [weak self] in
-            guard let self, self.reviewNavigationActive != active else { return }
+            guard let self, self.reviewNavigationActive != active || self.reviewReservesAllKeys != reservesAllKeys else { return }
             self.releaseAllLocked()
             self.reviewNavigationActive = active
+            self.reviewReservesAllKeys = reservesAllKeys
         }
     }
 
@@ -1073,6 +1079,7 @@ final class GameControlForwarder {
         guard acknowledgement.version == ReceiverControlProtocol.version,
               acknowledgement.type == "capabilitiesAck",
               acknowledgement.sessionID == controlSessionID else { return }
+        skillControlsAvailable = acknowledgement.capabilities.contains("skill-controls-v1")
         menuShortcutsCapabilityAvailable = acknowledgement.capabilities.contains(
             ReceiverControlProtocol.menuShortcutsCapability
         )
@@ -1303,6 +1310,7 @@ final class GameControlForwarder {
         controlSessionID = nil
         pauseLeaseMilliseconds = 0
         pauseCapabilityAvailable = false
+        skillControlsAvailable = false
         menuShortcutsCapabilityAvailable = false
         pointerCapabilityAvailable = false
         playerCheckpointCapabilityAvailable = false
@@ -1338,6 +1346,7 @@ final class GameControlForwarder {
         switch keyCode {
         case 123: return .left; case 124: return .right; case 125: return .down; case 126: return .up
         case 0: return .actionA; case 6: return .actionZ; case 7: return .actionX
+        case 8: return .dash; case 14: return .superDash; case 3: return .quickCast; case 2: return .dreamNail
         case 34: return .inventory; case 35: return .pauseMenu
         default: return nil
         }
@@ -1466,10 +1475,12 @@ final class GameControlForwarder {
     }
 
     private var activeSupportedKeyCodesLocked: Set<UInt16> {
+        if reviewReservesAllKeys { return [] }
         if settingsDialogActive { return [123, 124, 125, 126] }
-        let supported = menuShortcutsCapabilityAvailable
+        var supported = menuShortcutsCapabilityAvailable
             ? Self.supportedKeyCodes
             : Self.gameplayKeyCodes
+        if skillControlsAvailable && !reviewNavigationActive { supported.formUnion(Self.abilityKeyCodes) }
         return reviewNavigationActive
             ? supported.subtracting(Self.reviewNavigationKeyCodes)
             : supported

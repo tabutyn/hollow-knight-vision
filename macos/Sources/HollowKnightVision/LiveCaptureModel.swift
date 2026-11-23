@@ -25,6 +25,27 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     @Published private(set) var gameLostCountdown: Int?
     @Published private(set) var inputControlStatus = "Controls unavailable"
     @Published private(set) var gameMode: HollowKnightRuntimeMode
+    private var latestSkillFrame: BotDemoMenuObservation?
+    @Published private(set) var notebookProfile: SaveProfileAtlas?
+    private var pendingNotebookProfile: SaveProfileAtlas?
+    @Published private(set) var readingOpeningCutscene = false
+    var skillReading: SkillReading?
+    var skillContext: String { liveGameStatus == "Gameplay" ? activeRoomStatus : (liveGameStatus ?? "Game capture") }
+    var skillGeneration: UInt64 { currentStatusGeneration }
+
+    func currentSkillSight() -> SkillSight? {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard isCapturing, let frame = latestSkillFrame, frame.generation == currentStatusGeneration,
+              (0...0.45).contains(now - frame.capturedAt) else { return nil }
+        let reading = skillReading.flatMap { entry in
+            entry.context == skillContext && (0...2.5).contains(now - entry.capturedAt) ? entry : nil
+        }
+        return SkillSight(context: skillContext, capturedAt: frame.capturedAt, generation: frame.generation,
+                          gameplay: liveGameStatus == "Gameplay" && frame.context == nil,
+                          menu: frame.context, selected: frame.selectedIdentifier, lines: reading?.visible ?? [],
+                          hasAbilityControls: receiverCapabilities.contains("skill-controls-v1"), reading: reading)
+    }
+
     @Published private(set) var receiverCapabilities = Set<String>()
     @Published private(set) var labelPauseState: GamePauseState = .unavailable
     @Published private(set) var isPathRecording = false
@@ -735,6 +756,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             guard let self, self.isPathRecording, !self.isPathPlaybackActive else { return }
             self.stopPathRecording()
         }
+        botPlayer.skillSight = { [weak self] in self?.currentSkillSight() }
         botPlayer.configure(
             canContinue: { [weak self] in self?.canStartBotPlayback ?? false },
             begin: { [weak self] in self?.gameControlForwarder.beginBotControl() },
@@ -750,6 +772,9 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             guard let self, self.botEvaluation.start(domain: domain, model: policy, reference: self.botHumanGround.snapshot) else { return false }
             self.gameControlForwarder.setRenderFrameMarkerEnabled(true)
             return true
+        }
+        botPlayer.onSkillEvent = { [weak self] plan, choice, context, event, time in
+            self?.botEvaluation.recordSkill(plan, choice: choice, context: context, event: event, at: time)
         }
         botPlayer.onActionApplied = { [weak self] action, time in self?.botEvaluation.action(action, at: time) }
         botPlayer.onStopped = { [weak self] in
@@ -930,6 +955,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         wantsCapture = true
         guard !operationInFlight, !isCapturing else { return }
         operationInFlight = true
+        notebookProfile = nil
+        pendingNotebookProfile = nil
         status = "Finding the Hollow Knight window…"
         Task { [weak self] in
             guard let self else { return }
@@ -1279,6 +1306,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
 
     func switchToProfileAtlas(_ launch: ProfileLaunch) {
         if !switchingProfileAtlas { resetLiveBlockades() }
+        notebookProfile = nil
         switchingProfileAtlas = true
         guard !atlasManagementBusy, !hackerAtlasManagementBusy else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.switchToProfileAtlas(launch) }
@@ -1293,6 +1321,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             let current = try SaveProfileAtlas.read(from: root)
             let saved = launch.isNew || current?.slot == launch.slot ? [] : try atlasStateStore.list()
             let target = SaveProfileAtlas.target(for: launch, active: current, saved: saved)
+            pendingNotebookProfile = target
             let adoptingUnassigned = !launch.isNew && current == nil && !saved.contains { $0.profile == target }
             if current == target {
                 switchHackerProfileAtlas(to: target, adoptingUnassigned: adoptingUnassigned)
@@ -1313,6 +1342,11 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     private func switchHackerProfileAtlas(to target: SaveProfileAtlas, adoptingUnassigned: Bool) {
+        // The slot launch and the durable visual atlas now agree on this playthrough.
+        if pendingNotebookProfile == target {
+            notebookProfile = target
+            pendingNotebookProfile = nil
+        }
         guard !hackerAtlasManagementBusy else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.switchHackerProfileAtlas(to: target, adoptingUnassigned: adoptingUnassigned) }
             return
@@ -1580,9 +1614,6 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func startBotDemo(inGameplay: Bool = false, domain: BotDomain = .hacker) {
-        if inGameplay && !botPlayer.hasModel(for: domain) {
-            botDemo.rejectStart("Train or select a \(domain.title) bot model first."); return
-        }
         guard canStartBotDemo else { botDemo.rejectStart("Bot is not ready: check capture and recording or editing state."); return }
         botPlayer.stop(reason: "Starting bot control")
         botDemo.start(inGameplay: inGameplay, domain: domain)
@@ -1813,10 +1844,6 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
 
     func completeBotDemoHandoff(_ request: UUID, deadline: Double? = nil) {
         guard botDemo.isActive, botDemo.handoffRequest == request else { return }
-        guard botPlayer.hasModel(for: botDemo.domain) else {
-            botDemo.finishWithoutPolicy(request)
-            return
-        }
         let deadline = deadline ?? ProcessInfo.processInfo.systemUptime + 15
         guard ProcessInfo.processInfo.systemUptime < deadline else {
             botDemo.stop(reason: "\(botDemo.domain.title) bot controls did not become ready", failed: true); return
@@ -1834,8 +1861,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     var canStartBotPlayback: Bool {
-        botGameplayReady && gameMode == .modded && !botDemonstrations.isRecording
-            && botPlayer.hasModel(for: isHackerWorkspaceActive() ? .hacker : .gameplay)
+        (botGameplayReady || (botPlayer.allowsInGameMenu && canStartBotDemo)) && gameMode == .modded && !botDemonstrations.isRecording
+            && !botPlayer.isLoading
             && (!botDemo.isActive || botDemo.isHandingOff || botDemo.isPlaying)
     }
 
@@ -1849,7 +1876,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         guard canCollectBotDemonstration else { return }
         gameControlForwarder.releaseForGroundLabeling()
         botDemonstrations.start(gameMode: gameMode.rawValue,
-                                detectorVersion: activeObjectModelSummary ?? "unknown")
+                                detectorVersion: activeObjectModelSummary ?? "unknown", domain: isHackerWorkspaceActive() ? .hacker : .gameplay,
+                                skillControls: receiverCapabilities.contains("skill-controls-v1"))
     }
 
     func startGameControls() {
@@ -2279,7 +2307,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             guard self.botDemonstrations.start(gameMode: self.gameMode.rawValue,
                 detectorVersion: domain == .hacker ? "receiver-actors-v1" : visualDetector,
                 id: recordingID, at: startedAt, requiresUsableObservation: false,
-                domain: domain, pairedGameplayDetector: domain == .hacker ? visualDetector : nil) else {
+                domain: domain, pairedGameplayDetector: domain == .hacker ? visualDetector : nil,
+                skillControls: self.receiverCapabilities.contains("skill-controls-v1")) else {
                 self.inputPathRecorder.cancel()
                 self.pathRecordingIssue = self.botDemonstrations.issue ?? "Learning recording could not start"
                 self.restoreRenderFrameMarkerPolicy()
@@ -2766,12 +2795,12 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         gameControlForwarder.setSettingsDialogActive(active)
     }
 
-    func setModelReviewActive(_ active: Bool) {
+    func setModelReviewActive(_ active: Bool, reservesAllKeys: Bool = false) {
         if active {
             botPlayer.stop(reason: "Model review opened")
             botDemo.stop(reason: "Model review opened")
         }
-        gameControlForwarder.setReviewNavigationActive(active)
+        gameControlForwarder.setReviewNavigationActive(active, reservesAllKeys: reservesAllKeys)
     }
 
     func setObjectDetectionIconAtlas(_ snapshot: LabelingObjectAtlasSnapshot?) {
@@ -3469,6 +3498,11 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         gameControlForwarder.releaseForGroundLabeling()
     }
 
+    func thinkingScreenshot() -> CGImage? {
+        guard isCapturing else { return nil }
+        return capturedFrameStateLock.withLock { latestCleanGameFrame }
+    }
+
     func recentCapturedFrames() -> [RecentCapturedFrame] {
         capturedFrameStateLock.lock()
         defer { capturedFrameStateLock.unlock() }
@@ -3511,18 +3545,12 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func positionWindows() {
-        guard let screen = NSScreen.main else { return }
-        let visible = screen.visibleFrame
         guard let viewer = NSApp.windows.first(where: {
             ($0 is VisionPanel || $0 is NormalVisionPanel) && $0.isVisible
-        }) else { return }
+        }), let screen = viewer.screen ?? NSScreen.main,
+           let primary = NSScreen.screens.first else { return }
         tileGameWindow(
-            frame: CGRect(
-                x: visible.minX,
-                y: screen.frame.maxY - visible.maxY,
-                width: visible.width,
-                height: visible.height
-            ),
+            frame: DashboardWindowLayout.accessibilityFrame(for: screen.visibleFrame, primaryScreen: primary.frame),
             viewer: viewer
         )
     }
@@ -3662,6 +3690,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     private func installAcceptedSampleStream(_ streamID: ObjectIdentifier) async {
         await withCheckedContinuation { continuation in
             sampleQueue.async { [weak self] in
+                self?.capturedFrameStateLock.withLock { self?.latestCleanGameFrame = nil }
                 self?.acceptedSampleStreamID = streamID
                 continuation.resume()
             }
@@ -3705,6 +3734,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         invalidateObjectInferenceResults()
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.skillReading = nil
+            self.latestSkillFrame = nil
             self.currentStatusGeneration = generation
             self.updateAtlasPathEvidence { $0.resetVisualFrames() }
             self.resetLiveBlockades()
@@ -4003,9 +4034,10 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
               sampleBuffer.isValid,
               let pixelBuffer = sampleBuffer.imageBuffer,
               acceptedSampleStreamID == ObjectIdentifier(stream) else { return }
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
-            as? [[SCStreamFrameInfo: Any]],
-           let status = attachments.first?[.status] as? Int,
+        let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
+            as? [[SCStreamFrameInfo: Any]]
+        let info = attachments?.first
+        if let status = info?[.status] as? Int,
            SCFrameStatus(rawValue: status) != .complete {
             captureIncompleteFrames &+= 1
             return
@@ -4014,12 +4046,13 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
         let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
         let capturedAt = ProcessInfo.processInfo.systemUptime
         telemetry.record(.captureDelivery, seconds: capturedAt - timestamp)
-        autoreleasepool { stageFrame(pixelBuffer, timestamp: timestamp, capturedAt: capturedAt) }
+        autoreleasepool { stageFrame(pixelBuffer, info: info, timestamp: timestamp, capturedAt: capturedAt) }
     }
 
-    private func stageFrame(_ pixelBuffer: CVPixelBuffer, timestamp: Double, capturedAt: TimeInterval) {
+    private func stageFrame(_ pixelBuffer: CVPixelBuffer, info: [SCStreamFrameInfo: Any]?,
+                            timestamp: Double, capturedAt: TimeInterval) {
         guard !capturedFrameStateLock.withLock({ captureProcessingPaused || playbackPreparationCapturePaused }) else { return }
-        guard let converted = CaptureFrameConverter.convert(pixelBuffer, context: poseImageContext) else { return }
+        guard let converted = CaptureFrameConverter.convert(pixelBuffer, info: info, context: poseImageContext) else { return }
         stageConvertedFrame(converted, timestamp: timestamp, capturedAt: capturedAt)
     }
 
@@ -4128,6 +4161,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             let hold = profileLaunchPending || profileLaunchFailed || profileLaunchDetector.awaitingGameplay
             profileAtlasGate.withLock { $0 = hold }
         }
+        let readingOpening = profileLaunchDetector.awaitingGameplay && menuInput.context == nil && !menuInput.gameplay
         let holdAtlas = profileAtlasGate.withLock { $0 }
         if canUseHacker || inputPathRecorder.isRecording || botEvaluation.isRecording, let renderedGameFrame {
             recordHackerCapture(frame, unityFrame: renderedGameFrame, capturedAt: timestamp,
@@ -4374,6 +4408,12 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.labelImage == nil,
                   captureGeneration == self.currentStatusGeneration else { return }
+            self.latestSkillFrame = menuInput
+            if self.readingOpeningCutscene != readingOpening { self.readingOpeningCutscene = readingOpening }
+            if [.mainTitle, .selectProfile, .clearSave].contains(menuInput.context) {
+                self.pendingNotebookProfile = nil
+                if self.notebookProfile != nil { self.notebookProfile = nil }
+            }
             let status = self.gameStatusTracker.observe(recognizedGameStatus, at: timestamp)
             self.updateQuitGameExitWatch(for: status)
             let context = status?.context.labelingContext?.storageIdentifier
@@ -4381,7 +4421,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             self.updateAtlasPathEvidence { $0.observe(gameplay: pathFrame, at: timestamp) }
             if !gameplay {
                 self.botDemonstrations.stop(reason: "gameplay-ended")
-                self.botPlayer.stop(reason: "Gameplay ended")
+                if !self.botPlayer.allowsInGameMenu { self.botPlayer.stop(reason: "Gameplay ended") }
             }
             if self.liveGameStatus != status?.displayText { self.liveGameStatus = status?.displayText }
             if self.botDemo.isActive {
@@ -4518,8 +4558,9 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
             let screen = String(describing: startupEvidence.screen)
             let phase = String(describing: startupDecision.phase)
             let selected = startupEvidence.selectedOption ?? "none"
+            let health = snapshot.hudStencil.map { String($0.health.count) } ?? "unavailable"
             atlasAdmissionLog.info(
-                "startup phase=\(phase, privacy: .public) screen=\(screen, privacy: .public) selected=\(selected, privacy: .public) gameplayLikely=\(startupEvidence.gameplayLikely, privacy: .public) detections=\(detections, privacy: .public)"
+                "startup phase=\(phase, privacy: .public) screen=\(screen, privacy: .public) selected=\(selected, privacy: .public) gameplayLikely=\(startupEvidence.gameplayLikely, privacy: .public) healthMatches=\(health, privacy: .public) detections=\(detections, privacy: .public)"
             )
         }
         if let action = startupDecision.action {

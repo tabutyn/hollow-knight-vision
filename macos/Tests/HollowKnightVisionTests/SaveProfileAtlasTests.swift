@@ -140,6 +140,7 @@ final class SaveProfileAtlasTests: XCTestCase {
         changes.cancel()
         let identifier = try XCTUnwrap(model.atlasAutoSave.profile)
         XCTAssertEqual(identifier.name, "Atlas4")
+        XCTAssertEqual(model.notebookProfile, identifier)
         XCTAssertEqual(model.hackerAtlasAutoSave.profile, identifier)
         XCTAssertEqual(try SaveProfileAtlas.read(from: world), identifier)
         XCTAssertEqual(try HackerAtlasArchiveStore.read(from: hackerActive).profile, identifier)

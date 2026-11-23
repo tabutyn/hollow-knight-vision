@@ -34,8 +34,7 @@ namespace HollowKnightVisionInputReceiver
         private ReceiverFrameTiming frameTiming;
         private VisionInputDevice device;
         private HeroActions boundActions;
-        private DeviceBindingSource inventoryBinding;
-        private DeviceBindingSource pauseMenuBinding;
+        private readonly Dictionary<PlayerAction, DeviceBindingSource> shortcutBindings = new Dictionary<PlayerAction, DeviceBindingSource>();
         private VisionButtons applied = VisionButtons.None;
         private VisionPointerInput pointerInput;
         private InControl.HollowKnightInputModule pointerModule;
@@ -1460,28 +1459,33 @@ namespace HollowKnightVisionInputReceiver
             var handler = InputHandler.Instance;
             var actions = handler == null ? null : handler.inputActions;
             if (actions == null) return;
-            if (ReferenceEquals(boundActions, actions)
-                && inventoryBinding != null && pauseMenuBinding != null
-                && actions.openInventory.HasBinding(inventoryBinding)
-                && actions.pause.HasBinding(pauseMenuBinding)) return;
-
+            if (ReferenceEquals(boundActions, actions) && shortcutBindings.Count > 0) {
+                bool intact = true;
+                foreach (var entry in shortcutBindings) intact &= entry.Key.HasBinding(entry.Value);
+                if (intact) return;
+            }
             RemoveShortcutBindings();
-            inventoryBinding = new DeviceBindingSource(InputControlType.Button28);
-            pauseMenuBinding = new DeviceBindingSource(InputControlType.Button29);
-            actions.openInventory.AddBinding(inventoryBinding);
-            actions.pause.AddBinding(pauseMenuBinding);
+            BindShortcut(actions.openInventory, InputControlType.Button28);
+            BindShortcut(actions.pause, InputControlType.Button29);
+            BindShortcut(actions.quickCast, InputControlType.Button22);
+            BindShortcut(actions.dash, InputControlType.Button23);
+            BindShortcut(actions.superDash, InputControlType.Button24);
+            BindShortcut(actions.dreamNail, InputControlType.Button25);
             boundActions = actions;
+        }
+
+        private void BindShortcut(PlayerAction action, InputControlType control)
+        {
+            var source = new DeviceBindingSource(control);
+            action.AddBinding(source);
+            shortcutBindings.Add(action, source);
         }
 
         private void RemoveShortcutBindings()
         {
-            if (boundActions != null) {
-                if (inventoryBinding != null) boundActions.openInventory.RemoveBinding(inventoryBinding);
-                if (pauseMenuBinding != null) boundActions.pause.RemoveBinding(pauseMenuBinding);
-            }
+            foreach (var entry in shortcutBindings) entry.Key.RemoveBinding(entry.Value);
+            shortcutBindings.Clear();
             boundActions = null;
-            inventoryBinding = null;
-            pauseMenuBinding = null;
         }
 
         private void StopReceiver()

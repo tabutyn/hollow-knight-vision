@@ -25,9 +25,41 @@ final class BotPlaybackController: ObservableObject {
     private var policies = [BotDomain: BotNativePolicy]()
     private var playbackDirectories = [BotDomain: URL]()
     private(set) var domain = BotDomain.hacker
-    var onStarted: ((BotDomain, BotNativePolicy) -> Bool)?
+    var onStarted: ((BotDomain, BotNativePolicy?) -> Bool)?
     var onActionApplied: ((BotAction, Double) -> Void)?
     var onStopped: (() -> Void)?
+    private struct QueuedPlan {
+        let plan: BotSkillPlan
+        let context: String
+        let generation: UInt64
+    }
+    private struct Maneuver {
+        let choice: BotSkillChoice
+        let plan: BotSkillPlan
+        let start: Double
+        let sight: SkillSight
+        var sent = false
+    }
+    private var queued: QueuedPlan?
+    private var skillDecisionCount = 0
+    private var maneuver: Maneuver?
+    private var learnedSkill: BotLearnedSkill?
+    private var starter: BotSkillInputLayout?
+    private var starterHistory = BotObservationHistory()
+    var onSkillEvent: ((BotSkillPlan, BotSkillChoice, String, String, Double) -> Void)?
+    var didInspect: ((SkillSight, Double) -> Void)?
+    var skillSight: () -> SkillSight? = { nil }
+    var hasQueuedSkill: Bool { queued != nil }
+    var usesSkillControl: Bool { maneuver != nil || queued != nil }
+    var allowsInGameMenu: Bool {
+        guard let sight = skillSight(), sight.inGameMenu else { return false }
+        return usesSkillControl
+    }
+    func queue(_ plan: BotSkillPlan, context: String, generation: UInt64) {
+        queued = QueuedPlan(plan: plan, context: context, generation: generation)
+        status = "Queued · " + plan.objective
+    }
+    func clearPlan() { queued = nil; status = "Policy plan cleared" }
     private var latest: BotObservation?
     private var history = BotObservationHistory()
     private var maskedKnightDeadline: Double?
@@ -87,7 +119,7 @@ final class BotPlaybackController: ObservableObject {
                 self.playbackDirectories = locations
                 self.policies = loaded; self.policy = loaded[.hacker] ?? loaded[.gameplay]
                 self.modelName = self.policy?.document.modelName
-                self.status = loaded.isEmpty ? "Bot models unavailable" : "Ready · " + BotDomain.allCases.filter { loaded[$0] != nil }.map(\.title).joined(separator: " + ")
+                self.status = loaded.isEmpty ? "Ready · built-in playing policies" : "Ready · " + BotDomain.allCases.filter { loaded[$0] != nil }.map(\.title).joined(separator: " + ")
                 self.issue = failures.isEmpty ? nil : failures.joined(separator: "\n")
             }
         }
@@ -100,7 +132,8 @@ final class BotPlaybackController: ObservableObject {
         var result: [String: Any] = ["humanTerrainDecisions": humanTerrainDecisionCount,
             "nonNeutralDecisions": nonNeutralDecisionCount, "hackerKnightDecisions": hackerKnightDecisionCount,
             "predictedKnightDecisions": predictedKnightDecisionCount,
-            "actionSource": "general-policy", "policyDecisions": decisionCount,
+            "actionSource": skillDecisionCount == 0 ? "general-policy" : "skill-plan",
+            "policyDecisions": decisionCount, "skillDecisions": skillDecisionCount,
             "issueCounts": observationIssueCounts, "domain": domain.rawValue]
         if let score = atlasScore {
             result["atlasNewCells"] = score.newCells
@@ -176,10 +209,43 @@ final class BotPlaybackController: ObservableObject {
                 return
             }
         }
-        guard let policy = policies[domain] else { return }
-        self.domain = domain; self.policy = policy; modelName = policy.document.modelName
+        let policy = policies[domain]
+        self.domain = domain; self.policy = policy
+        modelName = policy?.document.modelName ?? "Built-in playing policies"
+        var selected: (BotSkillPlan, BotSkillChoice, SkillSight)?
+        if let queued {
+            guard let sight = skillSight(), sight.generation == queued.generation, sight.context == queued.context,
+                  (0...0.45).contains(now() - sight.capturedAt), let choice = queued.plan.choose(sight) else {
+                self.queued = nil
+                issue = "The queued policy no longer matches this screen. Reopen Thinking on the target screen."
+                status = issue ?? "Policy plan expired"
+                return
+            }
+            selected = (queued.plan, choice, sight)
+        }
+        let schema = policy?.document.observationSchemaVersion ?? BotObservationContract.nearestGeometryPolicyVersion
+        learnedSkill = nil
+        starter = nil
+        do {
+            if let (_, choice, sight) = selected, choice.control == .native {
+                if sight.hasAbilityControls {
+                    learnedSkill = try BotLearnedSkill.load(domain: domain, skill: choice.policy, schema: schema)
+                }
+                if learnedSkill == nil || policy == nil {
+                    starter = try BotSkillInputLayout(skill: choice.policy, schema: schema >= 14 ? schema : 14)
+                }
+            } else if selected == nil && policy == nil {
+                starter = try BotSkillInputLayout(skill: .explore, schema: 14)
+            }
+        } catch { issue = error.localizedDescription; return }
+        starterHistory.reset()
         guard let id = beginControl() else { issue = "Game controls are not ready."; return }
         controlSessionID = id; sessionStartedAt = now()
+        if let (plan, choice, sight) = selected {
+            maneuver = Maneuver(choice: choice, plan: plan, start: sessionStartedAt, sight: sight)
+            queued = nil
+        }
+        skillDecisionCount = 0
         maskedKnightDeadline = nil
         atlasRun = BotAtlasRun()
         if let latest, BotDomain.of(latest) == domain, let view = latest.atlasView,
@@ -195,6 +261,11 @@ final class BotPlaybackController: ObservableObject {
             issue = "Could not start the bot playback evidence recording."
             stop(reason: "Bot playback capture failed"); return
         }
+        if let run = maneuver {
+            onSkillEvent?(run.plan, run.choice, run.sight.context, "selected", sessionStartedAt)
+            _ = driveSkill(id: id)
+        }
+        guard isActive else { return }
         watchdog = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in self?.checkInputFreshness() }
         if let window = NSApp?.mainWindow {
             focusObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification,
@@ -206,6 +277,10 @@ final class BotPlaybackController: ObservableObject {
     func stop(reason: String = "Stopped with B") {
         guard isActive || controlSessionID != nil else { return }
         let id = controlSessionID
+        if let run = maneuver { onSkillEvent?(run.plan, run.choice, run.sight.context, reason, now()) }
+        maneuver = nil
+        starter = nil
+        learnedSkill = nil
         controlSessionID = nil; isActive = false; isWaiting = false
         history.reset(); lastAction = .neutral
         watchdog?.invalidate(); watchdog = nil
@@ -227,38 +302,49 @@ final class BotPlaybackController: ObservableObject {
         if let latest, latest.generation == observation.generation,
            observation.captureTimestamp <= latest.captureTimestamp { return }
         latest = observation
-        guard isActive, let id = controlSessionID, let policy,
+        guard isActive, let id = controlSessionID,
               observation.availableAt >= sessionStartedAt, observation.capturedAt >= sessionStartedAt else { return }
         guard canContinue(), hasFocus() else { stop(reason: "Gameplay controls interrupted"); return }
+        if let maneuver {
+            guard maneuver.choice.control == .native else { return }
+            guard let sight = skillSight(), sight.generation == maneuver.sight.generation,
+                  sight.context == maneuver.sight.context, (0...0.45).contains(now() - sight.capturedAt),
+                  now() - maneuver.start < maneuver.choice.control.duration else {
+                stop(reason: "Policy window ended"); return
+            }
+        }
         let now = now()
-        maskedKnightDeadline = domain == .gameplay && policy.document.supportsMaskedKnight == true
+        maskedKnightDeadline = domain == .gameplay && policy?.document.supportsMaskedKnight == true
             ? BotKnightOcclusionWindow.deadline(for: observation) : nil
         for issue in observation.issues { observationIssueCounts[issue, default: 0] += 1 }
         if lastDecisionValidUntil > 0 && now >= lastDecisionValidUntil {
             waitForObservation(id: id, reason: "Bot waiting for a fresh observation")
         }
-        guard let input = history.input(observation, previousAction: lastAction, now: now,
-                                        maskedKnightDeadline: maskedKnightDeadline,
-                                        includeScreenTerrain: policy.document.observationSchemaVersion >= BotObservationContract.screenPolicyVersion,
-                                        includeBlockade: policy.document.observationSchemaVersion >= BotObservationContract.blockadePolicyVersion,
-                                        includeGeoCaches: policy.document.observationSchemaVersion >= BotObservationContract.geoPolicyVersion,
-                                        includeAtlas: policy.document.observationSchemaVersion >= BotObservationContract.generalPolicyVersion,
-                                        includeAtlasMap: policy.document.observationSchemaVersion >= BotObservationContract.atlasMapVersion,
-                                        includeRoad: policy.document.observationSchemaVersion >= BotObservationContract.roadVersion,
-                                        includePickup: policy.document.observationSchemaVersion >= BotObservationContract.pickupVersion,
-                                        includeCocoons: policy.document.observationSchemaVersion >= BotObservationContract.cocoonVersion,
-                                        includeDoors: policy.document.observationSchemaVersion >= BotObservationContract.doorVersion,
-                                        includeSharedPath: policy.document.observationSchemaVersion >= BotObservationContract.sharedPathVersion,
-                                        includeCompactGeometry: policy.document.observationSchemaVersion >= BotObservationContract.compactGeometryPolicyVersion, compactGeometryVersion: policy.document.observationSchemaVersion) else {
+        let schema = policy?.document.observationSchemaVersion ?? BotObservationContract.nearestGeometryPolicyVersion
+        guard let input = history.input(observation, previousAction: lastAction, now: now, schema: schema,
+                                        maskedKnightDeadline: maskedKnightDeadline) else {
             waitForObservation(id: id, reason: Self.waitingStatus(for: observation, now: now)); return
         }
         do {
-            let action = try policy.action(for: input)
+            let motor = try policy?.action(for: input)
+            var action = motor ?? .neutral
+            if let starter {
+                if schema >= 14 {
+                    action = try starter.action(raw: input, motor: motor)
+                } else if let raw = starterHistory.input(observation, previousAction: lastAction, now: now, schema: 14,
+                                                         maskedKnightDeadline: maskedKnightDeadline) {
+                    action = try starter.action(raw: raw, motor: motor)
+                }
+            }
+            if let learnedSkill, skillSight()?.hasAbilityControls == true {
+                action = try learnedSkill.action(for: input, base: action)
+            }
             atlasRun.observe(observation, view: observation.atlasView)
             let deadline = min(now + 0.2, observation.capturedAt + BotObservationContract.maximumCaptureAge,
                                observation.availableAt + 0.25, observation.knightPredictionDeadline,
                                maskedKnightDeadline ?? .infinity)
             guard applyControl(action, deadline, id) else { stop(reason: "Game controls interrupted"); return }
+            if maneuver != nil { skillDecisionCount += 1 }
             atlasRun.recordAction(action, after: lastAction)
             onActionApplied?(action, now)
             lastDecisionValidUntil = deadline
@@ -299,14 +385,80 @@ final class BotPlaybackController: ObservableObject {
     private func waitForObservation(id: UUID, reason: String) {
         if !isWaiting { neutralizeControl(id) }
         if !isWaiting { onActionApplied?(.neutral, now()) }
-        history.reset(); lastAction = .neutral; lastDecisionValidUntil = 0
+        history.reset(); starterHistory.reset(); lastAction = .neutral; lastDecisionValidUntil = 0
         if !isWaiting { isWaiting = true }
         if status != reason { status = reason }
+    }
+
+    // Direct maneuvers renew the same exclusive, short-lived input lease as the learned actor.
+    // Menu and dialogue frames need fresh screen evidence even when no Knight is visible.
+    private func driveSkill(id: UUID) -> Bool {
+        let time = now()
+        let sight = skillSight()
+        if maneuver == nil, let sight, (0...0.45).contains(time - sight.capturedAt), let defaultChoice = BotSkillPlan.initial.choose(sight),
+           defaultChoice.control == .inspect {
+            maneuver = Maneuver(choice: defaultChoice, plan: .initial, start: time, sight: sight)
+            onSkillEvent?(.initial, defaultChoice, sight.context, "selected", time)
+        }
+        guard let run = maneuver else { return false }
+        guard let sight, sight.generation == run.sight.generation,
+              (0...0.45).contains(time - sight.capturedAt) else {
+            stop(reason: "Policy stopped · game frame expired")
+            return true
+        }
+        let control = run.choice.control
+        let elapsed = time - run.start
+        let prefix = run.choice.policy.rawValue + " · " + control.rawValue
+        if sight.context != run.sight.context {
+            stop(reason: prefix + " · screen changed")
+            return true
+        }
+        if run.choice.measuresAtlasCoverage && atlasRun.score.newCells > 0 {
+            stop(reason: "Atlas updated · \(atlasRun.score.newCells) new cells")
+            return true
+        }
+        if elapsed >= control.duration {
+            if control == .inspect, elapsed < 12 {
+                if !isWaiting { neutralizeControl(id); onActionApplied?(.neutral, time) }
+                lastAction = .neutral
+                isWaiting = true
+                status = "Reading sign or dialogue…"
+                if let reading = sight.reading, reading.capturedAt > run.start, let clue = reading.passage {
+                    stop(reason: "Remembered · " + clue)
+                }
+                return true
+            }
+            let result = control == .inspect ? "no new text verified"
+                : run.choice.measuresAtlasCoverage ? "no new ground verified" : "maneuver finished"
+            stop(reason: prefix + " · " + result)
+            return true
+        }
+        if !run.sent && !sight.allows(run.choice) {
+            stop(reason: prefix + " · cue or controls changed")
+            return true
+        }
+        if control == .native { return false }
+        let action = BotAction(buttons: control.buttons(elapsed: elapsed))
+        let deadline = min(time + 0.14, sight.capturedAt + 0.45, run.start + control.duration)
+        guard deadline > time, applyControl(action, deadline, id) else {
+            stop(reason: prefix + " · controls unavailable")
+            return true
+        }
+        if !run.sent && control == .inspect { didInspect?(sight, time) }
+        maneuver?.sent = true
+        if lastAction != action || isWaiting { onActionApplied?(action, time) }
+        isWaiting = false
+        lastAction = action
+        decisionCount += 1
+        skillDecisionCount += 1
+        status = prefix
+        return true
     }
 
     private func checkInputFreshness() {
         guard isActive, let id = controlSessionID else { return }
         guard canContinue(), hasFocus() else { stop(reason: "Gameplay controls interrupted"); return }
+        if driveSkill(id: id) { return }
         if !hasFreshObservation || (lastDecisionValidUntil > 0 && now() >= lastDecisionValidUntil) {
             waitForObservation(id: id, reason: Self.waitingStatus(for: latest, now: now()))
         }

@@ -23,6 +23,10 @@ namespace HollowKnightVisionInputReceiver
             AddControl(InputControlType.Action3, "Vision X (Attack)");
             // Private controls are bound directly to HeroActions by the
             // receiver. Standard controller aliases overlap across profiles.
+            AddControl(InputControlType.Button22, "Vision QuickCast");
+            AddControl(InputControlType.Button23, "Vision Dash");
+            AddControl(InputControlType.Button24, "Vision SuperDash");
+            AddControl(InputControlType.Button25, "Vision DreamNail");
             AddControl(InputControlType.Button28, "Vision Inventory");
             AddControl(InputControlType.Button29, "Vision Pause Menu");
         }
@@ -45,6 +49,10 @@ namespace HollowKnightVisionInputReceiver
             UpdateWithState(InputControlType.Action1, Has(VisionButtons.ActionZ), updateTick, deltaTime);
             UpdateWithState(InputControlType.Action2, Has(VisionButtons.ActionA), updateTick, deltaTime);
             UpdateWithState(InputControlType.Action3, Has(VisionButtons.ActionX), updateTick, deltaTime);
+            UpdateWithState(InputControlType.Button22, Has(VisionButtons.QuickCast), updateTick, deltaTime);
+            UpdateWithState(InputControlType.Button23, Has(VisionButtons.Dash), updateTick, deltaTime);
+            UpdateWithState(InputControlType.Button24, Has(VisionButtons.SuperDash), updateTick, deltaTime);
+            UpdateWithState(InputControlType.Button25, Has(VisionButtons.DreamNail), updateTick, deltaTime);
             UpdateWithState(InputControlType.Button28, Has(VisionButtons.Inventory), updateTick, deltaTime);
             UpdateWithState(InputControlType.Button29, Has(VisionButtons.PauseMenu), updateTick, deltaTime);
             Commit(updateTick, deltaTime);

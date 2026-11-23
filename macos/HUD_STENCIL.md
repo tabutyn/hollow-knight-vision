@@ -24,6 +24,16 @@ previous exclusion geometry for at most half a second, without inventing health
 matches. Menu transitions and capture generations clear held masks. Coordinates
 scale from the reference image to the actual capture dimensions.
 
+A change in window shape can shift the health row vertically in the 640×360
+macOS capture. A title bar in an ultrawide capture can also move the masks
+inward and reduce their size and spacing. If local tracking loses the row,
+Vision checks up to 32 reference pixels above and below its saved position
+and tries a small set of viewport scales around the bottom center. Recovery
+runs at most four times per second. It verifies two mask textures at the
+corresponding spacing and checks the preceding slot before reusing a layout.
+The live startup diagnostic
+reports the number of matched health icons alongside the Knight confidence.
+
 The immutable result travels with its image for Gameplay atlas masking. Hacker
 atlas workers receive the same captured template and match their own frames.
 Both keep the existing geometric HUD exclusion shield; that rectangle contains
