@@ -350,13 +350,13 @@ internal static class LiveAtlasPipelineRemainingParityTests
         var root = Path.Combine(workspace, "live-world");
         using var appendEntered = new ManualResetEventSlim(false);
         using var releaseAppend = new ManualResetEventSlim(false);
-        Task<LiveWorldPipelineReflectionResult>? processing = null;
+        Task<LiveWorldPipelineTestResult>? processing = null;
         Task? invalidation = null;
         var stages = new List<string>();
 
         try
         {
-            var pipeline = new LiveWorldPipelineReflection(
+            var pipeline = new LiveWorldPipelineHarness(
                 root,
                 stages.Add,
                 stage =>

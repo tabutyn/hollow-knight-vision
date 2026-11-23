@@ -8893,7 +8893,7 @@ static void TestPipelineOrdersTransactionAndUsesMonotonicTimestamp()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         var result = pipeline.Process(
             PipelineTextureFrame(1, 17),
             wallTimestamp: 1_700_000_000,
@@ -8915,7 +8915,7 @@ static void TestPipelineSuppressesUnverifiedNewWorldAndLossWithoutReference()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         var unverified = pipeline.Process(
             PipelineSolidFrame(1), 100, 1, 1, "Tutorial_01",
             stableTrackingVerified: false);
@@ -8950,7 +8950,7 @@ static void TestGroundAnchoredObservationKeepsCapturePoseAcrossLaterBasisRevisio
     WithTemporaryDirectory(root =>
     {
         var pixels = PipelineTexturePixels(71);
-        var pipeline = new LiveWorldPipelineReflection(root, _ => { });
+        var pipeline = new LiveWorldPipelineHarness(root, _ => { });
         var initial = pipeline.Process(
             PipelineTextureFrameFromPixels(1, pixels), 100, 1, 1, "Tutorial_01",
             localPose: new AtlasPoint(20, 10));
@@ -8984,7 +8984,7 @@ static void TestAtlasWorldTrackerReceivesGroundAlignmentExclusions()
         var controlRoot = Path.Combine(root, "control");
         var splitRoot = Path.Combine(root, "split");
         var frame = PipelineTextureFrame(1, 71);
-        var control = new LiveWorldPipelineReflection(controlRoot, _ => { });
+        var control = new LiveWorldPipelineHarness(controlRoot, _ => { });
         Equal("Committed", control.Process(
             frame, 100, 1, 1, "Tutorial_01").State);
         True(new LiveWorldSessionStore(controlRoot).Load().Snapshot.Landmarks.Count > 0);
@@ -8997,7 +8997,7 @@ static void TestAtlasWorldTrackerReceivesGroundAlignmentExclusions()
         [
             new(0, 0, frame.Width, frame.Height)
         ];
-        var pipeline = new LiveWorldPipelineReflection(splitRoot, _ => { });
+        var pipeline = new LiveWorldPipelineHarness(splitRoot, _ => { });
         Equal("Committed", pipeline.Process(
             frame, 100, 1, 1, "Tutorial_01",
             exclusions: compositionExclusions,
@@ -9025,7 +9025,7 @@ static void TestPersistentAppendFailureDoesNotFallBackToTransientAtlasOrTracker(
     {
         var stages = new List<string>();
         var failAppend = true;
-        var pipeline = new LiveWorldPipelineReflection(
+        var pipeline = new LiveWorldPipelineHarness(
             root,
             stages.Add,
             stage => failAppend && stage == "append");
@@ -9058,7 +9058,7 @@ static void TestCorruptPersistentWorldBlocksAtlasInsteadOfFallingBackToMemory()
         var snapshotPath = Path.Combine(root, "scene.snapshot");
         var original = File.ReadAllBytes(snapshotPath);
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
 
         var failed = pipeline.Process(
             PipelineSolidFrame(1), 100, 1, 1, "Tutorial_01");
@@ -9076,7 +9076,7 @@ static void TestDelayedWorldTimestampIsDiscardedWithoutRewindingTrackerVisit()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         Equal("Committed", pipeline.Process(
             PipelineSolidFrame(1), 1_000, 100, 7, "Tutorial_01",
             localPose: new AtlasPoint(0, 0)).State);
@@ -9104,7 +9104,7 @@ static void TestRecoverySearchIsTransientAndReturnsConfirmedWorldPlacement()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         var pixels = PipelineTexturePixels(71);
         var initial = pipeline.Process(
             PipelineTextureFrameFromPixels(1, pixels), 100, 1, 1, "Tutorial_01");
@@ -9159,7 +9159,7 @@ static void TestPipelinePersistsWalkedFloorAndRestoresItOnRecovery()
             new(WalkedGroundMemory.WalkedSegmentId, new(left, 80), new(right, 80));
         var original = Span(10, 100);
         var extended = Span(10, 120);
-        var pipeline = new LiveWorldPipelineReflection(root, _ => { });
+        var pipeline = new LiveWorldPipelineHarness(root, _ => { });
         var initial = pipeline.Process(PipelineTextureFrameFromPixels(1, texture), 100, 1, 1, room,
             walkedGround: [original]);
         Equal("Committed", initial.State);
@@ -9175,7 +9175,7 @@ static void TestPipelinePersistsWalkedFloorAndRestoresItOnRecovery()
         var saved = new LiveWorldSessionStore(root).Load().Snapshot;
         True(saved.Observations[1].WalkedGround!.SequenceEqual([new LiveWorldWalkedFloor(100, 120, 80)]));
 
-        var reopened = new LiveWorldPipelineReflection(root, _ => { });
+        var reopened = new LiveWorldPipelineHarness(root, _ => { });
         var raw = new AtlasPoint(80, 0);
         var first = reopened.Process(PipelineTextureFrameFromPixels(4, texture), 103, 1.60, 1, room, localPose: raw);
         Equal("PendingRecovery", first.State);
@@ -9204,7 +9204,7 @@ static void TestPipelineCadenceSuppressesDuplicatePersistence()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         Equal("Committed", pipeline.Process(
             PipelineSolidFrame(1), 100, 10, 1, "Tutorial_01").State);
         var afterFirst = stages.Count;
@@ -9224,7 +9224,7 @@ static void TestPipelineRejectsStaleCaptureGeneration()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         Equal("Committed", pipeline.Process(
             PipelineSolidFrame(1), 100, 1, 2, "Tutorial_01").State);
         var publishedStages = stages.Count;
@@ -9252,7 +9252,7 @@ static void TestPipelineRollsBackAfterCasFailureAndSuppressesPublication()
     {
         var stages = new List<string>();
         var contended = false;
-        var pipeline = new LiveWorldPipelineReflection(root, stage =>
+        var pipeline = new LiveWorldPipelineHarness(root, stage =>
         {
             stages.Add(stage);
             if (stage != "ingest" || contended) return;
@@ -9291,7 +9291,7 @@ static void TestPipelinePublishesClosureOnlyAfterRebuildAndCommit()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         var firstTexture = PipelineTexturePixels(191);
         var secondTexture = PipelineTexturePixels(811);
         Equal("Committed", pipeline.Process(
@@ -9368,7 +9368,7 @@ static void TestLiveRoomBoundaryAuditWhenRequested()
             "The live room audit could not derive a chronological later room.");
     var leftRoomID = firstLaterRoom.RoomId;
 
-    var result = new LiveWorldPipelineReflection(root, _ => { })
+    var result = new LiveWorldPipelineHarness(root, _ => { })
         .BoundaryEvidence(leftRoomID, rightRoomID);
     if (result.PersistenceIssue is { Length: > 0 } issue)
     {
@@ -9450,7 +9450,7 @@ static void TestLiveRoomBoundaryAuditSelectsChronologicalPersistedEvidence()
             ]);
         True(store.Commit(snapshot, expectedRevision: 0, newRevision: 1));
 
-        var pipeline = new LiveWorldPipelineReflection(root, _ => { });
+        var pipeline = new LiveWorldPipelineHarness(root, _ => { });
         var result = pipeline.BoundaryEvidence(leftRoomID, rightRoomID);
         True(result.PersistenceIssue is null);
         var evidence = result.Evidence ?? throw new InvalidOperationException(
@@ -9801,11 +9801,11 @@ static void ClosePoint(AtlasPoint expected, AtlasPoint actual, double tolerance 
     CloseWithin(expected.Y, actual.Y, tolerance);
 }
 
-internal sealed record LiveWorldPipelineReflectionResult(
+internal sealed record LiveWorldPipelineTestResult(
     string State,
     string Diagnostic,
     int Revision,
-    object? AcceptedClosure,
+    LiveWorldLoopClosureEdge? AcceptedClosure,
     AtlasPoint CameraPose,
     AtlasPoint AppliedCorrection,
     AtlasPoint WorldBasisOffset,
@@ -9814,207 +9814,46 @@ internal sealed record LiveWorldPipelineReflectionResult(
     bool HasRebuiltAtlas,
     IReadOnlyList<GroundHypothesisAtlasLine> WalkedGround);
 
-internal sealed record LiveRoomBoundaryEvidenceReflectionResult(
-    VisualRoomBoundaryEvidence? Evidence,
-    string? PersistenceIssue);
-
-internal sealed class LiveWorldPipelineReflection
+internal sealed class LiveWorldPipelineHarness
 {
-    private static readonly Assembly AppAssembly = LoadAppAssembly();
-    private static readonly Type PipelineType = RequiredType(
-        "HollowKnightVision.Windows.App.WindowsLiveWorldPipeline");
-    private static readonly Type FrameType = RequiredType(
-        "HollowKnightVision.Windows.App.WindowsLiveWorldFrame");
-    private static readonly ConstructorInfo PipelineConstructor = PipelineType.GetConstructor(
-        BindingFlags.Instance | BindingFlags.NonPublic,
-        binder: null,
-        [typeof(string), typeof(Action<string>), typeof(Func<string, bool>)],
-        modifiers: null) ?? throw new MissingMethodException(
-            PipelineType.FullName,
-            ".ctor(string, Action<string>, Func<string, bool>)");
-    private static readonly ConstructorInfo FrameConstructor = FrameType.GetConstructors(
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-        .Single(constructor => constructor.GetParameters().Length == 13);
-    private static readonly MethodInfo ProcessMethod = PipelineType.GetMethod(
-        "Process",
-        BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new MissingMethodException(PipelineType.FullName, "Process");
-    private static readonly MethodInfo NotifyTrackingLossMethod = PipelineType.GetMethod(
-        "NotifyTrackingLoss",
-        BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new MissingMethodException(PipelineType.FullName, "NotifyTrackingLoss");
-    private static readonly MethodInfo InvalidatePendingWorkMethod = PipelineType.GetMethod(
-        "InvalidatePendingWork",
-        BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new MissingMethodException(PipelineType.FullName, "InvalidatePendingWork");
-    private static readonly MethodInfo ReopenMethod = PipelineType.GetMethod(
-        "Reopen",
-        BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new MissingMethodException(PipelineType.FullName, "Reopen");
-    private static readonly FieldInfo AcceptsWorkField = RequiredField(
-        "acceptsWork",
-        typeof(bool));
-    private static readonly MethodInfo BoundaryEvidenceMethod = PipelineType.GetMethod(
-        "BoundaryEvidence",
-        BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new MissingMethodException(PipelineType.FullName, "BoundaryEvidence");
+    private static readonly FieldInfo AcceptsWorkField = typeof(WindowsLiveWorldPipeline)
+        .GetField("acceptsWork", BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new MissingFieldException(nameof(WindowsLiveWorldPipeline), "acceptsWork");
 
-    private readonly object pipeline;
+    private readonly WindowsLiveWorldPipeline pipeline;
 
-    internal LiveWorldPipelineReflection(
-        string root,
-        Action<string> transactionObserver,
+    internal LiveWorldPipelineHarness(string root, Action<string> transactionObserver,
         Func<string, bool>? transactionFault = null)
     {
-        pipeline = PipelineConstructor.Invoke([root, transactionObserver, transactionFault]);
+        pipeline = new(root, transactionObserver, transactionFault);
     }
 
-    internal LiveWorldPipelineReflectionResult Process(
-        BgraFrame frame,
-        double wallTimestamp,
-        double monotonicTimestamp,
-        ulong captureGeneration,
-        string roomName,
-        bool stableTrackingVerified = true,
-        AtlasPoint? localPose = null,
-        IReadOnlyList<StencilRect>? exclusions = null,
-        IReadOnlyList<StencilRect>? groundAlignmentExclusions = null,
-        IReadOnlyList<GroundHypothesisAtlasLine>? walkedGround = null,
-        long walkedCoordinateEpoch = 0)
+    internal LiveWorldPipelineTestResult Process(BgraFrame frame, double wallTimestamp, double monotonicTimestamp,
+        ulong captureGeneration, string roomName, bool stableTrackingVerified = true, AtlasPoint? localPose = null,
+        IReadOnlyList<StencilRect>? exclusions = null, IReadOnlyList<StencilRect>? groundAlignmentExclusions = null,
+        IReadOnlyList<GroundHypothesisAtlasLine>? walkedGround = null, long walkedCoordinateEpoch = 0)
     {
-        var request = FrameConstructor.Invoke(
-        [
-            frame,
-            frame,
-            wallTimestamp,
-            monotonicTimestamp,
-            localPose ?? new AtlasPoint(0, 0),
-            160d,
-            exclusions ?? Array.Empty<StencilRect>(),
-            groundAlignmentExclusions ?? exclusions ?? Array.Empty<StencilRect>(),
-            captureGeneration,
-            roomName,
-            1d,
-            64,
-            stableTrackingVerified
-        ]);
-        if (walkedGround is not null)
+        var request = new WindowsLiveWorldFrame(
+            frame, frame, wallTimestamp, monotonicTimestamp, localPose ?? default, 160,
+            exclusions ?? [], groundAlignmentExclusions ?? exclusions ?? [], captureGeneration, roomName, 1, 64,
+            stableTrackingVerified)
         {
-            const BindingFlags properties = BindingFlags.Instance | BindingFlags.NonPublic;
-            FrameType.GetProperty("WalkedGround", properties)!.SetValue(request, walkedGround);
-            FrameType.GetProperty("WalkedCoordinateEpoch", properties)!.SetValue(request, walkedCoordinateEpoch);
-        }
-        var result = Invoke(ProcessMethod, pipeline, request);
-        var type = result.GetType();
-        return new LiveWorldPipelineReflectionResult(
-            type.GetProperty("State")?.GetValue(result)?.ToString()
-                ?? throw new MissingMemberException(type.FullName, "State"),
-            type.GetProperty("Diagnostic")?.GetValue(result) as string
-                ?? throw new MissingMemberException(type.FullName, "Diagnostic"),
-            type.GetProperty("Revision")?.GetValue(result) is int revision
-                ? revision
-                : throw new MissingMemberException(type.FullName, "Revision"),
-            type.GetProperty("AcceptedClosure")?.GetValue(result),
-            type.GetProperty("CameraPose")?.GetValue(result) is AtlasPoint cameraPose
-                ? cameraPose
-                : throw new MissingMemberException(type.FullName, "CameraPose"),
-            type.GetProperty("AppliedCorrection")?.GetValue(result) is AtlasPoint appliedCorrection
-                ? appliedCorrection
-                : throw new MissingMemberException(type.FullName, "AppliedCorrection"),
-            type.GetProperty("WorldBasisOffset")?.GetValue(result) is AtlasPoint basis
-                ? basis
-                : throw new MissingMemberException(type.FullName, "WorldBasisOffset"),
-            type.GetProperty("ConfirmedRecoveryPose")?.GetValue(result) is AtlasPoint confirmed
-                ? confirmed
-                : null,
-            type.GetProperty("AllowsAtlasWrite", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                    ?.GetValue(result) is true,
-            type.GetProperty("RebuiltAtlas")?.GetValue(result) is not null,
-            (IReadOnlyList<GroundHypothesisAtlasLine>)type.GetProperty("WalkedGround")!.GetValue(result)!);
+            WalkedGround = walkedGround ?? [],
+            WalkedCoordinateEpoch = walkedCoordinateEpoch
+        };
+        var result = pipeline.Process(request);
+        return new(result.State.ToString(), result.Diagnostic, result.Revision, result.AcceptedClosure, result.CameraPose,
+            result.AppliedCorrection, result.WorldBasisOffset, result.ConfirmedRecoveryPose, result.AllowsAtlasWrite,
+            result.RebuiltAtlas is not null, result.WalkedGround);
     }
 
-    internal void NotifyTrackingLoss(ulong captureGeneration) =>
-        _ = Invoke(NotifyTrackingLossMethod, pipeline, captureGeneration);
+    internal void NotifyTrackingLoss(ulong captureGeneration) => pipeline.NotifyTrackingLoss(captureGeneration);
+    internal void InvalidatePendingWork() => pipeline.InvalidatePendingWork();
+    internal bool Reopen() => pipeline.Reopen();
+    internal bool AcceptsWork => AcceptsWorkField.GetValue(pipeline) is true;
 
-    internal void InvalidatePendingWork() =>
-        _ = Invoke(InvalidatePendingWorkMethod, pipeline);
-
-    internal bool Reopen() => Invoke(ReopenMethod, pipeline) is true;
-
-    internal bool AcceptsWork => AcceptsWorkField.GetValue(pipeline) is bool value
-        ? value
-        : throw new InvalidOperationException("Live-world work admission is not Boolean.");
-
-    internal LiveRoomBoundaryEvidenceReflectionResult BoundaryEvidence(
-        int leftRoomID,
-        int rightRoomID)
-    {
-        var result = Invoke(
-            BoundaryEvidenceMethod,
-            pipeline,
-            leftRoomID,
-            rightRoomID);
-        var type = result.GetType();
-        return new LiveRoomBoundaryEvidenceReflectionResult(
-            type.GetProperty("Evidence")?.GetValue(result)
-                as VisualRoomBoundaryEvidence,
-            type.GetProperty("PersistenceIssue")?.GetValue(result) as string);
-    }
-
-    private static object Invoke(MethodInfo method, object target, params object?[] arguments)
-    {
-        try
-        {
-            return method.Invoke(target, arguments) ?? new object();
-        }
-        catch (TargetInvocationException error) when (error.InnerException is not null)
-        {
-            throw error.InnerException;
-        }
-    }
-
-    private static Type RequiredType(string name) =>
-        AppAssembly.GetType(name, throwOnError: true)
-        ?? throw new TypeLoadException(name);
-
-    private static FieldInfo RequiredField(string name, Type expectedType)
-    {
-        var field = PipelineType.GetField(
-            name,
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingFieldException(PipelineType.FullName, name);
-        if (field.FieldType != expectedType)
-        {
-            throw new InvalidOperationException(
-                $"{PipelineType.FullName}.{name} must be {expectedType.FullName}.");
-        }
-        return field;
-    }
-
-    private static Assembly LoadAppAssembly()
-    {
-        var configuration = Directory.GetParent(
-                AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar))?.Name
-            ?? "Release";
-        var windowsRoot = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory,
-            "..", "..", "..", "..", ".."));
-        var path = Path.Combine(
-            windowsRoot,
-            "src",
-            "HollowKnightVision.Windows.App",
-            "bin",
-            configuration,
-            "net8.0-windows10.0.19041.0",
-            "HollowKnightVision.Windows.dll");
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException(
-                "Build HollowKnightVision.Windows.App before running pipeline regressions.",
-                path);
-        }
-        return Assembly.LoadFrom(path);
-    }
+    internal WindowsLiveRoomBoundaryEvidenceResult BoundaryEvidence(int leftRoomId, int rightRoomId) =>
+        pipeline.BoundaryEvidence(leftRoomId, rightRoomId);
 }
 
 file static class GroundPixelsParityTests

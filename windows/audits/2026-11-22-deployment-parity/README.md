@@ -80,3 +80,13 @@ The [WPF instrumentation run](https://github.com/tabutyn/hollow-knight-vision/ac
 passed. Across the draft up to `19bd296`, native suites reached 949 of 1,381
 changed C# lines (68.72%). The ground renderer reached 48 of 49 changed lines.
 Most window event handlers had counters and received few or no hits.
+
+The walked-ground persistence suites passed through the Windows world
+pipeline, including disk reopen, room recovery and Atlas rebuild. The Core tests now compile
+the pipeline from the app source, so their execution contributes line hits
+to the same report as the WPF app.
+
+The focused production-pipeline run reached all 46 of its changed lines.
+Combined with the native counters for the same production revision, the
+walked-ground storage changes reached 96 of 134 executable lines. The 38
+new or changed live window integration lines still need runtime coverage.
