@@ -112,12 +112,10 @@ final class ThinkingClientTests: XCTestCase {
             let displayed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(context.schemaText.utf8)) as? NSDictionary)
             XCTAssertEqual(format, displayed)
             let properties = try XCTUnwrap(format["properties"] as? [String: Any])
-            let choices = try XCTUnwrap(properties["choices"] as? [String: Any])
-            let items = try XCTUnwrap(choices["items"] as? [String: Any])
-            let fields = try XCTUnwrap(items["properties"] as? [String: [String: Any]])
-            XCTAssertEqual(Set(fields.keys), ["option", "points"])
-            XCTAssertEqual(fields["option"]?["enum"] as? [String],
-                           ["explore", "traverse", "fight", "recover", "progress", "readPrompt"])
+            let scores = try XCTUnwrap(properties["scores"] as? [String: Any])
+            let fields = try XCTUnwrap(scores["properties"] as? [String: Any])
+            XCTAssertEqual(Set(fields.keys), ["c0"])
+            XCTAssertTrue(context.user.contains(#""objective":"expandAtlas""#))
             let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
             XCTAssertEqual(messages.compactMap { $0["role"] as? String }, ["system", "user"])
             XCTAssertEqual(messages.compactMap { $0["content"] as? String }, [context.system, context.user])
@@ -129,23 +127,28 @@ final class ThinkingClientTests: XCTestCase {
     }
 
     func testModelRanksPoliciesWithoutControllingTheirInputs() throws {
-        let sight = SkillSight(context: "King's Pass", capturedAt: 1, generation: 1, gameplay: true,
-                              menu: nil, selected: nil, lines: [], hasAbilityControls: false)
+        let target = BotRouteTarget(chart: "room", goal: .init(20, 0), waypoint: .init(10, 0),
+            hint: .init(dx: 1, dy: 0, clearance: 0.1, distance: 0.3, frontier: true))
+        var sight = SkillSight(context: "Room", capturedAt: 1, generation: 1, gameplay: true, menu: nil,
+            selected: nil, lines: [], hasAbilityControls: true, scene: .init(room: 7, grounded: true,
+            recovery: .init(soul: 33, health: 3, maxHealth: 5, canFocus: true), enemies: [], cocoons: [], routes: [target]))
         let contract = ThinkingPolicyContract(sight: sight, visible: [])
-        let reply = #"{"choices":[{"option":"explore","points":40},{"option":"traverse","points":92}],"shopping":[]}"#
-        let plan = try contract.resolve(Data(reply.utf8), goal: "Find new ground")
-        XCTAssertEqual(plan.objective, "Find new ground")
-        XCTAssertEqual(plan.choose(sight), .init(policy: .traverse, control: .native, points: 92, cue: ""))
-        let invalid = [
-            #"{"choices":[{"control":"wallJumpRight","cue":"Wall Jump Right","points":92,"policy":"traverse"}],"objective":"Wall Jump Right","shopping":[],"success":"Reach the next area"}"#,
-            #"{"choices":[{"option":"wallJumpRight","points":92}],"shopping":[]}"#,
-            #"{"choices":[{"option":"traverse","points":92,"control":"wallJumpRight"}],"shopping":[]}"#,
-            #"{"choices":[{"option":"traverse","points":101}],"shopping":[]}"#,
-            #"{"choices":[{"option":"traverse","points":92},{"option":"traverse","points":40}],"shopping":[]}"#,
-            #"{"choices":[{"option":"readPrompt","points":90}],"shopping":[]}"#
-        ]
-        for reply in invalid {
-            XCTAssertThrowsError(try contract.resolve(Data(reply.utf8), goal: "Find new ground"), reply)
+        let plan = try contract.resolve(Data(#"{"scores":{"c0":90,"c1":90}}"#.utf8))
+        XCTAssertEqual(plan.objective, "expandAtlas")
+        XCTAssertEqual(plan.choose(sight)?.policy, .traverse)
+        sight.scene?.routes = []
+        XCTAssertEqual(plan.choose(sight)?.control, .focus)
+        for soul in [0,32] {
+            sight.scene = .init(room: 7, grounded: true, recovery: .init(soul: soul, health: 3, maxHealth: 5,
+                canFocus: true), enemies: [], cocoons: [])
+            XCTAssertNil(plan.choose(sight))
+        }
+        sight.scene = nil
+        XCTAssertNil(plan.choose(sight))
+        for reply in [#"{"choices":[],"shopping":[]}"#, #"{"scores":{"c2":80}}"#, #"{"scores":{"c0":101}}"#,
+                      #"{"scores":{"c0":false}}"#, #"{"scores":{"c0":0}}"#, #"{"scores":{"c0":"99"}}"#,
+                      #"{"scores":{"c0":1.5}}"#, #"{"scores":{},"reason":"Explore"}"#] {
+            XCTAssertThrowsError(try contract.resolve(Data(reply.utf8)), reply)
         }
     }
 
@@ -154,24 +157,83 @@ final class ThinkingClientTests: XCTestCase {
             .init(context: "King's Pass", capturedAt: 1, generation: 1, gameplay: gameplay,
                   menu: menu, selected: selection, lines: lines, hasAbilityControls: false)
         }
-        let reading = Data(#"{"choices":[{"option":"readPrompt","points":93}],"shopping":[]}"#.utf8)
+        let reading = Data(#"{"scores":{"c0":93}}"#.utf8)
         let page = sight(gameplay: true, lines: ["INSPECT"])
-        let read = try ThinkingPolicyContract(sight: page, visible: ["INSPECT"]).resolve(reading, goal: "Read")
+        let read = try ThinkingPolicyContract(sight: page, visible: ["INSPECT"]).resolve(reading)
         XCTAssertEqual(read.choose(page)?.control, .inspect)
         XCTAssertNil(read.choose(sight(gameplay: true)))
+        var differentPrompt = sight(gameplay: true, lines: ["INSPECT"])
+        differentPrompt.reading = .init(context: page.context, capturedAt: 15, visible: ["INSPECT"],
+            promptStarts: [RememberedGameText.key("Inspect"): 12])
+        XCTAssertNil(read.choose(differentPrompt))
 
-        let resume = Data(#"{"choices":[{"option":"resumeGame","points":80}],"shopping":[]}"#.utf8)
+        let resume = Data(#"{"scores":{"c0":80}}"#.utf8)
         let paused = sight(gameplay: false, menu: .pause, selection: "pause.continue")
         let options = sight(gameplay: false, menu: .pause, selection: "pause.options")
-        let plan = try ThinkingPolicyContract(sight: paused, visible: []).resolve(resume, goal: "Resume")
+        let plan = try ThinkingPolicyContract(sight: paused, visible: []).resolve(resume)
         XCTAssertEqual(plan.choose(paused)?.control, .confirm)
         XCTAssertNil(plan.choose(options))
-        XCTAssertThrowsError(try ThinkingPolicyContract(sight: options, visible: []).resolve(resume, goal: "Resume"))
+        XCTAssertThrowsError(try ThinkingPolicyContract(sight: options, visible: []).resolve(resume))
 
         let unavailable = ThinkingPolicyContract(sight: nil, visible: ["INSPECT"])
-        XCTAssertThrowsError(try unavailable.resolve(reading, goal: "Read"))
-        let idle = try unavailable.resolve(Data(#"{"choices":[],"shopping":[]}"#.utf8), goal: "Read")
+        XCTAssertThrowsError(try unavailable.resolve(reading))
+        let idle = try unavailable.resolve(Data(#"{"scores":{}}"#.utf8))
         XCTAssertTrue(idle.choices.isEmpty)
+    }
+
+    func testScoredCandidateRunsItsBoundWaypointAndFallsBackOnlyToAnotherScoredTarget() throws {
+        func route(_ x: Int, frontier: Bool) -> BotRouteTarget {
+            .init(chart: "Pass", goal: .init(x * 2, 0), waypoint: .init(x, 0),
+                  hint: .init(dx: x < 0 ? -0.4 : 0.4, dy: 0, clearance: 0.1, distance: 0.4, frontier: frontier))
+        }
+        let left = route(-20, frontier: true), right = route(30, frontier: false)
+        var sight = SkillSight(context: "Pass", capturedAt: 10, generation: 7, gameplay: true, menu: nil,
+            selected: nil, lines: [], hasAbilityControls: false, scene: .init(room: 8, grounded: true,
+            recovery: nil, enemies: [], cocoons: [], routes: [left, right]))
+        let contract = ThinkingPolicyContract(sight: sight, visible: [])
+        let plan = try contract.resolve(Data(#"{"scores":{"c1":95,"c0":42}}"#.utf8))
+        let rows = contract.rows(scoredBy: plan)
+        XCTAssertEqual(rows.map(\.id), ["c0", "c1"])
+        XCTAssertEqual(rows.map(\.score), [42, 95])
+        XCTAssertTrue(rows[1].target.contains("(30, 0)"))
+        XCTAssertEqual(ThinkingPolicyContract(sight: sight, visible: []).rows(scoredBy: plan).map(\.score), [nil, nil])
+        let singlePick = try contract.resolve(Data(#"{"scores":{"c1":95}}"#.utf8))
+        XCTAssertEqual(contract.rows(scoredBy: singlePick).map(\.score), [nil, 95])
+        for (liveRoutes, expectedID, expectedTarget, expectedButtons) in [
+            ([left, right], "c1", right, InputBridgeButtons.right),
+            ([left], "c0", left, InputBridgeButtons.left)
+        ] {
+            sight.scene?.routes = liveRoutes
+            let bot = BotPlaybackController(loadModel: false, now: { 10 }, hasFocus: { true })
+            bot.skillSight = { sight }
+            var selected: BotSkillChoice?, pressed: [InputBridgeButtons] = []
+            bot.onSkillEvent = { _, choice, _, event, _ in if event == "selected" { selected = choice } }
+            bot.configure(canContinue: { true }, begin: { UUID() }, apply: { action, _, _ in
+                pressed.append(action.buttons); return true
+            }, neutralize: { _ in }, end: { _ in })
+            let handoff = bot.dispatch(plan, context: sight.context, generation: 7, domain: .gameplay)
+            XCTAssertTrue(handoff.contains("Dispatched · " + expectedID), handoff)
+            XCTAssertEqual(selected?.candidateID, expectedID)
+            XCTAssertEqual(selected?.policy, .traverse)
+            XCTAssertEqual(selected?.binding, .init(room: 8, target: .traverse(expectedTarget)))
+            var features = [Double](repeating: 0, count: BotObservationContract.featureCount)
+            features[0] = 0.5; features[4] = 1
+            var obs = BotObservation(type: "observation", captureTimestamp: 10, capturedAt: 10, availableAt: 10,
+                generation: 7, roomID: 8, roomRevision: 1, detectionTimestamp: 10, detectionFrameID: nil,
+                modelVersion: nil, bestKnightConfidence: 1, features: features, issues: [], terrainSource: "detected")
+            obs.roadHint = expectedID == "c1" ? left.hint : right.hint
+            obs.hackerPathVersion = 1
+            obs.policyScene = sight.scene
+            bot.observe(obs)
+            let applied = expectation(description: "Playback consumes target observation")
+            DispatchQueue.main.async { applied.fulfill() }
+            wait(for: [applied], timeout: 2)
+            XCTAssertEqual(pressed.last, expectedButtons)
+            bot.stop()
+        }
+        XCTAssertNil(singlePick.choose(sight), "An unscored surviving target must stay unselected")
+        sight.scene?.routes = [route(99, frontier: false)]
+        XCTAssertNil(plan.choose(sight), "A replacement waypoint cannot inherit the previous score")
     }
 
     @MainActor
@@ -190,7 +252,7 @@ final class ThinkingClientTests: XCTestCase {
         let monitor = Task {
             await inspector.monitor(reader: reader, session: session, interval: .milliseconds(30)) {
                 let sample = ThinkingFrame(image: frame, profile: nil, generation: 0, context: "King's Pass",
-                    goal: BotSkillPlan.defaultObjective, mode: "modded", atlas: "", sight: nil, language: "en", readsText: false)
+                    mode: "modded", atlas: "", sight: nil, language: "en", readsText: false)
                 ids.append(sample.id)
                 if ids.count == 2 { secondCapture.fulfill() }
                 return sample
@@ -209,7 +271,7 @@ final class ThinkingClientTests: XCTestCase {
     @MainActor
     func testInvalidJSONRemainsInspectableWithoutCreatingAPlan() throws {
         let frame = ThinkingFrame(image: try testFrame(), profile: nil, generation: 0, context: "King's Pass",
-            goal: BotSkillPlan.defaultObjective, mode: "modded", atlas: "", sight: nil, language: "en", readsText: false)
+            mode: "modded", atlas: "", sight: nil, language: "en", readsText: false)
         let context = ThinkingContext(evidence: frame.decisionEvidence(visible: []), hasImage: true)
         let input = ThinkingInspector.Input(frame: frame, model: .gemma, context: context)
         let output = ThinkingInspector.Output(input: input, reply: #"{"choices":[]}"#)

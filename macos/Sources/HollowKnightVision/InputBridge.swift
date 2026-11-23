@@ -435,6 +435,7 @@ struct ReceiverActorTelemetry: Codable, Equatable, Sendable {
     var geoCaches: [ReceiverActorState]? = nil
     var lifebloodCocoons: [ReceiverActorState]? = nil
     var enemyOutcomes: BotEnemyOutcomes? = nil
+    var recovery: BotRecoveryInput? = nil
     var heroHealth: Int? = nil
 }
 

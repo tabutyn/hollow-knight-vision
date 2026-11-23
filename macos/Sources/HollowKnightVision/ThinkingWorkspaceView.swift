@@ -22,7 +22,6 @@ enum ThinkingModel: String, CaseIterable, Identifiable {
 struct ThinkingWorkspaceView: View {
     @ObservedObject var session: ThinkingModelSession
     @ObservedObject var inspector: ThinkingInspector
-    @ObservedObject var reader: GameTextReader
     @ObservedObject var player: BotPlaybackController
     let openLog: () -> Void
 
@@ -33,9 +32,6 @@ struct ThinkingWorkspaceView: View {
                     ForEach(ThinkingModel.allCases) { Text($0.title).tag($0) }
                 }.fixedSize()
                 Spacer()
-                if !reader.statedGoal.isEmpty {
-                    Button("Use Atlas goal") { reader.setGoal("") }
-                }
                 Button("Log", systemImage: "book.closed", action: openLog)
                 Toggle("Automatic policies", isOn: $player.automaticPoliciesEnabled).toggleStyle(.switch)
             }
@@ -115,8 +111,15 @@ struct ThinkingWorkspaceView: View {
             ScrollView {
                 if let input = inspector.input {
                     VStack(alignment: .leading, spacing: 12) {
-                        contextBlock("System message", input.context.system)
-                        contextBlock("User message", input.context.user)
+                        if inspector.output?.input.frame.id != input.frame.id {
+                            candidateList(input, plan: nil, showsScores: false)
+                        }
+                        DisclosureGroup("System message") {
+                            contextBlock(input.context.system)
+                        }
+                        DisclosureGroup("User message") {
+                            contextBlock(input.context.user)
+                        }
                         DisclosureGroup("Response schema") {
                             Text(input.context.schemaText)
                                 .font(.system(.caption, design: .monospaced))
@@ -136,7 +139,7 @@ struct ThinkingWorkspaceView: View {
 
     private var outputPanel: some View {
         VStack(alignment: .leading, spacing: 6) {
-            panelHeading("Latest JSON output", detail: inspector.output.map { "Frame " + captureTime($0.input.frame.capturedAt) })
+            panelHeading("Latest decision", detail: inspector.output.map { "Frame " + captureTime($0.input.frame.capturedAt) })
             if let output = inspector.output {
                 Text(output.input.model.title + " · received " + captureTime(output.receivedAt))
                     .font(.caption).foregroundStyle(.secondary)
@@ -146,11 +149,12 @@ struct ThinkingWorkspaceView: View {
                     Text(handoff).font(.caption)
                 }
                 ScrollView {
-                    Text(output.text).font(.system(.callout, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .textSelection(.enabled)
-                        .accessibilityIdentifier("thinking-output-json")
-                        .id(output.input.frame.id)
+                    VStack(alignment: .leading, spacing: 14) {
+                        candidateList(output.input, plan: output.plan, showsScores: true)
+                        Text("JSON reply").font(.subheadline.bold())
+                        contextBlock(output.text)
+                            .accessibilityIdentifier("thinking-output-json")
+                    }.id(output.input.frame.id)
                 }
             } else {
                 Text("Waiting for the first policy reply.")
@@ -168,11 +172,39 @@ struct ThinkingWorkspaceView: View {
         }
     }
 
-    private func contextBlock(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.subheadline.bold()).foregroundStyle(.secondary)
-            Text(value).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
-        }.frame(maxWidth: .infinity, alignment: .topLeading)
+    private func candidateList(_ input: ThinkingInspector.Input, plan: BotSkillPlan?, showsScores: Bool) -> some View {
+        let contract = input.context.contract
+        let rows = contract.rows(scoredBy: plan)
+        return VStack(alignment: .leading, spacing: 7) {
+            Text("Vision candidates · decision \(contract.decisionID)").font(.subheadline.bold())
+                .help("The highest-scored candidate with a live target can run. Equal scores use offer order.")
+            if rows.isEmpty {
+                Text("No executable targets found in this capture.").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(rows) { row in
+                DisclosureGroup {
+                    contextBlock(row.parameters)
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(verbatim: row.id).monospaced()
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.policy).bold()
+                            Text(row.target).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if showsScores {
+                            Text(row.score.map { "\($0) / 100" } ?? (plan == nil ? "Invalid reply" : "Unscored"))
+                                .font(.caption).monospacedDigit()
+                        }
+                    }
+                }
+            }
+        }.accessibilityIdentifier("thinking-candidates")
+    }
+
+    private func contextBlock(_ value: String) -> some View {
+        Text(value).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func captureTime(_ date: Date) -> String {

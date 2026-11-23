@@ -36,7 +36,7 @@ struct BotSkillInputLayout {
         current = newest
     }
 
-    func action(raw: [Float], motor: BotAction?) throws -> BotAction {
+    func action(raw: [Float], motor: BotAction?, waypoint: BotRoadHint? = nil) throws -> BotAction {
         guard raw.count == rawWidth else { throw BotRuntimeError.incompatible("Incomplete starter observation.") }
         let input = columns.map { raw[$0] }
         func value(_ name: String) -> Float { current[name].map { input[$0] } ?? 0 }
@@ -65,6 +65,9 @@ struct BotSkillInputLayout {
         case .interact:
             return .neutral // Interaction consumes screen cues through SkillSight.
         case .explore, .traverse, .progress:
+            if skill == .traverse, let waypoint {
+                return move(Float(waypoint.dx), jump: waypoint.dy > 0.20 || abs(blocked) > 0.5)
+            }
             if skill == .progress && value("geo_cache_present") > 0.5 {
                 let target = value("geo_cache_dx")
                 return move(target, attack: abs(target) < 0.10 && abs(value("geo_cache_dy")) < 0.12)

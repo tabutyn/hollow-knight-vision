@@ -81,7 +81,7 @@ struct AtlasPathNavigation {
     }
     private var crossing: [CrossingLeg] = []
     private var walked = Set<PathPoint>()  // small spatial bins, robust to a corrected ground row
-    private var goal: PathPoint?
+    private(set) var goal: PathPoint?
     private var lastPoint: PathPoint?
     private var bestRemaining: Int?
     // Paying for the same directed part of a platform twice makes a

@@ -29,6 +29,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     @Published private(set) var notebookProfile: SaveProfileAtlas?
     private var pendingNotebookProfile: SaveProfileAtlas?
     @Published private(set) var readingOpeningCutscene = false
+    private var skillObservation: BotObservation?
     var skillReading: SkillReading?
     var skillContext: String { liveGameStatus == "Gameplay" ? activeRoomStatus : (liveGameStatus ?? "Game capture") }
     var skillGeneration: UInt64 { currentStatusGeneration }
@@ -40,10 +41,16 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         let reading = skillReading.flatMap { entry in
             entry.context == skillContext && (0...2.5).contains(now - entry.capturedAt) ? entry : nil
         }
+        let scene = skillObservation.flatMap { row -> BotPolicyScene? in
+            guard row.generation == frame.generation, row.isUsable,
+                  (0...BotObservationContract.maximumCaptureAge).contains(now - row.capturedAt),
+                  BotDomain.of(row) == (isHackerWorkspaceActive() ? .hacker : .gameplay) else { return nil }
+            return row.policyScene
+        }
         return SkillSight(context: skillContext, capturedAt: frame.capturedAt, generation: frame.generation,
                           gameplay: liveGameStatus == "Gameplay" && frame.context == nil,
                           menu: frame.context, selected: frame.selectedIdentifier, lines: reading?.visible ?? [],
-                          hasAbilityControls: receiverCapabilities.contains("skill-controls-v1"), reading: reading)
+                          hasAbilityControls: receiverCapabilities.contains("skill-controls-v1"), reading: reading, scene: scene)
     }
 
     @Published private(set) var receiverCapabilities = Set<String>()
@@ -1800,6 +1807,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             // Visual paths above remain available for drawing, but policy and
             // credit always use the exact matched Hacker planner sample.
             let sharedPath = self.sharedHackerPath(for: observation)
+            observation.policyScene = sharedPath?.policyScene
             observation.roadHint = sharedPath?.roadHint
             observation.pathProgress = sharedPath?.pathProgress
             observation.pathAlignment = sharedPath?.pathAlignment
@@ -1832,6 +1840,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             if self.botHumanTerrainCount != humanCount { self.botHumanTerrainCount = humanCount }
             self.botDemonstrations.observe(observation, image: image)
             if self.botPlayer.isActive { self.botEvaluation.observe(observation, image: image) }
+            self.skillObservation = observation
             self.botPlayer.observe(observation)
         }
     }

@@ -78,6 +78,17 @@ final class BotHackerObservationSource: @unchecked Sendable {
             terrain: geometry.floors, terrainValid: !geometry.floors.isEmpty || !geometry.walls.isEmpty, transitioning: false,
             terrainSource: "human-authored", humanTerrainCount: geometry.floors.count, modActors: actorInput)
         if actorInput.issues.isEmpty { observation.enemyOutcomes = sample.actors?.enemyOutcomes }
+        if actorInput.issues.isEmpty, sample.heroAvailable, let actors = sample.actors, let hero = actors.hero,
+           let width = sample.projectionPixelWidth, width > 0 {
+            func targets(_ list: [ReceiverActorState]) -> [BotSceneActor] {
+                list.filter(\.isValid).map { actor in
+                    BotSceneActor(id: actor.id, dx: (actor.screenX - hero.screenX) / Double(width),
+                                  dy: (actor.screenY - hero.screenY) / Double(width))
+                }.sorted { ($0.distance, $0.id) < ($1.distance, $1.id) }
+            }
+            observation.policyScene = BotPolicyScene(room: roomID, grounded: sample.grounded,
+                recovery: actors.recovery, enemies: targets(actors.enemies), cocoons: targets(actors.lifebloodCocoons ?? []))
+        }
         observation.blueHealthOutcomes = sample.blueHealthOutcomes
         observation.authoredTerrain = geometry
         observation.blockadePose = BotBlockadePose.hacker(sample)

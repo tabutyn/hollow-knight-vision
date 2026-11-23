@@ -69,6 +69,7 @@ final class BotSkillTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testLocalOllamaProposesExecutablePlan() async throws {
         guard let path = ProcessInfo.processInfo.environment["HKV_PLANNER_TEST_SCREENSHOT"] else {
             throw XCTSkip("Set HKV_PLANNER_TEST_SCREENSHOT to a captured tablet prompt")
@@ -76,16 +77,29 @@ final class BotSkillTests: XCTestCase {
         let source = try XCTUnwrap(CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil))
         let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
         let scan = try await GameTextReader.recognize(image, language: "en", context: "King's Pass")
-        let goal = "Read the sign in front of the Knight."
+        let goal = BotSkillPlan.defaultObjective
         let visible = scan.lines.map(\.text)
         let evidence = "Current goal: " + goal + "\nVisible OCR:\n" + visible.joined(separator: "\n")
         let sight = SkillSight(context: "King's Pass", capturedAt: scan.capturedAt, generation: 1, gameplay: true, menu: nil,
                               selected: nil, lines: visible, hasAbilityControls: true)
         let context = ThinkingContext(evidence: evidence, hasImage: true, sight: sight, visible: visible)
         let answer = try await ThinkingClient.answer(model: .gemma, image: image, context: context)
-        let plan = try context.contract.resolve(Data(answer.utf8), goal: goal)
-        XCTAssertEqual(plan.choose(sight)?.control, .inspect, answer)
-        print("Local Gemma plan: " + answer)
+        let plan = try context.contract.resolve(Data(answer.utf8))
+        let row = try XCTUnwrap(context.contract.rows(scoredBy: plan).first { $0.score != nil })
+        let player = BotPlaybackController(loadModel: false, now: { scan.capturedAt }, hasFocus: { true })
+        player.skillSight = { sight }
+        var selected: BotSkillChoice?, applied: InputBridgeButtons?
+        player.onSkillEvent = { _, choice, _, event, _ in if event == "selected" { selected = choice } }
+        player.configure(canContinue: { true }, begin: { UUID() }, apply: { action, _, _ in
+            applied = action.buttons; return true
+        }, neutralize: { _ in }, end: { _ in })
+        defer { player.stop() }
+        let receipt = player.dispatch(plan, context: sight.context, generation: sight.generation, domain: .gameplay)
+        XCTAssertEqual(selected?.candidateID, row.id, receipt)
+        XCTAssertEqual(selected?.control, .inspect)
+        XCTAssertEqual(selected?.cue, "Inspect")
+        XCTAssertEqual(applied, .up)
+        print("Local Gemma reply \(answer) · \(receipt) · \(row.target)")
     }
 
     /// Opt-in end-to-end test. The stock tutorial renders both frames and the game ignores all save slots.
@@ -152,9 +166,18 @@ final class BotSkillTests: XCTestCase {
         let sight = SkillSight(context: room, capturedAt: gameTime, generation: 1, gameplay: true,
                               menu: nil, selected: nil, lines: prompt.lines.map(\.text), hasAbilityControls: true)
         let plan: BotSkillPlan
-        if let path = ProcessInfo.processInfo.environment["HKV_TABLET_TEST_REPLY"] {
+        if ProcessInfo.processInfo.environment["HKV_TABLET_TEST_GEMMA"] == "1" {
+            let request = ThinkingContext(evidence: "Room: \(room)\nVisible OCR: \(sight.lines.joined(separator: "\n"))",
+                hasImage: true, sight: sight, visible: sight.lines)
+            let reply = try await ThinkingClient.answer(model: .gemma, image: prompt.image, context: request)
+            plan = try request.contract.resolve(Data(reply.utf8))
+            let choice = try XCTUnwrap(plan.choose(sight), reply)
+            let row = try XCTUnwrap(request.contract.rows(scoredBy: plan).first { $0.id == choice.candidateID })
+            XCTAssertEqual(row.policy, "interact")
+            print("Tutorial_01 · Gemma \(reply) · \(row.id) \(row.policy) \(row.target)")
+        } else if let path = ProcessInfo.processInfo.environment["HKV_TABLET_TEST_REPLY"] {
             let contract = ThinkingPolicyContract(sight: sight, visible: sight.lines)
-            plan = try contract.resolve(Data(contentsOf: URL(fileURLWithPath: path)), goal: "Read the sign in front of the Knight.")
+            plan = try contract.resolve(Data(contentsOf: URL(fileURLWithPath: path)))
         } else if let path = ProcessInfo.processInfo.environment["HKV_TABLET_TEST_PLAN"] {
             plan = try BotSkillPlan.decode(Data(contentsOf: URL(fileURLWithPath: path)))
         } else { plan = .initial }

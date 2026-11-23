@@ -33,6 +33,7 @@ namespace HollowKnightVisionInputReceiver
             var config = JObject.Parse(File.ReadAllText(Path.Combine(gymDirectory, "episode.json")));
             gymEpisode = Guid.Parse(config.Value<string>("episode")).ToString();
             gymSeed = config.Value<int>("seed");
+            practiceRecovery = config.Value<string>("practice") == "policy-handoff";
             practiceTablet = config.Value<string>("practice") == "inspect-tablet";
             gymVisual = config.Value<string>("domain") == "gameplay";
             gymRenderHz = config.Value<int?>("renderHz") ?? 60;
@@ -47,6 +48,8 @@ namespace HollowKnightVisionInputReceiver
             gymActivity = Time.realtimeSinceStartup;
             return true;
         }
+
+        private bool practiceRecovery;
 
         private void TickGymWorker()
         {
@@ -86,6 +89,10 @@ namespace HollowKnightVisionInputReceiver
                         tabletPositioned = true;
                         gymGroundedAt = 0;
                         return;
+                    }
+                    if (practiceRecovery) {
+                        PlayerData.instance.health = PlayerData.instance.maxHealth - 1;
+                        PlayerData.instance.MPCharge = 66;
                     }
                     gymHealth = CurrentGymHealth();
                     if (gymHealth <= 0) return;

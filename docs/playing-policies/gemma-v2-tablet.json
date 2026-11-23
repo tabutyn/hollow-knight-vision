@@ -1,0 +1,12 @@
+{
+  "memory" : "Recorded game text (2\/2 excerpts, chronological)\n[R1 · King's Pass] INSPECT\n[R2 · King's Pass] Higher beings, these words are for you alone. Your great strength marks you amongst us. Focus your soul and you shall achieve feats of which others can only dream. Collect SOUIL by striking enemnies. Once enough SOUIL is collected HOLD to focus SOLIL and HEAL\nQuest notes with source rows\n{\"destinations\":[],\"quests\":[{\"sources\":[2],\"text\":\"Collect SOUIL by striking enemies. Once enough SOUIL is collected HOLD to focus SOLIL and HEAL.\"}],\"unknowns\":[{\"sources\":[2],\"text\":\"Nature of 'SOUIL' and its collection mechanic.\"},{\"sources\":[2],\"text\":\"Details of 'great strength' and its relation to the player.\"},{\"sources\":[2],\"text\":\"Specifics of 'feats of which others can only dream'.\"}]}",
+  "response" : "{\"scores\": {\"c0\": 95}}",
+  "selected" : "inspect",
+  "updates" : [
+    {
+      "newText" : "[R2 · King's Pass] Higher beings, these words are for you alone. Your great strength marks you amongst us. Focus your soul and you shall achieve feats of which others can only dream. Collect SOUIL by striking enemnies. Once enough SOUIL is collected HOLD to focus SOLIL and HEAL",
+      "next" : "{\"destinations\":[{\"sources\":[2],\"text\":\"King's Pass\"}],\"quests\":[{\"sources\":[2],\"text\":\"Collect SOUIL by striking enemies. Once enough SOUIL is collected HOLD to focus SOLIL and HEAL.\"}],\"unknowns\":[{\"sources\":[2],\"text\":\"Nature of 'SOUIL' and its collection mechanic.\"},{\"sources\":[2],\"text\":\"Details of 'great strength' and its relation to the player.\"},{\"sources\":[2],\"text\":\"Specifics of 'feats of which others can only dream'.\"}]}",
+      "previous" : "{\"destinations\":[],\"quests\":[],\"unknowns\":[]}"
+    }
+  ]
+}

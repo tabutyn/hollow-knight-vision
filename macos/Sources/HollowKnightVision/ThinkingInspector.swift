@@ -7,15 +7,15 @@ struct ThinkingFrame {
     let profile: UUID?
     let generation: UInt64
     let context: String
-    let goal: String
     let mode: String
     let atlas: String
     let sight: SkillSight?
     let language: String
     let readsText: Bool
+    var controlDomain: BotDomain = .gameplay
 
     func decisionEvidence(visible: [String]) -> String {
-        var lines = ["Current room or menu: " + context, "Current goal: " + goal, "Game mode: " + mode]
+        var lines = ["Current room or menu: " + context, "Game mode: " + mode]
         if !atlas.isEmpty { lines.append(atlas) }
         if let sight {
             lines.append("Gameplay recognized: \(sight.gameplay). Ability input available: \(sight.hasAbilityControls).")
@@ -54,7 +54,7 @@ final class ThinkingInspector: ObservableObject {
                 text = reply
             }
             do {
-                plan = try input.context.contract.resolve(data, goal: input.frame.goal)
+                plan = try input.context.contract.resolve(data)
                 issue = nil
             } catch {
                 plan = nil
@@ -113,7 +113,7 @@ final class ThinkingInspector: ObservableObject {
                 issue = nil
                 do {
                     guard reader.profile?.id == sample.profile else { continue }
-                    let memory = try await reader.policyContext(goal: sample.goal)
+                    let memory = try await reader.policyContext(goal: BotSkillPlan.defaultObjective)
                     let lines = sample.readsText
                         ? await reader.visibleLines(in: sample.image, language: sample.language, context: sample.context) : []
                     try Task.checkCancellation()

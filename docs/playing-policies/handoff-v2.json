@@ -1,0 +1,234 @@
+{
+  "decisions" : [
+    {
+      "buttons" : [
+        0,
+        2,
+        2
+      ],
+      "fromHealth" : 4,
+      "fromSoul" : 66,
+      "fromX" : 34.5,
+      "offer" : {
+        "candidates" : {
+          "c0" : {
+            "params" : {
+              "road_distance" : 0.14999999999999999,
+              "road_dx" : 1,
+              "road_dy" : 0,
+              "road_frontier" : true,
+              "roomId" : 1000000,
+              "routeId" : 0,
+              "waypointId" : 0
+            },
+            "policy" : "traverse"
+          },
+          "c1" : {
+            "params" : {
+              "road_distance" : 0.043359374999999999,
+              "road_dx" : -1,
+              "road_dy" : 0,
+              "road_frontier" : false,
+              "roomId" : 1000000,
+              "routeId" : 1,
+              "waypointId" : 1
+            },
+            "policy" : "traverse"
+          },
+          "c2" : {
+            "params" : {
+              "method" : "focus"
+            },
+            "policy" : "recover"
+          }
+        },
+        "decisionId" : 1,
+        "objective" : "expandAtlas",
+        "version" : 2
+      },
+      "reply" : {
+        "scores" : {
+          "c0" : 99
+        }
+      },
+      "selector" : "explore",
+      "toHealth" : 4,
+      "toSoul" : 66,
+      "toX" : 36.151344299316406
+    },
+    {
+      "buttons" : [
+        0,
+        1
+      ],
+      "fromHealth" : 4,
+      "fromSoul" : 66,
+      "fromX" : 36.160003662109375,
+      "offer" : {
+        "candidates" : {
+          "c0" : {
+            "params" : {
+              "road_distance" : 0.13554687500000001,
+              "road_dx" : 1,
+              "road_dy" : 0,
+              "road_frontier" : true,
+              "roomId" : 1000000,
+              "routeId" : 0,
+              "waypointId" : 0
+            },
+            "policy" : "traverse"
+          },
+          "c1" : {
+            "params" : {
+              "road_distance" : 0.057812500000000003,
+              "road_dx" : -1,
+              "road_dy" : 0,
+              "road_frontier" : false,
+              "roomId" : 1000000,
+              "routeId" : 1,
+              "waypointId" : 1
+            },
+            "policy" : "traverse"
+          },
+          "c2" : {
+            "params" : {
+              "method" : "focus"
+            },
+            "policy" : "recover"
+          }
+        },
+        "decisionId" : 2,
+        "objective" : "expandAtlas",
+        "version" : 2
+      },
+      "reply" : {
+        "scores" : {
+          "c1" : 99
+        }
+      },
+      "selector" : "progress",
+      "toHealth" : 4,
+      "toSoul" : 66,
+      "toX" : 35.338657379150391
+    },
+    {
+      "buttons" : [
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16
+      ],
+      "fromHealth" : 4,
+      "fromSoul" : 66,
+      "fromX" : 35.330001831054688,
+      "offer" : {
+        "candidates" : {
+          "c0" : {
+            "params" : {
+              "road_distance" : 0.14296875000000001,
+              "road_dx" : 1,
+              "road_dy" : 0,
+              "road_frontier" : true,
+              "roomId" : 1000000,
+              "routeId" : 0,
+              "waypointId" : 0
+            },
+            "policy" : "traverse"
+          },
+          "c1" : {
+            "params" : {
+              "road_distance" : 0.050390625000000001,
+              "road_dx" : -1,
+              "road_dy" : 0,
+              "road_frontier" : false,
+              "roomId" : 1000000,
+              "routeId" : 1,
+              "waypointId" : 1
+            },
+            "policy" : "traverse"
+          },
+          "c2" : {
+            "params" : {
+              "method" : "focus"
+            },
+            "policy" : "recover"
+          }
+        },
+        "decisionId" : 3,
+        "objective" : "expandAtlas",
+        "version" : 2
+      },
+      "reply" : {
+        "scores" : {
+          "c2" : 99
+        }
+      },
+      "selector" : "recover",
+      "toHealth" : 5,
+      "toSoul" : 33,
+      "toX" : 35.330001831054688
+    },
+    {
+      "buttons" : [
+        0,
+        2
+      ],
+      "fromX" : 35.330001831054688,
+      "model" : "gemma3:4b",
+      "offer" : {
+        "candidates" : {
+          "c0" : {
+            "params" : {
+              "road_distance" : 0.14296875000000001,
+              "road_dx" : 1,
+              "road_dy" : 0,
+              "road_frontier" : true,
+              "roomId" : 1000000,
+              "routeId" : 0,
+              "waypointId" : 0
+            },
+            "policy" : "traverse"
+          },
+          "c1" : {
+            "params" : {
+              "road_distance" : 0.050390625000000001,
+              "road_dx" : -1,
+              "road_dy" : 0,
+              "road_frontier" : false,
+              "roomId" : 1000000,
+              "routeId" : 1,
+              "waypointId" : 1
+            },
+            "policy" : "traverse"
+          }
+        },
+        "decisionId" : 4,
+        "objective" : "expandAtlas",
+        "version" : 2
+      },
+      "reply" : {
+        "scores" : {
+          "c0" : 85,
+          "c1" : 30
+        }
+      },
+      "selected" : "c0",
+      "selector" : "gemma",
+      "toX" : 36.151355743408203
+    }
+  ],
+  "saveDisabled" : true,
+  "scene" : "Tutorial_01",
+  "scoreSource" : "fixed scores for controller cases; local model for gemma case",
+  "seed" : 441
+}

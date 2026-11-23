@@ -54,7 +54,7 @@ final class BotPlaybackController: ObservableObject {
     /// A response is consumed once, on arrival. It never arms a later key press.
     func dispatch(_ plan: BotSkillPlan, context: String, generation: UInt64, domain: BotDomain) -> String {
         guard automaticPoliciesEnabled else { return "Automatic policies paused." }
-        guard !plan.choices.isEmpty else { return "Gemma abstained." }
+        guard !plan.choices.isEmpty else { return "Model abstained." }
         guard let sight = skillSight(), sight.generation == generation, sight.context == context,
               (0...0.45).contains(now() - sight.capturedAt), let choice = plan.choose(sight) else {
             return "Skipped · no eligible option on the fresh screen."
@@ -86,7 +86,8 @@ final class BotPlaybackController: ObservableObject {
             start(domain: domain, selection: run)
         }
         guard maneuver != nil else { return "Skipped · " + (issue ?? status) }
-        return "Dispatched · " + choice.policy.rawValue + " / " + choice.control.rawValue
+        let candidate = choice.candidateID.map { $0 + " · " } ?? ""
+        return "Dispatched · " + candidate + choice.policy.rawValue + " / " + choice.control.rawValue
     }
 
     private var latest: BotObservation?
@@ -319,7 +320,8 @@ final class BotPlaybackController: ObservableObject {
         stop(reason: reason)
     }
 
-    private func consume(_ observation: BotObservation) {
+    private func consume(_ received: BotObservation) {
+        var observation = received
         if isActive, observation.terrainSource != nil, BotDomain.of(observation) != domain { return }
         if let latest, latest.generation == observation.generation,
            observation.captureTimestamp <= latest.captureTimestamp { return }
@@ -327,12 +329,22 @@ final class BotPlaybackController: ObservableObject {
         guard isActive, let id = controlSessionID,
               observation.availableAt >= sessionStartedAt, observation.capturedAt >= sessionStartedAt else { return }
         guard canContinue(), hasFocus() else { stop(reason: "Gameplay controls interrupted"); return }
+        var boundWaypoint: BotRoadHint?
         if let maneuver {
             guard maneuver.choice.control == .native else { return }
             guard let sight = skillSight(), sight.generation == maneuver.sight.generation,
                   sight.context == maneuver.sight.context, (0...0.45).contains(now() - sight.capturedAt),
                   sight.allows(maneuver.choice) else {
                 stop(reason: "Policy context changed"); return
+            }
+            if let binding = maneuver.choice.binding {
+                guard let scene = observation.policyScene, scene.allows(binding) else {
+                    finishManeuver("Bound target expired", id: id); return
+                }
+                if case .traverse(let target) = binding.target {
+                    boundWaypoint = scene.routes.first { $0.matches(target) }?.hint
+                    observation.roadHint = boundWaypoint
+                }
             }
             if now() - maneuver.start >= maneuver.choice.control.duration {
                 finishManeuver("Policy window ended", id: id); return
@@ -355,14 +367,29 @@ final class BotPlaybackController: ObservableObject {
             var action = motor ?? .neutral
             if let starter {
                 if schema >= 14 {
-                    action = try starter.action(raw: input, motor: motor)
+                    action = try starter.action(raw: input, motor: motor, waypoint: boundWaypoint)
                 } else if let raw = starterHistory.input(observation, previousAction: lastAction, now: now, schema: 14,
                                                          maskedKnightDeadline: maskedKnightDeadline) {
-                    action = try starter.action(raw: raw, motor: motor)
+                    action = try starter.action(raw: raw, motor: motor, waypoint: boundWaypoint)
                 }
             }
             if let learnedSkill, skillSight()?.hasAbilityControls == true {
                 action = try learnedSkill.action(for: input, base: action)
+            }
+            if let binding = maneuver?.choice.binding, let scene = observation.policyScene {
+                let actor: BotSceneActor?
+                switch binding.target {
+                case .fight(let id): actor = scene.enemies.first { $0.id == id }
+                case .lifeblood(let id): actor = scene.cocoons.first { $0.id == id }
+                default: actor = nil
+                }
+                if let actor {
+                    var buttons: InputBridgeButtons = actor.dx < -0.01 ? .left : actor.dx > 0.01 ? .right : []
+                    if abs(actor.dx) < 0.11 && abs(actor.dy) < 0.13 && !lastAction.buttons.contains(.actionX) {
+                        buttons.insert(.actionX)
+                    }
+                    action = BotAction(buttons: buttons)
+                }
             }
             atlasRun.observe(observation, view: observation.atlasView)
             let deadline = min(now + 0.2, observation.capturedAt + BotObservationContract.maximumCaptureAge,
@@ -453,6 +480,17 @@ final class BotPlaybackController: ObservableObject {
             stop(reason: prefix + " · screen changed")
             return true
         }
+        if run.choice.binding?.target == .focus, let binding = run.choice.binding {
+            guard let scene = sight.scene, scene.room == binding.room, let recovery = scene.recovery else {
+                finishManeuver("Focus telemetry expired", id: id); return true
+            }
+            if run.sent, let initial = run.sight.scene?.recovery, recovery.health > initial.health {
+                finishManeuver("Focus restored a mask", id: id); return true
+            }
+            if !scene.focusOpening || (!run.sent && !scene.canStartFocus) {
+                finishManeuver("Focus opening closed", id: id); return true
+            }
+        }
         if run.choice.measuresAtlasCoverage && atlasRun.score.newCells > run.initialNewCells {
             finishManeuver("Atlas updated · \(atlasRun.score.newCells - run.initialNewCells) new cells", id: id)
             return true
@@ -469,7 +507,7 @@ final class BotPlaybackController: ObservableObject {
                 return true
             }
             let result = control == .inspect ? "no new text verified"
-                : run.choice.measuresAtlasCoverage ? "no new ground verified" : "maneuver finished"
+                : control == .focus ? "no healing verified" : run.choice.measuresAtlasCoverage ? "no new ground verified" : "maneuver finished"
             finishManeuver(prefix + " · " + result, id: id)
             return true
         }

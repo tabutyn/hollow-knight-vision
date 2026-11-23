@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using InControl;
 using Modding;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -477,6 +478,10 @@ namespace HollowKnightVisionInputReceiver
             SetOutcomeScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene().handle);
             var result = new HackerActorTelemetry {
                 OutcomeEpoch = outcomeEpoch, EnemyDamage = enemyDamage, EnemyKills = enemyKills,
+                Recovery = hero == null || PlayerData.instance == null ? null : new JObject {
+                    ["soul"] = PlayerData.instance.MPCharge, ["health"] = PlayerData.instance.health,
+                    ["maxHealth"] = PlayerData.instance.maxHealth, ["canFocus"] = hero.CanFocus()
+                },
                 HeroHealth = hero == null || PlayerData.instance == null ? (int?)null :
                     Math.Max(0, PlayerData.instance.health) + Math.Max(0, PlayerData.instance.healthBlue),
                 Hero = hero == null ? null : CaptureHackerActor(hero.gameObject, camera)

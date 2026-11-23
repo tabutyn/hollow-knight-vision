@@ -76,8 +76,11 @@ enum SkillControl: String, CaseIterable, Codable {
 struct BotSkillChoice: Codable, Equatable {
     let policy: BotSkill
     let control: SkillControl
-    let points: Int
+    var points: Int
     let cue: String
+    var binding: BotPolicyBinding? = nil
+    var candidateID: String? = nil
+    var promptFirstSeen: Double? = nil
 
     var measuresAtlasCoverage: Bool { policy == .explore && control == .native }
 
@@ -105,6 +108,7 @@ struct BotSkillPlan: Codable, Equatable {
     let choices: [BotSkillChoice]
     let shopping: [BotPurchaseWish]
     var shop: ShopSnapshot? = nil
+    var decisionID: Int? = nil
 
     struct ShopSnapshot: Codable, Equatable {
         struct Offer: Codable, Equatable { let item: String; let price: Int }
@@ -133,7 +137,7 @@ struct BotSkillPlan: Codable, Equatable {
     static let defaultObjective = "Find more unmapped territory for the Atlas"
     static let atlasGuidance = """
         The permanent objective is to complete the Atlas, including the progression needed to beat Hollow Knight.
-        Follow the player's stated goal first. In its absence, seek reachable unexplored exits or unrecorded
+        Seek reachable unexplored exits or unrecorded
         ground. Use clues, traversal upgrades and bosses to open new territory. Treat newly mapped ground
         or a newly recorded room as evidence of progress. Do not claim exploration without observations.
         """
@@ -150,7 +154,7 @@ struct BotSkillPlan: Codable, Equatable {
     func validated(allowEmptyChoices: Bool = false) throws -> Self {
         func valid(_ text: String, max: Int) -> Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.count <= max }
         guard valid(objective, max: 240), valid(success, max: 240),
-              ((allowEmptyChoices ? 0 : 1)...6).contains(choices.count), shopping.count <= 5,
+              ((allowEmptyChoices ? 0 : 1)...12).contains(choices.count), shopping.count <= 5,
               choices.allSatisfy({ $0.policy.controls.contains($0.control) && (1...100).contains($0.points) &&
                   $0.cue.count <= 160 && (![.inspect, .advance, .confirm].contains($0.control) || valid($0.cue, max: 160)) }),
               shop.map({ (0...99999).contains($0.wallet) && $0.offers.count <= 20 &&
@@ -174,6 +178,7 @@ struct SkillReading {
     let capturedAt: Double
     let visible: [String]
     var passage: String? = nil
+    var promptStarts = [String: Double]()
 }
 
 struct SkillSight {
@@ -186,10 +191,19 @@ struct SkillSight {
     let lines: [String]
     let hasAbilityControls: Bool
     var reading: SkillReading? = nil
+    var scene: BotPolicyScene? = nil
 
     var inGameMenu: Bool { menu == .inventory || menu == .pause }
     func allows(_ choice: BotSkillChoice) -> Bool {
         choice.policy.controls.contains(choice.control) && controlInput(for: choice).allows(choice.control)
+            && (choice.binding.map { scene?.allows($0) == true } ?? true)
+            && (choice.promptFirstSeen.map { promptStart(for: choice.cue) == $0 } ?? true)
+    }
+
+    func promptStart(for cue: String) -> Double? {
+        let key = RememberedGameText.key(cue)
+        guard lines.filter({ RememberedGameText.key($0) == key }).count == 1 else { return nil }
+        return reading?.promptStarts[key] ?? capturedAt
     }
 
     func controlInput(for choice: BotSkillChoice) -> BotControlInput {

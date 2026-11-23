@@ -64,7 +64,7 @@ def selector():
     rows = [
         ("1", "Atlas objective and notebook", "Permanent goal first, then chronological source excerpts. A large log fits across update calls."),
         ("2", "Current quest notes", "quests · destinations · unknowns. Each lead carries the source numbers behind it."),
-        ("3", "Current scene and decision spec", "Player goal, pinned frame, current OCR, Atlas and receiver state, offered option IDs and score bounds."),
+        ("3", "Current scene and decision spec", "Atlas goal, pinned frame, current OCR, Atlas and receiver state, bound candidates and score bounds."),
     ]
     for i, (num, title, detail) in enumerate(rows):
         y = 4.98 - .89*i
@@ -72,7 +72,7 @@ def selector():
         ax.text(.91, y+.11, title, fontsize=16, weight="bold", color=INK, va="center")
         ax.text(.92, y-.24, detail, fontsize=12.7, color=DIM, va="center")
     panel(ax, .35, .74, 5.90, 1.62, "Gemma returns JSON",
-          "choices and shopping; shop is optional.\nEach choice contains an offered ID and points.", SAND)
+          "One scores object. Each key is an offered ID.\nAn empty object abstains.", SAND)
     panel(ax, 7.20, .74, 6.44, 1.62, "Vision chooses at playback",
           "Check the fresh screen and receiver when the reply arrives.\nDispatch one eligible maneuver automatically.")
     arrow(ax, (6.32, 1.56), (7.10, 1.56))

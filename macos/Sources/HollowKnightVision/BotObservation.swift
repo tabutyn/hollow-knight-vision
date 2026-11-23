@@ -157,6 +157,7 @@ struct BotObservation: Codable, Equatable {
     var screenTerrain: BotScreenTerrain? { terrainSource == "human-authored" ? authoredTerrain : detectedTerrain }
     var atlasView: BotAtlasView? = nil
     var roadHint: BotRoadHint? = nil
+    var policyScene: BotPolicyScene? = nil
     var hackerPathVersion: Int? = nil
     var pathAlignment: Double? = nil
     var atlasPathVersion: Int? = nil

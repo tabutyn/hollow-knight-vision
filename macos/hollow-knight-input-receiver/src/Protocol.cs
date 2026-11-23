@@ -658,6 +658,7 @@ namespace HollowKnightVisionInputReceiver
     internal sealed class HackerActorTelemetry
     {
         internal int? HeroHealth;
+        internal JObject Recovery;
         internal string OutcomeEpoch;
         internal int EnemyDamage, EnemyKills;
         internal HackerActorState Hero;
@@ -675,7 +676,7 @@ namespace HollowKnightVisionInputReceiver
             foreach (var cocoon in LifebloodCocoons) cocoons.Add(cocoon.ToJson());
             return new JObject { ["version"] = 1,
                 ["lifebloodCocoons"] = cocoons, ["hero"] = Hero == null ? JValue.CreateNull() : (JToken)Hero.ToJson(),
-                ["enemies"] = enemies, ["geoCaches"] = caches, ["heroHealth"] = HeroHealth,
+                ["enemies"] = enemies, ["geoCaches"] = caches, ["heroHealth"] = HeroHealth, ["recovery"] = Recovery,
                 ["enemyOutcomes"] = OutcomeEpoch == null ? null : new JObject {
                     ["epoch"] = OutcomeEpoch, ["damage"] = EnemyDamage, ["kills"] = EnemyKills } };
         }

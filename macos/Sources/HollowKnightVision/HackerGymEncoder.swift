@@ -62,6 +62,7 @@ final class GymHackerPath {
                       width: size.width, row: &row, grounded: sample.grounded)
         if objective != nil && camera.sceneName != "Tutorial_01" {
             row.roadHint = nil
+            row.policyScene?.routes.removeAll { !$0.hint.frontier }
             row.pathProgress = nil
             row.pathAlignment = nil
         }

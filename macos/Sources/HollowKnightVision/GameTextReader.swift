@@ -276,7 +276,16 @@ final class GameTextReader: ObservableObject {
             _ = try await source.remember(stable, context: next.context, language: next.language, confirmed: confirmed)
         }
         guard !Task.isCancelled, notebook === source else { return }
-        skillReading = SkillReading(context: next.context, capturedAt: next.capturedAt, visible: visible, passage: passage)
+        // A cue that leaves and re-enters view can refer to another tablet or NPC in the same room.
+        let prior = skillReading.flatMap {
+            $0.context == next.context && (0...2.5).contains(next.capturedAt - $0.capturedAt) ? $0 : nil
+        }
+        var reading = SkillReading(context: next.context, capturedAt: next.capturedAt, visible: visible, passage: passage)
+        let keys = visible.map(RememberedGameText.key)
+        for cue in ["Inspect", "Listen"].map(RememberedGameText.key) where keys.filter({ $0 == cue }).count == 1 {
+            reading.promptStarts[cue] = prior?.promptStarts[cue] ?? next.capturedAt
+        }
+        skillReading = reading
         try await refresh(source)
     }
 
@@ -398,6 +407,7 @@ final class GameTextReader: ObservableObject {
                     } catch {
                         guard !Task.isCancelled, notebook === source else { return }
                         scan = nil
+                        skillReading = nil
                         issue = error.localizedDescription
                     }
                 }

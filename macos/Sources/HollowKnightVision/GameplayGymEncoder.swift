@@ -64,6 +64,7 @@ enum GameplayGymEncoder {
                         if var row = try model.observeGameplayGym(image, ticks: frame.ticks, previous: action) {
                             if version >= BotObservationContract.sharedPathVersion {
                                 row.hackerPathVersion = 1
+                                row.policyScene = hackerPath?.policyScene
                                 row.roadHint = hackerPath?.roadHint
                             }
                             row.pathProgress = hackerPath?.pathProgress

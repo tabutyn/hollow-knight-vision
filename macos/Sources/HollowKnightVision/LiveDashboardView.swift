@@ -552,16 +552,18 @@ struct DashboardView: View {
     private func dispatchThinkingPolicy(_ output: ThinkingInspector.Output) -> String? {
         let frame = output.input.frame
         guard let plan = output.plan, frame.profile == model.notebookProfile?.id,
-              frame.goal == gameTextReader.currentGoal, output.input.model == thinkingSession.model,
+              output.input.model == thinkingSession.model,
               frame.mode == model.gameMode.rawValue, model.gameMode == .modded else {
-            return "Skipped · game or objective changed."
+            return "Skipped · save, model or game mode changed."
         }
-        guard workspace == .gameplay || workspace == .hacker, !showingSettings, !showingTextReader,
+        let domain = frame.controlDomain
+        guard (domain == .gameplay && workspace == .gameplay || domain == .hacker && workspace == .hacker),
+              !showingSettings, !showingTextReader,
               initialization.isFirstPhaseComplete, !labelingTrainer.isRunning, !botTrainer.isRunning else {
             return "Skipped · gameplay controls unavailable."
         }
         return model.botPlayer.dispatch(plan, context: frame.context, generation: frame.generation,
-                                        domain: workspace == .hacker ? .hacker : .gameplay)
+                                        domain: domain)
     }
 
     private func thinkingFrame() -> ThinkingFrame? {
@@ -570,9 +572,10 @@ struct DashboardView: View {
             "Atlas observations: \($0.observations.count). Recorded transitions: \(model.transitionPortals.count)."
         } ?? ""
         return ThinkingFrame(image: image, profile: model.notebookProfile?.id, generation: model.skillGeneration,
-                             context: textReadingContext, goal: gameTextReader.currentGoal, mode: model.gameMode.rawValue,
+                             context: textReadingContext, mode: model.gameMode.rawValue,
                              atlas: atlas, sight: model.currentSkillSight(), language: initialization.language.rawValue,
-                             readsText: readGameText)
+                             readsText: readGameText,
+                             controlDomain: workspace == .hacker ? .hacker : .gameplay)
     }
     @State private var viewportFraming: LayerSceneFramingMode = .current
     @State private var framingRequest = 0
@@ -949,7 +952,7 @@ struct DashboardView: View {
                     }
                 )
             } else if workspace == .thinking {
-                ThinkingWorkspaceView(session: thinkingSession, inspector: thinkingInspector, reader: gameTextReader,
+                ThinkingWorkspaceView(session: thinkingSession, inspector: thinkingInspector,
                                       player: model.botPlayer, openLog: { showingTextReader = true })
             } else if workspace == .bot {
                 BotModelWorkspaceView(controller: botTrainer, trainingAllowed: !labelingTrainer.isRunning,

@@ -65,6 +65,7 @@ final class AtlasPathMap {
         var displayStrokes = [PathStroke]()
         var pathBounds = CGRect.null
         var navigation = AtlasPathNavigation()
+        var exploration = AtlasPathNavigation()
         var usesDefaultObjective = true
         var lastPose: (feet: PathPoint, grounded: Bool?, width: CGFloat, time: Double)?
         var revision = 0
@@ -137,6 +138,7 @@ final class AtlasPathMap {
     func interrupt(room: String) {
         rooms[room]?.lastPose = nil
         rooms[room]?.navigation.interrupt()
+        rooms[room]?.exploration.interrupt()
     }
 
     /// A reacquired camera can put the same fight into a new local chart.
@@ -480,6 +482,7 @@ final class AtlasPathMap {
             r.evidenceSpace = space
             r.dirty = true
             r.navigation.interrupt()
+            r.exploration.interrupt()
         }
         func span(_ f: BotTerrainSegment) -> PathPlatform? {
             guard [f.minimumX, f.maximumX, f.y].allSatisfy(\.isFinite), f.minimumX < f.maximumX else { return nil }
@@ -592,6 +595,7 @@ final class AtlasPathMap {
         else {
             r.lastPose = nil
             r.navigation.interrupt()
+            r.exploration.interrupt()
             return
         }
         // The mod's actor position is the hero transform pivot. In recorded
@@ -602,6 +606,7 @@ final class AtlasPathMap {
         guard PathPoint.supports(position) else {
             r.lastPose = nil
             r.navigation.interrupt()
+            r.exploration.interrupt()
             return
         }
         let feet = PathPoint(position)
@@ -642,6 +647,22 @@ final class AtlasPathMap {
             timestamp: row.captureTimestamp, measured: measured && trackPosition, grounded: grounded,
             revision: r.revision, registered: registered)
         if r.calibration != nil { row.pathAlignment = r.navigation.alignment }
+        if var scene = row.policyScene {
+            func target(_ nav: AtlasPathNavigation, _ hint: BotRoadHint?) -> BotRouteTarget? {
+                guard let hint, let goal = nav.goal, let waypoint = nav.next,
+                      hint.dx != 0 || hint.dy != 0 else { return nil }
+                return BotRouteTarget(chart: room, goal: goal, waypoint: waypoint, hint: hint)
+            }
+            if r.navigation.automatic {
+                scene.routes = [target(r.navigation, row.roadHint)].compactMap { $0 }
+            } else {
+                let (frontier, _) = r.exploration.observe(g, feet: feet, viewWidth: width,
+                    timestamp: row.captureTimestamp, measured: measured && trackPosition, grounded: grounded,
+                    revision: r.revision, registered: registered)
+                scene.routes = [target(r.exploration, frontier), target(r.navigation, row.roadHint)].compactMap { $0 }
+            }
+            row.policyScene = scene
+        }
     }
 
     func diagnostic(room: String) -> [String:Any] {

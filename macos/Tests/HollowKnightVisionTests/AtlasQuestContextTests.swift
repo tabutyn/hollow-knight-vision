@@ -136,14 +136,14 @@ final class AtlasQuestContextTests: XCTestCase {
         let first = row(prompt)
         _ = try await context.prepare(AtlasQuestLog([first]), update: revise)
         let memory = try await context.prepare(AtlasQuestLog([first, row(passage)]), update: revise)
-        let goal = "Read the sign in front of the Knight."
+        let goal = BotSkillPlan.defaultObjective
         let evidence = memory + "\nLive decision evidence\nKing's Pass, gameplay. Visible OCR: " + prompt +
             "\nCurrent goal: " + goal
         let sight = SkillSight(context: "King's Pass", capturedAt: 1, generation: 1, gameplay: true,
                                menu: nil, selected: nil, lines: [prompt], hasAbilityControls: true)
         let request = ThinkingContext(evidence: evidence, hasImage: true, sight: sight, visible: [prompt])
         let answer = try await ThinkingClient.answer(model: .gemma, image: frame, context: request)
-        let plan = try request.contract.resolve(Data(answer.utf8), goal: goal)
+        let plan = try request.contract.resolve(Data(answer.utf8))
         XCTAssertEqual(transitions.count, 1, "A bare INSPECT prompt must not create a quest")
         XCTAssertEqual(plan.choose(sight)?.control, .inspect, answer)
         let hidden = SkillSight(context: sight.context, capturedAt: 2, generation: 1, gameplay: true,

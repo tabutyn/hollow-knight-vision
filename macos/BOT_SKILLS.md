@@ -1,51 +1,18 @@
 # Playing policies for a first ending
 
-The long-term goal is to complete the Atlas, including the progression required to beat the game. With no other objective, explore unmapped territory and measure newly mapped ground or rooms. **Use Atlas goal** clears a previously saved objective.
+The long-term goal is to complete the Atlas, including the progression required to beat the game. The policy request always carries the fixed objective code `expandAtlas`.
 
-Press **T** to inspect the latest timed capture, the exact context, the response schema and the latest JSON proposal. Once a minute, the selected Ollama model receives a captured frame, the current goal and the options Vision has prepared for that screen. Atlas observations, OCR, earlier readings and saved quest notes help the model rank those options. In a ready Gameplay or Hacker workspace Vision immediately runs the highest eligible choice from each fresh reply. The inspector displays the result. **Automatic policies** pauses future dispatch, and **B** can stop an active session.
+Press **T** to inspect the latest timed capture, the exact context, the response schema and the latest JSON proposal. Once a minute, the selected Ollama model receives a captured frame, the fixed Atlas objective and the candidates Vision has prepared for that screen. Atlas observations, OCR, earlier readings and saved quest notes help the model rank those options. In a ready Gameplay or Hacker workspace Vision immediately runs the highest eligible choice from each fresh reply. The inspector displays the result. **Automatic policies** pauses future dispatch, and **B** can stop an active session.
 
 The [Gemma context design](../docs/playing-policies/README.md#how-gemma-uses-the-notebook) traces the playthrough notebook, evidence-backed quest notes and the separate JSON decision request.
 
 [Architecture slides](../docs/playing-policies/playing-policies.pptx) · [Selection diagram](../docs/playing-policies/policy-selection.png) · [Control diagram](../docs/playing-policies/policy-controls.png)
 
-## Initialized policies
+## Runtime selectors and controls
 
-These starting points guide the planner. Each proposal supplies its own scores from 1 through 100. At execution the agent checks the capture generation, room or menu, required literal text and receiver capabilities. It picks the highest-scoring eligible choice. Vision discards an expired plan. During ordinary playback an English INSPECT or LISTEN prompt can also start the reading routine.
+The v2 offer fixes the objective to `expandAtlas`. Explore proposes a reachable frontier and Progress proposes the next waypoint along the reachable Atlas objective route. Both use Traverse to move. Each candidate binds its chart, goal and waypoint. The selected road direction drives both route channels of the movement actor. A bound enemy or Lifeblood cocoon uses its observed relative position. Recover can also hold Focus in a clear grounded opening when the Knight has missing red health, permission to Focus and at least 33 main-vessel SOUL. It checks for a restored mask.
 
-| Policy | Starting points | First training task | Evidence for scoring the outcome |
-| --- | ---: | --- | --- |
-| Recover | 95 | Hold Focus in a safe opening with missing health and enough SOUL. Include interrupted and unnecessary heals. | A mask gained, SOUL spent, damage taken, or death. |
-| Fight | 85 | Dodge one telegraph, then attack or quick-cast in the opening. Include enemies above and below. | Damage dealt and taken, SOUL spent, and whether the encounter ended. |
-| Interact | 80 | Inspect a tablet, read each NPC page, navigate an inventory or pause menu. | A stable new passage saved, a changed page or the expected selected menu entry. |
-| Progress | 65 | Choose a reachable prerequisite from a map marker or remembered clue. Revisit the passage after gaining an ability. | A verified pickup, quest flag or newly usable connection. |
-| Traverse | 55 | Cross one named obstacle using the available jump, dash, wall jump, pogo or crystal dash. | Landing on the intended platform, elapsed time, damage and stalls. |
-| Explore | 40 | Take a reachable unexplored exit, then choose another exit when the first is blocked. | A new room or connection, repeat visits, damage and stalls. |
-
-Vision maps a movement option to its corresponding policy and gives it up to two seconds. With a compatible motor and learned skill head, the motor supplies the base action and the head adds a demonstrated ability. Without the head, the policy runs its deterministic starter. Without the motor, the starter supplies the base action and any compatible head can still add an ability. An ordinary bot session uses the domain motor when available or the Explore starter otherwise. Direct maneuvers own the same input lease and release their buttons on completion, stale capture, interruption or loss of focus. A traversal choice uses existing route and geometry inputs. Reaching a new area needs further decisions and verified route progress. The sign routine explicitly verifies storage.
-
-## Controls and shopping
-
-In modded gameplay the recording controls include arrows, **Z** jump, **X** attack, **A** Focus/cast, **F** quick cast, **C** dash, **E** crystal dash, **D** Dream Nail, **I** inventory and **P** pause. Hold Focus or charge crystal dash. Aim up or down with quick cast to select the corresponding unlocked spell. Jump twice for Monarch Wings and jump against a wall for Mantis Claw. Casting and movement upgrades require the corresponding in-game resources or unlocks.
-
-Vision offers `readPrompt` on a recognized visible INSPECT or LISTEN prompt and `resumeGame` when Continue is selected in the pause menu. Vision binds the exact OCR cue or selected menu identifier, then rechecks it before execution. For an inspected tablet, the reader waits for two matching transcriptions of the new page and writes the joined passage to the local notebook. Thinking can retrieve it in another room after restart.
-
-A shopping wish records an item, desire, maximum price and minimum Geo to keep. The reply accepts wishes and an optional price snapshot. A tested Swift helper can check OCR, price, wallet and reserve, but the production selector does not call it. No current Gemma option buys an item. A future Buy executor would need a bound offer and verification of both inventory and Geo after a purchase.
-
-A minimal example of the policy output follows.
-
-```json
-{
-  "choices": [
-    {"option": "readPrompt", "points": 85},
-    {"option": "explore", "points": 30}
-  ],
-  "shopping": []
-}
-```
-
-The installed contract accepts only IDs from the current request. Gemma can
-return an empty `choices` array. A future destination option needs a route that
-Vision can resolve and a target identifier it can verify before execution.
+Gemma returns only scores for candidate IDs from the original offer, for example `{"scores":{"c0":85,"c1":30}}`. Scores range from 1 to 100. Earlier offered IDs win ties. Returning `{"scores":{}}` abstains. The screen-backed **Inspect** and **Talk** verbs require an exact visible prompt and tap Up. Continue requires the selected pause-menu entry. Buy, Bench, Activate, Collect and Advance Dialogue have reserved schema entries. The current selector has no verified source for those offers. [Detailed contract and in-game evidence](../docs/playing-policies/README.md#decision-contract-and-policy-inputs)
 
 ## Training and evaluation
 
@@ -72,7 +39,7 @@ The [shared input contract](Sources/HollowKnightVision/Resources/playing-policy-
 | Progress | Approach a visible Geo cache and strike within reach, then prefer an available route when no cache is visible. With no cue or motor, wait. |
 | Interact | At INSPECT or LISTEN, tap Up and verify a new passage. Other choices can advance dialogue or operate an eligible menu entry. |
 
-Priority selects a skill. The skill head decides which demonstrated ability to apply alongside the shared motor. A head can only learn choices distinguishable from its observations. In particular the current vector has health but lacks SOUL, ability unlocks, inventory and quest flags. A recovery or progression head needs those observations to reliably learn resource spending or prerequisites. The schema 14–16 ability trainer emits version 2 heads. Earlier full-width heads still load.
+The table above describes the legacy movement and ability-head training path. Runtime v2 uses graph selectors, actor bindings and a dedicated Focus controller. Priority selects a candidate. The skill head decides which demonstrated ability to apply alongside the shared motor. A head can only learn choices distinguishable from its observations. The legacy learned vector contains health. The deterministic Focus controller reads live SOUL and red masks separately. Quest flags and unlocks still need a reliable source for learned progression. The schema 14–16 ability trainer emits version 2 heads. Earlier full-width heads still load.
 
 The first combined task is to reach the King's Pass tablet, select Inspect when the prompt appears, and recall the passage after reopening the notebook. Score traversal from the ordinary spawn by whether the prompt becomes visible, elapsed decisions, damage and stalls. Score interaction from that prompt by the chosen control, stored text and recalled text. The beside-tablet scenario below tests that second stage independently. Its optional artifacts include the actual `skill-events.jsonl` selection beside the recall result. A completed combined trial requires both stages in the same episode.
 
