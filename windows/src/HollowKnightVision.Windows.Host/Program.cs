@@ -142,6 +142,19 @@ internal static class Program
                 return Task.FromResult(1);
             }
         }
+        if (arguments is ["--hacker-gym-observations", "verify-inputs", var observations])
+        {
+            try
+            {
+                BotObservationParity.Verify(observations, standardOutput ?? Console.Out);
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+            {
+                (standardError ?? Console.Error).WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
         if (arguments is ["--tracking-step-verify-prefix", var prefixDirectory, var prefixSource])
         {
             try

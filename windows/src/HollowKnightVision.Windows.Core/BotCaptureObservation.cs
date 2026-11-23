@@ -37,6 +37,11 @@ public sealed record BotScreenTerrain(double Width, double Height, IReadOnlyList
 /// <summary>Actor coordinates and dimensions are normalized by image width in the recording.</summary>
 public sealed record BotObjectBounds(double X, double Y, double Width, double Height);
 public sealed record BotVisualContext(double FrameWidth, double FrameHeight, double? CameraX, double? CameraY);
+public sealed record BotAtlasView(double Left, double Right, IReadOnlyList<double> Camera, double Width,
+    int CoveredCells, int EarnedCells, int Revision, int? Health, IReadOnlyList<double>? Missing = null);
+public sealed record BotRoadHint(double Dx, double Dy, double Clearance, double Distance, bool Frontier);
+public sealed record BotBlockadeMark(string Space, double X, double Y, int Direction, double ViewWidth, bool Crossed);
+public sealed record BotBlockadeEvidence(BotBlockadeMark Mark, double Dx, double Dy);
 
 public sealed record BotCaptureTiming(double CaptureTimestamp, double AvailableAt, long Generation, int RoomId, ulong RoomRevision);
 public enum BotCaptureDomain { Gameplay, Hacker }
@@ -57,6 +62,14 @@ public sealed record BotCaptureObservation(
     public BotScreenTerrain? AuthoredTerrain { get; init; }
     public BotScreenTerrain? DetectedTerrain { get; init; }
     public IReadOnlyList<BotObjectBounds>? GeoCaches { get; init; }
+    public IReadOnlyList<BotObjectBounds>? JoniBlessings { get; init; }
+    public BotAtlasView? AtlasView { get; init; }
+    public BotRoadHint? RoadHint { get; init; }
+    public int? HackerPathVersion { get; init; }
+    public int? AtlasPathVersion { get; init; }
+    public double? PathProgress { get; init; }
+    public double? PathAlignment { get; init; }
+    public BotBlockadeEvidence? Blockade { get; init; }
     public IReadOnlyList<BotObjectBounds>? LifebloodCocoons { get; init; }
     public BotEnemyOutcomes? EnemyOutcomes { get; init; }
     public BotBlueHealthOutcomes? BlueHealthOutcomes { get; init; }
@@ -67,12 +80,15 @@ public sealed record BotCaptureObservation(
     public string? ImagePath { get; init; }
 
     [JsonIgnore]
-    public bool CanTrain => Issues.Count == 0 || (TerrainSource == "detected"
-        && Issues.SequenceEqual(new[] { "missing-knight" }) && KnightSource is null
+    public bool CanTrain => Issues.Count == 0 || HasMaskedKnightEvidence;
+
+    [JsonIgnore]
+    public bool HasMaskedKnightEvidence => TerrainSource == "detected" && Issues is ["missing-knight"]
+        && KnightSource is null && Features.Count >= BotRecordingContract.LegacyWidth
         && Features.Take(5).All(value => value == 0) && Features[6] == 1
         && DetectionTimestamp is { } detection && CaptureTimestamp - detection is >= 0 and <= BotRecordingContract.MaximumDetectionAge
         && AvailableAt - CapturedAt is >= 0 and <= BotRecordingContract.MaximumCaptureAge
-        && (Enumerable.Range(0, 16).Any(i => Features[20 + 5 * i] == 1) || DetectedTerrain?.Walls.Count > 0));
+        && (Enumerable.Range(0, 16).Any(i => Features[20 + 5 * i] == 1) || DetectedTerrain?.Walls.Count > 0);
 }
 
 public static class BotObservationBuilder

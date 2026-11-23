@@ -6,7 +6,6 @@ public static class BotPolicyContract
     public const int CurrentVersion = 14;
     public const int GroundContactVersion = 15;
     public const int LandingVersion = 16;
-    private const int GridCells = 24 * 14;
     private static readonly IReadOnlyDictionary<int, IReadOnlyList<string>> Schemas = Build();
 
     public static IReadOnlyList<string>? Names(int version) => Schemas.GetValueOrDefault(version);
@@ -45,7 +44,7 @@ public static class BotPolicyContract
         void Append(int version, params string[] names) => Add(version, schemas[version - 1].Concat(names));
     }
 
-    private static IEnumerable<string> Grid(string kind) => Enumerable.Range(0, GridCells).Select(i => $"screen_{kind}_{i}");
+    private static IEnumerable<string> Grid(string kind) => Enumerable.Range(0, BotPolicyGeometry.Cells).Select(i => $"screen_{kind}_{i}");
 
     private static IEnumerable<string> Markings(int slots)
     {

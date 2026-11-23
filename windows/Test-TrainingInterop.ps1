@@ -100,9 +100,67 @@ for manifest, observations, inputs in sessions.values():
         assert [row["continuedAttack"] for row in rows] == [False, True, True, False, True, True]
 print("PASS Windows paired PNG and event capture -> shared bot exporter, typed terrain, held attacks and blue health")
 
+import copy
 import hashlib
 import json
 import torch
+
+input_fixtures = []
+for domain, (manifest, observations, inputs) in sessions.items():
+    enriched = copy.deepcopy(observations)
+    for index, row in enumerate(enriched):
+        row["atlasView"] = dict(left=.3, right=.74, camera=[3, -11], width=80.0,
+                                health=5 if index < 4 else None, missing=[i/14 for i in range(15)])
+        row["roadHint"] = dict(dx=.24, dy=-.44, clearance=.62, distance=.47, frontier=index % 2 == 0)
+        if index == 1:
+            row["hackerPathVersion"] = 1
+        elif index == 2:
+            row["atlasPathVersion"] = 1
+        elif index == 3:
+            row["pathProgress"] = .2
+        row["blockade"] = dict(dx=-.2, dy=.11, mark=dict(direction=-1, crossed=False,
+                               space="fixture", x=4, y=9, viewWidth=80))
+        row["joniBlessings"] = [dict(x=.7, y=.3, width=.05, height=.075)]
+        row["grounded"] = False
+        terrain = row["authoredTerrain" if domain == "hacker" else "detectedTerrain"]
+        w, y, h = terrain["width"], row["features"][1], row["features"][3]
+        x = row["features"][0]
+        floor = dict(minimumX=(x - h)*w + index*.11, maximumX=(x + h)*w + index*.11,
+                     y=(y - 1.35*h)*w + index*.16, confidence=1)
+        terrain["floors"] = [floor, dict(floor)]
+        if index == 0:
+            # An old observation omitted later wall inputs.
+            row["features"] = row["features"][:len(bot.LEGACY_FEATURE_NAMES)]
+        if index == 4:
+            row["roomID"] += 1
+            row["detectionTimestamp"] = row["captureTimestamp"] - .21
+        if index == 5:
+            row["roomID"] += 1
+            terrain["floors"] += [dict(minimumX=i, maximumX=i+3, y=i+1, confidence=1) for i in range(20)]
+        if index == 1 and domain == "gameplay":
+            row["features"][:5] = [0]*5
+            row["issues"] = ["missing-knight"]
+            row.pop("knightSource", None)
+    for sequence in (observations, enriched):
+        timeline = bot.ActionTimeline(inputs)
+        for version in sorted(bot.SCHEMAS):
+            rows, rejected = bot.examples(manifest, sequence, inputs, policy_version=version)
+            expected = {row["timestamp"]: row for row in rows}
+            fixture_rows = []
+            prior = None
+            for observation in sequence:
+                row = expected.get(observation["availableAt"])
+                action = (timeline.action_during(prior["timestamp"], row["timestamp"])[0]
+                          if prior and row and prior["segment"] == row["segment"] else None)
+                fixture_rows.append(dict(observation=observation, expected=row["observation"] if row else None,
+                                         previous=dict(zip(("horizontal","aim","jump","attack"), action or (0,0,0,0)))))
+                prior = row
+            assert len(rows) == (6 if sequence is observations else 5)
+            if version == bot.LANDING_GEOMETRY_POLICY_VERSION and sequence is enriched and domain == "hacker":
+                assert any(row["observation"][-6] and row["observation"][-1] for row in rows)
+            input_fixtures.append(dict(version=version, allowMaskedKnight=domain == "gameplay", rows=fixture_rows))
+(Path(sys.argv[2]) / "native-input-fixtures.json").write_text(json.dumps(input_fixtures))
+
 root = Path(sys.argv[2]) / "policy-fixtures"
 for version in (bot.SCHEMA_VERSION, bot.GROUND_CONTACT_POLICY_VERSION, bot.LANDING_GEOMETRY_POLICY_VERSION):
     names = bot.SCHEMAS[version]
@@ -136,6 +194,8 @@ for version in (bot.SCHEMA_VERSION, bot.GROUND_CONTACT_POLICY_VERSION, bot.LANDI
   & $Python -B -c $botValidation $botSource $botFixture
   if ($LASTEXITCODE -ne 0) { throw 'Windows bot capture interoperability failed.' }
   $nativeVerifier = Join-Path $PSScriptRoot 'artifacts\win-x64\HollowKnightVision.Windows.Host.exe'
+  & $nativeVerifier --hacker-gym-observations verify-inputs (Join-Path $botFixture 'native-input-fixtures.json')
+  if ($LASTEXITCODE -ne 0) { throw 'Windows native observation history differs from shared trainer inputs.' }
   $policyFixtures = Get-ChildItem -LiteralPath (Join-Path $botFixture 'policy-fixtures') -Directory
   foreach ($entry in $policyFixtures) {
     & $nativeVerifier --hacker-gym-observations verify $entry.FullName (Join-Path $entry.FullName 'fixture.json')

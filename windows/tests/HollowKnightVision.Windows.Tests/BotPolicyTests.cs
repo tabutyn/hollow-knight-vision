@@ -43,6 +43,62 @@ internal static class BotPolicyTests
     }
 
 
+    internal static void TestObservationHistoryRejectsStaleFramesAndResetsAtDiscontinuities()
+    {
+        var features = new double[BotRecordingContract.FeatureNames.Count];
+        features[0] = .5;
+        features[1] = .35;
+        features[3] = .1;
+        features[4] = .85;
+        features[6] = 1;
+        features[20] = 1;
+        var terrain = new BotScreenTerrain(100, 60, [new(41, 58, 22, 1)], [new(12, 1, 48, 1)],
+            Doors: [new(12, 8, 12, 21)], Spikes: []);
+        var sample = new BotCaptureObservation(5, 5, 5.01, 1, 2, 0, features, [], "detected")
+        {
+            DetectionTimestamp = 5, DetectedTerrain = terrain, Grounded = false,
+            GeoCaches = [new(.6, .41, .1, .11)], LifebloodCocoons = [new(.81, .42, .2, .3)],
+            JoniBlessings = [new(.63, .62, .1, .2)], HackerPathVersion = 1,
+            RoadHint = new(.2, -.5, .28, .6, true), AtlasView = new(.32, .87, [2, 5], 100, 9, 1, 6, 5, new double[15]),
+            Blockade = new(new("fixture", 5, 5, -1, 100, false), -.2, .1)
+        };
+        var previous = new BotPolicyAction(2, 2, 1, 1);
+        for (var version = 1; version <= BotPolicyContract.LandingVersion; version++)
+        {
+            var history = new BotObservationHistory(version);
+            var names = BotPolicyContract.Names(version)!;
+            var width = names.Count;
+            var first = history.Append(sample, previous, 5.01)!;
+            if (first.Length != width * BotRecordingContract.HistoryLength
+                || first.Take(3 * width).Any(value => value != 0) || first[3 * width + 8] != 1
+                || first[3 * width + 9] != 0)
+                throw new InvalidOperationException($"The first frame of schema {version} must establish a new history.");
+
+            if (history.Append(sample, previous, 5.02) is not null)
+                throw new InvalidOperationException("Duplicate frames must not refresh an input decision.");
+            var next = sample with { CaptureTimestamp = 5.1, CapturedAt = 5.1, AvailableAt = 5.11, DetectionTimestamp = 5.09 };
+            var second = history.Append(next, previous, 5.12)!;
+            if (!second.AsSpan(2 * width, width).SequenceEqual(first.AsSpan(3 * width, width))
+                || !second.AsSpan(3 * width + 8, 5).SequenceEqual(new float[] { 0, 1, -1, 1, 1 }))
+                throw new InvalidOperationException($"Schema {version} lost causal history or the previous applied action.");
+
+            var changedRoom = next with { RoomId = 3, AvailableAt = 5.17 };
+            var afterTransition = history.Append(changedRoom, previous, 5.18)!;
+            if (afterTransition[3 * width + 8] != 1 || afterTransition.Take(3 * width).Any(value => value != 0))
+                throw new InvalidOperationException("A room transition must clear all prior input frames.");
+            if (history.Append(changedRoom, previous, 5.44) is not null)
+                throw new InvalidOperationException("Late delivery must expire the observation.");
+
+            var maskedFeatures = features.ToArray();
+            Array.Clear(maskedFeatures, 0, 5);
+            var masked = changedRoom with { Features = maskedFeatures, Issues = ["missing-knight"] };
+            if (history.Append(masked, previous, 5.18) is not null
+                || history.Append(masked, previous, 5.18, allowMaskedKnight: true) is not { } admitted
+                || admitted[3 * width + 8] != 1)
+                throw new InvalidOperationException("Masked Knight features require fresh terrain and an opted-in checkpoint.");
+        }
+    }
+
     internal static void TestNewestNativeModelIsSelectedWithinEachDomain()
     {
         var temporary = Directory.CreateTempSubdirectory("hkv-model-selection-");
