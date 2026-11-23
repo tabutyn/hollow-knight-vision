@@ -429,6 +429,8 @@ var tests = new List<(string Name, Action Run)>
     ("named Mac Atlas restore rebuilds Windows tiles and reopens the production world", NativeAtlasImportTests.TestNamedAtlasRestoreRebuildsTheWindowsMosaic),
     ("imported Atlas resumes in the room confirmed by two images", NativeAtlasImportTests.TestImportedAtlasRequiresTwoMatchesInTheSameRoom),
     ("imported Atlas holds identical scenery shared by different rooms", NativeAtlasImportTests.TestImportedAtlasRejectsIdenticalSceneryAcrossRooms),
+    ("delayed frames leave an in-progress saved-room match intact", NativeAtlasImportTests.TestLateFramesCannotInterruptSavedRoomRecovery),
+    ("Atlas frame order survives throttled writes and rollback", NativeAtlasImportTests.TestAtlasOrderingSurvivesThrottlingAndRollback),
     ("a confirmed doorway extends a restored Atlas without overwriting old rooms", NativeAtlasImportTests.TestImportedAtlasExtendsThroughAConfirmedDoorway),
     ("a tentative doorway match prevents duplication of a saved room", NativeAtlasImportTests.TestImportedAtlasKeepsSearchingForAKnownDoorwayArrival),
     ("measured walks retain ground beneath a hidden edge in the saved Atlas", NativeAtlasImportTests.TestMeasuredWalkSavesFloorUnderAHiddenEdge),

@@ -202,6 +202,84 @@ internal static class NativeAtlasImportTests
         });
     }
 
+    internal static void TestLateFramesCannotInterruptSavedRoomRecovery()
+    {
+        WithRecoveryFixture(identicalRooms: false, (root, before) =>
+        {
+            var pipeline = new WindowsLiveWorldPipeline(root);
+            var first = pipeline.Process(ResumeFrame(10, 191));
+            Check(first is { State: WindowsLiveWorldPipelineState.PendingRecovery, ConfirmedRecoveryPose: null },
+                "fresh recovery starts with a single match in the saved arrival room");
+
+            var delayedRoom = ResumeFrame(99, 71) with
+            {
+                RoomName = "Tutorial_Before_Load", Timestamp = 2.9, MonotonicTimestamp = 2.9
+            };
+            CheckDiscarded(pipeline.Process(delayedRoom), "stale world timestamp",
+                "a delayed frame from the departure room cannot replace an uncommitted recovery vote");
+            var duplicateId = ResumeFrame(10, 71) with
+            {
+                RoomName = "Tutorial_Before_Load", Timestamp = 3.1, MonotonicTimestamp = 3.1
+            };
+            CheckDiscarded(pipeline.Process(duplicateId), "stale analysis frame",
+                "a reused frame identifier cannot start another room visit");
+            CheckDiscarded(pipeline.Process(delayedRoom with { CaptureGeneration = 2, MonotonicTimestamp = double.NaN }),
+                "invalid frame timestamp",
+                "an invalid clock cannot retire the active capture generation");
+
+            var recovered = pipeline.Process(ResumeFrame(11, 191));
+            Check(recovered.ConfirmedRecoveryPose == new AtlasPoint(100, 20),
+                "the next fresh image completes the existing room match");
+            var continued = pipeline.Process(ResumeFrame(12, 191, localX: 84));
+            var snapshot = new LiveWorldSessionStore(root).Load().Snapshot;
+            Check(continued.AllowsAtlasWrite && continued.CameraPose == new AtlasPoint(104, 20)
+                && snapshot.Observations.Count == before.Observations.Count + 1
+                && snapshot.Observations[^1].RoomId == TargetRoom,
+                "the next commit extends the saved arrival room from its recovered pose");
+        });
+    }
+
+    internal static void TestAtlasOrderingSurvivesThrottlingAndRollback()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-ordered-room-recovery-");
+        try
+        {
+            var failAppend = false;
+            var pipeline = new WindowsLiveWorldPipeline(root.FullName, transactionObserver: null,
+                transactionFault: stage => failAppend && stage == "append");
+            Check(pipeline.Process(ResumeFrame(1, 71)).AllowsAtlasWrite, "first frame is committed");
+            var throttled = ResumeFrame(2, 71) with { Timestamp = .35, MonotonicTimestamp = .35 };
+            Check(pipeline.Process(throttled).State == WindowsLiveWorldPipelineState.Throttled,
+                "the newer frame reaches the live tracker between persistence ticks");
+            var delayed = ResumeFrame(3, 191) with
+            {
+                RoomName = "Tutorial_Other", Timestamp = .32, MonotonicTimestamp = .32
+            };
+            CheckDiscarded(pipeline.Process(delayed), "stale world timestamp",
+                "a newer capture ID cannot replay time before a throttled frame");
+
+            failAppend = true;
+            Check(pipeline.Process(ResumeFrame(3, 71)).State == WindowsLiveWorldPipelineState.Failed,
+                "a later admitted frame reaches the injected write failure");
+            failAppend = false;
+            var oldCapture = ResumeFrame(5, 191) with { CaptureGeneration = 0, RoomName = "Tutorial_Other" };
+            CheckDiscarded(pipeline.Process(oldCapture), "stale capture generation",
+                "rolling back persistence retains the live capture generation fence");
+            var oldTime = ResumeFrame(5, 191) with { Timestamp = .8, MonotonicTimestamp = .8 };
+            CheckDiscarded(pipeline.Process(oldTime), "stale world timestamp",
+                "rolling back persistence retains the admitted capture clock");
+            Check(pipeline.Process(ResumeFrame(4, 71)).State != WindowsLiveWorldPipelineState.Failed,
+                "new input can retry recovery after the write failure");
+            Check(pipeline.Process(ResumeFrame(5, 71)).ConfirmedRecoveryPose is not null
+                && pipeline.Process(ResumeFrame(6, 71)).AllowsAtlasWrite,
+                "fresh evidence reopens the previous room and resumes persistence");
+            var snapshot = new LiveWorldSessionStore(root.FullName).Load().Snapshot;
+            Check(snapshot.Observations.Count == 2 && snapshot.Observations.Select(row => row.RoomId).Distinct().Count() == 1,
+                "the replayed room cannot leak into the durable world");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
     internal static void TestReopenedAtlasRecoversFromFloorWithoutNarrowLandmarks()
     {
         foreach (var visual in new[] { true, false })
@@ -1056,4 +1134,8 @@ internal static class NativeAtlasImportTests
     {
         if (!condition) throw new InvalidOperationException($"Native Atlas fixture failed: {message}.");
     }
+
+    private static void CheckDiscarded(WindowsLiveWorldPipelineResult result, string reason, string message) =>
+        Check(result is { Discarded: true, AllowsAtlasWrite: false, ConfirmedRecoveryPose: null }
+            && result.Diagnostic.Contains(reason, StringComparison.Ordinal), message);
 }

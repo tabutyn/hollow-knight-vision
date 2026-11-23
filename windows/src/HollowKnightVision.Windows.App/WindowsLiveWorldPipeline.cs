@@ -51,6 +51,7 @@ internal sealed record WindowsLiveWorldPipelineResult(
 {
     internal bool AllowsAtlasWrite => State == WindowsLiveWorldPipelineState.Committed;
     internal bool AllowsAtlasComposition => AllowsAtlasWrite && !PlacementPending;
+    internal bool Discarded { get; init; }
     internal bool PlacementPending { get; init; }
     public IReadOnlyList<GroundHypothesisAtlasLine> WalkedGround { get; init; } = [];
     internal IReadOnlyList<GroundHypothesisAtlasLine>? SavedGround { get; init; }
@@ -129,10 +130,9 @@ internal sealed class WindowsLiveWorldPipeline
     private (double First, double Last, int Count, long CoordinateEpoch)? recoverySamples;
     private long recoveryCoordinateEpoch;
     private double lastPlacedVerticalBasis;
-    private long lastCaptureId = -1;
+    private (ulong Generation, long Id, double Timestamp)? latestAdmittedFrame;
     private double lastGlobalSearchAt = double.NegativeInfinity;
     private double lastPersistenceAt = double.NegativeInfinity;
-    private double lastWorldTrackerTimestamp = double.NegativeInfinity;
     private static readonly DateTimeOffset SwiftDateEpoch = new(2001, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private long workEpoch;
     // A constructor-time reopen failure remains a processable persistence
@@ -239,6 +239,7 @@ internal sealed class WindowsLiveWorldPipeline
         lock (gate)
         {
             if (!ReloadLocked()) return false;
+            latestAdmittedFrame = null;
             Interlocked.Increment(ref workEpoch);
             Volatile.Write(ref acceptsWork, true);
             return true;
@@ -301,6 +302,23 @@ internal sealed class WindowsLiveWorldPipeline
                 var result = Failed(request, diagnostic);
                 return IsWorkCurrent(processEpoch) ? result : Cancelled();
             }
+            WindowsLiveWorldPipelineResult Discard(string reason) =>
+                Publish(PendingRecovery(request, activeTracker, $"live-world skipped: {reason}") with { Discarded = true });
+
+            // Match votes and room ownership can advance between commits.
+            // Keep the live frame order through a store rollback.
+            if (!double.IsFinite(request.Timestamp) || !double.IsFinite(request.MonotonicTimestamp))
+                return Discard("invalid frame timestamp");
+            if (request.Frame.CaptureId < 0) return Discard("stale analysis frame");
+            if (latestAdmittedFrame is { } latest)
+            {
+                if (request.CaptureGeneration < latest.Generation) return Discard("stale capture generation");
+                if (request.CaptureGeneration == latest.Generation)
+                {
+                    if (request.Frame.CaptureId <= latest.Id) return Discard("stale analysis frame");
+                    if (request.MonotonicTimestamp <= latest.Timestamp) return Discard("stale world timestamp");
+                }
+            }
             int requestedRoomId;
             try
             {
@@ -310,14 +328,6 @@ internal sealed class WindowsLiveWorldPipeline
             {
                 RollBackTracker(activeTracker.Snapshot);
                 return Fail($"live-world room identity failed: {error.Message}");
-            }
-            if (captureGeneration is { } currentGeneration
-                && request.CaptureGeneration < currentGeneration)
-            {
-                return Publish(PendingRecovery(
-                    request,
-                    activeTracker,
-                    "live-world skipped: stale capture generation"));
             }
             var beginsCaptureGeneration = captureGeneration != request.CaptureGeneration;
             if (beginsCaptureGeneration)
@@ -349,11 +359,10 @@ internal sealed class WindowsLiveWorldPipeline
                 newRoomDoorway = null;
                 ResetLocalRecovery();
                 recoveryDisposition = RecoveryDisposition.AwaitSafeNewWorld;
-                lastCaptureId = -1;
                 lastGlobalSearchAt = double.NegativeInfinity;
                 lastPersistenceAt = double.NegativeInfinity;
-                lastWorldTrackerTimestamp = double.NegativeInfinity;
             }
+            latestAdmittedFrame = (request.CaptureGeneration, request.Frame.CaptureId, request.MonotonicTimestamp);
             var hasPlacedRoomId = placedRoomIds.TryGetValue(requestedRoomId, out var placedRoomId);
             var resolvedRoomId = hasPlacedRoomId ? placedRoomId : requestedRoomId;
             if (receiverRoomId != requestedRoomId)
@@ -394,33 +403,6 @@ internal sealed class WindowsLiveWorldPipeline
                 }
                 lastGlobalSearchAt = double.NegativeInfinity;
             }
-            if (request.Frame.CaptureId <= lastCaptureId)
-            {
-                return Publish(new WindowsLiveWorldPipelineResult(
-                    WindowsLiveWorldPipelineState.PendingRecovery,
-                    request.CaptureGeneration,
-                    request.LocalPose,
-                    new AtlasPoint(0, 0),
-                    worldBasis.Snapshot.WorldFromLocal,
-                    activeTracker.Snapshot.MapRevision,
-                    null,
-                    null,
-                    null,
-                    "live-world skipped: stale analysis frame"));
-            }
-            lastCaptureId = request.Frame.CaptureId;
-
-            // Capture delivery and receiver joins are ordered independently.
-            // Never let delayed world evidence rewind the active visit or its
-            // motion chain, even when its capture identifier is newer.
-            if (request.MonotonicTimestamp <= lastWorldTrackerTimestamp)
-            {
-                return Publish(PendingRecovery(
-                    request,
-                    activeTracker,
-                    "live-world skipped: stale world timestamp"));
-            }
-
             var locallyRecovered = canResumeLocalTracking && ObserveLocalRecovery(request);
             if (recoveryDisposition == RecoveryDisposition.AwaitNewWorldBoundary)
             {
@@ -682,7 +664,6 @@ internal sealed class WindowsLiveWorldPipeline
                 transactionObserver?.Invoke("commit");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 Volatile.Write(ref hasDurableEvidence, true);
-                lastWorldTrackerTimestamp = request.MonotonicTimestamp;
                 if (localRecoveryPlaced) placementPending = false;
                 placedRoomStartedAt ??= request.MonotonicTimestamp;
                 var committed = durableSnapshot.Observations[^1];
@@ -849,7 +830,7 @@ internal sealed class WindowsLiveWorldPipeline
             null,
             null,
             null,
-            "live-world cancelled: active atlas generation changed");
+            "live-world cancelled: active atlas generation changed") { Discarded = true };
     }
 
     private WindowsLiveWorldPipelineResult PendingRecovery(
@@ -969,12 +950,8 @@ internal sealed class WindowsLiveWorldPipeline
             newRoomDoorway = null;
             ResetLocalRecovery();
             recoveryDisposition = RecoveryDisposition.None;
-            lastCaptureId = -1;
             lastGlobalSearchAt = double.NegativeInfinity;
             lastPersistenceAt = double.NegativeInfinity;
-            lastWorldTrackerTimestamp = snapshot.Observations.Count == 0
-                ? double.NegativeInfinity
-                : snapshot.Observations.Max(value => value.Timestamp);
             Volatile.Write(ref hasDurableEvidence, snapshot.Observations.Count != 0);
             pathGeometryEpoch++;
             Volatile.Write(ref savedGround, restoredGround);
