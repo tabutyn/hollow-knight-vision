@@ -61,8 +61,9 @@ internal static class HackerGymObservationTests
             if (unreachable.GetProperty("pathReachable").GetBoolean())
                 throw new InvalidOperationException("The encoder replaced an unreachable fixed objective.");
             Check(unreachable, "shared_path_present", 0);
-            var automatic = Run(frames, labels, null)[0];
-            Check(automatic, "road_frontier", 1);
+            var defaultGoal = Run(frames, labels, null)[0];
+            Check(defaultGoal, "road_frontier", 0);
+            Check(defaultGoal, "road_distance", 600 / (4f * 192));
         }
         finally { temporary.Delete(recursive: true); }
     }
@@ -88,7 +89,7 @@ internal static class HackerGymObservationTests
 
     private static ReceiverGroundTruthSample Frame(int index, double heroX)
     {
-        const double scale = 20;
+        var scale = 20 + index * .000013;
         const double heroY = 1.28;
         const int width = 192, height = 128;
         const double cameraY = 2;

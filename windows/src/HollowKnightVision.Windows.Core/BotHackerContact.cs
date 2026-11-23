@@ -11,9 +11,14 @@ internal sealed class BotHackerContact
     public void Reset()
     {
         marks.Clear();
+        scene = null;
+        Interrupt();
+    }
+
+    public void Interrupt()
+    {
         previous = null;
         push = null;
-        scene = null;
     }
 
     public BotBlockadeEvidence? Observe(BotCaptureObservation row, GroundTruthCameraTransform camera, WorldSize size,

@@ -5,6 +5,7 @@ public readonly record struct AtlasPathHint(AtlasPathPoint Objective, AtlasPathP
     internal int Remaining { get; init; }
     internal int? PriorRemaining { get; init; }
     internal AtlasPathPoint Projection { get; init; }
+    internal int? FallSteering { get; init; }
 }
 
 /// <summary>Selects and follows reachable unvisited ground on a directed room chart.</summary>
@@ -125,7 +126,8 @@ internal sealed class AtlasPathNavigator
             {
                 Projection = start,
                 Remaining = search.DistanceTo(target),
-                PriorRemaining = oldGoal is { } old && search.Reaches(old) ? search.DistanceTo(old) : null
+                PriorRemaining = oldGoal is { } old && search.Reaches(old) ? search.DistanceTo(old) : null,
+                FallSteering = floor is null && grounded != true ? DriftDirection(position, graph.KnightHeight) : null
             };
         }
 
@@ -135,6 +137,29 @@ internal sealed class AtlasPathNavigator
 
     private AtlasPathPoint Bucket(AtlasPathPoint point) =>
         new((int)Math.Floor((double)point.X / bucketSize), (int)Math.Floor((double)point.Y / bucketSize));
+
+    // The route draws horizontal turns at the bottom of each descent. A real
+    // fall drifts during the descent, so interpolate by elapsed falling time.
+    private int? DriftDirection(AtlasPathPoint position, int height)
+    {
+        if (flight.Length == 0 || flight[0].Stroke.Kind != AtlasPathKind.Drop) return null;
+        var index = Array.FindIndex(flight, leg => leg.From.Y >= position.Y && position.Y > leg.To.Y && leg.From.X == leg.To.X);
+        if (index < 0) return null;
+        var descent = flight[index];
+        var destination = descent.From.X;
+        foreach (var turn in flight.Skip(index + 1).TakeWhile(turn => turn.From.Y == descent.To.Y && turn.To.Y == descent.To.Y))
+            destination = turn.To.X;
+        var top = flight[0].From.Y;
+        double Elapsed(int y) => Math.Sqrt(Math.Max(0, top - y));
+        var start = Elapsed(descent.From.Y);
+        var duration = Elapsed(descent.To.Y) - start;
+        if (duration <= 0) return null;
+        var lookAhead = Math.Max(descent.To.Y, position.Y - Math.Max(1, height / 4));
+        var fraction = (Elapsed(lookAhead) - start) / duration;
+        var desired = descent.From.X + (destination - descent.From.X) * fraction;
+        var error = desired - position.X;
+        return Math.Abs(error) <= .5 ? 0 : Math.Sign(error);
+    }
 
     private Leg? ProjectFlight(AtlasPlatformGraph graph, AtlasPathPoint position)
     {
