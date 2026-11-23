@@ -580,6 +580,53 @@ internal static class NativeAtlasImportTests
         });
     }
 
+    internal static void TestSameRoomRecoveryVerifiesBroadMatchesWithFloorTexture()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-ground-verified-recovery-");
+        try
+        {
+            var pipeline = new WindowsLiveWorldPipeline(root.FullName);
+            var store = new LiveWorldSessionStore(root.FullName);
+            WindowsLiveWorldFrame Measured(long id, double time, int texture, double x, int row = 135)
+            {
+                var request = FloorFrame(id, texture, true, row, false, false);
+                return request with
+                {
+                    Timestamp = time,
+                    MonotonicTimestamp = time,
+                    LocalPose = new(x, 0),
+                    // The narrow alignment mask leaves no scene landmarks.
+                    GroundAlignmentExclusions = [new(0, 0, request.Frame.Width, request.Frame.Height)],
+                    WorldEvidence = request.WorldEvidence! with { CaptureTimestamp = time, LocalReferenceTimestamp = time - .05 }
+                };
+            }
+
+            var first = pipeline.Process(Measured(1, .5, 71, 80));
+            Check(first.AllowsAtlasComposition && store.Load().Snapshot.Landmarks.Count == 0,
+                "the saved image has ground geometry and pixels even without narrow-band landmarks");
+            pipeline.NotifyTrackingLoss(1);
+            _ = pipeline.Process(Measured(2, .7, 901, 124));
+            _ = pipeline.Process(Measured(3, .8, 901, 125));
+            Check(pipeline.Process(Measured(4, .9, 901, 126)).PlacementPending,
+                "unseen imagery resumes in a pending island");
+            Check(pipeline.Process(Measured(5, 1.2, 71, 130, row: 105)).PlacementPending,
+                "identical scenery at the wrong floor elevation cannot place the island");
+            Check(pipeline.Process(Measured(6, 1.5, 71, 130)).PlacementPending,
+                "one ground-verified frame cannot place the island");
+            var placed = pipeline.Process(Measured(7, 1.65, 71, 130));
+            Check(placed is { AllowsAtlasComposition: true, RebuiltAtlas.TileCount: > 0 }
+                && placed.Diagnostic == "live-world ground-verified recovery placed",
+                $"two fresh ground matches should place the entire island ({placed.Diagnostic})");
+            var after = store.Load().Snapshot;
+            Check(after.UnplacedObservationIds().Count == 0
+                && after.Observations[0].OptimizedPose == new AtlasPoint(80, 0)
+                && after.Observations[1].OptimizedPose == new AtlasPoint(76, 0)
+                && after.Observations[^1].OptimizedPose == new AtlasPoint(80, 0),
+                "floor recovery rebuilds the new island without moving the prior map");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
     internal static void TestDoorwaySpacingUsesOnlyPlacedImages()
     {
         var root = Directory.CreateTempSubdirectory("hkv-local-recovery-doorway-");

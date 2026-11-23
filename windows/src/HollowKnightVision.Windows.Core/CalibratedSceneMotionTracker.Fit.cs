@@ -5,10 +5,14 @@ namespace HollowKnightVision.Windows.Core;
 internal sealed partial class CalibratedSceneMotionTracker
 {
     internal sealed record Grid(int Width, int Height, float[] Pixels, IReadOnlyList<StencilRect> Exclusions);
+    internal readonly record struct PatchFit(CameraVector Motion, double Correlation);
     private readonly record struct Candidate(double Correlation, int X, int Y);
     private const int PatchWidth = 16, PatchHeight = 12, PatchSize = PatchWidth * PatchHeight;
 
-    internal static CameraVector? RegisterPatch(Grid source, Grid target, AtlasPoint point, CameraVector? expected = null)
+    internal static CameraVector? RegisterPatch(Grid source, Grid target, AtlasPoint point, CameraVector? expected = null) =>
+        FitPatch(source, target, point, expected)?.Motion;
+
+    internal static PatchFit? FitPatch(Grid source, Grid target, AtlasPoint point, CameraVector? expected = null)
     {
         if (source.Width != target.Width || source.Height != target.Height || source.Width <= 0 || source.Height <= 0
             || source.Pixels.LongLength != (long)source.Width * source.Height
@@ -115,7 +119,7 @@ internal sealed partial class CalibratedSceneMotionTracker
             return null;
         var refineX = Math.Clamp((yy * bx - xy * by) / determinant, -.5, .5);
         var refineY = Math.Clamp((xx * by - xy * bx) / determinant, -.5, .5);
-        return new CameraVector(best.X + refineX, best.Y + refineY);
+        return new(new CameraVector(best.X + refineX, best.Y + refineY), best.Correlation);
     }
 
     private static (double Cross, double Variance) ComparePatch(

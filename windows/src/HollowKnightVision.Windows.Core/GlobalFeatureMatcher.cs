@@ -46,6 +46,10 @@ public sealed class GlobalFeatureMatcher
     public bool LastSelfPlacementWasAmbiguous { get; private set; }
     internal bool LastMatchWasAmbiguous { get; private set; }
 
+    internal bool PermitsPatchProposal(GlobalFeatureReference reference) =>
+        !HasAmbiguousSelfPlacement(reference.Id, reference.Features.Take(MaximumFeatures)
+            .Select(feature => new Corner(feature.SamplePoint, feature.Descriptor.ToArray(), feature.Strength)).ToArray());
+
     public GlobalFeatureReference? MakeReference(
         BgraFrame frame,
         AtlasPoint cameraPose,

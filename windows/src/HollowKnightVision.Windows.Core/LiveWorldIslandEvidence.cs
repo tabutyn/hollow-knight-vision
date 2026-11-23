@@ -64,10 +64,13 @@ public sealed record LiveGroundLineEvidence(
     internal bool IsHorizontal => SegmentId >= 0 && LiveWorldSnapshot.Finite(Start)
         && LiveWorldSnapshot.Finite(End) && Start.X < End.X && Start.Y == End.Y;
 
-    internal bool IsInImage(LiveWorldObservation observation)
+    internal bool IsInImage(LiveWorldObservation observation) =>
+        IsInImage(observation.SolveWidth, observation.SourceWidth, observation.SourceHeight);
+
+    internal bool IsInImage(double solveWidth, int sourceWidth, int sourceHeight)
     {
-        var height = observation.SourceHeight * observation.SolveWidth / observation.SourceWidth;
-        return IsHorizontal && Start.X >= 0 && End.X <= observation.SolveWidth + 0.000001
+        var height = sourceHeight * solveWidth / sourceWidth;
+        return IsHorizontal && Start.X >= 0 && End.X <= solveWidth + 0.000001
             && Start.Y >= 0 && Start.Y <= height + 0.000001;
     }
 }

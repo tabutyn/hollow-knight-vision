@@ -615,8 +615,18 @@ internal sealed class WindowsLiveWorldPipeline
                 if (newRoomDoorway is { } pendingDoor && request.MonotonicTimestamp - pendingDoor.ArrivalCaptureTimestamp > 3)
                     newRoomDoorway = null;
 
+                var groundConfirmationProbe = !globalSearchDue
+                    && activeTracker.CanConfirmGroundRecovery(request.MonotonicTimestamp);
+                var groundPlacement = (globalSearchDue || groundConfirmationProbe)
+                    && placementPending && update.AcceptedClosure is null
+                    && restoredPlacement is null
+                    ? activeTracker.RecoverFromGround(request.MaskedFrame, request.Exclusions, activeStore.Source,
+                        id => compositionExclusions[id], groundConfirmationProbe)
+                    : null;
+                if (!IsWorkCurrent(processEpoch)) return Cancelled();
+                var confirmedLocalPlacement = groundPlacement ?? restoredPlacement;
                 var localRecoveryPlaced = update.AcceptedClosure is not null
-                    || restoredPlacement is not null && activeTracker.PlaceRecoveredIsland(restoredPlacement);
+                    || confirmedLocalPlacement is not null && activeTracker.PlaceRecoveredIsland(confirmedLocalPlacement);
                 var doorwayAligned = !localRecoveryPlaced && newRoomDoorway is { } doorway
                     && activeTracker.AlignNewRoomThroughDoorway(doorway);
                 if (doorwayAligned) newRoomDoorway = null;
@@ -699,6 +709,7 @@ internal sealed class WindowsLiveWorldPipeline
                     rebuiltAtlas,
                     placementPending ? "live-world measured evidence saved; placement pending"
                         : doorwayAligned ? "live-world doorway floor aligned"
+                        : groundPlacement is not null && localRecoveryPlaced ? "live-world ground-verified recovery placed"
                         : restoredPlacement is not null && localRecoveryPlaced ? "live-world local recovery placed"
                         : update.AcceptedClosure is null ? "live-world committed" : "live-world loop closure committed")
                 {

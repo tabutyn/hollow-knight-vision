@@ -120,11 +120,15 @@ public sealed class LiveWorldTracker
         AtlasPoint Correction,
         int MissedFrames);
 
+    private sealed record GroundRecoveryVote(int KeyframeId, int RoomId, ulong LocalEpoch,
+        double Timestamp, AtlasPoint Correction);
+
     private const double KeyframeTravelFraction = 0.25;
     private const double MinimumClosureTravelFraction = 0.75;
     private const int MaximumMissedRecoveryFrames = 4;
 
     private readonly GlobalFeatureMatcher matcher = new();
+    private readonly LiveGroundClosureSearch groundClosureSearch = new();
     private readonly Guid visitId = Guid.NewGuid();
     private readonly Dictionary<int, CachedReference> references = [];
     private readonly Dictionary<int, CachedReference?> restoredRecoveryReferences = [];
@@ -133,6 +137,7 @@ public sealed class LiveWorldTracker
     private readonly HashSet<int> currentVisitObservationIds = [];
     private PendingClosure? pendingClosure;
     private PendingRecovery? pendingRecovery;
+    private GroundRecoveryVote? groundRecoveryVote;
     private int recoveryEpoch;
     private double? lastAcceptedClosureTravel;
     private int? lastObservationId;
@@ -156,6 +161,9 @@ public sealed class LiveWorldTracker
     public bool HasRecoveryReference(int roomId) =>
         RecoveryReferences().Any(reference => reference.RoomId == roomId);
 
+    public bool CanConfirmGroundRecovery(double timestamp) =>
+        groundRecoveryVote is { } vote && timestamp - vote.Timestamp is > 0 and <= .5;
+
     public void BeginVisit()
     {
         pendingClosure = null;
@@ -174,6 +182,7 @@ public sealed class LiveWorldTracker
     {
         recoveryEpoch = recoveryEpoch < int.MaxValue ? recoveryEpoch + 1 : 0;
         pendingRecovery = null;
+        groundRecoveryVote = null;
         pendingClosure = null;
     }
 
@@ -680,6 +689,51 @@ public sealed class LiveWorldTracker
         var rebuilt = ReferenceFor(keyframe);
         if (rebuilt is not null) references[keyframe.Id] = rebuilt;
         return keyframeId;
+    }
+
+    /// <summary>
+    /// Searches placed images in the current room for a scenery proposal with
+    /// independent ground support. Two fresh captures must agree on the correction.
+    /// </summary>
+    public LiveWorldRecoveryPlacement? RecoverFromGround(
+        BgraFrame maskedFrame, IReadOnlyList<StencilRect> exclusions,
+        Func<int, BgraFrame> loadImage, Func<int, IReadOnlyList<WorldRect>> loadExclusions,
+        bool isConfirmationProbe)
+    {
+        if (Snapshot.TrackingIslands.LastOrDefault()?.RequiresPlacement != true
+            || Snapshot.Observations.LastOrDefault() is not { CaptureTimestamp: { } timestamp } current
+            || (current.ObservedFloorCandidates?.Lines ?? current.GroundGeometry?.Lines) is not { Count: > 0 } ground)
+            return null;
+        if (groundRecoveryVote is { } previous && timestamp <= previous.Timestamp) return null;
+
+        var unplaced = Snapshot.UnplacedObservationIds();
+        var observations = Snapshot.Observations.Where(observation => observation.RoomId == current.RoomId
+            && observation.SolveWidth == current.SolveWidth && observation.GroundGeometry?.Lines.Count > 0
+            && !unplaced.Contains(observation.Id)).ToDictionary(observation => observation.Id);
+        var sources = new List<LiveGroundClosureSearch.Source>();
+        foreach (var keyframe in Snapshot.Keyframes)
+            if (observations.TryGetValue(keyframe.ObservationId, out var observation))
+                sources.Add(new(keyframe.Id, observation));
+
+        var match = groundClosureSearch.Find(sources, maskedFrame, exclusions,
+            ground, current.SolveWidth, loadImage, loadExclusions);
+        if (match is null)
+        {
+            if (!isConfirmationProbe || !CanConfirmGroundRecovery(timestamp))
+                groundRecoveryVote = null;
+            return null;
+        }
+
+        var correction = new AtlasPoint(match.CameraPose.X - current.RawPose.X, match.CameraPose.Y - current.RawPose.Y);
+        var consistency = Math.Max(current.SolveWidth * .0125, 4);
+        var confirmation = groundRecoveryVote is { } vote && vote.RoomId == current.RoomId
+            && vote.LocalEpoch == current.LocalEpoch && timestamp - vote.Timestamp <= .5
+            ? LiveWorldRecoveryConfirmation.ReferenceIds(vote.KeyframeId, vote.Correction,
+                match.KeyframeId, correction, consistency)
+            : null;
+        groundRecoveryVote = confirmation is null
+            ? new(match.KeyframeId, current.RoomId, current.LocalEpoch, timestamp, correction) : null;
+        return confirmation is null ? null : new(match.CameraPose, correction, confirmation) { RoomId = current.RoomId };
     }
 
     public bool PlaceRecoveredIsland(LiveWorldRecoveryPlacement placement)
