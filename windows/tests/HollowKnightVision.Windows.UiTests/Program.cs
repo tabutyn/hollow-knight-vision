@@ -92,6 +92,7 @@ internal static class Program
         TestControlPointPixelsStayOutsideRectangleInnerArea();
         TestNegativeModeAndFreshProfileChoices();
         TestModeSelection();
+        TestSettingsSections();
         TestBottomControlScope();
         TestFramingGroupsAreMutuallyExclusive();
         TestHackerTerrainControls();
@@ -935,6 +936,60 @@ internal static class Program
         WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize,
         ShowActivated = false, ShowInTaskbar = false, Background = Brushes.Black
     };
+
+    private static void TestSettingsSections()
+    {
+        var xml = MainWindowSource();
+        System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var root = xml.Descendants(ns + "TabControl")
+            .Single(item => (string?)item.Attribute(x + "Name") == "SettingsSections");
+        var tabs = root.Elements(ns + "TabItem").ToArray();
+        Check(tabs.Select(item => (string?)item.Attribute("Header")).SequenceEqual(["Atlas", "Debug View", "System"]),
+            "The settings sections are missing or out of order.");
+        Check(!root.Descendants(ns + "TextBlock").Any(item => ((string?)item.Attribute("Text")) is "Manage Atlas" or "Manage Hacker Atlas"),
+            "The Atlas page repeated its heading.");
+        var named = tabs.Select(tab => tab.Descendants().Select(item => (string?)item.Attribute(x + "Name"))
+            .OfType<string>().ToHashSet(StringComparer.Ordinal)).ToArray();
+        Check(named[0].Contains("AtlasStatesList") && named[1].Contains("GroundFeaturesCheck")
+            && named[2].Contains("OpsResetRoomButton") && named[2].Contains("SettingsLanguageCombo"),
+            "Controls appeared in the wrong settings section.");
+        var estimated = tabs[1].Descendants(ns + "CheckBox")
+            .Single(item => (string?)item.Attribute(x + "Name") == "EstimatedRoomConnectionsCheck");
+        Check((string?)estimated.Attribute("IsChecked") == "False"
+            && (string?)estimated.Attribute("Checked") == "EstimatedRoomConnections_Changed"
+            && (string?)estimated.Attribute("Unchecked") == "EstimatedRoomConnections_Changed",
+            "Estimated connections need a default-off debug toggle.");
+
+        // The standalone test loads the production template without window-bound event handlers.
+        var markup = new System.Xml.Linq.XElement(root);
+        var events = new HashSet<string>(StringComparer.Ordinal)
+            { "Click", "SelectionChanged", "ValueChanged", "Checked", "Unchecked" };
+        foreach (var attribute in markup.DescendantsAndSelf().SelectMany(item => item.Attributes())
+            .Where(attribute => attribute.Name.Namespace == System.Xml.Linq.XNamespace.None
+                && events.Contains(attribute.Name.LocalName)).ToArray()) attribute.Remove();
+        var control = (TabControl)System.Windows.Markup.XamlReader.Parse(markup.ToString());
+        var window = Offscreen(control, 660, 440);
+        window.Show();
+        Pump();
+        try
+        {
+            Check(control.TabStripPlacement == Dock.Left && control.SelectedIndex == 0
+                && ((TabItem)control.SelectedItem).Header is "Atlas", "The left Atlas tab should be selected initially.");
+            control.SelectedIndex = 1;
+            Pump();
+            var debug = (TabItem)control.SelectedItem;
+            Check(debug.Header is "Debug View" && control.SelectedContent is ScrollViewer, "Debug View did not open.");
+            var toggle = ((StackPanel)((ScrollViewer)debug.Content).Content).Children.OfType<CheckBox>()
+                .Single(box => box.Name == "EstimatedRoomConnectionsCheck");
+            Check(toggle.IsChecked == false, "Estimated room connections became visible by default.");
+            control.SelectedIndex = 2;
+            Pump();
+            Check(((TabItem)control.SelectedItem).Header is "System", "System did not open.");
+        }
+        finally { window.Close(); }
+        Console.WriteLine("PASS settings opens Atlas, Debug View and System from a left tab column");
+    }
 
     private static void TestModeSelection()
     {

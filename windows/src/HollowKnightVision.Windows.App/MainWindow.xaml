@@ -372,108 +372,160 @@
         </Grid>
 
         <Grid x:Name="SettingsOverlay" MouseLeftButtonDown="SettingsBackdrop_Click" Grid.RowSpan="2" Background="#99000000" Visibility="Collapsed" Panel.ZIndex="100">
-            <Border Width="620" MaxHeight="760" Margin="24" Background="#202124" BorderBrush="#55FFFFFF" BorderThickness="1" CornerRadius="14" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <Border Width="660" Height="510" Margin="24" Background="#202124" BorderBrush="#55FFFFFF" BorderThickness="1" CornerRadius="14" HorizontalAlignment="Center" VerticalAlignment="Center">
                 <DockPanel>
                     <DockPanel DockPanel.Dock="Top" Margin="20">
                         <Button DockPanel.Dock="Right" Content="Done" Click="AtlasManagerDone_Click"/>
                         <TextBlock x:Name="SettingsTitle" Text="Settings" FontSize="20" FontWeight="SemiBold"/>
                     </DockPanel>
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <StackPanel Margin="20,0,20,20">
-                            <StackPanel x:Name="GameplayAtlasManager">
-                    <DockPanel><TextBlock Text="Manage Atlas" FontSize="18" FontWeight="SemiBold"/></DockPanel>
-                    <TextBlock Text="New saves a copy of Auto Save and starts fresh. Delete clears the selected atlas without saving a copy. Stencil labels are kept. Save State creates a named restore point." FontSize="12" Foreground="#999999" TextWrapping="Wrap" Margin="0,12"/>
-                    <DockPanel><Button DockPanel.Dock="Right" Content="Save State" Click="AtlasSaveState_Click"/><TextBox x:Name="AtlasStateNameText"/></DockPanel>
-                    <ListBox x:Name="AtlasStatesList" Height="180" Margin="0,12"
-                             Background="#17181A" Foreground="#ECECEC" BorderBrush="#55585E" Padding="4"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                             SelectionChanged="AtlasStatesList_SelectionChanged">
-                        <ListBox.ItemContainerStyle>
-                            <Style TargetType="ListBoxItem">
-                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                                <Setter Property="Padding" Value="10,8"/>
-                                <Setter Property="Margin" Value="0,1"/>
+                    <TabControl x:Name="SettingsSections" SelectedIndex="0" TabStripPlacement="Left"
+                                AutomationProperties.Name="Settings sections">
+                        <TabControl.Template>
+                            <ControlTemplate TargetType="TabControl">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="152"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TabPanel IsItemsHost="True" Margin="10" VerticalAlignment="Top"/>
+                                    <Border Grid.Column="1" BorderBrush="#505154" BorderThickness="1,0,0,0">
+                                        <ContentPresenter ContentSource="SelectedContent"/>
+                                    </Border>
+                                </Grid>
+                            </ControlTemplate>
+                        </TabControl.Template>
+                        <TabControl.ItemContainerStyle>
+                            <Style TargetType="TabItem">
+                                <Setter Property="Foreground" Value="#ECECEC"/>
                                 <Setter Property="Background" Value="Transparent"/>
-                                <Setter Property="BorderBrush" Value="Transparent"/>
-                                <Setter Property="BorderThickness" Value="1"/>
-                                <Setter Property="Template"><Setter.Value>
-                                    <ControlTemplate TargetType="ListBoxItem">
-                                        <Border x:Name="Row" Background="{TemplateBinding Background}"
-                                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
-                                                Padding="{TemplateBinding Padding}">
-                                            <ContentPresenter/>
-                                        </Border>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="#303236"/></Trigger>
-                                            <Trigger Property="IsSelected" Value="True">
-                                                <Setter TargetName="Row" Property="Background" Value="#193D5A"/>
-                                                <Setter TargetName="Row" Property="BorderBrush" Value="#75BEF5"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value></Setter>
+                                <Setter Property="Padding" Value="12,10"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="TabItem">
+                                            <Border x:Name="Tab" MinWidth="132" CornerRadius="7" Margin="0,2"
+                                                    Padding="{TemplateBinding Padding}" Background="{TemplateBinding Background}">
+                                                <ContentPresenter ContentSource="Header"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="Tab" Property="Background" Value="#333639"/>
+                                                </Trigger>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter TargetName="Tab" Property="Background" Value="#193D5A"/>
+                                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
                             </Style>
-                        </ListBox.ItemContainerStyle>
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel>
-                                    <TextBlock Text="{Binding Name}" Foreground="#F0F0F0" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                                    <TextBlock Text="{Binding Detail}" Foreground="#C0C6D0" FontSize="12" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                        </TabControl.ItemContainerStyle>
+                        <TabItem x:Name="SettingsAtlasTab" Header="Atlas">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Margin="20,0,20,20">
+                                    <StackPanel x:Name="GameplayAtlasManager">
+                                        <DockPanel><Button DockPanel.Dock="Right" Content="Save State" Click="AtlasSaveState_Click"/><TextBox x:Name="AtlasStateNameText"/></DockPanel>
+                                        <ListBox x:Name="AtlasStatesList" Height="180" Margin="0,12"
+                                                 Background="#17181A" Foreground="#ECECEC" BorderBrush="#55585E" Padding="4"
+                                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                 SelectionChanged="AtlasStatesList_SelectionChanged">
+                                            <ListBox.ItemContainerStyle>
+                                                <Style TargetType="ListBoxItem">
+                                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                                    <Setter Property="Padding" Value="10,8"/>
+                                                    <Setter Property="Margin" Value="0,1"/>
+                                                    <Setter Property="Background" Value="Transparent"/>
+                                                    <Setter Property="BorderBrush" Value="Transparent"/>
+                                                    <Setter Property="BorderThickness" Value="1"/>
+                                                    <Setter Property="Template"><Setter.Value>
+                                                        <ControlTemplate TargetType="ListBoxItem">
+                                                            <Border x:Name="Row" Background="{TemplateBinding Background}"
+                                                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                                                    Padding="{TemplateBinding Padding}">
+                                                                <ContentPresenter/>
+                                                            </Border>
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="#303236"/></Trigger>
+                                                                <Trigger Property="IsSelected" Value="True">
+                                                                    <Setter TargetName="Row" Property="Background" Value="#193D5A"/>
+                                                                    <Setter TargetName="Row" Property="BorderBrush" Value="#75BEF5"/>
+                                                                </Trigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Setter.Value></Setter>
+                                                </Style>
+                                            </ListBox.ItemContainerStyle>
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Name}" Foreground="#F0F0F0" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                                        <TextBlock Text="{Binding Detail}" Foreground="#C0C6D0" FontSize="12" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                        <DockPanel><Button Content="New" Click="AtlasNew_Click"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="AtlasDeleteStateButton" Content="Delete" Click="AtlasDeleteState_Click" IsEnabled="False"/><Button x:Name="AtlasLoadStateButton" Content="Load" Click="AtlasLoadState_Click" IsEnabled="False"/></StackPanel></DockPanel>
+                                    </StackPanel>
+                                    <StackPanel x:Name="HackerAtlasManager" Visibility="Collapsed" Margin="0,20,0,0">
+                                        <Button Content="Delete Hacker Atlas" HorizontalAlignment="Left"
+                                                Foreground="#FF6868" Click="HackerDeleteAtlas_Click"/>
+                                    </StackPanel>
                                 </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                    <DockPanel><Button Content="New" Click="AtlasNew_Click"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="AtlasDeleteStateButton" Content="Delete" Click="AtlasDeleteState_Click" IsEnabled="False"/><Button x:Name="AtlasLoadStateButton" Content="Load" Click="AtlasLoadState_Click" IsEnabled="False"/></StackPanel></DockPanel>
-                </StackPanel>
-                            <StackPanel x:Name="HackerAtlasManager" Visibility="Collapsed" Margin="0,20,0,0">
-                                <TextBlock Text="Manage Hacker Atlas" FontWeight="SemiBold"/>
-                                <Button Content="Delete Atlas" HorizontalAlignment="Left" Foreground="#FF6868" Click="HackerDeleteAtlas_Click"/>
-                            </StackPanel>
-                            <TextBlock x:Name="OpsSettingsTitle" Text="Ops" FontWeight="SemiBold" Visibility="Collapsed"/>
-                <!-- Ops: exact Mac PlayerOpsView copy. -->
-                <Grid x:Name="OpsPanel" Visibility="Collapsed">
-                    <Grid HorizontalAlignment="Stretch" Margin="0,12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                        <Grid Grid.Row="0" Margin="0,0,0,18"><Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="190"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
-                            <TextBlock Text="Max Health" Margin="0,7"/><TextBox x:Name="OpsMaxHealthText" Grid.Column="1" Text="5" Width="72" HorizontalAlignment="Right"/>
-                            <TextBlock Grid.Row="1" Text="Health" Margin="0,7"/><TextBox x:Name="OpsHealthText" Grid.Row="1" Grid.Column="1" Text="5" Width="72" HorizontalAlignment="Right"/>
-                            <TextBlock Grid.Row="2" Text="Lifeblood Seed" Margin="0,7"/><TextBox x:Name="OpsLifebloodText" Grid.Row="2" Grid.Column="1" Text="0" Width="72" HorizontalAlignment="Right"/>
-                            <TextBlock Grid.Row="3" Text="Extra Mana Slots" Margin="0,7"/><TextBox x:Name="OpsManaSlotsText" Grid.Row="3" Grid.Column="1" Text="0" Width="72" HorizontalAlignment="Right"/>
-                            <TextBlock Grid.Row="4" Text="Mana" Margin="0,7"/><TextBox x:Name="OpsManaText" Grid.Row="4" Grid.Column="1" Text="99" Width="72" HorizontalAlignment="Right"/>
-                            <TextBlock Grid.Row="5" Text="Geo" Margin="0,7"/><TextBox x:Name="OpsGeoText" Grid.Row="5" Grid.Column="1" Text="18" Width="72" HorizontalAlignment="Right"/>
-                        </Grid>
-                        <CheckBox x:Name="OpsInvincibleCheck" Grid.Row="1" Content="Invincibility — ignore damage and phase through enemies" Margin="0,0,0,18"/>
-                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,18"><Button Content="Randomize Now" Click="OpsRandomize_Click"/><Button Content="Restore Enemies" Click="OpsRestoreEnemies_Click"/><Button x:Name="OpsResetRoomButton" Content="Reset Room" ToolTip="Reset Room (R)" Click="OpsResetRoom_Click" IsEnabled="False"/></StackPanel>
-                        <StackPanel Grid.Row="3"><Separator Margin="0,0,0,18"/><CheckBox x:Name="OpsRandomizeAfterLabelCheck" Content="Randomize health, lifeblood, mana, and geo after each Label session"/></StackPanel>
-                        <StackPanel Grid.Row="5" Orientation="Horizontal"><Button Content="Apply" Click="OpsApply_Click"/><Button Content="Reload" Click="OpsReload_Click"/><TextBlock x:Name="OpsStatusText" Foreground="#999999" VerticalAlignment="Center" Margin="8,0"/></StackPanel>
-                    </Grid>
-                </Grid>
-                            <Separator Margin="0,20"/>
-                            <TextBlock x:Name="DebugSettings" Text="Debug View" FontWeight="SemiBold" Margin="0,0,0,12"/>
-
-                            <CheckBox x:Name="GameStateCheck" IsChecked="True" Content="Game State" Margin="0,0,0,10" Checked="GameStateCheck_Changed" Unchecked="GameStateCheck_Changed"/>
-                    <CheckBox x:Name="ObjectDetectionCheck" Content="Object Detection" Margin="0,0,0,10" Checked="ObjectDetectionCheck_Changed" Unchecked="ObjectDetectionCheck_Changed"/>
-                    <TextBlock x:Name="ModelLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
-                    <StackPanel x:Name="ObjectDetectionOptions" IsEnabled="False">
-                        <TextBlock x:Name="ObjectInferenceIssueText" Foreground="#FF9F68" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,0,0,8"/>
-                        <CheckBox x:Name="RawDetectionCheck" Content="Raw Detection" Margin="0,0,0,10"/>
-                        <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="38"/></Grid.ColumnDefinitions><TextBlock Text="Detection Extend"/><Slider x:Name="DetectionExtendSlider" Grid.Column="1" Minimum="0" Maximum="50" Value="12" Margin="8,0" ValueChanged="DetectionExtendSlider_ValueChanged"/><TextBlock x:Name="DetectionExtendText" Grid.Column="2" Text="12%" FontFamily="Consolas" HorizontalAlignment="Right"/></Grid>
-                        <CheckBox x:Name="DetectionPixelsCheck" Content="Detection Pixels" Margin="0,0,0,10" Checked="DetectionPixelsCheck_Changed" Unchecked="DetectionPixelsCheck_Changed"/>
-                    </StackPanel>
-                    <CheckBox x:Name="StencilDetectionCheck" IsChecked="True" Content="Stencil Detection" Margin="0,0,0,10"/>
-                    <TextBlock x:Name="StencilLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
-                    <Separator Margin="0,0,0,10"/>
-                    <CheckBox x:Name="GroundFeaturesCheck" Content="Ground Features" Margin="0,0,0,10" IsChecked="True"/>
-                    <CheckBox x:Name="TransitionsCheck" Content="Transitions" Margin="0,0,0,10"/>
-                    <CheckBox x:Name="CoarseMotionCheck" Content="Coarse Motion Overlay"/>
-
-
-                            <Separator Margin="0,20"/>
-                            <TextBlock x:Name="SettingsLanguageTitle" Text="Game language" Margin="0,0,0,5"/>
-                            <ComboBox x:Name="SettingsLanguageCombo" SelectionChanged="SettingsLanguage_Changed" Margin="0,0,0,12"/>
-                            <Separator Margin="0,12"/>
-                            <Button x:Name="SettingsFactoryButton" Content="Factory Reset…" Foreground="#FF6868" HorizontalAlignment="Left" Click="FactoryReset_Click"/>
-                        </StackPanel>
-                    </ScrollViewer>
+                            </ScrollViewer>
+                        </TabItem>
+                        <TabItem x:Name="SettingsDebugTab" Header="Debug View">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Margin="20,0,20,20">
+                                    <CheckBox x:Name="GameStateCheck" IsChecked="True" Content="Game State" Margin="0,0,0,10" Checked="GameStateCheck_Changed" Unchecked="GameStateCheck_Changed"/>
+                                    <CheckBox x:Name="ObjectDetectionCheck" Content="Object Detection" Margin="0,0,0,10" Checked="ObjectDetectionCheck_Changed" Unchecked="ObjectDetectionCheck_Changed"/>
+                                    <TextBlock x:Name="ModelLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
+                                    <StackPanel x:Name="ObjectDetectionOptions" IsEnabled="False">
+                                        <TextBlock x:Name="ObjectInferenceIssueText" Foreground="#FF9F68" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,0,0,8"/>
+                                        <CheckBox x:Name="RawDetectionCheck" Content="Raw Detection" Margin="0,0,0,10"/>
+                                        <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="38"/></Grid.ColumnDefinitions><TextBlock Text="Detection Extend"/><Slider x:Name="DetectionExtendSlider" Grid.Column="1" Minimum="0" Maximum="50" Value="12" Margin="8,0" ValueChanged="DetectionExtendSlider_ValueChanged"/><TextBlock x:Name="DetectionExtendText" Grid.Column="2" Text="12%" FontFamily="Consolas" HorizontalAlignment="Right"/></Grid>
+                                        <CheckBox x:Name="DetectionPixelsCheck" Content="Detection Pixels" Margin="0,0,0,10" Checked="DetectionPixelsCheck_Changed" Unchecked="DetectionPixelsCheck_Changed"/>
+                                    </StackPanel>
+                                    <CheckBox x:Name="StencilDetectionCheck" IsChecked="True" Content="Stencil Detection" Margin="0,0,0,10"/>
+                                    <TextBlock x:Name="StencilLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
+                                    <Separator Margin="0,0,0,10"/>
+                                    <CheckBox x:Name="GroundFeaturesCheck" Content="Ground Features" Margin="0,0,0,10" IsChecked="True"/>
+                                    <CheckBox x:Name="EstimatedRoomConnectionsCheck" Content="Estimated room connections"
+                                              IsChecked="False" Margin="0,0,0,10" Checked="EstimatedRoomConnections_Changed"
+                                              Unchecked="EstimatedRoomConnections_Changed"/>
+                                    <CheckBox x:Name="TransitionsCheck" Content="Transitions" Margin="0,0,0,10"/>
+                                    <CheckBox x:Name="CoarseMotionCheck" Content="Coarse Motion Overlay"/>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </TabItem>
+                        <TabItem x:Name="SettingsSystemTab" Header="System">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Margin="20,0,20,20">
+                                    <TextBlock x:Name="OpsSettingsTitle" Text="Ops" FontWeight="SemiBold" Visibility="Collapsed"/>
+                                    <!-- Ops: exact Mac PlayerOpsView copy. -->
+                                    <Grid x:Name="OpsPanel" Visibility="Collapsed">
+                                        <Grid HorizontalAlignment="Stretch" Margin="0,12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                            <Grid Grid.Row="0" Margin="0,0,0,18"><Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="190"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                                <TextBlock Text="Max Health" Margin="0,7"/><TextBox x:Name="OpsMaxHealthText" Grid.Column="1" Text="5" Width="72" HorizontalAlignment="Right"/>
+                                                <TextBlock Grid.Row="1" Text="Health" Margin="0,7"/><TextBox x:Name="OpsHealthText" Grid.Row="1" Grid.Column="1" Text="5" Width="72" HorizontalAlignment="Right"/>
+                                                <TextBlock Grid.Row="2" Text="Lifeblood Seed" Margin="0,7"/><TextBox x:Name="OpsLifebloodText" Grid.Row="2" Grid.Column="1" Text="0" Width="72" HorizontalAlignment="Right"/>
+                                                <TextBlock Grid.Row="3" Text="Extra Mana Slots" Margin="0,7"/><TextBox x:Name="OpsManaSlotsText" Grid.Row="3" Grid.Column="1" Text="0" Width="72" HorizontalAlignment="Right"/>
+                                                <TextBlock Grid.Row="4" Text="Mana" Margin="0,7"/><TextBox x:Name="OpsManaText" Grid.Row="4" Grid.Column="1" Text="99" Width="72" HorizontalAlignment="Right"/>
+                                                <TextBlock Grid.Row="5" Text="Geo" Margin="0,7"/><TextBox x:Name="OpsGeoText" Grid.Row="5" Grid.Column="1" Text="18" Width="72" HorizontalAlignment="Right"/>
+                                            </Grid>
+                                            <CheckBox x:Name="OpsInvincibleCheck" Grid.Row="1" Content="Invincibility — ignore damage and phase through enemies" Margin="0,0,0,18"/>
+                                            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,18"><Button Content="Randomize Now" Click="OpsRandomize_Click"/><Button Content="Restore Enemies" Click="OpsRestoreEnemies_Click"/><Button x:Name="OpsResetRoomButton" Content="Reset Room" ToolTip="Reset Room (R)" Click="OpsResetRoom_Click" IsEnabled="False"/></StackPanel>
+                                            <StackPanel Grid.Row="3"><Separator Margin="0,0,0,18"/><CheckBox x:Name="OpsRandomizeAfterLabelCheck" Content="Randomize health, lifeblood, mana, and geo after each Label session"/></StackPanel>
+                                            <StackPanel Grid.Row="5" Orientation="Horizontal"><Button Content="Apply" Click="OpsApply_Click"/><Button Content="Reload" Click="OpsReload_Click"/><TextBlock x:Name="OpsStatusText" Foreground="#999999" VerticalAlignment="Center" Margin="8,0"/></StackPanel>
+                                        </Grid>
+                                    </Grid>
+                                    <TextBlock x:Name="SettingsLanguageTitle" Text="Game language" Margin="0,0,0,5"/>
+                                    <ComboBox x:Name="SettingsLanguageCombo" SelectionChanged="SettingsLanguage_Changed" Margin="0,0,0,12"/>
+                                    <Separator Margin="0,12"/>
+                                    <Button x:Name="SettingsFactoryButton" Content="Factory Reset…" Foreground="#FF6868" HorizontalAlignment="Left" Click="FactoryReset_Click"/>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </TabItem>
+                    </TabControl>
                 </DockPanel>
             </Border>
         </Grid>

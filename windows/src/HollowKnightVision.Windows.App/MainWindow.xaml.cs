@@ -1404,6 +1404,8 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        if (SettingsOverlay.Visibility == Visibility.Visible && Keyboard.FocusedElement is TabItem
+            && key is Key.Left or Key.Right or Key.Up or Key.Down) return;
         if (workspace == "Label" && SettingsOverlay.Visibility != Visibility.Visible) return;
         if (GameControlKeyPolicy.IsModelReviewReserved(workspace, key))
         {
@@ -1483,16 +1485,17 @@ public partial class MainWindow : Window
             return true;
         }
         if (isRepeat) return false;
+        var showingSettings = SettingsOverlay.Visibility == Visibility.Visible;
         if (key == Key.R && modifiers == ModifierKeys.None && CanResetRoom()
-            && (SettingsOverlay.Visibility == Visibility.Visible || workspace is "Gameplay" or "Hacker" or "Ops"))
+            && (showingSettings ? SettingsSystemTab.IsSelected : workspace is "Gameplay" or "Hacker" or "Ops"))
         {
             _ = ResetRoomAsync();
             return true;
         }
-        if (SettingsOverlay.Visibility == Visibility.Visible)
+        if (showingSettings)
         {
             if (key == Key.Escape) SettingsOverlay.Visibility = Visibility.Collapsed;
-            return key is not (Key.Left or Key.Right or Key.Up or Key.Down);
+            return key is not (Key.Left or Key.Right or Key.Up or Key.Down or Key.Tab or Key.Enter or Key.Space);
         }
         if (workspace == "Label")
         {
@@ -2078,7 +2081,9 @@ public partial class MainWindow : Window
         UpdateModeAvailability();
         SettingsTitle.Text = initialization.Text("settings");
         SettingsButton.ToolTip = SettingsTitle.Text;
-        DebugSettings.Text = initialization.Text("debugView");
+        SettingsAtlasTab.Header = initialization.Text("Atlas");
+        SettingsDebugTab.Header = initialization.Text("debugView");
+        SettingsSystemTab.Header = initialization.Text("System");
         GameStateCheck.Content = initialization.Text("gameState");
         SettingsLanguageTitle.Text = initialization.Text("language");
         SettingsFactoryButton.Content = initialization.Text("factory");
@@ -4331,6 +4336,11 @@ public partial class MainWindow : Window
             side == HackerRoomSide.Bottom ? bounds.MinY : bounds.MaxY);
     }
 
+    private void EstimatedRoomConnections_Changed(object sender, RoutedEventArgs e)
+    {
+        if (IsLoaded && workspace == "Hacker") RedrawHackerEdits();
+    }
+
     private void RedrawHackerEdits()
     {
         HackerOverlayCanvas.Children.Clear();
@@ -4368,6 +4378,8 @@ public partial class MainWindow : Window
             }
             foreach (var connection in topology.Connections)
             {
+                var freeform = topology.Layout.FreeformConnectionIds.Contains(connection.Id);
+                if (freeform && EstimatedRoomConnectionsCheck.IsChecked != true) continue;
                 var fromRoom = topology.Rooms[connection.FromRoomId];
                 var toRoom = topology.Rooms[connection.ToRoomId];
                 var from = HackerRoomEndpoint(
@@ -4380,7 +4392,6 @@ public partial class MainWindow : Window
                     HackerRoomPosition(toRoom, topology.Edits, topology.Layout),
                     connection.ToSide,
                     connection.ToCoordinate);
-                var freeform = topology.Layout.FreeformConnectionIds.Contains(connection.Id);
                 HackerOverlayCanvas.Children.Add(new Line
                 {
                     X1 = from.X - originX,
