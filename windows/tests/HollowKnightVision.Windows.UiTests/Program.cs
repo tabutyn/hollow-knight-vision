@@ -104,6 +104,7 @@ internal static class Program
         TestMainWindowHasProductTitle();
         TestGroundFeatureOverlayStartsVisible();
         TestGroundFeatureOverlayUsesMacReviewPalette();
+        TestTerrainCornersKeepVerticalWallStrokesHidden();
         RuntimeModeTests.Run();
         HudStencilTests.Run();
         MenuIntegrationTests.Run();
@@ -1940,6 +1941,19 @@ internal static class Program
         Check(Canvas.GetLeft(patch) == -29 && Canvas.GetTop(patch) == ground.Y1,
             "The tracking patch and floor did not share the atlas projection.");
         Console.WriteLine("PASS live and persistent ground boxes and walked floor use the atlas projection");
+    }
+
+    private static void TestTerrainCornersKeepVerticalWallStrokesHidden()
+    {
+        var canvas = new Canvas();
+        var wall = new DetectedWall(20, 5, 30, true);
+        var terrain = new TerrainWallDetection([wall], [new(0, 0, 20, 30, 24), new(0, 1, 20, 5, 20)]);
+        GroundFeatureOverlayPresentation.DrawTerrainCorners(canvas, terrain);
+        var line = canvas.Children.OfType<Line>().Single();
+        Check(line.X1 == 24.5 && line.X2 == 20.5 && line.Y1 == 30.5 && line.Y2 == 30.5
+            && terrain.Walls.Single() == wall, "The overlay must draw the horizontal corner extension and retain its wall evidence.");
+        Check(canvas.Children.OfType<Rectangle>().Count() == 2, "Missing detected terrain corner markers.");
+        Console.WriteLine("PASS detected terrain renders horizontal joins and corner markers");
     }
 
     private static void TestBackgroundKeyDelivery()

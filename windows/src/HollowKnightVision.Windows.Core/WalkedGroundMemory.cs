@@ -138,13 +138,14 @@ public sealed class WalkedGroundTracker
 {
     private readonly KnightFootLocator locator = new();
     private readonly KnightLevelWalk walk = new();
+    private readonly KnightWallContact wallContact = new();
     private readonly WalkedGroundMemory memory = new();
     private string? activeRoom;
 
     public IReadOnlyList<GroundHypothesisAtlasLine> InRoom(string room) => memory.InRoom(room);
 
-    public void Observe(string room, GroundEdgeAnalysis frame, PixelRect? knight, AtlasPoint? measuredCamera,
-        InputButtons? buttons, double time, IReadOnlyList<DetectedFloorLine> detected)
+    public KnightTerrainContact Observe(string room, GroundEdgeAnalysis frame, PixelRect? knight, AtlasPoint? measuredCamera,
+        InputButtons? buttons, double time, IReadOnlyList<DetectedFloorLine> detected, IReadOnlyList<DetectedWall>? walls = null)
     {
         if (room != activeRoom)
         {
@@ -153,22 +154,26 @@ public sealed class WalkedGroundTracker
         }
         var direction = buttons is { } held ? KnightLevelWalk.Direction(held) : 0;
         var actor = locator.Locate(frame, knight, direction, time);
+        var wall = wallContact.Observe(actor, measuredCamera, direction, time, frame.Width, frame.Height, walls ?? []);
         var foot = actor is { Partial: false } observed ? observed.Foot : (AtlasPoint?)null;
         if (walk.Observe(foot, measuredCamera, buttons, time, frame.Width, frame.Height) is not { } floor
-            || measuredCamera is not { } pose) return;
+            || measuredCamera is not { } pose) return new(null, wall);
 
         // Keep the walked extent and use a matching visible edge for elevation.
         var nearest = detected.Where(line =>
                 line.XSpan.Start <= floor.XSpan.EndInclusive && line.XSpan.EndInclusive >= floor.XSpan.Start
                 && Math.Abs(line.Row - floor.Row) <= Math.Max(1, (int)(2 * frame.Width / 640d)))
             .MinBy(line => Math.Abs(line.Row - floor.Row));
-        memory.Record(room, nearest is null ? floor : floor with { Row = nearest.Row }, pose, frame.Height);
+        var snapped = nearest is null ? floor : floor with { Row = nearest.Row };
+        memory.Record(room, snapped, pose, frame.Height);
+        return new(snapped, wall);
     }
 
     public void BreakContinuity()
     {
         locator.Reset();
         walk.Reset();
+        wallContact.Reset();
         activeRoom = null;
     }
 

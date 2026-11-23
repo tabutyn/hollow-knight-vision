@@ -49,6 +49,30 @@ internal static class GroundFeatureOverlayPresentation
         }
     }
 
+    internal static void DrawTerrainCorners(Canvas canvas, TerrainWallDetection terrain)
+    {
+        if (terrain.Corners.Count == 0) return;
+        var brush = new SolidColorBrush(Color.FromArgb(224, 56, 217, 255));
+        brush.Freeze();
+        foreach (var corner in terrain.Corners)
+        {
+            var x = corner.X + .5;
+            var y = corner.Row + .5;
+            if (corner.FloorEndpoint != corner.X)
+            {
+                canvas.Children.Add(new Line
+                {
+                    X1 = corner.FloorEndpoint + .5, X2 = x, Y1 = y, Y2 = y,
+                    Stroke = brush, StrokeThickness = 1, IsHitTestVisible = false
+                });
+            }
+            var marker = new Rectangle { Width = 3, Height = 3, Fill = brush, IsHitTestVisible = false };
+            Canvas.SetLeft(marker, x - 1.5);
+            Canvas.SetTop(marker, y - 1.5);
+            canvas.Children.Add(marker);
+        }
+    }
+
     internal static void DrawAtlas(Canvas canvas, AtlasPoint camera, ViewportSize capture, ViewportRect live,
         IReadOnlyList<GroundHypothesisAtlasLine> lines, IReadOnlyList<GroundHypothesisAtlasFeature> features)
     {

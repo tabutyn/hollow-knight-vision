@@ -872,6 +872,7 @@ public partial class MainWindow : Window
         public IReadOnlyList<GroundHypothesisAtlasLine> GroundDisplayLines { get; init; } = [];
         public AtlasPoint GroundDisplayCamera { get; init; }
         public IReadOnlyList<PixelRect> MeasuredPlatformPatches { get; init; } = [];
+        public TerrainWallDetection Terrain { get; init; } = TerrainWallDetection.Empty;
     }
 
     private sealed class GameWindowLostException : Exception
@@ -3334,10 +3335,15 @@ public partial class MainWindow : Window
             else groundHypothesisState.WalkedGround.BreakContinuity();
             groundHypothesisState.PlatformPatches.Reset();
         }
+        var terrain = TerrainWallDetection.Empty;
         if (groundAnalysis is not null)
-            groundHypothesisState.WalkedGround.Observe(atlasRoomId, groundAnalysis, masks.GroundKnight,
+        {
+            terrain = TerrainWallDetector.Detect(groundAnalysis, ground);
+            var contact = groundHypothesisState.WalkedGround.Observe(atlasRoomId, groundAnalysis, masks.GroundKnight,
                 visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null,
-                movementButtons, captureTimestamp, ground);
+                movementButtons, captureTimestamp, ground, terrain.Walls);
+            terrain = TerrainWallDetector.ApplyContact(terrain, contact, ground, groundAnalysis);
+        }
         IReadOnlyList<PixelRect> platformPatches = groundAnalysis is not null
             ? groundHypothesisState.PlatformPatches.Observe(groundAnalysis, ground, hypothesisExclusions,
                 visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null, captureTimestamp)
@@ -3557,7 +3563,8 @@ public partial class MainWindow : Window
                 GroundHypotheses = groundHypotheses,
                 GroundDisplayLines = groundDisplayLines,
                 GroundDisplayCamera = groundDisplayCamera,
-                MeasuredPlatformPatches = platformPatches
+                MeasuredPlatformPatches = platformPatches,
+                Terrain = terrain
             };
     }
 
@@ -3747,6 +3754,7 @@ public partial class MainWindow : Window
                 result.Ground,
                 result.GroundHypotheses,
                 result.MeasuredPlatformPatches,
+                result.Terrain,
                 result.MenuStencil,
                 result.HudStencil);
         }
@@ -3892,6 +3900,7 @@ public partial class MainWindow : Window
         IReadOnlyList<DetectedFloorLine> groundLines,
         GroundHypothesisTrackingResult groundHypotheses,
         IReadOnlyList<PixelRect> measuredPlatformPatches,
+        TerrainWallDetection terrain,
         MenuStencilResult? menuStencil,
         HudStencilResult? hudStencil)
     {
@@ -3913,6 +3922,7 @@ public partial class MainWindow : Window
                 groundHypotheses,
                 groundLines,
                 measuredPlatformPatches);
+            GroundFeatureOverlayPresentation.DrawTerrainCorners(DetectionCanvas, terrain);
         }
     }
 
