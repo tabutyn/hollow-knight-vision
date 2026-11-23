@@ -102,6 +102,7 @@ internal static class Program
         TestHackerTerrainControls();
         TestHackerPathPresentation();
         TestGameplayPathsFollowTheImageAndRespectMenuContext();
+        TestGameplayPathSelectionPaintsTheFullRoute();
         TestBotCapturePreviewColorsAndCoordinateOrientation();
         TestWorkspaceShortcuts();
         TestPathRecordingAvailability();
@@ -1223,6 +1224,34 @@ internal static class Program
             && road.Stroke == Brushes.Gold && road.X1 == 210 && road.X2 == 330 && road.Y1 == 133.5,
             "A restored route must use the same viewport projection as the placed live image.");
         Console.WriteLine("PASS Game Play roads use the live viewport, hide in menus, and show their direction");
+    }
+
+    private static void TestGameplayPathSelectionPaintsTheFullRoute()
+    {
+        var tracker = new GameplayPathTracker();
+        var sample = new GameplayPathFrame("route", 1, 640, 360, default(AtlasPoint),
+            [new(1, new(0, 20), new(300, 20)), new(2, new(320, 40), new(1000, 40))], [], TerrainWallDetection.Empty,
+            new(50, 340), new(45, 320, 10, 20), null);
+        var live = new ViewportRect(200, 50, 320, 180);
+        var displayed = new GameplayPathPresentation(11, 640, 360, tracker.Observe(sample)!) { Tracker = tracker };
+        Check(displayed.SelectObjective(new(600, 226), live, 2) is null,
+            "A click outside the scaled path tolerance must stay available to the viewport.");
+        var selected = displayed.SelectObjective(new(600, 200), live, 2);
+        Check(selected?.View.SelectedObjective == new AtlasPathPoint(800, 60),
+            "The path beyond the live image must remain selectable.");
+        var canvas = new Canvas();
+        selected!.Draw(canvas, live);
+        var route = canvas.Children.OfType<Line>().Where(line => line.Stroke == Brushes.White).ToArray();
+        Check(route.Any(line => line.X1 == 225 && line.Y1 == 210 && line.Y2 == 210 && line.X2 > line.X1)
+            && route.Any(line => line.X1 == line.X2 && line.X1 < 600 && line.Y2 < line.Y1)
+            && route.Any(line => line.X2 == 600 && line.Y2 == 200 && line.Y1 == 200 && line.X1 < 590),
+            "The full white route should include departure ground, the jump shelf, and the destination.");
+        var updated = tracker.Observe(sample with { Time = 1.1 });
+        Check(updated?.SelectedObjective == selected.View.SelectedObjective,
+            "The next capture should keep the displayed selection.");
+        Check(selected.SelectObjective(new(600, 200), live, 2)?.View.SelectedRoute.Count == 0,
+            "Clicking the same destination must clear the selected route.");
+        Console.WriteLine("PASS Game Play route selection uses Atlas coordinates and draws the full route");
     }
 
     private static void TestBotCapturePreviewColorsAndCoordinateOrientation()

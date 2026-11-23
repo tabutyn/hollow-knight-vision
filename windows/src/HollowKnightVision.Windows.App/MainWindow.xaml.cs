@@ -783,7 +783,7 @@ public partial class MainWindow : Window
         public AtlasPoint GroundDisplayCamera { get; init; }
         public IReadOnlyList<PixelRect> MeasuredPlatformPatches { get; init; } = [];
         public TerrainWallDetection Terrain { get; init; } = TerrainWallDetection.Empty;
-        public GameplayPathView? Paths { get; init; }
+        public GameplayPathPresentation? PathPresentation { get; init; }
     }
 
     private sealed class GameWindowLostException : Exception
@@ -1515,6 +1515,7 @@ public partial class MainWindow : Window
 
     private void GameViewport_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (workspace == "Gameplay" && SelectGameplayObjective(e)) return;
         if (workspace == "Hacker" && (SelectHackerObjective(e) || EditHackerPath(e))) return;
         if (workspace == "Hacker" && EditsHackerTerrain && GroundEditorMouseDown(e)) return;
         if (workspace == "Hacker" && hackerEditingTarget == "Rooms")
@@ -3434,7 +3435,10 @@ public partial class MainWindow : Window
                 GroundDisplayCamera = groundDisplayCamera,
                 MeasuredPlatformPatches = platformPatches,
                 Terrain = terrain,
-                Paths = paths
+                PathPresentation = paths is null ? null : new(frame.CaptureId, frame.Width, frame.Height, paths)
+                {
+                    Tracker = trackingPipeline.Paths
+                }
             };
     }
 
@@ -3528,8 +3532,9 @@ public partial class MainWindow : Window
         {
             if (result.SavedGround is { } savedGround) gameplaySavedGround = savedGround;
             Volatile.Write(ref recognizedMenuContext, result.MenuContext);
-            gameplayPathPresentation = result.Paths is { } paths
-                ? new(result.Frame.CaptureId, result.Frame.Width, result.Frame.Height, paths) : null;
+            gameplayPathPresentation = result.PathPresentation is { } paths && gameplayPathPresentation is { } visible
+                ? paths with { View = paths.View.PreserveNewerSelection(visible.View) }
+                : result.PathPresentation;
             MenuParticles.SetScene(result.MenuContext, result.MenuStencil);
             Volatile.Write(ref recognizedMenuSelection, result.Status?.SelectedMenuOption);
             VisionStatusText.ToolTip = result.StencilDiagnostic;

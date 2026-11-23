@@ -26,8 +26,21 @@ internal sealed class AtlasPathNavigator
     private AtlasPathPoint? heading;
     private AtlasPathPoint? inheritedHeading;
     internal bool HasStartProjection { get; private set; }
+    internal IReadOnlyList<AtlasPathPoint> SelectedRoute { get; private set; } = [];
 
-    public void Interrupt() => flight = [];
+    public void Interrupt()
+    {
+        flight = [];
+        SelectedRoute = [];
+    }
+
+    internal void ClearObjective()
+    {
+        objective = null;
+        heading = null;
+        inheritedHeading = null;
+        Interrupt();
+    }
 
     internal void InheritAutomaticDirection(AtlasPathNavigator source)
     {
@@ -51,6 +64,7 @@ internal sealed class AtlasPathNavigator
         AtlasPathPoint? fixedObjective = null, bool fixedObjectiveOnGround = true)
     {
         automatic = !fixedObjective.HasValue;
+        SelectedRoute = [];
         var h = graph.KnightHeight;
         var position = new AtlasPathPoint(feet.X, feet.Y + h);
         var floor = grounded == false ? null : graph.NearestStroke(position, grounded == true ? h : Math.Max(2, h / 3), walkOnly: true);
@@ -146,6 +160,7 @@ internal sealed class AtlasPathNavigator
                 }
             }
             objective = target;
+            if (fixedObjective.HasValue) SelectedRoute = route;
             if (next != origin)
             {
                 heading = new(Math.Sign(next.X - origin.X), Math.Sign(next.Y - origin.Y));
