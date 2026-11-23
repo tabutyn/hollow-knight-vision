@@ -1085,7 +1085,7 @@ internal static class Program
 
     private static void TestHackerTerrainControls()
     {
-        var expected = new[] { "Objective", "Ground", "Wall", "Spike", "Door", "Rooms" };
+        var expected = new[] { "Objective", "Ground", "Wall", "Spike", "Door", "Rooms", "Path" };
         Check(DashboardValues("HackerEditingTargets").SequenceEqual(expected), "Unexpected Hacker editing targets.");
         var xml = MainWindowSource();
         System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
@@ -1102,6 +1102,8 @@ internal static class Program
         var modes = xml.Descendants(ns + "RadioButton").ToLookup(item => (string?)item.Attribute("GroupName"),
             item => (string?)item.Attribute("Content"));
         Check(modes["GroundMode"].SequenceEqual(new[] { "Add", "Modify", "Delete" }), "Unexpected terrain editing controls.");
+        Check(modes["HackerPathTool"].SequenceEqual(new[] { "Jump", "2 Jump", "Delete" }),
+            "Unexpected authored path editing tools.");
         Check(modes["HackerFraming"].SequenceEqual(new[] { "Free Fly", "Fit", "Current" }) && !modes.Contains("HackerSettingsMode"),
             "Hacker camera controls should appear only in the framing toolbar.");
         Console.WriteLine("PASS Hacker terrain editing and camera framing have separate controls");

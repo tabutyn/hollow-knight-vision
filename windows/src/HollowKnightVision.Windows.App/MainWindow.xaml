@@ -296,6 +296,7 @@
                                 <ComboBoxItem Content="Spike"/>
                                 <ComboBoxItem Content="Door"/>
                                 <ComboBoxItem Content="Rooms"/>
+                                <ComboBoxItem Content="Path"/>
                             </ComboBox>
                             <StackPanel x:Name="HackerTerrainActions" Orientation="Horizontal" Visibility="Collapsed">
                                 <UniformGrid Width="240" Columns="3">
@@ -306,6 +307,14 @@
                                 <Button x:Name="GroundUndoButton" Content="Undo" IsEnabled="False" Margin="8,0,3,0" Click="GroundUndo_Click"/>
                                 <TextBlock x:Name="GroundCountText" Text="0" FontFamily="Consolas" Foreground="#999999" VerticalAlignment="Center" Margin="8,0"/>
                             </StackPanel>
+                            <UniformGrid x:Name="HackerPathActions" Width="240" Columns="3" Visibility="Collapsed">
+                                <RadioButton x:Name="HackerPathJumpButton" Content="Jump" Tag="Jump" GroupName="HackerPathTool"
+                                             Style="{StaticResource Segment}" IsChecked="True" Click="HackerPathTool_Click"/>
+                                <RadioButton Content="2 Jump" Tag="DoubleJump" GroupName="HackerPathTool"
+                                             Style="{StaticResource Segment}" Click="HackerPathTool_Click"/>
+                                <RadioButton Content="Delete" Tag="Delete" GroupName="HackerPathTool"
+                                             Style="{StaticResource Segment}" Click="HackerPathTool_Click"/>
+                            </UniformGrid>
                         </StackPanel>
                     </Border>
                     <Grid x:Name="HackerViewportPanel" Grid.Row="1" Background="Black"

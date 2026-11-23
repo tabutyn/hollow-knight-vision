@@ -452,7 +452,7 @@ internal static class DashboardPresentationPolicy
     internal static IReadOnlyList<string> BottomWorkspaces { get; } =
         ["Gameplay", "Label", "Stencil", "Model", "Hacker"];
     internal static IReadOnlyList<string> HackerEditingTargets { get; } =
-        ["Objective", "Ground", "Wall", "Spike", "Door", "Rooms"];
+        ["Objective", "Ground", "Wall", "Spike", "Door", "Rooms", "Path"];
 
     internal static bool ShowsFraming(
         string workspace,
@@ -953,6 +953,7 @@ public partial class MainWindow : Window
         activeAtlasDirectory = IOPath.Combine(root, "atlas-v1", "active");
         atlasStateStore = new AtlasStateStore(IOPath.Combine(root, "atlas-v1", "states"));
         groundTruthLabels = new GroundTruthLabelController();
+        hackerPathLinks = new AtlasPathLinkStore(IOPath.Combine(root, AtlasPathLinkStore.Filename));
         objectCatalog = new UserObjectCatalog(IOPath.Combine(root, "object-catalog-v1.json"));
         customObjectChoices.AddRange(objectCatalog.Load().Select(item =>
             new ClassChoice(item.Name, item.Identifier)));
@@ -1595,7 +1596,7 @@ public partial class MainWindow : Window
 
     private void GameViewport_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (workspace == "Hacker" && SelectHackerObjective(e)) return;
+        if (workspace == "Hacker" && (SelectHackerObjective(e) || EditHackerPath(e))) return;
         if (workspace == "Hacker" && EditsHackerTerrain && GroundEditorMouseDown(e)) return;
         if (workspace == "Hacker" && hackerEditingTarget == "Rooms")
         {
@@ -1928,6 +1929,7 @@ public partial class MainWindow : Window
         if (workspace == "Hacker" && destination != "Hacker")
         {
             CancelGroundTruthGesture();
+            hackerPathLinks.CancelSelection();
             InvalidatePendingHackerWork();
         }
         if (destination is "Label" or "Model") ReleaseForwardedInput();
@@ -6140,6 +6142,7 @@ public partial class MainWindow : Window
     private void ClearHackerAtlas()
     {
         hackerObjective = null;
+        hackerPathLinks.CancelSelection();
         hackerPathGraphs.Clear();
         CancelGroundTruthGesture();
         InvalidatePendingHackerWork(resetCore: true);

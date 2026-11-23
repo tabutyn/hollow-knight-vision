@@ -9,7 +9,7 @@ namespace HollowKnightVision.Windows.App;
 
 public partial class MainWindow
 {
-    private sealed record TerrainRoom(string SceneName, AtlasPoint Position,
+    private sealed record TerrainRoom(string Key, string SceneName, AtlasPoint Position,
         HackerAtlasRect Bounds, HackerTerrainProjection Projection);
 
     private string hackerEditingTarget = "Objective";
@@ -33,7 +33,13 @@ public partial class MainWindow
         if (groundTruthLabels is null || (sender as ComboBox)?.SelectedItem is not ComboBoxItem item
             || item.Content is not string target || !DashboardPresentationPolicy.HackerEditingTargets.Contains(target)) return;
         CancelGroundTruthGesture();
+        if (target == "Path" && !EditsHackerPaths) previousHackerTerrainTarget = hackerEditingTarget;
         hackerEditingTarget = target;
+        hackerPathLinks.CancelSelection();
+        hackerPathTool = AtlasPathEditTool.Jump;
+        HackerPathJumpButton.IsChecked = true;
+        HackerPathActions.Visibility = EditsHackerPaths ? Visibility.Visible : Visibility.Collapsed;
+        if (EditsHackerPaths) AtlasPathsCheck.IsChecked = true;
         hackerTerrainTool = Enum.TryParse<GroundTruthTerrainTool>(target, out var tool) ? tool : null;
         HackerTerrainActions.Visibility = EditsHackerTerrain ? Visibility.Visible : Visibility.Collapsed;
         ReleaseForwardedInput();
@@ -64,7 +70,8 @@ public partial class MainWindow
                 bounds = bounds.IsEmpty ? live : bounds.Union(live);
             }
             if (projection is not { IsValid: true } || bounds.IsEmpty) continue;
-            mapped.Add(new(room.SceneName, HackerRoomPosition(room, topology.Edits, topology.Layout),
+            mapped.Add(new(room.Id.ToString("D").ToUpperInvariant(), room.SceneName,
+                HackerRoomPosition(room, topology.Edits, topology.Layout),
                 bounds, projection));
         }
 
@@ -72,7 +79,8 @@ public partial class MainWindow
         {
             var projection = HackerTerrainProjection.FromFrame(current, new(0, 0));
             if (projection.IsValid)
-                mapped.Add(new(current.SceneName, new(0, 0), current.LiveBounds, projection));
+                mapped.Add(new(HackerLayoutId("room", current.SceneName).ToString("D").ToUpperInvariant(),
+                    current.SceneName, new(0, 0), current.LiveBounds, projection));
         }
         return mapped;
     }

@@ -1,13 +1,20 @@
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Controls;
+using System.Windows.Shapes;
+using System.Windows.Media;
 using HollowKnightVision.Windows.Core;
 
 namespace HollowKnightVision.Windows.App;
 
 public partial class MainWindow
 {
-    private sealed record HackerPathCache(GroundTruthLineDocument Document, AtlasPoint Scale,
+    private sealed record HackerPathCache(GroundTruthLineDocument Document, AtlasPoint Scale, string Room, int LinkRevision,
         AtlasPlatformGraph Graph, IReadOnlyList<AtlasPathStroke> Display);
+    private readonly AtlasPathLinkStore hackerPathLinks;
+    private AtlasPathEditTool hackerPathTool;
+    private string previousHackerTerrainTarget = "Objective";
+    private bool EditsHackerPaths => hackerEditingTarget == "Path";
     private readonly Dictionary<string, HackerPathCache> hackerPathGraphs = new(StringComparer.Ordinal);
     private (string Scene, AtlasPathPoint Point)? hackerObjective;
     private ViewportRect? hackerPathFitBounds;
@@ -24,7 +31,8 @@ public partial class MainWindow
         var scale = room.Projection.PixelsPerWorldUnit;
         var document = groundTruthLabels.Document;
         if (hackerPathGraphs.TryGetValue(room.SceneName, out var cached)
-            && ReferenceEquals(cached.Document, document) && cached.Scale == scale) return cached;
+            && ReferenceEquals(cached.Document, document) && cached.Scale == scale && cached.Room == room.Key
+            && cached.LinkRevision == hackerPathLinks.Revision) return cached;
         var floors = new List<AtlasPathPlatform>();
         var walls = new List<AtlasPathWall>();
         var spikes = new List<AtlasPathPlatform>();
@@ -52,8 +60,10 @@ public partial class MainWindow
         }
 
         var graph = new AtlasPlatformGraph(floors, walls, QuantizePath(KnightWorldHeight * scale.Y),
-            QuantizePath(KnightWorldWidth * scale.X), pixelsPerWorldUnit: scale, previous: cached?.Graph, spikes: spikes, doors: doors);
-        var result = new HackerPathCache(document, scale, graph, AtlasPathRouting.DisplayStrokes(graph.Strokes));
+            QuantizePath(KnightWorldWidth * scale.X), connections: hackerPathLinks.Connections(PathCalibration(room)),
+            pixelsPerWorldUnit: scale, previous: cached?.Graph, spikes: spikes, doors: doors);
+        var result = new HackerPathCache(document, scale, room.Key, hackerPathLinks.Revision,
+            graph, AtlasPathRouting.DisplayStrokes(graph.Strokes));
         hackerPathGraphs[room.SceneName] = result;
         return result;
     }
@@ -62,12 +72,56 @@ public partial class MainWindow
     {
         Volatile.Write(ref atlasPathsEnabled, AtlasPathsCheck?.IsChecked == true);
         if (!IsLoaded) return;
+        if (!atlasPathsEnabled)
+        {
+            hackerPathLinks.CancelSelection();
+            if (EditsHackerPaths)
+                HackerTerrainTarget.SelectedItem = HackerTerrainTarget.Items.OfType<ComboBoxItem>()
+                    .First(item => Equals(item.Content, previousHackerTerrainTarget));
+        }
         RenderGameplayPaths();
         if (workspace == "Hacker")
         {
             RedrawHackerEdits();
             ApplyViewport(AtlasCanvas, HackerViewportPanel, hackerFraming, HackerLiveImage);
         }
+    }
+
+    private void HackerPathTool_Click(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded || sender is not RadioButton { Tag: string tag } || !Enum.TryParse<AtlasPathEditTool>(tag, out var tool))
+            return;
+        hackerPathLinks.CancelSelection();
+        hackerPathTool = tool;
+        RedrawHackerEdits();
+    }
+
+    private bool EditHackerPath(MouseButtonEventArgs e)
+    {
+        if (!EditsHackerPaths || !ShowsHackerPaths) return false;
+        var pointer = GroundPointerAtlas(e);
+        var scaleTolerance = GroundPointerTolerance();
+        if (scaleTolerance is not (> 0 and <= 10_000)) return false;
+        var tolerance = Math.Max(1, (int)Math.Ceiling(scaleTolerance));
+        var best = tolerance + 1;
+        TerrainRoom? hit = null;
+        AtlasPathPoint point = default;
+        foreach (var room in HackerTerrainRooms().OrderByDescending(room => room.SceneName == hackerLivePrepared?.SceneName))
+        {
+            var offset = PathOffset(room);
+            if (!AtlasPathPoint.TryQuantize(pointer.X - offset.X, pointer.Y - offset.Y, out var roomPoint)) continue;
+            var distance = hackerPathLinks.HitDistance(HackerPaths(room).Graph, roomPoint, PathCalibration(room), hackerPathTool);
+            if (distance is not { } candidate || candidate >= best) continue;
+            best = candidate;
+            hit = room;
+            point = roomPoint;
+        }
+        if (hit is null) return false;
+        hackerPathLinks.Click(HackerPaths(hit).Graph, point, tolerance, PathCalibration(hit), hackerPathTool);
+        if (hackerPathLinks.Issue is { } issue) SetStatus(issue);
+        RedrawHackerEdits();
+        e.Handled = true;
+        return true;
     }
 
     private bool SelectHackerObjective(MouseButtonEventArgs e)
@@ -131,8 +185,19 @@ public partial class MainWindow
             if (AtlasPathPresentation.Draw(HackerPathCanvas, paths.Display, graph.KnightWidth,
                     new(offset.X - originX, -offset.Y - originY), target, route) is { } span)
                 hackerPathFitBounds = hackerPathFitBounds is { } fit ? fit.Union(span) : span;
+            if (EditsHackerPaths && hackerPathLinks.Selection is { } selectedEndpoint && selectedEndpoint.Room == room.Key)
+            {
+                var mark = new Rectangle { Width = 8, Height = 8, Fill = Brushes.White, IsHitTestVisible = false };
+                Canvas.SetLeft(mark, selectedEndpoint.Point.X + offset.X - originX - 4);
+                Canvas.SetTop(mark, -selectedEndpoint.Point.Y - graph.KnightHeight - offset.Y - originY - 4);
+                HackerPathCanvas.Children.Add(mark);
+            }
         }
+        HackerPathActions.ToolTip = hackerPathLinks.Issue;
     }
+
+    private static AtlasPathCalibration PathCalibration(TerrainRoom room) =>
+        new(room.Key, room.SceneName, new(0, 0), room.Projection.PixelsPerWorldUnit);
 
     private static AtlasPoint PathOffset(TerrainRoom room) =>
         new(room.Position.X + room.Projection.LocalOrigin.X, room.Position.Y + room.Projection.LocalOrigin.Y);
