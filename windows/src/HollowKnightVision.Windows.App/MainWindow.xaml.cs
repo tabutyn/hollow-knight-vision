@@ -628,13 +628,21 @@ public partial class MainWindow : Window
     private string gameplayFraming
     {
         get => gameplayFramingValue;
-        set { gameplayFramingValue = value; SelectModeButtons(GameplayControlsPanel, value); }
+        set
+        {
+            gameplayFramingValue = value;
+            SelectModeButtons(GameplayControlsPanel, GameplayViewportPolicy.FramingButton(value));
+        }
     }
     private string hackerFramingValue = "Fit";
     private string hackerFraming
     {
         get => hackerFramingValue;
-        set { hackerFramingValue = value; SelectModeButtons(HackerCameraControlsPanel, value); }
+        set
+        {
+            hackerFramingValue = value;
+            SelectModeButtons(HackerCameraControlsPanel, GameplayViewportPolicy.FramingButton(value));
+        }
     }
     private bool pointerWithinLiveFrame;
     private bool passingPrimaryMouse;
@@ -1449,6 +1457,13 @@ public partial class MainWindow : Window
         bool isRepeat = false,
         ModifierKeys modifiers = ModifierKeys.None)
     {
+        if (key == Key.Tab && modifiers == ModifierKeys.None && SettingsOverlay.Visibility != Visibility.Visible
+            && (workspace == "Gameplay" && GameplayControlsPanel.IsVisible
+                || workspace == "Hacker" && HackerCameraControlsPanel.IsVisible && !HackerTerrainTarget.IsDropDownOpen))
+        {
+            if (!isRepeat) CycleAtlasFraming();
+            return true;
+        }
         if (isRepeat) return false;
         if (key == Key.R && modifiers == ModifierKeys.None && CanResetRoom()
             && (SettingsOverlay.Visibility == Visibility.Visible || workspace is "Gameplay" or "Hacker" or "Ops"))
@@ -1570,9 +1585,8 @@ public partial class MainWindow : Window
             viewportPanMatrix = (surface.RenderTransform as MatrixTransform)?.Matrix ?? Matrix.Identity;
             Mouse.Capture((IInputElement)sender, CaptureMode.Element);
             e.Handled = true;
-            if ((workspace == "Gameplay"
-                    ? gameplayFraming
-                    : hackerFraming) != "Current") return;
+            if (!GameplayViewportPolicy.FollowsCurrent(workspace == "Gameplay"
+                    ? gameplayFraming : hackerFraming)) return;
         }
         if (!ForwardsGamePointer()) return;
         var normalized = NormalizedGamePointer(e);
@@ -5332,7 +5346,7 @@ public partial class MainWindow : Window
         bool explicitRequest = false)
     {
         if (host.ActualWidth <= 1 || host.ActualHeight <= 1) return;
-        var framing = mode is "Free Fly" or "Current" ? mode : "Fit";
+        var framing = mode == "Free Fly" || GameplayViewportPolicy.FollowsCurrent(mode) ? mode : "Fit";
         var follow = LiveFrameBounds(liveFrame);
         ViewportPoint? focus = follow is { } live
             ? new ViewportPoint(live.CenterX, live.CenterY) : null;

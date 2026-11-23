@@ -1197,7 +1197,34 @@ internal static class Program
         Near(1.32 * 1.12, zoomed.M11);
         Near(480, zoomed.Transform(new Point(1120, 680)).X);
         Near(300, zoomed.Transform(new Point(1120, 680)).Y);
-        Console.WriteLine("PASS production viewport transforms drive WPF Fit/Free Fly/Current projection");
+        const BindingFlags policies = BindingFlags.Static | BindingFlags.NonPublic;
+        var viewportPolicy = assembly.GetType(
+            "HollowKnightVision.Windows.App.GameplayViewportPolicy", throwOnError: true)!;
+        object? FromPolicy(string method, string mode) => viewportPolicy.GetMethod(method, policies)!.Invoke(null, [mode]);
+        var preset = (string)FromPolicy("NextTabPreset", "Free Fly")!;
+        Check(preset == (string)FromPolicy("NextTabPreset", "Current")!, "Current and Free Fly start the same Tab cycle.");
+        var tabController = Controller();
+        var tabViewport = Value(sizeType, 1280d, 720d);
+        var tabAtlas = Value(rectType, -80d, 0d, 1800d, 720d);
+        var tabLive = Value(rectType, 100d, 10d, 640d, 360d);
+        var tabFocus = Value(pointType, 420d, 190d);
+        var expectedScales = new[] { 1.76 / 1.1, .88, 1280d / 1800 * .9, 1.76 / 1.1 };
+        for (var index = 0; index < expectedScales.Length; index++)
+        {
+            var isFit = index == 2;
+            Check((string)FromPolicy("FramingButton", preset)! == (isFit ? "Fit" : "Current"),
+                "The viewport's Tab preset highlights the wrong camera button.");
+            _ = Call(tabController, "Configure", preset, tabViewport, tabAtlas, tabLive, tabFocus, (double)index, true);
+            var frame = MatrixFor(Call(tabController, "Advance", index + .999));
+            Near(expectedScales[index], frame.M11);
+            if (!isFit)
+            {
+                Near(640, frame.Transform(new Point(420, 190)).X);
+                Near(360, frame.Transform(new Point(420, 190)).Y);
+            }
+            preset = (string)FromPolicy("NextTabPreset", preset)!;
+        }
+        Console.WriteLine("PASS production viewport transforms drive WPF Fit, Free Fly, Current and both Tab zooms");
     }
 
     private static void TestLabelingViewportGeometry()
