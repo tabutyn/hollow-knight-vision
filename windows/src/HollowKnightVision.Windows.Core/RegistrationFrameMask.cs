@@ -58,9 +58,16 @@ public sealed class MaskedFrameMotionTracker
     public LowResolutionTranslationDiagnostic? Observe(BgraFrame frame, IReadOnlyList<StencilRect> exclusions)
     {
         var reference = previousFrame;
-        var union = previousExclusions.Concat(exclusions).ToArray();
+        var referenceExclusions = previousExclusions;
         previousFrame = frame; previousExclusions = exclusions.ToArray();
+        return Match(reference, referenceExclusions, frame, exclusions);
+    }
+
+    internal static LowResolutionTranslationDiagnostic? Match(BgraFrame? reference,
+        IReadOnlyList<StencilRect> referenceExclusions, BgraFrame frame, IReadOnlyList<StencilRect> exclusions)
+    {
         if (reference is null || reference.Width != frame.Width || reference.Height != frame.Height) return null;
+        var union = referenceExclusions.Concat(exclusions).ToArray();
         var size = new SourcePoint(frame.Width, frame.Height);
         // Apply the same padded union to both images. A moving hole must not
         // become a feature which falsely drags the camera along with the Knight.

@@ -985,6 +985,7 @@ var tests = new List<(string Name, Action Run)>
     ("scenery patch rejection handles ambiguity and foreground", CalibratedSceneMotionTests.TestBoundedPatchFitRejectsAmbiguityAndForeground),
     ("durable scenery continuity requires the exact measured capture", CalibratedSceneMotionTests.TestMeasuredSceneContinuityRequiresTheSamePublishedReference),
     ("ground placement checks preserve independent registration", CalibratedSceneMotionTests.TestGroundPlacementCheckPausesWritesWithoutDiscardingTrackedBasis),
+    ("a missed Atlas registration can reconnect to its exact previous capture", AtlasCaptureGapTests.TestOneMissCanReconnectOnlyToTheRetainedCapture),
     ("calibrated scenery tolerates exposure changes and expires across a gap", CalibratedSceneMotionTests.TestExposureChangeAndMissingFrames),
     ("distributed scenery motion survives moving occlusion", CalibratedSceneMotionTests.TestDistributedMotionSurvivesMovingOcclusion),
     ("horizontal scenery calibration cannot constrain a fall", CalibratedSceneMotionTests.TestHorizontalCalibrationCannotSupplyVerticalMotion),

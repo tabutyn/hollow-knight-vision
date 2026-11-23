@@ -22,6 +22,7 @@ public sealed record RecordedTrackingSample
     public string? PoseSource { get; init; }
     public double? MotionBridgeConfidence { get; init; }
     public string? MotionBridgeSource { get; init; }
+    public double? RecoveredAtlasReferenceTimestamp { get; init; }
     public bool PoseVerified { get; init; }
     public bool HasConfirmedGround { get; init; }
     public double? GlobalCorrectionX { get; init; }
@@ -425,7 +426,8 @@ public sealed class InputPathRecorder
         AtlasPoint? floorlessCoarsePosition = null, AtlasPoint? floorlessMaskedPosition = null,
         VisualRoomDirection? floorlessExpectedDirection = null,
         string? floorlessSelectionSource = null, double? observedAt = null,
-        CalibratedSceneMotionEvidence? sceneMotion = null, double? sceneMotionMilliseconds = null)
+        CalibratedSceneMotionEvidence? sceneMotion = null, double? sceneMotionMilliseconds = null,
+        double? recoveredAtlasReferenceTimestamp = null)
     {
         ArgumentNullException.ThrowIfNull(result);
         lock (gate)
@@ -439,6 +441,7 @@ public sealed class InputPathRecorder
                 PublishedCameraX = publishedCameraPosition?.X, PublishedCameraY = publishedCameraPosition?.Y,
                 PoseSource = poseSource, MotionBridgeConfidence = motionBridgeConfidence,
                 MotionBridgeSource = motionBridgeSource, PoseVerified = result.PoseVerified,
+                RecoveredAtlasReferenceTimestamp = recoveredAtlasReferenceTimestamp,
                 HasConfirmedGround = result.HasConfirmedGround,
                 GlobalCorrectionX = result.GlobalCorrection?.X, GlobalCorrectionY = result.GlobalCorrection?.Y,
                 GlobalMatchCount = result.GlobalMatchCount, GroundSegmentCount = result.GroundSegmentCount,

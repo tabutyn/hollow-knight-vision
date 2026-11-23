@@ -4,7 +4,10 @@ namespace HollowKnightVision.Windows.Core;
 
 public sealed record GameplayTrackingPreparation(
     GameplayTerrainAnalysis? Terrain, LowResolutionTranslationDiagnostic? Motion,
-    IReadOnlyList<PixelRect> ProtectedOcclusions, IReadOnlyList<PixelRect> GroundExclusions);
+    IReadOnlyList<PixelRect> ProtectedOcclusions, IReadOnlyList<PixelRect> GroundExclusions)
+{
+    internal IReadOnlyList<StencilRect>? MotionExclusions { get; init; }
+}
 
 public sealed record GameplayTrackedFrame(
     VisualGameplayObservation Observation, GroundHypothesisTrackingResult Ground, GroundReferenceEstimate? Reference,
@@ -18,7 +21,10 @@ public sealed record GameplayTrackedFrame(
     public bool AllowsAtlasWrite => Observation.AllowsAtlasWrite || HasMeasuredSceneryContinuity;
     public bool HasMeasuredSceneryContinuity { get; init; }
     public bool RequiresWorldRecovery => !RoomAllowsAtlasWrite || SceneCut is not null
-        || (!AllowsAtlasWrite && !Observation.RetainsWorldBasisDuringPlacementCheck);
+        || CaptureGap == AtlasCaptureGapState.RequiresRecovery
+        || (!AllowsAtlasWrite && !Observation.RetainsWorldBasisDuringPlacementCheck
+            && CaptureGap != AtlasCaptureGapState.AwaitingRegistration);
+    internal AtlasCaptureGapState CaptureGap { get; init; }
     public VisualSceneDiscontinuityTracker.Cut? SceneCut { get; init; }
 }
 
@@ -35,6 +41,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
     private readonly GroundPlatformPatches patches = new();
     private readonly NormalAtlasRoomIdentity roomIdentity = new();
     private readonly MeasuredAtlasPoseLineage measuredAtlasPose = new();
+    private readonly AtlasCaptureGap atlasCaptureGap = new();
     private bool needsCameraAnchor = true;
     private string? lastKnownRoom;
     private int frameWidth, frameHeight;
@@ -68,7 +75,11 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         if (admitted)
         {
             var terrain = GameplayTerrainAnalysis.Analyze(frame, masks, tuning, semanticTuning);
-            return new(terrain, motion.Observe(frame, masks.GroundRegions.OmittedRects), protectedOcclusions, masks.GroundExclusions);
+            var motionExclusions = masks.GroundRegions.OmittedRects;
+            return new(terrain, motion.Observe(frame, motionExclusions), protectedOcclusions, masks.GroundExclusions)
+            {
+                MotionExclusions = motionExclusions
+            };
         }
 
         ResetMotionReference();
@@ -86,10 +97,17 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         VisualRoomDirection? direction = drive < 0 ? VisualRoomDirection.Left : drive > 0 ? VisualRoomDirection.Right : null;
         var hasKnownRoom = !string.IsNullOrWhiteSpace(knownRoom);
         var sceneGrid = !hasKnownRoom && roomIdentity.HasUnresolvedLoading ? null : signal.MotionGrid;
+        var motionExclusions = prepared.MotionExclusions;
+        if (!hasCommittedAtlas || !admission.AdmitsTracking || admission.Transition.ResumedAfterTransition
+            || sceneGrid is null || motionExclusions is null)
+            atlasCaptureGap.Reset();
+        var skippedCaptureRegistration = motionExclusions is null ? null
+            : atlasCaptureGap.Match(frame, motionExclusions, knight, generation,
+                hasKnownRoom ? knownRoom! : roomIdentity.RoomId, timestamp);
         var observation = terrainAnalysis?.Edges.SourceLuma is { } sourceLuma
             ? camera.ObserveGroundAnchored(frame, prepared.Motion, sourceLuma,
                 terrainAnalysis.CameraReferences, prepared.ProtectedOcclusions, hasCommittedAtlas, knight, tracker, timestamp,
-                sceneGrid, direction)
+                sceneGrid, direction, skippedCaptureRegistration)
             : camera.ObserveUnverified(frame, prepared.Motion);
         if (!admission.AdmitsTracking) camera.PauseGroundVerification();
         var cameraMilliseconds = Stopwatch.GetElapsedTime(groundStarted).TotalMilliseconds;
@@ -128,12 +146,30 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         }
         var selectedScene = observation.FloorlessEvidence is { SelectedSource: FloorlessPoseCandidateSource.CalibratedScene } evidence
             ? evidence.Scene : null;
+        var measuredGround = observation.GroundVerified && GroundMotionEvidence.IsMeasured(ground);
         var canContinueAtlasPose = admission.AdmitsTracking && visualRoom.AllowsAtlasWrite
             && measuredAtlasPose.Observe(generation, room, timestamp, localCamera,
-                observation.GroundVerified && GroundMotionEvidence.IsMeasured(ground), selectedScene,
+                measuredGround, selectedScene,
                 groundAdjusted || admission.Transition.ResumedAfterTransition);
         if (!admission.AdmitsTracking || !visualRoom.AllowsAtlasWrite)
             measuredAtlasPose.Reset();
+        var publishesScenery = canContinueAtlasPose && hasCommittedAtlas && camera.AllowsAtlasPlacement;
+        var captureGap = AtlasCaptureGapState.None;
+        if (hasCommittedAtlas && sceneGrid is not null && motionExclusions is not null
+            && admission.AdmitsTracking && visualRoom.AllowsAtlasWrite
+            && !groundAdjusted && !admission.Transition.ResumedAfterTransition)
+        {
+            var acceptedMotionReference = measuredGround || publishesScenery
+                || observation.FloorlessEvidence?.SelectedSource == FloorlessPoseCandidateSource.MaskedRegistration
+                    && observation.MotionBridgeConfidence is >= VisualGameplayTracker.MinimumRecoveryConfidence;
+            var continuedAcrossGap = observation.RecoveredAtlasReferenceTimestamp is not null || publishesScenery
+                || measuredGround && skippedCaptureRegistration is { CameraPosition: var matched }
+                    && CameraMath.Length(localCamera.X - matched.X, localCamera.Y - matched.Y) <= 2 * frame.Width / 640d;
+            captureGap = atlasCaptureGap.Complete(frame, motionExclusions, knight, generation, room, timestamp,
+                localCamera, acceptedMotionReference, continuedAcrossGap,
+                atlasFrameHeld: !observation.AllowsAtlasWrite && !publishesScenery);
+        }
+        else atlasCaptureGap.Reset();
 
         var terrain = TerrainWallDetection.Empty;
         KnightTerrainContact contact = default;
@@ -152,7 +188,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             platformPatches, walked.InRoom(room), walkedCoordinateEpoch, cameraMilliseconds, atlasStarted)
         {
             RoomAllowsAtlasWrite = visualRoom.AllowsAtlasWrite,
-            HasMeasuredSceneryContinuity = canContinueAtlasPose && hasCommittedAtlas && camera.AllowsAtlasPlacement,
+            HasMeasuredSceneryContinuity = publishesScenery,
+            CaptureGap = captureGap,
             SceneCut = visualRoom.Cut
         };
     }
@@ -168,6 +205,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         semanticAtlas.Reset();
         reference.Reset();
         measuredAtlasPose.Reset();
+        atlasCaptureGap.Reset();
         camera.ResetFloorlessMotion();
         roomIdentity.ResetObservation();
         lastKnownRoom = null;
@@ -180,6 +218,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         tracker.Reset(keepingGlobalFeatures: true);
         reference.Reset();
         measuredAtlasPose.Reset();
+        atlasCaptureGap.Reset();
         walked.BreakContinuity();
         patches.Reset();
         Paths.Suspend();
@@ -324,6 +363,6 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             loadingOwnsResume = false;
         }
 
-        private string RoomId => FormattableString.Invariant($"normal:{captureGeneration}:room:{roomEpoch}");
+        internal string RoomId => FormattableString.Invariant($"normal:{captureGeneration}:room:{roomEpoch}");
     }
 }

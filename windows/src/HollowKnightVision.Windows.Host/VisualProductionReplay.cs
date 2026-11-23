@@ -212,6 +212,7 @@ internal static class VisualProductionReplay
                     floorlessCoarsePosition: floorless?.CoarsePosition, floorlessMaskedPosition: floorless?.MaskedPosition,
                     floorlessExpectedDirection: floorless?.ExpectedDirection, floorlessSelectionSource: floorless?.SelectionName,
                     sceneMotion: floorless?.Scene,
+                    recoveredAtlasReferenceTimestamp: observation.RecoveredAtlasReferenceTimestamp,
                     observedAt: evidence.CapturedAt);
                 replayTrace.RecordAtlasAdmission(evidence.CaptureTimestamp, placement?.AllowsAtlasWrite == true);
                 replayTrace.RecordCoarseMotion(evidence.CaptureTimestamp, evidence.RenderedGameFrame, publishedCamera,
@@ -224,6 +225,7 @@ internal static class VisualProductionReplay
                     admission.AdmitsTracking, admission.Transition.ResumedAfterTransition, observation.Source,
                     observation.GroundVerified, tracked.AllowsAtlasWrite, tracked.HasMeasuredSceneryContinuity,
                     tracked.RequiresWorldRecovery,
+                    observation.RecoveredAtlasReferenceTimestamp,
                     trackerState = camera.PlacementRecoveryState, localCamera, tracked.RoomId,
                     floorless,
                     tracked.RoomAllowsAtlasWrite, tracked.SceneCut,

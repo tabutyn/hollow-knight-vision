@@ -27,6 +27,7 @@ public sealed record VisualGameplayObservation(
     public GroundHypothesisTrackingResult GroundTracking { get; init; } = GroundHypothesisTrackingResult.Empty;
     public FloorlessCameraEvidence? FloorlessEvidence { get; init; }
     public bool RetainsWorldBasisDuringPlacementCheck { get; init; }
+    public double? RecoveredAtlasReferenceTimestamp { get; init; }
     public double? MotionBridgeConfidence { get; init; }
     public double? SceneMotionMilliseconds { get; init; }
 }
@@ -38,7 +39,7 @@ public sealed record VisualGameplayObservation(
 /// </summary>
 public sealed class VisualGameplayTracker
 {
-    private const float MinimumRecoveryConfidence = .8f;
+    internal const float MinimumRecoveryConfidence = .8f;
     private readonly CameraAccumulator camera = new()
     {
         Smoothing = 0.65,
@@ -89,7 +90,8 @@ public sealed class VisualGameplayTracker
         GroundHypothesisTracker? groundTracker = null,
         double? captureTimestamp = null,
         LowResolutionMotionGrid? sceneGrid = null,
-        VisualRoomDirection? expectedDirection = null)
+        VisualRoomDirection? expectedDirection = null,
+        TransitionMotionBridgeResult? skippedCaptureRegistration = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(sourceLuma);
@@ -158,7 +160,7 @@ public sealed class VisualGameplayTracker
         {
             var current = Position;
             var resumedAfterTransition = transition.AwaitingSceneResume;
-            var masked = transition.Track(diagnostic, frame.Width, frame.Height, frame.Width,
+            var masked = skippedCaptureRegistration ?? transition.Track(diagnostic, frame.Width, frame.Height, frame.Width,
                 movingForeground: movingForeground);
             AtlasPoint? acceptedFallback = null;
             if (sceneGrid is not null && transition.IsAnchored && !resumedAfterTransition)
@@ -186,7 +188,8 @@ public sealed class VisualGameplayTracker
                     _ = floorless.ApplyCorrection(new CameraVector(
                         selected.X - coarse.X, selected.Y - coarse.Y), floorless.Revision);
                 }
-                if (selectedCoarse || selectedScene) transition.Anchor(acceptedFallback!.Value, movingForeground);
+                if (selectedCoarse || selectedScene || bridged?.ReferenceTimestamp is not null)
+                    transition.Anchor(acceptedFallback!.Value, movingForeground);
                 update = acceptedFallback is { } pose ? ApplyPose(pose) : null;
             }
             else
@@ -233,6 +236,7 @@ public sealed class VisualGameplayTracker
         {
             GroundTracking = tracking,
             FloorlessEvidence = floorlessEvidence,
+            RecoveredAtlasReferenceTimestamp = bridged?.ReferenceTimestamp,
             // Ground validation can pause writes while independent registration
             // continues to carry the existing coordinate basis on each capture.
             RetainsWorldBasisDuringPlacementCheck = !placement.AllowsAtlasWrite

@@ -3358,7 +3358,8 @@ public partial class MainWindow : Window
             renderedGameFrame,
             gameplayAdmitted, groundMilliseconds, WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId),
             (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0), visualGameplayTracker.PlacementRecoveryState,
-            visualObservation.FloorlessEvidence, visualObservation.SceneMotionMilliseconds);
+            visualObservation.FloorlessEvidence, visualObservation.SceneMotionMilliseconds,
+            visualObservation.RecoveredAtlasReferenceTimestamp);
         if ((gameMode == GameRuntimeMode.Modded && resultGameplayAtlas.Revision != Interlocked.Read(ref gameplayRenderedRevision))
             || gameplayAccepted && (replacesGameplayAtlas
             || resultGameplayAtlas.AcceptedFrameCount == 1

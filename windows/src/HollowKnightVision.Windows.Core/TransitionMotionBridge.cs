@@ -9,7 +9,10 @@ public sealed record TransitionMotionBridgeResult(
     AtlasPoint CameraPosition,
     CameraVector CameraStep,
     float Confidence,
-    TransitionMotionSource Source);
+    TransitionMotionSource Source)
+{
+    public double? ReferenceTimestamp { get; init; }
+}
 
 /// <summary>
 /// Mac's exceptional, union-masked odometry path for intervals where confirmed

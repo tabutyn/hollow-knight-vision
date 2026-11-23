@@ -68,7 +68,7 @@ internal static class InputPathRecorderTests
             floorlessExpectedDirection: VisualRoomDirection.Right,
             floorlessSelectionSource: "maskedRegistration", observedAt: 101.25,
             sceneMotion: new(new(49, -9), 7_776.95, 7_777, 12, true, false, .3, .6),
-            sceneMotionMilliseconds: 2.75);
+            sceneMotionMilliseconds: 2.75, recoveredAtlasReferenceTimestamp: 7_776.94);
         var truth = MakeGroundTruth(7);
         recorder.RecordGroundTruth(truth, 101.3);
         recorder.RecordCoarseMotion(7_778, 88, new AtlasPoint(44, -6),
@@ -155,6 +155,7 @@ internal static class InputPathRecorderTests
         Close(.6, scene.SceneMotionResidualY ?? double.NaN);
         Close(7_776.95, scene.SceneMotionReferenceTimestamp ?? double.NaN);
         Close(2.75, scene.SceneMotionMilliseconds ?? double.NaN);
+        Close(7_776.94, scene.RecoveredAtlasReferenceTimestamp ?? double.NaN);
         Check(recorder.Stop(103) is null);
     }
 

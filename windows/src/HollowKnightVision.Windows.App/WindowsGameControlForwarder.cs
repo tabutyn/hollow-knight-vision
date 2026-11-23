@@ -173,7 +173,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         double signalVisibleFraction,
         int? renderedGameFrame,
         bool atlasWriteAllowed, double groundMilliseconds, int roomId, ulong roomRevision,
-        string recoveryState, FloorlessCameraEvidence? floorless, double? sceneMotionMilliseconds)
+        string recoveryState, FloorlessCameraEvidence? floorless, double? sceneMotionMilliseconds,
+        double? recoveredAtlasReferenceTimestamp)
     {
         lock (stateLock)
         {
@@ -186,6 +187,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                 floorlessMaskedPosition: floorless?.MaskedPosition, floorlessExpectedDirection: floorless?.ExpectedDirection,
                 floorlessSelectionSource: floorless?.SelectionName,
                 sceneMotion: floorless?.Scene, sceneMotionMilliseconds: sceneMotionMilliseconds,
+                recoveredAtlasReferenceTimestamp: recoveredAtlasReferenceTimestamp,
                 publishedCameraPosition: publishedCameraPosition,
                 poseSource: poseSource,
                 motionBridgeConfidence: motionBridgeConfidence,
