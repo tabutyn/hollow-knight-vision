@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using HollowKnightVision.Windows.Core;
 
@@ -112,7 +113,33 @@ internal static class BotRecordedAtlasPathTests
         throw new InvalidOperationException("Inconsistent capture counts were accepted.");
     }
 
-    internal static void TestHostCommands(Func<string[], TextWriter, TextWriter, int> run)
+    internal static void TestHostExecutable(string executable)
+    {
+        TestHostCommands((arguments, output, error) =>
+        {
+            var start = new ProcessStartInfo(executable)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            foreach (var argument in arguments) start.ArgumentList.Add(argument);
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the native Host.");
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(30_000))
+            {
+                process.Kill(entireProcessTree: true);
+                throw new TimeoutException("The native Host did not finish the recorded-path command.");
+            }
+            output.Write(stdout.GetAwaiter().GetResult());
+            error.Write(stderr.GetAwaiter().GetResult());
+            return process.ExitCode;
+        });
+    }
+
+    private static void TestHostCommands(Func<string[], TextWriter, TextWriter, int> run)
     {
         using var temp = new TempDirectory();
         var root = temp.Directory.FullName;

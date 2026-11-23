@@ -48,7 +48,7 @@ jobs:
               --include-test-assembly --format lcov --output $report
             if ($LASTEXITCODE -ne 0) { throw 'Instrumented Windows trainer interchange failed.' }
             $records = (Get-Content -LiteralPath $report -Raw) -split '(?m)^end_of_record\r?$'
-            foreach ($file in @('GameplayGymObservationEncoder', 'HackerGymObservationEncoder')) {
+            foreach ($file in @('GameplayGymObservationEncoder', 'HackerGymObservationEncoder', 'BotRecordedAtlasPath', 'BotRecordedExitPath')) {
               $record = $records | Where-Object { $_ -match "(?m)^SF:[^\r\n]*[\\/]${file}\.cs\r?$" }
               if (-not ($record -match '(?m)^DA:[0-9]+,[1-9][0-9]*')) {
                 throw "Native trainer fixture produced no executable hits in $file."

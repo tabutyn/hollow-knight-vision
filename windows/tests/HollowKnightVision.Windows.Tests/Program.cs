@@ -39,6 +39,13 @@ if (args is ["--export-hacker-gym-probe", var gymRoot])
     return;
 }
 
+if (args is ["--recorded-path-host-probe", var routeHost])
+{
+    BotRecordedAtlasPathTests.TestHostExecutable(routeHost);
+    Console.WriteLine("PASS recorded route commands and exact archive frame identity");
+    return;
+}
+
 if (args is ["--train-bot-probe", var installedVision])
 {
     await BotTrainingTests.TrainFromWindowsCaptures(installedVision);
@@ -10099,11 +10106,8 @@ file static class GameStartupCliTailParityTests
 
     public static void TestRecordedPathCommandsUseArchiveFixtures()
     {
-        var run = RequiredType("HollowKnightVision.Windows.Host.Program")
-            .GetMethod("RunAsync", BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new MissingMethodException("Native Host CLI entry point is missing.");
-        BotRecordedAtlasPathTests.TestHostCommands((args, output, error) =>
-            ((Task<int>)run.Invoke(null, [args, null, null, output, error])!).GetAwaiter().GetResult());
+        var executable = Path.ChangeExtension(HostAssembly.Location, OperatingSystem.IsWindows() ? ".exe" : null);
+        BotRecordedAtlasPathTests.TestHostExecutable(executable);
     }
 
     public static void TestAutomaticNavigationRequiresExplicitLaunchFlag()

@@ -63,13 +63,16 @@ function Invoke-TestProject($project, $framework, $report, [switch]$NoBuildServe
     }
     & $Coverlet $assembly --target $testTarget @targetArgs `
       --include '[HollowKnightVision*]*' --include-test-assembly `
-      --format lcov --output $coveragePath
+      --format lcov --output $coveragePath | Tee-Object -Variable testOutput
     if ($LASTEXITCODE -ne 0) {
       throw "Coverage run for $assemblyName failed with exit code $LASTEXITCODE."
     }
     if (-not (Test-Path -LiteralPath $coveragePath) -or
-        -not (Select-String -LiteralPath $coveragePath -Pattern '^DA:' -Quiet)) {
-      throw "No executable lines recorded for $assemblyName."
+        -not (Select-String -LiteralPath $coveragePath -Pattern '^DA:[0-9]+,[1-9][0-9]*' -Quiet)) {
+      throw "No executable coverage hits recorded for $assemblyName."
+    }
+    if ($report -eq 'desktop-core' -and -not ($testOutput -match '^Windows core tests passed: [0-9]+$')) {
+      throw 'The Windows core test executable did not finish.'
     }
     if ($WpfCoverage) {
       $records = (Get-Content -LiteralPath $coveragePath -Raw) -split '(?m)^end_of_record\r?$'

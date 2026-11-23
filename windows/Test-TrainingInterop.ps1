@@ -27,6 +27,8 @@ try {
   $env:MKL_NUM_THREADS = '1'
   $env:PYTHONDONTWRITEBYTECODE = '1'
   $env:HKV_TRAINER_PYTHON = $Python
+  & $Dotnet $tests --recorded-path-host-probe $NativeVerifier
+  if ($LASTEXITCODE -ne 0) { throw 'Native recorded-path command fixtures failed.' }
   & $Python -B -m unittest discover -s $trainerRoot -p test_incremental_trainer.py
   if ($LASTEXITCODE -ne 0) { throw 'Shared trainer unit tests failed.' }
   $null = New-Item -ItemType Directory -Path $fixtureRoot
