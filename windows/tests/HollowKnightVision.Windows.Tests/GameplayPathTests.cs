@@ -201,6 +201,67 @@ internal static class GameplayPathTests
             "Nearby long platforms must meet at a shared column without dropping a platform.");
     }
 
+    internal static void TestUnplacedSuccessorKeepsDirectionWithoutImportingCoordinates()
+    {
+        var tracker = new GameplayPathTracker();
+        var first = new GameplayPathFrame("room", 1, Width, Height, default(AtlasPoint),
+            [Floor(0, 200, 20)], [], TerrainWallDetection.Empty,
+            new(50, Height - 20), new(46, Height - 30, 8, 10), null) { CaptureGeneration = 1 };
+        var old = tracker.Observe(first)?.Hint;
+        Require(old.HasValue && old.Value.Next.X > old.Value.Current.X, "The registered route should start facing right.");
+        var successor = first with
+        {
+            Time = 1.1, VerifiedCamera = null, Ground = [], VisibleFloors = [Line(0, 300, 20)],
+            KnightFoot = new(180, Height - 20), LocalCamera = new(2, new(450, 0))
+        };
+        var next = tracker.Observe(successor);
+        var hint = next?.Hint;
+        Require(next is { Camera: null, LocalOrigin: { X: 450, Y: 0 } }
+            && next.Strokes.SequenceEqual([new(new(450, 30), new(750, 30), Walk, true)])
+            && hint.HasValue && hint.Value.Next.X > hint.Value.Current.X,
+            "A continuous successor must keep the heading and use only its own measured coordinates.");
+        var later = tracker.Observe(successor with { Time = 1.6, LocalCamera = new(3, new(450, 0)) })?.Hint;
+        Require(later.HasValue && later.Value.Next.X < later.Value.Current.X,
+            "A new chart after a capture gap should choose its own direction.");
+    }
+
+    internal static void TestPromotionCarriesMeasuredFloorAndSurvivesNextRegisteredFrame()
+    {
+        var tracker = new GameplayPathTracker();
+        var provisional = new GameplayPathFrame("room", 1, Width, Height, null,
+            [], [Line(5, 90, 20)], TerrainWallDetection.Empty, new(30, Height - 20),
+            new(20, Height - 40, 10, 20), null)
+        { CaptureGeneration = 7, LocalCamera = new(4, default) };
+        var registration = provisional with
+        {
+            Time = 1.1, VerifiedCamera = default(AtlasPoint), VisibleFloors = [],
+            Atlas = new(new(1, [], []), new(420, 230), 8)
+        };
+        Require(tracker.Observe(provisional) is { Camera: null }, "Measured local ground should be displayed before placement.");
+        var placed = tracker.Observe(registration);
+        var expected = new AtlasPathStroke(new(105, 90), new(190, 90), Walk, true);
+        Require(placed is { Camera: { X: 100, Y: 50 } } && placed.Strokes.SequenceEqual([expected]),
+            "A matching registration should project the measured floor into the Atlas without new edge evidence.");
+        Require(tracker.Observe(registration with { Time = 1.2 })?.Strokes.SequenceEqual([expected]) == true,
+            "The promoted floor should survive the next registered capture without duplication.");
+
+        foreach (var unrelated in new[]
+        {
+            registration with { LocalCamera = new(5, default) },
+            registration with { LocalCamera = new(4, new(3, 0)) },
+            registration with { CaptureGeneration = 8 },
+            registration with { Room = "other" }
+        })
+        {
+            tracker.Reset();
+            tracker.Observe(provisional);
+            Require(tracker.Observe(unrelated) is null, "A different room, capture or coordinate epoch adopted unrelated ground.");
+        }
+        tracker.Reset();
+        tracker.Observe(provisional with { LocalCamera = null });
+        Require(tracker.Observe(registration) is null, "Screen-only ground should disappear when the map registers.");
+    }
+
     private static GroundHypothesisAtlasLine Floor(int x1, int x2, int y, bool walked = false) =>
         new(walked ? WalkedGroundMemory.WalkedSegmentId : 1, new(x1, y), new(x2, y));
 
