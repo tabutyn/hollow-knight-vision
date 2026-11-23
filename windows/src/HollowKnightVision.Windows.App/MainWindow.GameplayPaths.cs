@@ -31,7 +31,7 @@ public partial class MainWindow
             || gameplayPathPresentation is not { } current) return false;
         AdvanceViewportAnimations();
         var pointer = e.GetPosition(GameplayAtlasCanvas);
-        if (current.SelectObjective(trackingPipeline.Paths, new(pointer.X, pointer.Y),
+        if (current.SelectObjective(new(pointer.X, pointer.Y),
             GameplayPathImageBounds(), GameplayAtlasCanvas.RenderTransform.Value.M11) is not { } updated)
             return false;
         gameplayPathPresentation = updated;

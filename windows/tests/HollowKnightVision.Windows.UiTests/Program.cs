@@ -1233,10 +1233,10 @@ internal static class Program
             [new(1, new(0, 20), new(300, 20)), new(2, new(320, 40), new(1000, 40))], [], TerrainWallDetection.Empty,
             new(50, 340), new(45, 320, 10, 20), null);
         var live = new ViewportRect(200, 50, 320, 180);
-        var displayed = new GameplayPathPresentation(11, 640, 360, tracker.Observe(sample)!);
-        Check(displayed.SelectObjective(tracker, new(600, 226), live, 2) is null,
+        var displayed = new GameplayPathPresentation(11, 640, 360, tracker.Observe(sample)!) { Tracker = tracker };
+        Check(displayed.SelectObjective(new(600, 226), live, 2) is null,
             "A click outside the scaled path tolerance must stay available to the viewport.");
-        var selected = displayed.SelectObjective(tracker, new(600, 200), live, 2);
+        var selected = displayed.SelectObjective(new(600, 200), live, 2);
         Check(selected?.View.SelectedObjective == new AtlasPathPoint(800, 60),
             "The path beyond the live image must remain selectable.");
         var canvas = new Canvas();
@@ -1249,7 +1249,7 @@ internal static class Program
         var updated = tracker.Observe(sample with { Time = 1.1 });
         Check(updated?.SelectedObjective == selected.View.SelectedObjective,
             "The next capture should keep the displayed selection.");
-        Check(selected.SelectObjective(tracker, new(600, 200), live, 2)?.View.SelectedRoute.Count == 0,
+        Check(selected.SelectObjective(new(600, 200), live, 2)?.View.SelectedRoute.Count == 0,
             "Clicking the same destination must clear the selected route.");
         Console.WriteLine("PASS Game Play route selection uses Atlas coordinates and draws the full route");
     }

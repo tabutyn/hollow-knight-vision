@@ -5,6 +5,8 @@ namespace HollowKnightVision.Windows.App;
 
 internal sealed record GameplayPathPresentation(long CaptureId, int Width, int Height, GameplayPathView View)
 {
+    internal GameplayPathTracker? Tracker { get; init; }
+
     internal bool IsCurrent(bool enabled, string? context, long latestCaptureId, bool registered) =>
         enabled && context is "game" or "Gameplay" && CaptureId <= latestCaptureId
         && (View.Camera is not null ? registered : CaptureId == latestCaptureId);
@@ -17,10 +19,10 @@ internal sealed record GameplayPathPresentation(long CaptureId, int Width, int H
             View.SelectedObjective.HasValue ? null : View.Hint);
     }
 
-    internal GameplayPathPresentation? SelectObjective(GameplayPathTracker tracker, ViewportPoint pointer,
-        ViewportRect live, double zoom)
+    internal GameplayPathPresentation? SelectObjective(ViewportPoint pointer, ViewportRect live, double zoom)
     {
-        if (!pointer.IsFinite || zoom <= 0 || !double.IsFinite(zoom) || Projection(live) is not { } projection)
+        if (Tracker is not { } tracker || !pointer.IsFinite || zoom <= 0
+            || !double.IsFinite(zoom) || Projection(live) is not { } projection)
             return null;
         var (origin, scale) = projection;
         var point = new AtlasPoint((pointer.X - origin.X) / scale.Width, (origin.Y - pointer.Y) / scale.Height);
