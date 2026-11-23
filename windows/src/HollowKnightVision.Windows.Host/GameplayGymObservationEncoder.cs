@@ -47,7 +47,7 @@ public static class GameplayGymObservationEncoder
             var authored = route.Observe(request.Sample, request.Ticks, health: null, previous);
             var row = result.Observation;
             if (row is not null && version >= 12)
-                row = row with { HackerPathVersion = 1, RoadHint = authored?.RoadHint };
+                row = row.WithSharedHackerPath(authored);
             if (row is null) history.Reset();
             var vector = row is null ? null : history.Append(row, previous, now, allowMaskedKnight);
             var visibleHealth = row?.AtlasView?.Health;

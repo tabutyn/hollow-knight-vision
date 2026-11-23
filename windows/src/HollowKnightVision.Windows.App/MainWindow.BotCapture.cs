@@ -15,6 +15,12 @@ public partial class MainWindow
     private IReadOnlyList<BotCaptureReviewFrame> botReview = [];
     private int botReviewIndex;
     private bool changingBotCapture;
+    // The frame-analysis worker owns the planner. A capture or playback gets its own visit.
+    private object? botRouteOwner;
+    private BotHackerVisit? botRouteVisit;
+    private int botRouteEpoch, activeBotRouteEpoch;
+    private readonly BotVisualAtlasCoverage botVisualCoverage = new();
+    private (int Room, long Coordinates)? botVisualChart;
     private string BotRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "HollowKnightVision", "bot-v1");
@@ -26,9 +32,20 @@ public partial class MainWindow
         int roomId, ulong roomRevision, int? renderedFrame, ReceiverGroundTruthSample? receiverTelemetry,
         LiveObjectDetectionBatch? batch, IReadOnlyList<DetectedFloorLine> floors, TerrainWallDetection terrain,
         bool analyzedTerrain, AtlasPoint? camera, HudStencilResult? hud, AtlasPoint? measuredFoot, InputButtons? input,
-        BotRun? run)
+        BotRun? run, long walkedCoordinateEpoch, bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions)
     {
         var capture = Volatile.Read(ref botCapture);
+        var owner = (object?)capture ?? run;
+        var epoch = Volatile.Read(ref botRouteEpoch);
+        if (!ReferenceEquals(owner, botRouteOwner) || activeBotRouteEpoch != epoch)
+        {
+            botRouteOwner = owner;
+            activeBotRouteEpoch = epoch;
+            var labels = capture is { CapturesHacker: true } ? capture.Authored : run?.Authored;
+            botRouteVisit = labels is null ? null : new(labels, hackerPathLinks);
+            botVisualCoverage.Reset();
+            botVisualChart = null;
+        }
         if (capture?.WantsFrame(generation, timestamp) != true) capture = null;
         var playback = run is null ? null : Volatile.Read(ref run.Loaded)?.Policy;
         if (playback?.WantsObservation(timestamp) != true) playback = null;
@@ -37,12 +54,27 @@ public partial class MainWindow
         if (batch?.CaptureGeneration == visualGeneration) batch = batch with { CaptureGeneration = generation };
         else batch = null;
         var time = new BotCaptureTiming(timestamp, BotCaptureClock(), generation, roomId, roomRevision);
-        var authored = capture is { CapturesHacker: true } ? capture.Authored
-            : playback is not null && run?.Domain == BotCaptureDomain.Hacker ? run.Authored : null;
-        var exact = authored is null ? null : BotObservationBuilder.Hacker(frame, renderedFrame, receiverTelemetry, authored, time, input);
+        var roomKey = receiverTelemetry?.SceneName is { Length: > 0 } scene
+            ? HackerLayoutId("room", scene).ToString("D").ToUpperInvariant() : null;
+        var exact = botRouteVisit?.Observe(new(frame.Width, frame.Height), renderedFrame, receiverTelemetry, time, input,
+            (int)Math.Min(roomRevision, int.MaxValue), objective: Volatile.Read(ref hackerObjective), roomKey: roomKey);
         var visual = capture is not null || playback is not null && run?.Domain == BotCaptureDomain.Gameplay
             ? BotObservationBuilder.Gameplay(frame, time, batch, floors, terrain.Walls, analyzedTerrain,
-                camera, hud, measuredFoot, input, exact?.BlueHealthOutcomes) : null;
+                camera, hud, measuredFoot, input, exact?.BlueHealthOutcomes).WithSharedHackerPath(exact) : null;
+        if (visual is not null)
+        {
+            var currentChart = (roomId, walkedCoordinateEpoch);
+            if (botVisualChart != currentChart)
+            {
+                botVisualCoverage.Reset();
+                botVisualChart = currentChart;
+            }
+            var size = new WorldSize(frame.Width, frame.Height);
+            if (camera is { } pose && admitsPlacement) botVisualCoverage.Register(pose, size, atlasExclusions);
+            else if (camera is null) botVisualCoverage.Interrupt();
+            visual = visual with { AtlasView = botVisualCoverage.View(camera, size,
+                (int)Math.Min(roomRevision, int.MaxValue), visual.MeasuredHealth) };
+        }
         if (capture is not null) capture.TryRecord(frame, visual!, exact);
         if (run is not null && playback is not null)
             DriveBotFrame(run, playback, run.Domain == BotCaptureDomain.Hacker ? exact : visual, input);

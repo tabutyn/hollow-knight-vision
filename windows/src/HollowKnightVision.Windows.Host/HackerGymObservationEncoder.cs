@@ -87,7 +87,6 @@ public static class HackerGymObservationEncoder
 /// <summary>Owns the authored route used by both observation domains in one Gym episode.</summary>
 internal sealed class GymHackerRoute
 {
-    private readonly GroundTruthLineDocument labels;
     private readonly BotHackerVisit visit;
     private readonly Dictionary<string, int> rooms = new(StringComparer.Ordinal);
 
@@ -102,8 +101,7 @@ internal sealed class GymHackerRoute
             throw new FileNotFoundException("The frozen Gym path connections are missing.", linksFile);
         var links = new AtlasPathLinkStore(linksFile);
         if (links.Issue is { } linkIssue) throw new InvalidDataException(linkIssue);
-        labels = new GroundTruthLineStore(labelsPath).Load();
-        visit = new BotHackerVisit(labels, links, fixedObjective);
+        visit = new BotHackerVisit(new GroundTruthLineStore(labelsPath).Load(), links, fixedObjective);
     }
 
     internal BotCaptureObservation? Observe(ReceiverGroundTruthSample sample, int ticks, int? health, BotPolicyAction previous)
@@ -118,12 +116,6 @@ internal sealed class GymHackerRoute
         var size = new WorldSize(sample.ProjectionPixelWidth.Value, sample.ProjectionPixelHeight.Value);
         if (!rooms.TryGetValue(sample.SceneName, out var room)) rooms[sample.SceneName] = room = rooms.Count + 1;
         var timing = new BotCaptureTiming(now, now, 1, room, 0);
-        var row = BotObservationBuilder.Hacker(size, HackerFrameSynchronizer.Key(sample.UnityFrame), sample, labels, timing, previous.Buttons);
-        if (row is null)
-        {
-            visit.Interrupt();
-            return null;
-        }
-        return visit.Extend(row, sample, size, ticks, health);
+        return visit.Observe(size, HackerFrameSynchronizer.Key(sample.UnityFrame), sample, timing, previous.Buttons, ticks, health);
     }
 }

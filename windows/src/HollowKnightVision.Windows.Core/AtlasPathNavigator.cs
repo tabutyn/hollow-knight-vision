@@ -27,7 +27,7 @@ internal sealed class AtlasPathNavigator
 
     internal AtlasPathHint? Follow(AtlasPlatformGraph graph, AtlasPathPoint feet, bool? grounded, bool measured,
         Func<AtlasPathPoint, AtlasPathPoint, bool>? admitted, IReadOnlyList<AtlasPathPlatform> walked,
-        AtlasPathPoint? fixedObjective = null)
+        AtlasPathPoint? fixedObjective = null, bool fixedObjectiveOnGround = true)
     {
         var h = graph.KnightHeight;
         var position = new AtlasPathPoint(feet.X, feet.Y + h);
@@ -52,7 +52,8 @@ internal sealed class AtlasPathNavigator
                     visited.Add(Bucket(vertex));
 
         var previousObjective = fixedObjective ?? objective;
-        var oldGoalLine = previousObjective is { } previous ? graph.NearestStroke(previous, h, walkOnly: true) : null;
+        var oldGoalLine = previousObjective is { } previous
+            ? graph.NearestStroke(previous, h, walkOnly: !fixedObjective.HasValue || fixedObjectiveOnGround) : null;
         var oldGoal = oldGoalLine is { } prior && previousObjective is { } target ? prior.Closest(target) : (AtlasPathPoint?)null;
         var search = new AtlasPathSearch(graph, startStroke, start, admitted, oldGoalLine, oldGoal, stopAtTarget: fixedObjective.HasValue);
         if (fixedObjective.HasValue)

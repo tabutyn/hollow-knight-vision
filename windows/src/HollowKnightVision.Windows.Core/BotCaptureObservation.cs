@@ -89,6 +89,15 @@ public sealed record BotCaptureObservation(
         && DetectionTimestamp is { } detection && CaptureTimestamp - detection is >= 0 and <= BotRecordingContract.MaximumDetectionAge
         && AvailableAt - CapturedAt is >= 0 and <= BotRecordingContract.MaximumCaptureAge
         && (Enumerable.Range(0, 16).Any(i => Features[20 + 5 * i] == 1) || DetectedTerrain?.Walls.Count > 0);
+
+    public BotCaptureObservation WithSharedHackerPath(BotCaptureObservation? authored)
+    {
+        if (authored is not { TerrainSource: "human-authored", HackerPathVersion: 1 }
+            || authored.Generation != Generation || authored.CaptureTimestamp != CaptureTimestamp)
+            authored = null;
+        return this with { HackerPathVersion = 1, RoadHint = authored?.RoadHint,
+            PathProgress = authored?.PathProgress, PathAlignment = authored?.PathAlignment };
+    }
 }
 
 public static class BotObservationBuilder

@@ -1,28 +1,62 @@
 namespace HollowKnightVision.Windows.Core;
 
+/// <summary>An Atlas objective stored in room world coordinates so it survives changes in projection.</summary>
+public sealed record BotAtlasObjective(string Scene, AtlasPoint WorldPosition)
+{
+    public AtlasPathPoint? Project(string scene, AtlasPoint scale, AtlasPlatformGraph graph) =>
+        Scene == scene && AtlasPathPoint.TryQuantize(WorldPosition.X * scale.X, WorldPosition.Y * scale.Y, out var point)
+            && graph.NearestStroke(point, graph.KnightHeight) is { } stroke ? stroke.Closest(point) : null;
+}
+
 /// <summary>Uses measured receiver frames to decorate observations within one Hacker visit.</summary>
 public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLinkStore? links = null, AtlasPoint? fixedWorldGoal = null)
 {
-    private readonly HashSet<(int X, int Y)> covered = [];
     private readonly Dictionary<string, RouteRoom> rooms = new(StringComparer.Ordinal);
     private readonly BotHackerContact contact = new();
-    private AtlasPoint? origin;
     private RouteRoom? activeRoom;
     private RouteSample? previous;
+    private BotAtlasObjective? previousObjective;
+    private Guid? session;
+    private long generation = -1;
 
     public bool ObjectiveReachable { get; private set; }
 
-    private sealed class RouteRoom(AtlasPathCalibration calibration, AtlasPlatformGraph graph)
+    private sealed class RouteRoom(AtlasPathCalibration calibration, AtlasPlatformGraph graph, int linkRevision)
     {
         public AtlasPathCalibration Calibration { get; set; } = calibration;
         public AtlasPlatformGraph Graph { get; set; } = graph;
+        public int LinkRevision { get; set; } = linkRevision;
         public AtlasPathNavigator Navigation { get; } = new();
+        public HashSet<(int X, int Y)> Covered { get; } = [];
+        public AtlasPoint? CoverageOrigin { get; set; }
     }
 
     private sealed record RouteSample(AtlasPathHint Path, AtlasPathPoint Knight, double Time, int Best, BotRoadHint Road);
 
-    public BotCaptureObservation Extend(BotCaptureObservation row, ReceiverGroundTruthSample sample, WorldSize size,
-        int revision, int? health)
+    public BotCaptureObservation? Observe(WorldSize size, int? renderedFrame, ReceiverGroundTruthSample? sample,
+        BotCaptureTiming timing, InputButtons? input, int revision, int? health = null,
+        BotAtlasObjective? objective = null, string? roomKey = null)
+    {
+        var row = BotObservationBuilder.Hacker(size, renderedFrame, sample, labels, timing, input);
+        if (row is null || sample is null)
+        {
+            Interrupt();
+            return null;
+        }
+        if (session != sample.SessionId || generation != timing.Generation)
+        {
+            Interrupt();
+            rooms.Clear();
+            activeRoom = null;
+            contact.Reset();
+            session = sample.SessionId;
+            generation = timing.Generation;
+        }
+        return Extend(row, sample, size, revision, health ?? row.MeasuredHealth, objective, roomKey);
+    }
+
+    private BotCaptureObservation Extend(BotCaptureObservation row, ReceiverGroundTruthSample sample, WorldSize size,
+        int revision, int? health, BotAtlasObjective? objective, string? roomKey)
     {
         ObjectiveReachable = false;
         if (size.Width > 8192 || size.Height > 8192
@@ -37,22 +71,23 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
 
         var scale = new AtlasPoint(camera.PixelsPerWorldUnitX, camera.PixelsPerWorldUnitY);
         var center = new AtlasPoint(camera.CameraWorld.X * scale.X, camera.CameraWorld.Y * scale.Y);
-        origin ??= center;
-        var pose = new AtlasPoint(center.X - origin.Value.X, center.Y - origin.Value.Y);
-        AddCoverage(covered, pose, size);
-        var view = BotAtlasFrontiers.View(pose, size, revision, health, covered.Count, 0, (x, y) => covered.Contains((x, y)));
+        var room = Room(camera.SceneName, scale, roomKey);
+        room.CoverageOrigin ??= center;
+        var pose = new AtlasPoint(center.X - room.CoverageOrigin.Value.X, center.Y - room.CoverageOrigin.Value.Y);
+        AddCoverage(room.Covered, pose, size);
+        var view = BotAtlasFrontiers.View(pose, size, revision, health, room.Covered.Count, 0, (x, y) => room.Covered.Contains((x, y)));
         var worldOrigin = new AtlasPoint(center.X - size.Width / 2, center.Y - size.Height / 2);
         var result = row with { AtlasView = view, HackerPathVersion = 1,
             Blockade = contact.Observe(row, camera, size, sample.Grounded) };
 
-        var room = Room(camera.SceneName, scale);
-        if (!ReferenceEquals(activeRoom, room))
+        if (!ReferenceEquals(activeRoom, room) || previousObjective != objective)
         {
             previous = null;
             activeRoom?.Navigation.Interrupt();
             activeRoom = room;
+            previousObjective = objective;
         }
-        ObjectiveReachable = !fixedWorldGoal.HasValue;
+        ObjectiveReachable = !fixedWorldGoal.HasValue && objective is null;
         var graph = room.Graph;
         if (row.Features[4] < .5 || row.Issues.Any(issue => issue != "missing-terrain-analysis")
             || !AtlasPathPoint.TryQuantize(worldOrigin.X + row.Features[0] * size.Width,
@@ -63,7 +98,7 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
             return result;
         }
 
-        var goal = graph.UpperRightObjective;
+        var goal = objective is null ? graph.UpperRightObjective : objective.Project(camera.SceneName, scale, graph);
         if (fixedWorldGoal is { } fixedGoal)
         {
             if (camera.SceneName != "Tutorial_01"
@@ -76,7 +111,7 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
             goal = target.Closest(gate);
         }
         var path = goal is null ? null : room.Navigation.Follow(graph, feet, sample.Grounded, measured: true,
-            admitted: null, walked: [], fixedObjective: goal);
+            admitted: null, walked: [], fixedObjective: goal, fixedObjectiveOnGround: objective is null);
         ObjectiveReachable |= path.HasValue;
         if (path is not { } next)
         {
@@ -105,20 +140,27 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
         activeRoom?.Navigation.Interrupt();
     }
 
-    private RouteRoom Room(string scene, AtlasPoint scale)
+    private RouteRoom Room(string scene, AtlasPoint scale, string? roomKey)
     {
-        var calibration = new AtlasPathCalibration("scene/" + scene, scene, default, scale);
+        var calibration = new AtlasPathCalibration(roomKey ?? "scene/" + scene, scene, default, scale);
+        var revision = links?.Revision ?? 0;
         if (!rooms.TryGetValue(scene, out var room))
         {
-            room = new(calibration, AuthoredAtlasGraph.Build(labels, calibration, links));
+            room = new(calibration, AuthoredAtlasGraph.Build(labels, calibration, links), revision);
             rooms[scene] = room;
         }
-        else if (room.Calibration != calibration)
+        else if (room.Calibration != calibration || room.LinkRevision != revision)
         {
             // A frame's projection can vary by a fraction of a pixel as the
             // camera moves. Retain route continuity across calibration updates.
             room.Graph = AuthoredAtlasGraph.Build(labels, calibration, links, room.Graph);
             room.Calibration = calibration;
+            if (room.LinkRevision != revision)
+            {
+                previous = null;
+                room.Navigation.Interrupt();
+            }
+            room.LinkRevision = revision;
         }
         return room;
     }

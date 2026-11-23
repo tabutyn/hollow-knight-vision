@@ -3446,7 +3446,13 @@ public partial class MainWindow : Window
                 WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0),
                 renderedGameFrame, receiverTelemetry, recognition.Objects.MeasuredBatch, ground, terrain,
                 groundAnalysis is not null, visualObservation.GroundVerified ? groundDisplayCamera : null, hudStencil,
-                terrainContact.MeasuredFoot, movementButtons, activeBot);
+                terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch,
+                admission.AllowsAtlasWrite, masks.AtlasExclusions);
+        }
+        else
+        {
+            botRouteVisit?.Interrupt();
+            botVisualCoverage.Interrupt();
         }
         if (inputPathDivergenceMonitor.IsAcceptingSamples
             && renderedGameFrame is { } renderedFrame)
@@ -6128,7 +6134,8 @@ public partial class MainWindow : Window
 
     private void ClearHackerAtlas()
     {
-        hackerObjective = null;
+        Volatile.Write(ref hackerObjective, null);
+        Interlocked.Increment(ref botRouteEpoch);
         hackerPathLinks.CancelSelection();
         hackerPathGraphs.Clear();
         CancelGroundTruthGesture();

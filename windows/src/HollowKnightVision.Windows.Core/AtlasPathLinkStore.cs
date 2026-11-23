@@ -24,7 +24,8 @@ public sealed class AtlasPathLinkStore
     private bool writable;
     public AtlasPathSelection? Selection { get; private set; }
     public string? Issue { get; private set; }
-    public int Revision { get; private set; }
+    private int revision;
+    public int Revision => Volatile.Read(ref revision);
 
     private sealed record Point([property: JsonRequired] double X, [property: JsonRequired] double Y);
     private sealed record Link([property: JsonRequired] Guid Id, [property: JsonRequired] Point First,
@@ -120,8 +121,9 @@ public sealed class AtlasPathLinkStore
     private Projected[] Placed(AtlasPathCalibration calibration)
     {
         if (!calibration.IsValid) return [];
-        var scenes = Project(document.Scenes.GetValueOrDefault(calibration.Scene) ?? [], world: true).ToArray();
-        if (!document.Rooms.TryGetValue(calibration.Room, out var room)) return scenes;
+        var current = Volatile.Read(ref document);
+        var scenes = Project(current.Scenes.GetValueOrDefault(calibration.Scene) ?? [], world: true).ToArray();
+        if (!current.Rooms.TryGetValue(calibration.Room, out var room)) return scenes;
         var byId = scenes.ToDictionary(link => link.Id);
         return Project(room, world: false).Select(link => byId.GetValueOrDefault(link.Id, link)).ToArray();
 
@@ -148,9 +150,9 @@ public sealed class AtlasPathLinkStore
         try
         {
             AtomicFile.Write(path, JsonSerializer.SerializeToUtf8Bytes(next, JsonOptions));
-            document = next;
+            Volatile.Write(ref document, next);
             Issue = null;
-            Revision++;
+            Interlocked.Increment(ref revision);
             return true;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)

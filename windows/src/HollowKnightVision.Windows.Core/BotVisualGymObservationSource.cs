@@ -24,9 +24,7 @@ public sealed class BotVisualGymObservationSource
         productionCameraSolver: true, deterministicGlobalSearch: true);
     private readonly GroundSemanticAtlas terrainAtlas = new();
     private readonly WalkedGroundTracker walked = new();
-    private readonly HashSet<(int X, int Y)> occupied = [];
-    private readonly HashSet<(int X, int Y)> earned = [];
-    private AtlasPoint? lastPlaced;
+    private readonly BotVisualAtlasCoverage coverage = new();
     private int chart;
     private int? activeRoom;
 
@@ -57,7 +55,7 @@ public sealed class BotVisualGymObservationSource
         {
             _ = ObserveRoom(camera.Position, groundVerified: false);
             camera.PauseGroundVerification();
-            lastPlaced = null;
+            coverage.Interrupt();
             return new(null, [signal.HasGameplaySignal ? "waiting-for-visual-gameplay" : "transition-blackout"], confidence);
         }
 
@@ -66,16 +64,14 @@ public sealed class BotVisualGymObservationSource
             ? masks.GroundExclusions.Append(knight).ToArray() : masks.GroundExclusions;
         var measuredMotion = motion.Observe(frame, masks.GroundRegions.OmittedRects);
         var observed = camera.ObserveGroundAnchored(frame, measuredMotion, analysis.Edges.SourceLuma!,
-            analysis.CameraReferences, textureExclusions, occupied.Count > 0, masks.GroundKnight, ground, time);
+            analysis.CameraReferences, textureExclusions, coverage.HasCoverage, masks.GroundKnight, ground, time);
         var placement = observed.GroundVerified ? observed.GroundTracking.CameraPosition : null;
         var room = ObserveRoom(placement ?? camera.Position, observed.GroundVerified);
         if (room.IsTransitioning || activeRoom.HasValue && activeRoom.Value != room.RoomID || admitted.Transition.ResumedAfterTransition)
         {
             activeRoom = room.RoomID;
             chart++;
-            occupied.Clear();
-            earned.Clear();
-            lastPlaced = null;
+            coverage.Reset();
             ground.Reset(keepingGlobalFeatures: false);
             camera.Reset();
             motion.Reset();
@@ -102,15 +98,14 @@ public sealed class BotVisualGymObservationSource
             // register its local footprint without waiting for the live
             // desktop Atlas's stationary first-write bootstrap.
             if (admitted.AllowsAtlasWrite)
-                IncludeCoverage(pose, size, masks.AtlasExclusions, room.CompositionBounds);
+                coverage.Register(pose, size, masks.AtlasExclusions, room.CompositionBounds);
         }
+        else coverage.Interrupt();
 
         var timing = new BotCaptureTiming(time, time, Generation, chart, room.Revision);
         var row = BotObservationBuilder.Gameplay(frame, timing, observations.MeasuredBatch, floors, terrain.Walls,
             terrainAnalyzed: true, placement, hud, contact.MeasuredFoot, controls);
-        if (placement is { } atlas && occupied.Count > 0)
-            row = row with { AtlasView = BotAtlasFrontiers.View(atlas, size, (int)frame.CaptureId, row.MeasuredHealth,
-                occupied.Count, earned.Count, (x, y) => occupied.Contains((x, y))) };
+        row = row with { AtlasView = coverage.View(placement, size, (int)frame.CaptureId, row.MeasuredHealth) };
         return new(row, row.Issues, confidence)
         {
             Camera = new(observed.Source, observed.GroundVerified, observed.AllowsAtlasWrite, analysis.CameraReferences.Count,
@@ -153,23 +148,4 @@ public sealed class BotVisualGymObservationSource
         return lines;
     }
 
-    private void IncludeCoverage(AtlasPoint pose, WorldSize size, IReadOnlyList<PixelRect> omissions, VisualRoomCompositionBounds bounds)
-    {
-        if (!AtlasPathPoint.TryQuantize(pose.X, pose.Y, out _)) return;
-        var left = Math.Max(pose.X, bounds.MinimumWorldX ?? pose.X);
-        var right = Math.Min(pose.X + size.Width, bounds.MaximumWorldX ?? pose.X + size.Width);
-        var delta = lastPlaced is { } old
-            ? Math.Sqrt(Math.Pow(old.X - pose.X, 2) + Math.Pow(old.Y - pose.Y, 2)) : 0;
-        lastPlaced = pose;
-        var step = BotAtlasFrontiers.CellSize;
-        for (var y = BotAtlasFrontiers.FirstCenter(pose.Y + size.Height * .18);
-             y < BotAtlasFrontiers.FirstCenter(pose.Y + size.Height * .78); y++)
-        for (var x = BotAtlasFrontiers.FirstCenter(left); x < BotAtlasFrontiers.FirstCenter(right); x++)
-        {
-            var pixelX = (x + .5) * step - pose.X;
-            var pixelY = size.Height - ((y + .5) * step - pose.Y);
-            if (omissions.Any(rect => rect.X <= pixelX && pixelX < rect.Right && rect.Y <= pixelY && pixelY < rect.Bottom)) continue;
-            if (occupied.Add((x, y)) && delta > 1 && delta <= size.Width / 2) earned.Add((x, y));
-        }
-    }
 }
