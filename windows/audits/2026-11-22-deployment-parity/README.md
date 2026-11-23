@@ -66,5 +66,12 @@ collecting counters. [Coverlet custom runner documentation](https://github.com/c
 [Native Windows terrain coverage](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45086876700)
 reached 423 of 438 changed executable lines in the Core terrain editor and room
 projection. The [Tab framing run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45087249498)
-reached 10 of 20 measured changed lines in the viewport policy. The live
-`MainWindow` handlers and XAML have no line counters in these runs.
+reached 10 of 20 measured changed lines in the viewport policy. Those
+runs lacked WPF counters because Coverlet could not resolve desktop framework
+types. The coverage build now stages the WPF tests with their framework and
+checks that the offscreen renderer produces WPF app line hits. Installer
+scripts and XAML themselves have no executable line counters.
+
+The [walked-ground native test run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45089001817)
+passed and reached 291 of 308 changed executable lines in the instrumented
+files. The focused platform-patch tests reached 71 of 71 changed Core lines.
