@@ -3246,20 +3246,11 @@ public partial class MainWindow : Window
         }
         if (admission.AdmitsTracking)
         {
-            groundAnalysis = GroundLineDetector.Analyze(frame, groundExclusions);
-            var groundComparison = GroundLineDetector.Compare(groundAnalysis);
-            groundTheory = GroundLineDetector.Theory(
-                groundComparison,
-                GroundTheoryTuning.Default);
-            ground = GroundLineDetector.SemanticFloorLines(
-                groundComparison,
-                GroundTheoryTuning.SemanticDefault);
-            ground = GroundLineDetector.RejectKnownForegroundLines(
-                ground, frame.Height, groundExclusions, masks.GroundKnight);
-
-            hypothesisFloorLines = GroundLineDetector.CameraReferenceFloors(
-                GroundLineDetector.CleanFloorLines(groundTheory), ground,
-                frame.Height, masks.GroundKnight, groundExclusions);
+            var extracted = GameplayTerrainAnalysis.Analyze(frame, masks);
+            groundAnalysis = extracted.Edges;
+            groundTheory = extracted.Theory;
+            ground = extracted.Floors;
+            hypothesisFloorLines = extracted.CameraReferences;
         }
         else groundHypothesisState.SuspendTracking();
 

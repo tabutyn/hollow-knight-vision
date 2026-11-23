@@ -3,7 +3,6 @@ namespace HollowKnightVision.Windows.Core;
 /// <summary>Uses measured receiver frames to decorate observations within one Hacker visit.</summary>
 public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLinkStore? links = null, AtlasPoint? fixedWorldGoal = null)
 {
-    private const double CellSize = 64;
     private readonly HashSet<(int X, int Y)> covered = [];
     private readonly Dictionary<string, RouteRoom> rooms = new(StringComparer.Ordinal);
     private readonly BotHackerContact contact = new();
@@ -41,7 +40,7 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
         origin ??= center;
         var pose = new AtlasPoint(center.X - origin.Value.X, center.Y - origin.Value.Y);
         AddCoverage(covered, pose, size);
-        var view = View(pose, size, revision, health);
+        var view = BotAtlasFrontiers.View(pose, size, revision, health, covered.Count, 0, (x, y) => covered.Contains((x, y)));
         var worldOrigin = new AtlasPoint(center.X - size.Width / 2, center.Y - size.Height / 2);
         var result = row with { AtlasView = view, HackerPathVersion = 1,
             Blockade = contact.Observe(row, camera, size, sample.Grounded) };
@@ -143,51 +142,14 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
         return (count / (double)height, alignment);
     }
 
-    private BotAtlasView View(AtlasPoint pose, WorldSize size, int revision, int? health)
-    {
-        var middle = Cell(pose.Y + size.Height / 2);
-        var missing = new List<double>(15);
-        for (var y = -1; y <= 1; y++)
-        for (var x = -2; x <= 2; x++)
-        {
-            var unknown = 0;
-            foreach (var oy in new[] { -.125, .125 })
-            foreach (var ox in new[] { -.125, .125 })
-            {
-                var wx = pose.X + size.Width * (.5 + x * .5 + ox);
-                var wy = pose.Y + size.Height * (.5 + y * .5 + oy);
-                if (!covered.Contains((Cell(wx), Cell(wy)))) unknown++;
-            }
-            missing.Add(unknown / 4d);
-        }
-        return new(Proximity(-1), Proximity(1), [pose.X, pose.Y], size.Width, covered.Count, 0, revision, health, missing);
-
-        double Proximity(int direction)
-        {
-            var column = Cell(direction < 0 ? pose.X : pose.X + size.Width);
-            for (var step = 1; step <= 64; step++)
-            {
-                var known = 0;
-                for (var row = middle - 1; row <= middle + 1; row++)
-                    if (covered.Contains((column + direction * step, row))) known++;
-                if (known < 2) return 1 / (1 + (step - 1) / 5d);
-            }
-            return 0;
-        }
-    }
-
     private static void AddCoverage(HashSet<(int X, int Y)> cells, AtlasPoint pose, WorldSize size)
     {
-        var firstX = CenterStart(pose.X);
-        var firstY = CenterStart(pose.Y);
-        var endX = CenterStart(pose.X + size.Width);
-        var endY = CenterStart(pose.Y + size.Height);
+        var firstX = BotAtlasFrontiers.FirstCenter(pose.X);
+        var firstY = BotAtlasFrontiers.FirstCenter(pose.Y);
+        var endX = BotAtlasFrontiers.FirstCenter(pose.X + size.Width);
+        var endY = BotAtlasFrontiers.FirstCenter(pose.Y + size.Height);
         for (var y = firstY; y < endY; y++)
         for (var x = firstX; x < endX; x++)
             cells.Add((x, y));
-
-        static int CenterStart(double value) => (int)Math.Ceiling(value / CellSize - .5);
     }
-
-    private static int Cell(double value) => (int)Math.Floor(value / CellSize);
 }

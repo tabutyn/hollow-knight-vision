@@ -286,6 +286,9 @@ public static class AutoNavigationRunner
         }
     }
 
+    internal static Func<BgraFrame, StartupStencilEvidence> CreateGymStencilSource(string supportRoot) =>
+        LiveStartupStencilEvidenceProvider.CreateDefault(supportRoot, allowFallback: false).Observe;
+
     private sealed class LiveStartupStencilEvidenceProvider : IStartupStencilEvidenceProvider
     {
         private readonly MenuStencilTracker menu;
@@ -306,7 +309,7 @@ public static class AutoNavigationRunner
 
         internal string Diagnostic { get; }
 
-        internal static LiveStartupStencilEvidenceProvider CreateDefault(string? supportRoot)
+        internal static LiveStartupStencilEvidenceProvider CreateDefault(string? supportRoot, bool allowFallback = true)
         {
             supportRoot ??= Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -354,7 +357,7 @@ public static class AutoNavigationRunner
 
             var language = LoadLanguage(supportRoot);
             var capturedHud = CapturedHud(examples, language);
-            var allowGeometryFallback = catalog.Scenes.Count == 0;
+            var allowGeometryFallback = allowFallback && catalog.Scenes.Count == 0;
             var diagnostic = FormattableString.Invariant(
                 $"menu-scenes={catalog.Scenes.Count}; title-fallback={(allowGeometryFallback ? "geometry" : "disabled")}; hud={(capturedHud is not null ? "captured" : "unavailable")}; language={language}");
             return new(

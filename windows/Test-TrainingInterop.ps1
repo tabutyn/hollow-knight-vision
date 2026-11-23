@@ -210,6 +210,8 @@ for version in (bot.SCHEMA_VERSION, bot.GROUND_CONTACT_POLICY_VERSION, bot.LANDI
   if ($LASTEXITCODE -ne 0) { throw 'Could not export the synthetic Hacker Gym receiver sequence.' }
   & $Python -B (Join-Path $PSScriptRoot 'tests\hacker_gym_interop.py') $botSource $gymProbe $nativeVerifier
   if ($LASTEXITCODE -ne 0) { throw 'Hacker Gym observation transport did not match the trainer protocol.' }
+  & $Python -B (Join-Path $PSScriptRoot 'tests\gameplay_gym_interop.py') $botSource $gymProbe $nativeVerifier
+  if ($LASTEXITCODE -ne 0) { throw 'Game Play Gym observation transport leaked telemetry into visual inputs or rejected pixel evidence.' }
 
 } finally {
   foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }

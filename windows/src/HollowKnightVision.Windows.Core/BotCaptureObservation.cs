@@ -175,6 +175,11 @@ public static class BotObservationBuilder
             .StartsWith("enemies.", StringComparison.Ordinal)).Select(ProjectBox);
         var ground = measuredFoot is { } foot && terrain.Floors.Any(line =>
             line.MinimumX <= foot.X && foot.X <= line.MaximumX && Math.Abs(image.Height - foot.Y - line.Y) <= Math.Max(2, image.Height / 180d));
+        bool? grounded = ground ? true : null;
+        if (!ground && measuredFoot is { } visible && input is { } applied && applied.HasFlag(InputButtons.ActionZ)
+            && terrain.Floors.Any(floor => floor.MinimumX <= visible.X && visible.X <= floor.MaximumX
+                && image.Height - visible.Y - floor.Y > Math.Max(2, image.Height / 180d)))
+            grounded = false;
         return Make(timing, terrain, knight, enemies, terrainAnalyzed, age, issues, "detected") with
         {
             DetectionTimestamp = fresh ? timing.CaptureTimestamp - age : null,
@@ -185,12 +190,13 @@ public static class BotObservationBuilder
             KnightSource = best is not null ? "visual" : null,
             DetectedTerrain = terrain,
             GeoCaches = Normalize(fresh ? predictions.Where(d => LabelingClassIdentity.CanonicalIdentifier(d.ClassIdentifier) == "world.geo-deposit").Select(ProjectBox) : null, terrain),
+            LifebloodCocoons = Normalize(fresh ? predictions.Where(d => LabelingClassIdentity.CanonicalIdentifier(d.ClassIdentifier) == "world.lifeblood-cacoon").Select(ProjectBox) : null, terrain),
             VisualContext = new(image.Width, image.Height / (double)image.Width, camera?.X / image.Width, camera?.Y / image.Width),
             BlueHealthOutcomes = Validate(blueHealth),
             MeasuredHealth = hud is { EstablishesGameplay: true, HoldsHealthMask: false }
                 ? hud.Health.Count(item => item.Kind != "empty") : null,
             DriveDirection = input is { } held ? KnightLevelWalk.Direction(held) : null,
-            Grounded = measuredFoot.HasValue && ground ? true : null
+            Grounded = grounded
         };
 
         Box ProjectBox(ObjectDetection detection)

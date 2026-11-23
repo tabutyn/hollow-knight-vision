@@ -250,6 +250,7 @@ var tests = new List<(string Name, Action Run)>
     ("input checkpoint control messages round trip", InputBridgeParityTests.TestCheckpointControlMessagesRoundTrip),
     ("native bot verification checks action heads and bound checkpoint hashes", BotPolicyTests.TestNativePolicyChecksActionsAndCheckpointHashes),
     ("Hacker Gym uses authored geometry and preserves fixed objectives and camera gaps", HackerGymObservationTests.TestFixedRouteAndCameraDropout),
+    ("Game Play Gym builds a pixel-only Atlas and recovers masked Knight observations", GameplayGymVisualTests.TestVisualFootprintAndMaskedKnightRecovery),
     ("bot startup latches cutscene skipping until fresh gameplay", BotPolicyTests.TestStartupSkipIsLatchedUntilFreshGameplay),
     ("bot policy preserves attack and rejects stale observations and wrong domains", BotPolicyTests.TestLivePolicyPreservesAttackAndRevokesInvalidPerception),
     ("bot runtime keeps four fresh history frames and expires stale input", BotPolicyTests.TestObservationHistoryRejectsStaleFramesAndResetsAtDiscontinuities),

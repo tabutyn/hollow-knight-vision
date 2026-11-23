@@ -174,6 +174,31 @@ internal static class Program
                 return Task.FromResult(1);
             }
         }
+        if (arguments is ["--gameplay-gym-observations", var gameGymVersion, var pixels, var mask, ..]
+            && arguments.Length is >= 4 and <= 7)
+        {
+            try
+            {
+                if (!int.TryParse(gameGymVersion, out var version) || !bool.TryParse(mask, out var allowMask))
+                    throw new InvalidDataException("Expected observation schema, frame path and masked Knight support.");
+                var support = Environment.GetEnvironmentVariable("HKV_GYM_VISUAL_SUPPORT_ROOT") ?? Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HollowKnightVision");
+                var labels = Environment.GetEnvironmentVariable("HKV_GYM_LABELS")
+                    ?? throw new InvalidDataException("Missing Gym authored terrain labels.");
+                GameplayGymObservationEncoder.Run(version, pixels, allowMask, support, labels, Console.In,
+                    standardOutput ?? Console.Out, Environment.GetEnvironmentVariable("HKV_GYM_VISUAL_MODEL_DIR"),
+                    arguments.Skip(4).ToArray(), Environment.GetEnvironmentVariable("HKV_ATLAS_PATH_CONNECTIONS"),
+                    HackerGymObservationEncoder.FixedObjective(Environment.GetEnvironmentVariable("HKV_GYM_EXIT_X"),
+                        Environment.GetEnvironmentVariable("HKV_GYM_EXIT_Y")));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException
+                or JsonException or ArgumentException or GroundTruthLineStoreException or Microsoft.ML.OnnxRuntime.OnnxRuntimeException)
+            {
+                (standardError ?? Console.Error).WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
         if (arguments is ["--tracking-step-verify-prefix", var prefixDirectory, var prefixSource])
         {
             try
