@@ -159,7 +159,7 @@ internal static class VisualProductionReplay
                     tuning: input?.Tuning, semanticTuning: input?.SemanticTuning);
                 var tracked = tracking.Track(frame, prepared, masks.GroundKnight, admission, signal, evidence.CaptureTimestamp,
                     captureGeneration, knownRoom: null, atlas.TileCount > 0, buttons,
-                    resetWorldCoordinatesForCorrection: true);
+                    resetWorldCoordinatesForCorrection: true, captureWorldEvidence: true);
                 var observation = tracked.Observation;
                 var telemetry = observation.Telemetry;
                 var localCamera = new AtlasPoint(telemetry.CameraX, telemetry.CameraY);
@@ -182,7 +182,9 @@ internal static class VisualProductionReplay
                         atlas.PixelsPerWorldUnit, atlas.TileSize, observation.GroundVerified)
                     {
                         WalkedGround = tracked.WalkedGround,
-                        WalkedCoordinateEpoch = tracked.WalkedCoordinateEpoch
+                        WalkedCoordinateEpoch = tracked.WalkedCoordinateEpoch,
+                        DoorwayCut = tracked.RecentDoorwayCut,
+                        WorldEvidence = tracked.WorldEvidence
                     });
                     if (placement.State == WindowsLiveWorldPipelineState.Failed)
                         throw new IOException(placement.Diagnostic);

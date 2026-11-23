@@ -44,6 +44,7 @@ public sealed class GlobalFeatureMatcher
 
     public int LastSelfPlacementPairChecks { get; private set; }
     public bool LastSelfPlacementWasAmbiguous { get; private set; }
+    internal bool LastMatchWasAmbiguous { get; private set; }
 
     public GlobalFeatureReference? MakeReference(
         BgraFrame frame,
@@ -137,6 +138,7 @@ public sealed class GlobalFeatureMatcher
     {
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(references);
+        LastMatchWasAmbiguous = false;
         var exclusions = excluding ?? [];
         if (currentSolveWidth is { } width && (!double.IsFinite(width) || width <= 0)
             || exclusions.Any(rectangle => !ValidRect(rectangle)))
@@ -185,7 +187,8 @@ public sealed class GlobalFeatureMatcher
         var ambiguity = Math.Min(
             1,
             (runnerUp?.Confidence ?? 0) / Math.Max(best.Confidence, double.Epsilon));
-        if (ambiguity >= AmbiguityLimit) return null;
+        LastMatchWasAmbiguous = ambiguity >= AmbiguityLimit;
+        if (LastMatchWasAmbiguous) return null;
         return new GlobalFeatureMatch(
             best.Reference.Id,
             best.Camera,

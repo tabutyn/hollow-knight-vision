@@ -3169,7 +3169,9 @@ public partial class MainWindow : Window
         var tracked = trackingPipeline.Track(frame, prepared, masks.GroundKnight, admission, signal, captureTimestamp,
             captureGeneration, receiverScene, gameplayAtlas.TileCount > 0, movementButtons,
             resetWorldCoordinatesForCorrection: usesDurableWorld,
-            visualRoomObservationEnabled: recognition.GameplayEnabled);
+            visualRoomObservationEnabled: recognition.GameplayEnabled,
+            observeLoadingInKnownRoom: liveWorldPipeline?.HasImportedAtlas == true,
+            captureWorldEvidence: usesDurableWorld);
         var visualObservation = tracked.Observation;
         var ground = prepared.Terrain?.Floors ?? [];
         var groundAnalysis = prepared.Terrain?.Edges;
@@ -3245,7 +3247,9 @@ public partial class MainWindow : Window
                     AtlasTileSize: gameplayAtlas.TileSize, StableTrackingVerified: visualObservation.GroundVerified)
                 {
                     WalkedGround = localWalkedGround,
-                    WalkedCoordinateEpoch = walkedCoordinateEpoch
+                    WalkedCoordinateEpoch = walkedCoordinateEpoch,
+                    DoorwayCut = tracked.RecentDoorwayCut,
+                    WorldEvidence = tracked.WorldEvidence
                 }, visualTelemetry, atlasCompositionExclusions, atlasRoomId, atlasCaptureIdentity);
             }
             if (worldRoom is { Length: > 0 })

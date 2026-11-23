@@ -121,8 +121,12 @@ internal static class VisualSceneDiscontinuityTrackerTests
             if (index == 39) Check(result.Id == "normal:6:room:1" && result.AllowsAtlasWrite);
         }
         Check(seenCuts == 1);
+        var saved = rooms.RecentDoorwayCut(1.95);
+        Check(saved is not null && saved.Direction == VisualRoomDirection.Right);
+        Check(rooms.RecentDoorwayCut(saved!.ArrivalTimestamp + 3.1) is null);
         var newCapture = rooms.Observe(7, true, new(true, false), arrival, 2.2, InputButtons.None, Departure);
-        Check(newCapture.Id == "normal:7:room:0" && newCapture.AllowsAtlasWrite);
+        Check(newCapture.Id == "normal:7:room:0" && newCapture.AllowsAtlasWrite
+            && rooms.RecentDoorwayCut(2.2) is null);
     }
 
     internal static void TestAtlasRetainsSameRoomAfterLoadingEvidenceRejectsTheSplit()

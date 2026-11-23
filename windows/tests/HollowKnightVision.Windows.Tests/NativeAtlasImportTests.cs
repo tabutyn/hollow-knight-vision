@@ -182,12 +182,209 @@ internal static class NativeAtlasImportTests
             var first = pipeline.Process(ResumeFrame(1, 71));
             var second = pipeline.Process(ResumeFrame(2, 71));
             Check(first.ConfirmedRecoveryPose is null && second.ConfirmedRecoveryPose is null
-                && second.Diagnostic.Contains("MatcherRejected", StringComparison.Ordinal),
+                && second.Diagnostic.Contains("AmbiguousPlacement", StringComparison.Ordinal),
                 "the same image and camera pose in two rooms cannot identify an imported room");
             Check(new LiveWorldSessionStore(root).Load().Snapshot.MapRevision == before.MapRevision
                 && new SceneSessionStore(root).Manifest.Observations.Count == 2,
                 "ambiguous frames cannot overwrite tiles or append evidence");
         });
+    }
+
+    internal static void TestImportedAtlasExtendsThroughAConfirmedDoorway()
+    {
+        foreach (var direction in new[] { VisualRoomDirection.Left, VisualRoomDirection.Right })
+        {
+            WithRecoveryFixture(identicalRooms: false, (root, before) =>
+            {
+                var pipeline = new WindowsLiveWorldPipeline(root);
+                _ = pipeline.Process(ResumeFrame(1, 71));
+                var anchor = pipeline.Process(ResumeFrame(2, 71));
+                Check(anchor.ConfirmedRecoveryPose == new AtlasPoint(100, 20), "recover the departure room");
+                pipeline.NotifyTrackingLoss(1);
+                var cut = new VisualSceneDiscontinuityTracker.Cut(.75, 1.9, new(80, 0), direction);
+                var target = "Unmapped_after_doorway";
+                var surface = new DetectedFloorLine(135, new PixelSpan(20, 160),
+                    [new PixelSpan(20, 61), new PixelSpan(94, 160)]);
+                var competing = new DetectedFloorLine(115, new PixelSpan(40, 100));
+                WindowsLiveWorldFrame Arrive(long id) => ResumeFrame(id, 901) with
+                {
+                    RoomName = target,
+                    DoorwayCut = cut,
+                    WorldEvidence = LiveWorldCaptureEvidence.FromGround(id * .3, 320, 180,
+                        [surface, competing], [new(17, surface.ToSemanticLine(), GroundLinePresenceState.Confirmed, .8, 1)],
+                        new PixelRect(20, 100, 24, 35), new AtlasPoint(30, 135))
+                };
+                for (var id = 7; id <= 9; id++)
+                {
+                    var search = pipeline.Process(Arrive(id));
+                    Check(search.State == WindowsLiveWorldPipelineState.PendingRecovery
+                        && search.ConfirmedRecoveryPose is null && !search.AllowsAtlasWrite,
+                        "room search and provisional positioning do not write images");
+                }
+                Check(new LiveWorldSessionStore(root).Load().Snapshot.MapRevision == before.MapRevision,
+                    "existing Atlas is untouched during entry");
+                var recorded = pipeline.Process(Arrive(10));
+                var after = new LiveWorldSessionStore(root).Load().Snapshot;
+                var entered = after.Observations[^1];
+                var expectedX = direction == VisualRoomDirection.Right ? 452 : -252;
+                Check(recorded.AllowsAtlasWrite && entered.OptimizedPose == new AtlasPoint(expectedX, 20)
+                    && entered.RoomId == WindowsLiveWorldPipeline.RoomIdentifier(target)
+                    && after.Observations.Take(2).Select(row => row.OptimizedPose)
+                        .SequenceEqual(before.Observations.Select(row => row.OptimizedPose)),
+                    "new imagery begins beyond the restored footprint while retaining the vertical basis");
+
+                Check(entered.CaptureTimestamp == 3
+                    && entered.GroundGeometry!.Lines.SequenceEqual([
+                        new LiveGroundLineEvidence(17, new(20, 45), new(62, 45)),
+                        new LiveGroundLineEvidence(17, new(94, 45), new(161, 45))])
+                    && entered.ObservedFloorCandidates!.Lines.Count == 3
+                    && entered.ObservedPlayerBounds == new WorldRect(new(20, 45), new(24, 35)),
+                    "observed spans, intervening gap, candidates and measured foot survive reopen");
+
+                Check(pipeline.Process(Arrive(11) with { LocalPose = new(84, 0) }).AllowsAtlasWrite,
+                    "successive measured normal captures extend the new room");
+                var joined = new LiveWorldSessionStore(root).Load().Snapshot;
+                var island = joined.TrackingIslands[^1];
+                Check(island.Placement == LiveIslandPlacement.Estimated && island.Members.Count == 2
+                    && island.Members.All(member => member.Measured)
+                    && island.Members[1].LocalPose.X - island.Members[0].LocalPose.X == 4,
+                    "continuous measured captures share a rigid estimated island");
+                Check(pipeline.Process(Arrive(13)).AllowsAtlasWrite, "a separate measured frame can be stored after a gap");
+                var separated = new LiveWorldSessionStore(root).Load().Snapshot;
+                Check(separated.TrackingIslands.Count == joined.TrackingIslands.Count + 1
+                    && separated.TrackingIslands[^1].Members.Count == 1,
+                    "a gap without a camera measurement starts a separate island");
+
+                for (var id = 14; id <= 17; id++)
+                {
+                    var staleCut = pipeline.Process(ResumeFrame(id, 744) with
+                    {
+                        RoomName = "Unrelated_third_scene",
+                        DoorwayCut = cut
+                    });
+                    Check(!staleCut.AllowsAtlasWrite, "the previous doorway cannot be reused for another scene");
+                }
+                Check(new LiveWorldSessionStore(root).Load().Snapshot.Observations.Count == 5,
+                    "no evidence is appended for the unconfirmed third scene");
+            });
+        }
+    }
+
+    internal static void TestImportedAtlasKeepsSearchingForAKnownDoorwayArrival()
+    {
+        WithRecoveryFixture(identicalRooms: false, (root, before) =>
+        {
+            var pipeline = new WindowsLiveWorldPipeline(root);
+            _ = pipeline.Process(ResumeFrame(1, 71));
+            _ = pipeline.Process(ResumeFrame(2, 71));
+            var cut = new VisualSceneDiscontinuityTracker.Cut(.75, 1.9, new(80, 0), VisualRoomDirection.Right);
+            for (var id = 7; id <= 11; id++)
+            {
+                var search = pipeline.Process(ResumeFrame(id, id == 7 ? 191 : 901) with
+                {
+                    RoomName = "Another_previously_mapped_room",
+                    DoorwayCut = cut
+                });
+                Check(search.ConfirmedRecoveryPose is null && !search.AllowsAtlasWrite,
+                    "a competing match prevents the creation of a duplicate room");
+            }
+            Check(new LiveWorldSessionStore(root).Load().Snapshot.MapRevision == before.MapRevision,
+                "a tentative known room is always recovered before writing");
+        });
+    }
+
+    internal static void TestDoorwayFloorAlignsOnlyWithMeasuredContactOnBothSides()
+    {
+        foreach (var (direction, airborne, competingSurface) in new[]
+        {
+            (VisualRoomDirection.Right, false, false),
+            (VisualRoomDirection.Left, false, false),
+            (VisualRoomDirection.Right, true, false),
+            (VisualRoomDirection.Right, false, true)
+        })
+        {
+            WithRecoveryFixture(identicalRooms: false, (root, saved) =>
+            {
+                var pipeline = new WindowsLiveWorldPipeline(root);
+                _ = pipeline.Process(ResumeFrame(1, 71));
+                Check(pipeline.Process(ResumeFrame(2, 71)).ConfirmedRecoveryPose is not null, "recover the departure");
+
+                var exitsRight = direction == VisualRoomDirection.Right;
+                for (var id = 3; id <= 5; id++)
+                {
+                    Check(pipeline.Process(FloorFrame(id, 71, exitsRight, 135, false, false)).AllowsAtlasWrite,
+                        "save measured departure samples");
+                }
+
+                pipeline.NotifyTrackingLoss(1);
+                var cut = new VisualSceneDiscontinuityTracker.Cut(1.65, 2.5, new(80, 0), direction);
+                const string arrivingScene = "New_room_past_the_door";
+                WindowsLiveWorldFrame Arrive(long id) => FloorFrame(id, 901, !exitsRight, 150, airborne, competingSurface) with
+                {
+                    RoomName = arrivingScene,
+                    DoorwayCut = cut
+                };
+                for (var id = 9; id <= 11; id++)
+                    Check(!pipeline.Process(Arrive(id)).AllowsAtlasWrite, "find an unmapped arrival without writing");
+
+                WindowsLiveWorldPipelineResult? last = null;
+                for (var id = 12; id <= 14; id++)
+                {
+                    last = pipeline.Process(Arrive(id));
+                    Check(last.AllowsAtlasWrite, "save measured arrival samples");
+                }
+                var snapshot = new LiveWorldSessionStore(root).Load().Snapshot;
+                Check(snapshot.Observations.Take(saved.Observations.Count).Select(frame => frame.OptimizedPose)
+                    .SequenceEqual(saved.Observations.Select(frame => frame.OptimizedPose)),
+                    "doorway alignment preserves the restored poses");
+                var expectedX = exitsRight ? 452 : -252;
+                if (airborne || competingSurface)
+                {
+                    Check(snapshot.DoorwayFloorConstraints.Count == 0 && last!.RebuiltAtlas is null
+                        && snapshot.Observations[^1].OptimizedPose == new AtlasPoint(expectedX, 20),
+                        "ambiguous or airborne evidence leaves height provisional");
+                    return;
+                }
+
+                var relation = snapshot.DoorwayFloorConstraints.Single();
+                var departure = snapshot.Observations.Single(row => row.Id == relation.DepartureObservationId);
+                var arrival = snapshot.Observations.Single(row => row.Id == relation.ArrivalObservationId);
+                Check(relation.Direction == (int)direction && relation.DepartureSupport.Count == 3
+                    && relation.ArrivalSupport.Count == 3, "the saved doorway names three source and target images");
+                Check(departure.OptimizedPose.Y + relation.DepartureFloor.Y
+                    == arrival.OptimizedPose.Y + relation.ArrivalFloor.Y, "the doorway floor aligns exactly");
+                Check(last!.RebuiltAtlas is { TileCount: > 0 } && last.AcceptedClosure is null
+                    && last.CameraPose == new AtlasPoint(expectedX, 35)
+                    && last.AppliedCorrection == new AtlasPoint(0, 15),
+                    "the durable graph, tiles and live camera agree after a vertical-only correction");
+                Check(pipeline.Process(Arrive(15)).CameraPose == new AtlasPoint(expectedX, 35),
+                    "subsequent frames retain the aligned basis");
+            });
+        }
+    }
+
+    private static WindowsLiveWorldFrame FloorFrame(long id, int seed, bool rightSide, int row, bool airborne, bool competing)
+    {
+        var request = ResumeFrame(id, seed);
+        var image = request.Frame;
+        var observedAt = new DateTimeOffset(2001, 1, 1, 0, 0, 0, TimeSpan.Zero)
+            .AddSeconds(SwiftDateSeconds + 100 + request.MonotonicTimestamp);
+        var frame = new BgraFrame(image.Width, image.Height, image.Stride, image.Pixels, id, observedAt);
+        var span = rightSide ? new PixelSpan(220, 319) : new PixelSpan(0, 100);
+        var surface = new DetectedFloorLine(row, span);
+        var other = new DetectedFloorLine(row - 20, span);
+        var footY = row - (airborne ? 15 : 0);
+        var knightX = rightSide ? 268 : 20;
+        var confirmed = new GroundLinePresenceReview(30, surface.ToSemanticLine(), GroundLinePresenceState.Confirmed, 1, 1);
+        return request with
+        {
+            Frame = frame,
+            MaskedFrame = frame,
+            WorldEvidence = LiveWorldCaptureEvidence.FromGround(request.MonotonicTimestamp, image.Width, image.Height,
+                competing ? [surface, other] : [surface],
+                competing ? [confirmed, confirmed with { Id = 31, Line = other.ToSemanticLine() }] : [confirmed],
+                new PixelRect(knightX, footY - 35, 24, 35), new AtlasPoint(knightX + 12, footY))
+        };
     }
 
     private static void WithRecoveryFixture(bool identicalRooms, Action<string, LiveWorldSnapshot> body)

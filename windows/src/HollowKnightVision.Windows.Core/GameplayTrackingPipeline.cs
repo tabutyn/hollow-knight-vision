@@ -26,6 +26,8 @@ public sealed record GameplayTrackedFrame(
             && CaptureGap != AtlasCaptureGapState.AwaitingRegistration);
     internal AtlasCaptureGapState CaptureGap { get; init; }
     public VisualSceneDiscontinuityTracker.Cut? SceneCut { get; init; }
+    public VisualSceneDiscontinuityTracker.Cut? RecentDoorwayCut { get; init; }
+    public LiveWorldCaptureEvidence? WorldEvidence { get; init; }
 }
 
 /// <summary>Ground, camera and terrain state shared by the capture worker and offline archive replay.</summary>
@@ -58,9 +60,10 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
     public GameplayTrackingPreparation Prepare(BgraFrame frame, GameplaySceneMasks masks, bool admitted,
         string? knownRoom = null, GroundTheoryTuning? tuning = null, GroundTheoryTuning? semanticTuning = null)
     {
-        if (frameWidth != 0 && (frameWidth != frame.Width || frameHeight != frame.Height)
-            || !string.IsNullOrWhiteSpace(knownRoom) && lastKnownRoom is not null && knownRoom != lastKnownRoom)
+        if (frameWidth != 0 && (frameWidth != frame.Width || frameHeight != frame.Height))
             Reset();
+        else if (!string.IsNullOrWhiteSpace(knownRoom) && lastKnownRoom is not null && knownRoom != lastKnownRoom)
+            ResetTracking(preserveWalkedGround: false, preserveLoadingObservation: true);
         frameWidth = frame.Width;
         frameHeight = frame.Height;
         if (!string.IsNullOrWhiteSpace(knownRoom)) lastKnownRoom = knownRoom;
@@ -89,7 +92,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
     public GameplayTrackedFrame Track(BgraFrame frame, GameplayTrackingPreparation prepared, PixelRect? knight,
         GameplayFrameDecision admission, FrameSignalProfile signal, double timestamp, long generation, string? knownRoom,
         bool hasCommittedAtlas, InputButtons? buttons, bool resetWorldCoordinatesForCorrection,
-        bool visualRoomObservationEnabled = true)
+        bool visualRoomObservationEnabled = true, bool observeLoadingInKnownRoom = false,
+        bool captureWorldEvidence = false)
     {
         var groundStarted = Stopwatch.GetTimestamp();
         var terrainAnalysis = prepared.Terrain;
@@ -124,7 +128,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             estimate = reference.Observe(frame, localCamera, frame.Width, knight,
                 prepared.GroundExclusions, terrainAnalysis.Theory);
 
-        var visualRoom = roomIdentity.Observe(generation, visualRoomObservationEnabled && !hasKnownRoom,
+        var observeLoading = visualRoomObservationEnabled && (!hasKnownRoom || observeLoadingInKnownRoom);
+        var visualRoom = roomIdentity.Observe(generation, observeLoading,
             admission.Transition, signal.MotionGrid, timestamp, buttons, localCamera);
         var room = hasKnownRoom ? knownRoom! : visualRoom.Id;
         if (visualRoom.Cut is not null)
@@ -184,17 +189,35 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             terrain = TerrainWallDetector.ApplyContact(terrain, contact, floors, edges);
             platformPatches = patches.Observe(edges, floors, prepared.ProtectedOcclusions, verifiedCamera, timestamp);
         }
+        LiveWorldCaptureEvidence? worldEvidence = null;
+        if (captureWorldEvidence && admission.AllowsAtlasWrite && visualRoom.AllowsAtlasWrite)
+        {
+            if (measuredGround)
+            {
+                worldEvidence = LiveWorldCaptureEvidence.FromGround(timestamp, frame.Width, frame.Height,
+                    floors, ground.LineReviews, knight, contact.MeasuredFoot);
+            }
+            else if (publishesScenery)
+            {
+                worldEvidence = new LiveWorldCaptureEvidence(timestamp);
+            }
+        }
         return new(observation, ground, estimate, localCamera, room, terrain, contact,
             platformPatches, walked.InRoom(room), walkedCoordinateEpoch, cameraMilliseconds, atlasStarted)
         {
             RoomAllowsAtlasWrite = visualRoom.AllowsAtlasWrite,
             HasMeasuredSceneryContinuity = publishesScenery,
             CaptureGap = captureGap,
-            SceneCut = visualRoom.Cut
+            SceneCut = visualRoom.Cut,
+            RecentDoorwayCut = roomIdentity.RecentDoorwayCut(timestamp),
+            WorldEvidence = worldEvidence
         };
     }
 
-    public void Reset(bool preserveWalkedGround = false)
+    public void Reset(bool preserveWalkedGround = false) =>
+        ResetTracking(preserveWalkedGround, preserveLoadingObservation: false);
+
+    private void ResetTracking(bool preserveWalkedGround, bool preserveLoadingObservation)
     {
         if (preserveWalkedGround) walked.BreakContinuity();
         else ResetWalkedCoordinateEpoch();
@@ -207,7 +230,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         measuredAtlasPose.Reset();
         atlasCaptureGap.Reset();
         camera.ResetFloorlessMotion();
-        roomIdentity.ResetObservation();
+        if (!preserveLoadingObservation) roomIdentity.ResetObservation();
         lastKnownRoom = null;
         frameWidth = 0;
         frameHeight = 0;
@@ -323,6 +346,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         private long roomEpoch;
         private bool transitionResumeActive;
         private bool loadingOwnsResume;
+        private VisualSceneDiscontinuityTracker.Cut? lastCut;
 
         internal bool HasUnresolvedLoading => cuts.IsPending;
 
@@ -347,6 +371,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             var direction = drive < 0 ? VisualRoomDirection.Left
                 : drive > 0 ? VisualRoomDirection.Right : (VisualRoomDirection?)null;
             var cut = cuts.Observe(grid, timestamp, direction, worldPose);
+            if (cut is not null) lastCut = cut;
             loadingOwnsResume |= wasPending || cuts.IsPending || cut is not null;
             if (cut is not null
                 || (transition.ResumedAfterTransition && !transitionResumeActive && !loadingOwnsResume))
@@ -356,9 +381,13 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             return (RoomId, !cuts.IsPending && cut is null, cut);
         }
 
+        internal VisualSceneDiscontinuityTracker.Cut? RecentDoorwayCut(double timestamp) =>
+            lastCut is { } cut && timestamp - cut.ArrivalTimestamp is >= 0 and <= 3 ? cut : null;
+
         internal void ResetObservation()
         {
             cuts.Reset();
+            lastCut = null;
             transitionResumeActive = false;
             loadingOwnsResume = false;
         }

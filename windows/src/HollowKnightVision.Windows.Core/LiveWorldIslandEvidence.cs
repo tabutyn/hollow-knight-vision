@@ -105,7 +105,8 @@ public sealed record LiveDoorwayFloorConstraint(
 {
     internal bool IsValid(
         IReadOnlyDictionary<int, LiveWorldObservation> observations,
-        IReadOnlyDictionary<int, (LiveTrackingIsland Island, LiveIslandMember Member)> owners)
+        IReadOnlyDictionary<int, (LiveTrackingIsland Island, LiveIslandMember Member)> owners,
+        bool requiringAlignment = true)
     {
         if (Id < 0 || Direction is not (-1 or 1)
             || !observations.TryGetValue(DepartureObservationId, out var departure)
@@ -129,7 +130,7 @@ public sealed record LiveDoorwayFloorConstraint(
         var unit = departure.SolveWidth / 640;
         var sourceY = departure.OptimizedPose.Y + DepartureFloor.Y;
         var targetY = arrival.OptimizedPose.Y + ArrivalFloor.Y;
-        return Math.Abs(sourceY - targetY) <= 4 * unit
+        return (!requiringAlignment || Math.Abs(sourceY - targetY) <= 4 * unit)
             && StableSupport(DepartureSupport, departure, source.Island.Id, sourceY, unit,
                 observations, owners, out _)
             && StableSupport(ArrivalSupport, arrival, target.Island.Id, targetY, unit,
