@@ -20,6 +20,7 @@ public partial class MainWindow
     private BotHackerVisit? botRouteVisit;
     private int botRouteEpoch, activeBotRouteEpoch;
     private readonly BotVisualAtlasCoverage botVisualCoverage = new();
+    private readonly BotBlockadeVisit botVisualBlockade = new();
     private (int Room, long Coordinates)? botVisualChart;
     private string BotRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -44,6 +45,7 @@ public partial class MainWindow
             var labels = capture is { CapturesHacker: true } ? capture.Authored : run?.Authored;
             botRouteVisit = labels is null ? null : new(labels, hackerPathLinks);
             botVisualCoverage.Reset();
+            botVisualBlockade.Reset();
             botVisualChart = null;
         }
         if (capture?.WantsFrame(generation, timestamp) != true) capture = null;
@@ -72,6 +74,7 @@ public partial class MainWindow
             var size = new WorldSize(frame.Width, frame.Height);
             if (camera is { } pose && admitsPlacement) botVisualCoverage.Register(pose, size, atlasExclusions);
             else if (camera is null) botVisualCoverage.Interrupt();
+            visual = botVisualBlockade.AddEvidence(visual, BotBlockadePose.Visual(visual, walkedCoordinateEpoch));
             visual = visual with { AtlasView = botVisualCoverage.View(camera, size,
                 (int)Math.Min(roomRevision, int.MaxValue), visual.MeasuredHealth) };
         }

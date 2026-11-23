@@ -128,6 +128,21 @@ internal static class Program
         TextWriter? standardError = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
+        if (arguments is ["--recover-bot-blockades", var capturePath])
+        {
+            try
+            {
+                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(
+                    BotBlockadeReplay.Recover(capturePath), WorldReplayJsonOptions));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                or JsonException or InvalidOperationException or KeyNotFoundException)
+            {
+                (standardError ?? Console.Error).WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
         if (arguments is ["--bot-playback-checkpoint", var botRoot, ("gameplay" or "hacker") and var botDomain])
         {
             try

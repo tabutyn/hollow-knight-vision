@@ -184,8 +184,14 @@ def _run_job(root, selection, run_id, baseline, epochs, domain, wall_extractor, 
             raise ValueError('Recording changed while snapshotting: ' + session_id)
         snapshot = snapshots / source.name
         manifest = json.loads((snapshot / "manifest.json").read_text())
-        if wall_extractor and any("driveDirection" not in o for o in read_session(snapshot)[1]):
-            result = subprocess.run([wall_extractor, "--recover-bot-blockades", str(snapshot)],
+        blockade_extractor = native_verifier or wall_extractor
+        if blockade_extractor and any(
+            o.get("driveDirection") is None or (
+                native_verifier and o.get("blockadeVersion") is None and o.get("blockadePose") is None
+                and o.get("terrainSource") == "detected")
+            for o in read_session(snapshot)[1]
+        ):
+            result = subprocess.run([blockade_extractor, "--recover-bot-blockades", str(snapshot)],
                                     stdout=subprocess.PIPE, check=True)
             evidence = json.loads(result.stdout)
             evidence["eventsSHA256"] = before["events.jsonl"]

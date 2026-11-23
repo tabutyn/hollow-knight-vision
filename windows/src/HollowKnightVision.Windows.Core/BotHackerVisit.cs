@@ -12,7 +12,7 @@ public sealed record BotAtlasObjective(string Scene, AtlasPoint WorldPosition)
 public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLinkStore? links = null, AtlasPoint? fixedWorldGoal = null)
 {
     private readonly Dictionary<string, RouteRoom> rooms = new(StringComparer.Ordinal);
-    private readonly BotHackerContact contact = new();
+    private readonly BotBlockadeVisit contact = new();
     private RouteRoom? activeRoom;
     private RouteSample? previous;
     private BotAtlasObjective? previousObjective;
@@ -77,8 +77,11 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
         AddCoverage(room.Covered, pose, size);
         var view = BotAtlasFrontiers.View(pose, size, revision, health, room.Covered.Count, 0, (x, y) => room.Covered.Contains((x, y)));
         var worldOrigin = new AtlasPoint(center.X - size.Width / 2, center.Y - size.Height / 2);
-        var result = row with { AtlasView = view, HackerPathVersion = 1,
-            Blockade = contact.Observe(row, camera, size, sample.Grounded) };
+        var result = contact.AddEvidence(row, BotBlockadePose.Hacker(camera, size)) with
+        {
+            AtlasView = view,
+            HackerPathVersion = 1
+        };
 
         if (!ReferenceEquals(activeRoom, room) || previousObjective != objective)
         {

@@ -3,6 +3,23 @@ using HollowKnightVision.Windows.Core;
 internal static class GameplayGymVisualTests
 {
     private const int Width = 640, Height = 360;
+    internal static void TestGamePlayGymUsesVisualBlockadeEvidence()
+    {
+        var source = new BotVisualGymObservationSource();
+        var pixels = Scene();
+        BotCaptureObservation? latest = null;
+        for (var i = 0; i < 12; i++)
+            latest = source.Observe(Frame(pixels, i), i / 10d, InputButtons.Right, frame => Detect(frame, true), hud: null).Observation;
+        if (latest is not { BlockadeVersion: 1, Blockade.Mark.Direction: 1, BlockadePose.Space: var space }
+            || !space.StartsWith("visual/", StringComparison.Ordinal))
+            throw new InvalidOperationException("The Game Play Gym observation should recognize a measured stationary push.");
+        var history = new BotObservationHistory(BotPolicyContract.LandingVersion);
+        var vector = history.Append(latest, new(2, 0, 0, 0), latest.AvailableAt + .01)!;
+        var names = BotPolicyContract.Names(BotPolicyContract.LandingVersion)!.ToList();
+        if (vector[3 * names.Count + names.IndexOf("blockade_direction")] != 1)
+            throw new InvalidOperationException("The visual blockade did not reach the policy input.");
+    }
+
     internal static void TestVisualFootprintAndMaskedKnightRecovery()
     {
         var source = new BotVisualGymObservationSource();

@@ -69,6 +69,8 @@ public sealed record BotCaptureObservation(
     public int? AtlasPathVersion { get; init; }
     public double? PathProgress { get; init; }
     public double? PathAlignment { get; init; }
+    public int? BlockadeVersion { get; init; }
+    public BotBlockadePose? BlockadePose { get; init; }
     public BotBlockadeEvidence? Blockade { get; init; }
     public IReadOnlyList<BotObjectBounds>? LifebloodCocoons { get; init; }
     public BotEnemyOutcomes? EnemyOutcomes { get; init; }

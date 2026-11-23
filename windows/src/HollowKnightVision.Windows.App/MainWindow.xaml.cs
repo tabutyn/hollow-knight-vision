@@ -3453,6 +3453,7 @@ public partial class MainWindow : Window
         {
             botRouteVisit?.Interrupt();
             botVisualCoverage.Interrupt();
+            botVisualBlockade.Interrupt();
         }
         if (inputPathDivergenceMonitor.IsAcceptingSamples
             && renderedGameFrame is { } renderedFrame)

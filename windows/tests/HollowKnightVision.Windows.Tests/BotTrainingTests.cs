@@ -61,6 +61,9 @@ internal static class BotTrainingTests
                     && training.Concat(held).All(plan.Clips.Contains), "The trainer leaked a holdout or trained the other domain.");
                 Require(receipt.RootElement.GetProperty("wallEvidence").GetProperty("withWall").GetInt32() > 0,
                     "The Windows recording's saved wall geometry did not enter the trained policy inputs.");
+                if (domain == BotCaptureDomain.Gameplay)
+                    Require(receipt.RootElement.GetProperty("blockadeTraining").GetProperty("validationClips").GetInt32() > 0,
+                        "The legacy Game Play capture's verified pose did not recover blockade inputs during training.");
                 var repeated = BotTrainingJob.Plan(temporary, domain, library);
                 Require(!repeated.CanTrain && repeated.PolicyName == selected.Policy.Name,
                     "A completed run should select its policy and request fresh clips before another comparison.");

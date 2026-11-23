@@ -25,6 +25,7 @@ public sealed class BotVisualGymObservationSource
     private readonly GroundSemanticAtlas terrainAtlas = new();
     private readonly WalkedGroundTracker walked = new();
     private readonly BotVisualAtlasCoverage coverage = new();
+    private readonly BotBlockadeVisit blockade = new();
     private int chart;
     private int? activeRoom;
 
@@ -56,6 +57,7 @@ public sealed class BotVisualGymObservationSource
             _ = ObserveRoom(camera.Position, groundVerified: false);
             camera.PauseGroundVerification();
             coverage.Interrupt();
+            blockade.Interrupt();
             return new(null, [signal.HasGameplaySignal ? "waiting-for-visual-gameplay" : "transition-blackout"], confidence);
         }
 
@@ -72,6 +74,7 @@ public sealed class BotVisualGymObservationSource
             activeRoom = room.RoomID;
             chart++;
             coverage.Reset();
+            blockade.Reset();
             ground.Reset(keepingGlobalFeatures: false);
             camera.Reset();
             motion.Reset();
@@ -105,6 +108,7 @@ public sealed class BotVisualGymObservationSource
         var timing = new BotCaptureTiming(time, time, Generation, chart, room.Revision);
         var row = BotObservationBuilder.Gameplay(frame, timing, observations.MeasuredBatch, floors, terrain.Walls,
             terrainAnalyzed: true, placement, hud, contact.MeasuredFoot, controls);
+        row = blockade.AddEvidence(row, BotBlockadePose.Visual(row));
         row = row with { AtlasView = coverage.View(placement, size, (int)frame.CaptureId, row.MeasuredHealth) };
         return new(row, row.Issues, confidence)
         {
