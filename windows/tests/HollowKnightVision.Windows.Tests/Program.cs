@@ -1141,6 +1141,8 @@ var tests = new List<(string Name, Action Run)>
     ("overlapping jump shelves connect through their measured landing", AtlasPlatformGraphTests.TestAnExistingNodeCannotTransferThroughAnOverlappingJump),
     ("recorded King's Pass jump stays guided above and past the shelf", AtlasPlatformGraphTests.TestRecordedKingsPassJumpKeepsAdviceAboveAndPastTheShelf),
     ("recorded early takeoff keeps the intermediate landing", AtlasPlatformGraphTests.TestRecordedEarlyTakeoffKeepsRouteThroughIntermediateLanding),
+    ("visual successor inherits route direction across unplaced charts", GameplayPathTests.TestUnplacedSuccessorKeepsDirectionWithoutImportingCoordinates),
+    ("visual registration promotes measured ground from the same epoch", GameplayPathTests.TestPromotionCarriesMeasuredFloorAndSurvivesNextRegisteredFrame),
     ("visual walls join measured platform faces and respect masks", TerrainWallDetectionTests.TestPlatformFacesFollowTheVisibleMask),
     ("visual walls use textured and strong isolated edges", TerrainWallDetectionTests.TestWallEvidenceUsesTexturedFacesAndStrongIsolatedEdges),
     ("terrain corners use near visible endpoints", TerrainWallDetectionTests.TestCornerExtrapolationRespectsVisibleEndpoints),

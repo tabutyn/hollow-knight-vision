@@ -3292,9 +3292,17 @@ public partial class MainWindow : Window
             var registeredPath = tracked.RequiresWorldRecovery ? null : liveWorldResult?.RegisteredPath(walkedCoordinateEpoch);
             if (usesDurableWorld)
                 pathCamera = registeredPath is not null && visualObservation.GroundVerified ? groundDisplayCamera : null;
+            var measuredLocal = usesDurableWorld && visualObservation.GroundVerified
+                && GroundMotionEvidence.IsMeasured(groundHypotheses.PoseVerified, groundHypotheses.HasConfirmedGround,
+                    groundHypotheses.LocalTextureSupport, groundHypotheses.InlierCount, groundHypotheses.GlobalMatchCount);
             paths = trackingPipeline.Paths.Observe(new(atlasRoomId, captureTimestamp, frame.Width, frame.Height,
                 pathCamera, groundDisplayLines, ground, terrain, terrainContact.MeasuredFoot, masks.GroundKnight,
-                terrainContact.Wall) { Atlas = registeredPath });
+                terrainContact.Wall)
+            {
+                Atlas = registeredPath,
+                CaptureGeneration = captureGeneration,
+                LocalCamera = measuredLocal ? new(walkedCoordinateEpoch, groundDisplayCamera) : null
+            });
         }
         else trackingPipeline.Paths.Suspend();
         var botGameplay = !holdAtlas && admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";

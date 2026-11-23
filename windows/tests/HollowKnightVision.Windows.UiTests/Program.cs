@@ -1196,6 +1196,12 @@ internal static class Program
             && !temporary.IsCurrent(true, "game", 12, registered: true),
             "An image-local road must disappear as soon as the pixels advance.");
 
+        var provisional = temporary with { View = temporary.View with { LocalOrigin = new(80, -25) } };
+        provisional.Draw(canvas, new(200, 50, 320, 180));
+        Check(canvas.Children.OfType<Line>().Any(line => line.Stroke == Brushes.Gold
+            && line.X1 == 200 && line.X2 == 360 && line.Y1 == 167.5 && line.Y2 == 167.5),
+            "A measured local route must use the current image as its presentation origin before placement.");
+        canvas.Children.Clear();
         registered.Draw(canvas, new(200, 50, 320, 180));
         var strokes = canvas.Children.OfType<Line>().ToArray();
         Check(strokes.Any(line => line.Stroke == Brushes.Gold

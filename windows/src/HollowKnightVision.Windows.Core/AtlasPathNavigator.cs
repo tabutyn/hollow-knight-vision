@@ -22,14 +22,35 @@ internal sealed class AtlasPathNavigator
     private Leg[] flight = [];
     private readonly HashSet<AtlasPathPoint> visited = [];
     private int bucketSize;
+    private bool automatic = true;
+    private AtlasPathPoint? heading;
+    private AtlasPathPoint? inheritedHeading;
     internal bool HasStartProjection { get; private set; }
 
     public void Interrupt() => flight = [];
+
+    internal void InheritAutomaticDirection(AtlasPathNavigator source)
+    {
+        if (!automatic || !source.automatic || (source.heading ?? source.inheritedHeading) is not { } direction) return;
+        inheritedHeading = direction;
+        Interrupt();
+    }
+
+    internal void MergeVisitedFrom(AtlasPathNavigator source, AtlasPathPoint translation, int height)
+    {
+        if (source.bucketSize == 0) return;
+        SetBucketSize(height);
+        var center = source.bucketSize / 2;
+        foreach (var point in source.visited)
+            visited.Add(Bucket(new(point.X * source.bucketSize + center + translation.X,
+                point.Y * source.bucketSize + center + translation.Y)));
+    }
 
     internal AtlasPathHint? Follow(AtlasPlatformGraph graph, AtlasPathPoint feet, bool? grounded, bool measured,
         Func<AtlasPathPoint, AtlasPathPoint, bool>? admitted, IReadOnlyList<AtlasPathPlatform> walked,
         AtlasPathPoint? fixedObjective = null, bool fixedObjectiveOnGround = true)
     {
+        automatic = !fixedObjective.HasValue;
         var h = graph.KnightHeight;
         var position = new AtlasPathPoint(feet.X, feet.Y + h);
         var floor = grounded == false ? null : graph.NearestStroke(position, grounded == true ? h : Math.Max(2, h / 3), walkOnly: true);
@@ -42,12 +63,7 @@ internal sealed class AtlasPathNavigator
             return null;
         }
         var start = airborne?.Project(position) ?? startStroke.Closest(position);
-        var bin = Math.Max(4, h / 3);
-        if (bin != bucketSize)
-        {
-            visited.Clear();
-            bucketSize = bin;
-        }
+        SetBucketSize(h);
         if (measured && floor.HasValue)
             foreach (var vertex in graph.Vertices(startStroke))
                 if (vertex.DistanceTo(start) <= Math.Max(4, h / 2))
@@ -65,7 +81,7 @@ internal sealed class AtlasPathNavigator
             return null;
         }
         if (oldGoal is { } previousGoal && search.Reaches(previousGoal) && IsUnvisited(previousGoal)
-            && start.DistanceTo(previousGoal) > Math.Max(3, h / 3))
+            && start.DistanceTo(previousGoal) > Math.Max(3, h / 3) && FollowsHeading(previousGoal))
         {
             var route = search.RouteTo(previousGoal);
             if (!startStroke.Contains(previousGoal) || start.DistanceTo(previousGoal) > h)
@@ -79,6 +95,11 @@ internal sealed class AtlasPathNavigator
             objective = null;
             flight = [];
             return null;
+        }
+        if (inheritedHeading.HasValue)
+        {
+            var aligned = candidates.Where(FollowsHeading).ToArray();
+            if (aligned.Length > 0) candidates = aligned;
         }
 
         if (oldGoal is { } lip && startStroke.Kind == AtlasPathKind.Walk && startStroke.Contains(lip) && start.DistanceTo(lip) <= h)
@@ -125,6 +146,11 @@ internal sealed class AtlasPathNavigator
                 }
             }
             objective = target;
+            if (next != origin)
+            {
+                heading = new(Math.Sign(next.X - origin.X), Math.Sign(next.Y - origin.Y));
+                inheritedHeading = null;
+            }
             return new(target, origin, next)
             {
                 Projection = start,
@@ -136,6 +162,18 @@ internal sealed class AtlasPathNavigator
 
         bool IsUnvisited(AtlasPathPoint point) => point != start && !visited.Contains(Bucket(point))
             && !walked.Any(span => Math.Abs(span.Y + h - point.Y) <= Math.Max(2, h / 5) && span.Contains(point.X));
+
+        bool FollowsHeading(AtlasPathPoint point) => inheritedHeading is not { } desired
+            || search.DistanceTo(point) >= Math.Max(3, h / 3) && search.FirstHopTo(point) is { } next
+            && (next.X - start.X) * desired.X + (next.Y - start.Y) * desired.Y > 0;
+    }
+
+    private void SetBucketSize(int height)
+    {
+        var bin = Math.Max(4, height / 3);
+        if (bin == bucketSize) return;
+        visited.Clear();
+        bucketSize = bin;
     }
 
     private AtlasPathPoint Bucket(AtlasPathPoint point) =>

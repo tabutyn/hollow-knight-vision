@@ -109,6 +109,17 @@ internal sealed class AtlasPathSearch
     internal bool Reaches(AtlasPathPoint point) => costs.ContainsKey(point);
     internal int DistanceTo(AtlasPathPoint point) => costs[point];
 
+    internal AtlasPathPoint? FirstHopTo(AtlasPathPoint point)
+    {
+        AtlasPathPoint? hop = null;
+        while (predecessors.TryGetValue(point, out var previous))
+        {
+            hop = point;
+            point = previous;
+        }
+        return hop;
+    }
+
     internal IReadOnlyList<AtlasPathPoint> RouteTo(AtlasPathPoint point)
     {
         if (!costs.ContainsKey(point)) return [];

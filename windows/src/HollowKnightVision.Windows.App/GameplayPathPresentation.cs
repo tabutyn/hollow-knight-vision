@@ -14,7 +14,7 @@ internal sealed record GameplayPathPresentation(long CaptureId, int Width, int H
         if (!live.IsUsable || Width <= 0 || Height <= 0) return;
         var sx = live.Width / Width;
         var sy = live.Height / Height;
-        var camera = View.Camera.GetValueOrDefault();
+        var camera = View.Camera ?? View.LocalOrigin;
         var origin = new AtlasPoint(live.X - camera.X * sx, live.Y + (Height + camera.Y) * sy);
         AtlasPathPresentation.Draw(canvas, View.Strokes, View.KnightWidth, origin,
             View.Hint?.Objective, [], new(sx, sy), View.Hint);
