@@ -183,6 +183,7 @@ internal static class VisualProductionReplay
                     {
                         WalkedGround = tracked.WalkedGround,
                         WalkedCoordinateEpoch = tracked.WalkedCoordinateEpoch,
+                        RoomIdentityIsVisual = true,
                         DoorwayCut = tracked.RecentDoorwayCut,
                         WorldEvidence = tracked.WorldEvidence
                     });

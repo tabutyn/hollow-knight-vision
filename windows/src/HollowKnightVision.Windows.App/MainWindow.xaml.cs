@@ -3165,12 +3165,15 @@ public partial class MainWindow : Window
             ?? (gameMode == GameRuntimeMode.Normal ? RenderedFrameMarker.Decode(frame) : null);
         var receiverTelemetry = gameMode == GameRuntimeMode.Modded ? exactReceiverTelemetry : null;
         var receiverScene = receiverTelemetry?.SceneName?.Trim();
-        var usesDurableWorld = gameMode == GameRuntimeMode.Modded || liveWorldPipeline?.HasImportedAtlas == true;
+        // Older Normal atlases can have saved tiles and no captured source images.
+        // Keep composing those tiles directly so a graph rebuild cannot erase them.
+        var usesDurableWorld = gameMode == GameRuntimeMode.Modded
+            || liveWorldPipeline is { } world && (world.HasDurableEvidence || gameplayAtlas.TileCount == 0);
         var tracked = trackingPipeline.Track(frame, prepared, masks.GroundKnight, admission, signal, captureTimestamp,
             captureGeneration, receiverScene, gameplayAtlas.TileCount > 0, movementButtons,
             resetWorldCoordinatesForCorrection: usesDurableWorld,
             visualRoomObservationEnabled: recognition.GameplayEnabled,
-            observeLoadingInKnownRoom: liveWorldPipeline?.HasImportedAtlas == true,
+            observeLoadingInKnownRoom: usesDurableWorld,
             captureWorldEvidence: usesDurableWorld);
         var visualObservation = tracked.Observation;
         var ground = prepared.Terrain?.Floors ?? [];
@@ -3248,6 +3251,7 @@ public partial class MainWindow : Window
                 {
                     WalkedGround = localWalkedGround,
                     WalkedCoordinateEpoch = walkedCoordinateEpoch,
+                    RoomIdentityIsVisual = gameMode == GameRuntimeMode.Normal,
                     DoorwayCut = tracked.RecentDoorwayCut,
                     WorldEvidence = tracked.WorldEvidence
                 }, visualTelemetry, atlasCompositionExclusions, atlasRoomId, atlasCaptureIdentity);

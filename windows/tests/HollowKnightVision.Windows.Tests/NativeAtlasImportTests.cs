@@ -145,7 +145,7 @@ internal static class NativeAtlasImportTests
         WithRecoveryFixture(identicalRooms: false, (root, before) =>
         {
             var pipeline = new WindowsLiveWorldPipeline(root);
-            Check(pipeline.HasImportedAtlas, "Normal gameplay can recognize a restored Swift world");
+            Check(pipeline.HasDurableEvidence, "Normal gameplay can recognize a restored Swift world");
             var unknown = pipeline.Process(ResumeFrame(1, 901));
             Check(unknown.State == WindowsLiveWorldPipelineState.PendingRecovery && !unknown.AllowsAtlasWrite,
                 "unrelated scenery leaves the restored map pending");
@@ -371,6 +371,108 @@ internal static class NativeAtlasImportTests
                 Check(pipeline.Process(Arrive(15)).CameraPose == new AtlasPoint(expectedX, 35),
                     "subsequent frames retain the aligned basis");
             });
+        }
+    }
+
+    internal static void TestWindowsAtlasExtendsAndAlignsWithoutMovingLegacyFrames()
+    {
+        foreach (var visualRoom in new[] { false, true })
+        {
+            var directory = Directory.CreateTempSubdirectory("hkv-windows-doorway-");
+            try
+            {
+                var root = directory.FullName;
+                const string departureScene = "Windows_departure";
+                const string arrivalScene = "Windows_arrival";
+                var pipeline = new WindowsLiveWorldPipeline(root);
+                Check(!pipeline.HasDurableEvidence, "an empty world does not claim durable evidence");
+                Check(pipeline.Process(ResumeFrame(1, 71) with
+                {
+                    RoomName = departureScene,
+                    RoomIdentityIsVisual = visualRoom
+                }).AllowsAtlasWrite, "a pre-island Windows capture writes its original image");
+                var legacy = new LiveWorldSessionStore(root).Load().Snapshot;
+                Check(!legacy.UsesSwiftWireFormat && legacy.TrackingIslands.Count == 0,
+                    "the prior Windows snapshot has no island membership");
+
+                pipeline = new WindowsLiveWorldPipeline(root);
+                Check(pipeline.HasDurableEvidence, "a reopened Windows world can resume through the durable pipeline");
+                WindowsLiveWorldFrame Depart(long id) => FloorFrame(id, 71, true, 135, false, false) with
+                {
+                    RoomName = departureScene,
+                    RoomIdentityIsVisual = visualRoom
+                };
+                _ = pipeline.Process(Depart(2));
+                Check(pipeline.Process(Depart(3)).ConfirmedRecoveryPose is not null, "recover the legacy image before extending it");
+
+                for (var id = 4; id <= 6; id++)
+                {
+                    Check(pipeline.Process(Depart(id)).AllowsAtlasWrite,
+                        "save a measured departure without replacing the legacy observation");
+                }
+
+                pipeline.NotifyTrackingLoss(1);
+                var cut = new VisualSceneDiscontinuityTracker.Cut(1.95, 2.6, new(80, 0), VisualRoomDirection.Right);
+                WindowsLiveWorldFrame Arrive(long id) => FloorFrame(id, 901, false, 150, false, false) with
+                {
+                    RoomName = arrivalScene,
+                    RoomIdentityIsVisual = visualRoom,
+                    DoorwayCut = cut
+                };
+                var next = visualRoom ? 9 : 11;
+                for (var id = next; id <= 11; id++)
+                {
+                    Check(!pipeline.Process(Arrive(id)).AllowsAtlasWrite,
+                        "recovery and provisional room placement do not append images");
+                }
+
+                WindowsLiveWorldPipelineResult? last = null;
+                for (var id = 12; id <= 14; id++)
+                {
+                    last = pipeline.Process(Arrive(id));
+                    Check(last.AllowsAtlasWrite, "commit a measured arrival");
+                }
+
+                var store = new LiveWorldSessionStore(root);
+                var snapshot = store.Load().Snapshot;
+                var original = snapshot.Observations[0];
+                var first = legacy.Observations.Single();
+                Check(!snapshot.UsesSwiftWireFormat && original.Timestamp == first.Timestamp
+                    && original.OptimizedPose == first.OptimizedPose && original.RawPose == first.RawPose
+                    && original.ExcludedRects.SequenceEqual(first.ExcludedRects)
+                    && snapshot.TrackingIslands[0].Placement == LiveIslandPlacement.LegacyUnknown
+                    && !snapshot.TrackingIslands[0].Members.Single().Measured,
+                    "existing Windows images and coordinates retain their original evidence");
+
+                var doorway = snapshot.DoorwayFloorConstraints.Single();
+                var source = snapshot.Observations.Single(row => row.Id == doorway.DepartureObservationId);
+                var target = snapshot.Observations.Single(row => row.Id == doorway.ArrivalObservationId);
+                Check(doorway.DepartureSupport.Count == 3 && doorway.ArrivalSupport.Count == 3
+                    && source.OptimizedPose.Y + doorway.DepartureFloor.Y
+                        == target.OptimizedPose.Y + doorway.ArrivalFloor.Y
+                    && last is { RebuiltAtlas.TileCount: > 0 }
+                    && last.CameraPose == new AtlasPoint(432, 15),
+                    "the reopened Windows graph, rebuilt tiles, and camera reflect one vertical correction");
+
+                var restored = new WindowsLiveWorldPipeline(root);
+                WindowsLiveWorldFrame Resume(long id) => FloorFrame(id, 901, false, 150, false, false) with
+                {
+                    // Normal mode's names can change when the capture restarts.
+                    RoomName = visualRoom ? departureScene : arrivalScene,
+                    RoomIdentityIsVisual = visualRoom,
+                    CaptureGeneration = 2
+                };
+                _ = restored.Process(Resume(15));
+                Check(restored.Process(Resume(16)).ConfirmedRecoveryPose == new AtlasPoint(432, 15),
+                    "a restored visit finds the saved arrival by image even when a visual room name is reused");
+                Check(restored.Process(Resume(17)).CameraPose == new AtlasPoint(432, 15)
+                    && store.Load().Snapshot.DoorwayFloorConstraints.Count == 1,
+                    "resuming the saved room preserves its connection");
+            }
+            finally
+            {
+                directory.Delete(recursive: true);
+            }
         }
     }
 

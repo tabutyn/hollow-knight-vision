@@ -26,6 +26,10 @@ class ScreenshotErrorTests(unittest.TestCase):
                 {'id': 4, 'timestamp': 120.04, 'roomId': 7,
                  'optimizedPose': {'x': 12, 'y': 0}},
             ],
+            'trackingIslands': [
+                {'id': 8, 'placement': 2, 'members': [{'observationId': 3, 'measured': True}]},
+                {'id': 9, 'placement': 1, 'members': [{'observationId': 4, 'measured': True}]},
+            ],
             'keyframes': [{'id': 1, 'observationId': 3}, {'id': 2, 'observationId': 4}],
             'loopClosureEdges': [{'id': 0, 'fromKeyframeId': 1, 'toKeyframeId': 2,
                                   'deltaX': 3, 'deltaY': 0, 'support': 9}],
@@ -35,6 +39,10 @@ class ScreenshotErrorTests(unittest.TestCase):
         self.assertEqual(result['rows'][0]['roomID'], 7)
         self.assertEqual(result['rows'][0]['errorPixels'], 4)
         self.assertEqual(result['rows'][0]['rawErrorPixels'], 2)
+        self.assertEqual(result['rows'][0]['islandID'], 8)
+        self.assertEqual(result['rows'][0]['placement'], 'estimated')
+        self.assertEqual(result['estimatedOrUnmeasuredErrorPixels']['count'], 1)
+        self.assertEqual(result['globallyPlacedMeasuredErrorPixels']['count'], 1)
         self.assertEqual(scorer.loop_constraint_errors(snapshot, result)['edges'][0]['errorPixels'], 1)
         tracking = [{'captureTimestamp': 120.02, 'poseVerified': True, 'hasConfirmedGround': True},
                     {'captureTimestamp': 120.04, 'poseVerified': True, 'hasConfirmedGround': False}]

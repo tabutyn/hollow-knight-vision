@@ -452,7 +452,7 @@ public sealed class LiveWorldTracker
         closedReferenceKeyframeIds.Add(reference.KeyframeId);
         lastAcceptedClosureTravel = travel;
         ReplaceSnapshot(loopEdges: [.. Snapshot.LoopClosureEdges, closure]);
-        var correction = Snapshot.UsesSwiftWireFormat
+        var correction = Snapshot.TrackingIslands.Count != 0
             ? PlaceNewObservation(observation, match.ProposedCameraPose)
             : Optimize(observationId);
         return Update(correction, closure, [], reference, match);
@@ -460,7 +460,7 @@ public sealed class LiveWorldTracker
 
     public bool AlignNewRoomThroughDoorway(LiveDoorwayTransition transition)
     {
-        if (!Snapshot.UsesSwiftWireFormat || LiveDoorwayFloorEvidence.Propose(Snapshot, transition) is not { } floor)
+        if (Snapshot.TrackingIslands.Count == 0 || LiveDoorwayFloorEvidence.Propose(Snapshot, transition) is not { } floor)
             return false;
 
         var observations = Snapshot.Observations.ToDictionary(value => value.Id);
@@ -484,7 +484,8 @@ public sealed class LiveWorldTracker
             ? pair.Value.OptimizedPose with { Y = pair.Value.OptimizedPose.Y + translationY }
             : pair.Value.OptimizedPose);
         var aligned = Snapshot.ReplaceOptimizedPoses(poses, Snapshot.MapRevision);
-        Snapshot = new LiveWorldSnapshot(LiveWorldSnapshot.CurrentSchemaVersion, aligned.MapRevision, aligned.AnchoredObservationId,
+        Snapshot = new LiveWorldSnapshot(aligned.UsesSwiftWireFormat ? LiveWorldSnapshot.CurrentSchemaVersion : aligned.SchemaVersion,
+            aligned.MapRevision, aligned.AnchoredObservationId,
             aligned.Observations, aligned.Keyframes, aligned.Landmarks, aligned.RelativeMotionEdges, aligned.LoopClosureEdges,
             aligned.TrackingIslands, [.. aligned.DoorwayFloorConstraints, floor]);
         RefreshReferences();
@@ -494,7 +495,15 @@ public sealed class LiveWorldTracker
     private IReadOnlyList<LiveTrackingIsland> CurrentTrackingIslands(LiveWorldObservation observation)
     {
         var islands = Snapshot.TrackingIslands;
-        if (!Snapshot.UsesSwiftWireFormat) return islands;
+        if (islands.Count == 0 && !Snapshot.UsesSwiftWireFormat)
+        {
+            if (observation.CaptureTimestamp is null) return islands;
+
+            // Previously saved Windows observations have a placement but no
+            // durable island membership. Keep those placements as independent
+            // owners until there is evidence to relate them.
+            islands = Snapshot.Observations.Select(value => LiveTrackingIsland.Legacy(value.Id, value)).ToArray();
+        }
 
         if (observation.CaptureTimestamp is not { } captureTimestamp)
             return [.. islands, LiveTrackingIsland.Legacy(NextId(islands.Select(value => value.Id)), observation)];
@@ -540,7 +549,7 @@ public sealed class LiveWorldTracker
 
         var observations = Snapshot.Observations.ToDictionary(value => value.Id);
         var keyframes = Snapshot.Keyframes.ToDictionary(value => value.Id);
-        var currentIslandMembers = Snapshot.UsesSwiftWireFormat
+        var currentIslandMembers = Snapshot.TrackingIslands.Count != 0
             ? Snapshot.TrackingIslands[^1].Members.Select(member => member.ObservationId).ToHashSet() : null;
         if (currentIslandMembers is not null && Snapshot.DoorwayFloorConstraints.Any(edge =>
             currentIslandMembers.Contains(edge.DepartureObservationId)

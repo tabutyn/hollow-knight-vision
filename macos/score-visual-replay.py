@@ -138,8 +138,10 @@ def screenshot_errors(snapshot, frames, capture_origin, world_origin, world_uses
     ordered = sorted(frames, key=lambda f: f['timestamp'])
     times = [f['timestamp'] for f in ordered]
     rows, missing = [], 0
-    ownership = {member['observationID']: (island, member)
+    ownership = {member.get('observationID', member.get('observationId')): (island, member)
                  for island in snapshot.get('trackingIslands', []) for member in island['members']}
+    # The Windows world stores LiveIslandPlacement as an enum ordinal.
+    windows_placements = {0: 'reference', 1: 'connected', 2: 'estimated', 3: 'legacyUnknown'}
     for observation in snapshot['observations']:
         capture_time = observation.get('captureTimestamp')
         if capture_time is None:
@@ -155,11 +157,12 @@ def screenshot_errors(snapshot, frames, capture_origin, world_origin, world_uses
         pose = point_coordinates(observation['optimizedPose'])
         error = [pose[axis]-match['expected'][axis] for axis in (0, 1)]
         island, member = ownership.get(observation['id'], ({}, {}))
+        placement = island.get('placement', 'legacyUnknown')
         rows.append({'observationID': observation['id'], 'offset': match['offset'],
                      'roomID': observation.get('roomID', observation.get('roomId')), 'errorXY': error,
                      'rawErrorPixels': math.dist(point_coordinates(observation['rawPose']), match['expected']) if 'rawPose' in observation else None,
                      'errorPixels': math.hypot(*error), 'islandID': island.get('id'),
-                     'placement': island.get('placement', 'legacyUnknown'),
+                     'placement': windows_placements.get(placement, placement),
                      'expectedPose': match['expected'], 'referenceEpoch': match.get('epoch'),
                      'sceneName': match.get('truth', {}).get('sceneName'),
                      'measured': member.get('measured', False)})

@@ -232,7 +232,6 @@ public sealed record LiveWorldLoopClosureEdge(
 public sealed record LiveWorldSnapshot
 {
     public const int CurrentSchemaVersion = 3;
-    // The Windows tracker still uses the legacy per-observation graph for new sessions.
     private const int WindowsTrackingSchema = 1;
 
     public LiveWorldSnapshot(

@@ -400,6 +400,7 @@ var tests = new List<(string Name, Action Run)>
     ("a tentative doorway match prevents duplication of a saved room", NativeAtlasImportTests.TestImportedAtlasKeepsSearchingForAKnownDoorwayArrival),
     ("measured walks retain ground beneath a hidden edge in the saved Atlas", NativeAtlasImportTests.TestMeasuredWalkSavesFloorUnderAHiddenEdge),
     ("restored Atlas aligns doorway floors only with measured foot contact on both sides", NativeAtlasImportTests.TestDoorwayFloorAlignsOnlyWithMeasuredContactOnBothSides),
+    ("Windows Atlas stitches a measured doorway and preserves saved legacy coordinates", NativeAtlasImportTests.TestWindowsAtlasExtendsAndAlignsWithoutMovingLegacyFrames),
     ("live world round trip and optimization preserve raw evidence", LiveWorldModelParityTests.TestRoundTripAndPoseReplacementPreserveRawEvidence),
     ("live world legacy observations preserve raw pose in epoch zero", LiveWorldModelParityTests.TestLegacyObservationDecodesIntoEpochZeroWithoutMovingItsWorldPose),
     ("live world invalid models are rejected", LiveWorldModelParityTests.TestInvalidModelsAreRejected),
