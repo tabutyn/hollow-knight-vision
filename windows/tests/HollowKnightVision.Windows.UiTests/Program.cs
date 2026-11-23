@@ -96,6 +96,7 @@ internal static class Program
         TestBottomControlScope();
         TestFramingGroupsAreMutuallyExclusive();
         TestHackerTerrainControls();
+        TestHackerPathPresentation();
         TestWorkspaceShortcuts();
         TestPathRecordingAvailability();
         TestWorkspaceExitShortcut();
@@ -122,7 +123,7 @@ internal static class Program
         GpuCaptureTests.TestMappedBounds();
         GpuCaptureTests.RunIfRequested();
         if (args.Contains("--input")) TestBackgroundKeyDelivery();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 72 : 71)}");
+        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 73 : 72)}");
         Application.Current.Shutdown();
     }
 
@@ -1083,7 +1084,7 @@ internal static class Program
 
     private static void TestHackerTerrainControls()
     {
-        var expected = new[] { "View", "Ground", "Wall", "Spike", "Door", "Rooms" };
+        var expected = new[] { "Objective", "Ground", "Wall", "Spike", "Door", "Rooms" };
         Check(DashboardValues("HackerEditingTargets").SequenceEqual(expected), "Unexpected Hacker editing targets.");
         var xml = MainWindowSource();
         System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
@@ -1091,12 +1092,42 @@ internal static class Program
         var picker = xml.Descendants(ns + "ComboBox").Single(item => (string?)item.Attribute(x + "Name") == "HackerTerrainTarget");
         Check(picker.Elements(ns + "ComboBoxItem").Select(item => (string?)item.Attribute("Content")).SequenceEqual(expected),
             "The Hacker terrain menu and editing targets disagree.");
+        Check((string?)picker.Attribute("SelectedIndex") == "0", "Hacker should start with Objective selected.");
+        var pathToggle = xml.Descendants(ns + "CheckBox").Single(item => (string?)item.Attribute(x + "Name") == "AtlasPathsCheck");
+        Check((string?)pathToggle.Attribute("Checked") == "AtlasPaths_Changed"
+            && (string?)pathToggle.Attribute("Unchecked") == "AtlasPaths_Changed", "Atlas path visibility should repaint immediately.");
+        var pathCanvas = xml.Descendants(ns + "Canvas").Single(item => (string?)item.Attribute(x + "Name") == "HackerPathCanvas");
+        Check((string?)pathCanvas.Attribute("IsHitTestVisible") == "False", "Roads should leave pointer handling to Hacker.");
         var modes = xml.Descendants(ns + "RadioButton").ToLookup(item => (string?)item.Attribute("GroupName"),
             item => (string?)item.Attribute("Content"));
         Check(modes["GroundMode"].SequenceEqual(new[] { "Add", "Modify", "Delete" }), "Unexpected terrain editing controls.");
         Check(modes["HackerFraming"].SequenceEqual(new[] { "Free Fly", "Fit", "Current" }) && !modes.Contains("HackerSettingsMode"),
             "Hacker camera controls should appear only in the framing toolbar.");
         Console.WriteLine("PASS Hacker terrain editing and camera framing have separate controls");
+    }
+
+    private static void TestHackerPathPresentation()
+    {
+        var canvas = new Canvas { Width = 160, Height = 150 };
+        var display = AtlasPathRouting.DisplayStrokes([
+            new(new(0, 0), new(360, 0), AtlasPathKind.Walk, true),
+            new(new(20, 0), new(20, 120), AtlasPathKind.Drop, false),
+            new(new(20, 60), new(20, 120), AtlasPathKind.Drop, false),
+            new(new(150, 0), new(150, 20), AtlasPathKind.DoubleJump, true),
+        ]);
+        var bounds = HackerPathPresentation.Draw(canvas, display, 10, new(7, 130),
+            target: new(355, 0), route: [new(40, 0), new(100, 0), new(355, 0)]);
+        var lines = canvas.Children.OfType<Line>().ToArray();
+        var white = lines.Where(line => line.Stroke == Brushes.White).ToArray();
+        Check(white.Length == 3 && white.Any(line => line.X1 == 47 && line.X2 == 362 && line.Y1 == 130),
+            "Hacker should draw the full, continuous white route through an objective beyond the captured tile.");
+        var drop = lines.Where(line => line.Stroke == Brushes.DarkOrange).ToArray();
+        Check(drop.Length == 3 && drop.Count(line => line.X1 == line.X2) == 1
+            && drop.Where(line => line.X1 != line.X2).All(line => line.Y1 > line.Y2),
+            "A shared drop shaft should have one downward arrow.");
+        Check(bounds is { Right: >= 367 } && lines.All(line => !line.IsHitTestVisible),
+            "Fit should include authored paths outside the capture while leaving the pointer available.");
+        Console.WriteLine("PASS Hacker displays the full objective route and one arrow on a shared fall");
     }
 
     private static void TestWorkspaceShortcuts()

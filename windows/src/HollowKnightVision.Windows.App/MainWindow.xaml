@@ -289,7 +289,7 @@
                         <StackPanel Orientation="Horizontal">
                             <ComboBox x:Name="HackerTerrainTarget" SelectedIndex="0" MinWidth="92"
                                       AutomationProperties.Name="Edit Hacker Atlas" SelectionChanged="HackerTerrainTarget_Changed">
-                                <ComboBoxItem Content="View"/>
+                                <ComboBoxItem Content="Objective"/>
                                 <ComboBoxItem Content="Ground"/>
                                 <ComboBoxItem Content="Wall"/>
                                 <ComboBoxItem Content="Spike"/>
@@ -317,6 +317,7 @@
                             <Image x:Name="HackerLiveImage" Visibility="Collapsed" Stretch="Fill"
                                    SnapsToDevicePixels="True" IsHitTestVisible="False" Panel.ZIndex="10"/>
                             <Canvas x:Name="HackerOverlayCanvas" Width="640" Height="360" Background="Transparent" Panel.ZIndex="20"/>
+                            <Canvas x:Name="HackerPathCanvas" IsHitTestVisible="False" Visibility="Collapsed" Panel.ZIndex="21"/>
                         </Canvas>
                         <StackPanel x:Name="AtlasEmptyPanel" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="Waiting for a matched game frame…" FontSize="14" Foreground="#9AA3AD"/></StackPanel>
                         <TextBlock x:Name="AtlasPreviewText" Visibility="Collapsed"/>
@@ -489,6 +490,8 @@
                                     <TextBlock x:Name="StencilLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
                                     <Separator Margin="0,0,0,10"/>
                                     <CheckBox x:Name="GroundFeaturesCheck" Content="Ground Features" Margin="0,0,0,10" IsChecked="True"/>
+                                    <CheckBox x:Name="AtlasPathsCheck" Content="Atlas paths" IsChecked="True" Margin="0,0,0,10"
+                                              Checked="AtlasPaths_Changed" Unchecked="AtlasPaths_Changed"/>
                                     <CheckBox x:Name="EstimatedRoomConnectionsCheck" Content="Estimated room connections"
                                               IsChecked="False" Margin="0,0,0,10" Checked="EstimatedRoomConnections_Changed"
                                               Unchecked="EstimatedRoomConnections_Changed"/>

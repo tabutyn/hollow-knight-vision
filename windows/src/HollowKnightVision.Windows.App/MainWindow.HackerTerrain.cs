@@ -12,7 +12,7 @@ public partial class MainWindow
     private sealed record TerrainRoom(string SceneName, AtlasPoint Position,
         HackerAtlasRect Bounds, HackerTerrainProjection Projection);
 
-    private string hackerEditingTarget = "View";
+    private string hackerEditingTarget = "Objective";
     private GroundTruthTerrainTool? hackerTerrainTool;
     private bool EditsHackerTerrain => hackerTerrainTool.HasValue;
     private TerrainRoom? groundDragRoom;
@@ -170,7 +170,7 @@ public partial class MainWindow
         if (HackerOverlayCanvas is not null) RedrawHackerEdits();
     }
 
-    private void RenderHackerTerrain(double originX, double originY)
+    private void RenderHackerTerrain(double originX, double originY, IReadOnlyList<TerrainRoom> rooms)
     {
         if (hackerTerrainTool == GroundTruthTerrainTool.Ground)
         {
@@ -179,7 +179,7 @@ public partial class MainWindow
                     legacy.IsNegative ? NegativeGroundLineBrush : GroundLineBrush, drawHandles: false);
         }
 
-        var roomsByScene = HackerTerrainRooms().ToDictionary(room => room.SceneName, StringComparer.Ordinal);
+        var roomsByScene = rooms.ToDictionary(room => room.SceneName, StringComparer.Ordinal);
         foreach (var line in groundTruthLabels.VisibleLines)
         {
             if (!roomsByScene.TryGetValue(line.SceneName, out var room)) continue;

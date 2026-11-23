@@ -41,7 +41,7 @@ scripts.
 | Hacker terrain editing | The draft provides Ground, Wall, Spike, Door, and Rooms controls independently of the camera controls. Walls and floors share editable corners. Doors can be drawn along either axis and follow an attached floor. Terrain uses the room coordinate system, and the editor preserves the floor-only document format. Older detector records stay stored and excluded from the editor and overlay. The core tests cover corner movement, room isolation, reload, undo, both door axes, and save failures. Live game rendering and behavior after leaving and returning to a room still need verification. |
 | Atlas camera shortcuts | The Windows draft cycles both workspaces through Current at 1.1× zoomed out, Current at 2× zoomed out, and Fit. The offscreen WPF viewport regression checks the requested scale and keeps the follow point centered in both Current presets. |
 | Game Play visual tracking | Windows rejects fully enclosed shorter floors within the Knight’s height and trims a slight overlap at supported platform tips. Game Play records level walks when frame-matched arrows, visible foot samples, and a verified camera agree. The draft keeps walked spans by room for the current capture and uses one green line over walked columns while keeping tracking boxes visible. Synthetic frames verify dark intervals, reversing, room isolation, and jump rejection. Camera references now need at least one patch width of floor support. Short platforms can show their own box after two adjacent, unmasked, registered observations. Existing live boxes align with the current floor and saved boxes show outside the live image. With the modded game, admitted walks now travel with their saved room observations and are reprojected when recovering a room or correcting the atlas. The store and pipeline regressions exercise reopen, new-column admission, stale pose correction, and room isolation. Game Play detects walls from visual edges and textured platform faces. It joins nearby visible floor endpoints and uses sustained, corroborated movement contact to extend wall evidence. The overlay draws corner markers and horizontal joins. Walked-ground reopen in normal game mode, wall evidence in bot observations, and live Windows recordings remain open. |
-| Atlas objectives, jumps, one-way drops, and path display | The deployed Mac path editor and graph have no Windows equivalent in the inspected Windows source. |
+| Atlas objectives, jumps, one-way drops, and path display | The draft builds a directed graph from authored Hacker terrain. Verified fixtures cover a continuous walked span, the measured jump apex, authored obstacles, one-way falls, and steered branches. Objective is the default Hacker tool. The atlas shows paths beyond the visited tiles, draws the selected route in white, and gates the path display on active gameplay and the Debug View setting. Path editing and saved connections, Game Play graph presentation and automatic frontier navigation, and live Windows interaction need verification or implementation. |
 | Paired bot capture and runtime, human evidence, policy selection, and Gym PPO | Windows has no bot playback or Gym observation encoder in the inspected application. The bot Python package is not connected to the Windows application or trainer environment. |
 
 ## Reproduce the changed-line report
@@ -94,3 +94,20 @@ new or changed live window integration lines still need runtime coverage.
 The [native pipeline instrumentation run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45092008893)
 confirmed 46 of 46 changed live-world pipeline lines. At `d3eb18b`, coverage
 was 1,044 of 1,517 changed C# executable lines across the draft, including WPF.
+
+
+The [native wall-detector run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45098167394)
+passed the installed build and offscreen WPF tests. It exercised 292 of 305
+changed executable lines in the wall and corner port. All 17 changed renderer
+lines were reached. The 10 changed live window integration lines had counters
+and received no hits.
+
+An offline Windows Core replay consumed 1,100 registered frames from King's
+Pass and 346 frames from a second recording that included blocked motion. The
+detector produced wall and corner evidence in 1,082 and 326 frames respectively,
+with right-wall contact in 58 frames of the second run while the recorded player
+position remained stationary. Contact used the recordings' verified visual
+camera poses. With a match defined by an 8-pixel horizontal distance and 50%
+overlap of the shorter span, 3,552 of 6,860 projected authored wall instances
+matched the detector in the first run. This measures agreement with existing
+labels. The annotations do not include a per-frame inventory of visible walls.

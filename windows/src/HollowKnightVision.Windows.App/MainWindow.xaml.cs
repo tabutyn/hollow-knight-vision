@@ -452,7 +452,7 @@ internal static class DashboardPresentationPolicy
     internal static IReadOnlyList<string> BottomWorkspaces { get; } =
         ["Gameplay", "Label", "Stencil", "Model", "Hacker"];
     internal static IReadOnlyList<string> HackerEditingTargets { get; } =
-        ["View", "Ground", "Wall", "Spike", "Door", "Rooms"];
+        ["Objective", "Ground", "Wall", "Spike", "Door", "Rooms"];
 
     internal static bool ShowsFraming(
         string workspace,
@@ -1591,6 +1591,7 @@ public partial class MainWindow : Window
 
     private void GameViewport_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (workspace == "Hacker" && SelectHackerObjective(e)) return;
         if (workspace == "Hacker" && EditsHackerTerrain && GroundEditorMouseDown(e)) return;
         if (workspace == "Hacker" && hackerEditingTarget == "Rooms")
         {
@@ -1984,6 +1985,7 @@ public partial class MainWindow : Window
     {
         if (HackerWorkspaceButton is null || OpsWorkspaceButton is null) return;
         if (initialization is null) return;
+        HackerPathCanvas.Visibility = ShowsHackerPaths ? Visibility.Visible : Visibility.Collapsed;
         PresentLabelPauseControls(LabelPanel, LabelWorkspaceButton, labelCapture, gameControls.IsRecording);
         GameplayControlsPanel.Visibility = visionCancellation is not null
             && DashboardPresentationPolicy.ShowsGameplayFraming(
@@ -4356,7 +4358,9 @@ public partial class MainWindow : Window
         HackerOverlayCanvas.Children.Clear();
         var originX = (hackerAtlasMinimumTileX ?? 0) * HackerAtlasTileSize;
         var originY = (hackerAtlasMinimumTileY ?? 0) * HackerAtlasTileSize;
-        RenderHackerTerrain(originX, originY);
+        var terrainRooms = HackerTerrainRooms();
+        RenderHackerTerrain(originX, originY, terrainRooms);
+        RenderHackerPaths(originX, originY, terrainRooms);
         if (hackerEditingTarget == "Rooms")
         {
             var topology = BuildHackerRoomLayout();
@@ -5416,6 +5420,8 @@ public partial class MainWindow : Window
         }
         if (liveBounds is { } live)
             union = union is { } current ? current.Union(live) : live;
+        if (ReferenceEquals(surface, AtlasCanvas) && ShowsHackerPaths && hackerPathFitBounds is { } paths)
+            union = union is { } current ? current.Union(paths) : paths;
         return union;
     }
 
@@ -6107,6 +6113,8 @@ public partial class MainWindow : Window
 
     private void ClearHackerAtlas()
     {
+        hackerObjective = null;
+        hackerPathGraphs.Clear();
         CancelGroundTruthGesture();
         InvalidatePendingHackerWork(resetCore: true);
         foreach (var image in hackerTileImages.Values)
