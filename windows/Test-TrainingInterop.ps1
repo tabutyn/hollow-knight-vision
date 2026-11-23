@@ -1,4 +1,8 @@
-param([string]$Python, [string]$Dotnet = 'dotnet')
+param(
+  [string]$Python,
+  [string]$Dotnet = 'dotnet',
+  [string]$NativeVerifier = (Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\HollowKnightVision.Windows.Host.exe')
+)
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 if (-not $Python) {
@@ -9,6 +13,7 @@ if (-not $Python) {
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw 'Run setup-training-windows.ps1 or supply -Python.' }
 $tests = Join-Path $PSScriptRoot 'tests\HollowKnightVision.Windows.Tests\bin\Release\net8.0\HollowKnightVision.Windows.Tests.dll'
 if (-not (Test-Path -LiteralPath $tests -PathType Leaf)) { throw 'Run build-windows.ps1 before the trainer interchange check.' }
+if (-not (Test-Path -LiteralPath $NativeVerifier -PathType Leaf)) { throw 'The native Windows trainer verifier is missing.' }
 $trainerRoot = Join-Path $repositoryRoot 'macos\TrainingPython'
 $temporaryParent = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))
 $fixtureRoot = Join-Path $temporaryParent ('hkv-dataset-probe-' + [Guid]::NewGuid().ToString('N'))
@@ -195,7 +200,6 @@ for version in (bot.SCHEMA_VERSION, bot.GROUND_CONTACT_POLICY_VERSION, bot.LANDI
 '@
   & $Python -B -c $botValidation $botSource $botFixture
   if ($LASTEXITCODE -ne 0) { throw 'Windows bot capture interoperability failed.' }
-  $nativeVerifier = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\HollowKnightVision.Windows.Host.exe'
   & $nativeVerifier --hacker-gym-observations verify-inputs (Join-Path $botFixture 'native-input-fixtures.json')
   if ($LASTEXITCODE -ne 0) { throw 'Windows native observation history differs from shared trainer inputs.' }
   $policyFixtures = Get-ChildItem -LiteralPath (Join-Path $botFixture 'policy-fixtures') -Directory
