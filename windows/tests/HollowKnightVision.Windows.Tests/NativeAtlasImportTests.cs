@@ -268,11 +268,8 @@ internal static class NativeAtlasImportTests
             var oldTime = ResumeFrame(5, 191) with { Timestamp = .8, MonotonicTimestamp = .8 };
             CheckDiscarded(pipeline.Process(oldTime), "stale world timestamp",
                 "rolling back persistence retains the admitted capture clock");
-            Check(pipeline.Process(ResumeFrame(4, 71)).State != WindowsLiveWorldPipelineState.Failed,
-                "new input can retry recovery after the write failure");
-            Check(pipeline.Process(ResumeFrame(5, 71)).ConfirmedRecoveryPose is not null
-                && pipeline.Process(ResumeFrame(6, 71)).AllowsAtlasWrite,
-                "fresh evidence reopens the previous room and resumes persistence");
+            Check(pipeline.Process(ResumeFrame(4, 71)).AllowsAtlasWrite,
+                "fresh input continues the saved room at the existing placement");
             var snapshot = new LiveWorldSessionStore(root.FullName).Load().Snapshot;
             Check(snapshot.Observations.Count == 2 && snapshot.Observations.Select(row => row.RoomId).Distinct().Count() == 1,
                 "the replayed room cannot leak into the durable world");
@@ -529,7 +526,13 @@ internal static class NativeAtlasImportTests
         }
     }
 
-    internal static void TestWindowsAtlasExtendsAndAlignsWithoutMovingLegacyFrames()
+    internal static void TestWindowsAtlasExtendsAndAlignsWithoutMovingLegacyFrames() =>
+        VerifyWindowsDoorwayCommit(failAlignmentCommit: false);
+
+    internal static void TestDoorwayCommitFailureKeepsPlacedRoomAndRetriesAlignment() =>
+        VerifyWindowsDoorwayCommit(failAlignmentCommit: true);
+
+    private static void VerifyWindowsDoorwayCommit(bool failAlignmentCommit)
     {
         foreach (var visualRoom in new[] { false, true })
         {
@@ -539,6 +542,8 @@ internal static class NativeAtlasImportTests
                 var root = directory.FullName;
                 const string departureScene = "Windows_departure";
                 const string arrivalScene = "Windows_arrival";
+                var failCommit = false;
+                var builtDoorway = false;
                 var pipeline = new WindowsLiveWorldPipeline(root);
                 Check(!pipeline.HasDurableEvidence, "an empty world does not claim durable evidence");
                 Check(pipeline.Process(ResumeFrame(1, 71) with
@@ -550,7 +555,9 @@ internal static class NativeAtlasImportTests
                 Check(!legacy.UsesSwiftWireFormat && legacy.TrackingIslands.Count == 0,
                     "the prior Windows snapshot has no island membership");
 
-                pipeline = new WindowsLiveWorldPipeline(root);
+                pipeline = new WindowsLiveWorldPipeline(root,
+                    stage => builtDoorway |= stage == "doorway-rebuild",
+                    stage => failCommit && stage == "commit");
                 Check(pipeline.HasDurableEvidence, "a reopened Windows world can resume through the durable pipeline");
                 WindowsLiveWorldFrame Depart(long id) => FloorFrame(id, 71, true, 135, false, false) with
                 {
@@ -584,11 +591,45 @@ internal static class NativeAtlasImportTests
                 WindowsLiveWorldPipelineResult? last = null;
                 for (var id = 12; id <= 14; id++)
                 {
+                    if (id == 14 && failAlignmentCommit) break;
                     last = pipeline.Process(Arrive(id));
                     Check(last.AllowsAtlasWrite, "commit a measured arrival");
                 }
 
                 var store = new LiveWorldSessionStore(root);
+                if (failAlignmentCommit)
+                {
+                    var unaligned = store.Load().Snapshot;
+                    failCommit = true;
+                    var failed = pipeline.Process(Arrive(14));
+                    failCommit = false;
+                    Check(builtDoorway && failed is { State: WindowsLiveWorldPipelineState.Failed, RebuiltAtlas: null }
+                        && store.Load().Snapshot.MapRevision == unaligned.MapRevision
+                        && store.Load().Snapshot.DoorwayFloorConstraints.Count == 0,
+                        "failed alignment cannot publish its new tiles or pose graph");
+
+                    var failedSource = new SceneSessionStore(root).Manifest.Observations[^1].Id;
+                    const double retryTime = 4.23; // Keep the next measured image in the arrival island.
+                    var retry = Arrive(15);
+                    last = pipeline.Process(retry with
+                    {
+                        Timestamp = retryTime,
+                        MonotonicTimestamp = retryTime,
+                        WorldEvidence = retry.WorldEvidence! with { CaptureTimestamp = retryTime }
+                    });
+                    Check(last is { AllowsAtlasWrite: true, RebuiltAtlas.TileCount: > 0 },
+                        $"the next measured frame retries the pending doorway ({last.Diagnostic})");
+                    var aligned = store.Load().Snapshot;
+                    var arrivalRoom = aligned.Observations[^1].RoomId;
+                    Check(aligned.Observations.Count == unaligned.Observations.Count + 1
+                        && aligned.Observations.Where(row => row.RoomId == arrivalRoom)
+                            .All(row => row.RawPose.Y == 0 && row.OptimizedPose.Y == 15),
+                        "the retry aligns the whole arrival while preserving its measured poses");
+                    var rebuilt = WindowsLiveWorldPipeline.RebuildAtlas(aligned,
+                        id => id == failedSource ? throw new InvalidOperationException("Failed image leaked into the Atlas.") : store.Source(id),
+                        1, 256);
+                    Check(rebuilt.TileCount > 0, "Atlas rebuild uses only the committed source images");
+                }
                 var snapshot = store.Load().Snapshot;
                 var original = snapshot.Observations[0];
                 var first = legacy.Observations.Single();
