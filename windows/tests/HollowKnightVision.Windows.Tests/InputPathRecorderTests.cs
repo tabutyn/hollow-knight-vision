@@ -66,7 +66,9 @@ internal static class InputPathRecorderTests
             floorlessCoarsePosition: new AtlasPoint(50, -8),
             floorlessMaskedPosition: new AtlasPoint(48, -9),
             floorlessExpectedDirection: VisualRoomDirection.Right,
-            floorlessSelectionSource: "maskedRegistration", observedAt: 101.25);
+            floorlessSelectionSource: "maskedRegistration", observedAt: 101.25,
+            sceneMotion: new(new(49, -9), 7_776.95, 7_777, 12, true, false, .3, .6),
+            sceneMotionMilliseconds: 2.75);
         var truth = MakeGroundTruth(7);
         recorder.RecordGroundTruth(truth, 101.3);
         recorder.RecordCoarseMotion(7_778, 88, new AtlasPoint(44, -6),
@@ -147,6 +149,12 @@ internal static class InputPathRecorderTests
             ?? throw new Exception("Path did not decode.");
         var decodedLowResolution = decodedPath.LowResolutionFrameTrace.Single();
         CheckLowResolution(lowResolution, decodedLowResolution);
+        var scene = decodedPath.TrackingSamples.Single();
+        Check(scene is { SceneMotionSupport: 12, SceneMotionMeasuredX: true, SceneMotionMeasuredY: false });
+        Close(.3, scene.SceneMotionResidualX ?? double.NaN);
+        Close(.6, scene.SceneMotionResidualY ?? double.NaN);
+        Close(7_776.95, scene.SceneMotionReferenceTimestamp ?? double.NaN);
+        Close(2.75, scene.SceneMotionMilliseconds ?? double.NaN);
         Check(recorder.Stop(103) is null);
     }
 

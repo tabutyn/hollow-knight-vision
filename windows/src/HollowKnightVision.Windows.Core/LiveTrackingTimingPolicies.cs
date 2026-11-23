@@ -127,7 +127,8 @@ public static class FloorlessMotionHandoff
 public enum FloorlessPoseCandidateSource
 {
     CoarseCaptureRate,
-    MaskedRegistration
+    MaskedRegistration,
+    CalibratedScene
 }
 
 public readonly record struct FloorlessPoseCandidate(

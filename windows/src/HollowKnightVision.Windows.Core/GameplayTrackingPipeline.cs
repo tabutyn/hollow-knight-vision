@@ -12,7 +12,8 @@ public sealed record GameplayTrackedFrame(
     IReadOnlyList<PixelRect> PlatformPatches, IReadOnlyList<GroundHypothesisAtlasLine> WalkedGround,
     long WalkedCoordinateEpoch, double CameraMilliseconds, long AtlasStartedTimestamp)
 {
-    public bool MotionBridgeActive => Observation.Source is "transition-bridge" or "coarse-presentation";
+    public bool MotionBridgeActive =>
+        Observation.Source is "transition-bridge" or "calibrated-scene" or "coarse-presentation";
     public bool RoomAllowsAtlasWrite { get; init; } = true;
     public VisualSceneDiscontinuityTracker.Cut? SceneCut { get; init; }
 }

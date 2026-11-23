@@ -56,6 +56,13 @@ public sealed record RecordedTrackingSample
     public double? FloorlessMaskedY { get; init; }
     public int? FloorlessExpectedDirection { get; init; }
     public string? FloorlessSelectionSource { get; init; }
+    public int? SceneMotionSupport { get; init; }
+    public bool? SceneMotionMeasuredX { get; init; }
+    public bool? SceneMotionMeasuredY { get; init; }
+    public double? SceneMotionResidualX { get; init; }
+    public double? SceneMotionResidualY { get; init; }
+    public double? SceneMotionReferenceTimestamp { get; init; }
+    public double? SceneMotionMilliseconds { get; init; }
 }
 
 public sealed record RecordedLoopClosureEvent(
@@ -417,7 +424,8 @@ public sealed class InputPathRecorder
         int? renderedGameFrame = null, string? placementRecoveryState = null,
         AtlasPoint? floorlessCoarsePosition = null, AtlasPoint? floorlessMaskedPosition = null,
         VisualRoomDirection? floorlessExpectedDirection = null,
-        string? floorlessSelectionSource = null, double? observedAt = null)
+        string? floorlessSelectionSource = null, double? observedAt = null,
+        CalibratedSceneMotionEvidence? sceneMotion = null, double? sceneMotionMilliseconds = null)
     {
         ArgumentNullException.ThrowIfNull(result);
         lock (gate)
@@ -452,7 +460,12 @@ public sealed class InputPathRecorder
                 FloorlessCoarseX = floorlessCoarsePosition?.X, FloorlessCoarseY = floorlessCoarsePosition?.Y,
                 FloorlessMaskedX = floorlessMaskedPosition?.X, FloorlessMaskedY = floorlessMaskedPosition?.Y,
                 FloorlessExpectedDirection = (int?)floorlessExpectedDirection,
-                FloorlessSelectionSource = floorlessSelectionSource
+                FloorlessSelectionSource = floorlessSelectionSource,
+                SceneMotionSupport = sceneMotion?.SupportedPatches,
+                SceneMotionMeasuredX = sceneMotion?.HorizontalMeasured, SceneMotionMeasuredY = sceneMotion?.VerticalMeasured,
+                SceneMotionResidualX = sceneMotion?.ResidualX, SceneMotionResidualY = sceneMotion?.ResidualY,
+                SceneMotionReferenceTimestamp = sceneMotion?.ReferenceTimestamp,
+                SceneMotionMilliseconds = sceneMotionMilliseconds
             });
             if (current.LowResolutionFrameIndices.TryGetValue(captureTimestamp, out var index))
             {

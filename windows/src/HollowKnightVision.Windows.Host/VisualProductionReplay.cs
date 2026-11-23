@@ -204,13 +204,14 @@ internal static class VisualProductionReplay
                 var floorless = observation.FloorlessEvidence;
                 replayTrace.RecordTracking(InputPathTrackingObservation.FromGround(tracked.Ground), evidence.CaptureTimestamp,
                     publishedCameraPosition: publishedCamera, poseSource: observation.Source,
-                    motionBridgeConfidence: observation.MaskedMotionConfidence,
+                    motionBridgeConfidence: observation.MotionBridgeConfidence,
                     motionBridgeSource: tracked.MotionBridgeActive ? observation.Source : null,
                     signalMeanPeak: signal.MeanPeak, signalVisibleFraction: signal.VisibleFraction,
                     roomId: roomId, roomRevision: revision, renderedGameFrame: evidence.RenderedGameFrame,
                     placementRecoveryState: camera.PlacementRecoveryState,
                     floorlessCoarsePosition: floorless?.CoarsePosition, floorlessMaskedPosition: floorless?.MaskedPosition,
                     floorlessExpectedDirection: floorless?.ExpectedDirection, floorlessSelectionSource: floorless?.SelectionName,
+                    sceneMotion: floorless?.Scene,
                     observedAt: evidence.CapturedAt);
                 replayTrace.RecordAtlasAdmission(evidence.CaptureTimestamp, placement?.AllowsAtlasWrite == true);
                 replayTrace.RecordCoarseMotion(evidence.CaptureTimestamp, evidence.RenderedGameFrame, publishedCamera,
