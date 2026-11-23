@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
+using HollowKnightVision.Windows.Core;
 using HollowKnightVision.Windows.Host;
 
 namespace HollowKnightVision.Windows.App;
@@ -103,6 +104,14 @@ internal sealed class WindowsNormalGameInput : IDisposable
         if (!CanUseTarget() || !allowsGameInput()) return false;
         EnterOverlay(forceActivation: true);
         return true;
+    }
+
+    internal InputButtons? CaptureMovement()
+    {
+        if (!overlayActive || !IsGameForeground()) return null;
+        return (IsKeyDown(0x25) ? InputButtons.Left : InputButtons.None)
+            | (IsKeyDown(0x27) ? InputButtons.Right : InputButtons.None)
+            | (IsKeyDown(0x5A) ? InputButtons.ActionZ : InputButtons.None);
     }
 
     internal bool ForwardKeyUp(Key key) =>

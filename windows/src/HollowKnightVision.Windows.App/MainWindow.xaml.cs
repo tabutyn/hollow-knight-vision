@@ -687,7 +687,8 @@ public partial class MainWindow : Window
         ReceiverGroundTruthSample? ReceiverTelemetry = null,
         bool OwnsHackerWork = false,
         bool IntegratesHackerAtlas = false,
-        long HackerWorkGeneration = 0);
+        long HackerWorkGeneration = 0,
+        InputButtons? MovementButtons = null);
 
     private readonly record struct HackerTileKey(Guid RoomId, long LayerId);
 
@@ -730,6 +731,7 @@ public partial class MainWindow : Window
         internal bool NeedsCameraAnchor { get; set; } = true;
         internal GroundSemanticAtlas SemanticAtlas { get; } = new();
         internal GroundReferenceTracker ReferenceTracker { get; } = new();
+        internal WalkedGroundTracker WalkedGround { get; } = new();
         internal string? ReceiverSceneName { get; private set; }
         internal int FrameWidth { get; private set; }
         internal int FrameHeight { get; private set; }
@@ -753,7 +755,7 @@ public partial class MainWindow : Window
                     receiverSceneName,
                     StringComparison.Ordinal))
             {
-                Reset();
+                Reset(preserveWalkedGround: true);
                 FrameWidth = width;
                 FrameHeight = height;
             }
@@ -764,10 +766,13 @@ public partial class MainWindow : Window
         {
             Tracker.Reset(keepingGlobalFeatures: true);
             ReferenceTracker.Reset();
+            WalkedGround.BreakContinuity();
         }
 
-        internal void Reset()
+        internal void Reset(bool preserveWalkedGround = false)
         {
+            if (preserveWalkedGround) WalkedGround.BreakContinuity();
+            else WalkedGround.Reset();
             NeedsCameraAnchor = true;
             Tracker.Reset();
             SemanticAtlas.Reset();
@@ -854,6 +859,8 @@ public partial class MainWindow : Window
         public long HackerWorkGeneration { get; init; }
         public GroundHypothesisTrackingResult GroundHypotheses { get; init; } =
             GroundHypothesisTrackingResult.Empty;
+        public IReadOnlyList<GroundHypothesisAtlasLine> GroundDisplayLines { get; init; } = [];
+        public AtlasPoint GroundDisplayCamera { get; init; }
     }
 
     private sealed class GameWindowLostException : Exception
@@ -2609,6 +2616,8 @@ public partial class MainWindow : Window
                     captureFallbackReason = capture.FallbackReason;
                     captureReadbackMilliseconds = capture.ReadbackMilliseconds;
                     var captureTimestamp = capture.CaptureTimestamp;
+                    var movement = gameMode == GameRuntimeMode.Normal
+                        ? normalGameInput?.CaptureMovement() : gameControls.CaptureMovement();
                     if (!labelCapture.Accept(frame, labelRevision)) continue;
                     gameplayPresentation.Capture(frame);
                     var bitmap = FrameBitmap(frame);
@@ -2631,7 +2640,8 @@ public partial class MainWindow : Window
                     var pending = new PendingVisionFrame(
                         frame,
                         labelRevision,
-                        captureTimestamp);
+                        captureTimestamp,
+                        MovementButtons: movement);
                     if (gameMode == GameRuntimeMode.Normal)
                     {
                         analysisFrames.Writer.TryWrite(pending);
@@ -2731,7 +2741,7 @@ public partial class MainWindow : Window
                 {
                     frameMotionTracker.Reset();
                     inputPathMotionTracker.Reset();
-                    groundHypothesisState.Reset();
+                    groundHypothesisState.Reset(preserveWalkedGround: true);
                     frameAdmission = new();
                     lastLabelRevision = pending.LabelRevision;
                 }
@@ -2751,6 +2761,7 @@ public partial class MainWindow : Window
                     pending.OwnsHackerWork,
                     pending.IntegratesHackerAtlas,
                     pending.HackerWorkGeneration,
+                    pending.MovementButtons,
                     groundHypothesisState,
                     normalAtlasRoomIdentity);
                 if (result is null) continue;
@@ -2997,7 +3008,8 @@ public partial class MainWindow : Window
                 capture.Frame,
                 capture.CaptureTimestamp,
                 IntegratesAtlas: ownsHackerWork
-                    && capture.Frame.CaptureId % HackerAtlasSampleStride == 0));
+                    && capture.Frame.CaptureId % HackerAtlasSampleStride == 0,
+                MovementButtons: capture.MovementButtons));
             if (matched is null)
             {
                 RememberReceiverFrameMetadata(
@@ -3103,7 +3115,8 @@ public partial class MainWindow : Window
             matched.Sample,
             ownsHackerWork,
             matched.Capture.IntegratesAtlas,
-            hackerGeneration);
+            hackerGeneration,
+            matched.Capture.MovementButtons);
         Volatile.Read(ref stepCapture)?.Trace("joined", pending.Frame.CaptureId, pending.RenderedGameFrame, pending.CaptureTimestamp);
         if (!writer.TryWrite(pending)) return;
         latestMatchedCaptureId = pending.Frame.CaptureId;
@@ -3168,6 +3181,7 @@ public partial class MainWindow : Window
         bool ownsHackerWork,
         bool integratesHackerAtlas,
         long pendingHackerWorkGeneration,
+        InputButtons? movementButtons,
         GroundHypothesisWorkerState groundHypothesisState,
         NormalAtlasRoomIdentity normalAtlasRoomIdentity)
     {
@@ -3295,6 +3309,20 @@ public partial class MainWindow : Window
             : normalAtlasRoomIdentity.Observe(
                 captureGeneration,
                 admission.Transition.ResumedAfterTransition);
+        var groundDisplayCamera = groundHypotheses.CameraPosition
+            ?? new AtlasPoint(visualTelemetry.CameraX, visualTelemetry.CameraY);
+        var cameraCorrection = groundHypotheses.GlobalCorrection;
+        if (cameraCorrection is { } correction && correction.X * correction.X + correction.Y * correction.Y > 9)
+            groundHypothesisState.WalkedGround.BreakContinuity();
+        if (groundAnalysis is not null)
+            groundHypothesisState.WalkedGround.Observe(atlasRoomId, groundAnalysis, masks.GroundKnight,
+                visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null,
+                movementButtons, captureTimestamp, ground);
+        IReadOnlyList<GroundHypothesisAtlasLine> groundDisplayLines = admission.AdmitsTracking
+            ? GroundStrokeGeometry.VisibleLines(groundHypotheses.AtlasLines, groundHypotheses.LineReviews,
+                groundHypothesisState.WalkedGround.InRoom(atlasRoomId), groundDisplayCamera,
+                frame.Height, masks.GroundKnight)
+            : [];
         var atlasCaptureIdentity = FormattableString.Invariant(
             $"{captureGeneration}:{frame.CaptureId}:{BitConverter.DoubleToInt64Bits(captureTimestamp):X16}");
         var atlasCompositionExclusions = LiveAtlasTransitionMaskPolicy.Merge(
@@ -3492,7 +3520,9 @@ public partial class MainWindow : Window
                 OwnsHackerWork = ownsHackerWork,
                 IntegratesHackerAtlas = integratesHackerAtlas,
                 HackerWorkGeneration = pendingHackerWorkGeneration,
-                GroundHypotheses = groundHypotheses
+                GroundHypotheses = groundHypotheses,
+                GroundDisplayLines = groundDisplayLines,
+                GroundDisplayCamera = groundDisplayCamera
             };
     }
 
@@ -3709,7 +3739,7 @@ public partial class MainWindow : Window
         if (presentsLatestFrame)
         {
             if (GroundFeaturesCheck.IsChecked == true)
-                DrawGroundHypothesisAtlasOverlay(result.GroundHypotheses, result.Frame);
+                DrawGroundHypothesisAtlasOverlay(result);
             else if (result.AdmitsTracking)
                 UpdateTrackedGround(result.Ground, result.GameplayTelemetry);
             else GameplayGroundCanvas.Children.Clear();
@@ -3844,94 +3874,17 @@ public partial class MainWindow : Window
             GroundFeatureOverlayPresentation.DrawLive(
                 DetectionCanvas,
                 groundHypotheses);
-
-            foreach (var review in GroundLineDetector.FeatureHypothesisPresenceReviews(
-                         groundHypotheses.LineReviews))
-            {
-                DetectionCanvas.Children.Add(new Line
-                {
-                    X1 = review.Line.XSpan.Start,
-                    X2 = review.Line.XSpan.EndInclusive + 1,
-                    Y1 = review.Line.Row + .5,
-                    Y2 = review.Line.Row + .5,
-                    Stroke = GroundFeatureOverlayPresentation.Brush(
-                        DashboardFeatureReviewLineKind.CurrentGround),
-                    StrokeThickness = DashboardFeatureReviewGeometry.LineWidth,
-                    Opacity = DashboardFeatureReviewPalette.Rgba(
-                        DashboardFeatureReviewLineKind.CurrentGround).Alpha,
-                    ToolTip = FormattableString.Invariant(
-                        $"confirmed ground {review.Id} • {review.DetectedFraction:P0}")
-                });
-            }
         }
     }
 
-    private void DrawGroundHypothesisAtlasOverlay(
-        GroundHypothesisTrackingResult groundHypotheses,
-        BgraFrame frame)
+    private void DrawGroundHypothesisAtlasOverlay(VisionAnalysisResult result)
     {
         GameplayGroundCanvas.Children.Clear();
-        if (groundHypotheses.CameraPosition is not { } camera
-            || !double.IsFinite(camera.X)
-            || !double.IsFinite(camera.Y)
-            || frame.Width <= 0
-            || frame.Height <= 0)
-        {
-            return;
-        }
-
-        var liveLeft = Canvas.GetLeft(GameplayImage);
-        var liveTop = Canvas.GetTop(GameplayImage);
-        var scaleX = GameplayImage.Width / frame.Width;
-        var scaleY = GameplayImage.Height / frame.Height;
-        if (!double.IsFinite(liveLeft) || !double.IsFinite(liveTop)
-            || !double.IsFinite(scaleX) || scaleX <= 0
-            || !double.IsFinite(scaleY) || scaleY <= 0)
-        {
-            return;
-        }
-
-        Point Project(AtlasPoint point) => new(
-            liveLeft + (point.X - camera.X) * scaleX,
-            liveTop + (frame.Height + camera.Y - point.Y) * scaleY);
-
-        foreach (var feature in groundHypotheses.AtlasFeatures)
-        {
-            if (!double.IsFinite(feature.AtlasPosition.X)
-                || !double.IsFinite(feature.AtlasPosition.Y)) continue;
-            var center = Project(feature.AtlasPosition);
-            var marker = GroundFeatureOverlayPresentation.PersistentRectangle(
-                feature,
-                scaleX,
-                scaleY);
-            Canvas.SetLeft(marker, center.X - marker.Width * .5);
-            Canvas.SetTop(marker, center.Y - marker.Height * .5);
-            GameplayGroundCanvas.Children.Add(marker);
-        }
-
-        foreach (var groundLine in groundHypotheses.AtlasLines)
-        {
-            if (!double.IsFinite(groundLine.AtlasStart.X)
-                || !double.IsFinite(groundLine.AtlasStart.Y)
-                || !double.IsFinite(groundLine.AtlasEnd.X)
-                || !double.IsFinite(groundLine.AtlasEnd.Y)) continue;
-            var start = Project(groundLine.AtlasStart);
-            var end = Project(groundLine.AtlasEnd);
-            GameplayGroundCanvas.Children.Add(new Line
-            {
-                X1 = start.X,
-                Y1 = start.Y,
-                X2 = end.X,
-                Y2 = end.Y,
-                Stroke = GroundFeatureOverlayPresentation.Brush(
-                    DashboardFeatureReviewLineKind.PersistentGround),
-                StrokeThickness = DashboardFeatureReviewGeometry.LineWidth,
-                Opacity = DashboardFeatureReviewPalette.Rgba(
-                    DashboardFeatureReviewLineKind.PersistentGround).Alpha,
-                IsHitTestVisible = false,
-                ToolTip = $"persistent ground {groundLine.SegmentId}"
-            });
-        }
+        if (!gameplayFrameRegistered || !result.AdmitsTracking) return;
+        GroundFeatureOverlayPresentation.DrawAtlas(GameplayGroundCanvas, result.GroundDisplayCamera,
+            new(result.Frame.Width, result.Frame.Height),
+            new(Canvas.GetLeft(GameplayImage), Canvas.GetTop(GameplayImage), GameplayImage.Width, GameplayImage.Height),
+            result.GroundDisplayLines, result.GroundHypotheses.AtlasFeatures);
     }
 
     private void DetectionExtendSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)

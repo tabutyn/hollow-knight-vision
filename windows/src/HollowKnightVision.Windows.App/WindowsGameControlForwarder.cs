@@ -38,6 +38,16 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
 
     internal event Action<ReceiverGroundTruthSample, double>? GroundTruthReceived;
 
+    internal InputButtons? CaptureMovement()
+    {
+        lock (stateLock)
+        {
+            if (receiver is null || replayCancellation is not null || pause.BlocksInput || roomResetPending)
+                return null;
+            return heldButtons;
+        }
+    }
+
     internal bool MenuShortcutsAvailable
     {
         get { lock (stateLock) return menuShortcutsAvailable; }

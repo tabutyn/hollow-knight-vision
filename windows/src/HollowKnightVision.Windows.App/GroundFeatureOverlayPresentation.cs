@@ -1,3 +1,4 @@
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
@@ -36,6 +37,45 @@ internal static class GroundFeatureOverlayPresentation
             count++;
         }
         return count;
+    }
+
+    internal static void DrawAtlas(Canvas canvas, AtlasPoint camera, ViewportSize capture, ViewportRect live,
+        IReadOnlyList<GroundHypothesisAtlasLine> lines, IReadOnlyList<GroundHypothesisAtlasFeature> features)
+    {
+        if (!capture.IsUsable || !live.IsUsable || !double.IsFinite(camera.X) || !double.IsFinite(camera.Y))
+            return;
+        var scaleX = live.Width / capture.Width;
+        var scaleY = live.Height / capture.Height;
+        Point Project(AtlasPoint p) => new(live.X + (p.X - camera.X) * scaleX,
+            live.Y + (capture.Height + camera.Y - p.Y) * scaleY);
+        foreach (var feature in features)
+        {
+            if (!double.IsFinite(feature.AtlasPosition.X) || !double.IsFinite(feature.AtlasPosition.Y)) continue;
+            var center = Project(feature.AtlasPosition);
+            var marker = PersistentRectangle(feature, scaleX, scaleY);
+            Canvas.SetLeft(marker, center.X - marker.Width * .5);
+            Canvas.SetTop(marker, center.Y - marker.Height * .5);
+            canvas.Children.Add(marker);
+        }
+
+        const DashboardFeatureReviewLineKind kind = DashboardFeatureReviewLineKind.PersistentGround;
+        var brush = Brush(kind);
+        var opacity = DashboardFeatureReviewPalette.Rgba(kind).Alpha;
+        foreach (var ground in lines)
+        {
+            var a = Project(ground.AtlasStart);
+            var b = Project(ground.AtlasEnd);
+            canvas.Children.Add(new Line
+            {
+                X1 = a.X, Y1 = a.Y, X2 = b.X, Y2 = b.Y,
+                Stroke = brush,
+                StrokeThickness = DashboardFeatureReviewGeometry.LineWidth,
+                Opacity = opacity,
+                IsHitTestVisible = false,
+                ToolTip = ground.SegmentId == WalkedGroundMemory.WalkedSegmentId
+                    ? "Walked ground" : $"Detected ground {ground.SegmentId}"
+            });
+        }
     }
 
     internal static Rectangle PersistentRectangle(

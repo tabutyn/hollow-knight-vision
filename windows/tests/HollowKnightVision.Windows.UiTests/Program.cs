@@ -1862,7 +1862,23 @@ internal static class Program
                 && atlasBrush.Color == Color.FromRgb(191, 79, 255)
                 && Math.Abs(persistent.Opacity - .95) < .001,
             "Persistent ground feature is not rendered with the Mac purple review color.");
-        Console.WriteLine("PASS live and persistent ground rectangles use Mac review palette");
+        canvas.Children.Clear();
+        var walked = new GroundHypothesisAtlasLine(WalkedGroundMemory.WalkedSegmentId,
+            new(60, 244), new(180, 244));
+        var camera = new AtlasPoint(50, 12);
+        var lines = GroundStrokeGeometry.VisibleLines([walked with { SegmentId = 7 }], [],
+            [walked], camera, 360, null);
+        GroundFeatureOverlayPresentation.DrawAtlas(canvas, camera, new(640, 360), new(17, -42, 1280, 1080),
+            lines, [atlasFeature with { AtlasPosition = new(80, 238) }]);
+        Check(canvas.Children.Count == 2, "Walked floor replaced its duplicate and should keep its patch box.");
+        var ground = canvas.Children.OfType<Line>().Single();
+        Check(ground.X1 == 37 && ground.X2 == 277 && ground.Y1 == 342 && ground.Y2 == 342
+            && ground.Stroke is SolidColorBrush groundBrush && groundBrush.Color == Color.FromRgb(69, 255, 120),
+            "The clean green line did not follow the live frame scale and position.");
+        var patch = canvas.Children.OfType<Rectangle>().Single();
+        Check(Canvas.GetLeft(patch) == 61 && Canvas.GetTop(patch) == ground.Y1,
+            "The tracking patch and floor did not share the atlas projection.");
+        Console.WriteLine("PASS live and persistent ground boxes and walked floor use the atlas projection");
     }
 
     private static void TestBackgroundKeyDelivery()

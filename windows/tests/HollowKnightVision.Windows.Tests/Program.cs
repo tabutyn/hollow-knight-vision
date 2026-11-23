@@ -691,7 +691,7 @@ var tests = new List<(string Name, Action Run)>
     ("viewport translation settler supports zero duration", TestTranslationSettlerSupportsZeroDuration),
     ("viewport basis correction settles atlas while live pan remains authoritative", TestBasisCorrectionSettlesAtlasWhileLivePanRemainsAuthoritative),
     ("viewport room boundary uses a thin cyan line", DashboardPresentationParityTests.TestRoomBoundaryUsesThinCyanLine),
-    ("viewport persistent ground palette uses purple", DashboardPresentationParityTests.TestGroundReviewPaletteUsesPurpleForPersistentTileAndLine),
+    ("viewport palette uses green ground lines and purple patch boxes", DashboardPresentationParityTests.TestGroundReviewPaletteKeepsGreenLinesAndPurplePatches),
     ("viewport live ground palette matches legend", DashboardPresentationParityTests.TestLiveGroundReviewPaletteMatchesLegend),
     ("viewport feature markers stay screen constant", DashboardPresentationParityTests.TestFeatureMarkersRemainScreenConstantAcrossZoom),
     ("viewport ground feature uses outlined purple square", DashboardPresentationParityTests.TestGroundFeatureUsesOnePixelOutlinedPurpleSquare),
@@ -947,6 +947,10 @@ var tests = new List<(string Name, Action Run)>
     ("ground truth overlay uses positive negative and selected kinds", TestGroundTruthOverlayUsesPositiveNegativeAndSelectedKinds),
     ("Hacker ground overlay and editor use authored lines only", TestGroundTruthRequiresAuthoredLines),
     ("ground clearance drops nearby enclosed shorter floors", GroundClearanceTests.TestGroundClearanceRejectsOnlyEnclosedShorterFloors),
+    ("walked dark ground remains continuous across occlusion and reversal", WalkedGroundTests.TestWalkedDarkGroundSurvivesOcclusionAndReversal),
+    ("occluded walk requires input and a continuous level camera", WalkedGroundTests.TestOccludedWalkNeedsInputAndAContinuousLevelCamera),
+    ("the Knight foot locator measures current mask pixels", WalkedGroundTests.TestFootUsesCurrentPixelsAndRejectsAmbiguousFaces),
+    ("walked ground matches observed elevation and owns its columns", WalkedGroundTests.TestWalkSnapsToAnObservedFloorAndReplacesOverlappingStrokes),
     ("ground clearance trims overlapping platform tips", GroundClearanceTests.TestGroundClearanceTrimsOnlyShortSharedTips),
     ("wall preview and persisted ground corners", HackerTerrainEditingTests.TestWallSnapsBothCornersAndCommitsOnRelease),
     ("wall and floor move on constrained axes after reload", HackerTerrainEditingTests.TestWallAndFloorMoveOnTheirOwnAxesAfterReload),
@@ -9511,15 +9515,18 @@ static void TestSynchronizerRequiresMatchingUnityFrameInEitherArrivalOrder()
         99,
         image,
         1.1,
-        false)) ?? throw new InvalidOperationException("Matching telemetry did not join its capture.");
+        false,
+        MovementButtons: InputButtons.Left)) ?? throw new InvalidOperationException("Matching telemetry did not join its capture.");
     Equal(99L, first.Sample.UnityFrame);
     Equal(99, first.Capture.UnityFrame);
+    True(first.Capture.MovementButtons == InputButtons.Left);
 
     True(synchronizer.Append(new HackerCapturedFrame(
         100,
         image,
         2,
-        true)) is null);
+        true,
+        MovementButtons: InputButtons.Right | InputButtons.ActionZ)) is null);
     True(synchronizer.Append(
         HackerSample(frame: 101, cameraX: 1),
         observedAt: 2.1) is null);
@@ -9529,6 +9536,7 @@ static void TestSynchronizerRequiresMatchingUnityFrameInEitherArrivalOrder()
             "Matching capture did not join its telemetry.");
     Equal(100, second.Capture.UnityFrame);
     Equal(100L, second.Sample.UnityFrame);
+    True(second.Capture.MovementButtons == (InputButtons.Right | InputButtons.ActionZ));
 }
 
 static void TestDirectCameraPlacementUsesIndependentXYProjectionScale()
@@ -10378,7 +10386,7 @@ file static class DashboardPresentationParityTests
         Check(DashboardFeatureReviewGeometry.LineWidth == 1);
     }
 
-    public static void TestGroundReviewPaletteUsesPurpleForPersistentTileAndLine()
+    public static void TestGroundReviewPaletteKeepsGreenLinesAndPurplePatches()
     {
         var tile = DashboardFeatureReviewPalette.Rgba(
             DashboardFeatureReviewMarkerKind.GroundFeature);
@@ -10389,9 +10397,8 @@ file static class DashboardPresentationParityTests
         Check(tile != selection);
         Check(tile.Blue > tile.Red);
         Check(tile.Red > tile.Green);
-        Check(tile.Red == line.Red);
-        Check(tile.Green == line.Green);
-        Check(tile.Blue == line.Blue);
+        Check(line == DashboardFeatureReviewPalette.Rgba(DashboardFeatureReviewLineKind.CurrentGround));
+        Check(line.Green > line.Blue && line.Blue > line.Red);
     }
 
     public static void TestLiveGroundReviewPaletteMatchesLegend()

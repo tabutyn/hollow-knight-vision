@@ -27,12 +27,15 @@ internal static class GroundClearance
         }
     }
 
+    internal static double KnightHeight(int imageHeight, PixelRect? knight) =>
+        knight is { Width: > 0, Height: > 0 } sprite && sprite.Height < imageHeight / 2d
+            ? sprite.Height : imageHeight * .12;
+
     internal static IReadOnlyList<DetectedFloorLine> Filter(IReadOnlyList<DetectedFloorLine> floors,
         int imageHeight, PixelRect? knight)
     {
         if (floors.Count <= 1) return floors;
-        var height = knight is { Height: > 0 } sprite && sprite.Height < imageHeight / 2d
-            ? sprite.Height : imageHeight * .12;
+        var height = KnightHeight(imageHeight, knight);
         var spans = floors.Select((floor, index) => new Surface(index, floor,
             Extent.FromPixels(floor.XSpan), floor.EvidenceSpans.Select(Extent.FromPixels).ToArray())).ToArray();
         var bounds = new Extent?[spans.Length];

@@ -4,7 +4,8 @@ public sealed record HackerCapturedFrame(
     int UnityFrame,
     BgraFrame Image,
     double CapturedAt,
-    bool IntegratesAtlas);
+    bool IntegratesAtlas,
+    InputButtons? MovementButtons = null);
 
 public sealed record HackerMatchedFrame(
     HackerCapturedFrame Capture,
