@@ -33,6 +33,12 @@ if (args is ["--export-bot-capture-probe", var captureRoot])
     return;
 }
 
+if (args is ["--export-hacker-gym-probe", var gymRoot])
+{
+    HackerGymObservationTests.Export(gymRoot);
+    return;
+}
+
 var tests = new List<(string Name, Action Run)>
 {
     ("labeling campaign batches and honest validation history", LabelingCampaignTests.TestBatchesAndValidationHistory),
@@ -243,6 +249,7 @@ var tests = new List<(string Name, Action Run)>
     ("input snapshot wire codec preserves versioned state", InputBridgeParityTests.TestWireCodecRoundTripsVersionedSnapshot),
     ("input checkpoint control messages round trip", InputBridgeParityTests.TestCheckpointControlMessagesRoundTrip),
     ("native bot verification checks action heads and bound checkpoint hashes", BotPolicyTests.TestNativePolicyChecksActionsAndCheckpointHashes),
+    ("Hacker Gym uses authored geometry and preserves fixed objectives and camera gaps", HackerGymObservationTests.TestFixedRouteAndCameraDropout),
     ("bot startup latches cutscene skipping until fresh gameplay", BotPolicyTests.TestStartupSkipIsLatchedUntilFreshGameplay),
     ("bot policy preserves attack and rejects stale observations and wrong domains", BotPolicyTests.TestLivePolicyPreservesAttackAndRevokesInvalidPerception),
     ("bot runtime keeps four fresh history frames and expires stale input", BotPolicyTests.TestObservationHistoryRejectsStaleFramesAndResetsAtDiscontinuities),

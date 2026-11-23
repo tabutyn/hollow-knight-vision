@@ -155,6 +155,25 @@ internal static class Program
                 return Task.FromResult(1);
             }
         }
+        if (arguments is ["--hacker-gym-observations", var gymVersion, var gymLabels, ..] && arguments.Length is 3 or 4)
+        {
+            try
+            {
+                if (!int.TryParse(gymVersion, out var version))
+                    throw new InvalidDataException("Expected the checkpoint observation version and ground labels path.");
+                HackerGymObservationEncoder.Run(version, gymLabels, Console.In, standardOutput ?? Console.Out,
+                    Environment.GetEnvironmentVariable("HKV_ATLAS_PATH_CONNECTIONS"),
+                    HackerGymObservationEncoder.FixedObjective(Environment.GetEnvironmentVariable("HKV_GYM_EXIT_X"),
+                        Environment.GetEnvironmentVariable("HKV_GYM_EXIT_Y")));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException
+                or JsonException or ArgumentException or GroundTruthLineStoreException)
+            {
+                (standardError ?? Console.Error).WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
         if (arguments is ["--tracking-step-verify-prefix", var prefixDirectory, var prefixSource])
         {
             try

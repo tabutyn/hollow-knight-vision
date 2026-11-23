@@ -1,6 +1,11 @@
 namespace HollowKnightVision.Windows.Core;
 
-public readonly record struct AtlasPathHint(AtlasPathPoint Objective, AtlasPathPoint Current, AtlasPathPoint Next);
+public readonly record struct AtlasPathHint(AtlasPathPoint Objective, AtlasPathPoint Current, AtlasPathPoint Next)
+{
+    internal int Remaining { get; init; }
+    internal int? PriorRemaining { get; init; }
+    internal AtlasPathPoint Projection { get; init; }
+}
 
 /// <summary>Selects and follows reachable unvisited ground on a directed room chart.</summary>
 internal sealed class AtlasPathNavigator
@@ -17,8 +22,11 @@ internal sealed class AtlasPathNavigator
     private readonly HashSet<AtlasPathPoint> visited = [];
     private int bucketSize;
 
+    public void Interrupt() => flight = [];
+
     internal AtlasPathHint? Follow(AtlasPlatformGraph graph, AtlasPathPoint feet, bool? grounded, bool measured,
-        Func<AtlasPathPoint, AtlasPathPoint, bool>? admitted, IReadOnlyList<AtlasPathPlatform> walked)
+        Func<AtlasPathPoint, AtlasPathPoint, bool>? admitted, IReadOnlyList<AtlasPathPlatform> walked,
+        AtlasPathPoint? fixedObjective = null)
     {
         var h = graph.KnightHeight;
         var position = new AtlasPathPoint(feet.X, feet.Y + h);
@@ -42,9 +50,16 @@ internal sealed class AtlasPathNavigator
                 if (vertex.DistanceTo(start) <= Math.Max(4, h / 2))
                     visited.Add(Bucket(vertex));
 
-        var oldGoalLine = objective is { } previous ? graph.NearestStroke(previous, h, walkOnly: true) : null;
-        var oldGoal = oldGoalLine is { } prior && objective is { } target ? prior.Closest(target) : (AtlasPathPoint?)null;
-        var search = new AtlasPathSearch(graph, startStroke, start, admitted, oldGoalLine, oldGoal);
+        var previousObjective = fixedObjective ?? objective;
+        var oldGoalLine = previousObjective is { } previous ? graph.NearestStroke(previous, h, walkOnly: true) : null;
+        var oldGoal = oldGoalLine is { } prior && previousObjective is { } target ? prior.Closest(target) : (AtlasPathPoint?)null;
+        var search = new AtlasPathSearch(graph, startStroke, start, admitted, oldGoalLine, oldGoal, stopAtTarget: fixedObjective.HasValue);
+        if (fixedObjective.HasValue)
+        {
+            if (oldGoal is { } goal && search.Reaches(goal)) return Guide(goal, search.RouteTo(goal));
+            flight = [];
+            return null;
+        }
         if (oldGoal is { } previousGoal && search.Reaches(previousGoal) && IsUnvisited(previousGoal)
             && start.DistanceTo(previousGoal) > Math.Max(3, h / 3))
         {
@@ -106,7 +121,12 @@ internal sealed class AtlasPathNavigator
                 }
             }
             objective = target;
-            return new(target, origin, next);
+            return new(target, origin, next)
+            {
+                Projection = start,
+                Remaining = search.DistanceTo(target),
+                PriorRemaining = oldGoal is { } old && search.Reaches(old) ? search.DistanceTo(old) : null
+            };
         }
 
         bool IsUnvisited(AtlasPathPoint point) => point != start && !visited.Contains(Bucket(point))

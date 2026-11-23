@@ -205,6 +205,12 @@ for version in (bot.SCHEMA_VERSION, bot.GROUND_CONTACT_POLICY_VERSION, bot.LANDI
   }
   Write-Host 'PASS Windows native PPO action heads match CPU PyTorch for compact, grounded, and landing policies.'
 
+  $gymProbe = Join-Path $fixtureRoot 'hacker-gym'
+  & $Dotnet $tests --export-hacker-gym-probe $gymProbe
+  if ($LASTEXITCODE -ne 0) { throw 'Could not export the synthetic Hacker Gym receiver sequence.' }
+  & $Python -B (Join-Path $PSScriptRoot 'tests\hacker_gym_interop.py') $botSource $gymProbe $nativeVerifier
+  if ($LASTEXITCODE -ne 0) { throw 'Hacker Gym observation transport did not match the trainer protocol.' }
+
 } finally {
   foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
   if (Test-Path -LiteralPath $fixtureRoot) {

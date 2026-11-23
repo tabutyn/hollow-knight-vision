@@ -22,6 +22,7 @@
     <ProjectReference Include="../../src/HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
     <ProjectReference Include="../../src/HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj"
                       ReferenceOutputAssembly="false" />
+    <Compile Include="../../src/HollowKnightVision.Windows.Host/HackerGymObservationEncoder.cs" Link="HackerGymObservationEncoder.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.Host/BmpWriter.cs" Link="BmpWriter.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.Host/HollowKnightGameLauncher.cs" Link="HollowKnightGameLauncher.cs" />
   </ItemGroup>

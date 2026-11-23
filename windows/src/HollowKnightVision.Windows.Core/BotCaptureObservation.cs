@@ -96,11 +96,15 @@ public static class BotObservationBuilder
     private readonly record struct Box(double X, double Y, double Width, double Height, double Confidence);
 
     public static BotCaptureObservation? Hacker(BgraFrame image, int? renderedFrame, ReceiverGroundTruthSample? sample,
+        GroundTruthLineDocument authored, BotCaptureTiming timing, InputButtons? input) =>
+        Hacker(new WorldSize(image.Width, image.Height), renderedFrame, sample, authored, timing, input);
+
+    public static BotCaptureObservation? Hacker(WorldSize size, int? renderedFrame, ReceiverGroundTruthSample? sample,
         GroundTruthLineDocument authored, BotCaptureTiming timing, InputButtons? input)
     {
         if (sample is null || renderedFrame != HackerFrameSynchronizer.Key(sample.UnityFrame)
             || sample.AtlasGameplayActive == false || !sample.HasFiniteCoordinates()
-            || GroundTruthCameraTransform.FromSample(sample, timing.CaptureTimestamp, new(image.Width, image.Height)) is not { } camera)
+            || GroundTruthCameraTransform.FromSample(sample, timing.CaptureTimestamp, size) is not { } camera)
             return null;
         var terrain = ProjectAuthored(authored, camera);
         var issues = BaseIssues(timing);
@@ -112,7 +116,7 @@ public static class BotObservationBuilder
         if (!fresh) issues.Add("missing-hacker-actor-telemetry");
         else if (!valid) issues.Add("invalid-hacker-actors");
         Box? knight = valid && sample.HeroAvailable && mod!.Hero is { } hero ? ProjectActor(hero) : null;
-        if (knight is { } k && (k.X < 0 || k.X > image.Width || k.Y < 0 || k.Y > image.Height)) knight = null;
+        if (knight is { } k && (k.X < 0 || k.X > size.Width || k.Y < 0 || k.Y > size.Height)) knight = null;
         if (knight is null) issues.Add("missing-hacker-knight");
         if (!valid) issues.Add("missing-hacker-enemies");
         var terrainValid = terrain.Floors.Count > 0 || terrain.Walls.Count > 0;
@@ -137,10 +141,10 @@ public static class BotObservationBuilder
         };
 
         Box ProjectActor(ReceiverActorState actor) => new(
-            actor.ScreenX * image.Width / sample.ProjectionPixelWidth!.Value,
-            actor.ScreenY * image.Height / sample.ProjectionPixelHeight!.Value,
-            actor.Width * image.Width / sample.ProjectionPixelWidth!.Value,
-            actor.Height * image.Height / sample.ProjectionPixelHeight!.Value, 1);
+            actor.ScreenX * size.Width / sample.ProjectionPixelWidth!.Value,
+            actor.ScreenY * size.Height / sample.ProjectionPixelHeight!.Value,
+            actor.Width * size.Width / sample.ProjectionPixelWidth!.Value,
+            actor.Height * size.Height / sample.ProjectionPixelHeight!.Value, 1);
     }
 
     public static BotCaptureObservation Gameplay(BgraFrame image, BotCaptureTiming timing, LiveObjectDetectionBatch? batch,

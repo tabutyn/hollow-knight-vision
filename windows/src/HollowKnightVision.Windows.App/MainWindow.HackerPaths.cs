@@ -19,7 +19,6 @@ public partial class MainWindow
     private (string Scene, AtlasPathPoint Point)? hackerObjective;
     private ViewportRect? hackerPathFitBounds;
     private const double KnightWorldHeight = 1.28;
-    private const double KnightWorldWidth = .5;
 
     private bool ShowsHackerPaths => AtlasPathsCheck?.IsChecked == true && workspace == "Hacker"
         && DashboardPresentationPolicy.ShowsHackerFraming(workspace, recognizedMenuContext)
@@ -33,35 +32,7 @@ public partial class MainWindow
         if (hackerPathGraphs.TryGetValue(room.SceneName, out var cached)
             && ReferenceEquals(cached.Document, document) && cached.Scale == scale && cached.Room == room.Key
             && cached.LinkRevision == hackerPathLinks.Revision) return cached;
-        var floors = new List<AtlasPathPlatform>();
-        var walls = new List<AtlasPathWall>();
-        var spikes = new List<AtlasPathPlatform>();
-        var doors = new List<AtlasPathDoor>();
-        foreach (var line in document.AuthoredLines.Where(line => line.SceneName == room.SceneName))
-        {
-            if (!AtlasPathPoint.TryQuantize(line.Start.X * scale.X, line.Start.Y * scale.Y, out var a)
-                || !AtlasPathPoint.TryQuantize(line.End.X * scale.X, line.End.Y * scale.Y, out var b)) continue;
-            switch (line.Kind)
-            {
-                case GroundTruthLineKind.Positive:
-                    floors.Add(new(Math.Min(a.X, b.X), Math.Max(a.X, b.X), a.Y));
-                    break;
-                case GroundTruthLineKind.Wall:
-                    walls.Add(new(a.X, Math.Min(a.Y, b.Y), Math.Max(a.Y, b.Y)));
-                    break;
-                case GroundTruthLineKind.Spike:
-                    spikes.Add(new(Math.Min(a.X, b.X), Math.Max(a.X, b.X), a.Y));
-                    break;
-                case GroundTruthLineKind.Door:
-                case GroundTruthLineKind.DoorVertical:
-                    doors.Add(new(a, b));
-                    break;
-            }
-        }
-
-        var graph = new AtlasPlatformGraph(floors, walls, QuantizePath(KnightWorldHeight * scale.Y),
-            QuantizePath(KnightWorldWidth * scale.X), connections: hackerPathLinks.Connections(PathCalibration(room)),
-            pixelsPerWorldUnit: scale, previous: cached?.Graph, spikes: spikes, doors: doors);
+        var graph = AuthoredAtlasGraph.Build(document, PathCalibration(room), hackerPathLinks, cached?.Graph);
         var result = new HackerPathCache(document, scale, room.Key, hackerPathLinks.Revision,
             graph, AtlasPathRouting.DisplayStrokes(graph.Strokes));
         hackerPathGraphs[room.SceneName] = result;
