@@ -201,6 +201,7 @@ var tests = new List<(string Name, Action Run)>
     ("ground feature review renders only confirmed presence", GroundLinePresenceTests.TestFeatureHypothesesRenderOnlyConfirmedLines),
     ("ground surface nearby ridges with interleaved evidence produce one line", GroundSurfaceEvidenceTests.TestNearbyRidgesWithInterleavedEvidenceProduceOneLine),
     ("ground surface caption strokes cannot extend an adjacent platform", GroundSurfaceEvidenceTests.TestCaptionStrokesCannotExtendAnAdjacentPlatform),
+    ("ground surface rejects single bright strokes over darker scenery", GroundSurfaceEvidenceTests.TestTransientBrightStrokeCannotStandInForLitPlatform),
     ("ground surface separates lit platforms across a bright opening", GroundSurfaceEvidenceTests.TestBrightOpeningSeparatesTwoPlatformsWithLitCaps),
     ("ground surface refines overhanging and underestimated endpoints", GroundSurfaceEvidenceTests.TestLocalKernelTrimsOverhangAndRecoversAnUnderestimatedEndpoint),
     ("ground surface strong core retains weak endpoints", GroundSurfaceEvidenceTests.TestStrongCoreKeepsWeakEndpointsButWeakOnlyLineIsRejected),

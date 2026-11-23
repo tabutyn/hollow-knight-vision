@@ -979,29 +979,54 @@ public static class GroundLineDetector
                 total += band.Sums[upper] - band.Sums[lower];
                 countTotal += band.Counts[upper] - band.Counts[lower];
             }
-            if (countTotal == 0 || total <= MaximumBodyLuma * countTotal) return true;
+            var shallow = countTotal == 0 || total <= MaximumBodyLuma * countTotal;
+            if (countTotal == 0 || row < 18 || row + 24 >= analysis.Height) return shallow;
 
-            // A lit cap can sit above a darker silhouette in the same unmasked columns.
-            if (row < 5 || row + 24 >= analysis.Height) return false;
             var width = analysis.Width;
             var measured = 0;
             var solid = 0;
+            var isolated = 0;
             foreach (var range in ranges)
             {
                 for (var x = Math.Max(0, range.Start); x <= Math.Min(width - 1, range.EndInclusive); x += 3)
                 {
                     var i = row * width + x;
-                    if (!IsValid(i) || !IsValid(i - 5 * width) || !IsValid(i - 2 * width)
+                    if (!IsValid(i - 18 * width) || !IsValid(i - 14 * width)
+                        || !IsValid(i - 12 * width) || !IsValid(i - 9 * width)
+                        || !IsValid(i - 7 * width) || !IsValid(i - 5 * width)
                         || !IsValid(i + 13 * width) || !IsValid(i + 18 * width) || !IsValid(i + 24 * width))
                         continue;
 
+                    var capPeak = 0;
+                    for (var offset = -2; offset <= 8; offset++)
+                    {
+                        var sample = i + offset * width;
+                        if (!IsValid(sample))
+                        {
+                            capPeak = -1;
+                            break;
+                        }
+                        capPeak = Math.Max(capPeak, luma[sample]);
+                    }
+                    if (capPeak < 0) continue;
                     measured++;
-                    var air = (luma[i - 5 * width] + luma[i - 2 * width]) / 2;
+
+                    // A lit cap should sit above a dark silhouette and below sustained light.
+                    var nearAir = (luma[i - 5 * width] + luma[i - 2 * width]) / 2;
+                    var farAir = (luma[i - 12 * width] + luma[i - 9 * width]) / 2;
+                    var air = Math.Min(nearAir, farAir);
                     var deep = (luma[i + 13 * width] + luma[i + 18 * width] + luma[i + 24 * width]) / 3;
-                    if (deep <= MaximumBodyLuma && air - deep >= 12) solid++;
+                    if (deep <= MaximumBodyLuma && air - deep >= 12 && capPeak <= air + 24) solid++;
+
+                    // A thin, bright stroke against dark pixels on both sides has
+                    // a dark shallow average too. Ignore it as foreground.
+                    var outside = Math.Min((luma[i - 18 * width] + luma[i - 14 * width]) / 2,
+                        (luma[i - 7 * width] + luma[i - 5 * width]) / 2);
+                    if (deep <= 35 && capPeak >= Math.Max(96, outside + 64)) isolated++;
                 }
             }
-            return solid >= 8 && solid * 2 >= measured;
+            if (isolated >= 8 && isolated * 2 >= measured) return false;
+            return shallow || (solid >= 8 && solid * 2 >= measured);
         }
 
         private bool IsValid(int index) => analysis.ValidSourcePixels is null

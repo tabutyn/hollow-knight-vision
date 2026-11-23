@@ -68,6 +68,21 @@ internal static class GroundSurfaceEvidenceTests
             floors.Any(line => line.Row == row && line.XSpan.Start <= x && line.XSpan.EndInclusive >= x);
     }
 
+    public static void TestTransientBrightStrokeCannotStandInForLitPlatform()
+    {
+        const int width = 240, height = 76, row = 30;
+        var response = new byte[width * height];
+        Array.Fill(response, (byte)100, row * width + 24, 64);
+        foreach (var (top, bottom) in new[] { (row - 4, row + 8), (row + 2, row + 3) })
+        {
+            var luma = Enumerable.Repeat((byte)20, response.Length).ToArray();
+            for (var y = top; y <= bottom; y++)
+                Array.Fill(luma, (byte)210, y * width + 24, 64);
+            var comparison = new GroundComparisonAnalysis(width, height, response, luma);
+            Check(GroundLineDetector.SemanticFloorLines(comparison, GroundTheoryTuning.SemanticDefault).Count == 0);
+        }
+    }
+
     public static void TestLocalKernelTrimsOverhangAndRecoversAnUnderestimatedEndpoint()
     {
         const int width = 150, height = 60, row = 20;
