@@ -37,13 +37,14 @@ internal static class AtlasPathFloorGeometry
         return bands.Select(band => band.Span).OrderBy(span => (span.Left, span.Y, span.Right)).ToArray();
     }
 
-    private static IReadOnlyList<AtlasPathPlatform> StitchDetected(IReadOnlyList<AtlasPathPlatform> raw,
+    internal static IReadOnlyList<AtlasPathPlatform> StitchDetected(IReadOnlyList<AtlasPathPlatform> raw,
         IReadOnlyList<AtlasPathPlatform> walked, IReadOnlyList<AtlasPathWall> walls, int height, int width,
-        IReadOnlyList<AtlasPathPlatform> witnesses)
+        IReadOnlyList<AtlasPathPlatform> witnesses, int? maximumSupportedGap = null, bool requireWitness = false)
     {
         var jitter = Math.Clamp(height / 5, 2, 8);
-        var seam = Math.Max(2, Math.Min(width, height));
-        var searchWidth = Math.Max(seam, Math.Min(3 * height, witnesses.Select(span => span.Right - span.Left).DefaultIfEmpty().Max()));
+        var seam = requireWitness ? 0 : Math.Max(2, Math.Min(width, height));
+        var searchWidth = Math.Max(seam, Math.Min(maximumSupportedGap ?? 3 * height,
+            witnesses.Select(span => span.Right - span.Left).DefaultIfEmpty().Max()));
         var margin = Math.Min(3, width / 2);
         var pending = new List<Band>();
         var finished = new List<AtlasPathPlatform>();

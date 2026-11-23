@@ -95,6 +95,7 @@
                                 IsHitTestVisible="False" Panel.ZIndex="20"/>
                         <Canvas x:Name="GameplayGroundCanvas" Width="640" Height="360"
                                 IsHitTestVisible="False" Panel.ZIndex="19"/>
+                        <Canvas x:Name="GameplayPathCanvas" IsHitTestVisible="False" Visibility="Collapsed" Panel.ZIndex="21"/>
                     </Canvas>
                     <local:MenuStencilParticles x:Name="MenuParticles" IsHitTestVisible="False"/>
                     <StackPanel x:Name="GameplayPlaceholder" HorizontalAlignment="Center" VerticalAlignment="Center">

@@ -3,6 +3,16 @@ namespace HollowKnightVision.Windows.Core;
 /// <summary>Quantized room pixels, with positive Y pointing up.</summary>
 public readonly record struct AtlasPathPoint(int X, int Y) : IComparable<AtlasPathPoint>
 {
+    public static bool TryQuantize(double x, double y, out AtlasPathPoint point)
+    {
+        point = default;
+        if (x is not (>= -1e8 and <= 1e8) || y is not (>= -1e8 and <= 1e8)) return false;
+        point = new(Round(x), Round(y));
+        return true;
+    }
+
+    internal static int Round(double value) => (int)Math.Round(value, MidpointRounding.AwayFromZero);
+
     public int CompareTo(AtlasPathPoint other)
     {
         var horizontal = X.CompareTo(other.X);
@@ -17,7 +27,7 @@ public readonly record struct AtlasPathPlatform(int Left, int Right, int Y)
     public bool Contains(int x) => Left <= x && x <= Right;
 }
 
-public readonly record struct AtlasPathWall(int X, int Low, int High);
+public readonly record struct AtlasPathWall(int X, int Low, int High, int SolidSide = 0, bool ConfirmedByContact = false);
 
 // Manual connections use floor height. The graph draws all routes at Knight height above the floor.
 public readonly record struct AtlasPathConnection(AtlasPathPoint First, AtlasPathPoint Second, bool DoubleJump);

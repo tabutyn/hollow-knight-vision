@@ -31,8 +31,8 @@ public partial class MainWindow
         var doors = new List<AtlasPathDoor>();
         foreach (var line in document.AuthoredLines.Where(line => line.SceneName == room.SceneName))
         {
-            if (!ToPathPoint(line.Start.X * scale.X, line.Start.Y * scale.Y, out var a)
-                || !ToPathPoint(line.End.X * scale.X, line.End.Y * scale.Y, out var b)) continue;
+            if (!AtlasPathPoint.TryQuantize(line.Start.X * scale.X, line.Start.Y * scale.Y, out var a)
+                || !AtlasPathPoint.TryQuantize(line.End.X * scale.X, line.End.Y * scale.Y, out var b)) continue;
             switch (line.Kind)
             {
                 case GroundTruthLineKind.Positive:
@@ -60,9 +60,14 @@ public partial class MainWindow
 
     private void AtlasPaths_Changed(object sender, RoutedEventArgs e)
     {
-        if (!IsLoaded || workspace != "Hacker") return;
-        RedrawHackerEdits();
-        ApplyViewport(AtlasCanvas, HackerViewportPanel, hackerFraming, HackerLiveImage);
+        Volatile.Write(ref atlasPathsEnabled, AtlasPathsCheck?.IsChecked == true);
+        if (!IsLoaded) return;
+        RenderGameplayPaths();
+        if (workspace == "Hacker")
+        {
+            RedrawHackerEdits();
+            ApplyViewport(AtlasCanvas, HackerViewportPanel, hackerFraming, HackerLiveImage);
+        }
     }
 
     private bool SelectHackerObjective(MouseButtonEventArgs e)
@@ -77,7 +82,7 @@ public partial class MainWindow
         foreach (var room in HackerTerrainRooms().OrderByDescending(room => room.SceneName == hackerLivePrepared?.SceneName))
         {
             var offset = PathOffset(room);
-            if (!ToPathPoint(pointer.X - offset.X, pointer.Y - offset.Y, out var point)) continue;
+            if (!AtlasPathPoint.TryQuantize(pointer.X - offset.X, pointer.Y - offset.Y, out var point)) continue;
             var graph = HackerPaths(room).Graph;
             if (graph.NearestStroke(point, nearest - 1) is not { } stroke) continue;
             var snapped = stroke.Closest(point);
@@ -114,7 +119,7 @@ public partial class MainWindow
             if (target is { } endpoint && graph.NearestStroke(endpoint, 0) is { } goal)
             {
                 if (currentRoom && hackerLivePrepared is { Sample.HeroAvailable: true } live
-                    && ToPathPoint(live.Sample.HeroX * paths.Scale.X,
+                    && AtlasPathPoint.TryQuantize(live.Sample.HeroX * paths.Scale.X,
                         (live.Sample.HeroY + KnightWorldHeight / 2) * paths.Scale.Y, out var point)
                     && graph.NearestStroke(point, 2 * graph.KnightHeight, walkOnly: live.Sample.Grounded) is { } start)
                     route = AtlasPathRouting.FindRoute(graph, start, start.Closest(point), goal, endpoint);
@@ -123,7 +128,7 @@ public partial class MainWindow
             {
                 target = null;
             }
-            if (HackerPathPresentation.Draw(HackerPathCanvas, paths.Display, graph.KnightWidth,
+            if (AtlasPathPresentation.Draw(HackerPathCanvas, paths.Display, graph.KnightWidth,
                     new(offset.X - originX, -offset.Y - originY), target, route) is { } span)
                 hackerPathFitBounds = hackerPathFitBounds is { } fit ? fit.Union(span) : span;
         }
@@ -134,12 +139,4 @@ public partial class MainWindow
 
     private static int QuantizePath(double value) => (int)Math.Round(value, MidpointRounding.AwayFromZero);
 
-    private static bool ToPathPoint(double x, double y, out AtlasPathPoint point)
-    {
-        point = default;
-        // Use the same admitted coordinate range as the macOS path graph.
-        if (x is not (>= -1e8 and <= 1e8) || y is not (>= -1e8 and <= 1e8)) return false;
-        point = new(QuantizePath(x), QuantizePath(y));
-        return true;
-    }
 }

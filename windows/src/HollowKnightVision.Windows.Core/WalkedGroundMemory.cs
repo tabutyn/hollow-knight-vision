@@ -157,7 +157,7 @@ public sealed class WalkedGroundTracker
         var wall = wallContact.Observe(actor, measuredCamera, direction, time, frame.Width, frame.Height, walls ?? []);
         var foot = actor is { Partial: false } observed ? observed.Foot : (AtlasPoint?)null;
         if (walk.Observe(foot, measuredCamera, buttons, time, frame.Width, frame.Height) is not { } floor
-            || measuredCamera is not { } pose) return new(null, wall);
+            || measuredCamera is not { } pose) return new(null, wall) { MeasuredFoot = foot };
 
         // Keep the walked extent and use a matching visible edge for elevation.
         var nearest = detected.Where(line =>
@@ -166,7 +166,7 @@ public sealed class WalkedGroundTracker
             .MinBy(line => Math.Abs(line.Row - floor.Row));
         var snapped = nearest is null ? floor : floor with { Row = nearest.Row };
         memory.Record(room, snapped, pose, frame.Height);
-        return new(snapped, wall);
+        return new(snapped, wall) { MeasuredFoot = foot };
     }
 
     public void BreakContinuity()

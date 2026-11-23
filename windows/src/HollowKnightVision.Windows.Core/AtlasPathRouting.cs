@@ -6,48 +6,7 @@ public static class AtlasPathRouting
         AtlasPathPoint start, AtlasPathStroke targetStroke, AtlasPathPoint target)
     {
         if (!startStroke.Contains(start) || !targetStroke.Contains(target)) return [];
-        if (start == target) return [start];
-
-        // Attach exact cursor positions to the containing strokes without changing the cached graph.
-        var outgoing = graph.Vertices(startStroke).Where(point => startStroke.AllowsTraversal(start, point)).ToArray();
-        var incoming = graph.Vertices(targetStroke).Where(point => targetStroke.AllowsTraversal(point, target)).ToHashSet();
-        var costs = new Dictionary<AtlasPathPoint, int> { [start] = 0 };
-        var predecessors = new Dictionary<AtlasPathPoint, AtlasPathPoint>();
-        var pending = new PriorityQueue<AtlasPathPoint, (int Cost, AtlasPathPoint Point)>();
-        pending.Enqueue(start, (0, start));
-        while (pending.TryDequeue(out var point, out var priority))
-        {
-            if (costs[point] != priority.Cost) continue;
-            if (point == target)
-            {
-                var path = new List<AtlasPathPoint> { target };
-                while (predecessors.TryGetValue(point, out var prior))
-                {
-                    path.Add(prior);
-                    point = prior;
-                }
-                path.Reverse();
-                return path;
-            }
-            if (graph.Nodes.TryGetValue(point, out var neighbors))
-                foreach (var next in neighbors) Visit(next);
-            if (point == start)
-            {
-                foreach (var next in outgoing) Visit(next);
-                if (startStroke == targetStroke && startStroke.AllowsTraversal(start, target)) Visit(target);
-            }
-            if (incoming.Contains(point)) Visit(target);
-
-            void Visit(AtlasPathPoint next)
-            {
-                var cost = priority.Cost + point.DistanceTo(next);
-                if (costs.TryGetValue(next, out var previous) && previous <= cost) return;
-                costs[next] = cost;
-                predecessors[next] = point;
-                pending.Enqueue(next, (cost, next));
-            }
-        }
-        return [];
+        return new AtlasPathSearch(graph, startStroke, start, targetStroke: targetStroke, target: target, stopAtTarget: true).RouteTo(target);
     }
 
     // Overlapping drop branches share a visible shaft. Keep direction and connectivity in the underlying graph.
@@ -72,5 +31,65 @@ public static class AtlasPathRouting
             if (pending.HasValue) result.Add(pending.Value);
         }
         return result;
+    }
+}
+
+internal sealed class AtlasPathSearch
+{
+    private readonly Dictionary<AtlasPathPoint, int> costs = [];
+    private readonly Dictionary<AtlasPathPoint, AtlasPathPoint> predecessors = [];
+
+    internal AtlasPathSearch(AtlasPlatformGraph graph, AtlasPathStroke startStroke, AtlasPathPoint start,
+        Func<AtlasPathPoint, AtlasPathPoint, bool>? admits = null, AtlasPathStroke? targetStroke = null,
+        AtlasPathPoint? target = null, bool stopAtTarget = false)
+    {
+        // Splitting a stroke at an exact cursor position leaves the cached graph unchanged.
+        var incoming = targetStroke is { } goal && target is { } endpoint
+            ? graph.Vertices(goal).Where(point => goal.AllowsTraversal(point, endpoint)).ToHashSet()
+            : [];
+        var outgoing = graph.Vertices(startStroke).Where(point => startStroke.AllowsTraversal(start, point)).ToArray();
+        var pending = new PriorityQueue<AtlasPathPoint, (int Cost, AtlasPathPoint Point)>();
+        costs[start] = 0;
+        pending.Enqueue(start, (0, start));
+        while (pending.TryDequeue(out var point, out var priority))
+        {
+            if (costs[point] != priority.Cost) continue;
+            if (stopAtTarget && point == target) return;
+            if (graph.Nodes.TryGetValue(point, out var neighbors))
+                foreach (var next in neighbors) Visit(next);
+            if (point == start)
+            {
+                foreach (var next in outgoing) Visit(next);
+                if (startStroke == targetStroke && target is { } here && startStroke.AllowsTraversal(start, here))
+                    Visit(here);
+            }
+            if (target is { } destination && incoming.Contains(point)) Visit(destination);
+
+            void Visit(AtlasPathPoint next)
+            {
+                var cost = priority.Cost + point.DistanceTo(next);
+                if (costs.TryGetValue(next, out var previous) && previous <= cost) return;
+                if (admits is not null && !admits(point, next)) return;
+                costs[next] = cost;
+                predecessors[next] = point;
+                pending.Enqueue(next, (cost, next));
+            }
+        }
+    }
+
+    internal bool Reaches(AtlasPathPoint point) => costs.ContainsKey(point);
+    internal int DistanceTo(AtlasPathPoint point) => costs[point];
+
+    internal IReadOnlyList<AtlasPathPoint> RouteTo(AtlasPathPoint point)
+    {
+        if (!costs.ContainsKey(point)) return [];
+        var path = new List<AtlasPathPoint> { point };
+        while (predecessors.TryGetValue(point, out var previous))
+        {
+            path.Add(previous);
+            point = previous;
+        }
+        path.Reverse();
+        return path;
     }
 }

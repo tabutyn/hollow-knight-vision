@@ -5,12 +5,14 @@ using HollowKnightVision.Windows.Core;
 
 namespace HollowKnightVision.Windows.App;
 
-internal static class HackerPathPresentation
+internal static class AtlasPathPresentation
 {
     internal static ViewportRect? Draw(Canvas canvas, IReadOnlyList<AtlasPathStroke> strokes, int knightWidth,
-        AtlasPoint origin, AtlasPathPoint? target, IReadOnlyList<AtlasPathPoint> route)
+        AtlasPoint origin, AtlasPathPoint? target, IReadOnlyList<AtlasPathPoint> route,
+        ViewportSize? scale = null, AtlasPathHint? hint = null)
     {
         ViewportRect? bounds = null;
+        var (scaleX, scaleY) = scale ?? new ViewportSize(1, 1);
         foreach (var stroke in strokes)
         {
             var brush = stroke.Kind switch
@@ -45,14 +47,25 @@ internal static class HackerPathPresentation
                 first = next;
             }
         }
+        if (hint is { } guidance && guidance.Current != guidance.Next)
+        {
+            var from = guidance.Current;
+            var tip = guidance.Next;
+            Draw(from, tip, Brushes.White, 2);
+            var length = Math.Min(Math.Max(3, knightWidth / 2), from.DistanceTo(tip));
+            var x = Math.Sign(tip.X - from.X) * length;
+            var y = Math.Sign(tip.Y - from.Y) * length;
+            Draw(tip, new(tip.X - x + y / 2, tip.Y - y + x / 2), Brushes.White, 2);
+            Draw(tip, new(tip.X - x - y / 2, tip.Y - y - x / 2), Brushes.White, 2);
+        }
         return bounds;
 
         void Draw(AtlasPathPoint a, AtlasPathPoint b, Brush brush, double thickness = 1.5)
         {
-            var x1 = a.X + origin.X;
-            var y1 = -a.Y + origin.Y;
-            var x2 = b.X + origin.X;
-            var y2 = -b.Y + origin.Y;
+            var x1 = a.X * scaleX + origin.X;
+            var y1 = -a.Y * scaleY + origin.Y;
+            var x2 = b.X * scaleX + origin.X;
+            var y2 = -b.Y * scaleY + origin.Y;
             var span = new ViewportRect(Math.Min(x1, x2), Math.Min(y1, y2),
                 Math.Max(1, Math.Abs(x1 - x2)), Math.Max(1, Math.Abs(y1 - y2)));
             bounds = bounds is { } current ? current.Union(span) : span;

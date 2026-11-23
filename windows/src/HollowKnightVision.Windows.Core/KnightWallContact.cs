@@ -1,6 +1,9 @@
 namespace HollowKnightVision.Windows.Core;
 
-public readonly record struct KnightTerrainContact(CleanFloorLine? Floor, DetectedWall? Wall);
+public readonly record struct KnightTerrainContact(CleanFloorLine? Floor, DetectedWall? Wall)
+{
+    public AtlasPoint? MeasuredFoot { get; init; }
+}
 
 /// <summary>Infers a wall from sustained input and camera-compensated contact.</summary>
 public sealed class KnightWallContact

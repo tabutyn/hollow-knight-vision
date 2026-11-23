@@ -734,6 +734,7 @@ public partial class MainWindow : Window
         internal WalkedGroundTracker WalkedGround { get; } = new();
         internal long WalkedCoordinateEpoch { get; private set; }
         internal GroundPlatformPatches PlatformPatches { get; } = new();
+        internal GameplayPathTracker Paths { get; } = new();
         internal string? ReceiverSceneName { get; private set; }
         internal int FrameWidth { get; private set; }
         internal int FrameHeight { get; private set; }
@@ -770,6 +771,7 @@ public partial class MainWindow : Window
             ReferenceTracker.Reset();
             WalkedGround.BreakContinuity();
             PlatformPatches.Reset();
+            Paths.Suspend();
         }
 
         internal void ResetWalkedCoordinateEpoch()
@@ -783,6 +785,7 @@ public partial class MainWindow : Window
             if (preserveWalkedGround) WalkedGround.BreakContinuity();
             else ResetWalkedCoordinateEpoch();
             PlatformPatches.Reset();
+            Paths.Reset();
             NeedsCameraAnchor = true;
             Tracker.Reset();
             SemanticAtlas.Reset();
@@ -873,6 +876,7 @@ public partial class MainWindow : Window
         public AtlasPoint GroundDisplayCamera { get; init; }
         public IReadOnlyList<PixelRect> MeasuredPlatformPatches { get; init; } = [];
         public TerrainWallDetection Terrain { get; init; } = TerrainWallDetection.Empty;
+        public GameplayPathView? Paths { get; init; }
     }
 
     private sealed class GameWindowLostException : Exception
@@ -1986,6 +1990,7 @@ public partial class MainWindow : Window
         if (HackerWorkspaceButton is null || OpsWorkspaceButton is null) return;
         if (initialization is null) return;
         HackerPathCanvas.Visibility = ShowsHackerPaths ? Visibility.Visible : Visibility.Collapsed;
+        UpdateGameplayPathVisibility();
         PresentLabelPauseControls(LabelPanel, LabelWorkspaceButton, labelCapture, gameControls.IsRecording);
         GameplayControlsPanel.Visibility = visionCancellation is not null
             && DashboardPresentationPolicy.ShowsGameplayFraming(
@@ -2586,6 +2591,7 @@ public partial class MainWindow : Window
             { SingleReader = true, SingleWriter = false, AllowSynchronousContinuations = false });
             var captureGeneration = Interlocked.Increment(ref recentCaptureGeneration);
             gameplayPresentation.Reset();
+            ResetGameplayPaths();
             previousAnalysisStartedTimestamp = 0;
             maxAnalysisGapMilliseconds = 0;
             BeginReceiverFrameJoin(
@@ -2643,6 +2649,7 @@ public partial class MainWindow : Window
                     var firstFreshGameFrame = !hasFreshGameFrame;
                     hasFreshGameFrame = true;
                     Interlocked.Exchange(ref latestPresentedCaptureId, frame.CaptureId);
+                    if (gameplayPathPresentation is { View.Camera: null }) UpdateGameplayPathVisibility();
                     GameplayImage.Source = bitmap;
                     if (firstFreshGameFrame)
                     {
@@ -3336,15 +3343,17 @@ public partial class MainWindow : Window
             if (gameMode == GameRuntimeMode.Modded) groundHypothesisState.ResetWalkedCoordinateEpoch();
             else groundHypothesisState.WalkedGround.BreakContinuity();
             groundHypothesisState.PlatformPatches.Reset();
+            groundHypothesisState.Paths.Reset();
         }
         var terrain = TerrainWallDetection.Empty;
+        KnightTerrainContact terrainContact = default;
         if (groundAnalysis is not null)
         {
             terrain = TerrainWallDetector.Detect(groundAnalysis, ground);
-            var contact = groundHypothesisState.WalkedGround.Observe(atlasRoomId, groundAnalysis, masks.GroundKnight,
+            terrainContact = groundHypothesisState.WalkedGround.Observe(atlasRoomId, groundAnalysis, masks.GroundKnight,
                 visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null,
                 movementButtons, captureTimestamp, ground, terrain.Walls);
-            terrain = TerrainWallDetector.ApplyContact(terrain, contact, ground, groundAnalysis);
+            terrain = TerrainWallDetector.ApplyContact(terrain, terrainContact, ground, groundAnalysis);
         }
         IReadOnlyList<PixelRect> platformPatches = groundAnalysis is not null
             ? groundHypothesisState.PlatformPatches.Observe(groundAnalysis, ground, hypothesisExclusions,
@@ -3441,6 +3450,16 @@ public partial class MainWindow : Window
             ? GroundStrokeGeometry.VisibleLines(groundHypotheses.AtlasLines, groundHypotheses.LineReviews,
                 localWalkedGround, groundDisplayCamera, frame.Height, masks.GroundKnight)
             : [];
+        GameplayPathView? paths = null;
+        if (workspace == "Gameplay" && admission.AdmitsTracking
+            && recognition.Status?.ContextIdentifier is "game" or "Gameplay" && Volatile.Read(ref atlasPathsEnabled))
+        {
+            var pathCamera = visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null;
+            paths = groundHypothesisState.Paths.Observe(new(atlasRoomId, captureTimestamp, frame.Width, frame.Height,
+                pathCamera, groundDisplayLines, ground, terrain, terrainContact.MeasuredFoot, masks.GroundKnight,
+                terrainContact.Wall));
+        }
+        else groundHypothesisState.Paths.Suspend();
         if (inputPathDivergenceMonitor.IsAcceptingSamples
             && renderedGameFrame is { } renderedFrame)
         {
@@ -3566,7 +3585,8 @@ public partial class MainWindow : Window
                 GroundDisplayLines = groundDisplayLines,
                 GroundDisplayCamera = groundDisplayCamera,
                 MeasuredPlatformPatches = platformPatches,
-                Terrain = terrain
+                Terrain = terrain,
+                Paths = paths
             };
     }
 
@@ -3735,9 +3755,12 @@ public partial class MainWindow : Window
         }
         // The capture loop has usually displayed a newer bitmap while tracking
         // runs. Accept ordered positions without replacing it with older pixels.
-        if (gameplayPresentation.TryAcceptAnalysis(result.Frame))
+        var acceptsGameplayPlacement = gameplayPresentation.TryAcceptAnalysis(result.Frame);
+        if (acceptsGameplayPlacement)
         {
             Volatile.Write(ref recognizedMenuContext, result.MenuContext);
+            gameplayPathPresentation = result.Paths is { } paths
+                ? new(result.Frame.CaptureId, result.Frame.Width, result.Frame.Height, paths) : null;
             MenuParticles.SetScene(result.MenuContext, result.MenuStencil);
             Volatile.Write(ref recognizedMenuSelection, result.Status?.SelectedMenuOption);
             VisionStatusText.ToolTip = result.StencilDiagnostic;
@@ -3774,6 +3797,7 @@ public partial class MainWindow : Window
                 gameplayLiveTelemetry);
             Interlocked.Exchange(ref gameplayRenderedRevision, result.GameplayTiles.Revision);
         }
+        else if (acceptsGameplayPlacement) RenderGameplayPaths();
         if (result.AcceptedClosure is { } closure)
         {
             gameControls.RecordLoopClosure(
@@ -5308,6 +5332,7 @@ public partial class MainWindow : Window
                 mosaic.PixelsPerWorldUnit, mosaic.TileSize,
                 minimumTileX, minimumTileY, liveFrame, telemetry);
         }
+        RenderGameplayPaths();
         ApplyViewport(canvas, GameplayPanel, gameplayFraming, liveImage);
     }
 
@@ -6098,6 +6123,7 @@ public partial class MainWindow : Window
         gameplayTileImages.Clear();
         gameplayOccupiedTileBounds.Clear();
         GameplayGroundCanvas.Children.Clear();
+        ResetGameplayPaths();
         gameplayAtlasMinimumTileX = gameplayAtlasMinimumTileY = null;
     }
 

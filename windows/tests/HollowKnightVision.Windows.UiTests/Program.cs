@@ -97,6 +97,7 @@ internal static class Program
         TestFramingGroupsAreMutuallyExclusive();
         TestHackerTerrainControls();
         TestHackerPathPresentation();
+        TestGameplayPathsFollowTheImageAndRespectMenuContext();
         TestWorkspaceShortcuts();
         TestPathRecordingAvailability();
         TestWorkspaceExitShortcut();
@@ -123,7 +124,7 @@ internal static class Program
         GpuCaptureTests.TestMappedBounds();
         GpuCaptureTests.RunIfRequested();
         if (args.Contains("--input")) TestBackgroundKeyDelivery();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 73 : 72)}");
+        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 74 : 73)}");
         Application.Current.Shutdown();
     }
 
@@ -1115,7 +1116,7 @@ internal static class Program
             new(new(20, 60), new(20, 120), AtlasPathKind.Drop, false),
             new(new(150, 0), new(150, 20), AtlasPathKind.DoubleJump, true),
         ]);
-        var bounds = HackerPathPresentation.Draw(canvas, display, 10, new(7, 130),
+        var bounds = AtlasPathPresentation.Draw(canvas, display, 10, new(7, 130),
             target: new(355, 0), route: [new(40, 0), new(100, 0), new(355, 0)]);
         var lines = canvas.Children.OfType<Line>().ToArray();
         var white = lines.Where(line => line.Stroke == Brushes.White).ToArray();
@@ -1128,6 +1129,39 @@ internal static class Program
         Check(bounds is { Right: >= 367 } && lines.All(line => !line.IsHitTestVisible),
             "Fit should include authored paths outside the capture while leaving the pointer available.");
         Console.WriteLine("PASS Hacker displays the full objective route and one arrow on a shared fall");
+    }
+
+    private static void TestGameplayPathsFollowTheImageAndRespectMenuContext()
+    {
+        var canvas = new Canvas();
+        var start = new AtlasPathPoint(80, 100);
+        var turn = new AtlasPathPoint(100, 100);
+        var end = new AtlasPathPoint(400, 100);
+        var view = new GameplayPathView(new(80, -25), [new(start, end, AtlasPathKind.Walk, true)],
+            10, new(end, start, turn));
+        var registered = new GameplayPathPresentation(11, 640, 360, view);
+        Check(registered.IsCurrent(true, "game", 12, registered: true),
+            "A registered road should keep its position when a newer capture arrives.");
+        Check(!registered.IsCurrent(true, "Main Title", 12, registered: true)
+            && !registered.IsCurrent(true, null, 12, registered: true)
+            && !registered.IsCurrent(false, "game", 12, registered: true)
+            && !registered.IsCurrent(true, "game", 12, registered: false)
+            && !registered.IsCurrent(true, "game", 10, registered: true),
+            "A road escaped the gameplay, registration, frame order, or Debug View gate.");
+        var temporary = registered with { View = view with { Camera = null } };
+        Check(temporary.IsCurrent(true, "game", 11, registered: false)
+            && !temporary.IsCurrent(true, "game", 12, registered: true),
+            "An image-local road must disappear as soon as the pixels advance.");
+
+        registered.Draw(canvas, new(200, 50, 320, 180));
+        var strokes = canvas.Children.OfType<Line>().ToArray();
+        Check(strokes.Any(line => line.Stroke == Brushes.Gold
+                    && line.X1 == 200 && line.X2 == 360 && line.Y1 == 167.5 && line.Y2 == 167.5)
+            && strokes.Any(line => line.Stroke == Brushes.White
+                    && line.X1 == 200 && line.X2 == 210 && line.Y1 == line.Y2)
+            && strokes.All(line => !line.IsHitTestVisible),
+            "The road and direction arrow must use the same camera origin and scale as the presented image.");
+        Console.WriteLine("PASS Game Play roads use the live viewport, hide in menus, and show their direction");
     }
 
     private static void TestWorkspaceShortcuts()
