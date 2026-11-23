@@ -278,13 +278,13 @@ internal static class Program
 
     private static void TestVisualReplayInspectionSkipsNormalStartup()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"hkv-visual-replay-host-{Guid.NewGuid():N}");
+        var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"hkv-visual-replay-host-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         try
         {
-            var path = Path.Combine(root, "path-legacy.json");
+            var path = System.IO.Path.Combine(root, "path-legacy.json");
             new RecordedInputPathStore(root).Save(new RecordedInputPath(RecordedInputPath.CurrentSchemaVersion,
-                Guid.NewGuid(), DateTimeOffset.UnixEpoch, 1, null, null, null, []), path);
+                Guid.NewGuid(), DateTimeOffset.UnixEpoch, 1, null, null, null, [], trackingSamples: []), path);
             using var output = new StringWriter();
             using var errors = new StringWriter();
             Task<int> Run(params string[] arguments) => HostProgram.RunAsync(arguments,
@@ -297,7 +297,7 @@ internal static class Program
             if (report.RootElement.GetProperty("archiveAvailable").GetBoolean())
                 throw new InvalidOperationException("The offline inspection reported image evidence for a legacy recording.");
             if (Run("--inspect-visual-replay").GetAwaiter().GetResult() != 64
-                || Run("--inspect-visual-replay", Path.Combine(root, "missing.json")).GetAwaiter().GetResult() != 1)
+                || Run("--inspect-visual-replay", System.IO.Path.Combine(root, "missing.json")).GetAwaiter().GetResult() != 1)
                 throw new InvalidOperationException("Offline visual replay usage and read failures returned the wrong exit codes.");
         }
         finally { Directory.Delete(root, recursive: true); }
