@@ -77,6 +77,34 @@ internal static class VisualRoomLowResolutionMotionParityTests
         Check(LowResolutionRoomMotionTracker.Translation(reference, moved) is null);
     }
 
+    public static void TestDarkLandingTracksTextureConfinedToBottomRows()
+    {
+        var reference = DarkBottomFloor(shift: 0);
+        var moved = DarkBottomFloor(shift: -2);
+        var diagnostic = LowResolutionRoomMotionTracker.DiagnoseTranslation(reference, moved);
+        Check(diagnostic.NarrowRejection is not null && diagnostic.WideRejection is not null,
+            "The test must require the edge retry.");
+        Near(-2, diagnostic.Motion?.ScreenShiftX ?? double.NaN, .25);
+        Near(0, diagnostic.Motion?.ScreenShiftY ?? double.NaN, .25);
+    }
+
+    public static void TestDarkBottomTextureDoesNotInventMotionWhenLightChanges()
+    {
+        var reference = DarkBottomFloor(shift: 0);
+        var dimmed = DarkBottomFloor(shift: 0, gain: .6);
+        Check(LowResolutionRoomMotionTracker.Translation(reference, dimmed) is null);
+    }
+
+    public static void TestBlackFrameAndTinyBottomRemnantCannotEstablishMotion()
+    {
+        var empty = new LowResolutionMotionGrid(64, 36, new byte[64 * 36]);
+        Check(LowResolutionRoomMotionTracker.Translation(empty, empty) is null);
+        var pixels = new byte[64 * 36];
+        for (var x = 28; x < 32; x++) pixels[33 * 64 + x] = (byte)((x - 27) * 45);
+        var remnant = new LowResolutionMotionGrid(64, 36, pixels);
+        Check(LowResolutionRoomMotionTracker.Translation(remnant, remnant) is null);
+    }
+
     public static void TestIsolatedVisiblePatchesRequireAComparableMotionCandidate()
     {
         LowResolutionMotionGrid MaskedGrid(double shift)
@@ -114,6 +142,13 @@ internal static class VisualRoomLowResolutionMotionParityTests
 
         Near(-3, vector?.ScreenShiftX ?? double.NaN, 0);
         Near(-7, vector?.ScreenShiftY ?? double.NaN, 0);
+    }
+
+    private static LowResolutionMotionGrid DarkBottomFloor(int shift, double gain = 1)
+    {
+        var texture = MotionGrid(shift, gain: gain, width: 64, height: 36);
+        return new LowResolutionMotionGrid(texture.Width, texture.Height,
+            texture.Luma.Select((value, index) => index / texture.Width >= 31 ? value : (byte)0).ToArray());
     }
 
     private static LowResolutionMotionGrid MotionGrid(
