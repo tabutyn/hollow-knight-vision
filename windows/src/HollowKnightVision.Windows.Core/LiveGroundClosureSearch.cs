@@ -20,11 +20,15 @@ internal sealed class LiveGroundClosureSearch
     private readonly Dictionary<int, Appearance?> appearances = [];
     private readonly Queue<int> cachedOrder = [];
 
+    internal bool LastSearchWasAmbiguous { get; private set; }
+
     internal Match? Find(
         IReadOnlyList<Source> sources, BgraFrame current, IReadOnlyList<StencilRect> exclusions,
         IReadOnlyList<LiveGroundLineEvidence> currentGround, double solveWidth,
-        Func<int, BgraFrame> loadImage, Func<int, IReadOnlyList<WorldRect>> loadExclusions)
+        Func<int, BgraFrame> loadImage, Func<int, IReadOnlyList<WorldRect>> loadExclusions,
+        bool searchAcrossRooms = false)
     {
+        LastSearchWasAmbiguous = false;
         var candidates = new List<Candidate>();
         foreach (var source in SelectSources(sources))
         {
@@ -47,15 +51,23 @@ internal sealed class LiveGroundClosureSearch
         }
         if (candidates.Count == 0) return null;
 
-        var scenery = matcher.Match(current, candidates.Select(candidate => candidate.Features).ToArray(),
-            currentSolveWidth: solveWidth, excluding: BottomOrigin(exclusions, current.Height));
-        if (matcher.LastMatchWasAmbiguous) return null;
+        var features = candidates.Select(candidate => candidate.Features).ToArray();
+        var masks = BottomOrigin(exclusions, current.Height);
+        var scenery = searchAcrossRooms
+            ? matcher.MatchAcrossRooms(current, features, solveWidth, masks,
+                candidates.ToDictionary(candidate => candidate.Features.Id, candidate => candidate.Source.Observation.RoomId))
+            : matcher.Match(current, features, currentSolveWidth: solveWidth, excluding: masks);
+        if (matcher.LastMatchWasAmbiguous)
+        {
+            LastSearchWasAmbiguous = true;
+            return null;
+        }
 
         var proposal = scenery is not null
             ? new PoseProposal(candidates.First(candidate => candidate.Features.Id == scenery.ReferenceId),
                 scenery.ProposedCameraPose, scenery.Confidence, scenery.Residual, scenery.InlierReferenceFeatureIds,
                 scenery.AmbiguityRatio)
-            : ProposeFromPatches(candidates, Grid(current, exclusions), solveWidth);
+            : ProposeFromPatches(candidates, Grid(current, exclusions), solveWidth, searchAcrossRooms);
         if (proposal is null) return null;
 
         var reference = proposal.Reference.Source;
@@ -77,7 +89,8 @@ internal sealed class LiveGroundClosureSearch
     }
 
     private PoseProposal? ProposeFromPatches(
-        IReadOnlyList<Candidate> candidates, CalibratedSceneMotionTracker.Grid? current, double solveWidth)
+        IReadOnlyList<Candidate> candidates, CalibratedSceneMotionTracker.Grid? current, double solveWidth,
+        bool searchAcrossRooms)
     {
         if (current is null) return null;
         var proposals = new List<PoseProposal>();
@@ -117,9 +130,11 @@ internal sealed class LiveGroundClosureSearch
         if (ranked.FirstOrDefault() is not { } best) return null;
         var separate = Math.Max(solveWidth * .025, 4);
         var rival = ranked.Skip(1).FirstOrDefault(value =>
-            Distance(value.Pose.X - best.Pose.X, value.Pose.Y - best.Pose.Y) > separate);
+            (searchAcrossRooms && value.Reference.Source.Observation.RoomId != best.Reference.Source.Observation.RoomId)
+            || Distance(value.Pose.X - best.Pose.X, value.Pose.Y - best.Pose.Y) > separate);
         var ambiguity = rival is null ? 0 : rival.Confidence / best.Confidence;
-        return ambiguity >= .80 ? null : best with { Ambiguity = ambiguity };
+        LastSearchWasAmbiguous = ambiguity >= .80;
+        return LastSearchWasAmbiguous ? null : best with { Ambiguity = ambiguity };
     }
 
     private static CalibratedSceneMotionTracker.Grid? Grid(BgraFrame frame, IReadOnlyList<StencilRect> masks) =>

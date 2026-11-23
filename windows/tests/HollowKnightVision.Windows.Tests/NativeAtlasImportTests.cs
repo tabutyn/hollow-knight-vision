@@ -190,6 +190,71 @@ internal static class NativeAtlasImportTests
         });
     }
 
+    internal static void TestReopenedAtlasRecoversFromFloorWithoutNarrowLandmarks()
+    {
+        foreach (var visual in new[] { true, false })
+        {
+            var root = Directory.CreateTempSubdirectory("hkv-floor-only-restore-");
+            try
+            {
+                var pipeline = new WindowsLiveWorldPipeline(root.FullName);
+                var room = visual ? "normal:original:0" : "Floor_only_saved_room";
+                var initial = MeasuredRecoveryFrame(1, .5, 71, new(80, 20)) with
+                    { RoomName = room, RoomIdentityIsVisual = visual };
+                Check(pipeline.Process(initial).AllowsAtlasComposition, "store the placed floor view");
+                var store = new LiveWorldSessionStore(root.FullName);
+                var before = store.Load().Snapshot;
+                Check(before.Keyframes.Count == 1 && before.Landmarks.Count == 0, "this view has no narrow-band landmarks");
+
+                pipeline = new WindowsLiveWorldPipeline(root.FullName);
+                WindowsLiveWorldFrame Revisit(long id, double time, double localX) =>
+                    MeasuredRecoveryFrame(id, time, 71, new(localX, 35)) with
+                    { RoomName = visual ? "normal:revisit:0" : room, RoomIdentityIsVisual = visual, CaptureGeneration = 2 };
+                var first = pipeline.Process(Revisit(2, 1, 120));
+                Check(first.ConfirmedRecoveryPose is null && first.Diagnostic.Contains("ConfirmationRequired", StringComparison.Ordinal),
+                    $"the first broad floor match is tentative ({first.Diagnostic})");
+                var confirmed = pipeline.Process(Revisit(3, 1.3, 120));
+                Check(confirmed.ConfirmedRecoveryPose == new AtlasPoint(80, 20) && !confirmed.AllowsAtlasWrite,
+                    $"two fresh floor matches locate the saved scene ({confirmed.Diagnostic})");
+                Check(store.Load().Snapshot.MapRevision == before.MapRevision
+                    && new SceneSessionStore(root.FullName).Manifest.Observations.Count == 1,
+                    "transient floor recovery keeps both captures outside the saved graph");
+                var continued = pipeline.Process(Revisit(4, 1.6, 124));
+                var placed = store.Load().Snapshot.Observations[^1];
+                Check(continued.AllowsAtlasComposition && placed.RoomId == before.Observations[0].RoomId
+                    && placed.OptimizedPose == new AtlasPoint(84, 20), "the next frame follows the restored room's coordinate basis");
+            }
+            finally { root.Delete(recursive: true); }
+        }
+    }
+
+    internal static void TestFloorOnlyRecoveryRejectsCompetingRoomsAndStaleVotes()
+    {
+        var first = MeasuredRecoveryFrame(1, .5, 71, new(80, 20));
+        var texture = first.Frame;
+        var placed = new[] { 0, 1 }.Select(id =>
+            LiveWorldObservation.Create(id, id, id + .5, texture.Width, texture.Height, first.SolveWidth,
+                160, [], first.LocalPose, first.LocalPose, roomId: id) with
+                { GroundGeometry = first.WorldEvidence!.GroundGeometry }).ToArray();
+        var snapshot = new LiveWorldSnapshot(anchoredObservationId: 0, observations: placed,
+            keyframes: [new(0, 0, 0), new(1, 1, 1)]);
+        var tracker = new LiveWorldTracker(snapshot);
+        LiveWorldRecoveryUpdate Scan(double time, int? room) => tracker.RecoverFromPlacedGround(texture,
+            first.LocalPose, first.SolveWidth, first.WorldEvidence! with { CaptureTimestamp = time },
+            [], _ => texture, _ => [], room);
+
+        var ambiguous = Scan(1, null);
+        Check(ambiguous.ConfirmedPlacement is null
+            && ambiguous.Review.Rejections.Contains(LiveWorldTrackerRejection.AmbiguousPlacement),
+            "identical scenery in separate rooms stays ambiguous even at the same coordinates");
+        Check(Scan(2, 0).ConfirmedPlacement is null && Scan(2, 0).ConfirmedPlacement is null,
+            "submitting the same capture twice never confirms it");
+        Check(Scan(4, 0).ConfirmedPlacement is null && Scan(4.3, 1).ConfirmedPlacement is null,
+            "a stale vote and a vote from a different room each require a fresh confirmation");
+        Check(Scan(4.6, 1).ConfirmedPlacement?.RoomId == 1 && ReferenceEquals(tracker.Snapshot, snapshot),
+            "two fresh same-room votes confirm without mutating the saved graph");
+    }
+
     internal static void TestImportedAtlasExtendsThroughAConfirmedDoorway()
     {
         foreach (var direction in new[] { VisualRoomDirection.Left, VisualRoomDirection.Right })

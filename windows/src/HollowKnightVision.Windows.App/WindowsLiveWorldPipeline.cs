@@ -373,7 +373,8 @@ internal sealed class WindowsLiveWorldPipeline
                 {
                     recoveryDisposition = RecoveryDisposition.FindSavedRoom;
                 }
-                else if (activeTracker.HasRecoveryReference(resolvedRoomId))
+                else if (activeTracker.HasRecoveryReference(resolvedRoomId)
+                    || activeTracker.HasPlacedGroundReference(resolvedRoomId, request.SolveWidth))
                 {
                     recoveryDisposition = RecoveryDisposition.SearchReference;
                 }
@@ -481,6 +482,19 @@ internal sealed class WindowsLiveWorldPipeline
                         request.SolveWidth,
                         request.GroundAlignmentExclusions,
                         findSavedRoom ? null : resolvedRoomId);
+                    if (!IsWorkCurrent(processEpoch)) return Cancelled();
+                    if (!canResumeLocalTracking && recovery.MatchedReferenceKeyframeId is null
+                        && !recovery.Review.Rejections.Contains(LiveWorldTrackerRejection.AmbiguousPlacement)
+                        && request.StableTrackingVerified
+                        && request.WorldEvidence is { } evidence && evidence.CaptureTimestamp == request.MonotonicTimestamp)
+                    {
+                        var floorRecovery = activeTracker.RecoverFromPlacedGround(request.MaskedFrame,
+                            request.LocalPose, request.SolveWidth, evidence, request.Exclusions,
+                            activeStore.Source, id => compositionExclusions[id], findSavedRoom ? null : resolvedRoomId);
+                        if (floorRecovery.MatchedReferenceKeyframeId is not null
+                            || floorRecovery.Review.Rejections.Contains(LiveWorldTrackerRejection.AmbiguousPlacement))
+                            recovery = floorRecovery;
+                    }
                     if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 }
                 catch (Exception error)

@@ -118,7 +118,8 @@ public sealed class LiveWorldTracker
         int ReferenceKeyframeId,
         int RoomId,
         AtlasPoint Correction,
-        int MissedFrames);
+        int MissedFrames,
+        double? CaptureTimestamp = null);
 
     private sealed record GroundRecoveryVote(int ReferenceIslandId, int TargetIslandId,
         double Timestamp, AtlasPoint Correction);
@@ -126,6 +127,7 @@ public sealed class LiveWorldTracker
     private const double KeyframeTravelFraction = 0.25;
     private const double MinimumClosureTravelFraction = 0.75;
     private const int MaximumMissedRecoveryFrames = 4;
+    private const double MaximumGroundConfirmationAge = 1.25;
 
     private readonly GlobalFeatureMatcher matcher = new();
     private readonly LiveGroundClosureSearch groundClosureSearch = new();
@@ -137,6 +139,7 @@ public sealed class LiveWorldTracker
     private readonly HashSet<int> currentVisitObservationIds = [];
     private PendingClosure? pendingClosure;
     private PendingRecovery? pendingRecovery;
+    private PendingRecovery? pendingGroundPlacement;
     private GroundRecoveryVote? groundRecoveryVote;
     private int recoveryEpoch;
     private double? lastAcceptedClosureTravel;
@@ -162,6 +165,9 @@ public sealed class LiveWorldTracker
     public bool HasRecoveryReference(int roomId) =>
         RecoveryReferences().Any(reference => reference.RoomId == roomId);
 
+    public bool HasPlacedGroundReference(int roomId, double solveWidth) =>
+        PlacedGroundReferences(roomId, solveWidth).Any();
+
     public bool CanConfirmGroundRecovery(double timestamp) =>
         groundRecoveryVote is { } vote && timestamp - vote.Timestamp is > 0 and <= .5;
 
@@ -183,6 +189,7 @@ public sealed class LiveWorldTracker
     {
         recoveryEpoch = recoveryEpoch < int.MaxValue ? recoveryEpoch + 1 : 0;
         pendingRecovery = null;
+        pendingGroundPlacement = null;
         groundRecoveryVote = null;
         pendingClosure = null;
     }
@@ -223,19 +230,7 @@ public sealed class LiveWorldTracker
         var candidate = RecoveryMatch(frame, solveWidth, excluded, eligible, searchAcrossRooms: roomId is null);
         if (candidate is null)
         {
-            if (pendingRecovery is { } pending
-                && pending.Epoch == recoveryEpoch
-                && pending.MissedFrames < MaximumMissedRecoveryFrames)
-            {
-                pendingRecovery = pending with
-                {
-                    MissedFrames = pending.MissedFrames + 1
-                };
-            }
-            else
-            {
-                pendingRecovery = null;
-            }
+            MissedRecovery(ref pendingRecovery);
             return RecoveryUpdate(
                 null,
                 null,
@@ -244,45 +239,75 @@ public sealed class LiveWorldTracker
         }
 
         var (reference, match) = candidate.Value;
-        var correction = new AtlasPoint(
-            match.ProposedCameraPose.X - proposedCameraPose.X,
-            match.ProposedCameraPose.Y - proposedCameraPose.Y);
-        var consistency = Math.Max(solveWidth * 0.0125, 4);
-        if (pendingRecovery is not { } confirmation
-            || confirmation.Epoch != recoveryEpoch)
+        return ConfirmRecovery(ref pendingRecovery, reference.KeyframeId, reference.RoomId,
+            match.ProposedCameraPose, proposedCameraPose, solveWidth);
+    }
+
+    /// <summary>Uses two distinct, floor-verified captures to locate placed imagery without writing either capture.</summary>
+    public LiveWorldRecoveryUpdate RecoverFromPlacedGround(
+        BgraFrame maskedFrame, AtlasPoint proposedCameraPose, double solveWidth,
+        LiveWorldCaptureEvidence evidence, IReadOnlyList<StencilRect> exclusions,
+        Func<int, BgraFrame> loadImage, Func<int, IReadOnlyList<WorldRect>> loadExclusions,
+        int? roomId)
+    {
+        var ground = evidence.FloorCandidates?.Lines ?? evidence.GroundGeometry?.Lines;
+        if (!double.IsFinite(evidence.CaptureTimestamp) || ground is not { Count: > 0 }
+            || !Finite(proposedCameraPose) || !double.IsFinite(solveWidth) || solveWidth <= 0 || roomId < 0)
+            return RecoveryUpdate(null, null, [LiveWorldTrackerRejection.NoEligibleReference]);
+
+        var timestamp = evidence.CaptureTimestamp;
+        if (pendingGroundPlacement is { CaptureTimestamp: { } previous } vote && timestamp <= previous)
+            return RecoveryUpdate(vote.ReferenceKeyframeId, null, [LiveWorldTrackerRejection.ConfirmationRequired]);
+
+        var sources = PlacedGroundReferences(roomId, solveWidth).ToArray();
+        if (sources.Length == 0)
         {
-            pendingRecovery = new PendingRecovery(
-                recoveryEpoch, reference.KeyframeId, reference.RoomId, correction, 0);
-            return RecoveryUpdate(
-                reference,
-                null,
-                [LiveWorldTrackerRejection.ConfirmationRequired]);
+            pendingGroundPlacement = null;
+            return RecoveryUpdate(null, null, [LiveWorldTrackerRejection.NoEligibleReference]);
         }
 
-        var confirmationReferenceIds = LiveWorldRecoveryConfirmation.ReferenceIds(
-            confirmation.ReferenceKeyframeId,
-            confirmation.Correction,
-            reference.KeyframeId,
-            correction,
-            consistency);
-        if (confirmationReferenceIds is null || confirmation.RoomId != reference.RoomId)
+        var match = groundClosureSearch.Find(sources, maskedFrame, exclusions, ground, solveWidth,
+            loadImage, loadExclusions, searchAcrossRooms: roomId is null);
+        if (match is null)
         {
-            pendingRecovery = new PendingRecovery(
-                recoveryEpoch, reference.KeyframeId, reference.RoomId, correction, 0);
-            return RecoveryUpdate(
-                reference,
-                null,
-                [LiveWorldTrackerRejection.InconsistentConfirmation]);
+            if (groundClosureSearch.LastSearchWasAmbiguous)
+            {
+                pendingGroundPlacement = null;
+                return RecoveryUpdate(null, null, [LiveWorldTrackerRejection.AmbiguousPlacement]);
+            }
+            MissedRecovery(ref pendingGroundPlacement);
+            return RecoveryUpdate(null, null, [LiveWorldTrackerRejection.MatcherRejected]);
         }
 
-        pendingRecovery = null;
-        return RecoveryUpdate(
-            reference,
-            new LiveWorldRecoveryPlacement(
-                match.ProposedCameraPose,
-                correction,
-                confirmationReferenceIds) { RoomId = reference.RoomId },
-            []);
+        var matchedRoom = sources.First(source => source.KeyframeId == match.KeyframeId).Observation.RoomId;
+        return ConfirmRecovery(ref pendingGroundPlacement, match.KeyframeId, matchedRoom,
+            match.CameraPose, proposedCameraPose, solveWidth, timestamp);
+    }
+
+    private LiveWorldRecoveryUpdate ConfirmRecovery(ref PendingRecovery? pending, int keyframeId, int roomId,
+        AtlasPoint measuredPose, AtlasPoint proposedPose, double solveWidth, double? timestamp = null)
+    {
+        var correction = Difference(measuredPose, proposedPose);
+        var previous = pending;
+        pending = new(recoveryEpoch, keyframeId, roomId, correction, 0, timestamp);
+        if (previous is null || previous.Epoch != recoveryEpoch
+            || (timestamp - previous.CaptureTimestamp) > MaximumGroundConfirmationAge)
+            return RecoveryUpdate(keyframeId, null, [LiveWorldTrackerRejection.ConfirmationRequired]);
+
+        var references = LiveWorldRecoveryConfirmation.ReferenceIds(previous.ReferenceKeyframeId,
+            previous.Correction, keyframeId, correction, Math.Max(solveWidth * 0.0125, 4));
+        if (references is null || previous.RoomId != roomId)
+            return RecoveryUpdate(keyframeId, null, [LiveWorldTrackerRejection.InconsistentConfirmation]);
+
+        pending = null;
+        return RecoveryUpdate(keyframeId, new(measuredPose, correction, references) { RoomId = roomId }, []);
+    }
+
+    private void MissedRecovery(ref PendingRecovery? state)
+    {
+        state = state is { } pending && pending.Epoch == recoveryEpoch
+            && pending.MissedFrames < MaximumMissedRecoveryFrames
+            ? pending with { MissedFrames = pending.MissedFrames + 1 } : null;
     }
 
     public LiveWorldTrackerUpdate Ingest(
@@ -1046,6 +1071,18 @@ public sealed class LiveWorldTracker
             .Where(reference => !unplaced.Contains(reference.ObservationId));
     }
 
+    private IEnumerable<LiveGroundClosureSearch.Source> PlacedGroundReferences(int? roomId, double solveWidth)
+    {
+        var unplaced = Snapshot.UnplacedObservationIds();
+        var observations = Snapshot.Observations.Where(observation =>
+            (roomId is null || observation.RoomId == roomId) && observation.SolveWidth == solveWidth
+            && observation.GroundGeometry?.Lines.Count > 0 && !unplaced.Contains(observation.Id))
+            .ToDictionary(observation => observation.Id);
+        foreach (var keyframe in Snapshot.Keyframes)
+            if (observations.TryGetValue(keyframe.ObservationId, out var observation))
+                yield return new(keyframe.Id, observation);
+    }
+
     private (CachedReference Reference, GlobalFeatureMatch Match)? RecoveryMatch(
         BgraFrame frame,
         double solveWidth,
@@ -1065,11 +1102,11 @@ public sealed class LiveWorldTracker
     }
 
     private LiveWorldRecoveryUpdate RecoveryUpdate(
-        CachedReference? reference,
+        int? referenceKeyframeId,
         LiveWorldRecoveryPlacement? placement,
         IReadOnlyList<LiveWorldTrackerRejection> rejections) => new(
             placement,
-            reference?.KeyframeId,
+            referenceKeyframeId,
             Snapshot,
             Snapshot.MapRevision,
             Update(new AtlasPoint(0, 0), null, rejections).Review);

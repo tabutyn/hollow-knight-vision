@@ -62,10 +62,16 @@ internal static class GroundPlaneClosureVerifierTests
         var floor = Ground(30);
         var observation = LiveWorldObservation.Create(0, 0, 0, saved.Width, saved.Height, 320, 160, [], pose, pose)
             with { GroundGeometry = new(floor) };
-        var match = new LiveGroundClosureSearch().Find([new(0, observation)], current, [], floor, 320,
+        var search = new LiveGroundClosureSearch();
+        var match = search.Find([new(0, observation)], current, [], floor, 320,
             _ => saved, _ => []);
         Require(match is not null && Math.Abs(match.CameraPose.X - pose.X) < 0.25 && match.CameraPose.Y == pose.Y,
             "Exposure-tolerant patch motion should propose a position that independent floor texture can verify.");
+        var otherRoom = observation with { Id = 1, SourceObservationId = 1, RoomId = 1 };
+        var ambiguous = search.Find([new(0, observation), new(1, otherRoom)], current, [], floor, 320,
+            _ => saved, _ => [], searchAcrossRooms: true);
+        Require(ambiguous is null && search.LastSearchWasAmbiguous,
+            "Patch proposals in distinct rooms must compete even when their coordinates agree.");
     }
 
     private static GroundPlaneClosureVerifier.Measurement? Verify(AtlasPoint proposed) =>

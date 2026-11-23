@@ -520,7 +520,8 @@ settings, select the state, and choose **Load**. Windows rebuilds its tiles from
 the saved captures and preserves the original map, tracking islands, walked
 ground, and doorway evidence in the active copy. When you return to gameplay,
 Windows verifies two fresh images against the saved scenery before resuming in
-a mapped room. New Windows Atlases use the same doorway placement. Normal mode
+a mapped room. Verified floor texture can locate the room when narrow-band
+landmarks are missing. New Windows Atlases use the same doorway placement. Normal mode
 uses the visual room transition and checks the saved imagery for a competing
 match. Modded mode also uses the receiver's room name. After a confirmed horizontal
 loading cut, a new room starts provisionally beyond the saved Atlas. Windows
