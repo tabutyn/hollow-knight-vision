@@ -5,6 +5,7 @@ using HollowKnightVision.Windows.Core;
 
 internal static class NativeAtlasImportTests
 {
+    private const double SwiftDateSeconds = 816_957_222;
     private const int SourceRoom = 5;
     private const int TargetRoom = 9;
     private const int SourceIsland = 7;
@@ -40,7 +41,14 @@ internal static class NativeAtlasImportTests
             Check(LiveWorldWalkedGround.ProjectRoom(horizontal, SourceRoom).Single().AtlasStart == new AtlasPoint(-22, 90),
                 "walked geometry moves with its island");
             Check(store.Commit(horizontal, original.MapRevision, horizontal.MapRevision), "commit rigid translation");
-            var evidence = store.Append(Frame(), 12, new(100, 9), 640, [ForegroundMask]);
+            var frame = Frame();
+            var request = new WindowsLiveWorldFrame(frame, frame, 42, 42, new(100, 9), 640,
+                [ForegroundMask], [], 1, "room", 1, 256);
+            var timestamp = WindowsLiveWorldPipeline.StoredCaptureTimestamp(request, horizontal);
+            Check(timestamp > horizontal.Observations[^1].Timestamp
+                && WindowsLiveWorldPipeline.StoredCaptureTimestamp(request, new LiveWorldSnapshot()) == 42,
+                "reopening preserves the saved clock while keeping the Windows live clock");
+            var evidence = store.Append(frame, timestamp, new(100, 9), 640, [ForegroundMask]);
             Check(evidence.ExcludedRects.SequenceEqual([BottomOriginMask]), "new evidence uses native masks");
 
             var tracker = new LiveWorldTracker(horizontal);
@@ -163,7 +171,7 @@ internal static class NativeAtlasImportTests
             var rows = Enumerable.Range(0, 6).Select(id =>
             {
                 var source = id < 3;
-                var startedAt = source ? 1.0 : 10.0;
+                var startedAt = SwiftDateSeconds + (source ? 1 : 10);
                 var timestamp = startedAt + (id % 3) * 0.2;
                 var room = source ? SourceRoom : TargetRoom;
                 var offset = (id % 3) * 10.0;
@@ -174,7 +182,7 @@ internal static class NativeAtlasImportTests
                 var line = new { segmentID = (long)id, start = new[] { 0.0, floorY }, end = new[] { 640.0, floorY } };
                 return new
                 {
-                    id, sourceObservationID = stored.Id, timestamp, captureTimestamp = timestamp - 0.01,
+                    id, sourceObservationID = stored.Id, timestamp, captureTimestamp = timestamp - SwiftDateSeconds - 0.01,
                     sourceWidth = 32, sourceHeight = 20, solveWidth = 640, sampleWidth = 160,
                     excludedRects = new[] { new[] { new[] { 2.5, 12.875 }, new[] { 7.0, 4 } } },
                     localPose = new[] { offset, 0.0 }, roomID = room, rawPose = raw,

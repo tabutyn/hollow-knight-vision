@@ -109,6 +109,7 @@ internal sealed class WindowsLiveWorldPipeline
     private double lastGlobalSearchAt = double.NegativeInfinity;
     private double lastPersistenceAt = double.NegativeInfinity;
     private double lastWorldTrackerTimestamp = double.NegativeInfinity;
+    private static readonly DateTimeOffset SwiftDateEpoch = new(2001, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private long workEpoch;
     // A constructor-time reopen failure remains a processable persistence
     // failure so Process can report (and retry) the real store error. Only an
@@ -476,6 +477,7 @@ internal sealed class WindowsLiveWorldPipeline
             // the image and to any ground geometry recorded with that image.
             var capturePose = resolvedObservation.Value.Ticket.LocalPose;
             var priorSnapshot = activeTracker.Snapshot;
+            var storedTimestamp = StoredCaptureTimestamp(request, priorSnapshot);
             var scope = (request.CaptureGeneration, resolvedRoomId, request.WalkedCoordinateEpoch);
             IReadOnlyList<GroundHypothesisAtlasLine> priorWalk = walkedScope == scope ? committedLocalWalk : [];
             IReadOnlyList<GroundHypothesisAtlasLine> walked = request.StableTrackingVerified ? request.WalkedGround : [];
@@ -490,7 +492,7 @@ internal sealed class WindowsLiveWorldPipeline
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 var source = activeStore.Append(
                     request.MaskedFrame,
-                    request.MonotonicTimestamp,
+                    storedTimestamp,
                     capturePose,
                     request.SolveWidth,
                     request.Exclusions);
@@ -504,7 +506,7 @@ internal sealed class WindowsLiveWorldPipeline
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 var update = activeTracker.Ingest(
                     source.Id,
-                    request.MonotonicTimestamp,
+                    storedTimestamp,
                     request.Frame,
                     capturePose,
                     request.SolveWidth,
@@ -836,6 +838,17 @@ internal sealed class WindowsLiveWorldPipeline
                 new AtlasPoint(rectangle.X, rectangle.Y),
                 new WorldSize(rectangle.Width, rectangle.Height))).ToArray();
 
+    internal static double StoredCaptureTimestamp(WindowsLiveWorldFrame request, LiveWorldSnapshot snapshot)
+    {
+        if (!snapshot.UsesSwiftWireFormat) return request.MonotonicTimestamp;
+
+        var recordedAt = (request.Frame.ObservedAt - SwiftDateEpoch).TotalSeconds;
+        // A reopened Mac atlas uses Apple's date epoch. Live clock adjustments
+        // must still leave newly saved frames ordered after the previous visit.
+        return snapshot.Observations.Count == 0 ? recordedAt
+            : Math.Max(recordedAt, Math.BitIncrement(snapshot.Observations.Max(value => value.Timestamp)));
+    }
+
     internal static GroundTruthAtlasMosaic RebuildAtlas(
         LiveWorldSnapshot snapshot,
         Func<int, BgraFrame> loadSource,
@@ -864,9 +877,11 @@ internal sealed class WindowsLiveWorldPipeline
             Version: 1,
             Type: "groundTruth",
             SessionId: Guid.Empty,
-            Sequence: 0,
-            UnityFrame: 0,
-            UnityRealtime: observation.Timestamp,
+            Sequence: (ulong)observation.Id,
+            UnityFrame: observation.Id,
+            // A saved capture can have a wall-clock timestamp. The renderer
+            // only needs the stable identity and geometry for newest-pixel composition.
+            UnityRealtime: 0,
             SceneName: "",
             HeroAvailable: false,
             HeroX: 0,
