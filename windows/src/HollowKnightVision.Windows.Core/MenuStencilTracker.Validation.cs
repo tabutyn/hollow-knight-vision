@@ -55,7 +55,9 @@ public sealed partial class MenuStencilTracker
         var anchors = WithRepeatedProfileActions(scene, pixels, image, probe.Language,
             scored.Select(item => new MenuStencilMatch(item.Anchor.ClassIdentifier, item.Anchor.Name,
                 OutputRect(item.Score.Rect, image, scene), item.Score.Confidence, item.Score.Reference)).ToArray());
-        var currentBounds = scored.ToDictionary(item => item.Anchor.ClassIdentifier, item => item.Score.Rect, StringComparer.Ordinal);
+        var currentBounds = scored.ToDictionary(item => item.Anchor.ClassIdentifier,
+            item => item.Score.Reference.VerifiedBounds(item.Score.Rect), StringComparer.Ordinal);
+        verifiedAnchorBounds[scene.ContextIdentifier] = currentBounds;
         var selection = DetectSelection(scene, probe.Language, pixels, image, timestamp, false, currentBounds);
         if (selection.Name is { } selectedName && scene.Options.FirstOrDefault(option => option.Name == selectedName) is { } selectedOption
             && anchors.FirstOrDefault(anchor => anchor.Name == selectedName) is { } selectedAnchor
@@ -72,6 +74,8 @@ public sealed partial class MenuStencilTracker
     private MenuStencilResult? TrackedResult(Scene scene, Score probe, ImageStencilPixels pixels, BgraFrame image, double timestamp)
     {
         if (lastValidated is not { } previous) return null;
+        if (verifiedAnchorBounds.TryGetValue(scene.ContextIdentifier, out var bounds))
+            bounds[scene.Probe.ClassIdentifier] = probe.Reference.VerifiedBounds(probe.Rect);
         var selection = DetectSelection(scene, trackedLanguage, pixels, image, timestamp, true);
         var anchors = WithRepeatedProfileActions(scene, pixels, image, trackedLanguage,
             previous.Anchors.Select(match => match.ClassIdentifier == scene.Probe.ClassIdentifier

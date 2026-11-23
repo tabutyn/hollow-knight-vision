@@ -21,9 +21,19 @@ public sealed record MenuStencilCatalog(IReadOnlyList<MenuStencilCatalog.Scene> 
     }
     public sealed record PositionedSelector(StencilRect Bounds, IReadOnlyList<Variant> Variants,
         IReadOnlyDictionary<string, StencilRect>? LocalizedBounds = null,
-        IReadOnlyDictionary<string, ImageStencilForegroundMask>? IdleForegroundMasks = null)
+        IReadOnlyDictionary<string, ImageStencilForegroundMask>? IdleForegroundMasks = null,
+        StencilRect? ReferenceBounds = null, IReadOnlyDictionary<string, StencilRect>? LocalizedReferenceBounds = null)
     {
-        public StencilRect BoundsFor(string? language) => language is null ? Bounds : LocalizedBounds?.GetValueOrDefault(language, Bounds) ?? Bounds;
+        public StencilRect ReferenceFor(string? language) => language is null ? ReferenceBounds ?? Bounds
+            : (LocalizedReferenceBounds ?? LocalizedBounds)?.GetValueOrDefault(language, ReferenceBounds ?? Bounds)
+                ?? ReferenceBounds ?? Bounds;
+
+        public StencilRect BoundsFor(string? language)
+        {
+            var reference = ReferenceFor(language);
+            var configured = language is null ? Bounds : LocalizedBounds?.GetValueOrDefault(language, reference) ?? reference;
+            return MenuSelectorPlacement.Resolve(configured, reference);
+        }
         public ImageStencilForegroundMask? IdleMaskFor(string? language) => language is null ? null : IdleForegroundMasks?.GetValueOrDefault(language);
     }
     public sealed record SelectorGeometry(double LeftWidth, double LeftHeight, double LeftGap, double LeftCenterYOffset,

@@ -23,6 +23,7 @@ public sealed partial class MenuStencilCatalogBuilder
     {
         var corrections = examples.Where(IsSelectorCorrection).ToArray();
         var scenes = new List<Scene>();
+        var referenceCalibration = calibration is not null ? MenuStencilCalibration.LoadBundled() : null;
         foreach (var context in contexts.Where(item => item.Identifier is not ("game" or "gameplay-hud")
                      && (includedContexts is null || includedContexts.Contains(item.Identifier))))
         {
@@ -33,7 +34,7 @@ public sealed partial class MenuStencilCatalogBuilder
             var ids = accepted.Select(example => example.Id).ToHashSet();
             var live = calibration is null ? [] : (liveCaptures ?? []).Where(item => item.ContextIdentifier == context.Identifier).ToArray();
             var scene = MakeScene(context, accepted, all.Where(example => !ids.Contains(example.Id)).ToArray(),
-                calibration?.FindScene(context.Identifier), live, positiveCaptureHoldoutIds ?? new HashSet<Guid>());
+                calibration?.FindScene(context.Identifier), referenceCalibration?.FindScene(context.Identifier), live, positiveCaptureHoldoutIds ?? new HashSet<Guid>());
             if (scene is not null) scenes.Add(scene);
         }
         if (scenes.Count == 0) throw new MenuStencilCatalogUnavailableException();
@@ -49,6 +50,7 @@ public sealed partial class MenuStencilCatalogBuilder
 
     private Scene? MakeScene(MenuStencilContext context, IReadOnlyList<SavedLabelingExample> examples,
         IReadOnlyList<SavedLabelingExample> supplemental, MenuStencilCalibration.Scene? calibration,
+        MenuStencilCalibration.Scene? referenceCalibration,
         IReadOnlyList<MenuStencilLiveSource> liveCaptures, IReadOnlySet<Guid> holdouts)
     {
         if (examples.Count == 0) return null;
@@ -202,8 +204,8 @@ public sealed partial class MenuStencilCatalogBuilder
             }
             selectorVariants[side] = variants;
         }
-        var options = BuildOptions(context, compatible, sources, width, height, calibration, anchors, verifiedBounds, geometry,
-            selectorVariants, selectedIds, allPixels, liveBySelection, allLiveBySelection);
+        var options = BuildOptions(context, compatible, sources, width, height, calibration, referenceCalibration, anchors,
+            verifiedBounds, geometry, selectorVariants, selectedIds, allPixels, liveBySelection, allLiveBySelection);
         return new(context.Identifier, width, height, sceneProbe, anchors, options, selectorVariants, geometry);
     }
 

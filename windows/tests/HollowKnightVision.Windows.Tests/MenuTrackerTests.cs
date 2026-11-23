@@ -197,6 +197,74 @@ internal static class MenuTrackerTests
         Near(32, result.Anchors.Single().Rect.Y);
     }
 
+    internal static void TestPlainMenuSelectorBoxesFollowTheMatchedWords()
+    {
+        var heading = Variant();
+        var word = Variant(ForeignPattern);
+        var decoration = Variant(ThirdPattern);
+        const string creditsId = "extras.credits";
+        const string menuStyleId = "extras.menu-style";
+        var title = new Anchor("extras.extras", "Extras", new(16, 12, 4, 4), null, [heading], heading);
+        var credits = new Anchor(creditsId, "Credits", new(74, 44, 4, 4), null, [word], word);
+        var style = new Anchor(menuStyleId, "Menu Style", new(74, 76, 4, 4), null, [word], word);
+        var left = new PositionedSelector(new(60, 76, 4, 4), [decoration]);
+        var right = new PositionedSelector(new(88, 76, 4, 4), [decoration]);
+        var options = new Option[]
+        {
+            new(creditsId, "Credits", credits.Bounds, null, left, right),
+            new(menuStyleId, "Menu Style", style.Bounds, null, left, right)
+        };
+        var scene = new Scene("extras", 156, 112, title, [title, credits, style], options,
+            new Dictionary<string, IReadOnlyList<Variant>>(), null);
+        var tracker = new MenuStencilTracker(new([scene], 156, 112, 0, 112, []));
+        var frame = Frame(156, 112, (16, 12, Pattern), (76, 46, ForeignPattern), (74, 76, ForeignPattern),
+            (60, 76, ThirdPattern), (88, 76, ThirdPattern));
+        for (var step = 0; step < 12; step++)
+        {
+            var result = tracker.Observe(frame, step * .25)!;
+            Check(result.IsMatch && result.SelectedOption == "Menu Style", "The Credits row latched on to Menu Style.");
+            var anchor = result.Anchors.Single(item => item.ClassIdentifier == creditsId);
+            var text = anchor.Reference!.VerifiedBounds(anchor.Rect);
+            foreach (var region in result.SelectorSearchRegions.Where(item => item.OptionIdentifier == creditsId))
+            {
+                Near(text.MidY, region.Rect.MidY);
+                Check(region.Side == MenuSelectorSide.Left ? region.Rect.MidX < text.X : region.Rect.MidX > text.Right,
+                    "The selector preview must flank its matched text.");
+            }
+        }
+    }
+
+    internal static void TestSelectorRefinementStaysNearTheCapturedReference()
+    {
+        using var fixture = new CalibrationFixture();
+        var tracker = fixture.Tracker();
+        for (var i = 0; i <= 10; i++) tracker.Observe(Image(18, 20, 56, 20), i * .25);
+        var stored = MenuStencilCalibration.Load(fixture.Output)!.FindScene("main-title")!.Selectors.Single();
+        Near(18, stored.LeftRect.X);
+        for (var i = 0; i <= 12; i++)
+        {
+            var result = tracker.Observe(Image(21, 20, 59, 20), 3 + i * .25)!;
+            foreach (var candidate in result.SelectorCandidates)
+            {
+                var original = candidate.Name.EndsWith("left", StringComparison.Ordinal) ? 12 : 50;
+                Check(Math.Abs(candidate.Rect.MidX - original) <= 8, "A candidate walked beyond its original reference.");
+            }
+        }
+        var updated = MenuStencilCalibration.Load(fixture.Output)!.FindScene("main-title")!.Selectors.Single();
+        Near(18, updated.LeftRect.X);
+        var recovered = tracker.Observe(Image(7, 20, 45, 20), 7)!;
+        Check(recovered.SelectedOption == "Fixture Option", "The original reference did not recover a valid match.");
+        Near(7, recovered.SelectorCandidates[0].Rect.X);
+
+        var english = new StencilRect(20, 20, 4, 4);
+        var french = english.Offset(40, 1);
+        var saved = new PositionedSelector(english.Offset(15, -9), [],
+            new Dictionary<string, StencilRect> { ["en"] = english.Offset(20, 0), ["fr"] = french.Offset(2, 1) },
+            ReferenceBounds: english, LocalizedReferenceBounds: new Dictionary<string, StencilRect> { ["fr"] = french });
+        Equal(english, saved.BoundsFor("en"));
+        Equal(french.Offset(2, 1), saved.BoundsFor("fr"));
+    }
+
     internal static void TestTrackingStaysNearCapturedPositions()
     {
         var titleVariant = Variant();

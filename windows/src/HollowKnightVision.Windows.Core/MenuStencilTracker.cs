@@ -35,7 +35,8 @@ public sealed partial class MenuStencilTracker
         SelectorThreshold = .48, SelectorEvidenceThreshold = .38, FadedSelectorEvidenceThreshold = .22,
         SelectorWinningMargin = .06;
     public const int SelectorMinimumForegroundPixels = 24, FadedSelectorMinimumForegroundPixels = 36,
-        SelectorSearchRadiusX = 4, SelectorSearchRadiusY = 4, SelectorRecoveryRadiusX = 40, SelectorRecoveryRadiusY = 10,
+        SelectorSearchRadiusX = 4, SelectorSearchRadiusY = 4,
+        SelectorRecoveryRadiusX = MenuSelectorPlacement.MaximumOffsetX, SelectorRecoveryRadiusY = MenuSelectorPlacement.MaximumOffsetY,
         ValidationInterval = 8, LossGraceFrames = 2, SceneChallengeCandidateLimit = 16;
     private const double SelectorMaximumPairRowDelta = 5, SceneChallengeWinningMargin = .12;
     private sealed record Score(double Confidence, int Foreground, int BrightForeground, StencilRect Rect,
@@ -52,6 +53,7 @@ public sealed partial class MenuStencilTracker
     private Offset trackedOffset;
     private int missingProbeFrames, languageMissFrames, framesUntilValidation, comparisons;
     private MenuStencilResult? lastValidated;
+    private readonly Dictionary<string, Dictionary<string, StencilRect>> verifiedAnchorBounds = new(StringComparer.Ordinal);
     public string? SelectorCalibrationDiagnostic => calibration.Diagnostic;
 
     public MenuStencilTracker(MenuStencilCatalog? catalog = null, double minimumSearchInterval = 0,
@@ -64,6 +66,7 @@ public sealed partial class MenuStencilTracker
     {
         trackedContext = null; if (!preservingLanguage) { trackedLanguage = null; languageMissFrames = 0; }
         trackedOffset = default; missingProbeFrames = 0; framesUntilValidation = 0; lastValidated = null;
+        verifiedAnchorBounds.Clear();
         calibration.Reset(); cadence.Reset();
     }
     public void ReplaceCatalog(MenuStencilCatalog value)

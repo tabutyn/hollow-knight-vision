@@ -134,6 +134,8 @@
     { "source": "macos/Sources/HollowKnightVision/LabelingCampaignView.swift", "status": "partial", "notes": "Model Summary displays collection bars and held-out accuracy history on both platforms, sharing all eleven translated instruction/chart strings. Mac dark-mode chart rendering inspected. Windows panel compiles and native app checks passed, but chart-specific Windows rendering assertions remain to be added." }
   ],
   "testMappings": [
+    { "mac": "MenuStencilTests.testSelectorRefinementCannotWalkAwayFromOriginalPrediction", "windows": "windows/tests/HollowKnightVision.Windows.Tests/MenuTrackerTests.cs:TestSelectorRefinementStaysNearTheCapturedReference" },
+    { "mac": "MenuStencilTests.testSavedBadSelectorPositionsResetToTrustedLanguageReference", "windows": "windows/tests/HollowKnightVision.Windows.Tests/MenuTrackerTests.cs:TestSelectorRefinementStaysNearTheCapturedReference" },
     { "mac": "MenuStencilLocalityTests.testTrackingCannotWalkAwayFromReferenceThroughSmallFrameShifts", "windows": "windows/tests/HollowKnightVision.Windows.Tests/MenuTrackerTests.cs:TestTrackingStaysNearCapturedPositions" },
     { "mac": "MenuStencilLocalityTests.testRejectedContextDoesNotDrawAcceptedLookingStencils", "windows": "windows/tests/HollowKnightVision.Windows.UiTests/Program.cs:TestRejectedMenuDoesNotDrawStencils" },
     { "mac": "GroundTruthLabelingTests.testRoomRegistrationNeverCreatesOrRestoresAuthoredLines", "windows": "windows/tests/HollowKnightVision.Windows.Tests/Program.cs:TestGroundTruthRequiresAuthoredLines", "notes": "Windows capture no longer seeds labels. The test verifies that retained legacy detector records never render or receive edits, and deleting a manually drawn line stays deleted after reopening." },

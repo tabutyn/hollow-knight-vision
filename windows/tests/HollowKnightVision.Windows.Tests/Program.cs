@@ -663,6 +663,8 @@ var tests = new List<(string Name, Action Run)>
     ("menu language changes reacquire and catalog refresh retains language", MenuTrackerTests.TestLanguageChangeAndCatalogRefresh),
     ("two-column menu rows share a nonzero selector band", MenuTrackerTests.TestTwoColumnRowBand),
     ("Clear Save modal takes ownership while its parent heading remains visible", MenuTrackerTests.TestModalTakesParentOwnership),
+    ("plain menu selector boxes follow the matched words", MenuTrackerTests.TestPlainMenuSelectorBoxesFollowTheMatchedWords),
+    ("menu selector calibration stays near the captured reference", MenuTrackerTests.TestSelectorRefinementStaysNearTheCapturedReference),
     ("menu tracking stays near the captured stencil after gradual shifts", MenuTrackerTests.TestTrackingStaysNearCapturedPositions),
     ("dialog selector search pose follows stable rows rather than animated title", MenuTrackerTests.TestDialogPoseUsesStableRows),
     ("synthetic stable selector matches persist measured product calibration", MenuTrackerTests.TestStableSelectorMatchPersistsProductCalibration),

@@ -6,7 +6,7 @@ public sealed partial class MenuStencilCatalogBuilder
 {
     private static IReadOnlyList<Option> BuildOptions(MenuStencilContext context, IReadOnlyList<SavedLabelingExample> compatible,
         IReadOnlyList<SavedLabelingExample> sources, int width, int height, MenuStencilCalibration.Scene? calibration,
-        IReadOnlyList<Anchor> anchors, IReadOnlyDictionary<string, StencilRect> verifiedBounds, SelectorGeometry? globalGeometry,
+        MenuStencilCalibration.Scene? referenceCalibration, IReadOnlyList<Anchor> anchors, IReadOnlyDictionary<string, StencilRect> verifiedBounds, SelectorGeometry? globalGeometry,
         IReadOnlyDictionary<string, IReadOnlyList<Variant>> selectorVariants, IReadOnlyDictionary<Guid, string?> selectedIds,
         IReadOnlyDictionary<Guid, ImageStencilPixels> allPixels,
         IReadOnlyDictionary<string, Dictionary<string, List<ImageStencilPixels>>> liveBySelection,
@@ -15,7 +15,17 @@ public sealed partial class MenuStencilCatalogBuilder
         // Clear Save moves with the profile slot. Persisted absolute positions
         // may belong to another slot; derive this modal from its labeled reference.
         // The tracker then translates the whole reference to the detected row.
-        if (context.Identifier == "clear-save") calibration = null;
+        if (context.Identifier == "clear-save")
+        {
+            calibration = null;
+            referenceCalibration = null;
+        }
+        MenuStencilCalibration.Selector? Original(string identifier) =>
+            referenceCalibration?.Selectors.FirstOrDefault(selector => selector.SelectedIdentifier == identifier);
+        static StencilRect Placement(MenuStencilCalibration.Selector selector, string side) =>
+            side == "left" ? selector.LeftRect.Bounds : selector.RightRect.Bounds;
+        static StencilRect PlacementForLanguage(MenuStencilCalibration.LocalizedPlacement placement, string side) =>
+            side == "left" ? placement.LeftRect.Bounds : placement.RightRect.Bounds;
         IReadOnlyList<Variant> Variants(string side) => selectorVariants.GetValueOrDefault(side) ?? [];
         ImageStencilPixels[] NegativeFrames(string identifier, string language) => allLiveBySelection.TryGetValue(language, out var selections)
             ? selections.Where(pair => pair.Key != identifier).OrderBy(pair => pair.Key, StringComparer.Ordinal)
@@ -60,6 +70,8 @@ public sealed partial class MenuStencilCatalogBuilder
                 var annotation = side == "left" ? annotations[0] : annotations[^1];
                 captures.Add((new(pixels, PixelBounds(annotation, width, height)), example.Manifest.ResolvedLanguageIdentifier));
             }
+            var human = captures.ToArray();
+            var original = Original(identifier);
             var calibrated = calibration?.Selectors.FirstOrDefault(selector => selector.SelectedIdentifier == identifier);
             StencilRect? measured = calibrated is null ? null : side == "left" ? calibrated.LeftRect.Bounds : calibrated.RightRect.Bounds;
             var localized = new Dictionary<string, StencilRect>(StringComparer.Ordinal);
@@ -80,8 +92,17 @@ public sealed partial class MenuStencilCatalogBuilder
                     foreach (var pixels in positiveFrames.AsEnumerable().Reverse()) captures.Insert(0, (new(pixels, languageBounds), language));
                 }
             }
+            var references = new Dictionary<string, StencilRect>(localized, StringComparer.Ordinal);
+            if (original is not null)
+            {
+                references["en"] = Placement(original, side);
+                foreach (var pair in original.LocalizedPlacements ?? new Dictionary<string, MenuStencilCalibration.LocalizedPlacement>())
+                    references[pair.Key] = PlacementForLanguage(pair.Value, side);
+            }
+            foreach (var language in human.GroupBy(item => item.Language ?? "en"))
+                references[language.Key] = MedianRect(language.Select(item => item.Capture.AnnotationBounds));
             if (calibrated?.LocalizedPlacements is { } placements)
-                foreach (var pair in placements) localized[pair.Key] = side == "left" ? pair.Value.LeftRect.Bounds : pair.Value.RightRect.Bounds;
+                foreach (var pair in placements) localized[pair.Key] = PlacementForLanguage(pair.Value, side);
             if (captures.Count == 0) return null;
             var consensus = MenuStencilConsensus.Build(captures.Select(source => source.Capture).ToArray(), MedianRect(captures.Select(source => source.Capture.AnnotationBounds)), alignmentRadius: 8);
             if (consensus is null) return null;
@@ -102,13 +123,26 @@ public sealed partial class MenuStencilCatalogBuilder
             if (consensusReference is not null) variants.Add(MakeVariant($"{identifier}.selector.{side}.consensus", consensusReference));
             else if (variants.Count == 0 && consensusNegatives.Length < 2) variants.Add(MakeVariant($"{identifier}.selector.{side}.legacy", consensus.Reference));
             if (variants.Count == 0) variants.AddRange(Variants(side));
-            return variants.Count == 0 ? null : new(consensus.Bounds, variants, localized, IdleMasks(identifier, measured ?? fallback ?? consensus.Bounds, localized));
+            var referenceBounds = human.Length > 0 ? MedianRect(human.Select(item => item.Capture.AnnotationBounds))
+                : original is not null ? Placement(original, side) : fallback ?? consensus.Bounds;
+            return variants.Count == 0 ? null : new(consensus.Bounds, variants, localized,
+                IdleMasks(identifier, measured ?? fallback ?? consensus.Bounds, localized), referenceBounds, references);
         }
         PositionedSelector Calibrated(string identifier, string side, StencilRect bounds, PositionedSelector? captured)
         {
             var masks = IdleMasks(identifier, bounds, captured?.LocalizedBounds);
             foreach (var pair in captured?.IdleForegroundMasks ?? new Dictionary<string, ImageStencilForegroundMask>()) masks[pair.Key] = pair.Value;
-            return new(bounds, captured?.Variants ?? Variants(side), captured?.LocalizedBounds, masks);
+            var original = Original(identifier);
+            var referenceBounds = captured?.ReferenceBounds ?? (original is not null ? Placement(original, side) : bounds);
+            var references = captured?.LocalizedReferenceBounds
+                ?? original?.LocalizedPlacements?.ToDictionary(pair => pair.Key,
+                    pair => PlacementForLanguage(pair.Value, side), StringComparer.Ordinal)
+                ?? new Dictionary<string, StencilRect>(StringComparer.Ordinal);
+            var configured = captured?.LocalizedBounds;
+            if (captured is null && calibration?.Selectors.FirstOrDefault(item => item.SelectedIdentifier == identifier)
+                ?.LocalizedPlacements is { } measured)
+                configured = measured.ToDictionary(pair => pair.Key, pair => PlacementForLanguage(pair.Value, side), StringComparer.Ordinal);
+            return new(bounds, captured?.Variants ?? Variants(side), configured, masks, referenceBounds, references);
         }
         var options = new List<Option>();
         var firstDefinition = context.Labels.FirstOrDefault()?.Identifier;
