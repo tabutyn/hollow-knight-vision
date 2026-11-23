@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace HollowKnightVision.Windows.Core;
 
@@ -14,6 +15,7 @@ public sealed record HackerAtlasArchivedRoom(
     Guid Id,
     string SceneName,
     AtlasPoint Position,
+    AtlasPoint CameraAnchor,
     HackerTerrainProjection TerrainProjection,
     StencilRect ContentBounds,
     IReadOnlyList<HackerAtlasArchivedTile> Tiles);
@@ -41,6 +43,7 @@ public sealed class HackerAtlasArchiveStore(string root)
         Guid Id,
         string SceneName,
         AtlasPoint Position,
+        [property: JsonRequired] AtlasPoint CameraAnchor,
         HackerTerrainProjection TerrainProjection,
         StencilRect ContentBounds,
         AtlasTileCoordinate[] Tiles);
@@ -84,7 +87,7 @@ public sealed class HackerAtlasArchiveStore(string root)
                     tiles.Add(new(coordinate, new BgraFrame(
                         TileSize, TileSize, TileStride, pixels, 0, DateTimeOffset.UnixEpoch)));
                 }
-                rooms.Add(new(room.Id, room.SceneName, room.Position, room.TerrainProjection, room.ContentBounds, tiles));
+                rooms.Add(new(room.Id, room.SceneName, room.Position, room.CameraAnchor, room.TerrainProjection, room.ContentBounds, tiles));
             }
             return new(rooms, manifest.Connections, manifest.RoomOffsets, manifest.RegistrationCount, manifest.CreatedAt);
         }
@@ -94,7 +97,7 @@ public sealed class HackerAtlasArchiveStore(string root)
     {
         var destination = ArchivePath(profile);
         var manifest = new Manifest(Version, profile,
-            archive.Rooms.Select(room => new Room(room.Id, room.SceneName, room.Position,
+            archive.Rooms.Select(room => new Room(room.Id, room.SceneName, room.Position, room.CameraAnchor,
                 room.TerrainProjection, room.ContentBounds, room.Tiles.Select(tile => tile.Coordinate).ToArray())).ToArray(),
             archive.Connections.ToArray(),
             new Dictionary<string, AtlasPoint>(archive.RoomOffsets, StringComparer.Ordinal),
@@ -159,7 +162,7 @@ public sealed class HackerAtlasArchiveStore(string root)
         {
             if (room is null || room.Id == Guid.Empty || !roomIds.Add(room.Id)
                 || string.IsNullOrWhiteSpace(room.SceneName) || !sceneNames.Add(room.SceneName)
-                || !Finite(room.Position) || room.TerrainProjection is not { IsValid: true }
+                || !Finite(room.Position) || !Finite(room.CameraAnchor) || room.TerrainProjection is not { IsValid: true }
                 || !room.ContentBounds.IsFinite || room.ContentBounds.Width < 0 || room.ContentBounds.Height < 0
                 || room.Tiles is null || room.Tiles.Distinct().Count() != room.Tiles.Length
                 || room.Tiles.Any(tile => !ValidCoordinate(tile.X) || !ValidCoordinate(tile.Y)))

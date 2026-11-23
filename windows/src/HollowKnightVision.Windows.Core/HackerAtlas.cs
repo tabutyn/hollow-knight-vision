@@ -512,6 +512,16 @@ public sealed class HackerFramePreparer
         }
     }
 
+    public void RestoreRoomAnchors(IEnumerable<HackerAtlasArchivedRoom> savedRooms)
+    {
+        lock (gate)
+        {
+            anchorPositions.Clear();
+            lastPlayableReference = null;
+            foreach (var room in savedRooms) anchorPositions.Add(room.SceneName, room.CameraAnchor);
+        }
+    }
+
     public HackerPreparedFrame? Process(HackerMatchedFrame match)
     {
         ArgumentNullException.ThrowIfNull(match);
@@ -722,12 +732,13 @@ public sealed class HackerAtlasPipeline
 
     private sealed class RoomState
     {
-        internal RoomState(Guid id, string sceneName, AtlasPoint position, HackerTerrainProjection terrainProjection,
+        internal RoomState(Guid id, string sceneName, AtlasPoint position, AtlasPoint cameraAnchor, HackerTerrainProjection terrainProjection,
             HudStencilTemplate? hudTemplate)
         {
             Id = id;
             SceneName = sceneName;
             Position = position;
+            CameraAnchor = cameraAnchor;
             TerrainProjection = terrainProjection;
             HudStencilTracker = new(hudTemplate);
         }
@@ -735,6 +746,7 @@ public sealed class HackerAtlasPipeline
         internal Guid Id { get; }
         internal string SceneName { get; }
         internal AtlasPoint Position { get; }
+        internal AtlasPoint CameraAnchor { get; }
         internal HackerTerrainProjection TerrainProjection { get; }
         internal LiveTiledAtlas Composer { get; } = new(
             anchorPosition: new AtlasPoint(0, 0),
@@ -764,7 +776,7 @@ public sealed class HackerAtlasPipeline
             var archivedRooms = rooms.Values.OrderBy(room => room.SceneName, StringComparer.Ordinal).Select(room =>
             {
                 var raster = room.Composer.PublishedForArchive;
-                return new HackerAtlasArchivedRoom(room.Id, room.SceneName, room.Position, room.TerrainProjection,
+                return new HackerAtlasArchivedRoom(room.Id, room.SceneName, room.Position, room.CameraAnchor, room.TerrainProjection,
                     raster.ContentBounds, raster.Tiles.Select(tile => new HackerAtlasArchivedTile(
                         new AtlasTileCoordinate(tile.TileX, tile.TileY), tile.Image)).ToArray());
             }).ToArray();
@@ -782,7 +794,7 @@ public sealed class HackerAtlasPipeline
         };
         foreach (var saved in archive.Rooms)
         {
-            var room = new RoomState(saved.Id, saved.SceneName, saved.Position, saved.TerrainProjection, null);
+            var room = new RoomState(saved.Id, saved.SceneName, saved.Position, saved.CameraAnchor, saved.TerrainProjection, null);
             room.Composer.RestoreHackerTiles(saved.Tiles, saved.ContentBounds);
             pipeline.rooms.Add(saved.SceneName, room);
         }
@@ -839,7 +851,7 @@ public sealed class HackerAtlasPipeline
                     return null;
                 }
                 var origin = new AtlasPoint(prepared.LiveBounds.MinX, prepared.LiveBounds.MinY);
-                state = new RoomState(Guid.NewGuid(), prepared.SceneName, origin,
+                state = new RoomState(Guid.NewGuid(), prepared.SceneName, origin, prepared.AnchorPosition,
                     HackerTerrainProjection.FromFrame(prepared, origin), hudTemplate);
                 rooms[prepared.SceneName] = state;
                 revision = unchecked(revision + 1);

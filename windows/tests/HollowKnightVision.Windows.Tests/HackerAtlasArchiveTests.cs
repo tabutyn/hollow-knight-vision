@@ -8,8 +8,9 @@ internal static class HackerAtlasArchiveTests
     {
         using var workspace = new Fixture();
         var pipeline = new HackerAtlasPipeline();
-        _ = Integrate(pipeline, "Tutorial_01", -64, 1);
-        var original = Integrate(pipeline, "Tutorial_02", 180, 2);
+        var preparer = new HackerFramePreparer();
+        _ = Integrate(pipeline, "Tutorial_01", -64, 1, preparer);
+        var original = Integrate(pipeline, "Tutorial_02", 180, 2, preparer);
         var offsets = new Dictionary<string, AtlasPoint> { ["Tutorial_02"] = new(12.5, -6) };
         var archived = pipeline.CaptureArchive(offsets);
         Check(archived.Archive.RegistrationCount == 2 && original.RoomCount == 2 && original.Connections.Count == 1,
@@ -43,7 +44,13 @@ internal static class HackerAtlasArchiveTests
                     "The archive must reproduce the exact composited BGRA tile.");
             }
         }
-        var resumed = Integrate(restored, "Tutorial_02", 800, 3);
+        var restoredPreparer = new HackerFramePreparer();
+        restoredPreparer.RestoreRoomAnchors(loaded.Rooms);
+        var expectedNext = Prepare("Tutorial_02", 800, 3, preparer);
+        var actualNext = Prepare("Tutorial_02", 800, 3, restoredPreparer);
+        Check(actualNext.AnchorPosition == expectedNext.AnchorPosition && actualNext.LiveBounds == expectedNext.LiveBounds,
+            "A different camera position after loading must keep the existing pixel origin.");
+        var resumed = restored.Process(actualNext) ?? throw new InvalidOperationException("Expected resumed composition.");
         var priorRoom = restoredOutput.Rooms.Single(room => room.SceneName == "Tutorial_02");
         var extended = resumed.Rooms.Single(room => room.Id == priorRoom.Id);
         Check(extended.AtlasTiles.Count > priorRoom.AtlasTiles.Count && extended.Bounds.MinX == priorRoom.Bounds.MinX,
@@ -84,6 +91,13 @@ internal static class HackerAtlasArchiveTests
             truncated.WriteByte(7);
         }
         Throws<InvalidDataException>(() => workspace.Archives.Read(null));
+
+        var another = new SaveProfileAtlas(4, Guid.NewGuid());
+        workspace.Archives.Write(another, original);
+        workspace.Archives.Write(null, new HackerAtlasPipeline().CaptureArchive(new Dictionary<string, AtlasPoint>()).Archive);
+        Check(workspace.Archives.Read(null) is { RegistrationCount: 0, Rooms.Count: 0 }
+            && Read(workspace.Archives, another).Rooms.Count == 1,
+            "An explicit empty replacement must clear only its own archive.");
     }
 
     public static void TestProfilePreflightKeepsBothWritersOnFailure()
@@ -122,19 +136,23 @@ internal static class HackerAtlasArchiveTests
     private static HackerAtlasArchive Read(HackerAtlasArchiveStore store, SaveProfileAtlas profile) =>
         store.Read(profile) ?? throw new InvalidOperationException("The profile's archive is missing.");
 
-    private static HackerAtlasOutput Integrate(HackerAtlasPipeline pipeline, string scene, double x, int index)
+    private static HackerAtlasOutput Integrate(HackerAtlasPipeline pipeline, string scene, double x, int index,
+        HackerFramePreparer? preparer = null) =>
+        pipeline.Process(Prepare(scene, x, index, preparer ?? new HackerFramePreparer()))
+        ?? throw new InvalidOperationException("Expected a registered playable image.");
+
+    private static HackerPreparedFrame Prepare(string scene, double x, int index, HackerFramePreparer preparer)
     {
         const int width = 192;
         const int height = 128;
         const double scale = 20;
         var image = TexturedFrame(width, height, index);
-        var camera = new GroundTruthCameraTransform(scene, new(x / scale, 2), scale, scale, new(width, height));
         var telemetry = new ReceiverGroundTruthSample(ReceiverProtocol.ControlVersion, "groundTruth", Guid.Empty,
             (ulong)index, index, index, scene, true, x / scale + 2, 2, 0, 1, 0, true, true, true,
             x / scale, 2, 0, x / scale, 2, 0, height / (2 * scale), scale, scale,
             width - 12, height / 2, width, height, width, height) { AtlasGameplayActive = true };
-        return pipeline.Process(new(image, new(x, -10, width, height), default, camera, telemetry,
-            default, scene, index, index, true, true)) ?? throw new InvalidOperationException("Expected a registered playable image.");
+        return preparer.Process(new(new HackerCapturedFrame(index, image, index, true), telemetry, index))
+            ?? throw new InvalidOperationException("Expected a registered playable image.");
     }
 
     private static BgraFrame TexturedFrame(int width, int height, int index)

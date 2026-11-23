@@ -20,6 +20,7 @@ public partial class MainWindow
     private sealed record LoadedHackerArchive(
         SaveProfileAtlas? Profile,
         HackerAtlasPipeline Pipeline,
+        IReadOnlyList<HackerAtlasArchivedRoom> Rooms,
         IReadOnlyDictionary<string, AtlasPoint> Offsets,
         HackerAtlasPublication Publication);
 
@@ -98,7 +99,7 @@ public partial class MainWindow
     private static LoadedHackerArchive CreateHackerArchivePresentation(SaveProfileAtlas? profile, HackerAtlasArchive? archive)
     {
         var pipeline = archive is null ? new HackerAtlasPipeline() : HackerAtlasPipeline.FromArchive(archive);
-        return new(profile, pipeline, archive?.RoomOffsets ?? new Dictionary<string, AtlasPoint>(),
+        return new(profile, pipeline, archive?.Rooms ?? [], archive?.RoomOffsets ?? new Dictionary<string, AtlasPoint>(),
             StageHackerAtlas(pipeline.Snapshot()));
     }
 
@@ -108,6 +109,7 @@ public partial class MainWindow
         lock (hackerAtlasGate)
         {
             hackerAtlasPipeline = loaded.Pipeline;
+            hackerFramePreparer.RestoreRoomAnchors(loaded.Rooms);
             latestStagedHackerAtlas = loaded.Publication;
         }
         hackerArchiveProfile = loaded.Profile;
