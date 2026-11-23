@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using HollowKnightVision.Windows.Core;
 
 namespace HollowKnightVision.Windows.App;
@@ -21,9 +22,26 @@ public partial class MainWindow
         GameplayPathCanvas.Height = GameplayAtlasCanvas.Height;
         UpdateGameplayPathVisibility();
         if (ShowsGameplayPaths)
-            gameplayPathPresentation!.Draw(GameplayPathCanvas,
-                new(Canvas.GetLeft(GameplayImage), Canvas.GetTop(GameplayImage), GameplayImage.Width, GameplayImage.Height));
+            gameplayPathPresentation!.Draw(GameplayPathCanvas, GameplayPathImageBounds());
     }
+
+    private bool SelectGameplayObjective(MouseButtonEventArgs e)
+    {
+        if (!ShowsGameplayPaths || (Keyboard.Modifiers & ModifierKeys.Shift) != 0
+            || gameplayPathPresentation is not { } current) return false;
+        AdvanceViewportAnimations();
+        var pointer = e.GetPosition(GameplayAtlasCanvas);
+        if (current.SelectObjective(trackingPipeline.Paths, new(pointer.X, pointer.Y),
+            GameplayPathImageBounds(), GameplayAtlasCanvas.RenderTransform.Value.M11) is not { } updated)
+            return false;
+        gameplayPathPresentation = updated;
+        RenderGameplayPaths();
+        e.Handled = true;
+        return true;
+    }
+
+    private ViewportRect GameplayPathImageBounds() =>
+        new(Canvas.GetLeft(GameplayImage), Canvas.GetTop(GameplayImage), GameplayImage.Width, GameplayImage.Height);
 
     private void UpdateGameplayPathVisibility() =>
         GameplayPathCanvas.Visibility = ShowsGameplayPaths ? Visibility.Visible : Visibility.Collapsed;

@@ -11,12 +11,30 @@ internal sealed record GameplayPathPresentation(long CaptureId, int Width, int H
 
     internal void Draw(Canvas canvas, ViewportRect live)
     {
-        if (!live.IsUsable || Width <= 0 || Height <= 0) return;
+        if (Projection(live) is not { } projection) return;
+        AtlasPathPresentation.Draw(canvas, View.Strokes, View.KnightWidth, projection.Origin,
+            View.SelectedObjective ?? View.Hint?.Objective, View.SelectedRoute, projection.Scale,
+            View.SelectedObjective.HasValue ? null : View.Hint);
+    }
+
+    internal GameplayPathPresentation? SelectObjective(GameplayPathTracker tracker, ViewportPoint pointer,
+        ViewportRect live, double zoom)
+    {
+        if (!pointer.IsFinite || zoom <= 0 || !double.IsFinite(zoom) || Projection(live) is not { } projection)
+            return null;
+        var (origin, scale) = projection;
+        var point = new AtlasPoint((pointer.X - origin.X) / scale.Width, (origin.Y - pointer.Y) / scale.Height);
+        var tolerance = Math.Min(10_000, 10 / (zoom * Math.Min(scale.Width, scale.Height)));
+        return tracker.SelectObjective(View, point, tolerance) is { } selected ? this with { View = selected } : null;
+    }
+
+    private (AtlasPoint Origin, ViewportSize Scale)? Projection(ViewportRect live)
+    {
+        if (!live.IsUsable || Width <= 0 || Height <= 0) return null;
         var sx = live.Width / Width;
         var sy = live.Height / Height;
         var camera = View.Camera ?? View.LocalOrigin;
         var origin = new AtlasPoint(live.X - camera.X * sx, live.Y + (Height + camera.Y) * sy);
-        AtlasPathPresentation.Draw(canvas, View.Strokes, View.KnightWidth, origin,
-            View.Hint?.Objective, [], new(sx, sy), View.Hint);
+        return (origin, new(sx, sy));
     }
 }

@@ -262,6 +262,86 @@ internal static class GameplayPathTests
         Require(tracker.Observe(registration) is null, "Screen-only ground should disappear when the map registers.");
     }
 
+    internal static void TestPromotionProjectsExplicitGoalOntoRegisteredGround()
+    {
+        var tracker = new GameplayPathTracker();
+        var local = new GameplayPathFrame("room", 1, Width, Height, null,
+            [], [Line(0, 100, 20)], TerrainWallDetection.Empty, new(20, Height - 20), null, null)
+        { CaptureGeneration = 1, LocalCamera = new(4, default) };
+        var initial = tracker.Observe(local)!;
+        var preview = tracker.SelectObjective(initial, new(70, 63), 2);
+        Require(preview?.SelectedObjective == new AtlasPathPoint(70, 63)
+            && preview.SelectedRoute.LastOrDefault() == new AtlasPathPoint(70, 63)
+            && initial.PreserveNewerSelection(preview).SelectedObjective == preview.SelectedObjective,
+            "The path click should immediately select and display the complete route.");
+        var registered = local with
+        {
+            Time = 1.1, VerifiedCamera = default(AtlasPoint), VisibleFloors = [],
+            KnightSize = new(12, 310, 16, 30), Atlas = new(new(1, [], []), new(420, 230), 8)
+        };
+        var placed = tracker.Observe(registered);
+        var goal = new AtlasPathPoint(170, 100);
+        Require(placed?.SelectedObjective == goal && placed.SelectedRoute.LastOrDefault() == goal,
+            "Registration must apply the measured translation and the measured Knight-height correction.");
+        var cleared = tracker.SelectObjective(placed!, new(170, 100), 2);
+        Require(cleared is { SelectedObjective: null, SelectedRoute.Count: 0 }
+            && placed!.PreserveNewerSelection(cleared).SelectedObjective is null,
+            "Clicking the selected destination should clear it, even while the analysis frame is unchanged.");
+        Require(tracker.Observe(registered with { Time = 1.2 })?.SelectedObjective is null,
+            "The capture worker should acknowledge the cleared destination.");
+    }
+
+    internal static void TestPromotionKeepsAnExistingManualGoalAndDoesNotRepeat()
+    {
+        var tracker = new GameplayPathTracker();
+        var registered = new GameplayPathFrame("room", 1, Width, Height, default(AtlasPoint),
+            [], [], TerrainWallDetection.Empty, new(35, Height - 20), new(30, 320, 10, 20), null)
+        { Atlas = new(new(1, [Floor(100, 200, 70)], []), new(420, 230), 8) };
+        var initial = tracker.Observe(registered)!;
+        Require(tracker.SelectObjective(initial, new(120, 90), 2)?.SelectedObjective == new AtlasPathPoint(120, 90),
+            "A registered chart should accept an explicit selection.");
+        var local = registered with
+        {
+            Time = 1.1, VerifiedCamera = null, Atlas = null, VisibleFloors = [Line(0, 100, 20)],
+            LocalCamera = new(4, default)
+        };
+        var provisional = tracker.Observe(local)!;
+        Require(tracker.SelectObjective(provisional, new(70, 40), 2)?.SelectedObjective == new AtlasPathPoint(70, 40),
+            "An unplaced chart should have its own selectable path.");
+        var placed = tracker.Observe(registered with { Time = 1.2, LocalCamera = local.LocalCamera });
+        Require(placed?.SelectedObjective == new AtlasPathPoint(120, 90),
+            "Promoting geometry should preserve the registered chart's existing objective.");
+        _ = tracker.SelectObjective(placed!, new(140, 90), 2);
+        placed = tracker.Observe(registered with { Time = 1.3, LocalCamera = local.LocalCamera });
+        Require(placed?.SelectedObjective == new AtlasPathPoint(140, 90),
+            "A later choice must survive subsequent registration samples.");
+    }
+
+    internal static void TestDiscardingFrameChartDropsScreenGoalAndKeepsRegisteredMap()
+    {
+        var tracker = new GameplayPathTracker();
+        var screen = new GameplayPathFrame("room", 1, Width, Height, null,
+            [], [Line(0, 100, 20)], TerrainWallDetection.Empty, new(40, Height - 20),
+            new(35, 320, 10, 20), null);
+        var view = tracker.Observe(screen)!;
+        Require(tracker.SelectObjective(view, new(20, 40), 2)?.SelectedObjective == new AtlasPathPoint(20, 40),
+            "A short-lived screen chart should accept a destination on its current floor.");
+        tracker.Suspend();
+        var registered = tracker.Observe(screen with
+        {
+            Time = 1.1, VerifiedCamera = default(AtlasPoint),
+            Atlas = new(new(1, [Floor(200, 500, 20)], []), new(320, 180), 1), VisibleFloors = []
+        });
+        Require(registered is { SelectedObjective: null }
+            && registered.Strokes.SequenceEqual([new(new(200, 40), new(500, 40), Walk, true)]),
+            "Discarding the screen chart must keep the registered map and leave its objective untouched.");
+        var stale = tracker.SelectObjective(view, new(70, 40), 2)!;
+        var resumed = tracker.Observe(screen with { Time = 1.2 });
+        Require(resumed is { SelectedObjective: null }
+            && resumed.PreserveNewerSelection(stale).SelectedObjective is null,
+            "A delayed edit from a retired screen chart cannot become the new chart's objective.");
+    }
+
     private static GroundHypothesisAtlasLine Floor(int x1, int x2, int y, bool walked = false) =>
         new(walked ? WalkedGroundMemory.WalkedSegmentId : 1, new(x1, y), new(x2, y));
 

@@ -25,6 +25,36 @@ public sealed record GameplayPathView(
 {
     // An unplaced view follows only the pixels from its own capture.
     public AtlasPoint LocalOrigin { get; init; }
+    public AtlasPathPoint? SelectedObjective { get; init; }
+    public IReadOnlyList<AtlasPathPoint> SelectedRoute { get; init; } = [];
+    internal AtlasPlatformGraph? Graph { get; init; }
+    internal AtlasPathPoint? Feet { get; init; }
+    internal object? ChartIdentity { get; init; }
+    internal AtlasPathPoint? RequestedObjective { get; init; }
+    internal long ObjectiveRevision { get; init; }
+
+    public GameplayPathView PreserveNewerSelection(GameplayPathView previous) =>
+        ChartIdentity is not null && ChartIdentity == previous.ChartIdentity && ObjectiveRevision < previous.ObjectiveRevision
+            ? PreviewSelection(previous.RequestedObjective, previous.ObjectiveRevision) : this;
+
+    internal GameplayPathView PreviewSelection(AtlasPathPoint? target, long revision)
+    {
+        var navigation = new AtlasPathNavigator();
+        var hint = target is not null && Graph is { } graph && Feet is { } feet
+            ? navigation.Follow(graph, feet, grounded: null, measured: false, admitted: null,
+                walked: [], fixedObjective: target, fixedObjectiveOnGround: false) : null;
+        return this with
+        {
+            RequestedObjective = target,
+            ObjectiveRevision = revision,
+            SelectedObjective = ProjectObjective(Graph, target),
+            SelectedRoute = navigation.SelectedRoute,
+            Hint = hint
+        };
+    }
+
+    internal static AtlasPathPoint? ProjectObjective(AtlasPlatformGraph? graph, AtlasPathPoint? target) =>
+        graph is not null && target is { } point ? graph.NearestStroke(point, graph.KnightHeight)?.Closest(point) : null;
 }
 
 /// <summary>Keeps path evidence in its measured camera space. An unplaced frame has a short-lived chart.</summary>
@@ -43,9 +73,16 @@ public sealed class GameplayPathTracker
     private int knightHeight;
     private int knightWidth;
     private bool measuredSize;
+    private long objectiveRevision;
+    private ObjectiveEdit? pendingObjective;
+
+    private sealed record ObjectiveEdit(object ChartIdentity, AtlasPathPoint? Point, long Revision);
 
     private sealed class Chart
     {
+        internal readonly object Identity = new();
+        internal AtlasPathPoint? Objective;
+        internal long ObjectiveRevision;
         internal AtlasPlatformGraph? Graph;
         internal AtlasPathPlatform[] Floors = [];
         internal AtlasPathPlatform[] Walked = [];
@@ -61,6 +98,22 @@ public sealed class GameplayPathTracker
         internal readonly PathCoverage Coverage = new();
     }
 
+    /// <summary>Uses the presented chart for hit testing and queues its selection for the capture worker.</summary>
+    public GameplayPathView? SelectObjective(GameplayPathView view, AtlasPoint point, double tolerance)
+    {
+        if (view.ChartIdentity is not { } owner || view.Graph is not { } graph
+            || tolerance is not (>= 0 and <= 10_000) || !AtlasPathPoint.TryQuantize(point.X, point.Y, out var click))
+            return null;
+        var radius = Math.Max(2, (int)Math.Ceiling(tolerance));
+        if (graph.NearestStroke(click, radius) is not { } stroke) return null;
+        var hit = stroke.Closest(click);
+        AtlasPathPoint? target = view.SelectedObjective is { } selected
+            && hit.DistanceTo(selected) <= Math.Min(radius, Math.Max(2, graph.KnightWidth / 2)) ? null : hit;
+        var revision = Interlocked.Increment(ref objectiveRevision);
+        Volatile.Write(ref pendingObjective, new(owner, target, revision));
+        return view.PreviewSelection(target, revision);
+    }
+
     public GameplayPathView? Observe(GameplayPathFrame sample)
     {
         if (!double.IsFinite(sample.Time) || sample.Width < 1 || sample.Height < 1) return null;
@@ -74,9 +127,15 @@ public sealed class GameplayPathTracker
             activeRoom = sample.Room;
             activeGeneration = sample.CaptureGeneration;
         }
+        ApplyPendingObjective();
         if (placed && atlasScope != activeAtlas)
         {
-            registered = new();
+            var sameRoom = atlasScope is { } current && activeAtlas?.Room == current.Room;
+            registered = new()
+            {
+                Objective = sameRoom ? registered.Objective : null,
+                ObjectiveRevision = sameRoom ? registered.ObjectiveRevision : 0
+            };
             activeAtlas = atlasScope;
         }
         if (!measuredSize)
@@ -98,6 +157,15 @@ public sealed class GameplayPathTracker
             ? ObserveProvisional(sample, local) : ObserveFrame(sample);
     }
 
+    private void ApplyPendingObjective()
+    {
+        if (Interlocked.Exchange(ref pendingObjective, null) is not { } edit
+            || previousChart is not { } chart || chart.Identity != edit.ChartIdentity) return;
+        chart.Objective = edit.Point;
+        chart.ObjectiveRevision = edit.Revision;
+        chart.Navigation.ClearObjective();
+    }
+
     public void Reset()
     {
         activeRoom = null;
@@ -106,6 +174,7 @@ public sealed class GameplayPathTracker
         provisional = null;
         frame = null;
         previousChart = null;
+        Interlocked.Exchange(ref pendingObjective, null);
         measuredSize = false;
     }
 
@@ -121,6 +190,7 @@ public sealed class GameplayPathTracker
         }
         frame = null;
         previousChart = null;
+        Interlocked.Exchange(ref pendingObjective, null);
     }
 
     private GameplayPathView? ObserveRegistered(GameplayPathFrame sample, AtlasPoint camera)
@@ -179,6 +249,12 @@ public sealed class GameplayPathTracker
             wall with { X = wall.X + shift.X, Low = wall.Low + shift.Y, High = wall.High + shift.Y }).ToArray());
         var heightShift = knightHeight - (source.Graph?.KnightHeight ?? knightHeight);
         registered.Navigation.MergeVisitedFrom(source.Navigation, shift with { Y = shift.Y + heightShift }, knightHeight);
+        if (registered.Objective is null && source.Objective is { } target)
+        {
+            registered.Objective = new(target.X + shift.X, target.Y + shift.Y + heightShift);
+            registered.ObjectiveRevision = source.ObjectiveRevision;
+            registered.Navigation.ClearObjective();
+        }
         registered.Navigation.Interrupt();
         registered.LastBuild = double.NegativeInfinity;
     }
@@ -247,17 +323,33 @@ public sealed class GameplayPathTracker
         if (chart.Graph is not { } graph || graph.Strokes.Count == 0) return null;
         if (!ReferenceEquals(chart, previousChart))
         {
-            if (camera is null && IsContinuous(sample.Time) && previousChart is { } previous)
+            if (camera is null && chart.Objective is null && IsContinuous(sample.Time)
+                && previousChart is { Objective: null } previous)
                 chart.Navigation.InheritAutomaticDirection(previous.Navigation);
             previousChart = chart;
         }
         previousTime = sample.Time;
         AtlasPathHint? hint = null;
+        AtlasPathPoint? observedFeet = null;
         if (sample.KnightFoot is { } foot && AtlasPathPoint.TryQuantize(
                 position.X + foot.X, position.Y + sample.Height - foot.Y, out var feet))
+        {
+            observedFeet = feet;
             hint = chart.Navigation.Follow(graph, feet, grounded: null, measured,
-                camera.HasValue ? (a, b) => chart.Coverage.Allows(a, b, graph) : null, chart.Walked);
-        return new(camera, chart.Display, graph.KnightWidth, hint) { LocalOrigin = position };
+                camera.HasValue && chart.Objective is null ? (a, b) => chart.Coverage.Allows(a, b, graph) : null,
+                chart.Walked, fixedObjective: chart.Objective, fixedObjectiveOnGround: false);
+        }
+        return new(camera, chart.Display, graph.KnightWidth, hint)
+        {
+            LocalOrigin = position,
+            Graph = graph,
+            Feet = observedFeet,
+            ChartIdentity = chart.Identity,
+            RequestedObjective = chart.Objective,
+            ObjectiveRevision = chart.ObjectiveRevision,
+            SelectedObjective = GameplayPathView.ProjectObjective(graph, chart.Objective),
+            SelectedRoute = chart.Objective.HasValue && hint.HasValue ? chart.Navigation.SelectedRoute : []
+        };
     }
 
     private bool IsContinuous(double time) =>

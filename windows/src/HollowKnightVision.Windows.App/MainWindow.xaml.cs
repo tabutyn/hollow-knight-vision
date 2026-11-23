@@ -1515,6 +1515,7 @@ public partial class MainWindow : Window
 
     private void GameViewport_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (workspace == "Gameplay" && SelectGameplayObjective(e)) return;
         if (workspace == "Hacker" && (SelectHackerObjective(e) || EditHackerPath(e))) return;
         if (workspace == "Hacker" && EditsHackerTerrain && GroundEditorMouseDown(e)) return;
         if (workspace == "Hacker" && hackerEditingTarget == "Rooms")
@@ -3529,7 +3530,8 @@ public partial class MainWindow : Window
             if (result.SavedGround is { } savedGround) gameplaySavedGround = savedGround;
             Volatile.Write(ref recognizedMenuContext, result.MenuContext);
             gameplayPathPresentation = result.Paths is { } paths
-                ? new(result.Frame.CaptureId, result.Frame.Width, result.Frame.Height, paths) : null;
+                ? new(result.Frame.CaptureId, result.Frame.Width, result.Frame.Height,
+                    gameplayPathPresentation is { } visible ? paths.PreserveNewerSelection(visible.View) : paths) : null;
             MenuParticles.SetScene(result.MenuContext, result.MenuStencil);
             Volatile.Write(ref recognizedMenuSelection, result.Status?.SelectedMenuOption);
             VisionStatusText.ToolTip = result.StencilDiagnostic;
