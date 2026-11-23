@@ -15,28 +15,38 @@ internal static class GroundFeatureOverlayPresentation
 {
     internal static int DrawLive(
         Canvas canvas,
-        GroundHypothesisTrackingResult hypotheses)
+        GroundHypothesisTrackingResult hypotheses,
+        IReadOnlyList<DetectedFloorLine> floors,
+        IReadOnlyList<PixelRect> measuredPatches)
     {
         ArgumentNullException.ThrowIfNull(canvas);
         ArgumentNullException.ThrowIfNull(hypotheses);
-        var count = 0;
+        var occupied = new List<PixelRect>();
         foreach (var feature in hypotheses.Features)
         {
-            if (feature.Classification == GroundHypothesisClassification.Candidate)
-                continue;
-            var kind = Kind(feature.Classification);
-            var marker = Rectangle(
-                feature.ImageRect.Width,
-                feature.ImageRect.Height,
-                kind,
-                opacity: 1,
+            if (feature.Classification == GroundHypothesisClassification.Candidate) continue;
+            var observed = feature.ImageRect;
+            var floor = floors.Where(line => GroundPlatformPatches.Contains(line, observed.X, observed.Y))
+                .MinBy(line => Math.Abs(line.Row - observed.Y));
+            if (floor is null) continue;
+            Append(observed with { Y = floor.Row }, Kind(feature.Classification),
                 $"ground feature {feature.Id} • {feature.Classification}");
-            Canvas.SetLeft(marker, feature.ImageRect.X);
-            Canvas.SetTop(marker, feature.ImageRect.Y);
-            canvas.Children.Add(marker);
-            count++;
         }
-        return count;
+        foreach (var box in measuredPatches)
+        {
+            if (occupied.Any(prior => GroundPlatformPatches.Overlaps(prior, box))) continue;
+            Append(box, DashboardFeatureReviewMarkerKind.CameraConsistentGround, "Measured platform patch");
+        }
+        return occupied.Count;
+
+        void Append(PixelRect box, DashboardFeatureReviewMarkerKind kind, string tooltip)
+        {
+            var marker = Rectangle(box.Width, box.Height, kind, opacity: 1, tooltip);
+            Canvas.SetLeft(marker, box.X);
+            Canvas.SetTop(marker, box.Y);
+            canvas.Children.Add(marker);
+            occupied.Add(box);
+        }
     }
 
     internal static void DrawAtlas(Canvas canvas, AtlasPoint camera, ViewportSize capture, ViewportRect live,
@@ -52,6 +62,12 @@ internal static class GroundFeatureOverlayPresentation
         {
             if (!double.IsFinite(feature.AtlasPosition.X) || !double.IsFinite(feature.AtlasPosition.Y)) continue;
             var center = Project(feature.AtlasPosition);
+            if (center.X >= live.X && center.X < live.Right && center.Y >= live.Y && center.Y < live.Bottom)
+                continue; // Inside the image, current matches own the boxes.
+            var patchTop = feature.AtlasPosition.Y + GroundPixels.PatchHeight * .5;
+            var left = feature.AtlasPosition.X - GroundPixels.PatchWidth * .5;
+            if (!lines.Any(line => Math.Abs(line.AtlasStart.Y - patchTop) <= 3
+                && line.AtlasStart.X <= left && line.AtlasEnd.X >= left + GroundPixels.PatchWidth)) continue;
             var marker = PersistentRectangle(feature, scaleX, scaleY);
             Canvas.SetLeft(marker, center.X - marker.Width * .5);
             Canvas.SetTop(marker, center.Y - marker.Height * .5);

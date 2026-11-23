@@ -18,10 +18,10 @@ internal static class GroundClearance
     {
         internal long Support(Extent interval) => Evidence.Sum(part => part.Overlap(interval));
 
-        internal bool Excludes(Surface shorter, double height)
+        internal bool Excludes(Surface shorter, double height, int rowTolerance = 0)
         {
             var distance = Math.Abs(Line.Row - shorter.Line.Row);
-            return distance > 0 && distance < height && Bounds.Width > shorter.Bounds.Width
+            return distance > rowTolerance && distance < height && Bounds.Width > shorter.Bounds.Width
                 && Bounds.Start <= shorter.Bounds.Start && Bounds.End >= shorter.Bounds.End
                 && Support(shorter.Bounds) >= shorter.Bounds.Width / 4d;
         }
@@ -31,13 +31,28 @@ internal static class GroundClearance
         knight is { Width: > 0, Height: > 0 } sprite && sprite.Height < imageHeight / 2d
             ? sprite.Height : imageHeight * .12;
 
+    internal static IReadOnlyList<DetectedFloorLine> SelectReferences(IReadOnlyList<DetectedFloorLine> references,
+        IReadOnlyList<DetectedFloorLine> floors, int imageHeight, PixelRect? knight)
+    {
+        if (references.Count == 0 || floors.Count == 0) return [];
+        var height = KnightHeight(imageHeight, knight);
+        var visible = floors.Select(ToSurface).ToArray();
+        return references.Select(ToSurface).Where(candidate =>
+                !visible.Any(floor => floor.Excludes(candidate, height, rowTolerance: 3))
+                && visible.Any(floor => Math.Abs(floor.Line.Row - candidate.Line.Row) < height
+                    && floor.Bounds.Overlap(candidate.Bounds) >= GroundPixels.PatchWidth))
+            .Select(candidate => candidate.Line).ToArray();
+    }
+
+    private static Surface ToSurface(DetectedFloorLine floor, int index) =>
+        new(index, floor, Extent.FromPixels(floor.XSpan), floor.EvidenceSpans.Select(Extent.FromPixels).ToArray());
+
     internal static IReadOnlyList<DetectedFloorLine> Filter(IReadOnlyList<DetectedFloorLine> floors,
         int imageHeight, PixelRect? knight)
     {
         if (floors.Count <= 1) return floors;
         var height = KnightHeight(imageHeight, knight);
-        var spans = floors.Select((floor, index) => new Surface(index, floor,
-            Extent.FromPixels(floor.XSpan), floor.EvidenceSpans.Select(Extent.FromPixels).ToArray())).ToArray();
+        var spans = floors.Select(ToSurface).ToArray();
         var bounds = new Extent?[spans.Length];
         var kept = new List<Surface>(spans.Length);
         foreach (var span in spans.OrderByDescending(span => span.Bounds.Width))

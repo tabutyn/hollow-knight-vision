@@ -732,6 +732,7 @@ public partial class MainWindow : Window
         internal GroundSemanticAtlas SemanticAtlas { get; } = new();
         internal GroundReferenceTracker ReferenceTracker { get; } = new();
         internal WalkedGroundTracker WalkedGround { get; } = new();
+        internal GroundPlatformPatches PlatformPatches { get; } = new();
         internal string? ReceiverSceneName { get; private set; }
         internal int FrameWidth { get; private set; }
         internal int FrameHeight { get; private set; }
@@ -767,12 +768,14 @@ public partial class MainWindow : Window
             Tracker.Reset(keepingGlobalFeatures: true);
             ReferenceTracker.Reset();
             WalkedGround.BreakContinuity();
+            PlatformPatches.Reset();
         }
 
         internal void Reset(bool preserveWalkedGround = false)
         {
             if (preserveWalkedGround) WalkedGround.BreakContinuity();
             else WalkedGround.Reset();
+            PlatformPatches.Reset();
             NeedsCameraAnchor = true;
             Tracker.Reset();
             SemanticAtlas.Reset();
@@ -861,6 +864,7 @@ public partial class MainWindow : Window
             GroundHypothesisTrackingResult.Empty;
         public IReadOnlyList<GroundHypothesisAtlasLine> GroundDisplayLines { get; init; } = [];
         public AtlasPoint GroundDisplayCamera { get; init; }
+        public IReadOnlyList<PixelRect> MeasuredPlatformPatches { get; init; } = [];
     }
 
     private sealed class GameWindowLostException : Exception
@@ -3247,9 +3251,9 @@ public partial class MainWindow : Window
             ground = GroundLineDetector.RejectKnownForegroundLines(
                 ground, frame.Height, groundExclusions, masks.GroundKnight);
 
-            hypothesisFloorLines = GroundLineDetector.RejectKnownForegroundLines(
-                GroundLineDetector.CleanFloorLines(groundTheory),
-                frame.Height, groundExclusions, masks.GroundKnight);
+            hypothesisFloorLines = GroundLineDetector.CameraReferenceFloors(
+                GroundLineDetector.CleanFloorLines(groundTheory), ground,
+                frame.Height, masks.GroundKnight, groundExclusions);
         }
         else groundHypothesisState.SuspendTracking();
 
@@ -3313,11 +3317,18 @@ public partial class MainWindow : Window
             ?? new AtlasPoint(visualTelemetry.CameraX, visualTelemetry.CameraY);
         var cameraCorrection = groundHypotheses.GlobalCorrection;
         if (cameraCorrection is { } correction && correction.X * correction.X + correction.Y * correction.Y > 9)
+        {
             groundHypothesisState.WalkedGround.BreakContinuity();
+            groundHypothesisState.PlatformPatches.Reset();
+        }
         if (groundAnalysis is not null)
             groundHypothesisState.WalkedGround.Observe(atlasRoomId, groundAnalysis, masks.GroundKnight,
                 visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null,
                 movementButtons, captureTimestamp, ground);
+        IReadOnlyList<PixelRect> platformPatches = groundAnalysis is not null
+            ? groundHypothesisState.PlatformPatches.Observe(groundAnalysis, ground, hypothesisExclusions,
+                visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null, captureTimestamp)
+            : [];
         IReadOnlyList<GroundHypothesisAtlasLine> groundDisplayLines = admission.AdmitsTracking
             ? GroundStrokeGeometry.VisibleLines(groundHypotheses.AtlasLines, groundHypotheses.LineReviews,
                 groundHypothesisState.WalkedGround.InRoom(atlasRoomId), groundDisplayCamera,
@@ -3522,7 +3533,8 @@ public partial class MainWindow : Window
                 HackerWorkGeneration = pendingHackerWorkGeneration,
                 GroundHypotheses = groundHypotheses,
                 GroundDisplayLines = groundDisplayLines,
-                GroundDisplayCamera = groundDisplayCamera
+                GroundDisplayCamera = groundDisplayCamera,
+                MeasuredPlatformPatches = platformPatches
             };
     }
 
@@ -3711,6 +3723,7 @@ public partial class MainWindow : Window
                 result.Objects,
                 result.Ground,
                 result.GroundHypotheses,
+                result.MeasuredPlatformPatches,
                 result.MenuStencil,
                 result.HudStencil);
         }
@@ -3855,6 +3868,7 @@ public partial class MainWindow : Window
         LiveObjectDetectionSnapshot objects,
         IReadOnlyList<DetectedFloorLine> groundLines,
         GroundHypothesisTrackingResult groundHypotheses,
+        IReadOnlyList<PixelRect> measuredPlatformPatches,
         MenuStencilResult? menuStencil,
         HudStencilResult? hudStencil)
     {
@@ -3873,7 +3887,9 @@ public partial class MainWindow : Window
         {
             GroundFeatureOverlayPresentation.DrawLive(
                 DetectionCanvas,
-                groundHypotheses);
+                groundHypotheses,
+                groundLines,
+                measuredPlatformPatches);
         }
     }
 

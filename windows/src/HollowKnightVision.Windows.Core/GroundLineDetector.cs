@@ -555,7 +555,14 @@ public static class GroundLineDetector
         IReadOnlyList<DetectedFloorLine> lines,
         int imageHeight,
         IReadOnlyList<PixelRect> foregroundRects,
-        PixelRect? knightRect = null)
+        PixelRect? knightRect = null) =>
+        GroundClearance.Filter(RejectForeground(lines, imageHeight, foregroundRects, knightRect), imageHeight, knightRect);
+
+    private static IReadOnlyList<DetectedFloorLine> RejectForeground(
+        IReadOnlyList<DetectedFloorLine> lines,
+        int imageHeight,
+        IReadOnlyList<PixelRect> foregroundRects,
+        PixelRect? knightRect)
     {
         ArgumentNullException.ThrowIfNull(lines);
         ArgumentNullException.ThrowIfNull(foregroundRects);
@@ -575,7 +582,7 @@ public static class GroundLineDetector
                 inferredHeight);
         }
 
-        var visible = lines.Where(line =>
+        return lines.Where(line =>
         {
             var row = line.Row + 0.5;
             var lower = line.XSpan.Start;
@@ -602,8 +609,13 @@ public static class GroundLineDetector
                 && Math.Max(0, Math.Min(upper, rect.Right) - Math.Max(lower, rect.X))
                     / (double)span >= 0.55);
         }).ToArray();
-        return GroundClearance.Filter(visible, imageHeight, knightRect);
     }
+
+    public static IReadOnlyList<DetectedFloorLine> CameraReferenceFloors(
+        IReadOnlyList<DetectedFloorLine> references, IReadOnlyList<DetectedFloorLine> visibleFloors,
+        int imageHeight, PixelRect? knight, IReadOnlyList<PixelRect>? foreground = null) =>
+        GroundClearance.SelectReferences(RejectForeground(references, imageHeight, foreground ?? [], knight),
+            visibleFloors, imageHeight, knight);
 
     public static GroundTheoryAnalysis Theory(
         GroundComparisonAnalysis analysis,

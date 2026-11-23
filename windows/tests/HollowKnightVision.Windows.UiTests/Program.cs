@@ -1833,9 +1833,13 @@ internal static class Program
             ],
         };
         var canvas = new Canvas();
-        var count = GroundFeatureOverlayPresentation.DrawLive(canvas, result);
-        Check(count == 4 && canvas.Children.Count == 4,
-            "The live renderer did not draw each accepted ground feature exactly once.");
+        var count = GroundFeatureOverlayPresentation.DrawLive(canvas, result,
+            [new(22, new(18, 54)), new(31, new(18, 54)), new(41, new(38, 55)), new(61, new(70, 85))],
+            [new(20, 22, 16, 12), new(70, 61, 16, 12)]);
+        Check(count == 4 && canvas.Children.Count == 4
+            && canvas.Children.OfType<Rectangle>().Any(rectangle => Canvas.GetLeft(rectangle) == 70)
+            && canvas.Children.OfType<Rectangle>().All(rectangle => Canvas.GetLeft(rectangle) != 50),
+            "The live renderer duplicated a patch or drew one without a measured platform.");
         Check(canvas.Children.OfType<Rectangle>().All(rectangle =>
                 rectangle.StrokeThickness == 1 && !rectangle.IsHitTestVisible),
             "Ground feature rectangles do not use the one-pixel non-interactive review style.");
@@ -1864,19 +1868,21 @@ internal static class Program
             "Persistent ground feature is not rendered with the Mac purple review color.");
         canvas.Children.Clear();
         var walked = new GroundHypothesisAtlasLine(WalkedGroundMemory.WalkedSegmentId,
-            new(60, 244), new(180, 244));
+            new(20, 244), new(180, 244));
         var camera = new AtlasPoint(50, 12);
         var lines = GroundStrokeGeometry.VisibleLines([walked with { SegmentId = 7 }], [],
             [walked], camera, 360, null);
         GroundFeatureOverlayPresentation.DrawAtlas(canvas, camera, new(640, 360), new(17, -42, 1280, 1080),
-            lines, [atlasFeature with { AtlasPosition = new(80, 238) }]);
+            lines, [atlasFeature with { AtlasPosition = new(35, 238) },
+                atlasFeature with { AtlasPosition = new(80, 238) },
+                atlasFeature with { AtlasPosition = new(35, 180) }]);
         Check(canvas.Children.Count == 2, "Walked floor replaced its duplicate and should keep its patch box.");
         var ground = canvas.Children.OfType<Line>().Single();
-        Check(ground.X1 == 37 && ground.X2 == 277 && ground.Y1 == 342 && ground.Y2 == 342
+        Check(ground.X1 == -43 && ground.X2 == 277 && ground.Y1 == 342 && ground.Y2 == 342
             && ground.Stroke is SolidColorBrush groundBrush && groundBrush.Color == Color.FromRgb(69, 255, 120),
             "The clean green line did not follow the live frame scale and position.");
         var patch = canvas.Children.OfType<Rectangle>().Single();
-        Check(Canvas.GetLeft(patch) == 61 && Canvas.GetTop(patch) == ground.Y1,
+        Check(Canvas.GetLeft(patch) == -29 && Canvas.GetTop(patch) == ground.Y1,
             "The tracking patch and floor did not share the atlas projection.");
         Console.WriteLine("PASS live and persistent ground boxes and walked floor use the atlas projection");
     }
