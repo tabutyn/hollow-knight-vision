@@ -157,16 +157,16 @@ internal static class VisualProductionReplay
                 var masks = RestoreMasks(input, frame);
                 var prepared = tracking.Prepare(frame, masks, admission.AdmitsTracking,
                     tuning: input?.Tuning, semanticTuning: input?.SemanticTuning);
-                var tracked = tracking.Track(frame, prepared, masks.GroundKnight, admission, evidence.CaptureTimestamp,
+                var tracked = tracking.Track(frame, prepared, masks.GroundKnight, admission, signal, evidence.CaptureTimestamp,
                     captureGeneration, knownRoom: null, atlas.TileCount > 0, buttons,
                     resetWorldCoordinatesForCorrection: true);
                 var observation = tracked.Observation;
                 var telemetry = observation.Telemetry;
                 var localCamera = new AtlasPoint(telemetry.CameraX, telemetry.CameraY);
                 if (observation.GroundVerified) groundVerified++;
-                lostTracking |= !observation.AllowsAtlasWrite;
+                lostTracking |= !observation.AllowsAtlasWrite || !tracked.RoomAllowsAtlasWrite;
                 WindowsLiveWorldPipelineResult? placement = null;
-                if (admission.AllowsAtlasWrite && observation.AllowsAtlasWrite)
+                if (admission.AllowsAtlasWrite && observation.AllowsAtlasWrite && tracked.RoomAllowsAtlasWrite)
                 {
                     if (lostTracking) world.NotifyTrackingLoss(evidence.CaptureGeneration);
                     lostTracking = false;
@@ -219,6 +219,7 @@ internal static class VisualProductionReplay
                     admission.AdmitsTracking, admission.Transition.ResumedAfterTransition, observation.Source,
                     observation.GroundVerified, observation.AllowsAtlasWrite,
                     trackerState = camera.PlacementRecoveryState, localCamera, tracked.RoomId,
+                    tracked.RoomAllowsAtlasWrite, tracked.SceneCut,
                     worldCamera = placement?.CameraPose, worldState = placement?.State.ToString(),
                     groundSupport = observation.GroundSupport, groundError = observation.GroundError,
                     tracked.Ground.HasConfirmedGround, tracked.Ground.InlierCount, tracked.Ground.ResidualRms,

@@ -3165,9 +3165,10 @@ public partial class MainWindow : Window
             ?? (gameMode == GameRuntimeMode.Normal ? RenderedFrameMarker.Decode(frame) : null);
         var receiverTelemetry = gameMode == GameRuntimeMode.Modded ? exactReceiverTelemetry : null;
         var receiverScene = receiverTelemetry?.SceneName?.Trim();
-        var tracked = trackingPipeline.Track(frame, prepared, masks.GroundKnight, admission, captureTimestamp,
+        var tracked = trackingPipeline.Track(frame, prepared, masks.GroundKnight, admission, signal, captureTimestamp,
             captureGeneration, receiverScene, gameplayAtlas.TileCount > 0, movementButtons,
-            resetWorldCoordinatesForCorrection: gameMode == GameRuntimeMode.Modded);
+            resetWorldCoordinatesForCorrection: gameMode == GameRuntimeMode.Modded,
+            visualRoomObservationEnabled: recognition.GameplayEnabled);
         var visualObservation = tracked.Observation;
         var ground = prepared.Terrain?.Floors ?? [];
         var groundAnalysis = prepared.Terrain?.Edges;
@@ -3194,7 +3195,7 @@ public partial class MainWindow : Window
             signal,
             motionBridgeActive);
         var gameplayAdmitted = !holdAtlas && admission.AllowsAtlasWrite
-            && visualObservation.AllowsAtlasWrite;
+            && visualObservation.AllowsAtlasWrite && tracked.RoomAllowsAtlasWrite;
         WindowsLiveWorldPipelineResult? liveWorldResult = null;
         var liveWorldGeneration = captureGeneration > 0
             ? (ulong)captureGeneration
@@ -3275,7 +3276,7 @@ public partial class MainWindow : Window
                 localWalkedGround, groundDisplayCamera, frame.Height, masks.GroundKnight)
             : [];
         GameplayPathView? paths = null;
-        if (workspace == "Gameplay" && admission.AdmitsTracking
+        if (workspace == "Gameplay" && admission.AdmitsTracking && tracked.RoomAllowsAtlasWrite
             && recognition.Status?.ContextIdentifier is "game" or "Gameplay" && Volatile.Read(ref atlasPathsEnabled))
         {
             var pathCamera = visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null;

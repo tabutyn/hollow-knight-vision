@@ -13,6 +13,8 @@ public sealed record GameplayTrackedFrame(
     long WalkedCoordinateEpoch, double CameraMilliseconds, long AtlasStartedTimestamp)
 {
     public bool MotionBridgeActive => Observation.Source is "transition-bridge" or "coarse-presentation";
+    public bool RoomAllowsAtlasWrite { get; init; } = true;
+    public VisualSceneDiscontinuityTracker.Cut? SceneCut { get; init; }
 }
 
 /// <summary>Ground, camera and terrain state shared by the capture worker and offline archive replay.</summary>
@@ -68,8 +70,9 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
     }
 
     public GameplayTrackedFrame Track(BgraFrame frame, GameplayTrackingPreparation prepared, PixelRect? knight,
-        GameplayFrameDecision admission, double timestamp, long generation, string? knownRoom,
-        bool hasCommittedAtlas, InputButtons? buttons, bool resetWorldCoordinatesForCorrection)
+        GameplayFrameDecision admission, FrameSignalProfile signal, double timestamp, long generation, string? knownRoom,
+        bool hasCommittedAtlas, InputButtons? buttons, bool resetWorldCoordinatesForCorrection,
+        bool visualRoomObservationEnabled = true)
     {
         var groundStarted = Stopwatch.GetTimestamp();
         var terrainAnalysis = prepared.Terrain;
@@ -92,8 +95,17 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             estimate = reference.Observe(frame, localCamera, frame.Width, knight,
                 prepared.GroundExclusions, terrainAnalysis.Theory);
 
-        var room = !string.IsNullOrWhiteSpace(knownRoom)
-            ? knownRoom : roomIdentity.Observe(generation, admission.Transition.ResumedAfterTransition);
+        var hasKnownRoom = !string.IsNullOrWhiteSpace(knownRoom);
+        var visualRoom = roomIdentity.Observe(generation, visualRoomObservationEnabled && !hasKnownRoom,
+            admission.Transition, signal.MotionGrid, timestamp, buttons, localCamera);
+        var room = hasKnownRoom ? knownRoom! : visualRoom.Id;
+        if (visualRoom.Cut is not null)
+        {
+            // The loading cut establishes ownership independently of camera alignment.
+            walked.BreakContinuity();
+            patches.Reset();
+            Paths.Reset();
+        }
         if (ground.GlobalCorrection is { } correction && correction.X * correction.X + correction.Y * correction.Y > 9)
         {
             if (resetWorldCoordinatesForCorrection) ResetWalkedCoordinateEpoch();
@@ -108,14 +120,19 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         if (terrainAnalysis is not null)
         {
             var edges = terrainAnalysis.Edges;
-            var verifiedCamera = observation.GroundVerified ? ground.CameraPosition : null;
+            var verifiedCamera = observation.GroundVerified && visualRoom.AllowsAtlasWrite
+                ? ground.CameraPosition : null;
             terrain = TerrainWallDetector.Detect(edges, floors);
             contact = walked.Observe(room, edges, knight, verifiedCamera, buttons, timestamp, floors, terrain.Walls);
             terrain = TerrainWallDetector.ApplyContact(terrain, contact, floors, edges);
             platformPatches = patches.Observe(edges, floors, prepared.ProtectedOcclusions, verifiedCamera, timestamp);
         }
         return new(observation, ground, estimate, ground.CameraPosition ?? localCamera, room, terrain, contact,
-            platformPatches, walked.InRoom(room), walkedCoordinateEpoch, cameraMilliseconds, atlasStarted);
+            platformPatches, walked.InRoom(room), walkedCoordinateEpoch, cameraMilliseconds, atlasStarted)
+        {
+            RoomAllowsAtlasWrite = visualRoom.AllowsAtlasWrite,
+            SceneCut = visualRoom.Cut
+        };
     }
 
     public void Reset(bool preserveWalkedGround = false)
@@ -128,6 +145,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         tracker.Reset();
         semanticAtlas.Reset();
         reference.Reset();
+        roomIdentity.ResetObservation();
         lastKnownRoom = null;
         frameWidth = 0;
         frameHeight = 0;
@@ -228,29 +246,51 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             existing);
     }
 
-    private sealed class NormalAtlasRoomIdentity
+    internal sealed class NormalAtlasRoomIdentity
     {
+        private readonly VisualSceneDiscontinuityTracker cuts = new();
         private long captureGeneration = long.MinValue;
         private long roomEpoch;
         private bool transitionResumeActive;
+        private bool loadingOwnsResume;
 
-        internal string Observe(
-            long currentCaptureGeneration,
-            bool resumedAfterTransition)
+        internal (string Id, bool AllowsAtlasWrite, VisualSceneDiscontinuityTracker.Cut? Cut) Observe(
+            long currentCaptureGeneration, bool enabled, TransitionFrameDecision transition, LowResolutionMotionGrid? grid,
+            double timestamp, InputButtons? buttons, AtlasPoint worldPose)
         {
             if (captureGeneration != currentCaptureGeneration)
             {
+                ResetObservation();
                 captureGeneration = currentCaptureGeneration;
                 roomEpoch = 0;
-                transitionResumeActive = false;
             }
-            if (resumedAfterTransition && !transitionResumeActive)
+            if (!enabled)
             {
-                roomEpoch = checked(roomEpoch + 1);
+                ResetObservation();
+                return (RoomId, true, null);
             }
-            transitionResumeActive = resumedAfterTransition;
-            return FormattableString.Invariant(
-                $"normal:{currentCaptureGeneration}:room:{roomEpoch}");
+
+            var wasPending = cuts.IsPending;
+            var drive = KnightLevelWalk.Direction(buttons ?? InputButtons.None);
+            var direction = drive < 0 ? VisualRoomDirection.Left
+                : drive > 0 ? VisualRoomDirection.Right : (VisualRoomDirection?)null;
+            var cut = cuts.Observe(grid, timestamp, direction, worldPose);
+            loadingOwnsResume |= wasPending || cuts.IsPending || cut is not null;
+            if (cut is not null
+                || (transition.ResumedAfterTransition && !transitionResumeActive && !loadingOwnsResume))
+                roomEpoch = checked(roomEpoch + 1);
+            if (transition.AdmitsTracking && !cuts.IsPending) loadingOwnsResume = false;
+            transitionResumeActive = transition.ResumedAfterTransition;
+            return (RoomId, !cuts.IsPending && cut is null, cut);
         }
+
+        internal void ResetObservation()
+        {
+            cuts.Reset();
+            transitionResumeActive = false;
+            loadingOwnsResume = false;
+        }
+
+        private string RoomId => FormattableString.Invariant($"normal:{captureGeneration}:room:{roomEpoch}");
     }
 }
