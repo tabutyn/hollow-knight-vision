@@ -42,6 +42,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+    <Content Include="../../../macos/score-visual-replay.py;../../../macos/camera_diagnostics.py">
+      <Link>diagnostics/%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <ProjectReference Include="../HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
     <ProjectReference Include="../HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj" />
     <Content Include="../../../models/shared-object-model/**">

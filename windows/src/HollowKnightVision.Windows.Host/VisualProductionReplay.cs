@@ -54,7 +54,7 @@ internal sealed record VisualProductionReplayReport(int SchemaVersion,
     int MaskInputs, int GroundVerifiedFrames, int CommittedFrames, int WorldObservations, int AtlasTiles,
     double ElapsedSeconds, double FramesPerSecond, string VisualDigest, string CoarseVisualDigest, string WorldDigest,
     string AtlasDigest, string WorldDirectory, string OutputPath, string WorldSnapshotPath, string DiagnosticsPath,
-    IReadOnlyList<string> Notes);
+    string WorldSnapshotTimestampDomain, IReadOnlyList<string> Notes);
 
 /// <summary>Feeds recorded images and visual input into the capture worker's camera and durable atlas pipeline.</summary>
 internal static class VisualProductionReplay
@@ -251,7 +251,7 @@ internal static class VisualProductionReplay
             available.Length - frames.Length, missing, archive.Complete, masksUsed, groundVerified, committed,
             snapshot.Observations.Count, atlas.TileCount, elapsed, frames.Length / Math.Max(.001, elapsed),
             Hex(visualDigest.GetHashAndReset()), Hex(coarseDigest.GetHashAndReset()), Hex(SHA256.HashData(snapshotBytes)),
-            tileDigest, worldDirectory, tracePath, snapshotPath, diagnosticsPath,
+            tileDigest, worldDirectory, tracePath, snapshotPath, diagnosticsPath, "capture-uptime",
             [
                 "Tracking and world publication run serially using the Windows production ground, camera and atlas code.",
                 "Only archived images, visual masks, tuning and input transitions feed tracking. Room identity is derived from visual transitions.",

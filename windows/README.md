@@ -648,6 +648,25 @@ When the file has a start checkpoint, Windows restores it through
 current game state. Playback drains receiver telemetry and always sends a
 neutral state on completion, cancellation, or failure.
 
+### Replay archived frames offline
+
+Modded **K** and full input replays save a frame archive beside the input path.
+From the installed build, replay the archived images and score the result against
+the source run's receiver measurements.
+
+```powershell
+$vision = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision'
+& "$vision\HollowKnightVision.Windows.Host.exe" --replay-visual-archive C:\path\to\path.json `
+  --visual-replay-output C:\path\to\new-replay
+py -3 "$vision\diagnostics\score-visual-replay.py" --reference C:\path\to\path.json `
+  --replay C:\path\to\new-replay
+```
+
+The replay saves a visual input-path trace, per-frame diagnostics and a fresh
+atlas. Use `--visual-replay-frame-limit 600` to cap the run. An incomplete archive
+requires `--visual-replay-allow-incomplete` and reports the original missing
+frame indices.
+
 ## CPU model training on Windows
 
 The shared incremental detector can train on Windows without Core ML and export
