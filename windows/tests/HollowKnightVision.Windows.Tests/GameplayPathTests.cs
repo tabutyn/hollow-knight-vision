@@ -130,6 +130,77 @@ internal static class GameplayPathTests
         Require(registered?.Hint is { Objective.Y: 20 }, "Once the whole descent is observed the lower landing should be reachable.");
     }
 
+    internal static void TestSavedFloorKeepsAContinuousWorldPathAcrossReloadAndCorrection()
+    {
+        var tracker = new GameplayPathTracker();
+        var room = new GameplaySavedRoomPath(7, [Floor(900, 1500, 400)],
+            [new(new(800, 300), new(800, 360))]);
+        var sample = new GameplayPathFrame("return", 0, Width, Height, new(25, 10),
+            [Floor(125, 300, 80), Floor(355, 515, 80)],
+            [Line(100, 275, 70), Line(330, 490, 70)], TerrainWallDetection.Empty,
+            new(110, 290), new(104, 270, 12, 20), null)
+        { Atlas = new(room, new(1095, 500), 1) };
+        Require(tracker.Observe(sample with { VerifiedCamera = null, VisibleFloors = [] }) is null,
+            "An unplaced view must not borrow the saved route.");
+        var restored = tracker.Observe(sample with { Time = .2 });
+        Require(restored is { Camera: { X: 800, Y: 330 }, Strokes.Count: 1 }
+            && restored.Strokes[0] == new AtlasPathStroke(new(900, 420), new(1500, 420), Walk, true),
+            "The first placed frame must recover a continuous walk through the occluded region.");
+        var correctedRoom = room with { Ground = [Floor(1100, 1700, 400)] };
+        var corrected = tracker.Observe(sample with
+        {
+            Time = .4, Atlas = new(correctedRoom, new(1295, 500), 2), Ground = [], VisibleFloors = []
+        });
+        Require(corrected is { Camera: { X: 1000 }, Strokes.Count: 1 }
+            && corrected.Strokes[0].A == new AtlasPathPoint(1100, 420),
+            "A newer world placement must retire the live fragments from the old placement.");
+        var next = tracker.Observe(sample with
+        {
+            Time = .5, Atlas = new(new GameplaySavedRoomPath(8, [], []), new(1295, 500), 2),
+            Ground = [], VisibleFloors = []
+        });
+        Require(next is null, "Changing durable room IDs must retire even a chart with the same live room label.");
+    }
+
+    internal static void TestRestoredCameraFootprintsAdmitOnlyThePreviouslyObservedDescent()
+    {
+        var tracker = new GameplayPathTracker();
+        var saved = new GameplaySavedRoomPath(3, [Floor(0, 130, 0), Floor(25, 75, 840, walked: true)],
+            [new(new(0, 0), new(640, 360))]);
+        var top = new GameplayPathFrame("return", 0, Width, Height, new(0, 800), [],
+            [], TerrainWallDetection.Empty, new(74, 320), new(69, 300, 10, 20), null)
+        { Atlas = new(saved, new(320, 180), 1) };
+        var unknown = tracker.Observe(top);
+        Require(unknown?.Strokes.Any(stroke => stroke.Kind == Drop) == true && unknown.Hint is null,
+            "Two saved endpoints alone cannot make an unseen descent an automatic objective.");
+        var visited = saved with { CameraFootprints = [.. saved.CameraFootprints,
+            new(new(0, 330), new(640, 360)), new(new(0, 650), new(640, 360))] };
+        var known = tracker.Observe(top with { Time = .2, Atlas = new(visited, new(320, 180), 1) });
+        Require(known?.Hint is { Objective.Y: 20 }, "The known descent should work without retraversing the archived room.");
+    }
+
+    internal static void TestShortCombatEdgeAtWalkedEndpointDoesNotCreateAnotherLanding()
+    {
+        var sample = new GameplayPathFrame("fight", 0, Width, Height, default(AtlasPoint),
+            [Floor(534, 779, 176), Floor(531, 592, 166), Floor(580, 690, 175, walked: true)],
+            [], TerrainWallDetection.Empty, new(600, 185), new(592, 150, 16, 35), null);
+        var view = new GameplayPathTracker().Observe(sample);
+        Require(view?.Strokes.SequenceEqual([new(new(534, 210), new(779, 210), Walk, true)]) == true,
+            "A three-pixel overhang at a walked endpoint must not make a false lower landing.");
+    }
+
+    internal static void TestLongNearbySavedFloorsPreserveBothPlatformsAndDivideTheirSmallOverlap()
+    {
+        var saved = new GameplaySavedRoomPath(6, [Floor(-20, 180, 120), Floor(160, 330, 170)], []);
+        var sample = new GameplayPathFrame("returned", 0, Width, Height, default(AtlasPoint), [],
+            [], TerrainWallDetection.Empty, new(10, 240), new(0, 180, 20, 60), null)
+        { Atlas = new(saved, new(320, 180), 1) };
+        var view = new GameplayPathTracker().Observe(sample);
+        Require(view?.Strokes.Where(stroke => stroke.Kind == Walk).SequenceEqual([
+            new(new(-20, 180), new(170, 180), Walk, true), new(new(170, 230), new(330, 230), Walk, true)]) == true,
+            "Nearby long platforms must meet at a shared column without dropping a platform.");
+    }
+
     private static GroundHypothesisAtlasLine Floor(int x1, int x2, int y, bool walked = false) =>
         new(walked ? WalkedGroundMemory.WalkedSegmentId : 1, new(x1, y), new(x2, y));
 

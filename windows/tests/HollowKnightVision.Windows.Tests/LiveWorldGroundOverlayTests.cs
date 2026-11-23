@@ -84,6 +84,28 @@ internal static class LiveWorldGroundOverlayTests
             "The live walk extends the remembered footprint and hides the nearby edge and duplicate stroke.");
     }
 
+    internal static void TestNavigationUsesOnlyPlacedGroundAndCameraFootprintsFromItsRoom()
+    {
+        var known = Observation(0, 0, new(150, 50), Line(4, 20, 90, 70));
+        var estimated = Observation(1, 0, new(500, 50), Line(5, 20, 90, 70));
+        var pending = Observation(2, 0, new(900, 50), Line(6, 20, 90, 70));
+        var local = Observation(3, 1, new(1200, 70), Line(7, 20, 90, 70));
+        var map = World([known, estimated, pending, local], Island(0, known),
+            Island(1, estimated) with { Placement = LiveIslandPlacement.Estimated, BreakReason = "room-cut" },
+            Island(2, pending) with { Placement = LiveIslandPlacement.Estimated, BreakReason = LiveTrackingIsland.RecoveryBreakReason },
+            Island(3, local) with
+            {
+                Placement = LiveIslandPlacement.Estimated,
+                BreakReason = LiveTrackingIsland.PlacedTrackingBreakReason
+            });
+        var projection = LiveWorldGroundOverlay.ProjectWorld(map);
+        Check(projection.DisplayLines.Count == 3, "The estimated visible floor retains its display stroke.");
+        Check(projection.PathRooms[0].Ground.SequenceEqual([Stroke(4, -150, -80, -60)])
+            && projection.PathRooms[0].CameraFootprints.SequenceEqual([new(new(-170, -130), new(640, 360))])
+            && projection.PathRooms[1].Ground.SequenceEqual([Stroke(7, 900, 970, -40)]),
+            "The route and camera coverage must stay inside their measured room and placement.");
+    }
+
     private static LiveWorldSnapshot World(IReadOnlyList<LiveWorldObservation> images, params LiveTrackingIsland[] islands) =>
         new(anchoredObservationId: images[0].Id, observations: images, trackingIslands: islands);
 

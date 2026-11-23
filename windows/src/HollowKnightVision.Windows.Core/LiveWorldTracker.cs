@@ -583,7 +583,7 @@ public sealed class LiveWorldTracker
         var id = NextId(islands.Select(value => value.Id));
         return [.. islands, new LiveTrackingIsland(id, observation.RoomId, observation.Timestamp,
             basis, LiveIslandPlacement.Estimated, default,
-            placementPending ? LiveTrackingIsland.RecoveryBreakReason : "measured-local-tracking", [member])];
+            placementPending ? LiveTrackingIsland.RecoveryBreakReason : LiveTrackingIsland.PlacedTrackingBreakReason, [member])];
     }
 
     private IReadOnlyList<CachedReference> EligibleReferences(

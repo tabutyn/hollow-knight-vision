@@ -4,7 +4,15 @@ public sealed record GameplayPathFrame(
     string Room, double Time, int Width, int Height, AtlasPoint? VerifiedCamera,
     IReadOnlyList<GroundHypothesisAtlasLine> Ground,
     IReadOnlyList<DetectedFloorLine> VisibleFloors, TerrainWallDetection Terrain,
-    AtlasPoint? KnightFoot, PixelRect? KnightSize, DetectedWall? ContactWall);
+    AtlasPoint? KnightFoot, PixelRect? KnightSize, DetectedWall? ContactWall)
+{
+    public GameplayPathRegistration? Atlas { get; init; }
+}
+
+public sealed record GameplaySavedRoomPath(int RoomId, IReadOnlyList<GroundHypothesisAtlasLine> Ground,
+    IReadOnlyList<WorldRect> CameraFootprints);
+
+public sealed record GameplayPathRegistration(GameplaySavedRoomPath Room, AtlasPoint WorldFromLocal, long GeometryEpoch);
 
 /// <summary>Path view in world-up pixels, paired with the capture that supplied it.</summary>
 public sealed record GameplayPathView(
@@ -15,6 +23,7 @@ public sealed class GameplayPathTracker
 {
     private const double GraphInterval = .125;
     private string? activeRoom;
+    private (int Room, long Epoch)? activeAtlas;
     private Chart registered = new();
     private Chart? frame;
     private int knightHeight;
@@ -41,11 +50,15 @@ public sealed class GameplayPathTracker
     public GameplayPathView? Observe(GameplayPathFrame sample)
     {
         if (!double.IsFinite(sample.Time) || sample.Width < 1 || sample.Height < 1) return null;
-        if (sample.Room != activeRoom)
+        var placed = sample.VerifiedCamera is { } pose && AtlasPathPoint.TryQuantize(pose.X, pose.Y, out _);
+        (int Room, long Epoch)? atlasScope = sample.Atlas is { } registration
+            ? (registration.Room.RoomId, registration.GeometryEpoch) : null;
+        if (sample.Room != activeRoom || placed && atlasScope != activeAtlas)
         {
             Reset();
             activeRoom = sample.Room;
         }
+        if (placed) activeAtlas = atlasScope;
         if (!measuredSize)
         {
             knightHeight = Math.Max(5, AtlasPathPoint.Round(sample.Height * .12));
@@ -59,13 +72,13 @@ public sealed class GameplayPathTracker
             }
         }
 
-        var placed = sample.VerifiedCamera is { } pose && AtlasPathPoint.TryQuantize(pose.X, pose.Y, out _);
         return placed ? ObserveRegistered(sample, sample.VerifiedCamera.GetValueOrDefault()) : ObserveFrame(sample);
     }
 
     public void Reset()
     {
         activeRoom = null;
+        activeAtlas = null;
         registered = new();
         frame = null;
         measuredSize = false;
@@ -80,11 +93,28 @@ public sealed class GameplayPathTracker
 
     private GameplayPathView? ObserveRegistered(GameplayPathFrame sample, AtlasPoint camera)
     {
+        IEnumerable<GroundHypothesisAtlasLine> ground = sample.Ground;
+        if (sample.Atlas is { } atlas)
+        {
+            // Live ground is expressed relative to the bottom-left of the
+            // image. The durable world stores camera positions at its center.
+            var offset = new AtlasPoint(atlas.WorldFromLocal.X - sample.Width / 2d,
+                atlas.WorldFromLocal.Y - sample.Height / 2d);
+            camera = TranslatePoint(camera, offset);
+            if (!AtlasPathPoint.TryQuantize(camera.X, camera.Y, out _)) return ObserveFrame(sample);
+            ground = atlas.Room.Ground.Concat(sample.Ground.Select(line => line with
+            {
+                AtlasStart = TranslatePoint(line.AtlasStart, offset),
+                AtlasEnd = TranslatePoint(line.AtlasEnd, offset)
+            }));
+            registered.Coverage.SetSaved(atlas.Room.CameraFootprints);
+        }
         registered.Coverage.Include(camera, sample.Width, sample.Height);
-        var walked = sample.Ground.Where(line => line.SegmentId == WalkedGroundMemory.WalkedSegmentId)
-            .Select(Translate).Where(span => span.HasValue).Select(span => span.GetValueOrDefault()).Distinct().OrderBy(LineOrder).ToArray();
-        var floors = sample.Ground.Where(line => line.SegmentId != WalkedGroundMemory.WalkedSegmentId)
-            .Select(Translate).Where(span => span.HasValue).Select(span => span.GetValueOrDefault()).ToArray();
+        var geometry = ground.Select(line => (Walked: line.SegmentId == WalkedGroundMemory.WalkedSegmentId,
+                Span: Translate(line)))
+            .Where(line => line.Span.HasValue).ToLookup(line => line.Walked, line => line.Span.GetValueOrDefault());
+        var walked = geometry[true].Distinct().OrderBy(LineOrder).ToArray();
+        var floors = geometry[false];
         var current = ProjectFloors(sample, camera, exposed: false);
         registered.Visible = Extend(registered.Visible, current);
         var visibleEdges = ProjectFloors(sample, camera, exposed: true);
@@ -111,7 +141,8 @@ public sealed class GameplayPathTracker
 
         // Accepted world strokes own the geometry outside the current image.
         // Current edges fill the visible chart until the tracker admits them.
-        var all = SelectFloors(floors.Concat(registered.Visible).SelectMany(line => ExcludeWalkedColumns(line, walked)));
+        var all = GroundClearance.FilterPaths(floors.Concat(registered.Visible).Distinct().ToArray(), knightHeight)
+            .SelectMany(line => ExcludeWalkedColumns(line, walked)).Distinct().OrderBy(LineOrder).ToArray();
         UpdateGraph(registered, all, walked, walls, registered.Visible, sample.Time);
         return Present(registered, sample, camera, camera, measured: true);
     }
@@ -204,24 +235,6 @@ public sealed class GameplayPathTracker
         if (bottom < wall.High) yield return wall with { Low = bottom };
     }
 
-    private AtlasPathPlatform[] SelectFloors(IEnumerable<AtlasPathPlatform> source)
-    {
-        var tolerance = Math.Clamp(knightHeight / 5, 2, 8);
-        var kept = new List<AtlasPathPlatform>();
-        foreach (var candidate in source.Distinct().OrderByDescending(span => span.Right - span.Left))
-        {
-            if (kept.Any(span =>
-            {
-                var rows = Math.Abs(span.Y - candidate.Y);
-                return rows > tolerance && rows < knightHeight
-                    && span.Left <= candidate.Left && span.Right >= candidate.Right
-                    && span.Right - span.Left > candidate.Right - candidate.Left;
-            })) continue;
-            kept.Add(candidate);
-        }
-        return kept.OrderBy(LineOrder).ToArray();
-    }
-
     private IEnumerable<AtlasPathPlatform> ExcludeWalkedColumns(AtlasPathPlatform line, AtlasPathPlatform[] walked)
     {
         var left = line.Left;
@@ -273,16 +286,37 @@ public sealed class GameplayPathTracker
 
     private static (int, int, int) LineOrder(AtlasPathPlatform line) => (line.Left, line.Y, line.Right);
 
+    private static AtlasPoint TranslatePoint(AtlasPoint point, AtlasPoint offset) =>
+        new(point.X + offset.X, point.Y + offset.Y);
+
     private sealed class PathCoverage
     {
         private const int Cell = 32;
         private readonly HashSet<AtlasPathPoint> seen = [];
-        private (int Left, int Bottom, int Right, int Top)? previous;
+        private readonly record struct CellBounds(int Left, int Bottom, int Right, int Top)
+        {
+            internal bool Contains(AtlasPathPoint cell) =>
+                Left <= cell.X && cell.X <= Right && Bottom <= cell.Y && cell.Y <= Top;
+        }
+        private CellBounds? previous;
+        private IReadOnlyList<WorldRect>? savedFootprints;
+        private CellBounds[] savedCells = [];
+
+        internal void SetSaved(IReadOnlyList<WorldRect> footprints)
+        {
+            if (ReferenceEquals(footprints, savedFootprints)) return;
+            savedFootprints = footprints;
+            savedCells = footprints.Where(bounds => bounds.Width > 0 && bounds.Height > 0
+                    && AtlasPathPoint.TryQuantize(bounds.X, bounds.Y, out _)
+                    && AtlasPathPoint.TryQuantize(bounds.X + bounds.Width, bounds.Y + bounds.Height, out _))
+                .Select(bounds => new CellBounds(Coordinate(bounds.X), Coordinate(bounds.Y),
+                    Coordinate(bounds.X + bounds.Width), Coordinate(bounds.Y + bounds.Height))).Distinct().ToArray();
+        }
 
         internal void Include(AtlasPoint camera, int width, int height)
         {
-            var current = (Left: Coordinate(camera.X), Bottom: Coordinate(camera.Y),
-                Right: Coordinate(camera.X + width), Top: Coordinate(camera.Y + height));
+            var current = new CellBounds(Coordinate(camera.X), Coordinate(camera.Y),
+                Coordinate(camera.X + width), Coordinate(camera.Y + height));
             if (current == previous) return;
             for (var y = current.Bottom; y <= current.Top; y++)
             for (var x = current.Left; x <= current.Right; x++)
@@ -306,7 +340,14 @@ public sealed class GameplayPathTracker
             return true;
         }
 
-        private bool Known(AtlasPathPoint point) => seen.Contains(new(Coordinate(point.X), Coordinate(point.Y)));
+        private bool Known(AtlasPathPoint point)
+        {
+            var cell = new AtlasPathPoint(Coordinate(point.X), Coordinate(point.Y));
+            if (seen.Contains(cell)) return true;
+            foreach (var bounds in savedCells)
+                if (bounds.Contains(cell)) return true;
+            return false;
+        }
         private static int Coordinate(double value) => (int)Math.Floor(value / Cell);
     }
 }

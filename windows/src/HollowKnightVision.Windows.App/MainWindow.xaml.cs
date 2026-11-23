@@ -3289,9 +3289,12 @@ public partial class MainWindow : Window
             && recognition.Status?.ContextIdentifier is "game" or "Gameplay" && Volatile.Read(ref atlasPathsEnabled))
         {
             var pathCamera = visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null;
+            var registeredPath = tracked.RequiresWorldRecovery ? null : liveWorldResult?.RegisteredPath(walkedCoordinateEpoch);
+            if (usesDurableWorld)
+                pathCamera = registeredPath is not null && visualObservation.GroundVerified ? groundDisplayCamera : null;
             paths = trackingPipeline.Paths.Observe(new(atlasRoomId, captureTimestamp, frame.Width, frame.Height,
                 pathCamera, groundDisplayLines, ground, terrain, terrainContact.MeasuredFoot, masks.GroundKnight,
-                terrainContact.Wall));
+                terrainContact.Wall) { Atlas = registeredPath });
         }
         else trackingPipeline.Paths.Suspend();
         var botGameplay = !holdAtlas && admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";

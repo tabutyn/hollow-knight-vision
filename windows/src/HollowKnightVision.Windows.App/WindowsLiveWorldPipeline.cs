@@ -54,8 +54,12 @@ internal sealed record WindowsLiveWorldPipelineResult(
     internal bool PlacementPending { get; init; }
     public IReadOnlyList<GroundHypothesisAtlasLine> WalkedGround { get; init; } = [];
     internal IReadOnlyList<GroundHypothesisAtlasLine>? SavedGround { get; init; }
+    internal GameplayPathRegistration? PathRegistration { get; init; }
     internal long WalkedCoordinateEpoch { get; init; }
     internal IReadOnlyList<GroundHypothesisAtlasLine> RecordedLocalWalk { get; init; } = [];
+
+    internal GameplayPathRegistration? RegisteredPath(long coordinateEpoch) =>
+        coordinateEpoch == WalkedCoordinateEpoch ? PathRegistration : null;
 
     internal static WindowsLiveWorldPipelineResult NotApplicable(
         WindowsLiveWorldFrame frame,
@@ -136,10 +140,11 @@ internal sealed class WindowsLiveWorldPipeline
     // explicit InvalidatePendingWork call closes admission until Reopen succeeds.
     private bool acceptsWork = true;
     private bool hasDurableEvidence;
-    private IReadOnlyList<GroundHypothesisAtlasLine> savedGround = [];
+    private LiveWorldGroundProjection savedGround = LiveWorldGroundProjection.Empty;
+    private long pathGeometryEpoch;
 
     internal bool HasDurableEvidence => Volatile.Read(ref hasDurableEvidence);
-    internal IReadOnlyList<GroundHypothesisAtlasLine> SavedGround => Volatile.Read(ref savedGround);
+    internal IReadOnlyList<GroundHypothesisAtlasLine> SavedGround => Volatile.Read(ref savedGround).DisplayLines;
 
     internal WindowsLiveWorldPipeline(string rootDirectory)
         : this(rootDirectory, transactionObserver: null, transactionFault: null) { }
@@ -718,11 +723,13 @@ internal sealed class WindowsLiveWorldPipeline
                 var basis = worldBasis.Snapshot.WorldFromLocal;
                 if (!placementPending) lastPlacedVerticalBasis = basis.Y;
                 LastError = null;
-                var projected = !placementPending && (requiresRebuild || committed.GroundGeometry is not null
-                    || groundEvidence.Count != 0)
-                    ? LiveWorldGroundOverlay.Project(durableSnapshot) : SavedGround;
+                var projected = savedGround;
+                if (!placementPending && (requiresRebuild || committed.GroundGeometry is not null
+                    || groundEvidence.Count != 0 || !projected.PathRooms.ContainsKey(resolvedRoomId)))
+                    projected = LiveWorldGroundOverlay.ProjectWorld(durableSnapshot);
                 transactionObserver?.Invoke("publish");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
+                if (requiresRebuild) pathGeometryEpoch++;
                 Volatile.Write(ref savedGround, projected);
                 return new WindowsLiveWorldPipelineResult(
                     WindowsLiveWorldPipelineState.Committed,
@@ -743,7 +750,8 @@ internal sealed class WindowsLiveWorldPipeline
                 {
                     PlacementPending = placementPending,
                     WalkedGround = publishedGround,
-                    SavedGround = projected,
+                    SavedGround = projected.DisplayLines,
+                    PathRegistration = PathRegistrationFor(resolvedRoomId, basis),
                     WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
                     RecordedLocalWalk = committedLocalWalk
                 };
@@ -892,10 +900,15 @@ internal sealed class WindowsLiveWorldPipeline
             PlacementPending = placementPending,
             WalkedGround = !placementPending && projectedWalkedGround.TryGetValue(committedRoomId, out var ground) ? ground : [],
             SavedGround = SavedGround,
+            PathRegistration = PathRegistrationFor(committedRoomId, worldBasis.Snapshot.WorldFromLocal),
             WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
             RecordedLocalWalk = walkedScope == (request.CaptureGeneration, committedRoomId, request.WalkedCoordinateEpoch)
                 ? committedLocalWalk : []
         };
+
+    private GameplayPathRegistration? PathRegistrationFor(int roomId, AtlasPoint worldFromLocal) =>
+        !placementPending && savedGround.PathRooms.TryGetValue(roomId, out var room)
+            ? new(room, worldFromLocal, pathGeometryEpoch) : null;
 
     private WindowsLiveWorldPipelineResult Failed(
         WindowsLiveWorldFrame request,
@@ -927,7 +940,7 @@ internal sealed class WindowsLiveWorldPipeline
             var reopened = new LiveWorldSessionStore(rootDirectory);
             var reopenedTracker = reopened.LoadTracker();
             var snapshot = reopenedTracker.Snapshot;
-            var restoredGround = LiveWorldGroundOverlay.Project(snapshot);
+            var restoredGround = LiveWorldGroundOverlay.ProjectWorld(snapshot);
             var manifest = new SceneSessionStore(reopened.RootDirectory).Manifest;
             var reopenedCompositionExclusions = manifest.Observations.ToDictionary(
                 observation => observation.Id,
@@ -963,6 +976,7 @@ internal sealed class WindowsLiveWorldPipeline
                 ? double.NegativeInfinity
                 : snapshot.Observations.Max(value => value.Timestamp);
             Volatile.Write(ref hasDurableEvidence, snapshot.Observations.Count != 0);
+            pathGeometryEpoch++;
             Volatile.Write(ref savedGround, restoredGround);
             LastError = null;
             return true;
@@ -971,7 +985,7 @@ internal sealed class WindowsLiveWorldPipeline
         {
             store = null;
             tracker = null;
-            Volatile.Write(ref savedGround, []);
+            Volatile.Write(ref savedGround, LiveWorldGroundProjection.Empty);
             LastError = $"live-world reopen failed: {error.Message}";
             return false;
         }

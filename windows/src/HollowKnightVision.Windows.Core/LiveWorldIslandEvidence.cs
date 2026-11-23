@@ -28,6 +28,7 @@ public sealed record LiveTrackingIsland(
     [property: JsonRequired] IReadOnlyList<LiveIslandMember> Members)
 {
     internal const string RecoveryBreakReason = "local-tracking-recovery";
+    internal const string PlacedTrackingBreakReason = "measured-local-tracking";
     internal bool RequiresPlacement => Placement == LiveIslandPlacement.Estimated && BreakReason == RecoveryBreakReason;
 
     internal bool IsValid => Id >= 0 && RoomId >= 0 && double.IsFinite(StartedAt)

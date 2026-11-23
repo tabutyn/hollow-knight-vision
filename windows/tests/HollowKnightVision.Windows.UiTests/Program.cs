@@ -1204,6 +1204,18 @@ internal static class Program
                     && line.X1 == 200 && line.X2 == 210 && line.Y1 == line.Y2)
             && strokes.All(line => !line.IsHitTestVisible),
             "The road and direction arrow must use the same camera origin and scale as the presented image.");
+
+        canvas.Children.Clear();
+        var saved = new GameplaySavedRoomPath(7, [new(12, new(260, 250), new(500, 250))], []);
+        var restored = new GameplayPathTracker().Observe(new GameplayPathFrame("returned", 0, 640, 360,
+            new(10, 20), [], [], TerrainWallDetection.Empty, null, null, null)
+        { Atlas = new(saved, new(550, 260), 1) }) ?? throw new InvalidOperationException("Missing restored path.");
+        var restoredPresentation = new GameplayPathPresentation(12, 640, 360, restored);
+        restoredPresentation.Draw(canvas, new(200, 50, 320, 180));
+        var road = canvas.Children.OfType<Line>().Single();
+        Check(restoredPresentation.IsCurrent(true, "Gameplay", 12, registered: true)
+            && road.Stroke == Brushes.Gold && road.X1 == 210 && road.X2 == 330 && road.Y1 == 133.5,
+            "A restored route must use the same viewport projection as the placed live image.");
         Console.WriteLine("PASS Game Play roads use the live viewport, hide in menus, and show their direction");
     }
 

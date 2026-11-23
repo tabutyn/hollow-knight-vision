@@ -157,18 +157,27 @@ internal static class NativeAtlasImportTests
             Check(first.ConfirmedRecoveryPose is null && switched.ConfirmedRecoveryPose is null,
                 "two matches in different Atlas rooms cannot confirm a scene");
             var confirmed = pipeline.Process(ResumeFrame(4, 191));
-            Check(confirmed.ConfirmedRecoveryPose == new AtlasPoint(100, 20) && !confirmed.AllowsAtlasWrite,
+            Check(confirmed.ConfirmedRecoveryPose == new AtlasPoint(100, 20) && !confirmed.AllowsAtlasWrite
+                && confirmed.RegisteredPath(0) is null,
                 "a verified second frame places the camera without writing recovery evidence");
             var afterRecovery = new LiveWorldSessionStore(root).Load().Snapshot;
             Check(afterRecovery.MapRevision == before.MapRevision && afterRecovery.Observations.Count == 2
                 && afterRecovery.Landmarks.Count == 0, "regenerated descriptors stay outside the graph");
 
-            var next = pipeline.Process(ResumeFrame(5, 191, localX: 84));
+            var next = pipeline.Process(ResumeFrame(5, 191, localX: 84) with
+            {
+                WorldEvidence = new(1.5, new([new(44, new(20, 96), new(200, 96))]))
+            });
             var persisted = new LiveWorldSessionStore(root).Load().Snapshot;
             Check(next.State == WindowsLiveWorldPipelineState.Committed
                 && persisted.Observations[^1].RoomId == TargetRoom
                 && persisted.Observations[^1].OptimizedPose == new AtlasPoint(104, 20),
                 "the next frame continues inside the matched room in Atlas coordinates");
+            Check(next.RegisteredPath(0) is { Room: { RoomId: TargetRoom } path }
+                && path.Ground.Any(line => line.SegmentId == 44
+                    && line.AtlasStart == new AtlasPoint(-36, 26))
+                && next.RegisteredPath(1) is null,
+                "saved route publication uses the recovered room and fences an obsolete coordinate epoch");
 
             pipeline.NotifyTrackingLoss(1);
             Check(pipeline.Process(ResumeFrame(6, 191)).ConfirmedRecoveryPose is null

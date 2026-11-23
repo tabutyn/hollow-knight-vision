@@ -1,43 +1,67 @@
 namespace HollowKnightVision.Windows.Core;
 
+public sealed record LiveWorldGroundProjection(
+    IReadOnlyList<GroundHypothesisAtlasLine> DisplayLines,
+    IReadOnlyDictionary<int, GameplaySavedRoomPath> PathRooms)
+{
+    public static LiveWorldGroundProjection Empty { get; } = new([], new Dictionary<int, GameplaySavedRoomPath>());
+}
+
 /// <summary>Projects durable green strokes from the same poses used to place Atlas images.</summary>
 public static class LiveWorldGroundOverlay
 {
     private const double MaximumHeightSpread = 8;
     private readonly record struct Span(int Observation, double Left, double Right, double Y);
 
-    public static IReadOnlyList<GroundHypothesisAtlasLine> Project(LiveWorldSnapshot snapshot)
+    public static IReadOnlyList<GroundHypothesisAtlasLine> Project(LiveWorldSnapshot snapshot) =>
+        ProjectWorld(snapshot).DisplayLines;
+
+    public static LiveWorldGroundProjection ProjectWorld(LiveWorldSnapshot snapshot)
     {
         var owners = snapshot.TrackingIslands
             .SelectMany(island => island.Members.Select(member => (island, member)))
             .ToDictionary(owner => owner.member.ObservationId);
+        var usesLegacyWindowsPoses = owners.Count == 0 && !snapshot.UsesSwiftWireFormat;
         var placed = snapshot.Observations.Where(observation =>
             !owners.TryGetValue(observation.Id, out var owner) || !owner.island.RequiresPlacement);
         var islands = snapshot.TrackingIslands.ToDictionary(island => island.Id);
         var result = new List<GroundHypothesisAtlasLine>();
+        var pathRooms = new Dictionary<int, GameplaySavedRoomPath>();
         foreach (var room in placed.GroupBy(observation => observation.RoomId))
         {
             var walked = LiveWorldWalkedGround.ProjectPlaced(room, islands, centered: true)
                 .OrderBy(line => line.AtlasStart.X).ToArray();
+            var pathFloors = new List<GroundHypothesisAtlasLine>(walked);
             var edges = room.Where(observation =>
                     observation.GroundGeometry is { Lines.Count: > 0 }
                     && (!owners.TryGetValue(observation.Id, out var owner)
                         ? !snapshot.UsesSwiftWireFormat : owner.member.Measured))
                 .GroupBy(observation => owners.TryGetValue(observation.Id, out var owner)
                     ? (Island: owner.island.Id, LegacyObservation: -1)
-                    : (Island: -1, LegacyObservation: observation.Id))
-                .SelectMany(island => GroundStrokeGeometry.Coalesce(island
+                    : (Island: -1, LegacyObservation: observation.Id));
+            var clearance = GroundClearance.KnightHeight((int)Math.Round(SolveHeight(room.First())), null);
+            result.AddRange(walked);
+            foreach (var island in edges)
+            {
+                var strokes = GroundStrokeGeometry.Coalesce(island
                     .SelectMany(observation => observation.GroundGeometry!.Lines
                         .Where(line => line.SegmentId != long.MaxValue)
                         .Select(line => (line.SegmentId, Span: InAtlas(observation, line))))
                     .GroupBy(evidence => evidence.SegmentId)
-                    .SelectMany(segment => Estimate(segment.Key, segment.Select(evidence => evidence.Span)))));
-            var first = room.First();
-            var clearance = GroundClearance.KnightHeight((int)Math.Round(SolveHeight(first)), null);
-            result.AddRange(walked);
-            result.AddRange(edges.SelectMany(line => GroundStrokeGeometry.ExcludeColumns(line, walked, clearance)));
+                    .SelectMany(segment => Estimate(segment.Key, segment.Select(evidence => evidence.Span))));
+                if (HasMeasuredPlacement(island.First())) pathFloors.AddRange(strokes);
+                result.AddRange(strokes.SelectMany(line => GroundStrokeGeometry.ExcludeColumns(line, walked, clearance)));
+            }
+            pathRooms.Add(room.Key, new(room.Key, pathFloors, room.Where(HasMeasuredPlacement)
+                .Select(ImageBounds).Distinct().ToArray()));
         }
-        return result;
+        return new(result, pathRooms);
+
+        bool HasMeasuredPlacement(LiveWorldObservation observation) =>
+            owners.TryGetValue(observation.Id, out var owner)
+                ? owner.member.Measured && (owner.island.Placement is LiveIslandPlacement.Reference or LiveIslandPlacement.Connected
+                    || owner.island is { Placement: LiveIslandPlacement.Estimated, BreakReason: LiveTrackingIsland.PlacedTrackingBreakReason })
+                : usesLegacyWindowsPoses;
     }
 
     public static IReadOnlyList<GroundHypothesisAtlasLine> CombineWithLive(
@@ -70,6 +94,13 @@ public static class LiveWorldGroundOverlay
 
     private static double SolveHeight(LiveWorldObservation observation) =>
         observation.SourceHeight * observation.SolveWidth / observation.SourceWidth;
+
+    private static WorldRect ImageBounds(LiveWorldObservation observation)
+    {
+        var offset = ImageOriginOffset(observation);
+        return new(new(observation.OptimizedPose.X + offset.X, observation.OptimizedPose.Y + offset.Y),
+            new(observation.SolveWidth, SolveHeight(observation)));
+    }
 
     private static Span InAtlas(LiveWorldObservation observation, LiveGroundLineEvidence line)
     {
