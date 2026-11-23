@@ -54,6 +54,15 @@ var tests = new List<(string Name, Action Run)>
     ("blockade tracking compensation and crossing work in both directions", BotBlockadeTests.TestCameraCompensationAndCrossingInBothDirections),
     ("blockade tracking needs fresh measured contacts in the current chart", BotBlockadeTests.TestRequiresFreshGroundContactsAndResetsCoordinates),
     ("saved clips recover only causal legacy blockade evidence", BotBlockadeTests.TestLegacyReplayUsesOnlyPriorInputAndLeavesRecordedRowsIntact),
+    ("recorded Atlas path recovery is causal", BotRecordedAtlasPathTests.TestRecoveryIsCausalAndUsesRecordedTerrain),
+    ("recorded routes preserve existing paths and stop scoring across gaps", BotRecordedAtlasPathTests.TestMissingPoseBreaksProgressAndCurrentPathsArePreserved),
+    ("recovered routes preserve credited distance across camera gaps", BotRecordedAtlasPathTests.TestReacquisitionDoesNotEarnAlreadyMeasuredDistance),
+    ("unreliable recorded terrain pauses recovery", BotRecordedAtlasPathTests.TestUnreliableTerrainAndStaleDetectionDoNotCarryIntoLaterFrames),
+    ("Hacker replay uses recorded terrain and pose", BotRecordedAtlasPathTests.TestHackerUsesTheRecordedGroundAndWorldPose),
+    ("recorded room handoffs cannot duplicate unplaced progress", BotRecordedAtlasPathTests.TestOnlyTheLongestUnplacedChartEarnsProgressInEachRoom),
+    ("an unreachable recorded exit cannot become an exploration hint", BotRecordedAtlasPathTests.TestAnUnreachableUpperRightGoalDoesNotBecomeAnExplorationHint),
+    ("recorded route reader accepts legacy captures and checks counts", BotRecordedAtlasPathTests.TestRecordedPathReaderSupportsLegacyFeaturesAndChecksCountsWithoutChangingFiles),
+    ("native route commands require exact archive frame identity", GameStartupCliTailParityTests.TestRecordedPathCommandsUseArchiveFixtures),
     ("visual Knight memory uses measured motion and current geometry", BotVisualKnightMemoryTests.TestVisualPredictionUsesMeasuredMotionAndCurrentGeometry),
     ("weak cues cannot renew visual Knight memory across rooms", BotVisualKnightMemoryTests.TestWeakCueNeverRenewsTrackAndRoomChangeClearsIt),
     ("Game Play policy input expires with the last measured Knight", BotPolicyTests.TestGamePlayInputExpiresWithLastMeasuredKnight),
@@ -10087,6 +10096,15 @@ file static class GroundPixelsParityTests
 file static class GameStartupCliTailParityTests
 {
     private static readonly Assembly HostAssembly = LoadHostAssembly();
+
+    public static void TestRecordedPathCommandsUseArchiveFixtures()
+    {
+        var run = RequiredType("HollowKnightVision.Windows.Host.Program")
+            .GetMethod("RunAsync", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new MissingMethodException("Native Host CLI entry point is missing.");
+        BotRecordedAtlasPathTests.TestHostCommands((args, output, error) =>
+            ((Task<int>)run.Invoke(null, [args, null, null, output, error])!).GetAwaiter().GetResult());
+    }
 
     public static void TestAutomaticNavigationRequiresExplicitLaunchFlag()
     {

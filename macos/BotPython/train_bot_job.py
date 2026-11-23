@@ -157,9 +157,10 @@ def _run_job(root, selection, run_id, baseline, epochs, domain, wall_extractor, 
     blockades.mkdir()
     exit_evidence = run / "exit-path-evidence"
     exit_evidence.mkdir()
+    path_extractor = wall_extractor or native_verifier
     if exit_path:
-        if not wall_extractor:
-            raise ValueError("Exit path reconstruction requires --wall-extractor")
+        if not path_extractor:
+            raise ValueError("Exit path reconstruction requires a native route extractor")
         replay_root, labels, connections, objective = exit_path
         input_snapshot = run / "exit-path-inputs"
         input_snapshot.mkdir()
@@ -206,7 +207,7 @@ def _run_job(root, selection, run_id, baseline, epochs, domain, wall_extractor, 
                 (recovered / (source.name + ".json")).write_text(json.dumps(evidence))
         if exit_path:
             sidecar = root / "exit-paths-v1" / (source.name + ".json")
-            recover_exit_path(wall_extractor, snapshot, replay_root, labels_copy, connections_copy, objective, sidecar)
+            recover_exit_path(path_extractor, snapshot, replay_root, labels_copy, connections_copy, objective, sidecar)
         sidecar = root / "exit-paths-v1" / (source.name + ".json")
         if sidecar.exists():
             snapshot_exit_path_evidence(source, sidecar, exit_evidence, replay_root if exit_path else None)
@@ -228,8 +229,8 @@ def _run_job(root, selection, run_id, baseline, epochs, domain, wall_extractor, 
     export_args = ['export', str(snapshots), '--output', str(dataset), '--wall-evidence', str(recovered),
                    '--blockade-evidence', str(blockades), '--paired-root', str(paired_root)]
     export_args.extend(["--exit-path-evidence", str(exit_evidence)])
-    if wall_extractor:
-        export_args.extend(['--path-extractor', str(wall_extractor)])
+    if path_extractor:
+        export_args.extend(['--path-extractor', str(path_extractor)])
     export_dataset(export_args)
     candidate_directory = root / 'models'
     if domain is not None:
@@ -340,7 +341,7 @@ def _run_job(root, selection, run_id, baseline, epochs, domain, wall_extractor, 
             # A compact schema is not a prefix of historical raster schemas.
             # Re-encode the identical recordings with the baseline's own contract.
             baseline_rows, baseline_report = collect(snapshots, compact=True, wall_evidence=recovered,
-                blockade_evidence=blockades, paired_root=paired_root, path_extractor=wall_extractor,
+                blockade_evidence=blockades, paired_root=paired_root, path_extractor=path_extractor,
                 exit_path_evidence=exit_evidence, policy_version=baseline_manifest['schemaVersion'])
             if baseline_report['skipped']: raise ValueError('Baseline recordings could not be re-encoded')
             indexed = {(r['session'], r['timestamp']): r['observation'] for r in baseline_rows}
@@ -437,8 +438,9 @@ if __name__ == '__main__':
     if args.native_verifier and not args.domain:
         parser.error('Native verification requires a bot domain')
     exit_args = (args.exit_path_replay_root, args.exit_path_labels, args.exit_path_connections, args.exit_path_objective)
-    if any(x is not None for x in exit_args) and (not all(x is not None for x in exit_args) or not args.wall_extractor):
-        parser.error('Exit reconstruction requires --wall-extractor and all four --exit-path inputs')
+    if any(x is not None for x in exit_args) and (not all(x is not None for x in exit_args)
+                                                 or not (args.wall_extractor or args.native_verifier)):
+        parser.error('Exit reconstruction requires a native route extractor and all four --exit-path inputs')
     exit_path = exit_args if all(x is not None for x in exit_args) else None
     run_job(args.root, args.selection, args.run_id, args.baseline, args.epochs, args.domain, args.wall_extractor,
             args.recovery_session, args.upgrade_observations, args.follow_playback, exit_path, args.reuse_validation,

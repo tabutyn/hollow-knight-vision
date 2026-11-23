@@ -22,6 +22,7 @@ internal sealed class AtlasPathNavigator
     private Leg[] flight = [];
     private readonly HashSet<AtlasPathPoint> visited = [];
     private int bucketSize;
+    internal bool HasStartProjection { get; private set; }
 
     public void Interrupt() => flight = [];
 
@@ -34,6 +35,7 @@ internal sealed class AtlasPathNavigator
         var floor = grounded == false ? null : graph.NearestStroke(position, grounded == true ? h : Math.Max(2, h / 3), walkOnly: true);
         var airborne = floor is null && grounded != true ? ProjectFlight(graph, position) : null;
         var nearest = floor ?? airborne?.Stroke ?? graph.NearestStroke(position, h);
+        HasStartProjection = nearest.HasValue;
         if (nearest is not { } startStroke)
         {
             flight = [];
