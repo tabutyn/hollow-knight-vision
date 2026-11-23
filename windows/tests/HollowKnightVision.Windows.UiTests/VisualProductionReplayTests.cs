@@ -5,7 +5,7 @@ using HostProgram = HollowKnightVision.Windows.Host.Program;
 
 internal static class VisualProductionReplayTests
 {
-    internal static void Run() => Exercise().GetAwaiter().GetResult();
+    internal static void Run() => Task.Run(Exercise).GetAwaiter().GetResult();
 
     private static async Task Exercise()
     {
