@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.IO;
+using System.Windows;
 using System.Text.Json;
 using HollowKnightVision.Windows.Core;
 
@@ -9,22 +11,43 @@ public partial class MainWindow
     private sealed record LoadedBot(BotPolicyPlayback? Policy, string? ModelName, string? Issue);
 
     private sealed class BotRun(Guid owner, BotCaptureDomain domain, long generation, double startedAt,
-        GroundTruthLineDocument authored, bool startedInGameplay)
+        GroundTruthLineDocument authored, BotDemoSaveArchive? archive)
     {
         internal Guid Owner { get; } = owner;
         internal BotCaptureDomain Domain { get; } = domain;
         internal long Generation { get; } = generation;
         internal double StartedAt { get; } = startedAt;
         internal GroundTruthLineDocument Authored { get; } = authored;
-        internal bool StartedInGameplay { get; } = startedInGameplay;
+        internal bool StartedInGameplay => Demo is null;
+        internal BotDemoSession? Demo { get; } = archive is null ? null : new(archive, startedAt);
         internal BotStartupNavigation Startup { get; } = new(startedAt);
         internal LoadedBot? Loaded;
         // The vision analysis worker owns these fields.
         internal bool Playing;
         internal bool AnnouncedModel;
+        internal string? ReportedDemoStatus;
+        internal BotDemoSaveBackup? ReportedBackup;
     }
 
     private BotRun? botPlayback;
+    private string? lastBotDemoArchive;
+    private string BotDemoArchiveRoot => Path.Combine(BotRoot, "save-archives");
+
+    private async void BotPlayback_Click(object sender, RoutedEventArgs e) => await ToggleBotPlaybackAsync();
+
+    private void BotDemoArchives_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var path = lastBotDemoArchive ?? BotDemoArchiveRoot;
+            if (!Directory.Exists(path)) path = Directory.CreateDirectory(BotDemoArchiveRoot).FullName;
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            ShowError(error);
+        }
+    }
 
     private async Task ToggleBotPlaybackAsync()
     {
@@ -47,11 +70,14 @@ public partial class MainWindow
         }
 
         var domain = workspace == "Hacker" ? BotCaptureDomain.Hacker : BotCaptureDomain.Gameplay;
+        var archive = recognizedMenuContext == "game" ? null : new BotDemoSaveArchive(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "AppData", "LocalLow", "Team Cherry", "Hollow Knight"), BotDemoArchiveRoot);
         var run = new BotRun(owner, domain, Interlocked.Read(ref recentCaptureGeneration), BotCaptureClock(),
-            groundTruthLabels.Document, recognizedMenuContext == "game");
+            groundTruthLabels.Document, archive);
         Volatile.Write(ref botPlayback, run);
         SetStatus(run.StartedInGameplay ? "Loading the latest verified bot checkpoint."
-            : "Bot startup active. Press B again to stop.");
+            : "Bot Demo active. Press B again to stop.");
 
         LoadedBot loaded;
         try
@@ -85,6 +111,8 @@ public partial class MainWindow
         if (Volatile.Read(ref botPlayback) is not { } run) return;
         if (!gameControls.OwnsBotControl(run.Owner))
             StopBotPlayback("Bot stopped. Press B to start again.");
+        else if (run.Demo is not null && !Volatile.Read(ref run.Playing) && BotCaptureClock() - run.StartedAt > 420)
+            StopBotPlayback("Bot Demo timed out.");
     }
 
     private BotRun? ObserveBotStartup(BgraFrame frame, long generation, double capturedAt, bool admitted,
@@ -102,24 +130,40 @@ public partial class MainWindow
                 && frameTime - hud.SourceTimestamp is >= 0 and <= .25;
             var freshGameplay = freshHud && receiver?.AtlasGameplayActive != false
                 || run.StartedInGameplay && admitted && receiverGameplay;
-            string? context = null;
-            string? option = null;
-            if (menu is { IsMatch: true } && frameTime - menu.SourceTimestamp is >= 0 and <= .3)
+            if (run.Demo is { } demo)
             {
-                context = menu.ContextIdentifier;
-                if (menu.SelectedPairAccepted)
-                    option = menu.SelectorSearchRegions.FirstOrDefault(region => region.IsSolved)?.OptionIdentifier;
+                var decision = demo.Observe(BotDemoFrame.FromVision(capturedAt, frameTime, freshGameplay, menu), now);
+                PublishBotDemoStatus(run, demo);
+                if (decision.Phase == BotDemoPhase.Stopped)
+                {
+                    EndBotFromWorker(run, decision.Issue ?? "Bot Demo stopped.");
+                    return null;
+                }
+                if (decision.Buttons is InputButtons.PauseMenu or InputButtons.Inventory && !gameControls.MenuShortcutsAvailable)
+                {
+                    EndBotFromWorker(run, "Bot Demo needs a receiver with menu shortcuts.");
+                    return null;
+                }
+                var expiresAt = Math.Min(BotCaptureClock() + .09, capturedAt + .35);
+                if (decision.Buttons != InputButtons.None && !(decision.Phase == BotDemoPhase.Opening && receiverGameplay)
+                    && !gameControls.RenewBotControl(run.Owner, decision.Buttons, expiresAt))
+                {
+                    EndBotFromWorker(run, "Bot Demo input expired or control was interrupted.");
+                    return null;
+                }
+                if (decision.Phase != BotDemoPhase.Gameplay) return null;
             }
-            var decision = run.Startup.Observe(capturedAt, now, freshGameplay, receiverGameplay, context, option);
-            if (decision.Buttons != InputButtons.None)
-                gameControls.RenewBotControl(run.Owner, decision.Buttons, Math.Min(now + .09, capturedAt + .35));
-            if (decision.Phase == BotStartupPhase.Stopped)
+            else
             {
-                EndBotFromWorker(run, decision.Issue ?? "Bot startup stopped.");
-                return null;
+                var decision = run.Startup.Observe(capturedAt, now, freshGameplay, receiverGameplay, null, null);
+                if (decision.Phase == BotStartupPhase.Stopped)
+                {
+                    EndBotFromWorker(run, decision.Issue ?? "Bot startup stopped.");
+                    return null;
+                }
+                if (decision.Phase != BotStartupPhase.Gameplay) return null;
             }
-            if (decision.Phase != BotStartupPhase.Gameplay) return null;
-            run.Playing = true;
+            Volatile.Write(ref run.Playing, true);
             gameControls.NeutralizeBotControl(run.Owner);
         }
 
@@ -142,6 +186,19 @@ public partial class MainWindow
         loaded.Policy.ResetHistory();
         gameControls.NeutralizeBotControl(run.Owner);
         return null;
+    }
+
+    private void PublishBotDemoStatus(BotRun run, BotDemoSession demo)
+    {
+        if (demo.Status == run.ReportedDemoStatus && demo.Backup == run.ReportedBackup) return;
+        var status = run.ReportedDemoStatus = demo.Status;
+        var backup = run.ReportedBackup = demo.Backup;
+        _ = Dispatcher.InvokeAsync(() =>
+        {
+            if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
+            if (backup is not null) lastBotDemoArchive = backup.Directory;
+            SetStatus(status);
+        });
     }
 
     private void DriveBotFrame(BotRun run, BotPolicyPlayback playback, BotCaptureObservation? row, InputButtons? previous)

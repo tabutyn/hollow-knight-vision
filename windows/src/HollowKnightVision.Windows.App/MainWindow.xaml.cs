@@ -2023,6 +2023,8 @@ public partial class MainWindow : Window
             && DashboardPresentationPolicy.ShowsHackerFraming(
                 workspace, recognizedMenuContext)
             ? Visibility.Visible : Visibility.Collapsed;
+        BotPlaybackButton.Visibility = gameMode == GameRuntimeMode.Modded && visionCancellation is not null
+            && workspace is "Gameplay" or "Hacker" ? Visibility.Visible : Visibility.Collapsed;
         PathRecordingButton.Visibility = botCapture is not null
             || DashboardPresentationPolicy.ShowsBotCapture(workspace, gameMode, recognizedMenuContext)
             ? Visibility.Visible : Visibility.Collapsed;
