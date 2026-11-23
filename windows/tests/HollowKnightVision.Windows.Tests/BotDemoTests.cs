@@ -113,6 +113,24 @@ internal static class BotDemoTests
         Expect(At(5, gameplay: true), BotDemoPhase.Gameplay);
     }
 
+    public static void TestLongOpeningRetainsSkipActionsUntilHud()
+    {
+        var nav = new BotDemoNavigation(0);
+        BotDemoDecision At(double t, bool profile = false, bool gameplay = false) =>
+            nav.Observe(new(t, gameplay, profile ? "select-profile" : null,
+                profile ? "select-profile.slot-4" : null, profile ? t : null, 15, 0, InputButtons.None), t, false);
+        _ = At(.1, profile: true);
+        Expect(At(.4, profile: true), BotDemoPhase.Archiving, action: BotDemoSaveAction.Archive);
+        nav.ArchiveCompleted(false, .5);
+        _ = At(.6, profile: true);
+        Expect(At(.9, profile: true), BotDemoPhase.LeavingProfile, InputButtons.ActionZ);
+        for (var index = 0; index < 150; index++)
+            Expect(At(2 + index * .7), BotDemoPhase.Opening, index % 2 == 0 ? InputButtons.ActionX : InputButtons.ActionZ);
+        Expect(At(108, gameplay: true), BotDemoPhase.Opening);
+        Expect(At(108.14, gameplay: true), BotDemoPhase.Opening);
+        Expect(At(108.28, gameplay: true), BotDemoPhase.Gameplay);
+    }
+
     public static void TestSessionStopsIfGameSaveChangesBeforeConfirm()
     {
         using var fixture = new Fixture();

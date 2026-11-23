@@ -828,6 +828,7 @@ var tests = new List<(string Name, Action Run)>
     ("Bot Demo reconciles versioned saves and rejects unverified clears", BotDemoTests.TestEmptySaveAndMismatchedFamiliesCannotAuthorizeClear),
     ("Bot Demo navigates only to verified slot 4", BotDemoTests.TestMeasuredSlotAndVerifiedClear),
     ("Bot Demo skips the opening and requires a fresh Gameplay HUD", BotDemoTests.TestEmptySlotSkipsOpeningAndRequiresFreshHud),
+    ("Bot Demo keeps skipping long opening sequences until the HUD", BotDemoTests.TestLongOpeningRetainsSkipActionsUntilHud),
     ("Bot Demo aborts before confirmation when the save changes", BotDemoTests.TestSessionStopsIfGameSaveChangesBeforeConfirm),
     ("Bot Demo uses fresh menu timing, selection and dialog geometry", BotDemoTests.TestVisionAdmitsOnlyFreshMeasuredEvidence),
     ("atlas replacement validates staging before active mutation", ActiveAtlasReplacementTests.TestValidatesStagingBeforeReplacingActive),

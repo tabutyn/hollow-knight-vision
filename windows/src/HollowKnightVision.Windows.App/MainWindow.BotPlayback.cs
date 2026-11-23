@@ -111,7 +111,7 @@ public partial class MainWindow
         if (Volatile.Read(ref botPlayback) is not { } run) return;
         if (!gameControls.OwnsBotControl(run.Owner))
             StopBotPlayback("Bot stopped. Press B to start again.");
-        else if (run.Demo is not null && !Volatile.Read(ref run.Playing) && BotCaptureClock() - run.StartedAt > 420)
+        else if (run.Demo is not null && !Volatile.Read(ref run.Playing) && BotCaptureClock() - run.StartedAt > 720)
             StopBotPlayback("Bot Demo timed out.");
     }
 

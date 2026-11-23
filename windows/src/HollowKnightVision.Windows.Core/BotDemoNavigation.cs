@@ -100,7 +100,8 @@ public sealed class BotDemoNavigation(double startedAt)
     public BotDemoDecision Observe(BotDemoFrame frame, double now, bool? activeSave)
     {
         if (phase is BotDemoPhase.Gameplay or BotDemoPhase.Stopped) return new(phase);
-        if (now - phaseStartedAt > (phase == BotDemoPhase.Opening ? 300 : 90) || now - runStartedAt > 420)
+        if (now - phaseStartedAt > (phase == BotDemoPhase.Opening ? 300 : 90)
+            || phase != BotDemoPhase.Opening && now - runStartedAt > 420)
             return Fail($"Bot timed out. {Status}");
         if (!double.IsFinite(frame.CapturedAt) || !double.IsFinite(now) || frame.CapturedAt < runStartedAt
             || frame.CapturedAt <= lastCapture || now - frame.CapturedAt is < 0 or > .5
@@ -251,7 +252,8 @@ public sealed class BotDemoNavigation(double startedAt)
         if (now < nextActionAt) return new(phase);
         var button = skipWithAttack ? InputButtons.ActionX : InputButtons.ActionZ;
         skipWithAttack = !skipWithAttack;
-        return Pulse(button, now);
+        nextActionAt = now + PulseInterval;
+        return new(phase, button);
     }
 
     private BotDemoDecision MoveToSlot(BotDemoFrame frame, double now)
