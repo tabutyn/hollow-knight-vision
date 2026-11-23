@@ -3236,7 +3236,7 @@ public partial class MainWindow : Window
         }
         var hudStencil = recognition.Hud;
         var detections = recognition.Detections;
-        var masks = GameplaySceneMasks.Create(frame.Width, frame.Height, detections, hudStencil, recognition.Objects.Masks);
+        var masks = GameplaySceneMasks.Create(frame, detections, hudStencil, recognition.Objects.Masks);
         if (Volatile.Read(ref stepCapture) is not null)
         {
             if (exactReceiverTelemetry is { } stepTruth && exactRenderedGameFrame is { } stepFrame)

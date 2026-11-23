@@ -38,7 +38,7 @@ public sealed class BotVisualGymObservationSource
         var observations = LiveObjectDetectionSnapshot.Empty;
         var presentation = status.Observe(menu, hud, time, inferObjects: signal.HasGameplaySignal ? Infer : null);
         var admitted = admission.Observe(signal, presentation.Status?.IsGameplay == true, Generation);
-        var masks = GameplaySceneMasks.Create(frame.Width, frame.Height, observations.Tracked, hud, observations.Masks);
+        var masks = GameplaySceneMasks.Create(frame, observations.Tracked, hud, observations.Masks);
         var size = new WorldSize(frame.Width, frame.Height);
         var direction = KnightLevelWalk.Direction(controls) switch
         {

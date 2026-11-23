@@ -8,9 +8,10 @@ public sealed record GameplayTerrainAnalysis(GroundEdgeAnalysis Edges, GroundThe
     {
         var edges = GroundLineDetector.Analyze(frame, masks.GroundExclusions);
         var comparison = GroundLineDetector.Compare(edges);
-        var theory = GroundLineDetector.Theory(comparison, GroundTheoryTuning.Default);
+        var captions = new GroundCaptionEvidence(comparison);
+        var theory = GroundLineDetector.TrackingTheory(comparison, GroundTheoryTuning.Default, captions);
         var floors = GroundLineDetector.RejectKnownForegroundLines(
-            GroundLineDetector.SemanticFloorLines(comparison, GroundTheoryTuning.SemanticDefault),
+            GroundLineDetector.SemanticFloorLines(comparison, GroundTheoryTuning.SemanticDefault, captions),
             frame.Height, masks.GroundExclusions, masks.GroundKnight);
         var references = GroundLineDetector.CameraReferenceFloors(
             GroundLineDetector.CleanFloorLines(theory), floors, frame.Height, masks.GroundKnight, masks.GroundExclusions);

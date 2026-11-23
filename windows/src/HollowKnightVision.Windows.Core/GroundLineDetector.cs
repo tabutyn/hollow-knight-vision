@@ -206,7 +206,7 @@ public static class GroundPixels
 public static class GroundLineDetector
 {
     public const int ComparisonKernelSpan = 32;
-    private static readonly int[] ComparisonWeights = [-1, -2, -3, -4, 4, 3, 2, 1];
+    internal static ReadOnlySpan<int> ComparisonWeights => [-1, -2, -3, -4, 4, 3, 2, 1];
 
     public static GroundEdgeAnalysis Analyze(
         BgraFrame frame,
@@ -442,8 +442,11 @@ public static class GroundLineDetector
 
     public static IReadOnlyList<DetectedFloorLine> SemanticFloorLines(
         GroundComparisonAnalysis analysis,
-        GroundTheoryTuning tuning) => CreateTheory(analysis, tuning, validateSurface: true)
-            .CleanFloorLines;
+        GroundTheoryTuning tuning) => SemanticFloorLines(analysis, tuning, new GroundCaptionEvidence(analysis));
+
+    internal static IReadOnlyList<DetectedFloorLine> SemanticFloorLines(GroundComparisonAnalysis analysis,
+        GroundTheoryTuning tuning, GroundCaptionEvidence captions) =>
+        CreateTheory(analysis, tuning, validateSurface: true, captions).CleanFloorLines;
 
     /// <summary>
     /// Suppresses stale rejected projections that cover a presently confirmed
@@ -621,14 +624,19 @@ public static class GroundLineDetector
         GroundComparisonAnalysis analysis,
         GroundTheoryTuning tuning) => CreateTheory(analysis, tuning, validateSurface: false);
 
+    internal static GroundTheoryAnalysis TrackingTheory(GroundComparisonAnalysis analysis,
+        GroundTheoryTuning tuning, GroundCaptionEvidence captions) =>
+        CreateTheory(analysis, tuning, validateSurface: false, captions);
+
     private static GroundTheoryAnalysis CreateTheory(
         GroundComparisonAnalysis analysis,
         GroundTheoryTuning tuning,
-        bool validateSurface)
+        bool validateSurface, GroundCaptionEvidence? captions = null)
     {
         ValidateComparisonAnalysis(analysis);
-        var accepted = AcceptedRunsByRow(analysis, tuning, validateSurface);
-        var lines = BuildTheoryLines(analysis, tuning, validateSurface, accepted);
+        var surface = validateSurface ? new GroundSurfaceEvidence(analysis) : null;
+        var accepted = AcceptedRunsByRow(analysis, tuning, surface, captions);
+        var lines = BuildTheoryLines(analysis, tuning, surface, accepted);
         var sharedRuns = Enumerable.Range(0, analysis.Height)
             .Select(row => (IReadOnlyList<DetectedFloorLine>)lines
                 .Where(line => line.Row == row)
@@ -640,11 +648,12 @@ public static class GroundLineDetector
     private static IReadOnlyList<DetectedFloorLine> BuildTheoryLines(
         GroundComparisonAnalysis analysis,
         GroundTheoryTuning tuning,
-        bool validateSurface,
+        GroundSurfaceEvidence? surface,
         List<CandidateRun>[] accepted)
     {
         var minimumLength = Math.Max(1, tuning.MinimumSegmentLength);
-        var surface = validateSurface ? new GroundSurfaceEvidence(analysis) : null;
+        var threshold = Math.Clamp(tuning.GroundThreshold, 0, 255);
+        var extent = surface is not null && analysis.SourceLuma is not null ? new GroundEdgeExtent(analysis) : null;
 
         var candidates = accepted.SelectMany((runs, row) => runs.Select(run =>
             new ScoredRun(
@@ -666,6 +675,11 @@ public static class GroundLineDetector
             var suppressed = surviving.Any(stronger =>
             {
                 if (Math.Abs(stronger.Row - candidate.Row) > separation) return false;
+                var shared = OverlapLength(stronger.Run.Span, candidate.Run.Span);
+                if (surface is not null && Math.Abs(stronger.Row - candidate.Row) <= 3
+                    && shared * 2 >= Math.Min(SpanLength(stronger.Run.Span), SpanLength(candidate.Run.Span)))
+                    return true;
+
                 var directOverlap = stronger.Run.EvidenceSpans.Any(strong =>
                     candidate.Run.EvidenceSpans.Any(weak =>
                         OverlapLength(strong, weak) >= Math.Min(16, SpanLength(weak))));
@@ -692,7 +706,9 @@ public static class GroundLineDetector
                 var span = new PixelSpan(group[0].Start, group[^1].EndInclusive);
                 if (surface?.Supports(candidate.Row, [span]) != false)
                 {
-                    results.Add(new DetectedFloorLine(candidate.Row, span, group));
+                    var refined = extent?.Refine(group, candidate.Row, threshold) ?? group;
+                    var bounds = new PixelSpan(refined[0].Start, refined[^1].EndInclusive);
+                    results.Add(new DetectedFloorLine(candidate.Row, bounds, refined));
                 }
             }
 
@@ -724,9 +740,8 @@ public static class GroundLineDetector
     private static List<CandidateRun>[] AcceptedRunsByRow(
         GroundComparisonAnalysis analysis,
         GroundTheoryTuning tuning,
-        bool validateSurface)
+        GroundSurfaceEvidence? surface, GroundCaptionEvidence? captions)
     {
-        ValidateComparisonAnalysis(analysis);
         var threshold = Math.Clamp(tuning.GroundThreshold, 0, 255);
         var minimumLength = Math.Max(1, tuning.MinimumSegmentLength);
         var maximumGap = Math.Max(0, tuning.OcclusionMergeGap);
@@ -752,13 +767,31 @@ public static class GroundLineDetector
             if (start is { } finalStart)
                 rawRuns.Add(new PixelSpan(finalStart, analysis.Width - 1));
 
-            accepted[row] = MergeGroundRuns(rawRuns, maximumGap).Where(run =>
+            if (captions is not null && rawRuns.Sum(SpanLength) >= minimumLength)
+                rawRuns = captions.RemoveText(rawRuns, row);
+
+            var merged = MergeGroundRuns(rawRuns, maximumGap);
+            if (surface is not null)
+            {
+                // Bright air can cause two supported ledges to fail a single body vote.
+                merged = merged.SelectMany(run =>
+                {
+                    var spans = run.EvidenceSpans;
+                    if (SpanLength(run.Span) < minimumLength || spans.Count <= 1
+                        || !spans.Zip(spans.Skip(1)).Any(pair => pair.Second.Start - pair.First.EndInclusive - 1 >= minimumLength)
+                        || surface.Supports(row, [run.Span])) return [run];
+                    return MergeGroundRuns(spans, maximumGap,
+                        gap => SpanLength(gap) < minimumLength || surface.Supports(row, [gap]));
+                }).ToArray();
+            }
+
+            accepted[row] = merged.Where(run =>
             {
                 var evidenceLength = run.EvidenceSpans.Sum(SpanLength);
                 if (SpanLength(run.Span) < minimumLength || evidenceLength < minimumLength)
                     return false;
-                if (!validateSurface) return true;
-                var strongThreshold = Math.Min(255, threshold + 1);
+                if (surface is null) return true;
+                var strongThreshold = Math.Min(254, threshold) + 1;
                 var strong = run.EvidenceSpans.Sum(span => CountMatching(
                     span,
                     x => analysis.GroundPixels[offset + x] >= strongThreshold));
@@ -770,7 +803,7 @@ public static class GroundLineDetector
 
     private static IReadOnlyList<CandidateRun> MergeGroundRuns(
         IReadOnlyList<PixelSpan> runs,
-        int maximumGap)
+        int maximumGap, Func<PixelSpan, bool>? bridgesGap = null)
     {
         if (runs.Count == 0) return [];
         var current = runs[0];
@@ -779,7 +812,8 @@ public static class GroundLineDetector
         foreach (var run in runs.Skip(1))
         {
             var gap = run.Start - current.EndInclusive - 1;
-            if (gap <= maximumGap)
+            if (gap <= maximumGap
+                && (gap == 0 || bridgesGap?.Invoke(new(current.EndInclusive + 1, run.Start - 1)) != false))
             {
                 current = new PixelSpan(current.Start, Math.Max(current.EndInclusive, run.EndInclusive));
                 evidence.Add(run);
@@ -945,7 +979,29 @@ public static class GroundLineDetector
                 total += band.Sums[upper] - band.Sums[lower];
                 countTotal += band.Counts[upper] - band.Counts[lower];
             }
-            return countTotal == 0 || total <= MaximumBodyLuma * countTotal;
+            if (countTotal == 0 || total <= MaximumBodyLuma * countTotal) return true;
+
+            // A lit cap can sit above a darker silhouette in the same unmasked columns.
+            if (row < 5 || row + 24 >= analysis.Height) return false;
+            var width = analysis.Width;
+            var measured = 0;
+            var solid = 0;
+            foreach (var range in ranges)
+            {
+                for (var x = Math.Max(0, range.Start); x <= Math.Min(width - 1, range.EndInclusive); x += 3)
+                {
+                    var i = row * width + x;
+                    if (!IsValid(i) || !IsValid(i - 5 * width) || !IsValid(i - 2 * width)
+                        || !IsValid(i + 13 * width) || !IsValid(i + 18 * width) || !IsValid(i + 24 * width))
+                        continue;
+
+                    measured++;
+                    var air = (luma[i - 5 * width] + luma[i - 2 * width]) / 2;
+                    var deep = (luma[i + 13 * width] + luma[i + 18 * width] + luma[i + 24 * width]) / 3;
+                    if (deep <= MaximumBodyLuma && air - deep >= 12) solid++;
+                }
+            }
+            return solid >= 8 && solid * 2 >= measured;
         }
 
         private bool IsValid(int index) => analysis.ValidSourcePixels is null
