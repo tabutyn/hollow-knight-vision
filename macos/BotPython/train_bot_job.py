@@ -348,7 +348,7 @@ def _run_job(root, selection, run_id, baseline, epochs, domain, wall_extractor, 
         eligible, reason = False, 'Own-action feedback regressed on recorded states.'
     # Check the actual exported weights on the complete held-out batch.
     payload = json.loads((candidate_directory / 'runtime-policy.json').read_text())
-    native = x.copy()
+    native = x[:, payload['inputColumns']] if 'inputColumns' in payload else x
     for layer in payload['layers']:
         weights = np.asarray(layer['weights'], dtype=np.float32).reshape(layer['outputSize'], layer['inputSize'])
         native = native @ weights.T + np.asarray(layer['biases'], dtype=np.float32)

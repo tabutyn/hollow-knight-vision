@@ -11,6 +11,7 @@ enum RecordedGameButton: String, Codable, CaseIterable, Sendable {
     case x
     case inventory
     case pause
+    case dash, superDash, quickCast, dreamNail
 
     var bridgeButton: InputBridgeButtons {
         switch self {
@@ -21,6 +22,10 @@ enum RecordedGameButton: String, Codable, CaseIterable, Sendable {
         case .a: .actionA
         case .z: .actionZ
         case .x: .actionX
+        case .dash: .dash
+        case .superDash: .superDash
+        case .quickCast: .quickCast
+        case .dreamNail: .dreamNail
         case .inventory: .inventory
         case .pause: .pauseMenu
         }
@@ -35,6 +40,10 @@ enum RecordedGameButton: String, Codable, CaseIterable, Sendable {
         case .actionA: .a
         case .actionZ: .z
         case .actionX: .x
+        case .dash: .dash
+        case .superDash: .superDash
+        case .quickCast: .quickCast
+        case .dreamNail: .dreamNail
         case .inventory: .inventory
         case .pauseMenu: .pause
         default: nil

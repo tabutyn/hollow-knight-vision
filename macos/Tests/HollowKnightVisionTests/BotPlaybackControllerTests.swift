@@ -306,8 +306,17 @@ final class BotPlaybackControllerTests: XCTestCase {
         let controller = BotPlaybackController(policy: try policy(), now: { 100 }, hasFocus: { true })
         controller.configure(canContinue: { true }, begin: { begins += 1; return UUID() }, apply: { _, _, _ in true },
             neutralize: { _ in }, end: { _ in })
+        var startedWithMotor = true
+        controller.onStarted = { domain, motor in
+            XCTAssertEqual(domain, .gameplay)
+            startedWithMotor = motor != nil
+            return true
+        }
         controller.start(domain: .gameplay)
-        XCTAssertFalse(controller.isActive); XCTAssertEqual(begins, 0)
+        XCTAssertTrue(controller.isActive)
+        XCTAssertEqual(begins, 1)
+        XCTAssertFalse(startedWithMotor)
+        controller.stop()
     }
 
     func testHackerRejectsDetectedTerrainFromTheOtherModelDomain() throws {

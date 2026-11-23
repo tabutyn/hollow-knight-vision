@@ -27,6 +27,7 @@ HISTORY_LENGTH = 4
 ACTION_SIZES = [3, 3, 2, 2]
 HELD_ATTACK_COST = 0.05
 SUPPORTED = {"left", "right", "up", "down", "z", "x"}
+SKILL_BUTTONS = ("a", "quickCast", "dash", "superDash", "dreamNail", "inventory", "pause")
 RECOVERY_START_WINDOW = 1.2
 BASE_FEATURES = [
     "knight_x", "knight_y", "knight_width", "knight_height", "knight_confidence",
@@ -329,7 +330,9 @@ def read_session(path, *, verify_images=True):
 
 
 class ActionTimeline:
-    def __init__(self, events):
+    def __init__(self, events, skill_controls=False):
+        self.skill_controls = skill_controls
+        self.supported = SUPPORTED.union(SKILL_BUTTONS) if skill_controls else SUPPORTED
         self.events = sorted(events, key=lambda x: x["timestamp"])
         self.times = [x["timestamp"] for x in self.events]
         self.states = []
@@ -357,21 +360,24 @@ class ActionTimeline:
         # during the decision invalidates its label, including a press/release pair.
         during = self.events[index:bisect.bisect_left(self.times, end)]
         held.update(x["button"] for x in during if x["isPressed"])
-        if held - SUPPORTED:
+        if held - self.supported:
             return None, "unsupported-input"
         if {"left", "right"} <= held or {"up", "down"} <= held:
             return None, "conflicting-directions"
-        return [1 if "left" in held else 2 if "right" in held else 0,
+        action = [1 if "left" in held else 2 if "right" in held else 0,
                 1 if "up" in held else 2 if "down" in held else 0,
-                int("z" in held), int("x" in held)], None
+                int("z" in held), int("x" in held)]
+        if self.skill_controls:
+            action.extend(int(button in held) for button in SKILL_BUTTONS)
+        return action, None
 
 
-def examples(manifest, observations, inputs, action_delay=0.0, *, compact=False, policy_version=SCHEMA_VERSION):
+def examples(manifest, observations, inputs, action_delay=0.0, *, compact=False, policy_version=SCHEMA_VERSION, skill_controls=False):
     if not finite_number(action_delay) or not 0 <= action_delay <= 0.5:
         raise ValueError("action delay must be between zero and 0.5 seconds")
     names = SCHEMAS[policy_version]
     width = len(names)
-    timeline = ActionTimeline(inputs)
+    timeline = ActionTimeline(inputs, skill_controls=skill_controls)
     history = deque(maxlen=HISTORY_LENGTH)
     previous = None
     segment = -1
@@ -738,7 +744,7 @@ def recover_exit_path(executable, path, replay_root, labels, connections, object
 
 
 def collect(root, action_delay=0.0, wall_evidence=None, *, compact=False, blockade_evidence=None, paired_root=None,
-            path_extractor=None, exit_path_evidence=None, policy_version=SCHEMA_VERSION):
+            path_extractor=None, exit_path_evidence=None, policy_version=SCHEMA_VERSION, skill_controls=False):
     paths = session_paths(root)
     if not paths:
         raise ValueError(f"No demonstration sessions in {root}")
@@ -746,6 +752,10 @@ def collect(root, action_delay=0.0, wall_evidence=None, *, compact=False, blocka
     for path in paths:
         try:
             manifest, observations, inputs = read_session(path)
+            if skill_controls and manifest.get("recordedSkillControls") is not True:
+                raise ValueError("This clip did not record the extended receiver controls")
+            if skill_controls and (path / "evaluation.json").exists():
+                raise ValueError("Policy evaluations are not expert demonstrations")
             marking_recovery = recover_recorded_spikes(path, manifest, observations) if policy_version >= 13 else {}
             evidence_file = None
             if exit_path_evidence:
@@ -779,7 +789,7 @@ def collect(root, action_delay=0.0, wall_evidence=None, *, compact=False, blocka
                 evidence_path = Path(wall_evidence) / (path.name + ".json")
                 if evidence_path.exists():
                     apply_recovered_walls(evidence_path, path, manifest, observations)
-            rows, rejected = examples(manifest, observations, inputs, action_delay, compact=compact, policy_version=policy_version)
+            rows, rejected = examples(manifest, observations, inputs, action_delay, compact=compact, policy_version=policy_version, skill_controls=skill_controls)
         except (OSError, ValueError) as error:
             # Active/failed/corrupt recordings are reported, never silently trained.
             skipped.append({"path": str(path), "error": str(error)})
@@ -788,7 +798,8 @@ def collect(root, action_delay=0.0, wall_evidence=None, *, compact=False, blocka
                   for name in ("manifest.json", "events.jsonl")}
         frame_count = len(SCHEMAS[policy_version])
         wall_analyzed, wall_present_count = wall_statistics(rows, policy_version)
-        reports.append({"markingRecovery": marking_recovery, "id": manifest["id"], "path": str(path), "status": manifest["status"],
+        reports.append({**({"botDomain": manifest.get("botDomain"), "sourceRun": manifest.get("replayID") or manifest["id"]} if skill_controls else {}),
+                        "markingRecovery": marking_recovery, "id": manifest["id"], "path": str(path), "status": manifest["status"],
                         "pairedMeasurements": sum("pairedMeasurement" in o for o in observations),
                         "maskedKnightExamples": sum(row["observation"][-frame_count + 4] == 0 for row in rows),
                         "duration": manifest["duration"], "observations": len(observations),
@@ -800,7 +811,8 @@ def collect(root, action_delay=0.0, wall_evidence=None, *, compact=False, blocka
                         "sha256": hashes})
         all_rows.extend(rows)
     return all_rows, {"schemaVersion": policy_version, "featureCount": len(SCHEMAS[policy_version]),
-                      "historyLength": HISTORY_LENGTH, "actionSizes": ACTION_SIZES,
+                      "historyLength": HISTORY_LENGTH, "actionSizes": ACTION_SIZES + ([2] * len(SKILL_BUTTONS) if skill_controls else []),
+                      **({"skillButtons": list(SKILL_BUTTONS)} if skill_controls else {}),
                       "actionDelay": action_delay, "examples": len(all_rows),
                       "sessions": reports, "skipped": skipped}
 
@@ -835,6 +847,7 @@ def main(argv=None):
     parser.add_argument("--exit-path-labels", type=Path)
     parser.add_argument("--exit-path-connections", type=Path)
     parser.add_argument("--exit-path-objective", type=float, nargs=2, metavar=("X", "Y"))
+    parser.add_argument("--skill-controls", action="store_true", help="Include held/tapped ability and menu buttons as additional binary labels")
     args = parser.parse_args(argv)
     reconstruct = [args.exit_path_replay_root, args.exit_path_labels, args.exit_path_connections, args.exit_path_objective]
     if any(x is not None for x in reconstruct):
@@ -845,7 +858,7 @@ def main(argv=None):
                               args.exit_path_connections, args.exit_path_objective,
                               args.exit_path_evidence / (path.name + ".json"))
     rows, report = collect(args.root, args.action_delay, args.wall_evidence, compact=True, blockade_evidence=args.blockade_evidence,
-                           paired_root=args.paired_root, path_extractor=args.path_extractor, exit_path_evidence=args.exit_path_evidence, policy_version=args.policy_version)
+                           paired_root=args.paired_root, path_extractor=args.path_extractor, exit_path_evidence=args.exit_path_evidence, policy_version=args.policy_version, skill_controls=args.skill_controls)
     if args.command == "export":
         if not args.output or args.output.suffix != ".npz":
             parser.error("export requires --output ending in .npz")

@@ -118,12 +118,13 @@ enum DashboardWorkspace: String, CaseIterable, Identifiable {
     case stencils = "Stencil"
     case model = "Model"
     case bot = "Bot"
+    case thinking = "Thinking"
     case hacker = "Hacker"
     case ops = "Ops"
 
     var id: Self { self }
     var shortcutCharacter: Character { rawValue.lowercased().first! }
-    var supportsGameplayExitShortcut: Bool { self == .label || self == .model || self == .bot || self == .stencils }
+    var supportsGameplayExitShortcut: Bool { self == .label || self == .model || self == .bot || self == .thinking || self == .stencils }
 }
 
 enum DashboardControlVisibility {
@@ -150,6 +151,7 @@ enum WorkspaceExitShortcutPolicy {
         isRepeat: Bool, isEditingText: Bool = false
     ) -> Bool {
         workspace.supportsGameplayExitShortcut
+            && (workspace != .thinking || !isEditingText)
             && eventType == .keyDown
             && (keyCode == 7 || (workspace == .label && keyCode == 37 && !isEditingText)) // X / L
             && !isRepeat
@@ -316,6 +318,7 @@ private struct DebugView: View {
     let stencilReady: Bool
     let modelReady: Bool
     let openGroundViewer: () -> Void
+    let openTextReader: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -345,6 +348,7 @@ private struct DebugView: View {
                 Toggle(visionText("Coarse Motion Overlay"), isOn: $model.coarseMotionDiagnosticsEnabled)
             }.disabled(!showsGroundTrackingTools)
             Button("Ground Viewer", action: openGroundViewer)
+            Button("Text Reader", action: openTextReader)
         }.toggleStyle(.checkbox)
     }
 }
@@ -528,6 +532,22 @@ struct DashboardView: View {
 
     @ObservedObject var model: LiveCaptureModel
     @State private var workspace = DashboardWorkspace.gameplay
+    @FocusState private var editingThinkingPrompt: Bool
+    @State private var gameTextReader = GameTextReader()
+    @ObservedObject var thinkingSession: ThinkingModelSession
+    private var proofreadingTarget: ThinkingModel? {
+        guard !thinkingSession.answering else { return nil }
+        switch thinkingSession.state {
+        case .ready(let target): return target
+        default: return nil
+        }
+    }
+    @AppStorage("HollowKnightVision.readGameText") private var readGameText = true
+    @State private var showingTextReader = false
+
+    private var textReadingContext: String {
+        model.readingOpeningCutscene ? RememberedGameText.openingContext : model.skillContext
+    }
     @State private var viewportFraming: LayerSceneFramingMode = .current
     @State private var framingRequest = 0
     @State private var viewportTransformStore = LayerSceneViewportTransformStore()
@@ -591,8 +611,9 @@ struct DashboardView: View {
     private let labelingSelectionPreferences: LabelingSelectionPreferences
     private let labelingObjectReferenceStore = LabelingObjectReferenceStore()
 
-    init(model: LiveCaptureModel, defaults: UserDefaults = .standard) {
+    init(model: LiveCaptureModel, thinkingSession: ThinkingModelSession, defaults: UserDefaults = .standard) {
         self.model = model
+        self.thinkingSession = thinkingSession
         let preferences = LabelingSelectionPreferences(defaults: defaults)
         labelingSelectionPreferences = preferences
         let selection = preferences.load()
@@ -612,13 +633,13 @@ struct DashboardView: View {
         .frame(minWidth: 720, minHeight: 560)
         .background {
             WorkspaceExitKeyMonitor(
-                workspace: showingSettings ? .gameplay : workspace,
+                workspace: showingSettings || showingTextReader ? .gameplay : workspace,
                 onExit: {
                     recentFramesPresentation = nil
                     selectWorkspace(.gameplay)
                 },
-                onAtlasTab: !showingSettings && showsFramingControls ? cycleAtlasFraming : nil,
-                onResetRoom: roomResetShortcutEnabled ? model.resetRoom : nil,
+                onAtlasTab: !showingSettings && !showingTextReader && showsFramingControls ? cycleAtlasFraming : nil,
+                onResetRoom: !showingTextReader && roomResetShortcutEnabled ? model.resetRoom : nil,
                 gameHasFocus: { model.managedGameIsActive }
             )
             .frame(width: 0, height: 0)
@@ -629,7 +650,7 @@ struct DashboardView: View {
                 groundFeatureWindowController.changeScene(lines: groundViewerSceneLines, center: groundViewerCenter)
             }
         }
-        .onChange(of: showingSettings) { _, active in model.setSettingsDialogActive(active) }
+        .onChange(of: showingSettings || showingTextReader) { _, active in model.setSettingsDialogActive(active) }
         .onReceive(model.botDemo.handoffRequests) { request in
             selectWorkspace(model.botDemo.domain == .hacker ? .hacker : .gameplay)
             model.completeBotDemoHandoff(request)
@@ -699,6 +720,32 @@ struct DashboardView: View {
 
     var body: some View {
         visibleContent
+        .task(id: thinkingSession.model) {
+            let selected = thinkingSession.model
+            while !Task.isCancelled {
+                await thinkingSession.checkResidency(of: selected)
+                if thinkingSession.state == .unloaded(selected) {
+                    thinkingSession.select(selected)
+                }
+                do { try await Task.sleep(for: .seconds(20)) } catch { return }
+            }
+        }
+        .onReceive(model.$notebookProfile.removeDuplicates()) { gameTextReader.selectProfile($0) }
+        .task(id: "\(model.notebookProfile?.id.uuidString ?? "")-\(readGameText)-\(model.isCapturing)-\(initialization.language.rawValue)") {
+            gameTextReader.selectProfile(model.notebookProfile)
+            await gameTextReader.monitor(enabled: readGameText && model.isCapturing, language: initialization.language.rawValue) {
+                model.thinkingScreenshot().map { ($0, textReadingContext) }
+            }
+        }
+        .task(id: "\(model.notebookProfile?.id.uuidString ?? "")-\(readGameText)-\(String(describing: proofreadingTarget))") {
+            gameTextReader.selectProfile(model.notebookProfile)
+            if readGameText, let target = proofreadingTarget { await gameTextReader.cleanReadings(preferred: target) }
+        }
+        .onAppear { model.botPlayer.didInspect = { sight, start in gameTextReader.beginInspection(sight, at: start) } }
+        .onReceive(gameTextReader.$skillReading) { model.skillReading = $0 }
+        .sheet(isPresented: $showingTextReader) {
+            GameTextDebugView(reader: gameTextReader, enabled: $readGameText)
+        }
         .alert(initialization.text("resetTitle"), isPresented: $confirmsStencilReset) {
             Button(initialization.text("cancel"), role: .cancel) {}
             Button(initialization.text("reset"), role: .destructive, action: resetStencils)
@@ -862,6 +909,18 @@ struct DashboardView: View {
                         } catch { labelingSaveError = error.localizedDescription }
                     }
                 )
+            } else if workspace == .thinking {
+                ThinkingWorkspaceView(session: thinkingSession, snapshot: model.thinkingScreenshot, promptFocus: $editingThinkingPrompt,
+                                      reader: gameTextReader, readingContext: { textReadingContext },
+                                      atlasSummary: {
+                                          guard let atlas = model.liveWorldSnapshot else { return "" }
+                                          return "Atlas observations: \(atlas.observations.count). Recorded transitions: \(model.transitionPortals.count)."
+                                      },
+                                      language: initialization.language.rawValue, readGameText: readGameText,
+                                      openLog: { showingTextReader = true },
+                                      generation: { model.skillGeneration },
+                                      skillSight: model.currentSkillSight,
+                                      player: model.botPlayer)
             } else if workspace == .bot {
                 BotModelWorkspaceView(controller: botTrainer, trainingAllowed: !labelingTrainer.isRunning,
                                       reloadModel: { model.botPlayer.reloadModel() })
@@ -954,7 +1013,9 @@ struct DashboardView: View {
                 }
             }
         }
+        .blur(radius: showsModelLoadingOverGame && !thinkingSession.isReady ? 10 : 0)
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay { if showsModelLoadingOverGame { ThinkingLoadingOverlay(session: thinkingSession) } }
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.14)))
         .overlay(alignment: .topTrailing) {
             if workspace == .gameplay
@@ -980,12 +1041,12 @@ struct DashboardView: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            if workspace == .gameplay, model.labelImage == nil, reviewingModelCandidate == nil {
+            if (workspace == .gameplay || workspace == .hacker), model.labelImage == nil, reviewingModelCandidate == nil {
                 VStack(alignment: .trailing, spacing: 6) {
-                    if model.groundReviewAvailable && model.groundHypothesesEnabled && showsGroundTrackingPatches {
+                    if workspace == .gameplay && model.groundReviewAvailable && model.groundHypothesesEnabled && showsGroundTrackingPatches {
                         featureHypothesisLegend
                     }
-                    if showsEstimatedPlacement, model.hasEstimatedIslandPlacement,
+                    if workspace == .gameplay, showsEstimatedPlacement, model.hasEstimatedIslandPlacement,
                        model.hasGameplayStarted || model.liveImage == nil {
                         Text(visionText("estimatedIslandPlacement"))
                             .font(.caption2)
@@ -994,6 +1055,7 @@ struct DashboardView: View {
                             .padding(.vertical, 5)
                             .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 7))
                     }
+                    GameplayNotebookReadout(reader: gameTextReader, session: thinkingSession, enabled: readGameText)
                 }.padding(8).allowsHitTesting(false)
             }
         }
@@ -1037,6 +1099,10 @@ struct DashboardView: View {
                     .allowsHitTesting(false)
             }
         }
+    }
+
+    private var showsModelLoadingOverGame: Bool {
+        (workspace == .gameplay || workspace == .hacker) && model.labelImage == nil
     }
 
     private var hackerCanvas: some View {
@@ -1721,7 +1787,13 @@ struct DashboardView: View {
         // explicit user action, then start after activation has been delivered.
         NSApp.activate(ignoringOtherApps: true)
         NSApp.windows.first { $0.title == "Hollow Knight Vision" && $0.isVisible }?.makeKeyAndOrderFront(nil)
-        DispatchQueue.main.async { model.startBotDemo(inGameplay: inGameplay, domain: domain) }
+        DispatchQueue.main.async {
+            if model.botPlayer.hasQueuedSkill {
+                model.botPlayer.start(domain: domain)
+            } else {
+                model.startBotDemo(inGameplay: inGameplay, domain: domain)
+            }
+        }
     }
 
     private func hasTrainedGameplayModel() -> Bool {
@@ -1781,6 +1853,9 @@ struct DashboardView: View {
                                 modelReady: initialization.isFirstPhaseComplete && trainedGameplayModelReady,
                                 openGroundViewer: {
                                     groundFeatureWindowController.showScene(lines: groundViewerSceneLines, center: groundViewerCenter)
+                                }, openTextReader: {
+                                    showingSettings = false
+                                    showingTextReader = true
                                 })
                         case .system:
                             if model.canUseOps && model.liveGameStatus == "Gameplay" {
@@ -1845,7 +1920,7 @@ struct DashboardView: View {
             title: workspaceTitle, selection: workspaceSelection
         )
         .frame(width: 480)
-        .overlay(workspaceShortcuts)
+        .overlay { if !editingThinkingPrompt { workspaceShortcuts } }
     }
 
     private var workspaceShortcuts: some View {
@@ -1927,7 +2002,7 @@ struct DashboardView: View {
         }
 
 
-        if workspace == .model || workspace == .bot || reviewingModelCandidate != nil {
+        if workspace == .model || workspace == .bot || workspace == .thinking || reviewingModelCandidate != nil {
             closeModelReview()
         }
         if model.isLabelModeActive {
@@ -1959,6 +2034,9 @@ struct DashboardView: View {
                 ?? labelingContext.labels.first?.id ?? ""
             workspace = .label
             model.toggleLabelMode()
+        case .thinking:
+            workspace = .thinking
+            model.setModelReviewActive(true, reservesAllKeys: true)
         case .bot:
             workspace = .bot
             model.setModelReviewActive(true)

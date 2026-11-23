@@ -14,6 +14,7 @@ def export_policy(model_directory, output_directory=None):
     from stable_baselines3 import PPO
     from stable_baselines3.common.torch_layers import FlattenExtractor
     from stable_baselines3.common.distributions import MultiCategoricalDistribution
+    from bot_projected_ppo import ColumnExtractor
 
     root = Path(model_directory)
     output = Path(output_directory) if output_directory else root
@@ -29,7 +30,7 @@ def export_policy(model_directory, output_directory=None):
     model.policy.set_training_mode(False)
     if (model.observation_space.shape != (len(names) * HISTORY_LENGTH,)
             or model.action_space.nvec.tolist() != ACTION_SIZES
-            or not isinstance(model.policy.pi_features_extractor, FlattenExtractor)
+            or type(model.policy.pi_features_extractor) not in (FlattenExtractor, ColumnExtractor)
             or not isinstance(model.policy.action_dist, MultiCategoricalDistribution)):
         raise ValueError('Only flat observations and MultiDiscrete PPO actors are supported')
     modules = list(model.policy.mlp_extractor.policy_net)
@@ -46,6 +47,8 @@ def export_policy(model_directory, output_directory=None):
                'modelName': manifest.get('name', root.name), 'featureNames': names,
                'historyLength': HISTORY_LENGTH, 'actionSizes': ACTION_SIZES,
                'sourceCheckpointSHA256': digest, 'layers': []}
+    if isinstance(model.policy.pi_features_extractor, ColumnExtractor):
+        payload.update(schemaVersion=2, inputColumns=model.policy.pi_features_extractor.indices.tolist())
     if (manifest.get('supportsMaskedKnight') or manifest.get('maskedKnightTrainingExamples', 0) > 0) and manifest.get('botDomain') == 'gameplay':
         payload['supportsMaskedKnight'] = True
     for module, activation in layers:
@@ -83,14 +86,19 @@ def write_parity_fixture(model, output, dataset=None):
                 raise ValueError('Invalid parity dataset')
             selected = np.linspace(0, len(recorded) - 1, min(32, len(recorded)), dtype=int)
             inputs = np.concatenate([inputs, recorded[selected].astype(np.float32)])
+    logits, actions = [], []
     with torch.no_grad():
-        tensor = torch.as_tensor(inputs)
-        features = model.policy.extract_features(tensor, model.policy.pi_features_extractor)
-        latent = model.policy.mlp_extractor.forward_actor(features)
-        logits = model.policy.action_net(latent).cpu().numpy()
-        actions, _ = model.predict(inputs, deterministic=True)
-    Path(output).write_text(json.dumps({'inputs': inputs.tolist(), 'logits': logits.tolist(),
-                                       'actions': actions.tolist()}, allow_nan=False))
+        # Playback makes one decision at a time. Batched matrix multiplication can
+        # accumulate differently from the single-observation call used in the game.
+        for observation in inputs:
+            tensor = torch.as_tensor(observation).unsqueeze(0)
+            features = model.policy.extract_features(tensor, model.policy.pi_features_extractor)
+            latent = model.policy.mlp_extractor.forward_actor(features)
+            logits.append(model.policy.action_net(latent)[0].cpu().tolist())
+            action, _ = model.predict(observation, deterministic=True)
+            actions.append(action.tolist())
+    Path(output).write_text(json.dumps({'inputs': inputs.tolist(), 'logits': logits,
+                                       'actions': actions}, allow_nan=False))
 
 
 if __name__ == '__main__':

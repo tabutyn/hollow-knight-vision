@@ -21,6 +21,8 @@ artifacts/
 *.mp4
 !artwork/app-icon-source.png
 !artwork/app-icon-monocle-overlay.png
+!docs/playing-policies/policy-controls.png
+!docs/playing-policies/policy-selection.png
 **/labeling-v1/
 **/training-v1/datasets/
 **/atlases/

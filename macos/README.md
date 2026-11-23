@@ -13,6 +13,10 @@ Win32 capture/normalization bootstrap and Windows CI; the feature-complete app i
 still macOS-only. See [WINDOWS_PORT.md](WINDOWS_PORT.md) for the dependency audit
 and ordered port gates.
 
+## Playing policies
+
+Use **T** to open Thinking, enter a goal, and choose **Queue for B**. Back in Gameplay or Hacker, **B** runs the eligible policy with the highest proposed score. The default goal is mapping new Atlas territory. The [policy guide](BOT_SKILLS.md) describes all six policies and their compact inputs. The [architecture diagrams and slides](../docs/playing-policies/README.md) show how the planner reaches game controls.
+
 ## Build, capture, and dashboard
 
 After changing code, use the canonical build command:

@@ -24,7 +24,7 @@ reported detour limitations.
 
 One UTF-8 JSON object per line, maximum 262144 characters (including bounded room-mask checkpoint data). A client sends full
 `state` snapshots. `heldButtons` is a complete bitset: left=1, right=2,
-down=4, up=8, A=16, Z=32, X=64, inventory=128, pause menu=256.
+down=4, up=8, A=16, Z=32, X=64, inventory=128, pause menu=256. The negotiated `skill-controls-v1` capability adds quick cast=512, dash=1024, crystal dash=2048 and Dream Nail=4096. The receiver binds these to the game’s HeroActions and removes those bindings on shutdown.
 
 ```json
 {"version":1,"type":"state","sessionID":"4b6f...","sequence":12,"enabled":true,"heldButtons":18}

@@ -71,6 +71,7 @@ icon_digest=${icon_digest%% *}
 icon_filename="HollowKnightVision-$build_version-${icon_digest[1,12]}.icns"
 cp "$scratch_dir/release/HollowKnightVision" "$contents_dir/MacOS/HollowKnightVision"
 cp "$scratch_dir/release/HollowKnightVisionTrainer" "$contents_dir/Helpers/HollowKnightVisionTrainer"
+cp "$script_dir/Sources/HollowKnightVision/Resources/playing-policy-inputs.json" "$contents_dir/Resources/"
 cp "$script_dir/Sources/HollowKnightVision/Resources/labeling-contracts.json" \
   "$contents_dir/Resources/labeling-contracts.json"
 # Remove reference pixels left by older incremental packages.
@@ -89,7 +90,8 @@ cp -R "$script_dir/TrainingPython" "$contents_dir/Resources/TrainingPython"
 rm -rf "$contents_dir/Resources/BotPython"
 cp -R "$script_dir/BotPython" "$contents_dir/Resources/BotPython"
 # Keep the local interpreter outside the app bundle; only its location is bundled.
-print -r -- "$script_dir/.bot-venv/bin/python" > "$contents_dir/Resources/bot-training-environment.txt"
+bot_venv_dir="$script_dir/.bot-venv"
+print -r -- "${bot_venv_dir:A}/bin/python" > "$contents_dir/Resources/bot-training-environment.txt"
 cp "$script_dir/setup-incremental-trainer.sh" "$contents_dir/Resources/setup-incremental-trainer.sh"
 cp "$script_dir/Info.plist" "$contents_dir/Info.plist"
 plutil -replace CFBundleVersion -string "$build_version" "$contents_dir/Info.plist"

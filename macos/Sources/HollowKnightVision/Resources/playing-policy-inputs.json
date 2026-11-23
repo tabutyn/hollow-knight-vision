@@ -1,0 +1,26 @@
+{
+  "motor": {
+    "current": [""],
+    "history": ["knight_", "detection_age", "capture_age", "room_changed", "previous_", "terrain_valid", "blockade_", "enemy_0_", "enemy_1_", "marking_0_", "marking_1_", "marking_ground_known", "marking_wall_known", "marking_spike_known", "marking_door_known"]
+  },
+  "explore": {
+    "current": ["knight_", "detection_age", "capture_age", "room_changed", "previous_", "terrain_valid", "blockade_", "enemy_0_", "enemy_1_", "marking_0_", "marking_1_", "marking_ground_known", "marking_wall_known", "marking_spike_known", "marking_door_known", "road_", "shared_path_", "landing_", "atlas_", "geo_cache_"],
+    "history": ["knight_", "detection_age", "capture_age", "room_changed", "previous_", "terrain_valid", "blockade_"]
+  },
+  "traverse": {
+    "current": ["knight_", "detection_age", "capture_age", "room_changed", "previous_", "terrain_valid", "enemy_0_", "enemy_1_", "road_", "shared_path_", "landing_", "marking_", "blockade_"],
+    "history": ["knight_", "detection_age", "capture_age", "room_changed", "previous_", "terrain_valid", "blockade_", "enemy_0_", "enemy_1_", "marking_0_", "marking_1_", "marking_ground_known", "marking_wall_known", "marking_spike_known", "marking_door_known"]
+  },
+  "fight": {
+    "current": ["knight_", "detection_age", "capture_age", "room_changed", "previous_", "terrain_valid", "enemy_0_", "enemy_1_", "enemy_2_", "enemy_3_", "marking_0_", "marking_1_", "marking_ground_known", "marking_wall_known", "marking_spike_known", "marking_door_known", "health_"],
+    "history": ["knight_", "detection_age", "capture_age", "room_changed", "previous_", "terrain_valid", "enemy_0_", "enemy_1_"]
+  },
+  "recover": {
+    "current": ["knight_", "detection_age", "capture_age", "room_changed", "previous_", "terrain_valid", "enemy_0_", "enemy_1_", "enemy_2_", "enemy_3_", "marking_0_", "marking_1_", "marking_ground_known", "marking_wall_known", "marking_spike_known", "marking_door_known", "health_", "lifeblood_cocoon_"],
+    "history": ["knight_", "detection_age", "capture_age", "room_changed", "previous_", "terrain_valid", "enemy_0_", "enemy_1_", "health_"]
+  },
+  "progress": {
+    "current": ["knight_", "detection_age", "capture_age", "room_changed", "previous_", "terrain_valid", "blockade_", "enemy_0_", "enemy_1_", "marking_0_", "marking_1_", "marking_ground_known", "marking_wall_known", "marking_spike_known", "marking_door_known", "road_", "shared_path_", "landing_", "atlas_", "geo_cache_", "lifeblood_cocoon_"],
+    "history": ["knight_", "detection_age", "capture_age", "room_changed", "previous_", "terrain_valid", "enemy_0_", "enemy_1_"]
+  }
+}

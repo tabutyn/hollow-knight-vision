@@ -578,6 +578,59 @@ class HackerGymTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "simulation timing"):
                 env._receive(0)
 
+    def test_reset_relaunches_an_invalid_spawn_with_the_same_seed_and_render_rate(self):
+        env = HackerGym(game="game", vision="vision", labels="labels", version=7)
+        attempts = []
+        read_reply = env._receive
+
+        def receive(step):
+            if attempts:
+                self.assertFalse(attempts[-1][0].exists())
+            config = json.loads((env.directory / "episode.json").read_text())
+            reply = frame(x=39.0 if not attempts else 34.5, ticks=0, episode=env.episode,
+                          noSave=True, invincible=False, renderHz=120, simulationHz=60)
+            attempts.append((env.directory, config))
+            (env.directory / "reply.json").write_text(json.dumps(reply))
+            return read_reply(step)
+
+        self.addCleanup(env.close)
+        with patch("hacker_gym.subprocess.Popen") as launch, patch.object(env, "_receive", side_effect=receive), \
+                patch.object(env, "_encode", return_value=np.zeros(env.observation_space.shape)) as encode, \
+                self.assertLogs("hacker_gym", level="WARNING") as messages:
+            launch.return_value.poll.return_value = None
+            env.usable = True
+            env.reset(seed=755698, options={"render_hz": 120})
+            self.assertEqual(launch.return_value.terminate.call_count, 2)
+            self.assertEqual(encode.call_count, 1)
+
+        configs = [config for _, config in attempts]
+        self.assertEqual([(config["seed"], config["renderHz"]) for config in configs], [(755698, 120)] * 2)
+        self.assertNotEqual(configs[0]["episode"], configs[1]["episode"])
+        self.assertEqual(env.last_frame["heroX"], 34.5)
+        self.assertIn("'heroX': 39.0", messages.output[0])
+
+    def test_reset_bounds_spawn_retries_and_propagates_protocol_failures(self):
+        for no_save, launches, message in ((True, 6, r"attempt 3/3.*'health': 4"),
+                                            (False, 2, "Invalid worker, sequence, save or damage state")):
+            with self.subTest(no_save=no_save):
+                env = HackerGym(game="game", vision="vision", labels="labels", version=7)
+                read_reply = env._receive
+
+                def receive(step):
+                    reply = frame(health=4, ticks=0, episode=env.episode, noSave=no_save, invincible=False)
+                    (env.directory / "reply.json").write_text(json.dumps(reply))
+                    return read_reply(step)
+
+                with patch("hacker_gym.subprocess.Popen") as launch, \
+                        patch.object(env, "_receive", side_effect=receive), patch.object(env, "_encode") as encode, \
+                        patch("hacker_gym.logging.getLogger"):
+                    with self.assertRaisesRegex(RuntimeError, message):
+                        env.reset(seed=755698)
+                    self.assertEqual(launch.call_count, launches)
+                    encode.assert_not_called()
+                self.assertFalse(env.directory.exists())
+                self.assertIsNone(env.last_frame)
+
     def test_practice_bank_uses_only_compatible_observations_and_unique_training_starts(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

@@ -20,7 +20,7 @@ namespace HollowKnightVisionInputReceiver
         private bool gymStarted, gymReady;
         private float gymNextSkip;
         private VisionButtons gymButtons;
-        private bool gymVisual;
+        private bool gymVisual, practiceTablet, tabletPositioned;
         private RenderTexture gymTarget;
         private Texture2D gymPixels;
         private readonly Dictionary<int, int> gymRockHits = new Dictionary<int, int>();
@@ -33,6 +33,7 @@ namespace HollowKnightVisionInputReceiver
             var config = JObject.Parse(File.ReadAllText(Path.Combine(gymDirectory, "episode.json")));
             gymEpisode = Guid.Parse(config.Value<string>("episode")).ToString();
             gymSeed = config.Value<int>("seed");
+            practiceTablet = config.Value<string>("practice") == "inspect-tablet";
             gymVisual = config.Value<string>("domain") == "gameplay";
             gymRenderHz = config.Value<int?>("renderHz") ?? 60;
             if (gymRenderHz != 60 && gymRenderHz != 120)
@@ -57,6 +58,7 @@ namespace HollowKnightVisionInputReceiver
                     Application.Quit(); return;
                 }
                 if (gm == null || gm.gameConfig == null) return;
+                EnsureShortcutBindings();
                 gm.profileID = -1;
                 gm.gameConfig.disableSaveGame = true;
                 if (!gymStarted) {
@@ -79,6 +81,12 @@ namespace HollowKnightVisionInputReceiver
                     }
                     if (gymGroundedAt == 0) gymGroundedAt = Time.time;
                     if (Time.time - gymGroundedAt < 0.35f) return;
+                    if (practiceTablet && !tabletPositioned) {
+                        PlaceAtPracticeTablet(hero);
+                        tabletPositioned = true;
+                        gymGroundedAt = 0;
+                        return;
+                    }
                     gymHealth = CurrentGymHealth();
                     if (gymHealth <= 0) return;
                     gymReady = true;
@@ -100,8 +108,7 @@ namespace HollowKnightVisionInputReceiver
                 gymActivity = Time.realtimeSinceStartup;
                 gymFramesLeft = request.Value<int>("ticks");
                 var buttons = request.Value<int>("buttons");
-                const VisionButtons allowed = VisionButtons.Left | VisionButtons.Right | VisionButtons.Up |
-                    VisionButtons.Down | VisionButtons.ActionX | VisionButtons.ActionZ;
+                const VisionButtons allowed = VisionButtons.All;
                 if (gymFramesLeft < 1 || gymFramesLeft > 30 || (buttons & ~(int)allowed) != 0)
                     throw new InvalidDataException("Invalid gym input.");
                 gymButtons = InputSnapshot.Normalize((VisionButtons)buttons);
@@ -109,6 +116,36 @@ namespace HollowKnightVisionInputReceiver
                 gymArmedFrame = Time.frameCount;
                 Time.timeScale = 1;
             } catch (Exception ex) { FailGymWorker(ex); }
+        }
+
+        // A repeatable interaction start for the private, save-disabled tutorial worker.
+        // The actual prompt, input, dialogue and rendered pixels still come from the game.
+        private void PlaceAtPracticeTablet(HeroController hero)
+        {
+            Collider2D nearest = null;
+            float distance = float.PositiveInfinity;
+            var candidates = new List<string>();
+            foreach (var collider in UnityEngine.Object.FindObjectsByType<Collider2D>(FindObjectsSortMode.None)) {
+                if (!collider.isTrigger || collider.gameObject.scene.name != GameManager.instance.sceneName) continue;
+                if (!collider.name.StartsWith("Tut_tablet_top", StringComparison.OrdinalIgnoreCase)) continue;
+                candidates.Add(collider.name);
+                float d = Vector2.Distance(hero.transform.position, collider.bounds.center);
+                if (d < distance) { nearest = collider; distance = d; }
+            }
+            if (nearest == null) throw new InvalidDataException("No active tutorial tablet trigger among " + String.Join(", ", candidates.ToArray()));
+            var center = nearest.bounds.center;
+            var position = new Vector3(center.x, nearest.bounds.max.y + 1.5f, hero.transform.position.z);
+            hero.transform.position = position;
+            var body = hero.GetComponent<Rigidbody2D>();
+            if (body != null) { body.position = position; body.linearVelocity = Vector2.zero; }
+            hero.current_velocity = Vector2.zero;
+            hero.cState.onGround = false;
+            Physics2D.SyncTransforms();
+            var cameras = GameCameras.instance;
+            if (cameras != null && cameras.cameraController != null) cameras.cameraController.PositionToHero(true);
+            File.WriteAllText(Path.Combine(gymDirectory, "practice-start.json"),
+                new JObject { ["trigger"] = nearest.name, ["x"] = center.x, ["y"] = center.y,
+                              ["candidates"] = new JArray(candidates) }.ToString());
         }
 
         private static int CurrentGymHealth()

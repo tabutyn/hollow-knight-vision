@@ -20,6 +20,9 @@ namespace HollowKnightVisionInputReceiver
             Assert("up bit", (VisionButtons.Up & (VisionButtons)8) != 0);
             Assert("inventory bit", (VisionButtons.Inventory & (VisionButtons)128) != 0);
             Assert("pause menu bit", (VisionButtons.PauseMenu & (VisionButtons)256) != 0);
+            var abilities = VisionButtons.QuickCast | VisionButtons.Dash | VisionButtons.SuperDash | VisionButtons.DreamNail;
+            Assert("ability bits shared with the Mac sender", (int)abilities == (512 | 1024 | 2048 | 4096));
+            Assert("aim and extended abilities survive normalization", InputSnapshot.Normalize(abilities | VisionButtons.Up) == (abilities | VisionButtons.Up));
             Assert("version rejected", !InputSnapshot.TryParse("{\"version\":2,\"type\":\"state\"}", out snapshot));
             Assert("negative sequence rejected", !InputSnapshot.TryParse("{\"version\":1,\"type\":\"state\",\"sessionID\":\"x\",\"sequence\":-1,\"enabled\":true,\"heldButtons\":0}", out snapshot));
             var ack = InputSnapshot.Ack("test", 9, true, VisionButtons.Right | VisionButtons.ActionX);

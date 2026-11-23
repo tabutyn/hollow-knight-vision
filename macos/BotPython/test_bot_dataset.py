@@ -37,6 +37,20 @@ def road_values(row, offset=0):
 
 
 class BotDatasetTests(unittest.TestCase):
+    def test_extended_labels_preserve_combined_and_short_ability_inputs(self):
+        frames = [observation(100.1), observation(100.2)]
+        events = [event(100.01, "right"), event(100.12, "dash"), event(100.14, "dash", False),
+                  event(100.19, "a"), event(100.29, "a", False)]
+        rows, _ = dataset.examples(manifest(), frames, events, skill_controls=True)
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertEqual(row["action"][:4], [2, 0, 0, 0])
+            self.assertEqual(row["action"][4 + dataset.SKILL_BUTTONS.index("a")], 1)
+        self.assertEqual([row["action"][4 + dataset.SKILL_BUTTONS.index("dash")] for row in rows], [1, 0])
+        legacy, rejected = dataset.examples(manifest(), frames, events)
+        self.assertFalse(legacy)
+        self.assertEqual(rejected["unsupported-input"], 2)
+
     def test_landing_geometry_follows_moving_shelf_in_current_room(self):
         frames = [observation(100.1), observation(100.2), observation(100.3, room=2)]
         for frame, (x, y) in zip(frames, ((320, 175), (336, 182), (336, 182))):
