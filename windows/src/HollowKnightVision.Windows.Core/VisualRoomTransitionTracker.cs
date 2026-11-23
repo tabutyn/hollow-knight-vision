@@ -1079,6 +1079,7 @@ public sealed class VisualRoomTransitionTracker
     private TimedDirection? lastBoundary;
     private TimedKnightObservation? lastKnightObservation;
     private PendingTransition? pending;
+    private readonly VisualSceneDiscontinuityTracker sceneCuts = new();
     private readonly LowResolutionRoomMotionTracker motionTracker = new();
     private readonly LowResolutionTransitionOdometry transitionOdometry = new();
     private readonly FloorlessCameraMotion floorlessMotion = new();
@@ -1330,6 +1331,7 @@ public sealed class VisualRoomTransitionTracker
                 ? appearance
                 : null;
             pending = null;
+            sceneCuts.Reset();
             lastIntent = null;
             lastBoundary = null;
             lastKnightObservation = null;
@@ -1381,6 +1383,20 @@ public sealed class VisualRoomTransitionTracker
                 || !double.IsFinite(currentWorldPose.X)
                 || !double.IsFinite(currentWorldPose.Y))
             {
+                return SnapshotLocked();
+            }
+            if (sceneCuts.Observe(profile.MotionGrid, timestamp, horizontalInput, currentWorldPose) is not null)
+            {
+                // An image-only loading cut provides ownership evidence. The new room starts without a portal.
+                activeRoomID = nextRoomID;
+                nextRoomID = checked(nextRoomID + 1);
+                activeEntryWorldPose = currentWorldPose;
+                activeAppearance = InitialAppearance(profile);
+                roomAppearances[activeRoomID] = activeAppearance.Value;
+                ClearTransientState(resetPlaceMemory: true);
+                activationWorldPose = currentWorldPose;
+                latestCoarseMotionGrid = profile.MotionGrid;
+                revision++;
                 return SnapshotLocked();
             }
             var priorMotionSample = previousMotionSample;
@@ -1696,9 +1712,9 @@ public sealed class VisualRoomTransitionTracker
             $"Room {activeRoomID + 1}",
             revision,
             activeEntryWorldPose,
-            pending is not null,
-            pending?.Direction,
-            transitionWorldPose,
+            pending is not null || sceneCuts.IsPending,
+            pending?.Direction ?? sceneCuts.PendingDirection,
+            transitionWorldPose ?? sceneCuts.DepartureWorldPose,
             activationWorldPose,
             floorlessPublishedPose,
             floorlessMotion.Revision,
@@ -1913,6 +1929,7 @@ public sealed class VisualRoomTransitionTracker
                     layout.TargetEntryWorldPose,
                     portalID);
         }
+        sceneCuts.Reset();
         activeRoomID = target.RoomID;
         activeEntryWorldPose = target.EntryWorldPose;
         activationWorldPose = continuousArrival ?? target.EntryWorldPose;
@@ -2028,6 +2045,7 @@ public sealed class VisualRoomTransitionTracker
 
     private void ClearTransientState(bool resetPlaceMemory)
     {
+        sceneCuts.Reset();
         lastIntent = null;
         lastBoundary = null;
         lastKnightObservation = null;

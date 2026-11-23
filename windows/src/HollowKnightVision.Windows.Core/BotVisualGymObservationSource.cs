@@ -72,7 +72,15 @@ public sealed class BotVisualGymObservationSource
             analysis.CameraReferences, textureExclusions, coverage.HasCoverage, masks.GroundKnight, ground, time);
         var placement = observed.GroundVerified ? observed.GroundTracking.CameraPosition : null;
         var room = ObserveRoom(placement ?? camera.Position, observed.GroundVerified);
-        if (room.IsTransitioning || activeRoom.HasValue && activeRoom.Value != room.RoomID || admitted.Transition.ResumedAfterTransition)
+        if (room.IsTransitioning || admitted.Transition.ResumedAfterTransition && activeRoom == room.RoomID)
+        {
+            walked.BreakContinuity();
+            coverage.Interrupt();
+            blockade.Interrupt();
+            knightMemory.Reset();
+            return new(null, ["room-transition"], confidence);
+        }
+        if (activeRoom.HasValue && activeRoom.Value != room.RoomID)
         {
             activeRoom = room.RoomID;
             chart++;

@@ -251,6 +251,38 @@ internal static class VisualSceneDiscontinuityTrackerTests
         }
     }
 
+    internal static void TestImageOnlyCutPersistsRoomWithoutInventingAPortal()
+    {
+        var tracker = new VisualRoomTransitionTracker();
+        var source = Texture(1);
+        var arrival = Texture(2);
+        var arrivingPose = new AtlasPoint(207, -39);
+        var departureRoom = tracker.Snapshot.RoomID;
+        for (var index = 0; index < 40; index++)
+        {
+            var grid = index < 8 ? source : index < 18 ? Black : arrival;
+            var current = tracker.Observe(Profile(grid), new(index < 8 || index >= 18, false),
+                VisualRoomDirection.Right, null, new(640, 360), index < 18 ? Departure : arrivingPose, 640, index * .05);
+            if (index is >= 8 and < 18)
+                Check(current.IsTransitioning && current.TransitionDirection == VisualRoomDirection.Right
+                    && current.TransitionWorldPose == Departure && current.RoomID == departureRoom,
+                    "Loading must withhold the source room before a confirmed arrival.");
+        }
+        var arrived = tracker.Snapshot;
+        Check(!arrived.IsTransitioning && arrived.RoomID == 1 && arrived.Revision == 1
+            && arrived.EntryWorldPose == arrivingPose && arrived.Portals.Count == 0);
+        var path = Path.GetTempFileName();
+        try
+        {
+            tracker.SaveTopology(path);
+            var restored = new VisualRoomTransitionTracker().RestoreTopology(path);
+            Check(!restored.IsTransitioning && restored.RoomID == arrived.RoomID
+                && restored.EntryWorldPose == arrived.EntryWorldPose && restored.Portals.Count == 0);
+            Check(tracker.Reset() is { RoomID: 0, IsTransitioning: false, Portals.Count: 0 });
+        }
+        finally { File.Delete(path); }
+    }
+
     private static FrameSignalProfile Profile(LowResolutionMotionGrid grid) =>
         new(grid.Luma.Length, grid.Luma.Count(value => value >= 5), grid.Luma.Count(value => value >= 16),
             grid.Luma.Average(value => (double)value), grid);
