@@ -580,6 +580,34 @@ internal static class NativeAtlasImportTests
         });
     }
 
+    internal static void TestDoorwaySpacingUsesOnlyPlacedImages()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-local-recovery-doorway-");
+        try
+        {
+            var pipeline = new WindowsLiveWorldPipeline(root.FullName);
+            Check(pipeline.Process(ResumeFrame(1, 71)).AllowsAtlasWrite, "the departure room has a saved footprint");
+            pipeline.NotifyTrackingLoss(1);
+            WindowsLiveWorldFrame Local(long id, double time) => ResumeFrame(id, 901, localX: 1600) with
+            {
+                Timestamp = time,
+                MonotonicTimestamp = time,
+                WorldEvidence = new LiveWorldCaptureEvidence(time) { LocalReferenceTimestamp = time - .05 }
+            };
+            _ = pipeline.Process(Local(2, .45));
+            _ = pipeline.Process(Local(3, .57));
+            Check(pipeline.Process(Local(4, .72)).PlacementPending, "distant geometry is saved with no world placement");
+
+            var cut = new VisualSceneDiscontinuityTracker.Cut(.75, 1.35, new(1600, 0), VisualRoomDirection.Right);
+            WindowsLiveWorldFrame Arrive(long id) => ResumeFrame(id, 191) with { RoomName = "Next_room", DoorwayCut = cut };
+            Check(!pipeline.Process(Arrive(5)).AllowsAtlasWrite, "the cut provisionally places the new room");
+            var arrival = pipeline.Process(Arrive(6));
+            Check(arrival.AllowsAtlasComposition && arrival.CameraPose == new AtlasPoint(432, 0),
+                "the next room sits alongside the visible map instead of the pending section");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
     private static WindowsLiveWorldFrame FloorFrame(long id, int seed, bool rightSide, int row, bool airborne, bool competing)
     {
         var request = ResumeFrame(id, seed);

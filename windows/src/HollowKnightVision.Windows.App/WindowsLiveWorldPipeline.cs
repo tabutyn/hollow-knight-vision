@@ -959,8 +959,7 @@ internal sealed class WindowsLiveWorldPipeline
             || !double.IsFinite(cut.DepartureTimestamp) || !double.IsFinite(cut.ArrivalTimestamp)
             || cut.DepartureTimestamp < source.StartedAt || cut.ArrivalTimestamp <= cut.DepartureTimestamp
             || request.MonotonicTimestamp - cut.ArrivalTimestamp is < 0 or > 3
-            || cut.Direction is not (VisualRoomDirection.Left or VisualRoomDirection.Right)
-            || snapshot.Observations.All(observation => observation.RoomId != source.RoomId))
+            || cut.Direction is not (VisualRoomDirection.Left or VisualRoomDirection.Right))
         {
             return false;
         }
@@ -981,14 +980,16 @@ internal sealed class WindowsLiveWorldPipeline
             while (usedRoomIds.Contains(targetId)) targetId = checked(targetId + 1);
         }
 
-        // Keep an unverified room outside the saved images. A confirmed cut
-        // supplies direction while the relative positions still need evidence.
+        var unplaced = snapshot.UnplacedObservationIds();
+        var placed = snapshot.Observations.Where(observation => !unplaced.Contains(observation.Id)).ToArray();
+        if (!placed.Any(observation => observation.RoomId == source.RoomId)) return false;
+
+        // The measured cut supplies direction, and the visible Atlas supplies
+        // spacing until there is direct evidence for a relative placement.
         var margin = request.SolveWidth * .1;
         var worldX = cut.Direction == VisualRoomDirection.Right
-            ? snapshot.Observations.Max(value => value.OptimizedPose.X + value.SolveWidth * .5)
-                + margin + request.SolveWidth * .5
-            : snapshot.Observations.Min(value => value.OptimizedPose.X - value.SolveWidth * .5)
-                - margin - request.SolveWidth * .5;
+            ? placed.Max(value => value.OptimizedPose.X + value.SolveWidth * .5) + margin + request.SolveWidth * .5
+            : placed.Min(value => value.OptimizedPose.X - value.SolveWidth * .5) - margin - request.SolveWidth * .5;
         var basis = new AtlasPoint(worldX - request.LocalPose.X, worldBasis.Snapshot.WorldFromLocal.Y);
         if (!double.IsFinite(basis.X)) return false;
 
