@@ -56,6 +56,7 @@ internal static class Program
         ControlledStepCaptureTests.Run();
         ReplayLifecycleTests.Run();
         TestVisualReplayInspectionSkipsNormalStartup();
+        VisualProductionReplayTests.Run();
         TestWorldReplayRequiresExplicitReturningIntent();
         TestWorldReplayCreatesRequestedReport();
         TestWorldReplayBadArgumentsAndFailureExitCodes();
@@ -128,7 +129,7 @@ internal static class Program
         GpuCaptureTests.TestMappedBounds();
         GpuCaptureTests.RunIfRequested();
         if (args.Contains("--input")) TestBackgroundKeyDelivery();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 77 : 76)}");
+        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 78 : 77)}");
         Application.Current.Shutdown();
     }
 

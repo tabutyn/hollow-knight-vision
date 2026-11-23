@@ -196,6 +196,23 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         }
     }
 
+    internal void RecordLoopClosure(
+        double captureTimestamp,
+        int worldRevision,
+        AtlasPoint correction,
+        LiveWorldLoopClosureEdge closure)
+    {
+        lock (stateLock)
+        {
+            inputPathRecorder.RecordLoopClosure(
+                captureTimestamp,
+                worldRevision,
+                new CameraVector(correction.X, correction.Y),
+                closure,
+                MonotonicSeconds());
+        }
+    }
+
     internal bool TryGetFreshGroundTruth(
         TimeSpan maximumAge,
         out ReceiverGroundTruthSample sample)

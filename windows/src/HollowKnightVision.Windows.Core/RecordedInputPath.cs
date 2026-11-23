@@ -276,6 +276,27 @@ public sealed record InputPathTrackingObservation
     public double? LocalReferenceTimestamp { get; init; }
     public CameraVector? LocalReferencePosition { get; init; }
     public CameraVector? LocalMatchedImageDisplacement { get; init; }
+
+    public static InputPathTrackingObservation FromGround(GroundHypothesisTrackingResult ground) => new()
+    {
+        CameraPosition = ground.CameraPosition,
+        PoseVerified = ground.PoseVerified,
+        HasConfirmedGround = ground.HasConfirmedGround,
+        GlobalCorrection = ground.GlobalCorrection,
+        GlobalMatchCount = ground.GlobalMatchCount,
+        GroundSegmentCount = ground.GroundSegmentCount,
+        InlierCount = ground.InlierCount,
+        ResidualRms = ground.ResidualRms,
+        VisibleLineIds = ground.LineReviews.Select(line => line.Id).ToArray(),
+        AtlasLineIds = ground.AtlasLines.Select(line => line.SegmentId).Distinct().ToArray(),
+        LocalTextureSupport = ground.LocalTextureSupport,
+        LocalTextureError = ground.LocalTextureError,
+        LocalMatchSource = ground.LocalMatchSource,
+        LocalReferenceTimestamp = ground.LocalReferenceTimestamp,
+        LocalReferencePosition = ground.LocalReferencePosition,
+        LocalMatchedImageDisplacement = ground.LocalMatchedImageDisplacement,
+        ProvisionalContinuityActive = ground.ProvisionalContinuityActive
+    };
 }
 
 public sealed record InputPathPlaceMatch(
@@ -336,13 +357,18 @@ public sealed class InputPathRecorder
         {
             if (session is not null) return false;
             var pathId = id ?? Guid.NewGuid();
+            var startedAt = timestamp ?? MonotonicSeconds();
             session = new Session
             {
                 Id = pathId, CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
-                StartedAt = timestamp ?? MonotonicSeconds(), SourcePathId = sourcePathId,
+                StartedAt = startedAt, SourcePathId = sourcePathId,
                 ReplayIteration = replayIteration, StartCheckpoint = startCheckpoint, Metadata = metadata,
                 VisualArchive = visualArchiveRoot is null ? null
-                    : new VisualReplayArchiveWriter(visualArchiveRoot, pathId, MergedMetadata(metadata))
+                    : new VisualReplayArchiveWriter(visualArchiveRoot, pathId,
+                        new Dictionary<string, string>(MergedMetadata(metadata))
+                        {
+                            ["inputStartedAt"] = startedAt.ToString("R", CultureInfo.InvariantCulture)
+                        })
             };
             return true;
         }

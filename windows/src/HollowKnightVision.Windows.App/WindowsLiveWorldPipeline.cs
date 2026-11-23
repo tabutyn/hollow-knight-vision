@@ -906,23 +906,3 @@ internal sealed class WindowsLiveWorldPipeline
             ScreenWidth: frame.Width,
             ScreenHeight: frame.Height);
 }
-
-internal sealed partial class WindowsGameControlForwarder
-{
-    internal void RecordLoopClosure(
-        double captureTimestamp,
-        int worldRevision,
-        AtlasPoint correction,
-        LiveWorldLoopClosureEdge closure)
-    {
-        lock (stateLock)
-        {
-            inputPathRecorder.RecordLoopClosure(
-                captureTimestamp,
-                worldRevision,
-                new CameraVector(correction.X, correction.Y),
-                closure,
-                MonotonicSeconds());
-        }
-    }
-}

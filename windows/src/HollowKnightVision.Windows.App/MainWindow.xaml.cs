@@ -725,107 +725,6 @@ public partial class MainWindow : Window
 
     private sealed record GroundTruthMatchedContext(long CaptureGeneration, long CaptureId);
 
-    private sealed class GroundHypothesisWorkerState
-    {
-        internal GroundHypothesisTracker Tracker { get; } = new(
-            minimumObservationSeconds: .2,
-            backgroundGlobalSearch: true,
-            confirmedLossGraceSeconds: 3,
-            productionCameraSolver: true);
-        internal bool NeedsCameraAnchor { get; set; } = true;
-        internal GroundSemanticAtlas SemanticAtlas { get; } = new();
-        internal GroundReferenceTracker ReferenceTracker { get; } = new();
-        internal WalkedGroundTracker WalkedGround { get; } = new();
-        internal long WalkedCoordinateEpoch { get; private set; }
-        internal GroundPlatformPatches PlatformPatches { get; } = new();
-        internal GameplayPathTracker Paths { get; } = new();
-        internal string? ReceiverSceneName { get; private set; }
-        internal int FrameWidth { get; private set; }
-        internal int FrameHeight { get; private set; }
-
-        internal void PrepareFrame(
-            int width,
-            int height,
-            string? receiverSceneName)
-        {
-            if (FrameWidth != 0 && (FrameWidth != width || FrameHeight != height))
-            {
-                Reset();
-            }
-            FrameWidth = width;
-            FrameHeight = height;
-
-            if (string.IsNullOrWhiteSpace(receiverSceneName)) return;
-            if (ReceiverSceneName is not null
-                && !string.Equals(
-                    ReceiverSceneName,
-                    receiverSceneName,
-                    StringComparison.Ordinal))
-            {
-                Reset();
-                FrameWidth = width;
-                FrameHeight = height;
-            }
-            ReceiverSceneName = receiverSceneName;
-        }
-
-        internal void SuspendTracking()
-        {
-            Tracker.Reset(keepingGlobalFeatures: true);
-            ReferenceTracker.Reset();
-            WalkedGround.BreakContinuity();
-            PlatformPatches.Reset();
-            Paths.Suspend();
-        }
-
-        internal void ResetWalkedCoordinateEpoch()
-        {
-            WalkedCoordinateEpoch++;
-            WalkedGround.Reset();
-        }
-
-        internal void Reset(bool preserveWalkedGround = false)
-        {
-            if (preserveWalkedGround) WalkedGround.BreakContinuity();
-            else ResetWalkedCoordinateEpoch();
-            PlatformPatches.Reset();
-            Paths.Reset();
-            NeedsCameraAnchor = true;
-            Tracker.Reset();
-            SemanticAtlas.Reset();
-            ReferenceTracker.Reset();
-            ReceiverSceneName = null;
-            FrameWidth = 0;
-            FrameHeight = 0;
-        }
-    }
-
-    private sealed class NormalAtlasRoomIdentity
-    {
-        private long captureGeneration = long.MinValue;
-        private long roomEpoch;
-        private bool transitionResumeActive;
-
-        internal string Observe(
-            long currentCaptureGeneration,
-            bool resumedAfterTransition)
-        {
-            if (captureGeneration != currentCaptureGeneration)
-            {
-                captureGeneration = currentCaptureGeneration;
-                roomEpoch = 0;
-                transitionResumeActive = false;
-            }
-            if (resumedAfterTransition && !transitionResumeActive)
-            {
-                roomEpoch = checked(roomEpoch + 1);
-            }
-            transitionResumeActive = resumedAfterTransition;
-            return FormattableString.Invariant(
-                $"normal:{currentCaptureGeneration}:room:{roomEpoch}");
-        }
-    }
-
     private sealed record AtlasPersistencePublication(
         GroundTruthAtlasMosaic Atlas,
         long Revision,
@@ -2745,8 +2644,7 @@ public partial class MainWindow : Window
         CancellationToken cancellationToken)
     {
         var frameAdmission = new GameplayFrameAdmission();
-        var groundHypothesisState = new GroundHypothesisWorkerState();
-        var normalAtlasRoomIdentity = new NormalAtlasRoomIdentity();
+        var trackingPipeline = new GameplayTrackingPipeline(visualGameplayTracker, frameMotionTracker);
         var appliedGroundResetGeneration = Interlocked.Read(
             ref groundHypothesisResetGeneration);
         long? lastLabelRevision = null;
@@ -2759,14 +2657,14 @@ public partial class MainWindow : Window
                     ref groundHypothesisResetGeneration);
                 if (requestedGroundResetGeneration != appliedGroundResetGeneration)
                 {
-                    groundHypothesisState.Reset();
+                    trackingPipeline.Reset();
                     appliedGroundResetGeneration = requestedGroundResetGeneration;
                 }
                 if (lastLabelRevision != pending.LabelRevision)
                 {
                     frameMotionTracker.Reset();
                     inputPathMotionTracker.Reset();
-                    groundHypothesisState.Reset(preserveWalkedGround: true);
+                    trackingPipeline.Reset(preserveWalkedGround: true);
                     frameAdmission = new();
                     lastLabelRevision = pending.LabelRevision;
                 }
@@ -2791,8 +2689,7 @@ public partial class MainWindow : Window
                         pending.IntegratesHackerAtlas,
                         pending.HackerWorkGeneration,
                         pending.MovementButtons,
-                        groundHypothesisState,
-                        normalAtlasRoomIdentity);
+                        trackingPipeline);
                 }
                 finally
                 {
@@ -2822,7 +2719,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            groundHypothesisState.Reset();
+            trackingPipeline.Reset();
             menuStencilRecognizer.ResetObjectInference();
             await menuStencilRecognizer.DrainObjectInferenceAsync().ConfigureAwait(false);
         }
@@ -3220,8 +3117,7 @@ public partial class MainWindow : Window
         bool integratesHackerAtlas,
         long pendingHackerWorkGeneration,
         InputButtons? movementButtons,
-        GroundHypothesisWorkerState groundHypothesisState,
-        NormalAtlasRoomIdentity normalAtlasRoomIdentity)
+        GameplayTrackingPipeline trackingPipeline)
     {
         menuStencilRecognizer.ConfigureObjectDiagnostics(Volatile.Read(ref objectDetectionExtension), createsObjectPixelDiagnostic);
         var recognition = menuStencilRecognizer.AnalyzeLiveWithPublication(frame,
@@ -3240,11 +3136,7 @@ public partial class MainWindow : Window
             signal,
             recognition.GameplayEnabled,
             recognition.Generation);
-        if (admission.ResetMotionReference)
-        {
-            frameMotionTracker.Reset();
-            groundHypothesisState.SuspendTracking();
-        }
+        if (admission.ResetMotionReference) trackingPipeline.ResetMotionReference();
         var hudStencil = recognition.Hud;
         var detections = recognition.Detections;
         var masks = GameplaySceneMasks.Create(frame, detections, hudStencil, recognition.Objects.Masks);
@@ -3262,121 +3154,41 @@ public partial class MainWindow : Window
             && profileTimestamp - hudStencil.SourceTimestamp is >= 0 and <= .25;
         var profileLaunch = ObserveProfileAtlas(profileMenu, freshProfileHud, captureTimestamp, captureGeneration);
         var holdAtlas = Volatile.Read(ref profileAtlasHeld);
-        var atlasExclusions = masks.AtlasExclusions;
-        var groundExclusions = masks.GroundExclusions;
-        IReadOnlyList<DetectedFloorLine> ground = [];
-        var groundHypotheses = GroundHypothesisTrackingResult.Empty;
-        IReadOnlyList<DetectedFloorLine> hypothesisFloorLines = [];
-        var hypothesisExclusions = groundExclusions.ToList();
-        if (masks.GroundKnight is { } groundKnight) hypothesisExclusions.Add(groundKnight);
-        GroundEdgeAnalysis? groundAnalysis = null;
-        GroundTheoryAnalysis? groundTheory = null;
-        groundHypothesisState.PrepareFrame(
-            frame.Width,
-            frame.Height,
-            exactReceiverTelemetry?.SceneName);
-        if (groundHypothesisState.NeedsCameraAnchor)
-        {
-            groundHypothesisState.Tracker.ReanchorLocalCamera(visualGameplayTracker.Position);
-            groundHypothesisState.NeedsCameraAnchor = false;
-        }
         if (admission.AdmitsTracking)
-        {
             gameControls.RecordVisualGroundInput(captureTimestamp, (ulong)captureGeneration, frame.Height, masks, movementButtons);
-            var extracted = GameplayTerrainAnalysis.Analyze(frame, masks);
-            groundAnalysis = extracted.Edges;
-            groundTheory = extracted.Theory;
-            ground = extracted.Floors;
-            hypothesisFloorLines = extracted.CameraReferences;
-        }
-        else groundHypothesisState.SuspendTracking();
-
-        LowResolutionTranslationDiagnostic? motion = null;
-        if (admission.AdmitsTracking)
-        {
-            motion = frameMotionTracker.Observe(frame, masks.GroundRegions.OmittedRects);
-        }
-        else frameMotionTracker.Reset();
+        var prepared = trackingPipeline.Prepare(frame, masks, admission.AdmitsTracking, exactReceiverTelemetry?.SceneName);
+        var motion = prepared.Motion;
         latestMotion = motion;
         if (!labelCapture.CanProcess(labelRevision)) return null;
 
-        AtlasMosaicDelta? gameplayTiles = null;
-        var groundStarted = Stopwatch.GetTimestamp();
-        var visualObservation = admission.AdmitsTracking
-            && groundAnalysis?.SourceLuma is { } sourceLuma
-            ? visualGameplayTracker.ObserveGroundAnchored(
-                frame, motion, sourceLuma, hypothesisFloorLines, hypothesisExclusions,
-                gameplayAtlas.TileCount > 0, masks.GroundKnight,
-                groundHypothesisState.Tracker, captureTimestamp)
-            : visualGameplayTracker.ObserveUnverified(frame, motion);
-        if (!admission.AdmitsTracking) visualGameplayTracker.PauseGroundVerification();
-        var groundMilliseconds = Stopwatch.GetElapsedTime(groundStarted).TotalMilliseconds;
-        var atlasStarted = Stopwatch.GetTimestamp();
-        var visualTelemetry = visualObservation.Telemetry;
-        groundHypotheses = visualObservation.GroundTracking;
-        var semanticAtlasLines = groundHypothesisState.SemanticAtlas.Update(
-            groundHypotheses.AtlasLines,
-            ground.Select(line => line.ToSemanticLine()).ToArray(),
-            groundHypotheses.CameraPosition, frame.Width, frame.Height,
-            groundHypotheses.PoseVerified);
-        groundHypotheses = groundHypotheses with { AtlasLines = semanticAtlasLines };
-        var groundReference = groundHypothesisState.ReferenceTracker.CurrentEstimate();
-        if (visualObservation.Registration?.State == CameraUpdateState.Accepted
-            && groundTheory is not null)
-        {
-            groundReference = groundHypothesisState.ReferenceTracker.Observe(
-                frame,
-                new AtlasPoint(visualTelemetry.CameraX, visualTelemetry.CameraY),
-                frame.Width,
-                masks.GroundKnight,
-                groundExclusions,
-                groundTheory);
-        }
         var renderedGameFrame = exactRenderedGameFrame
-            ?? (gameMode == GameRuntimeMode.Normal
-                ? RenderedFrameMarker.Decode(frame)
-                : null);
-        var receiverTelemetry = gameMode == GameRuntimeMode.Modded
-            ? exactReceiverTelemetry
-            : null;
-        var motionBridgeActive = visualObservation.Source is
-            "transition-bridge" or "coarse-presentation";
+            ?? (gameMode == GameRuntimeMode.Normal ? RenderedFrameMarker.Decode(frame) : null);
+        var receiverTelemetry = gameMode == GameRuntimeMode.Modded ? exactReceiverTelemetry : null;
         var receiverScene = receiverTelemetry?.SceneName?.Trim();
-        var atlasRoomId = !string.IsNullOrWhiteSpace(receiverScene)
-            ? receiverScene
-            : normalAtlasRoomIdentity.Observe(
-                captureGeneration,
-                admission.Transition.ResumedAfterTransition);
-        var groundDisplayCamera = groundHypotheses.CameraPosition
-            ?? new AtlasPoint(visualTelemetry.CameraX, visualTelemetry.CameraY);
-        var cameraCorrection = groundHypotheses.GlobalCorrection;
-        if (cameraCorrection is { } correction && correction.X * correction.X + correction.Y * correction.Y > 9)
-        {
-            if (gameMode == GameRuntimeMode.Modded) groundHypothesisState.ResetWalkedCoordinateEpoch();
-            else groundHypothesisState.WalkedGround.BreakContinuity();
-            groundHypothesisState.PlatformPatches.Reset();
-            groundHypothesisState.Paths.Reset();
-        }
-        var terrain = TerrainWallDetection.Empty;
-        KnightTerrainContact terrainContact = default;
-        if (groundAnalysis is not null)
-        {
-            terrain = TerrainWallDetector.Detect(groundAnalysis, ground);
-            terrainContact = groundHypothesisState.WalkedGround.Observe(atlasRoomId, groundAnalysis, masks.GroundKnight,
-                visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null,
-                movementButtons, captureTimestamp, ground, terrain.Walls);
-            terrain = TerrainWallDetector.ApplyContact(terrain, terrainContact, ground, groundAnalysis);
-        }
-        IReadOnlyList<PixelRect> platformPatches = groundAnalysis is not null
-            ? groundHypothesisState.PlatformPatches.Observe(groundAnalysis, ground, hypothesisExclusions,
-                visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null, captureTimestamp)
-            : [];
-        var localWalkedGround = groundHypothesisState.WalkedGround.InRoom(atlasRoomId);
-        var walkedCoordinateEpoch = groundHypothesisState.WalkedCoordinateEpoch;
+        var tracked = trackingPipeline.Track(frame, prepared, masks.GroundKnight, admission, captureTimestamp,
+            captureGeneration, receiverScene, gameplayAtlas.TileCount > 0, movementButtons,
+            resetWorldCoordinatesForCorrection: gameMode == GameRuntimeMode.Modded);
+        var visualObservation = tracked.Observation;
+        var ground = prepared.Terrain?.Floors ?? [];
+        var groundAnalysis = prepared.Terrain?.Edges;
+        var groundHypotheses = tracked.Ground;
+        var groundReference = tracked.Reference;
+        var visualTelemetry = visualObservation.Telemetry;
+        var groundDisplayCamera = tracked.DisplayCamera;
+        var groundMilliseconds = tracked.CameraMilliseconds;
+        var atlasStarted = tracked.AtlasStartedTimestamp;
+        var motionBridgeActive = tracked.MotionBridgeActive;
+        var atlasRoomId = tracked.RoomId;
+        var terrain = tracked.Terrain;
+        var terrainContact = tracked.Contact;
+        var platformPatches = tracked.PlatformPatches;
+        var localWalkedGround = tracked.WalkedGround;
+        var walkedCoordinateEpoch = tracked.WalkedCoordinateEpoch;
+        AtlasMosaicDelta? gameplayTiles = null;
         var atlasCaptureIdentity = FormattableString.Invariant(
             $"{captureGeneration}:{frame.CaptureId}:{BitConverter.DoubleToInt64Bits(captureTimestamp):X16}");
         var atlasCompositionExclusions = LiveAtlasTransitionMaskPolicy.Merge(
-            atlasExclusions,
+            masks.AtlasExclusions,
             frame.Width,
             frame.Height,
             signal,
@@ -3407,12 +3219,12 @@ public partial class MainWindow : Window
                     rectangle.Y,
                     rectangle.Width,
                     rectangle.Height)).ToArray();
-                var groundAlignmentExclusions = CreateGroundAlignmentExclusions(
+                var groundAlignmentExclusions = GameplayTrackingPipeline.CreateGroundAlignmentExclusions(
                     frame,
                     localPose,
                     frame.Width,
                     ground,
-                    groundExclusions,
+                    masks.GroundExclusions,
                     signal,
                     visualObservation,
                     motionBridgeActive,
@@ -3467,11 +3279,11 @@ public partial class MainWindow : Window
             && recognition.Status?.ContextIdentifier is "game" or "Gameplay" && Volatile.Read(ref atlasPathsEnabled))
         {
             var pathCamera = visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null;
-            paths = groundHypothesisState.Paths.Observe(new(atlasRoomId, captureTimestamp, frame.Width, frame.Height,
+            paths = trackingPipeline.Paths.Observe(new(atlasRoomId, captureTimestamp, frame.Width, frame.Height,
                 pathCamera, groundDisplayLines, ground, terrain, terrainContact.MeasuredFoot, masks.GroundKnight,
                 terrainContact.Wall));
         }
-        else groundHypothesisState.Paths.Suspend();
+        else trackingPipeline.Paths.Suspend();
         var botGameplay = !holdAtlas && admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";
         var activeBot = Volatile.Read(ref botPlayback) is null ? null
             : ObserveBotStartup(frame, captureGeneration, captureTimestamp, botGameplay, receiverTelemetry, recognition.Menu, hudStencil);
@@ -3535,26 +3347,7 @@ public partial class MainWindow : Window
             signal.VisibleFraction, WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0));
         gameControls.RecordVisualTracking(
             captureTimestamp,
-            new InputPathTrackingObservation
-            {
-                CameraPosition = groundHypotheses.CameraPosition,
-                PoseVerified = groundHypotheses.PoseVerified,
-                HasConfirmedGround = groundHypotheses.HasConfirmedGround,
-                GlobalCorrection = groundHypotheses.GlobalCorrection,
-                GlobalMatchCount = groundHypotheses.GlobalMatchCount,
-                GroundSegmentCount = groundHypotheses.GroundSegmentCount,
-                InlierCount = groundHypotheses.InlierCount,
-                ResidualRms = groundHypotheses.ResidualRms,
-                VisibleLineIds = groundHypotheses.LineReviews.Select(line => line.Id).ToArray(),
-                AtlasLineIds = groundHypotheses.AtlasLines.Select(line => line.SegmentId).Distinct().ToArray(),
-                LocalTextureSupport = groundHypotheses.LocalTextureSupport,
-                LocalTextureError = groundHypotheses.LocalTextureError,
-                LocalMatchSource = groundHypotheses.LocalMatchSource,
-                LocalReferenceTimestamp = groundHypotheses.LocalReferenceTimestamp,
-                LocalReferencePosition = groundHypotheses.LocalReferencePosition,
-                LocalMatchedImageDisplacement = groundHypotheses.LocalMatchedImageDisplacement,
-                ProvisionalContinuityActive = groundHypotheses.ProvisionalContinuityActive
-            },
+            InputPathTrackingObservation.FromGround(groundHypotheses),
             publishedCameraPosition,
             visualObservation.Source,
             motionBridgeActive ? motion?.Motion?.Confidence : null,
@@ -3620,86 +3413,6 @@ public partial class MainWindow : Window
                 Terrain = terrain,
                 Paths = paths
             };
-    }
-
-    private static IReadOnlyList<StencilRect> CreateGroundAlignmentExclusions(
-        BgraFrame frame,
-        AtlasPoint cameraPosition,
-        double solveWidth,
-        IReadOnlyList<DetectedFloorLine> ground,
-        IReadOnlyList<PixelRect> foregroundExclusions,
-        FrameSignalProfile signal,
-        VisualGameplayObservation observation,
-        bool transitionBridgeActive,
-        GroundReferenceEstimate? trackedEstimate)
-    {
-        var existing = foregroundExclusions.Select(rectangle => new StencilRect(
-            rectangle.X,
-            frame.Height - rectangle.Bottom,
-            rectangle.Width,
-            rectangle.Height)).ToList();
-        if (transitionBridgeActive && signal.EdgeBlackBands is { } transitionBands)
-        {
-            existing.AddRange(transitionBands.RectangularOmissions(frame.Width, frame.Height));
-        }
-
-        var estimate = trackedEstimate;
-        // A verified ground solve owns ordinary frames. During a measured
-        // transition, current semantic line evidence may still define the
-        // narrow matcher band, with the detected edge matte excluded above.
-        // No current line evidence still produces the full-frame exclusion.
-        if (estimate is null
-            && (observation.GroundVerified || transitionBridgeActive)
-            && double.IsFinite(solveWidth)
-            && solveWidth > 0)
-        {
-            var scale = frame.Width / solveWidth;
-            var segments = ground.Select(line =>
-            {
-                // Detector rows and foreground rectangles address the top-down
-                // BGRA capture. Ground feature geometry, like the Mac tracker,
-                // is world-up; retain the half-pixel line-center convention.
-                var frameY = frame.Height - line.Row - 0.5;
-                return new GroundReferenceSegment(
-                    cameraPosition.X + line.XSpan.Start / scale,
-                    cameraPosition.X + (line.XSpan.EndInclusive + 1) / scale,
-                    cameraPosition.Y + frameY / scale);
-            }).Where(segment =>
-                double.IsFinite(segment.MinimumWorldX)
-                && double.IsFinite(segment.MaximumWorldX)
-                && segment.MaximumWorldX > segment.MinimumWorldX
-                && double.IsFinite(segment.WorldY ?? double.NaN))
-                .ToArray();
-            if (segments.Length > 0)
-            {
-                var confidence = observation.GroundError is { } error
-                    && double.IsFinite(error)
-                    ? 1 / (1 + Math.Max(0, error))
-                    : 1;
-                estimate = new GroundReferenceEstimate(
-                    segments[0].WorldY!.Value,
-                    segments.Min(segment => segment.MinimumWorldX),
-                    segments.Max(segment => segment.MaximumWorldX),
-                    segments,
-                    segments.SelectMany(segment => new[]
-                        {
-                            segment.MinimumWorldX,
-                            segment.MaximumWorldX
-                        })
-                        .Distinct()
-                        .Order()
-                        .ToArray(),
-                    Math.Max(segments.Length, observation.GroundSupport),
-                    confidence);
-            }
-        }
-
-        return GroundFeatureEligibility.AlignmentExclusions(
-            new WorldSize(frame.Width, frame.Height),
-            cameraPosition,
-            solveWidth,
-            estimate,
-            existing);
     }
 
     private void PublishAuthoritativeVisionState(VisionAnalysisResult result)

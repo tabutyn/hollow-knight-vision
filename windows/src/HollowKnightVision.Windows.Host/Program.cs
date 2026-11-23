@@ -128,6 +128,29 @@ internal static class Program
         TextWriter? standardError = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
+        if (arguments.Contains("--replay-visual-archive", StringComparer.Ordinal))
+        {
+            VisualProductionReplayOptions options;
+            var errors = standardError ?? Console.Error;
+            try { options = VisualProductionReplayOptions.Parse(arguments); }
+            catch (ArgumentException error)
+            {
+                errors.WriteLine(error.Message);
+                return Task.FromResult(64);
+            }
+            try
+            {
+                var report = VisualProductionReplay.Run(options);
+                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(report, WorldReplayJsonOptions));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                or JsonException or ArgumentException or OverflowException or LiveWorldSessionStoreException)
+            {
+                errors.WriteLine($"Visual replay failed. {error.Message}");
+                return Task.FromResult(1);
+            }
+        }
         if (arguments.Contains("--inspect-visual-replay", StringComparer.Ordinal))
         {
             var output = standardOutput ?? Console.Out;
@@ -663,6 +686,12 @@ internal static class Program
 
             --inspect-visual-replay PATH
                                     Verify a saved input path's exact frame archive offline.
+            --replay-visual-archive PATH --visual-replay-output DIRECTORY
+                                    Replay archived frames through Windows ground tracking and atlas placement.
+            --visual-replay-frame-limit N
+                                    Consider only the first N original archive entries.
+            --visual-replay-allow-incomplete
+                                    Retain reported gaps and process the remaining images.
             --probe                 Locate the game window without capturing pixels.
             --receiver-probe        Verify the in-game receiver and print its capabilities.
             --ground-truth-once     Print one Hacker camera/hero telemetry sample.
