@@ -242,6 +242,7 @@ var tests = new List<(string Name, Action Run)>
     ("input player Ops wire round trips", InputBridgeParityTests.TestPlayerOpsWireRoundTrip),
     ("input snapshot wire codec preserves versioned state", InputBridgeParityTests.TestWireCodecRoundTripsVersionedSnapshot),
     ("input checkpoint control messages round trip", InputBridgeParityTests.TestCheckpointControlMessagesRoundTrip),
+    ("native bot verification checks action heads and bound checkpoint hashes", BotPolicyTests.TestNativePolicyChecksActionsAndCheckpointHashes),
     ("bot actor payload and exact camera separate paired domains", BotCaptureTests.TestExactHackerSourcesStaySeparateFromVisualSources),
     ("fresh visual terrain retains training evidence through Knight occlusion", BotCaptureTests.TestFreshTerrainMakesOccludedKnightUsable),
     ("paired captures publish immediate evidence while invalid clips are discarded", BotCaptureTests.TestPairedEvidencePublishesOnceAndHazardClipsAreDiscarded),

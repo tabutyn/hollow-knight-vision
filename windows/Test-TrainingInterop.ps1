@@ -99,9 +99,50 @@ for manifest, observations, inputs in sessions.values():
         assert sum(row["blueHealthGained"] for row in rows) == 2
         assert [row["continuedAttack"] for row in rows] == [False, True, True, False, True, True]
 print("PASS Windows paired PNG and event capture -> shared bot exporter, typed terrain, held attacks and blue health")
+
+import hashlib
+import json
+import torch
+root = Path(sys.argv[2]) / "policy-fixtures"
+for version in (bot.SCHEMA_VERSION, bot.GROUND_CONTACT_POLICY_VERSION, bot.LANDING_GEOMETRY_POLICY_VERSION):
+    names = bot.SCHEMAS[version]
+    folder = root / str(version)
+    folder.mkdir(parents=True)
+    fake_checkpoint = b"native parity test"
+    (folder / "model.zip").write_bytes(fake_checkpoint)
+    digest = hashlib.sha256(fake_checkpoint).hexdigest()
+    width = len(names) * bot.HISTORY_LENGTH
+    generator = torch.Generator().manual_seed(version)
+    samples = torch.rand((8, width), generator=generator) - .5
+    weights = torch.rand((7, width), generator=generator) / width
+    hidden_bias = torch.rand((7,), generator=generator)
+    heads = torch.rand((sum(bot.ACTION_SIZES), 7), generator=generator)
+    biases = torch.rand((sum(bot.ACTION_SIZES),), generator=generator)
+    logits = torch.nn.functional.linear(torch.tanh(torch.nn.functional.linear(samples, weights, hidden_bias)), heads, biases)
+    actions = torch.stack([torch.argmax(head, dim=1) for head in torch.split(logits, bot.ACTION_SIZES, dim=1)], dim=1)
+    layers = []
+    for matrix, bias, activation in ((weights, hidden_bias, "tanh"), (heads, biases, "linear")):
+        layers.append(dict(inputSize=matrix.shape[1], outputSize=matrix.shape[0], activation=activation,
+                           weights=matrix.reshape(-1).tolist(), biases=bias.tolist()))
+    raw = json.dumps(dict(schemaVersion=1, observationSchemaVersion=version, modelName="CPU fixture",
+                          featureNames=names, historyLength=bot.HISTORY_LENGTH, actionSizes=bot.ACTION_SIZES,
+                          sourceCheckpointSHA256=digest, layers=layers)).encode()
+    (folder / "runtime-policy.json").write_bytes(raw)
+    (folder / "runtime-manifest.json").write_text(json.dumps(dict(schemaVersion=1, policyFile="runtime-policy.json",
+        policySHA256=hashlib.sha256(raw).hexdigest(), sourceCheckpointSHA256=digest)))
+    (folder / "fixture.json").write_text(json.dumps(dict(inputs=samples.tolist(), logits=logits.tolist(), actions=actions.tolist())))
+
 '@
   & $Python -B -c $botValidation $botSource $botFixture
   if ($LASTEXITCODE -ne 0) { throw 'Windows bot capture interoperability failed.' }
+  $nativeVerifier = Join-Path $PSScriptRoot 'artifacts\win-x64\HollowKnightVision.Windows.Host.exe'
+  $policyFixtures = Get-ChildItem -LiteralPath (Join-Path $botFixture 'policy-fixtures') -Directory
+  foreach ($entry in $policyFixtures) {
+    & $nativeVerifier --hacker-gym-observations verify $entry.FullName (Join-Path $entry.FullName 'fixture.json')
+    if ($LASTEXITCODE -ne 0) { throw "Native bot policy verification failed for schema $($entry.Name)." }
+  }
+  Write-Host 'PASS Windows native PPO action heads match CPU PyTorch for compact, grounded, and landing policies.'
+
 } finally {
   foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
   if (Test-Path -LiteralPath $fixtureRoot) {

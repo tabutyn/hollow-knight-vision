@@ -128,6 +128,20 @@ internal static class Program
         TextWriter? standardError = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
+        if (arguments is ["--hacker-gym-observations", "verify", var checkpoint, var fixture])
+        {
+            try
+            {
+                var count = BotNativePolicy.Load(checkpoint).Verify(fixture);
+                (standardOutput ?? Console.Out).WriteLine($"Verified {count} bot policy observations.");
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+            {
+                (standardError ?? Console.Error).WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
         if (arguments is ["--tracking-step-verify-prefix", var prefixDirectory, var prefixSource])
         {
             try
