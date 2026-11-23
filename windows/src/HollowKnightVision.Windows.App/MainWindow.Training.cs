@@ -13,18 +13,44 @@ public partial class MainWindow
     private TrainingUiOutputPump? trainingOutputPump;
     private bool trainingStopping, trainingFinalizing;
     private int untrainedImageCount;
+    private bool hasGameplayTrainingLabels;
     private string? trainingProgress;
 
     internal static LabelingDatasetSnapshot ExportSharedTrainingDataset(string examplesRoot, string datasetRoot,
         IReadOnlyList<string> classes) => new LabelingDatasetExporter(datasetRoot).ExportSharedModel(classes,
             new LabelingExampleStore(examplesRoot).LoadTrainingExamplesInContext("game"), LabelingSharedModelPolicy.ModelIdentifier);
 
+    private IReadOnlySet<string> GameplayTrainingClassIdentifiers() => LabelingSharedModelPolicy.ClassIdentifiers(
+        customObjectChoices.Select(item => new MenuStencilLabel(item.Identifier, item.Name)).ToArray());
+
     private void RefreshTrainingNotification()
     {
         RefreshCampaignProgress();
+        hasGameplayTrainingLabels = LabelingSharedModelPolicy.HasPositiveGameplayEvidence(examples, GameplayTrainingClassIdentifiers());
         untrainedImageCount = LabelingTrainingNotificationPolicy.CountExamples(examples, modelLifecycle?.Latest(LabelingSharedModelPolicy.ModelIdentifier));
         UpdateModelTrainingControls();
     }
+
+    private void UpdateModelTrainingControls()
+    {
+        if (TrainingControls is null || initialization is null) return;
+        var help = hasGameplayTrainingLabels
+            ? initialization.Text("updateModel", ("model", LabelingSharedModelPolicy.ModelName))
+            : initialization.Text("enableTraining");
+        TrainingControls.Update(untrainedImageCount, hasGameplayTrainingLabels, trainingInProgress, trainingStopping, trainingFinalizing,
+            trainingProgress, help, key => initialization.Text(key));
+        RefreshGuidance();
+    }
+
+    private bool AdmitModelTraining()
+    {
+        // Reload saved labels immediately before export and launch.
+        RefreshExamples();
+        if (hasGameplayTrainingLabels && !trainingInProgress) return true;
+        SetStatus(initialization.Text("enableTraining"));
+        return false;
+    }
+
     private void ApplyTrainingOutput(TrainingOutputSnapshot snapshot)
     {
         if (isClosing || !trainingInProgress) return;
@@ -54,7 +80,7 @@ public partial class MainWindow
     private async Task RunTrainerAsync(bool validateOnly)
     {
         if (trainingInProgress || isClosing) return;
-        try { if (!validateOnly && !AdmitModelTraining(requireSelectedClass: false)) return; }
+        try { if (!validateOnly && !AdmitModelTraining()) return; }
         catch (Exception error) { ShowError(error); return; }
         try
         {

@@ -19,37 +19,6 @@ public partial class MainWindow
             screenshotReviewPanel = null;
         }
         screenshotReview.SetExamples(examples);
-        UpdateModelTrainingControls();
-    }
-
-    private void UpdateModelTrainingControls()
-    {
-        if (TrainingControls is null || initialization is null) return;
-        var canTrain = screenshotReview?.CanTrainModel() == true;
-        var help = screenshotReview?.BreachCount > 0
-            ? initialization.Text("fixLabels", ("count", screenshotReview.BreachCount.ToString()))
-            : canTrain ? initialization.Text("updateModel", ("model", LabelingSharedModelPolicy.ModelName)) : initialization.Text("enableTraining");
-        TrainingControls.Update(untrainedImageCount, canTrain, trainingInProgress, trainingStopping, trainingFinalizing,
-            trainingProgress, help, key => initialization.Text(key));
-        RefreshGuidance();
-    }
-
-    private bool AdmitModelTraining(bool requireSelectedClass)
-    {
-        // Refresh from disk immediately before export/launch, not only when the tab opens.
-        RefreshExamples();
-        if (screenshotReview!.BreachCount > 0)
-        {
-            SetStatus(initialization.Text("fixLabels", ("count", screenshotReview.BreachCount.ToString())));
-            return false;
-        }
-        if (!screenshotReview.CanTrainModel(trainingInProgress)
-            || requireSelectedClass && !screenshotReview.CanTrainSelectedClass(ClassIdentifierText.Text, trainingInProgress))
-        {
-            SetStatus(initialization.Text("enableTraining"));
-            return false;
-        }
-        return true;
     }
 
     private void RefreshScreenshotReview()
@@ -59,7 +28,7 @@ public partial class MainWindow
             example => MessageBox.Show(this,
                 initialization.Text("Images, labels, and exemptions will be removed. This cannot be undone."),
                 initialization.Text("Delete Screenshot"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes,
-            UpdateModelTrainingControls, ScreenshotsDeleted);
+            ScreenshotsDeleted);
         screenshotReviewPanel.Refresh(ClassIdentifierText.Text, customObjectChoices.Select(item => item.Identifier), objectReferencePanel?.Atlas);
         if (!ModelScreenshotsPanel.Children.Contains(screenshotReviewPanel))
         { ModelScreenshotsPanel.Children.Clear(); ModelScreenshotsPanel.Children.Add(screenshotReviewPanel); }

@@ -244,12 +244,11 @@ internal sealed class StencilInitializationCoordinator
             ? Text("selectProfile") : Text("navigateShort", ("screen", ScreenName(step.ContextName)));
     }
 
-    internal string? ModelGuidance(string workspace, bool hasGameplayLabels, int breaches, bool modelReady, bool training, string? campaignGuidance = null)
+    internal string? ModelGuidance(string workspace, bool hasGameplayLabels, bool modelReady, bool training, string? campaignGuidance = null)
     {
         if (!IsComplete || workspace == "Label") return null;
         if (training) return Text("modelTraining");
         if (!hasGameplayLabels) return campaignGuidance ?? Text("modelLabelGameplay");
-        if (breaches > 0) return Text("modelReview", ("count", breaches.ToString()));
         if (modelReady && !HasEnabledObjectDetection) return Text("modelReady");
         return campaignGuidance ?? (modelReady ? null : Text(workspace == "Model" ? "modelTrain" : "modelOpen"));
     }

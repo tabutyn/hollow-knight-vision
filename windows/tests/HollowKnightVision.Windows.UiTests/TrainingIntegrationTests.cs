@@ -32,17 +32,24 @@ internal static class TrainingIntegrationTests
             var examples = Path.Combine(root.FullName, "examples");
             var store = new LabelingExampleStore(examples);
             var frame = new BgraFrame(2, 2, 8, new byte[16], 0, DateTimeOffset.UnixEpoch);
-            LabelingExampleAnnotation Box(string id) => new(Guid.NewGuid(), id, .1, .1, .2, .2);
-            store.Save(frame, "main-title", [Box("main-title.start-game")]);
-            var game = store.Save(frame, "game", [Box("game.playable-knight")]);
-            var classes = LabelingSharedModelPolicy.ClassIdentifiers().Order(StringComparer.Ordinal).ToArray();
+            LabelingExampleAnnotation Box(string id, bool negative = false) => new(Guid.NewGuid(), id, .1, .1, .2, .2, negative);
+            var menu = store.Save(frame, "main-title", [Box("world.sign")]);
+            var game = store.Save(frame, "game", [Box("world.sign")]);
+            var empty = store.Save(frame, "game", [], knownClassIdentifiers: ["world.sign"]);
+            var negative = store.Save(frame, "game", [Box("world.sign", negative: true)]);
+            var modelClasses = LabelingSharedModelPolicy.ClassIdentifiers();
+            var classes = modelClasses.Order(StringComparer.Ordinal).ToArray();
+            Check(store.Load().Single(example => example.Id == menu.Id).Manifest.ContextIdentifier == "main-title",
+                "The mislabeled menu fixture must retain its original context.");
+            Check(LabelingSharedModelPolicy.HasPositiveGameplayEvidence(store.Load(), modelClasses),
+                "A Game Play sign without Knight labels should enable shared training.");
             // Exercise the same export boundary used by Train, without constructing
             // the live capture window or providing any model-name UI state.
             var snapshot = MainWindow.ExportSharedTrainingDataset(examples, Path.Combine(root.FullName, "datasets"), classes);
             Check(snapshot.Manifest.ClassIdentifier == LabelingSharedModelPolicy.ModelIdentifier
                 && snapshot.Manifest.ClassIdentifiers!.SequenceEqual(classes), "Train exported an empty or per-object model identity.");
-            Check(snapshot.Manifest.Items.Single().ExampleIdentifier == game.Id
-                && snapshot.Manifest.TrainingAnnotationCount == 1, "Shared training included menu screenshots or lost Knight-only gameplay labels.");
+            Check(snapshot.Manifest.Items.Select(item => item.ExampleIdentifier).ToHashSet().SetEquals([game.Id, empty.Id, negative.Id])
+                && snapshot.Manifest.TrainingAnnotationCount == 1, "Shared training must use just the Game Play sign, known-empty frame, and hard negative.");
             Check(LabelingTrainingConfiguration.ForModel(snapshot.Manifest.ClassIdentifier).MaximumIterations == 100,
                 "Shared model export selected the short per-object training preset.");
         }

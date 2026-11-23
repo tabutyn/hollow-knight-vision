@@ -235,24 +235,23 @@ internal static class StencilGuidanceParityTests
             var guidance = coordinator.Guidance("select-profile", StencilInitializationPolicy.ProfileClearSaveClass);
             Check(guidance is not null && guidance.StartsWith("Draw a box around Clear Save.")
                 && guidance.Contains("create a save") && guidance.Contains("Return to Select Profile"));
-            Check(coordinator.ModelGuidance("Gameplay", true, 0, false, false) is null);
+            Check(coordinator.ModelGuidance("Gameplay", true, false, false) is null);
             var profile = coordinator.ExampleFor("select-profile")!;
             var completed = store.Update(profile, "select-profile", [.. profile.Manifest.Annotations, Box(StencilInitializationPolicy.ProfileClearSaveClass)]);
             coordinator.Refresh();
             Check(coordinator.IsComplete && coordinator.IsScreenComplete("select-profile") && coordinator.CompletedScreenCount == coordinator.ScreenCount);
-            Check(coordinator.ModelGuidance("Gameplay", false, 0, false, false)!.Contains("Enter gameplay"));
-            Check(coordinator.ModelGuidance("Gameplay", true, 0, false, false)!.Contains("Open Model"));
-            Check(coordinator.ModelGuidance("Model", true, 2, false, false)!.Contains("2 screenshots"));
-            Check(coordinator.ModelGuidance("Model", true, 0, false, false)!.StartsWith("Click Train"));
-            Check(coordinator.ModelGuidance("Model", true, 0, false, true)!.StartsWith("Training your model"));
-            Check(coordinator.ModelGuidance("Gameplay", true, 0, true, false)!.StartsWith("Model trained"));
+            Check(coordinator.ModelGuidance("Gameplay", false, false, false)!.Contains("Enter gameplay"));
+            Check(coordinator.ModelGuidance("Gameplay", true, false, false)!.Contains("Open Model"));
+            Check(coordinator.ModelGuidance("Model", true, false, false)!.StartsWith("Click Train"));
+            Check(coordinator.ModelGuidance("Model", true, false, true)!.StartsWith("Training your model"));
+            Check(coordinator.ModelGuidance("Gameplay", true, true, false)!.StartsWith("Model trained"));
             coordinator.RecordObjectDetectionEnabled();
-            Check(coordinator.ModelGuidance("Gameplay", true, 0, true, false) is null);
+            Check(coordinator.ModelGuidance("Gameplay", true, true, false) is null);
             var reopened = new StencilInitializationCoordinator(store, GameRuntimeMode.Normal) { HasUsableHUD = true };
             Check(reopened.HasEnabledObjectDetection);
-            Check(reopened.ModelGuidance("Gameplay", true, 0, true, false) is null);
-            Check(reopened.ModelGuidance("Gameplay", true, 0, true, false, "Next batch") == "Next batch");
-            Check(coordinator.ModelGuidance("Label", true, 0, false, false) is null);
+            Check(reopened.ModelGuidance("Gameplay", true, true, false) is null);
+            Check(reopened.ModelGuidance("Gameplay", true, true, false, "Next batch") == "Next batch");
+            Check(coordinator.ModelGuidance("Label", true, false, false) is null);
             Check(coordinator.Guidance("game", "enemies.crawlid")!.Contains("Crawlid")
                 && coordinator.Guidance("game", "enemies.crawlid")!.Contains("press L"));
             Check(coordinator.Guidance("game", "game.health")!.Contains("Knight")

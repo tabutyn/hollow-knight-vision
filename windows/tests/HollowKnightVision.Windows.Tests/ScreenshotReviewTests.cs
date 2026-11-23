@@ -35,47 +35,25 @@ internal static class ScreenshotReviewTests
         session.Reload(); Check(session.Examples.Count == 2 && session.Selected?.Id == first.Id);
     }
 
-    public static void TestExemptionsAndTraining()
+    public static void TestSparseGameplayExamplesAndLegacyExemptions()
     {
-        using var fixture = new Fixture(); var good = fixture.Save(ValidBoxes); var bad = fixture.Save(Box("game.playable-knight"), Box("game.playable-knight"), Box("world.sign"), Box("world.sign"));
-        var session = new LabelingScreenshotReviewSession(fixture.Store); session.Reload();
-        Check(session.BreachCount == 1 && !session.CanTrainModel() && !session.CanTrainSelectedClass("game.playable-knight"));
-        Check(session.Outline(good.Id) == LabelingScreenshotOutline.Selected && session.Outline(bad.Id) == LabelingScreenshotOutline.Breach);
-        var satisfied = session.Evaluations(good.Id).First(evaluation => evaluation.IsSatisfied).Id;
-        Check(!session.ToggleExemption(good.Id, satisfied) && !session.ToggleExemption(good.Id, "unknown"));
-        Check(!File.Exists(Path.Combine(good.DirectoryPath, LabelingContractExemptionStore.Filename)), "A disabled contract wrote an exemption.");
-        var failed = session.Evaluations(bad.Id).Where(evaluation => evaluation.IsBreach).Select(evaluation => evaluation.Id).ToArray();
-        Check(failed.Length >= 2);
-        session.Select(bad.Id); session.ToggleExemption(bad.Id, failed[0]);
-        Check(session.Outline(bad.Id) == LabelingScreenshotOutline.Breach, "Selection or exemption hid another breach.");
-        foreach (var id in failed.Skip(1)) Check(session.ToggleExemption(bad.Id, id));
-        Check(session.Outline(bad.Id) == LabelingScreenshotOutline.Exempt && session.BreachCount == 0);
-        Check(session.CanTrainModel() && !session.CanTrainModel(training: true) && !session.CanTrainSelectedClass("shared.options"),
-            "Global model training incorrectly depends on the leftover menu selection.");
-        Check(session.CanTrainSelectedClass("game.playable-knight") && !session.CanTrainSelectedClass("custom.absent")
-            && !session.CanTrainSelectedClass("game.playable-knight", training: true) && !session.CanTrainSelectedClass(" "));
-        session.Reload(); Check(session.BreachCount == 0 && session.Selected?.Id == bad.Id);
-        Check(new LabelingContractExemptionStore().Load(bad).SetEquals(failed));
-        Check(session.ToggleExemption(bad.Id, failed[0]) && session.BreachCount == 1 && !session.CanTrainSelectedClass("game.playable-knight"));
-        // A now-satisfied check that was exempted remains removable.
-        new LabelingContractExemptionStore().Save([satisfied], good); session.Reload();
-        Check(session.ToggleExemption(good.Id, satisfied) && new LabelingContractExemptionStore().Load(good).Count == 0);
-    }
+        using var fixture = new Fixture();
+        var empty = fixture.Save();
+        var sign = fixture.Save(Box("world.sign"), Box("world.sign"));
+        var exemptionPath = Path.Combine(empty.DirectoryPath, LabelingContractExemptionStore.Filename);
+        const string previousExemption = "[\"set.game.game.geo\"]";
+        File.WriteAllText(exemptionPath, previousExemption);
 
-    public static void TestFailedAndStaleExemptionWrites()
-    {
-        using var fixture = new Fixture(); var example = fixture.Save(Box("game.playable-knight"), Box("game.playable-knight"), Box("world.sign"), Box("world.sign"));
-        var session = new LabelingScreenshotReviewSession(fixture.Store); session.Reload();
-        var rule = session.Evaluations(example.Id).First(evaluation => evaluation.IsBreach).Id;
-        var blocked = Path.Combine(example.DirectoryPath, LabelingContractExemptionStore.Filename); Directory.CreateDirectory(blocked);
-        try { session.ToggleExemption(example.Id, rule); throw new Exception("Blocked exemption write succeeded."); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
-        Check(session.Evaluations(example.Id).Single(evaluation => evaluation.Id == rule).IsBreach && session.BreachCount == 1);
-        Check(Directory.Exists(blocked) && !Directory.EnumerateFiles(example.DirectoryPath, "*.tmp-*").Any());
-        Directory.Delete(blocked); ChangeIdentity(example);
-        try { session.ToggleExemption(example.Id, rule); throw new Exception("Replaced screenshot was edited."); }
-        catch (InvalidOperationException) { }
-        Check(!File.Exists(blocked) && session.BreachCount == 1);
+        var session = new LabelingScreenshotReviewSession(fixture.Store);
+        session.Reload();
+        Check(session.Selected?.Id == empty.Id && session.Examples.Count == 2,
+            "Blank gameplay screenshots remain available for review.");
+        Check(LabelingSharedModelPolicy.HasPositiveGameplayEvidence(session.Examples, LabelingSharedModelPolicy.ClassIdentifiers()),
+            "Positive gameplay labels enable training without a Knight or complete screenshot.");
+        Check(File.ReadAllText(exemptionPath) == previousExemption,
+            "Reviewing existing screenshots leaves the archived exemption file intact.");
+        Check(!File.Exists(Path.Combine(sign.DirectoryPath, LabelingContractExemptionStore.Filename)),
+            "Positive examples need no exemption metadata.");
     }
 
     public static void TestConfirmedDeletionAndFailures()
@@ -89,19 +67,32 @@ internal static class ScreenshotReviewTests
         Check(result.Deleted.SequenceEqual(new[] { first.Id }) && result.Failures.Count == 2);
         Check(!Directory.Exists(firstDirectory) && Directory.Exists(changed.DirectoryPath) && File.Exists(outside.ImagePath)
             && File.Exists(survivor.ImagePath), "Deletion escaped its confirmed owned examples.");
-        Check(session.Selected?.Id != first.Id && session.Evaluations(first.Id).Count == 0 && session.Examples.Count == 3);
+        Check(session.Selected?.Id != first.Id && session.Examples.Count == 3);
         var missing = session.DeleteConfirmed([first.Id]); Check(missing.Deleted.Count == 0 && missing.Failures.Count == 0);
         session.SetExamples([survivor]); Check(session.DeleteConfirmed([survivor.Id]).Deleted.Count == 1 && session.Selected is null);
     }
 
-    public static void TestKnownEmptyNegativeAndCanonicalTraining()
+    public static void TestTrainingUsesPositiveGameplayVocabulary()
     {
-        using var fixture = new Fixture(); var negative = fixture.Save([.. ValidBoxes, Box("custom.wisp", true), Box("main-title.options")]);
-        var empty = fixture.Save(); var session = new LabelingScreenshotReviewSession(fixture.Store); session.Reload();
-        Check(session.BreachCount == 1 && session.Evaluations(empty.Id).Any(item => item.Id == "screenshot.has-label" && item.IsBreach));
-        foreach (var id in session.Evaluations(empty.Id).Where(item => item.IsBreach).Select(item => item.Id).ToArray()) session.ToggleExemption(empty.Id, id);
-        Check(!session.CanTrainSelectedClass("custom.wisp") && session.CanTrainSelectedClass("main-title.options") && session.CanTrainSelectedClass("shared.options"));
-        session.SetExamples([empty]); Check(!session.CanTrainModel() && !session.CanTrainSelectedClass("game.playable-knight"), "Exempt empty screenshots invented positive examples.");
+        using var fixture = new Fixture();
+        var image = new BgraFrame(2, 2, 8, new byte[16], 0, DateTimeOffset.UnixEpoch);
+        var empty = fixture.Store.Save(image, "game", [], knownClassIdentifiers: ["world.sign"]);
+        var negative = fixture.Save(Box("world.sign", negative: true));
+        var hud = fixture.Save(Box("game.health"), Box("game.mana"));
+        var misplacedMenuLabel = fixture.Save(Box("main-title.options"));
+        var misplacedGameplayLabel = LabelingContractTests.Example("main-title", "world.sign");
+        var custom = fixture.Save(Box("custom.wisp"));
+        var builtIn = LabelingSharedModelPolicy.ClassIdentifiers();
+        var customClasses = LabelingSharedModelPolicy.ClassIdentifiers([new("custom.wisp", "Wisp")]);
+
+        Check(!LabelingSharedModelPolicy.HasPositiveGameplayEvidence([], builtIn));
+        Check(!LabelingSharedModelPolicy.HasPositiveGameplayEvidence(
+            [empty, negative, hud, misplacedMenuLabel, misplacedGameplayLabel, custom], builtIn),
+            "Only positive examples within the gameplay model vocabulary enable training.");
+        Check(LabelingSharedModelPolicy.HasPositiveGameplayEvidence([custom], customClasses),
+            "A registered custom label may be the only positive gameplay label.");
+        Check(fixture.Store.LoadTrainingExamplesInContext("game").Any(example => example.Id == empty.Id),
+            "An explicitly empty gameplay screenshot remains usable as training evidence.");
     }
 
     public static void TestVisualIdentity()

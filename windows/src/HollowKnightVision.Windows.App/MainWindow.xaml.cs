@@ -2057,8 +2057,7 @@ public partial class MainWindow : Window
     {
         if (StencilGuidanceText is null || initialization is null) return;
         StencilGuidanceText.Text = (workspace == "Label" && CurrentContextName == "Gameplay" ? CampaignGuidance() : null) ?? initialization.ModelGuidance(workspace,
-            screenshotReview?.HasGameplayLabels == true, screenshotReview?.BreachCount ?? 0,
-            trainedGameplayModelReady, trainingInProgress, CampaignGuidance()) ?? initialization.Guidance(
+            hasGameplayTrainingLabels, trainedGameplayModelReady, trainingInProgress, CampaignGuidance()) ?? initialization.Guidance(
             workspace == "Label" ? StencilInitializationPolicy.NormalizeContext(CurrentContextName) : null,
             ClassIdentifierText.Text, initializationTargetContext) ?? "";
         StencilGuidanceText.Visibility = StencilGuidanceText.Text.Length == 0
@@ -2218,6 +2217,7 @@ public partial class MainWindow : Window
             if (customObjectChoices.All(item => item.Identifier != added.Identifier))
             {
                 customObjectChoices.Add(new ClassChoice(added.Name, added.Identifier));
+                RefreshTrainingNotification();
             }
             ApplyLabelSelection(() => ClassIdentifierText.Text = added.Identifier);
             SetStatus($"Added {added.Name}. Draw boxes and train when ready.");
@@ -2316,12 +2316,10 @@ public partial class MainWindow : Window
         if (trainingInProgress) { RequestStopTraining(); return; }
         try
         {
-            if (!AdmitModelTraining(requireSelectedClass: false)) return;
+            if (!AdmitModelTraining()) return;
         }
         catch (Exception error) { ShowError(error); return; }
-        var classes = LabelingObjectReferencePolicy.ModelClasses(customObjectChoices.Select(item => new MenuStencilLabel(item.Identifier, item.Name)).ToArray())
-            .Select(item => item.Identifier).Order(StringComparer.Ordinal)
-            .ToArray();
+        var classes = GameplayTrainingClassIdentifiers().Order(StringComparer.Ordinal).ToArray();
         if (classes.Length == 0) return;
         try
         {

@@ -772,6 +772,13 @@ audit and ordered port plan.
 
 ### Stencil walkthrough and model workspace
 
+**Model → Screenshots** shows Game Play examples with their saved boxes and lets
+you open or delete them. An example with a positive label for a supported Game
+Play object enables shared model training. Each object is optional, including
+the Knight. Training uses Game Play examples, including known-empty frames and
+hard negatives for the selected vocabulary. Menu and HUD references continue
+to support stencil recognition.
+
 The gear opens a centered, scrollable Settings dialog with atlas actions, Debug View, Game language, and Factory Reset. Language names use their native spelling. Navigate to the screen named by the blue guidance in the single bottom row, then press **L** or **Label**. Game State is an optional overlay under Debug View. Free Fly, Fit, and Current appear only after Phase 1 while Gameplay is recognized in the Gameplay workspace; Ops also requires Modded mode and a recognized gameplay state. Required menu labels follow menu order and disappear from Add after their required boxes are present (two for selection decorations); Modify/Delete keep them editable. Gameplay objects remain repeatable and alone expose **+ Object**.
 
 **Stencil** derives its checklist from the contracts: 26 required screens in Modded, 25 in Normal (excluding Mods). Phase 1 is Main Title, Select Profile without Clear Save, and a separately captured Gameplay HUD reference (two adjacent full health icons). It unlocks Model and Stencil Detection. Phase 2 contains the other menu/game screens; Phase 3 contains Clear Save, which requires an existing save and is dismissed with No. Credits has no required boxes. Each stencil category keeps one reference; gameplay model objects remain repeatable. Reset Stencils below the sidebar archives stencil references and calibration while preserving gameplay training examples. Factory Reset also removes stencils. The gear opens a centered, scrolling dialog with Save State, New, Delete, Load, all debug controls, language, and Factory Reset. Object Detection stays disabled until an active model has completed training and evaluation on current gameplay labels; bundled models and models from a cleared dataset do not unlock it. Framing controls require both Phase 1 readiness and recognized Gameplay in the Gameplay workspace.
