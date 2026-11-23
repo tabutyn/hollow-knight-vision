@@ -86,7 +86,7 @@ internal static class VisualRoomTransitionOdometryParityTests
         Near(afterOverlapLoss, odometry.WorldDeltaX, 0.001);
     }
 
-    public static void TestReliableVelocityHandoffBridgesInitialFadeMismatch()
+    public static void TestReliableVelocityBridgesRejectedMotionWithoutOverridingValidEasing()
     {
         var odometry = new LowResolutionTransitionOdometry();
         odometry.Arm(MotionGrid(shift: 0), timestamp: 0);
@@ -112,11 +112,11 @@ internal static class VisualRoomTransitionOdometryParityTests
         smallContradiction.PrimeHorizontalVelocity(
             new LowResolutionCameraVelocitySeed(new CameraVector(-360, 0), 0),
             VisualRoomDirection.Left);
-        Near(-18, smallContradiction.Observe(
-            FractionalMotionGrid(horizontalShift: -0.5),
+        Near(10, smallContradiction.Observe(
+            FractionalMotionGrid(horizontalShift: -1),
             timestamp: 0.05,
             solveWidth: 640,
-            expectedDirection: VisualRoomDirection.Left) ?? double.NaN, 0.001);
+            expectedDirection: VisualRoomDirection.Left) ?? double.NaN, 1);
 
         var expired = new LowResolutionTransitionOdometry();
         expired.Arm(MotionGrid(shift: 0), timestamp: 0.45);
@@ -132,7 +132,7 @@ internal static class VisualRoomTransitionOdometryParityTests
         Near(0, expired.WorldDeltaX, 0.001);
     }
 
-    public static void TestReliableVelocityHandoffBridgesCollapsedSameDirectionMotion()
+    public static void TestObservedCameraSlowdownOverridesOlderVelocity()
     {
         var odometry = new LowResolutionTransitionOdometry();
         odometry.Arm(FractionalMotionGrid(horizontalShift: 0), timestamp: 0);
@@ -140,12 +140,12 @@ internal static class VisualRoomTransitionOdometryParityTests
             new LowResolutionCameraVelocitySeed(new CameraVector(200, 0), 0),
             VisualRoomDirection.Right);
 
-        Near(10, odometry.Observe(
+        Near(2.5, odometry.Observe(
             FractionalMotionGrid(horizontalShift: -0.25),
             timestamp: 0.05,
             solveWidth: 640,
-            expectedDirection: VisualRoomDirection.Right) ?? double.NaN, 0.5);
-        Near(10, odometry.WorldDeltaX, 0.5);
+            expectedDirection: VisualRoomDirection.Right) ?? double.NaN, 1.5);
+        Near(2.5, odometry.WorldDeltaX, 1.5);
     }
 
     public static void TestReliableVelocityHandoffKeepsStrongSameDirectionMeasurement()
@@ -163,7 +163,7 @@ internal static class VisualRoomTransitionOdometryParityTests
             expectedDirection: VisualRoomDirection.Right) ?? double.NaN, 1);
     }
 
-    public static void TestReliableVelocityHandoffBridgesWeakVerticalFadeMotion()
+    public static void TestObservedVerticalTravelAndReversalOverrideOlderVelocity()
     {
         var odometry = new LowResolutionTransitionOdometry();
         odometry.Arm(
@@ -178,21 +178,21 @@ internal static class VisualRoomTransitionOdometryParityTests
             timestamp: 0.05,
             solveWidth: 640,
             expectedDirection: VisualRoomDirection.Left) is not null);
-        Near(-28, odometry.WorldDeltaY, 2);
+        Near(-2.5, odometry.WorldDeltaY, 2);
 
         Check(odometry.Observe(
             FractionalMotionGrid(horizontalShift: 0, verticalShift: -0.10),
             timestamp: 0.10,
             solveWidth: 640,
             expectedDirection: VisualRoomDirection.Left) is not null);
-        Near(-56, odometry.WorldDeltaY, 3);
+        Near(-1, odometry.WorldDeltaY, 2);
 
         Check(odometry.Observe(
             FractionalMotionGrid(horizontalShift: 0, verticalShift: -2.46),
             timestamp: 0.15,
             solveWidth: 640,
             expectedDirection: VisualRoomDirection.Left) is not null);
-        Near(-79.6, odometry.WorldDeltaY, 4);
+        Near(-24.6, odometry.WorldDeltaY, 2);
     }
 
     public static void TestVerticalHandoffUsesLatestMeasuredAcceleration()
@@ -216,7 +216,7 @@ internal static class VisualRoomTransitionOdometryParityTests
             solveWidth: 640,
             expectedDirection: VisualRoomDirection.Left) is not null);
         Check(odometry.Observe(
-            FractionalMotionGrid(horizontalShift: 0, verticalShift: -1.5),
+            VisibilityCircle(FractionalMotionGrid(horizontalShift: 0, verticalShift: -2.4), radius: 2),
             timestamp: 0.15,
             solveWidth: 640,
             expectedDirection: VisualRoomDirection.Left) is not null);
@@ -234,15 +234,19 @@ internal static class VisualRoomTransitionOdometryParityTests
             expectedDirection: null);
 
         Check(odometry.Observe(
-            FractionalMotionGrid(horizontalShift: 0, verticalShift: -0.25),
+            VisibilityCircle(FractionalMotionGrid(horizontalShift: 0, verticalShift: -2.8), radius: 2),
             timestamp: 0.05,
             solveWidth: 640,
             expectedDirection: null) is not null);
         Check(odometry.Observe(
-            FractionalMotionGrid(horizontalShift: 0, verticalShift: -0.10),
+            VisibilityCircle(FractionalMotionGrid(horizontalShift: 0, verticalShift: -5.6), radius: 2),
             timestamp: 0.10,
             solveWidth: 640,
             expectedDirection: VisualRoomDirection.Left) is not null);
+        Near(-56, odometry.WorldDeltaY, 3);
+        Check(odometry.Observe(
+            VisibilityCircle(FractionalMotionGrid(horizontalShift: 0, verticalShift: -8.4), radius: 2),
+            .15, 640, VisualRoomDirection.Left) is null);
         Near(-56, odometry.WorldDeltaY, 3);
     }
 
@@ -314,6 +318,154 @@ internal static class VisualRoomTransitionOdometryParityTests
             timestamp: 0.05,
             solveWidth: 640,
             expectedDirection: VisualRoomDirection.Right) ?? double.NaN, 2);
+    }
+
+    public static void TestCoarseMeasurementLineageIsIndependentFromVelocityPredictionNeeds()
+    {
+        var odometry = new LowResolutionTransitionOdometry();
+        odometry.Arm(FractionalMotionGrid(0), 0);
+        odometry.PrimeHorizontalVelocity(new LowResolutionCameraVelocitySeed(new(200, -80), 0), VisualRoomDirection.Right);
+        Check(odometry.Observe(FractionalMotionGrid(-1, -.4), .05, 640, VisualRoomDirection.Right) is not null);
+        Check(odometry.LastEstimateIsMeasured && odometry.LastReferenceTimestamp == 0);
+        Check(odometry.Observe(InsufficientOverlapGrid(), .10, 640, VisualRoomDirection.Right) is not null);
+        Check(odometry.LastEstimateIsComplete && !odometry.LastHorizontalMeasured
+            && !odometry.LastVerticalMeasured && !odometry.LastEstimateIsMeasured);
+        _ = odometry.Observe(FractionalMotionGrid(-3), .15, 640, VisualRoomDirection.Right);
+        Check(odometry.Observe(FractionalMotionGrid(-4), .20, 640, VisualRoomDirection.Right) is not null);
+        Check(odometry.LastEstimateIsMeasured && odometry.LastReferenceTimestamp == .15);
+        odometry.Reset();
+        Check(!odometry.LastEstimateIsMeasured && odometry.LastReferenceTimestamp is null);
+    }
+
+    public static void TestCoarseMixedAxisPredictionDoesNotBecomeMeasuredLineage()
+    {
+        var odometry = new LowResolutionTransitionOdometry();
+        odometry.Arm(FractionalMotionGrid(0), 0);
+        odometry.PrimeHorizontalVelocity(new LowResolutionCameraVelocitySeed(new(200, 0), 0), VisualRoomDirection.Right);
+        Check(odometry.Observe(FractionalMotionGrid(2, .4), .05, 640, VisualRoomDirection.Right) is not null);
+        Check(odometry.LastEstimateIsComplete && !odometry.LastHorizontalMeasured
+            && odometry.LastVerticalMeasured && !odometry.LastEstimateIsMeasured);
+    }
+
+    public static void TestHorizontalPredictionCannotRenewAnExpiredVerticalEstimate()
+    {
+        var odometry = new LowResolutionTransitionOdometry();
+        odometry.Arm(FractionalMotionGrid(0), 0);
+        odometry.PrimeHorizontalVelocity(new LowResolutionCameraVelocitySeed(new(200, -560), 0), VisualRoomDirection.Right);
+        for (var index = 1; index <= 3; index++)
+        {
+            Check(odometry.Observe(InsufficientOverlapGrid(), index * .05, 640, VisualRoomDirection.Right) is not null);
+            Check(odometry.LastEstimateIsComplete == (index <= 2));
+        }
+        Near(30, odometry.WorldDeltaX, .001);
+        Near(-56, odometry.WorldDeltaY, .001);
+    }
+
+    public static void TestMeasuredVerticalStopCannotResurrectOldFallVelocity()
+    {
+        var odometry = new LowResolutionTransitionOdometry();
+        odometry.Arm(FractionalMotionGrid(0), 0);
+        odometry.PrimeHorizontalVelocity(new LowResolutionCameraVelocitySeed(new(200, -560), 0), VisualRoomDirection.Right);
+        Check(odometry.Observe(FractionalMotionGrid(-1), .05, 640, VisualRoomDirection.Right) is not null);
+        Check(odometry.Observe(InsufficientOverlapGrid(), .10, 640, VisualRoomDirection.Right) is not null);
+        Check(odometry.LastEstimateIsComplete);
+        Near(20, odometry.WorldDeltaX, .1);
+        Near(0, odometry.WorldDeltaY, .1);
+    }
+
+    public static void TestFloorlessReferenceUsesCompletedCapturePoseInsteadOfNewerPrediction()
+    {
+        var tracker = new VisualRoomTransitionTracker();
+        _ = RoomSample(tracker, MotionGrid(0), 1, new(100, 0), reliable: true);
+        var moving = RoomSample(tracker, MotionGrid(2), 1.05, new(20, 0), completed: new(1, new(100, 0)));
+        Check(moving.CoarseMotionIsControlling && moving.CoarseMotionMeasured);
+        Check(moving.CoarseReferenceTimestamp == 1 && moving.CoarseMeasurementTimestamp == 1.05);
+        Near(60, moving.CoarseWorldPose?.X ?? double.NaN, .001);
+        var continued = RoomSample(tracker, MotionGrid(4), 1.1, new(-50, 0), completed: new(1.05, new(60, 0)));
+        Near(20, continued.CoarseWorldPose?.X ?? double.NaN, .001);
+    }
+
+    public static void TestFloorlessReferenceDoesNotDoubleVerticalFallPrediction()
+    {
+        var tracker = new VisualRoomTransitionTracker();
+        _ = RoomSample(tracker, FractionalMotionGrid(0), 1, default, reliable: true, direction: null);
+        var falling = RoomSample(tracker, FractionalMotionGrid(0, -2), 1.05, new(0, -40),
+            direction: null, completed: new(1, default), seed: new(new(0, -400), 1));
+        Check(falling.CoarseMotionIsControlling && falling.CoarseMotionMeasured);
+        Near(0, falling.CoarseWorldPose?.X ?? double.NaN, 1);
+        Near(-20, falling.CoarseWorldPose?.Y ?? double.NaN, 1);
+    }
+
+    public static void TestDelayedSolveUpdatesReferenceBeforeFirstEligibleCoarseComparison()
+    {
+        var tracker = new VisualRoomTransitionTracker();
+        _ = RoomSample(tracker, MotionGrid(0), 1, new(80, 0), reliable: true);
+        Check(!RoomSample(tracker, MotionGrid(1), 1.02, new(20, 0)).CoarseMotionIsControlling);
+        var corrected = RoomSample(tracker, MotionGrid(2), 1.04, new(-20, 0), completed: new(1, new(100, 0)));
+        Check(corrected.CoarseMotionIsControlling);
+        Near(60, corrected.CoarseWorldPose?.X ?? double.NaN, .001);
+    }
+
+    public static void TestStaleFloorlessPoseReleasesPresentationAndResumesFromAcceptedTracking()
+    {
+        var tracker = new VisualRoomTransitionTracker();
+        _ = RoomSample(tracker, MotionGrid(0), 1, default, reliable: true);
+        Check(RoomSample(tracker, MotionGrid(2), 1.1, default).CoarseMotionIsControlling);
+        var stale = RoomSample(tracker, new(32, 18, new byte[32 * 18]), 1.4, new(-80, 0));
+        Check(!stale.CoarseMotionIsControlling && stale.CoarseWorldPose is null);
+        static LowResolutionMotionGrid NewTerrain(int shift)
+        {
+            var grid = MotionGrid(shift);
+            return new(grid.Width, grid.Height, grid.Luma.Select(value => (byte)(255 - value)).ToArray());
+        }
+        _ = RoomSample(tracker, NewTerrain(2), 1.45, new(-100, 0));
+        var resumed = RoomSample(tracker, NewTerrain(3), 1.5, new(-100, 0));
+        Check(resumed.CoarseMotionIsControlling);
+        Near(-120, resumed.CoarseWorldPose?.X ?? double.NaN, .5);
+    }
+
+    public static void TestPartialFloorlessPredictionReleasesControlAndResumesFromCompletedPose()
+    {
+        var tracker = new VisualRoomTransitionTracker();
+        VisualRoomSnapshot Sample(LowResolutionMotionGrid grid, double timestamp, AtlasPoint pose = default,
+            bool reliable = false) => RoomSample(tracker, grid, timestamp, pose, reliable, VisualRoomDirection.Right,
+                seed: new(new(200, -560), 1));
+        var full = FractionalMotionGrid(0);
+        var tiny = InsufficientOverlapGrid();
+        _ = Sample(full, 1, reliable: true);
+        Check(LowResolutionRoomMotionTracker.DiagnoseTranslation(full, tiny).FinalRejection
+            == LowResolutionTranslationRejection.InsufficientOverlap);
+        Check(LowResolutionRoomMotionTracker.DiagnoseTranslation(tiny, tiny).FinalRejection
+            == LowResolutionTranslationRejection.InsufficientOverlap);
+        var first = Sample(tiny, 1.05);
+        Check(first.CoarseMotionIsControlling && !first.CoarseMotionMeasured);
+        Near(-28, first.CoarseWorldPose?.Y ?? double.NaN, .001);
+        Check(Sample(tiny, 1.06).CoarseMotionIsControlling);
+        var second = Sample(tiny, 1.10);
+        Check(second.CoarseMotionIsControlling);
+        Near(-56, second.CoarseWorldPose?.Y ?? double.NaN, .001);
+        var released = Sample(tiny, 1.15, new(30, -84));
+        Check(!released.CoarseMotionIsControlling && released.CoarseWorldPose is null
+            && released.CoarsePoseRevision > second.CoarsePoseRevision);
+        _ = Sample(full, 1.20, new(40, -112));
+        var resumed = Sample(FractionalMotionGrid(-1, -2), 1.25, new(40, -112));
+        Check(resumed.CoarseMotionIsControlling && resumed.CoarseMotionMeasured);
+        Near(50, resumed.CoarseWorldPose?.X ?? double.NaN, 1);
+        Near(-132, resumed.CoarseWorldPose?.Y ?? double.NaN, 1);
+    }
+
+    private static VisualRoomSnapshot RoomSample(VisualRoomTransitionTracker tracker, LowResolutionMotionGrid grid,
+        double timestamp, AtlasPoint pose, bool reliable = false, VisualRoomDirection? direction = VisualRoomDirection.Left,
+        VisualCameraPoseSample? completed = null, LowResolutionCameraVelocitySeed? seed = null) =>
+        tracker.Observe(new(1_000, 800, 700, 80, grid), new(true, false), direction,
+            null, new(640, 360), pose, 640, timestamp, reliable, seed, completed);
+
+    private static LowResolutionMotionGrid InsufficientOverlapGrid()
+    {
+        var pixels = new byte[64 * 36];
+        byte[] visible = [30, 80, 140, 200];
+        visible.CopyTo(pixels, 18 * 64 + 30);
+        return new(64, 36, pixels);
     }
 
     private static LowResolutionMotionGrid MotionGrid(
