@@ -77,6 +77,31 @@ internal static class VisualRoomLowResolutionMotionParityTests
         Check(LowResolutionRoomMotionTracker.Translation(reference, moved) is null);
     }
 
+    public static void TestIsolatedVisiblePatchesRequireAComparableMotionCandidate()
+    {
+        LowResolutionMotionGrid MaskedGrid(double shift)
+        {
+            var grid = FractionalMotionGrid(horizontalShift: shift);
+            var pixels = new byte[grid.Luma.Length];
+            for (var row = 9; row <= 25; row += 8)
+            for (var column = 7; column <= 47; column += 10)
+            for (var y = row - 1; y <= row + 1; y++)
+            for (var x = column - 1; x <= column + 1; x++)
+                pixels[y * grid.Width + x] = grid.Luma[y * grid.Width + x];
+            return new(grid.Width, grid.Height, pixels);
+        }
+
+        var reference = MaskedGrid(0);
+        var moved = MaskedGrid(.35);
+        var diagnostic = LowResolutionRoomMotionTracker.DiagnoseTranslation(reference, moved);
+        Check(diagnostic.Motion is null
+            && diagnostic.FinalRejection == LowResolutionTranslationRejection.InsufficientOverlap,
+            $"Isolated patches returned {diagnostic}.");
+        var tracker = new LowResolutionRoomMotionTracker();
+        tracker.Observe(reference, 0);
+        Check(tracker.Observe(moved, .05) is null);
+    }
+
     public static void TestRuntimeResolutionMotionRetainsFastVerticalTravel()
     {
         var reference = MotionGrid(shift: 0, width: 64, height: 36);

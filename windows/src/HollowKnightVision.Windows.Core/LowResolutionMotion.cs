@@ -320,6 +320,8 @@ public sealed class LowResolutionRoomMotionTracker
         var improvement = (zero - best.Value) / zero;
         var second = scores.Where(pair => pair.Key != best.Key)
             .Select(pair => pair.Value).DefaultIfEmpty(zero).Min();
+        if (!double.IsFinite(second))
+            return TranslationAttempt.Rejected(LowResolutionTranslationRejection.InsufficientOverlap);
         var uniqueness = Math.Max(0, (second - best.Value) / Math.Max(0.0001, second));
         var residual = SubcellResidual(
             normalizedReference.Values,
