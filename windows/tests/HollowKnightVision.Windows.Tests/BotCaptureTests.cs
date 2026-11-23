@@ -89,6 +89,27 @@ internal static class BotCaptureTests
         });
     }
 
+    internal static void TestReviewUsesTheSavedDomainAndSafeLocalImage()
+    {
+        WithLibrary(root =>
+        {
+            var pair = WriteFixture(root);
+            foreach (var clip in pair.Published)
+            {
+                var folder = Path.Combine(root, BotCaptureSession.DirectoryName(clip.Id));
+                var frames = BotCaptureSession.Review(folder);
+                var frame = frames.Single();
+                Check(frame.Authored == (clip.BotDomain == "hacker") && frame.Features.Count == BotRecordingContract.FeatureNames.Count
+                    && File.Exists(frame.ImageFile) && frame.Offset > 0,
+                    "Review should use the image and source domain stored in its own clip.");
+                Check(frame.Terrain?.Walls.Single().SolidSide == (frame.Authored ? 0 : 1),
+                    "Review must show the saved wall source for its domain.");
+                File.AppendAllText(Path.Combine(folder, "events.jsonl"), """{"imagePath":"../outside.png"}""" + "\n");
+                Check(BotCaptureSession.Review(folder).Count == 1, "Review should only open paths inside the capture.");
+            }
+        });
+    }
+
     internal static BotCaptureResult WriteFixture(string root)
     {
         var id = Guid.NewGuid();

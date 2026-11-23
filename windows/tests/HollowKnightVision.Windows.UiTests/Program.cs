@@ -98,6 +98,7 @@ internal static class Program
         TestHackerTerrainControls();
         TestHackerPathPresentation();
         TestGameplayPathsFollowTheImageAndRespectMenuContext();
+        TestBotCapturePreviewColorsAndCoordinateOrientation();
         TestWorkspaceShortcuts();
         TestPathRecordingAvailability();
         TestWorkspaceExitShortcut();
@@ -124,7 +125,7 @@ internal static class Program
         GpuCaptureTests.TestMappedBounds();
         GpuCaptureTests.RunIfRequested();
         if (args.Contains("--input")) TestBackgroundKeyDelivery();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 74 : 73)}");
+        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 75 : 74)}");
         Application.Current.Shutdown();
     }
 
@@ -1164,6 +1165,26 @@ internal static class Program
             && strokes.All(line => !line.IsHitTestVisible),
             "The road and direction arrow must use the same camera origin and scale as the presented image.");
         Console.WriteLine("PASS Game Play roads use the live viewport, hide in menus, and show their direction");
+    }
+
+    private static void TestBotCapturePreviewColorsAndCoordinateOrientation()
+    {
+        var canvas = new Canvas();
+        var terrain = new BotScreenTerrain(80, 48, [new(5, 60, 12, 1)], [new(40, 10, 30, 0)],
+            [new(43, 10, 43, 22)], [new(12, 12, 14, 12)]);
+        var features = new double[BotRecordingContract.FeatureNames.Count];
+        features[0] = .5; features[1] = .25; features[2] = .1; features[3] = .2; features[4] = 1;
+        var authored = new BotCaptureReviewFrame("local.png", 0, terrain, true, features);
+        BotCapturePreview.Draw(canvas, authored, new(160, 96));
+        var strokes = canvas.Children.OfType<Line>().ToArray();
+        Check(strokes.Length == 4 && strokes.All(line => line.Stroke == Brushes.SpringGreen)
+            && strokes.Any(line => line.X1 == 80 && line.X2 == 80 && line.Y1 == 76 && line.Y2 == 36)
+            && canvas.Children.OfType<Rectangle>().Single().Stroke == Brushes.Gold,
+            "Hacker preview should show authored floor, wall, door, and spike geometry over the recorded Knight.");
+        BotCapturePreview.Draw(canvas, authored with { Authored = false }, new(160, 96));
+        Check(canvas.Children.OfType<Line>().All(line => line.Stroke == Brushes.DeepSkyBlue),
+            "Game Play preview should draw the detected geometry in blue.");
+        Console.WriteLine("PASS bot capture previews place authored green and detected blue terrain in capture coordinates");
     }
 
     private static void TestWorkspaceShortcuts()

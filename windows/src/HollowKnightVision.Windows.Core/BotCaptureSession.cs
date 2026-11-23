@@ -24,6 +24,9 @@ public sealed record BotCaptureInput(double Timestamp, string Button, bool IsPre
     public string Type => "input";
 }
 
+public sealed record BotCaptureReviewFrame(string ImageFile, double Offset, BotScreenTerrain? Terrain, bool Authored,
+    IReadOnlyList<double> Features);
+
 public sealed record BotCaptureResult(IReadOnlyList<BotCaptureManifest> Published, int Discarded);
 
 /// <summary>Streams a single run into separate camera domains. An eight-frame queue bounds pending image memory.</summary>
@@ -217,6 +220,32 @@ public sealed class BotCaptureSession
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { }
         }
         return captures.OrderByDescending(item => item.CreatedAt).ToArray();
+    }
+
+    public static IReadOnlyList<BotCaptureReviewFrame> Review(string folder, CancellationToken cancellationToken = default)
+    {
+        var manifest = JsonSerializer.Deserialize<BotCaptureManifest>(File.ReadAllBytes(Path.Combine(folder, "manifest.json")), Json)
+            ?? throw new InvalidDataException("The capture has no manifest.");
+        if (manifest is not { Status: "completed", SchemaVersion: BotRecordingContract.SchemaVersion }) return [];
+        var authored = manifest.BotDomain == "hacker";
+        var frames = new List<BotCaptureReviewFrame>();
+        var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)) + Path.DirectorySeparatorChar;
+        foreach (var line in File.ReadLines(Path.Combine(folder, "events.jsonl")))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var document = JsonDocument.Parse(line);
+            var row = document.RootElement;
+            if (!row.TryGetProperty("imagePath", out var pathNode) || pathNode.ValueKind != JsonValueKind.String
+                || pathNode.GetString() is not { Length: > 0 } relative || Path.IsPathRooted(relative)
+                || relative.Split('/', '\\').Contains("..")) continue;
+            if (row.Deserialize<BotCaptureObservation>(Json) is not { } observation) continue;
+            var image = Path.GetFullPath(Path.Combine(fullRoot, relative));
+            if (!image.StartsWith(fullRoot, StringComparison.Ordinal) || !File.Exists(image)) continue;
+            var terrain = authored ? observation.AuthoredTerrain : observation.DetectedTerrain;
+            frames.Add(new(image, Math.Max(0, observation.CaptureTimestamp - manifest.StartedAt), terrain, authored,
+                observation.Features));
+        }
+        return frames;
     }
 
     private bool CanTake(long captureGeneration, double timestamp) => !finished && !writer.IsCompleted

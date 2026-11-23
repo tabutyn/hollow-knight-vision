@@ -246,6 +246,7 @@ var tests = new List<(string Name, Action Run)>
     ("fresh visual terrain retains training evidence through Knight occlusion", BotCaptureTests.TestFreshTerrainMakesOccludedKnightUsable),
     ("paired captures publish immediate evidence while invalid clips are discarded", BotCaptureTests.TestPairedEvidencePublishesOnceAndHazardClipsAreDiscarded),
     ("native controls produce edges and interrupted bot captures are discarded", BotCaptureTests.TestNativeControlsAndInterruptedCapture),
+    ("bot clip preview uses the saved image and domain", BotCaptureTests.TestReviewUsesTheSavedDomainAndSafeLocalImage),
     ("input ground truth telemetry provides projection scale", InputBridgeParityTests.TestGroundTruthTelemetryDecodesAndProvidesProjectionScale),
     ("input player pose playback preserves recorded truth", InputBridgeParityTests.TestPlayerPosePlaybackEncodesRecordedGroundTruth),
     ("hacker atlas synchronizer requires matching Unity frame in either arrival order", TestSynchronizerRequiresMatchingUnityFrameInEitherArrivalOrder),
