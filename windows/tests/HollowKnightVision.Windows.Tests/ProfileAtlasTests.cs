@@ -13,6 +13,15 @@ internal static class ProfileAtlasTests
         Check(!detector.AwaitingGameplay, "A stale menu image cannot arm a launch.");
         _ = detector.Observe(occupied with { SourceTimestamp = 1.2, OccupiedProfileSlots = [] }, false, 10.3, 1);
         Check(detector.AwaitingGameplay, "A checked card and stable selectors should arm the launch.");
+        var faded = occupied with
+        {
+            SourceTimestamp = 1.3,
+            SelectedOptionIdentifier = "shared.back",
+            CheckedProfileSlots = [],
+            OccupiedProfileSlots = []
+        };
+        _ = detector.Observe(faded, false, 10.4, 1);
+        Check(detector.AwaitingGameplay, "A grace frame without card evidence cannot replace the measured selection.");
         _ = detector.Observe(null, false, 11, 1);
         _ = detector.Observe(occupied with { ContextIdentifier = "brightness" }, false, 12, 1);
         Check(detector.Observe(null, true, 13, 1) is null, "One HUD sample cannot switch the Atlas.");

@@ -91,6 +91,9 @@ public sealed class ProfileLaunchDetector
                 ClearSelection();
             return null;
         }
+        // A scene held during probe loss may still have a selector result,
+        // but it did not actually search any of the cards in this frame.
+        if (menu.CheckedProfileSlots.Count == 0) return null;
         var time = menu.SourceTimestamp;
         if (!double.IsFinite(time) || time <= lastMenu) return null;
         var gap = time - lastMenu;
