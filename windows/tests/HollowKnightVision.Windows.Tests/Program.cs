@@ -1142,6 +1142,7 @@ var tests = new List<(string Name, Action Run)>
     ("recorded King's Pass jump stays guided above and past the shelf", AtlasPlatformGraphTests.TestRecordedKingsPassJumpKeepsAdviceAboveAndPastTheShelf),
     ("recorded early takeoff keeps the intermediate landing", AtlasPlatformGraphTests.TestRecordedEarlyTakeoffKeepsRouteThroughIntermediateLanding),
     ("visual successor inherits route direction across unplaced charts", GameplayPathTests.TestUnplacedSuccessorKeepsDirectionWithoutImportingCoordinates),
+    ("measured camera recovery keeps a temporarily occluded floor continuous", GameplayPathTests.TestReacquiredCameraCanVerifyBothSidesOfAMaskedFloor),
     ("visual registration promotes measured ground from the same epoch", GameplayPathTests.TestPromotionCarriesMeasuredFloorAndSurvivesNextRegisteredFrame),
     ("visual registration projects explicit goals through the measured basis", GameplayPathTests.TestPromotionProjectsExplicitGoalOntoRegisteredGround),
     ("visual registration preserves the current registered goal during promotion", GameplayPathTests.TestPromotionKeepsAnExistingManualGoalAndDoesNotRepeat),

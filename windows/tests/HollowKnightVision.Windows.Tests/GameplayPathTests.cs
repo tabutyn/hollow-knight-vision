@@ -225,6 +225,92 @@ internal static class GameplayPathTests
             "A new chart after a capture gap should choose its own direction.");
     }
 
+    internal static void TestReacquiredCameraCanVerifyBothSidesOfAMaskedFloor()
+    {
+        var source = new GameplayPathFrame("room", 1, Width, Height, null, [], [Line(22, 498, 92)],
+            TerrainWallDetection.Empty, new(40, Height - 92), new(31, Height - 118, 17, 26), null)
+        { CaptureGeneration = 1, LocalCamera = new(4, new(600, 0)) };
+        var correction = GroundHypothesisTrackingResult.Empty with
+        {
+            PoseVerified = true, HasConfirmedGround = true, CameraPosition = default(AtlasPoint),
+            LocalTextureSupport = 4, LocalReferenceTimestamp = 1, LocalReferencePosition = new(600, 0),
+            LocalMatchedImageDisplacement = new(150, 0), GlobalCorrection = new(-450, 0)
+        };
+        var left = Line(172, 550, 93);
+        var right = Line(614, 630, 93);
+        var next = source with
+        {
+            Time = 1.1, VisibleFloors = [left, right], LocalCamera = new(5, default),
+            KnightFoot = new(260, Height - 93), KnightSize = new(251, Height - 119, 17, 26)
+        };
+
+        GameplayPathTracker Recover(GroundHypothesisTrackingResult proof, long generation = 1,
+            GameplayPathFrame? start = null)
+        {
+            var tracker = new GameplayPathTracker();
+            tracker.Observe(start ?? source);
+            tracker.RecoverMeasuredBasis("room", generation, 4, 5, 1.1, proof);
+            return tracker;
+        }
+
+        var bridged = Recover(correction);
+        Require(bridged.Observe(next)?.Strokes.SequenceEqual([new(new(172, 119), new(630, 119), Walk, true)]) == true,
+            "A measured correction should stitch two receiving edges across the occlusion without extending past them.");
+        Require(Walks(bridged.Observe(next with { Time = 1.81 })) == 2,
+            "The temporary witness should expire without entering the receiving chart's measured ground.");
+
+        var room = new GameplaySavedRoomPath(7, [], []);
+        var placed = Recover(correction, start: source with
+        {
+            VerifiedCamera = new(600, 0), Atlas = new(room, new(520, 280), 1)
+        });
+        var registered = placed.Observe(next with
+        {
+            VerifiedCamera = default(AtlasPoint), Atlas = new(room, new(370, 160), 2)
+        });
+        Require(registered is { Camera: { X: 50, Y: -20 } }
+            && registered.Strokes.SequenceEqual([new(new(222, 99), new(680, 99), Walk, true)]),
+            "Different registered chart offsets should map the temporary witness in both axes.");
+        Require(Recover(correction).Observe(next with { VisibleFloors = [left] })?.Strokes
+            .SequenceEqual([new(new(172, 119), new(550, 119), Walk, true)]) == true,
+            "A source-chart witness should not create the other side of a missing platform.");
+        Require(Walks(Recover(correction).Observe(next with { VisibleFloors = [Line(172, 500, 93), right] })) == 2,
+            "A wide gap should still divide the platforms.");
+        Require(Walks(Recover(correction).Observe(next with { VisibleFloors = [left, right, Line(569, 593, 28)] })) == 3,
+            "A lower landing beneath the seam should keep it open.");
+
+        var wall = new DetectedWall(573, Height - 170, Height - 92, true);
+        var blocked = Recover(correction);
+        var contact = next with { Terrain = new([wall], []), ContactWall = wall };
+        for (var i = 0; i < 4; i++) blocked.Observe(contact with { Time = 1.1 + i * .09 });
+        Require(Walks(blocked.Observe(contact with { Time = 1.49 })) == 2,
+            "A corroborated wall should keep the seam open while the previous floor witness is still active.");
+
+        Require(Walks(Recover(correction with { LocalReferenceTimestamp = null }).Observe(next)) == 2
+            && Walks(Recover(correction with { LocalReferenceTimestamp = .7 }).Observe(next)) == 2
+            && Walks(Recover(correction, generation: 2).Observe(next)) == 2
+            && Walks(Recover(correction).Observe(next with { Room = "other" })) == 2
+            && Walks(Recover(correction).Observe(next with { LocalCamera = new(6, default) })) == 2,
+            "A missing reference or another room, generation, or epoch must not transfer the witness.");
+        var interrupted = Recover(correction);
+        interrupted.Suspend();
+        Require(Walks(interrupted.Observe(next)) == 2, "A capture interruption should retire the temporary witness.");
+
+        var chained = Recover(correction);
+        chained.Observe(next);
+        chained.RecoverMeasuredBasis("room", 1, 5, 6, 1.2, correction with
+        {
+            LocalReferenceTimestamp = 1.1, LocalReferencePosition = default(CameraVector),
+            LocalMatchedImageDisplacement = default(CameraVector), GlobalCorrection = new(10, 0)
+        });
+        Require(Walks(chained.Observe(next with
+        {
+            Time = 1.2, LocalCamera = new(6, new(10, 0))
+        })) == 2, "A second correction must not treat the first inferred seam as measured ground.");
+
+        static int Walks(GameplayPathView? view) => view?.Strokes.Count(stroke => stroke.Kind == Walk) ?? 0;
+    }
+
     internal static void TestPromotionCarriesMeasuredFloorAndSurvivesNextRegisteredFrame()
     {
         var tracker = new GameplayPathTracker();

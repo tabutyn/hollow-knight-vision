@@ -62,6 +62,7 @@ public sealed class GameplayPathTracker
 {
     private const double GraphInterval = .125;
     private const double HandoffInterval = .35;
+    private const double SeamLifetime = .7;
     private string? activeRoom;
     private long activeGeneration;
     private (int Room, long Epoch)? activeAtlas;
@@ -70,6 +71,8 @@ public sealed class GameplayPathTracker
     private Chart? frame;
     private Chart? previousChart;
     private double previousTime;
+    private (long Epoch, AtlasPoint ChartFromLocal)? previousMeasurement;
+    private SeamHandoff? handoff;
     private int knightHeight;
     private int knightWidth;
     private bool measuredSize;
@@ -77,6 +80,7 @@ public sealed class GameplayPathTracker
     private ObjectiveEdit? pendingObjective;
 
     private sealed record ObjectiveEdit(object ChartIdentity, AtlasPathPoint? Point, long Revision);
+    private sealed record SeamHandoff(long Epoch, double Time, AtlasPathPlatform[] Floors);
 
     private sealed class Chart
     {
@@ -89,6 +93,7 @@ public sealed class GameplayPathTracker
         internal AtlasPathWall[] Walls = [];
         internal IReadOnlyList<AtlasPathStroke> Display = [];
         internal IReadOnlyList<AtlasPathPlatform> Seams = [];
+        internal IReadOnlyList<AtlasPathPlatform> HandoffSeams = [];
         internal double LastBuild = double.NegativeInfinity;
         internal readonly VisualPathWallHistory Witnesses = new();
         internal AtlasPathWall[] RememberedWalls = [];
@@ -174,6 +179,8 @@ public sealed class GameplayPathTracker
         provisional = null;
         frame = null;
         previousChart = null;
+        previousMeasurement = null;
+        handoff = null;
         Interlocked.Exchange(ref pendingObjective, null);
         measuredSize = false;
     }
@@ -190,7 +197,44 @@ public sealed class GameplayPathTracker
         }
         frame = null;
         previousChart = null;
+        previousMeasurement = null;
+        handoff = null;
         Interlocked.Exchange(ref pendingObjective, null);
+    }
+
+    internal void RecoverMeasuredBasis(string room, long generation, long sourceEpoch, long destinationEpoch,
+        double time, GroundHypothesisTrackingResult ground)
+    {
+        AtlasPathPlatform[] witnessed = [];
+        if (room == activeRoom && generation == activeGeneration && IsContinuous(time)
+            && previousChart is { Graph: { } graph } chart
+            && previousMeasurement is { } measurement && measurement.Epoch == sourceEpoch
+            && ground.LocalTextureSupport > 0 && ground.LocalReferenceTimestamp is { } reference
+            && time - reference is > 0 and <= HandoffInterval
+            && ground.LocalReferencePosition is { } referencePosition
+            && AtlasPathPoint.TryQuantize(referencePosition.X, referencePosition.Y, out _)
+            && ground.LocalMatchedImageDisplacement is { } displacement
+            && AtlasPathPoint.TryQuantize(displacement.X, displacement.Y, out _)
+            && ground.GlobalCorrection is { } correction
+            && AtlasPathPoint.TryQuantize(correction.X - measurement.ChartFromLocal.X,
+                correction.Y - measurement.ChartFromLocal.Y, out var shift))
+        {
+            // A previous bridge supplies no evidence of its own. Only export
+            // the parts of the road that the source chart actually observed.
+            witnessed = (from floor in graph.Floors
+                         from edge in chart.Visible
+                         let left = Math.Max(floor.Left, edge.Left)
+                         let right = Math.Min(floor.Right, edge.Right)
+                         where left < right && Math.Abs(floor.Y - edge.Y) <= 2
+                         select new AtlasPathPlatform(left + shift.X, right + shift.X, floor.Y + shift.Y))
+                .Distinct().ToArray();
+        }
+
+        Reset();
+        if (witnessed.Length == 0) return;
+        activeRoom = room;
+        activeGeneration = generation;
+        handoff = new(destinationEpoch, time, witnessed);
     }
 
     private GameplayPathView? ObserveRegistered(GameplayPathFrame sample, AtlasPoint camera)
@@ -296,11 +340,33 @@ public sealed class GameplayPathTracker
         // Current edges fill the visible chart until the tracker admits them.
         var all = GroundClearance.FilterPaths(floors.Concat(chart.Visible).Distinct().ToArray(), knightHeight)
             .SelectMany(line => ExcludeWalkedColumns(line, walked)).Distinct().OrderBy(LineOrder).ToArray();
-        UpdateGraph(chart, all, walked, walls, chart.Visible, sample.Time);
+        var seams = ResolveHandoffSeams(sample, camera);
+        var changedHandoff = !seams.SequenceEqual(chart.HandoffSeams);
+        chart.HandoffSeams = seams;
+        UpdateGraph(chart, all, walked, walls, seams.Length == 0 ? chart.Visible : [.. chart.Visible, .. seams],
+            sample.Time, force: changedHandoff);
+    }
+
+    private AtlasPathPlatform[] ResolveHandoffSeams(GameplayPathFrame sample, AtlasPoint camera)
+    {
+        if (handoff is not { } pending) return [];
+        if (sample.Time - pending.Time is not (>= 0 and <= SeamLifetime)
+            || sample.LocalCamera is not { } local || local.CoordinateEpoch != pending.Epoch
+            || sample.VerifiedCamera is { } verified && verified != local.Position)
+        {
+            handoff = null;
+            return [];
+        }
+        if (!AtlasPathPoint.TryQuantize(camera.X - local.Position.X, camera.Y - local.Position.Y, out var shift))
+            return [];
+        return shift == default ? pending.Floors : pending.Floors.Select(floor =>
+            new AtlasPathPlatform(floor.Left + shift.X, floor.Right + shift.X, floor.Y + shift.Y)).ToArray();
     }
 
     private GameplayPathView? ObserveFrame(GameplayPathFrame sample)
     {
+        handoff = null;
+        previousMeasurement = null;
         registered.Witnesses.Reset();
         if (provisional is { } local) local.Chart.Witnesses.Reset();
         var current = ProjectFloors(sample, default, exposed: false);
@@ -320,6 +386,7 @@ public sealed class GameplayPathTracker
 
     private GameplayPathView? Present(Chart chart, GameplayPathFrame sample, AtlasPoint position, AtlasPoint? camera, bool measured)
     {
+        previousMeasurement = null;
         if (chart.Graph is not { } graph || graph.Strokes.Count == 0) return null;
         if (!ReferenceEquals(chart, previousChart))
         {
@@ -329,6 +396,9 @@ public sealed class GameplayPathTracker
             previousChart = chart;
         }
         previousTime = sample.Time;
+        if (measured && sample.LocalCamera is { CoordinateEpoch: >= 0 } local
+            && (sample.VerifiedCamera is null || sample.VerifiedCamera == local.Position))
+            previousMeasurement = (local.CoordinateEpoch, new(position.X - local.Position.X, position.Y - local.Position.Y));
         AtlasPathHint? hint = null;
         AtlasPathPoint? observedFeet = null;
         if (sample.KnightFoot is { } foot && AtlasPathPoint.TryQuantize(
