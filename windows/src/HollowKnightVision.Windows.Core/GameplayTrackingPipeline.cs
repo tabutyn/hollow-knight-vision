@@ -129,8 +129,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
                 prepared.GroundExclusions, terrainAnalysis.Theory);
 
         var observeLoading = visualRoomObservationEnabled && (!hasKnownRoom || observeLoadingInKnownRoom);
-        var visualRoom = roomIdentity.Observe(generation, observeLoading,
-            admission.Transition, signal.MotionGrid, timestamp, buttons, localCamera);
+        var visualRoom = roomIdentity.Observe(generation, observeLoading, signal.MotionGrid,
+            timestamp, buttons, localCamera);
         var room = hasKnownRoom ? knownRoom! : visualRoom.Id;
         if (visualRoom.Cut is not null)
         {
@@ -349,14 +349,12 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         private readonly VisualSceneDiscontinuityTracker cuts = new();
         private long captureGeneration = long.MinValue;
         private long roomEpoch;
-        private bool transitionResumeActive;
-        private bool loadingOwnsResume;
         private VisualSceneDiscontinuityTracker.Cut? lastCut;
 
         internal bool HasUnresolvedLoading => cuts.IsPending;
 
         internal (string Id, bool AllowsAtlasWrite, VisualSceneDiscontinuityTracker.Cut? Cut) Observe(
-            long currentCaptureGeneration, bool enabled, TransitionFrameDecision transition, LowResolutionMotionGrid? grid,
+            long currentCaptureGeneration, bool enabled, LowResolutionMotionGrid? grid,
             double timestamp, InputButtons? buttons, AtlasPoint worldPose)
         {
             if (captureGeneration != currentCaptureGeneration)
@@ -371,18 +369,16 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
                 return (RoomId, true, null);
             }
 
-            var wasPending = cuts.IsPending;
             var drive = KnightLevelWalk.Direction(buttons ?? InputButtons.None);
             var direction = drive < 0 ? VisualRoomDirection.Left
                 : drive > 0 ? VisualRoomDirection.Right : (VisualRoomDirection?)null;
             var cut = cuts.Observe(grid, timestamp, direction, worldPose);
-            if (cut is not null) lastCut = cut;
-            loadingOwnsResume |= wasPending || cuts.IsPending || cut is not null;
-            if (cut is not null
-                || (transition.ResumedAfterTransition && !transitionResumeActive && !loadingOwnsResume))
+            // Settled frames can resume tracking in the same room after a fade or capture gap.
+            if (cut is not null)
+            {
+                lastCut = cut;
                 roomEpoch = checked(roomEpoch + 1);
-            if (transition.AdmitsTracking && !cuts.IsPending) loadingOwnsResume = false;
-            transitionResumeActive = transition.ResumedAfterTransition;
+            }
             return (RoomId, !cuts.IsPending && cut is null, cut);
         }
 
@@ -393,8 +389,6 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         {
             cuts.Reset();
             lastCut = null;
-            transitionResumeActive = false;
-            loadingOwnsResume = false;
         }
 
         internal string RoomId => FormattableString.Invariant($"normal:{captureGeneration}:room:{roomEpoch}");
