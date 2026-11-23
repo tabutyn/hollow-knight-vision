@@ -26,6 +26,7 @@ public sealed record VisualGameplayObservation(
 {
     public GroundHypothesisTrackingResult GroundTracking { get; init; } = GroundHypothesisTrackingResult.Empty;
     public FloorlessCameraEvidence? FloorlessEvidence { get; init; }
+    public bool RetainsWorldBasisDuringPlacementCheck { get; init; }
     public double? MotionBridgeConfidence { get; init; }
     public double? SceneMotionMilliseconds { get; init; }
 }
@@ -113,6 +114,7 @@ public sealed class VisualGameplayTracker
         LastPatchSearchExecution = tracker.LatestPatchSearchExecution;
         if (!evaluatedPlacement) placement.MissingObservation();
         var firstFrame = previousTimestamp is null;
+        var captureInterval = timestamp - previousTimestamp;
         previousTimestamp = timestamp;
         var verified = tracking.PoseVerified && tracking.HasConfirmedGround
             && tracking.CameraPosition is not null;
@@ -231,6 +233,11 @@ public sealed class VisualGameplayTracker
         {
             GroundTracking = tracking,
             FloorlessEvidence = floorlessEvidence,
+            // Ground validation can pause writes while independent registration
+            // continues to carry the existing coordinate basis on each capture.
+            RetainsWorldBasisDuringPlacementCheck = !placement.AllowsAtlasWrite
+                && bridged is { Confidence: >= MinimumRecoveryConfidence }
+                && captureInterval is > 0 and <= CaptureGroundReliability.MaximumAge,
             SceneMotionMilliseconds = sceneMotionMilliseconds,
             MotionBridgeConfidence = selectedScene
                 ? 1 / (1 + (scene!.HorizontalMeasured ? Math.Max(scene.ResidualX, scene.ResidualY) : scene.ResidualY)

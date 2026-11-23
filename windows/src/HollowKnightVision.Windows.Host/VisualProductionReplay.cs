@@ -164,7 +164,7 @@ internal static class VisualProductionReplay
                 var telemetry = observation.Telemetry;
                 var localCamera = new AtlasPoint(telemetry.CameraX, telemetry.CameraY);
                 if (observation.GroundVerified) groundVerified++;
-                lostTracking |= !tracked.AllowsAtlasWrite || !tracked.RoomAllowsAtlasWrite;
+                lostTracking |= tracked.RequiresWorldRecovery;
                 WindowsLiveWorldPipelineResult? placement = null;
                 if (admission.AllowsAtlasWrite && tracked.AllowsAtlasWrite && tracked.RoomAllowsAtlasWrite)
                 {
@@ -223,6 +223,7 @@ internal static class VisualProductionReplay
                     evidence.Index, evidence.CaptureTimestamp, evidence.CaptureGeneration, evidence.RenderedGameFrame,
                     admission.AdmitsTracking, admission.Transition.ResumedAfterTransition, observation.Source,
                     observation.GroundVerified, tracked.AllowsAtlasWrite, tracked.HasMeasuredSceneryContinuity,
+                    tracked.RequiresWorldRecovery,
                     trackerState = camera.PlacementRecoveryState, localCamera, tracked.RoomId,
                     floorless,
                     tracked.RoomAllowsAtlasWrite, tracked.SceneCut,

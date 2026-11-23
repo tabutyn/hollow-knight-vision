@@ -17,6 +17,8 @@ public sealed record GameplayTrackedFrame(
     public bool RoomAllowsAtlasWrite { get; init; } = true;
     public bool AllowsAtlasWrite => Observation.AllowsAtlasWrite || HasMeasuredSceneryContinuity;
     public bool HasMeasuredSceneryContinuity { get; init; }
+    public bool RequiresWorldRecovery => !RoomAllowsAtlasWrite || SceneCut is not null
+        || (!AllowsAtlasWrite && !Observation.RetainsWorldBasisDuringPlacementCheck);
     public VisualSceneDiscontinuityTracker.Cut? SceneCut { get; init; }
 }
 

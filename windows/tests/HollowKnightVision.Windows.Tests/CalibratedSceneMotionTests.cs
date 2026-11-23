@@ -148,6 +148,24 @@ internal static class CalibratedSceneMotionTests
             "A missing vertical calibration leaves the masked pose in control.");
     }
 
+    public static void TestGroundPlacementCheckPausesWritesWithoutDiscardingTrackedBasis()
+    {
+        var registrationOnly = new VisualGameplayObservation(default!, null, false, false, 4, 1, "transition-bridge")
+        {
+            RetainsWorldBasisDuringPlacementCheck = true
+        };
+        var paused = new GameplayTrackedFrame(registrationOnly, GroundHypothesisTrackingResult.Empty,
+            null, default, "entrance", TerrainWallDetection.Empty, default, [], [], 0, 0, 0);
+        Check(!paused.AllowsAtlasWrite && !paused.RequiresWorldRecovery,
+            "The uncertain frame must be withheld while the registered world basis is preserved.");
+        Check((paused with { RoomAllowsAtlasWrite = false }).RequiresWorldRecovery,
+            "Unresolved room ownership still suspends the world basis.");
+        Check((paused with
+        {
+            Observation = registrationOnly with { RetainsWorldBasisDuringPlacementCheck = false }
+        }).RequiresWorldRecovery, "An unsupported registration gap still requires recovery.");
+    }
+
     public static void TestGameplayCalibratesSceneryFromTrackedGround()
     {
         const int width = 640, height = 360;

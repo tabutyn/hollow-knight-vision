@@ -3202,7 +3202,7 @@ public partial class MainWindow : Window
             : 0;
         if (gameMode == GameRuntimeMode.Modded
             && liveWorldPipeline is not null
-            && (!tracked.AllowsAtlasWrite || !tracked.RoomAllowsAtlasWrite))
+            && tracked.RequiresWorldRecovery)
         {
             Interlocked.Exchange(ref pendingWorldTrackingLoss, (long)liveWorldGeneration);
         }
