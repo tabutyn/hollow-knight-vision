@@ -23,6 +23,8 @@ artifacts/
 !artwork/app-icon-monocle-overlay.png
 !docs/playing-policies/policy-controls.png
 !docs/playing-policies/policy-selection.png
+!docs/playing-policies/gemma-quest-memory.png
+!docs/playing-policies/gemma-policy-request.png
 **/labeling-v1/
 **/training-v1/datasets/
 **/atlases/

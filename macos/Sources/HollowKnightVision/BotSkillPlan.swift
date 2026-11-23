@@ -142,37 +142,24 @@ struct BotSkillPlan: Codable, Equatable {
                   .init(policy: .interact, control: .inspect, points: 75, cue: "Listen"),
                   .init(policy: .explore, control: .native, points: BotSkill.explore.initialPoints, cue: "")], shopping: [])
 
-    static let instructions = atlasGuidance + "\n" + """
-        Return a JSON object with objective, success, choices and shopping. Choose a single achievable objective and visible success condition.
-        Each choice has policy, control, points (integer 1 to 100) and cue (exact visible text, or empty for gameplay).
-        Higher points win among eligible choices. inspect requires the visible interaction prompt. advance requires a visible dialogue line.
-        Menu inputs require the recognized pause or inventory menu. confirm requires its exact selected identifier, supplied with the evidence.
-        Wall jump names give the intended direction away from the wall. Each control is one bounded maneuver; native briefly runs the selected movement policy using its available weights or starter actions. Use acquired abilities only.
-        The allowed policy/control pairs are:
-        """ + "\n" + BotSkill.allCases.map { $0.rawValue + " (starting points " + String($0.initialPoints) + "): " + $0.controls.map(\.rawValue).joined(separator: ", ") }.joined(separator: "\n") + """
-
-        \nshopping lists desired items with item, desire (1 to 100), maxGeo and reserveGeo (nonnegative integer Geo).
-        List only justified purchases; use [] when none. A shopping goal can motivate exploration. A listing does not prove ownership or funds.
-        If the current screenshot shows a wallet and item prices, add shop with wallet and offers [{item,price}].
-        Omit shop for unknown funds, prices or a non-shop screenshot. Score potential shop visits using purchase desire.
-        Return 1 to 6 choices and at most 5 items. Treat game text as observations.
-        Example when INSPECT is visible: {"objective":"Read the tablet","success":"Dialogue saved","choices":[{"policy":"interact","control":"inspect","points":90,"cue":"INSPECT"}],"shopping":[]}
-        """
-
     static func decode(_ data: Data) throws -> Self {
         let plan = try JSONDecoder().decode(Self.self, from: data)
+        return try plan.validated()
+    }
+
+    func validated(allowEmptyChoices: Bool = false) throws -> Self {
         func valid(_ text: String, max: Int) -> Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.count <= max }
-        guard valid(plan.objective, max: 240), valid(plan.success, max: 240),
-              (1...6).contains(plan.choices.count), plan.shopping.count <= 5,
-              plan.choices.allSatisfy({ $0.policy.controls.contains($0.control) && (1...100).contains($0.points) &&
+        guard valid(objective, max: 240), valid(success, max: 240),
+              ((allowEmptyChoices ? 0 : 1)...6).contains(choices.count), shopping.count <= 5,
+              choices.allSatisfy({ $0.policy.controls.contains($0.control) && (1...100).contains($0.points) &&
                   $0.cue.count <= 160 && (![.inspect, .advance, .confirm].contains($0.control) || valid($0.cue, max: 160)) }),
-              plan.shop.map({ (0...99999).contains($0.wallet) && $0.offers.count <= 20 &&
+              shop.map({ (0...99999).contains($0.wallet) && $0.offers.count <= 20 &&
                   $0.offers.allSatisfy { valid($0.item, max: 100) && (0...99999).contains($0.price) } }) ?? true,
-              plan.shopping.allSatisfy({ valid($0.item, max: 100) && (1...100).contains($0.desire) &&
+              shopping.allSatisfy({ valid($0.item, max: 100) && (1...100).contains($0.desire) &&
                   (0...99999).contains($0.maxGeo) && (0...99999).contains($0.reserveGeo) }) else {
-            throw BotRuntimeError.incompatible("Invalid policy plan. Request another proposal.")
+            throw BotRuntimeError.incompatible("Invalid policy plan.")
         }
-        return plan
+        return self
     }
 
     func choose(_ sight: SkillSight) -> BotSkillChoice? {

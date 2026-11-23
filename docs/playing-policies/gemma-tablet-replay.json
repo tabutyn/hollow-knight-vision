@@ -1,0 +1,136 @@
+{
+  "model": "gemma3:4b",
+  "fixture": "recorded King’s Pass tablet prompt and passage",
+  "goal": "Read the sign in front of the Knight.",
+  "storedRows": [
+    {
+      "id": 1,
+      "text": "INSPECT"
+    },
+    {
+      "id": 2,
+      "text": "Higher beings, these words are for you alone. Your great strength marks you amongst us. Focus your soul and you shall achieve feats of which others can only dream. Collect SOUIL by striking enemnies. Once enough SOUIL is collected HOLD to focus SOLIL and HEAL"
+    }
+  ],
+  "before": {
+    "destinations": [],
+    "quests": [],
+    "unknowns": []
+  },
+  "modelNotes": {
+    "destinations": [
+      {
+        "sources": [
+          2
+        ],
+        "text": "King's Pass"
+      }
+    ],
+    "quests": [
+      {
+        "sources": [
+          2
+        ],
+        "text": "Collect SOUIL by striking enemies. Once enough SOUIL is collected HOLD to focus SOLIL and HEAL."
+      }
+    ],
+    "unknowns": [
+      {
+        "sources": [
+          2
+        ],
+        "text": "The nature of 'higher beings' and their relationship to the player."
+      },
+      {
+        "sources": [
+          2
+        ],
+        "text": "The exact mechanics of 'SOUIL' collection and its use for healing."
+      },
+      {
+        "sources": [
+          2
+        ],
+        "text": "The specific requirements to 'focus your soul'."
+      }
+    ]
+  },
+  "savedNotes": {
+    "destinations": [],
+    "quests": [
+      {
+        "sources": [
+          2
+        ],
+        "text": "Collect SOUIL by striking enemies. Once enough SOUIL is collected HOLD to focus SOLIL and HEAL."
+      }
+    ],
+    "unknowns": [
+      {
+        "sources": [
+          2
+        ],
+        "text": "The nature of 'higher beings' and their relationship to the player."
+      },
+      {
+        "sources": [
+          2
+        ],
+        "text": "The exact mechanics of 'SOUIL' collection and its use for healing."
+      },
+      {
+        "sources": [
+          2
+        ],
+        "text": "The specific requirements to 'focus your soul'."
+      }
+    ]
+  },
+  "proposal": {
+    "objective": "Read the sign in front of the Knight",
+    "success": "Sign text recorded",
+    "choices": [
+      {
+        "policy": "interact",
+        "control": "inspect",
+        "points": 90,
+        "cue": "INSPECT"
+      }
+    ],
+    "shopping": []
+  },
+  "selectionWithCue": "inspect",
+  "inspectEligibleWithoutCue": false,
+  "currentRankingReplay": {
+    "model": "gemma3:4b",
+    "fixture": "recorded King’s Pass tablet prompt and passage",
+    "goal": "Read the sign in front of the Knight.",
+    "memory": "Recorded game text (2/2 excerpts, chronological)\n[R1 · King's Pass] INSPECT\n[R2 · King's Pass] Higher beings, these words are for you alone. Your great strength marks you amongst us. Focus your soul and you shall achieve feats of which others can only dream. Collect SOUIL by striking enemnies. Once enough SOUIL is collected HOLD to focus SOLIL and HEAL\nQuest notes with source rows\n{\"destinations\":[],\"quests\":[{\"sources\":[2],\"text\":\"The player is directed to 'focus your soul' to achieve greater feats.\"}],\"unknowns\":[{\"sources\":[2],\"text\":\"The player must collect SOUIL by striking enemies. This SOUIL can be used to focus SOLIL and heal.\"}]}",
+    "response": {
+      "shopping": [],
+      "choices": [
+        {
+          "option": "readPrompt",
+          "points": 95
+        }
+      ]
+    },
+    "selectedControlWithCue": "inspect",
+    "inspectEligibleWithoutCue": false,
+    "privateGameDispatch": {
+      "episode": "f43b9b81-deff-423c-b674-8222bb1ff173",
+      "scene": "Tutorial_01",
+      "spawn": "beside-tablet",
+      "saveDisabled": true,
+      "selection": {
+        "cue": "Inspect",
+        "points": 95,
+        "control": "inspect",
+        "policy": "interact"
+      },
+      "button": 8,
+      "storedPassage": "Higher beings, these words are for you alone. Your great strength marks you amongst us. Focus your soul and you shall achieve feats of which others can only drcam. Collect SOLIL by striking enemnies. Once enough SOUIL is collected HOLD to focus SOLIL and HEAL",
+      "recalledAfterReopen": true
+    }
+  }
+}

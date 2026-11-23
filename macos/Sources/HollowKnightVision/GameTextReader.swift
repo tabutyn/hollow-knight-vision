@@ -182,6 +182,9 @@ final class GameTextReader: ObservableObject {
     @Published private(set) var cleanupStatus: String?
     private let directory: URL
     private var notebook: GameTextNotebook
+    private var questContext: AtlasQuestContext
+    private var questLog: AtlasQuestLog?
+    private var summarizedRevision = -1
     private var openingSource: GameTextNotebook?
     private var revision = -1
     private var passageLines = Set<String>()
@@ -190,6 +193,7 @@ final class GameTextReader: ObservableObject {
         self.preferences = preferences
         self.directory = directory
         self.notebook = notebook ?? GameTextNotebook()
+        self.questContext = AtlasQuestContext(notebookURL: notebook?.url)
     }
 
     func selectProfile(_ next: SaveProfileAtlas?) {
@@ -199,6 +203,10 @@ final class GameTextReader: ObservableObject {
         statedGoal = goalKey.flatMap { preferences.string(forKey: $0) } ?? ""
         loggedText = []
         notebook = next.map { GameTextNotebook(url: directory.appendingPathComponent($0.id.uuidString + ".json")) } ?? GameTextNotebook()
+        questContext.invalidate()
+        questContext = AtlasQuestContext(notebookURL: notebook.url)
+        questLog = nil
+        summarizedRevision = -1
         revision = -1
         memory = []
         entries = []
@@ -221,6 +229,7 @@ final class GameTextReader: ObservableObject {
         guard !Task.isCancelled, notebook === source, snapshot.revision > revision else { return }
         revision = snapshot.revision
         memory = snapshot.rows
+        questLog = nil
         entries = GameTextLogEntry.current(memory)
         let recent = entries.lazy.compactMap { entry in
             entry.reading.interpretation.map { $0.displayLabel + " · " + $0.text }
@@ -271,7 +280,33 @@ final class GameTextReader: ObservableObject {
         try await refresh(source)
     }
 
-    func cleanReadings(preferred: ThinkingModel,
+    private func updatePolicyMemory(model: ThinkingModel) async throws {
+        let source = notebook
+        try await refresh(source)
+        try Task.checkCancellation()
+        guard source === notebook else { throw CancellationError() }
+        let context = questContext, currentRevision = revision
+        let log = questLog ?? AtlasQuestLog(memory)
+        questLog = log
+        _ = try await context.prepare(log) { notes, page in
+            try await AtlasQuestContext.revise(notes, page: page, model: model)
+        }
+        try Task.checkCancellation()
+        guard source === notebook else { throw CancellationError() }
+        summarizedRevision = currentRevision
+    }
+
+    func policyContext(goal: String) async throws -> String {
+        let source = notebook
+        try await refresh(source)
+        try Task.checkCancellation()
+        guard source === notebook else { throw CancellationError() }
+        let log = questLog ?? AtlasQuestLog(memory)
+        questLog = log
+        return questContext.selectionEvidence(log, goal: goal)
+    }
+
+    func cleanReadings(preferred: ThinkingModel, updateQuestNotes: Bool = false,
                        find: (ThinkingModel) async throws -> GameTextCleanup.Resident? = GameTextCleanup.resident,
                        correct: (([RememberedGameText], GameTextCleanup.Resident) async throws -> [String: GameTextInterpretation])? = nil) async {
         let source = notebook
@@ -314,6 +349,14 @@ final class GameTextReader: ObservableObject {
                     guard !Task.isCancelled, notebook === source else { return }
                     cleanupStatus = "OCR captured. Waiting for the selected model to review it."
                     delay = 12
+                }
+                if updateQuestNotes && summarizedRevision != revision && notebook === source && !Task.isCancelled {
+                    do { try await updatePolicyMemory(model: preferred) }
+                    catch {
+                        guard !Task.isCancelled, notebook === source else { return }
+                        cleanupStatus = "Quest notes pending. " + error.localizedDescription
+                        delay = 20
+                    }
                 }
             } catch {
                 guard !Task.isCancelled, notebook === source else { return }
@@ -373,14 +416,9 @@ final class GameTextReader: ObservableObject {
         if memory.isEmpty {
             do { try await refresh(source) } catch { if notebook === source { issue = error.localizedDescription } }
         }
-        var current = [String]()
-        if enabled, let image {
-            if let scan, scan.image === image, scan.language == language {
-                current = scan.lines.map(\.text)
-            } else if let pinned = try? await Self.recognize(image, language: language, context: context) {
-                current = pinned.lines.map(\.text)
-            }
-        }
+        let current: [String]
+        if enabled, let image { current = await visibleLines(in: image, language: language, context: context) }
+        else { current = [] }
         guard !Task.isCancelled, notebook === source else { return ("", []) }
         let recalled = GameTextNotebook.recall(memory, question: question, context: context, current: current, language: language)
         var parts = [String]()
@@ -396,5 +434,13 @@ final class GameTextReader: ObservableObject {
         if !interpreted.isEmpty { parts.append("Likely transcription of visible text:\n" + interpreted.joined(separator: "\n").prefix(650)) }
         if !recalled.isEmpty { parts.append("Earlier game text (may be from another visit):\n" + recalled.joined(separator: "\n").prefix(400)) }
         return (parts.joined(separator: "\n\n"), current)
+    }
+
+    func visibleLines(in image: CGImage, language: String, context: String) async -> [String] {
+        if let scan, scan.image === image, scan.language == language {
+            return scan.lines.map(\.text)
+        }
+        let result = try? await Self.recognize(image, language: language, context: context)
+        return result?.lines.map(\.text) ?? []
     }
 }

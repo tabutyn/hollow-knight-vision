@@ -532,8 +532,8 @@ struct DashboardView: View {
 
     @ObservedObject var model: LiveCaptureModel
     @State private var workspace = DashboardWorkspace.gameplay
-    @FocusState private var editingThinkingPrompt: Bool
     @State private var gameTextReader = GameTextReader()
+    @StateObject private var thinkingInspector = ThinkingInspector()
     @ObservedObject var thinkingSession: ThinkingModelSession
     private var proofreadingTarget: ThinkingModel? {
         guard !thinkingSession.answering else { return nil }
@@ -547,6 +547,32 @@ struct DashboardView: View {
 
     private var textReadingContext: String {
         model.readingOpeningCutscene ? RememberedGameText.openingContext : model.skillContext
+    }
+
+    private func dispatchThinkingPolicy(_ output: ThinkingInspector.Output) -> String? {
+        let frame = output.input.frame
+        guard let plan = output.plan, frame.profile == model.notebookProfile?.id,
+              frame.goal == gameTextReader.currentGoal, output.input.model == thinkingSession.model,
+              frame.mode == model.gameMode.rawValue, model.gameMode == .modded else {
+            return "Skipped · game or objective changed."
+        }
+        guard workspace == .gameplay || workspace == .hacker, !showingSettings, !showingTextReader,
+              initialization.isFirstPhaseComplete, !labelingTrainer.isRunning, !botTrainer.isRunning else {
+            return "Skipped · gameplay controls unavailable."
+        }
+        return model.botPlayer.dispatch(plan, context: frame.context, generation: frame.generation,
+                                        domain: workspace == .hacker ? .hacker : .gameplay)
+    }
+
+    private func thinkingFrame() -> ThinkingFrame? {
+        guard let image = model.thinkingScreenshot() else { return nil }
+        let atlas = model.liveWorldSnapshot.map {
+            "Atlas observations: \($0.observations.count). Recorded transitions: \(model.transitionPortals.count)."
+        } ?? ""
+        return ThinkingFrame(image: image, profile: model.notebookProfile?.id, generation: model.skillGeneration,
+                             context: textReadingContext, goal: gameTextReader.currentGoal, mode: model.gameMode.rawValue,
+                             atlas: atlas, sight: model.currentSkillSight(), language: initialization.language.rawValue,
+                             readsText: readGameText)
     }
     @State private var viewportFraming: LayerSceneFramingMode = .current
     @State private var framingRequest = 0
@@ -730,7 +756,18 @@ struct DashboardView: View {
                 do { try await Task.sleep(for: .seconds(20)) } catch { return }
             }
         }
-        .onReceive(model.$notebookProfile.removeDuplicates()) { gameTextReader.selectProfile($0) }
+        .task {
+            await thinkingInspector.monitor(reader: gameTextReader, session: thinkingSession, dispatch: dispatchThinkingPolicy, snapshot: thinkingFrame)
+        }
+        .onChange(of: thinkingSession.model) { _, _ in
+            thinkingInspector.reset(session: thinkingSession, keepFrame: true)
+        }
+        .onReceive(model.$notebookProfile.removeDuplicates()) { profile in
+            if profile != gameTextReader.profile {
+                thinkingInspector.reset(session: thinkingSession, keepFrame: false)
+                gameTextReader.selectProfile(profile)
+            }
+        }
         .task(id: "\(model.notebookProfile?.id.uuidString ?? "")-\(readGameText)-\(model.isCapturing)-\(initialization.language.rawValue)") {
             gameTextReader.selectProfile(model.notebookProfile)
             await gameTextReader.monitor(enabled: readGameText && model.isCapturing, language: initialization.language.rawValue) {
@@ -739,7 +776,9 @@ struct DashboardView: View {
         }
         .task(id: "\(model.notebookProfile?.id.uuidString ?? "")-\(readGameText)-\(String(describing: proofreadingTarget))") {
             gameTextReader.selectProfile(model.notebookProfile)
-            if readGameText, let target = proofreadingTarget { await gameTextReader.cleanReadings(preferred: target) }
+            if readGameText, let target = proofreadingTarget {
+                await gameTextReader.cleanReadings(preferred: target, updateQuestNotes: true)
+            }
         }
         .onAppear { model.botPlayer.didInspect = { sight, start in gameTextReader.beginInspection(sight, at: start) } }
         .onReceive(gameTextReader.$skillReading) { model.skillReading = $0 }
@@ -910,17 +949,8 @@ struct DashboardView: View {
                     }
                 )
             } else if workspace == .thinking {
-                ThinkingWorkspaceView(session: thinkingSession, snapshot: model.thinkingScreenshot, promptFocus: $editingThinkingPrompt,
-                                      reader: gameTextReader, readingContext: { textReadingContext },
-                                      atlasSummary: {
-                                          guard let atlas = model.liveWorldSnapshot else { return "" }
-                                          return "Atlas observations: \(atlas.observations.count). Recorded transitions: \(model.transitionPortals.count)."
-                                      },
-                                      language: initialization.language.rawValue, readGameText: readGameText,
-                                      openLog: { showingTextReader = true },
-                                      generation: { model.skillGeneration },
-                                      skillSight: model.currentSkillSight,
-                                      player: model.botPlayer)
+                ThinkingWorkspaceView(session: thinkingSession, inspector: thinkingInspector, reader: gameTextReader,
+                                      player: model.botPlayer, openLog: { showingTextReader = true })
             } else if workspace == .bot {
                 BotModelWorkspaceView(controller: botTrainer, trainingAllowed: !labelingTrainer.isRunning,
                                       reloadModel: { model.botPlayer.reloadModel() })
@@ -1775,8 +1805,8 @@ struct DashboardView: View {
     }
 
     private func toggleBotControl() {
-        if model.botDemo.isActive { model.stopBotDemo(reason: "Stopped with B"); return }
-        if model.botPlayer.isActive { model.botPlayer.stop(); return }
+        if model.botDemo.isActive { model.botPlayer.automaticPoliciesEnabled = false; model.stopBotDemo(reason: "Stopped with B"); return }
+        if model.botPlayer.isActive { model.botPlayer.automaticPoliciesEnabled = false; model.botPlayer.stop(); return }
         guard !labelingTrainer.isRunning && !botTrainer.isRunning else { model.botDemo.rejectStart("Wait for Model training to finish before starting the bot."); return }
         guard initialization.isFirstPhaseComplete else { model.botDemo.rejectStart("Complete stencil setup before starting the bot."); return }
         let inGameplay = model.liveGameStatus == "Gameplay"
@@ -1788,11 +1818,8 @@ struct DashboardView: View {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.windows.first { $0.title == "Hollow Knight Vision" && $0.isVisible }?.makeKeyAndOrderFront(nil)
         DispatchQueue.main.async {
-            if model.botPlayer.hasQueuedSkill {
-                model.botPlayer.start(domain: domain)
-            } else {
-                model.startBotDemo(inGameplay: inGameplay, domain: domain)
-            }
+            model.botPlayer.automaticPoliciesEnabled = true
+            model.startBotDemo(inGameplay: inGameplay, domain: domain)
         }
     }
 
@@ -1920,7 +1947,7 @@ struct DashboardView: View {
             title: workspaceTitle, selection: workspaceSelection
         )
         .frame(width: 480)
-        .overlay { if !editingThinkingPrompt { workspaceShortcuts } }
+        .overlay { workspaceShortcuts }
     }
 
     private var workspaceShortcuts: some View {
@@ -2036,7 +2063,7 @@ struct DashboardView: View {
             model.toggleLabelMode()
         case .thinking:
             workspace = .thinking
-            model.setModelReviewActive(true, reservesAllKeys: true)
+            model.setModelReviewActive(true)
         case .bot:
             workspace = .bot
             model.setModelReviewActive(true)

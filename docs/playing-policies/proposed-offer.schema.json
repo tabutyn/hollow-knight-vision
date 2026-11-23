@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "version": {
+      "const": 2
+    },
+    "decisionId": { "$ref": "#/$defs/id" },
+    "objective": { "const": "expandAtlas" },
+    "candidates": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^c(?:0|[1-9][0-9]*)$"
+      },
+      "maxProperties": 12,
+      "additionalProperties": {
+        "oneOf": [
+          { "$ref": "#/$defs/traverse" },
+          { "$ref": "#/$defs/fight" },
+          { "$ref": "#/$defs/recover" },
+          { "$ref": "#/$defs/interact" },
+          { "$ref": "#/$defs/menu" },
+          { "$ref": "#/$defs/buy" }
+        ]
+      }
+    }
+  },
+  "required": [ "version", "decisionId", "objective", "candidates" ],
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "traverse": {
+      "type": "object",
+      "properties": {
+        "policy": { "const": "traverse" },
+        "params": {
+          "type": "object",
+          "properties": {
+            "roomId": { "$ref": "#/$defs/id" },
+            "routeId": { "$ref": "#/$defs/id" },
+            "waypointId": { "$ref": "#/$defs/id" },
+            "road_dx": {
+              "type": "number",
+              "minimum": -1,
+              "maximum": 1
+            },
+            "road_dy": {
+              "type": "number",
+              "minimum": -1,
+              "maximum": 1
+            },
+            "road_distance": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "road_frontier": {
+              "type": "boolean"
+            }
+          },
+          "required": [ "roomId", "routeId", "waypointId", "road_dx", "road_dy", "road_distance", "road_frontier" ],
+          "additionalProperties": false
+        }
+      },
+      "required": [ "policy", "params" ],
+      "additionalProperties": false
+    },
+    "fight": {
+      "type": "object",
+      "properties": {
+        "policy": { "const": "fight" },
+        "params": {
+          "type": "object",
+          "properties": {
+            "enemyId": { "$ref": "#/$defs/id" }
+          },
+          "required": [ "enemyId" ],
+          "additionalProperties": false
+        }
+      },
+      "required": [ "policy", "params" ],
+      "additionalProperties": false
+    },
+    "recover": {
+      "type": "object",
+      "properties": {
+        "policy": { "const": "recover" },
+        "params": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "method": { "const": "focus" }
+              },
+              "required": [ "method" ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "enum": [ "bench", "lifeblood" ]
+                },
+                "sourceId": { "$ref": "#/$defs/id" }
+              },
+              "required": [ "method", "sourceId" ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [ "policy", "params" ],
+      "additionalProperties": false
+    },
+    "interact": {
+      "type": "object",
+      "properties": {
+        "policy": { "const": "interact" },
+        "params": {
+          "type": "object",
+          "properties": {
+            "verb": {
+              "enum": [ "inspect", "talk", "advanceDialogue", "activate", "collect" ]
+            },
+            "targetId": { "$ref": "#/$defs/id" }
+          },
+          "required": [ "verb", "targetId" ],
+          "additionalProperties": false
+        }
+      },
+      "required": [ "policy", "params" ],
+      "additionalProperties": false
+    },
+    "menu": {
+      "type": "object",
+      "properties": {
+        "policy": { "const": "menu" },
+        "params": {
+          "type": "object",
+          "properties": {
+            "menuId": { "$ref": "#/$defs/id" },
+            "entryId": { "$ref": "#/$defs/id" }
+          },
+          "required": [ "menuId", "entryId" ],
+          "additionalProperties": false
+        }
+      },
+      "required": [ "policy", "params" ],
+      "additionalProperties": false
+    },
+    "buy": {
+      "type": "object",
+      "properties": {
+        "policy": { "const": "buy" },
+        "params": {
+          "type": "object",
+          "properties": {
+            "shopId": { "$ref": "#/$defs/id" },
+            "offerId": { "$ref": "#/$defs/id" },
+            "itemId": { "$ref": "#/$defs/id" },
+            "priceGeo": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "walletGeo": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxPriceGeo": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reserveGeo": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "desire": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          "required": [ "shopId", "offerId", "itemId", "priceGeo", "walletGeo", "maxPriceGeo", "reserveGeo", "desire" ],
+          "additionalProperties": false
+        }
+      },
+      "required": [ "policy", "params" ],
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "version": 2,
+      "decisionId": 42,
+      "objective": "expandAtlas",
+      "candidates": {
+        "c0": {
+          "policy": "traverse",
+          "params": {
+            "roomId": 7,
+            "routeId": 2,
+            "waypointId": 3,
+            "road_dx": 0.6,
+            "road_dy": 0.8,
+            "road_distance": 0.25,
+            "road_frontier": true
+          }
+        },
+        "c1": {
+          "policy": "interact",
+          "params": {
+            "verb": "inspect",
+            "targetId": 8
+          }
+        }
+      }
+    }
+  ]
+}

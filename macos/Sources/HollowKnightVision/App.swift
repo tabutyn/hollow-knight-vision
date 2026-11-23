@@ -24,7 +24,7 @@ private struct GameModeChooserView: View {
     let icon: NSImage
     let normalAvailable: Bool
     let moddedAvailable: Bool
-    let choose: (NSApplication.ModalResponse) -> Void
+    let choose: (HollowKnightRuntimeMode?) -> Void
 
     var body: some View {
         VStack(spacing: 24) {
@@ -36,19 +36,19 @@ private struct GameModeChooserView: View {
 
             HStack(spacing: 10) {
                 Button(visionText(HollowKnightRuntimeMode.normal.title)) {
-                    choose(.alertFirstButtonReturn)
+                    choose(.normal)
                 }
                 .disabled(!normalAvailable)
                 .accessibilityLabel(visionText(HollowKnightRuntimeMode.normal.title))
 
                 Button(visionText(HollowKnightRuntimeMode.modded.title)) {
-                    choose(.alertSecondButtonReturn)
+                    choose(.modded)
                 }
                 .disabled(!moddedAvailable)
                 .accessibilityLabel(visionText(HollowKnightRuntimeMode.modded.title))
 
                 Button(visionText("Quit")) {
-                    choose(.abort)
+                    choose(nil)
                 }
                 .keyboardShortcut(.cancelAction)
                 .accessibilityLabel(visionText("Quit"))
@@ -123,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let requiresGameModeChoice: Bool
     private var automationController: GameAutomationController?
     private var viewerPanel: NSWindow?
+    private var modeChooser: NSPanel?
 
     override init() {
         let options = HollowKnightVisionLaunchOptions(arguments: CommandLine.arguments)
@@ -174,26 +175,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         thinkingSession.select(.startup)
         NSApp.setActivationPolicy(.regular)
-        // Make per-launch mode selection the first visible app UI. Showing the
-        // dashboard first can leave its modal alert on another Space or hidden
-        // behind the large dashboard window.
         NSApp.activate(ignoringOtherApps: true)
         if requiresGameModeChoice {
-            guard let gameMode = Self.chooseGameMode(
-                availableInstallations: availableInstallations
-            ) else {
-                NSApp.terminate(nil)
-                return
-            }
-            requestedGamePath = availableInstallations.installation(for: gameMode)?.path
-            model.configureGameMode(gameMode)
-        } else if let requestedGameMode,
-                  requestedGamePath == nil {
+            showGameModeChooser()
+            return
+        }
+        if let requestedGameMode, requestedGamePath == nil {
             Self.showMissingInstallation(for: requestedGameMode)
             NSApp.terminate(nil)
             return
         }
 
+        startDashboard()
+    }
+
+    @MainActor private func startDashboard() {
         showDashboard()
         model.startGame(gamePath: requestedGamePath)
         if automationControlEnabled {
@@ -238,9 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.makeKeyAndOrderFront(nil)
     }
 
-    private static func chooseGameMode(
-        availableInstallations: HollowKnightInstallationCatalog
-    ) -> HollowKnightRuntimeMode? {
+    @MainActor private func showGameModeChooser() {
         let panel = NSPanel(
             contentRect: CGRect(x: 0, y: 0, width: 500, height: 270),
             styleMask: [.titled, .fullSizeContentView],
@@ -256,17 +250,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             icon: NSApp.applicationIconImage,
             normalAvailable: availableInstallations.normal != nil,
             moddedAvailable: availableInstallations.modded != nil,
-            choose: { NSApp.stopModal(withCode: $0) }
+            choose: { [weak self] selection in
+                guard let self, let chooser = self.modeChooser else { return }
+                self.modeChooser = nil
+                chooser.close()
+                guard let selection else { NSApp.terminate(nil); return }
+                self.requestedGamePath = self.availableInstallations.installation(for: selection)?.path
+                self.model.configureGameMode(selection)
+                self.startDashboard()
+            }
         ))
+        // Let application launch finish so Ollama can warm up while this is on screen.
+        modeChooser = panel
         panel.center()
         panel.makeKeyAndOrderFront(nil)
-        let response = NSApp.runModal(for: panel)
-        panel.orderOut(nil)
-        switch response {
-        case .alertFirstButtonReturn: return .normal
-        case .alertSecondButtonReturn: return .modded
-        default: return nil
-        }
     }
 
     private static func showMissingInstallation(for mode: HollowKnightRuntimeMode) {
