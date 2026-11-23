@@ -51,6 +51,10 @@ public sealed class BotBlockadeVisit
     {
         if (chart is { } current && (current.Generation != row.Generation || current.Room != row.RoomId
             || pose is not null && current.Space != pose.Space)) Reset();
+        if (row.KnightPrediction is not null && row.Issues.Count == 0 && pose is { IsValid: true }
+            && chart is not null && push is { } driveInProgress && row.DriveDirection == driveInProgress.Side
+            && previous is { } previousSighting && row.CapturedAt - previousSighting.Time is >= 0 and <= .25)
+            return null;
         if (pose is not { IsValid: true } || row.Features is not { Count: >= 5 } || row.Features[4] < .5
             || row.Issues is null || row.Issues.Any(issue => issue != "missing-terrain-analysis") || row.KnightSource == "visual-predicted"
             || row.DetectionTimestamp is not { } detection

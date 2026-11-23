@@ -26,6 +26,7 @@ public sealed class BotVisualGymObservationSource
     private readonly WalkedGroundTracker walked = new();
     private readonly BotVisualAtlasCoverage coverage = new();
     private readonly BotBlockadeVisit blockade = new();
+    private readonly BotVisualKnightMemory knightMemory = new();
     private int chart;
     private int? activeRoom;
 
@@ -58,6 +59,7 @@ public sealed class BotVisualGymObservationSource
             camera.PauseGroundVerification();
             coverage.Interrupt();
             blockade.Interrupt();
+            knightMemory.Reset();
             return new(null, [signal.HasGameplaySignal ? "waiting-for-visual-gameplay" : "transition-blackout"], confidence);
         }
 
@@ -75,6 +77,7 @@ public sealed class BotVisualGymObservationSource
             chart++;
             coverage.Reset();
             blockade.Reset();
+            knightMemory.Reset();
             ground.Reset(keepingGlobalFeatures: false);
             camera.Reset();
             motion.Reset();
@@ -108,6 +111,7 @@ public sealed class BotVisualGymObservationSource
         var timing = new BotCaptureTiming(time, time, Generation, chart, room.Revision);
         var row = BotObservationBuilder.Gameplay(frame, timing, observations.MeasuredBatch, floors, terrain.Walls,
             terrainAnalyzed: true, placement, hud, contact.MeasuredFoot, controls);
+        row = knightMemory.Resolve(row, BotPolicyAction.FromButtons(controls), observations.MeasuredBatch);
         row = blockade.AddEvidence(row, BotBlockadePose.Visual(row));
         row = row with { AtlasView = coverage.View(placement, size, (int)frame.CaptureId, row.MeasuredHealth) };
         return new(row, row.Issues, confidence)

@@ -127,6 +127,30 @@ internal static class BotPolicyTests
         }
     }
 
+    internal static void TestGamePlayInputExpiresWithLastMeasuredKnight()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-visual-prediction-policy-");
+        try
+        {
+            WriteRuntime(temporary.FullName, alwaysAttack: true);
+            var policy = new BotPolicyPlayback(BotNativePolicy.Load(temporary.FullName), BotCaptureDomain.Gameplay);
+            var memory = new BotVisualKnightMemory();
+            policy.Decide(memory.Resolve(BotVisualKnightMemoryTests.Row(1, .3, camera: 0)), InputButtons.Right, 1.01);
+            policy.Decide(memory.Resolve(BotVisualKnightMemoryTests.Row(1.1, .31, camera: .01)), InputButtons.Right, 1.11);
+            var predicted = memory.Resolve(BotVisualKnightMemoryTests.Row(1.6, null, camera: .01) with
+                { DetectionTimestamp = null, Issues = ["missing-knight", "stale-or-missing-detection"] });
+            var decision = policy.Decide(predicted, InputButtons.Right, 1.61);
+            if (decision is null || !decision.Value.Action.Buttons.HasFlag(InputButtons.ActionX)
+                || Math.Abs(decision.Value.Deadline - 1.7) > 1e-6
+                || policy.Decide(predicted, InputButtons.Right, 1.71) is not null)
+                throw new InvalidOperationException("The policy action must be leased only through its real visual sighting's deadline.");
+            var forged = predicted with { KnightPrediction = predicted.KnightPrediction! with { LastSeenAt = 1.3 } };
+            if (policy.Decide(forged, InputButtons.Right, 1.61) is not null)
+                throw new InvalidOperationException("Inconsistent prediction provenance must not renew control.");
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
     internal static void TestLivePolicyPreservesAttackAndRevokesInvalidPerception()
     {
         var temporary = Directory.CreateTempSubdirectory("hkv-bot-playback-");

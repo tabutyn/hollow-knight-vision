@@ -30,7 +30,8 @@ public sealed class BotPolicyPlayback(BotNativePolicy policy, BotCaptureDomain d
         if (features is null) return null;
         var action = BotNativePolicy.Action(policy.Logits(features));
         var deadline = Math.Min(now + .18,
-            Math.Min(row.CapturedAt + BotRecordingContract.MaximumCaptureAge, row.AvailableAt + .25));
+            Math.Min(row.KnightPredictionDeadline,
+                Math.Min(row.CapturedAt + BotRecordingContract.MaximumCaptureAge, row.AvailableAt + .25)));
         return now < deadline ? new(action, deadline) : null;
     }
 }

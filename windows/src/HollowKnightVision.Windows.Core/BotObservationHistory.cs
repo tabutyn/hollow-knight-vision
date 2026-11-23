@@ -26,10 +26,11 @@ public sealed class BotObservationHistory
     public float[]? Append(BotCaptureObservation row, BotPolicyAction previousAction, double now, bool allowMaskedKnight = false)
     {
         var masked = allowMaskedKnight && row.HasMaskedKnightEvidence;
+        var predicted = row.KnightSource == "visual-predicted";
         if (!IsFresh(row, now) || (row.Issues.Count != 0 && !masked)
             || (row.Features.Count != BotRecordingContract.LegacyWidth && row.Features.Count != BotRecordingContract.FeatureNames.Count)
             || row.Features.Any(value => !double.IsFinite(value) || Math.Abs(value) > 4)
-            || row.Features[6] != 1 || (!masked && row.Features[4] < .5))
+            || row.Features[6] != 1 || (!masked && row.Features[4] < (predicted ? .2 : .5)))
         {
             Reset();
             return null;
@@ -59,8 +60,9 @@ public sealed class BotObservationHistory
         now - row.AvailableAt is >= 0 and <= MaximumDeliveryAge
         && now - row.CapturedAt is >= 0 and <= BotRecordingContract.MaximumCaptureAge
         && row.AvailableAt - row.CapturedAt is >= 0 and <= BotRecordingContract.MaximumCaptureAge
-        && row.DetectionTimestamp is { } detected
-        && row.CaptureTimestamp - detected is >= 0 and <= BotRecordingContract.MaximumDetectionAge;
+        && now < row.KnightPredictionDeadline
+        && (row.KnightSource == "visual-predicted" || row.DetectionTimestamp is { } detected
+            && row.CaptureTimestamp - detected is >= 0 and <= BotRecordingContract.MaximumDetectionAge);
 
     private List<double> Encode(BotCaptureObservation row, BotPolicyAction previous, bool continuous, bool masked)
     {

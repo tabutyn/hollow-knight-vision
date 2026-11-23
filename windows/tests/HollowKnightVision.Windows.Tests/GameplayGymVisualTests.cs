@@ -33,16 +33,22 @@ internal static class GameplayGymVisualTests
             || visible.LifebloodCocoons is not { Count: > 0 })
             throw new InvalidOperationException("Pixel-derived actor and terrain evidence must establish the episode Atlas.");
 
-        var masked = source.Observe(Frame(pixels, 10), 1, InputButtons.None, frame => Detect(frame, false), hud: null);
-        if (masked.Observation is not { HasMaskedKnightEvidence: true })
-            throw new InvalidOperationException("An occluded Knight lost its fresh floor evidence.");
+        var predicted = source.Observe(Frame(pixels, 10), 1, InputButtons.None, frame => Detect(frame, false), hud: null);
+        if (predicted.Observation is not { KnightSource: "visual-predicted", KnightPrediction: not null }
+            || predicted.Observation.Blockade is not null)
+            throw new InvalidOperationException("A recent visual sighting should bridge the first occluded frame without proving a blockade.");
+        BotVisualGymReading? masked = null;
+        for (var i = 11; i < 18; i++)
+            masked = source.Observe(Frame(pixels, i), i / 10d, InputButtons.None, frame => Detect(frame, false), hud: null);
+        if (masked?.Observation is not { HasMaskedKnightEvidence: true })
+            throw new InvalidOperationException("A longer occlusion should fall back to fresh terrain and no Knight estimate.");
 
-        var blackout = source.Observe(Frame(new byte[pixels.Length], 11), 1.1, InputButtons.None,
+        var blackout = source.Observe(Frame(new byte[pixels.Length], 18), 1.8, InputButtons.None,
             _ => throw new InvalidOperationException("Inference must skip a complete blackout."), hud: null);
         if (blackout.Observation is not null || blackout.Issues is not ["transition-blackout"])
             throw new InvalidOperationException("A black frame entered policy history.");
 
-        for (var i = 12; i < 21; i++)
+        for (var i = 19; i < 28; i++)
             latest = source.Observe(Frame(pixels, i), i / 10d, InputButtons.None, frame => Detect(frame, true), hud: null);
         if (latest?.Observation?.AtlasView is not { CoveredCells: > 0 } || latest.Observation.RoomId == visible.RoomId)
             throw new InvalidOperationException("A recovered room must establish fresh coverage after the blackout.");

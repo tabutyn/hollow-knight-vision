@@ -36,7 +36,11 @@ public sealed record BotScreenTerrain(double Width, double Height, IReadOnlyList
 
 /// <summary>Actor coordinates and dimensions are normalized by image width in the recording.</summary>
 public sealed record BotObjectBounds(double X, double Y, double Width, double Height);
-public sealed record BotVisualContext(double FrameWidth, double FrameHeight, double? CameraX, double? CameraY);
+public sealed record BotVisualContext(double FrameWidth, double FrameHeight, double? CameraX, double? CameraY)
+{
+    internal AtlasPoint? Camera => CameraX is { } x && CameraY is { } y && double.IsFinite(x) && double.IsFinite(y)
+        ? new(x, y) : null;
+}
 public sealed record BotAtlasView(double Left, double Right, IReadOnlyList<double> Camera, double Width,
     int CoveredCells, int EarnedCells, int Revision, int? Health, IReadOnlyList<double>? Missing = null);
 public sealed record BotRoadHint(double Dx, double Dy, double Clearance, double Distance, bool Frontier);
@@ -76,17 +80,30 @@ public sealed record BotCaptureObservation(
     public BotEnemyOutcomes? EnemyOutcomes { get; init; }
     public BotBlueHealthOutcomes? BlueHealthOutcomes { get; init; }
     public BotVisualContext? VisualContext { get; init; }
+    public BotKnightPrediction? KnightPrediction { get; init; }
+
+    [JsonIgnore]
+    public double KnightPredictionDeadline => KnightPrediction is null && KnightSource != "visual-predicted"
+        ? double.PositiveInfinity
+        : KnightPrediction is { } estimate && KnightSource == "visual-predicted" && TerrainSource == "detected"
+        && VisualContext is { FrameWidth: > 0 and < double.PositiveInfinity, FrameHeight: > 0 and < double.PositiveInfinity }
+        && (!estimate.CameraCompensated || VisualContext.Camera.HasValue)
+        && estimate.Age > 0 && estimate.Age <= estimate.MaximumAge + 1e-6
+        && Math.Abs(CaptureTimestamp - estimate.LastSeenAt - estimate.Age) <= 1e-6
+        && estimate.Uncertainty is >= 0 and <= .06 && estimate.ObservedIssues is { } issues
+        && issues.Contains("missing-knight") && issues.All(BotKnightPrediction.Bridgeable)
+        ? CapturedAt + estimate.MaximumAge - estimate.Age : double.NegativeInfinity;
     public int? MeasuredHealth { get; init; }
     public int? DriveDirection { get; init; }
     public bool? Grounded { get; init; }
     public string? ImagePath { get; init; }
 
     [JsonIgnore]
-    public bool CanTrain => Issues.Count == 0 || HasMaskedKnightEvidence;
+    public bool CanTrain => Issues.Count == 0 && AvailableAt < KnightPredictionDeadline || HasMaskedKnightEvidence;
 
     [JsonIgnore]
     public bool HasMaskedKnightEvidence => TerrainSource == "detected" && Issues is ["missing-knight"]
-        && KnightSource is null && Features.Count >= BotRecordingContract.LegacyWidth
+        && KnightSource is null && KnightPrediction is null && Features.Count >= BotRecordingContract.LegacyWidth
         && Features.Take(5).All(value => value == 0) && Features[6] == 1
         && DetectionTimestamp is { } detection && CaptureTimestamp - detection is >= 0 and <= BotRecordingContract.MaximumDetectionAge
         && AvailableAt - CapturedAt is >= 0 and <= BotRecordingContract.MaximumCaptureAge
@@ -271,16 +288,8 @@ public static class BotObservationBuilder
         feature[5] = Math.Clamp(detectionAge / BotRecordingContract.MaximumDetectionAge, 0, 1);
         feature[6] = terrainValid ? 1 : 0;
         feature[7] = Math.Clamp((timing.AvailableAt - timing.CaptureTimestamp) / BotRecordingContract.MaximumCaptureAge, 0, 1);
-        var i = 16;
-        foreach (var floor in terrain.Floors.OrderBy(f => (Distance((f.MinimumX + f.MaximumX) / 2 - cx, f.Y - cy), f.Y, f.MinimumX)).Take(16))
-        {
-            feature[i++] = (floor.MinimumX - cx) / width;
-            feature[i++] = (floor.MaximumX - cx) / width;
-            feature[i++] = (floor.Y - cy) / width;
-            feature[i++] = floor.Confidence;
-            feature[i++] = 1;
-        }
-        i = 96;
+        WriteFloorFeatures(feature, terrain.Floors, cx, cy, width);
+        var i = 96;
         foreach (var enemy in enemies.OrderBy(e => (Distance(e.X - cx, e.Y - cy), e.Y - e.Height / 2, e.X - e.Width / 2)).Take(8))
         {
             feature[i++] = (enemy.X - cx) / width;
@@ -290,27 +299,44 @@ public static class BotObservationBuilder
             feature[i++] = enemy.Confidence;
             feature[i++] = 1;
         }
-        if (knight.HasValue && terrainValid)
-        {
-            feature[144] = 1;
-            FillWall(145, left: true);
-            FillWall(150, left: false);
-        }
+        if (knight.HasValue && terrainValid) WriteWallFeatures(feature, terrain, cx, cy);
         for (var index = 0; index < feature.Length; index++)
             feature[index] = double.IsFinite(feature[index]) ? Math.Clamp(feature[index], -4, 4) : 0;
         return new(timing.CaptureTimestamp, timing.CaptureTimestamp, timing.AvailableAt, timing.Generation,
             timing.RoomId, timing.RoomRevision, feature, issues, source);
+    }
+
+    internal static void WriteFloorFeatures(double[] features, IEnumerable<BotFloor> floors, double x, double y, double width)
+    {
+        Array.Clear(features, 16, 80);
+        var i = 16;
+        foreach (var floor in floors.OrderBy(f => (Distance((f.MinimumX + f.MaximumX) / 2 - x, f.Y - y), f.Y, f.MinimumX)).Take(16))
+        {
+            features[i++] = (floor.MinimumX - x) / width;
+            features[i++] = (floor.MaximumX - x) / width;
+            features[i++] = (floor.Y - y) / width;
+            features[i++] = floor.Confidence;
+            features[i++] = 1;
+        }
+    }
+
+    internal static void WriteWallFeatures(double[] features, BotScreenTerrain terrain, double x, double y)
+    {
+        Array.Clear(features, BotRecordingContract.LegacyWidth, 11);
+        features[144] = 1;
+        FillWall(145, left: true);
+        FillWall(150, left: false);
 
         void FillWall(int index, bool left)
         {
-            var wall = terrain.Walls.Where(w => (w.X < cx) == left)
-                .MinBy(w => Distance(w.X - cx, Math.Max(0, Math.Max(w.BottomY - cy, cy - w.TopY))));
+            var wall = terrain.Walls.Where(w => (w.X < x) == left)
+                .MinBy(w => Distance(w.X - x, Math.Max(0, Math.Max(w.BottomY - y, y - w.TopY))));
             if (wall is null) return;
-            feature[index] = (wall.X - cx) / width;
-            feature[index + 1] = (wall.BottomY - cy) / width;
-            feature[index + 2] = (wall.TopY - cy) / width;
-            feature[index + 3] = wall.SolidSide;
-            feature[index + 4] = 1;
+            features[index] = (wall.X - x) / terrain.Width;
+            features[index + 1] = (wall.BottomY - y) / terrain.Width;
+            features[index + 2] = (wall.TopY - y) / terrain.Width;
+            features[index + 3] = wall.SolidSide;
+            features[index + 4] = 1;
         }
     }
 
