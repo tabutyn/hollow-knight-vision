@@ -193,7 +193,7 @@ internal static class VisualProductionReplay
                     {
                         committed++;
                         if (placement.RebuiltAtlas is { } rebuilt) atlas = rebuilt;
-                        else atlas.AddFrame(frame, telemetry with {
+                        else if (placement.AllowsAtlasComposition) atlas.AddFrame(frame, telemetry with {
                             CameraX = placement.CameraPose.X, CameraY = placement.CameraPose.Y,
                             CameraTargetX = placement.CameraPose.X, CameraTargetY = placement.CameraPose.Y
                         }, exclusions, roomId: tracked.RoomId, captureGeneration: evidence.CaptureGeneration);
@@ -217,7 +217,7 @@ internal static class VisualProductionReplay
                     sceneMotion: floorless?.Scene,
                     recoveredAtlasReferenceTimestamp: observation.RecoveredAtlasReferenceTimestamp,
                     observedAt: evidence.CapturedAt);
-                replayTrace.RecordAtlasAdmission(evidence.CaptureTimestamp, placement?.AllowsAtlasWrite == true);
+                replayTrace.RecordAtlasAdmission(evidence.CaptureTimestamp, placement?.AllowsAtlasComposition == true);
                 replayTrace.RecordCoarseMotion(evidence.CaptureTimestamp, evidence.RenderedGameFrame, publishedCamera,
                     tracked.MotionBridgeActive ? publishedCamera : null, coarse, tracked.MotionBridgeActive,
                     !admission.AdmitsTracking, roomId, revision, signal.MeanPeak, signal.VisibleFraction,
@@ -234,6 +234,7 @@ internal static class VisualProductionReplay
                     tracked.RoomAllowsAtlasWrite, tracked.SceneCut,
                     worldCamera = placement?.CameraPose, worldState = placement?.State.ToString(),
                     worldDiagnostic = placement?.Diagnostic,
+                    placementPending = placement?.PlacementPending,
                     groundSupport = observation.GroundSupport, groundError = observation.GroundError,
                     tracked.Ground.HasConfirmedGround, tracked.Ground.InlierCount, tracked.Ground.ResidualRms,
                     tracked.Ground.GlobalCorrection,

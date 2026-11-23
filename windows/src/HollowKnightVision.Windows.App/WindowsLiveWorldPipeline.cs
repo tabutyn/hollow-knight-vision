@@ -50,6 +50,8 @@ internal sealed record WindowsLiveWorldPipelineResult(
     string Diagnostic)
 {
     internal bool AllowsAtlasWrite => State == WindowsLiveWorldPipelineState.Committed;
+    internal bool AllowsAtlasComposition => AllowsAtlasWrite && !PlacementPending;
+    internal bool PlacementPending { get; init; }
     public IReadOnlyList<GroundHypothesisAtlasLine> WalkedGround { get; init; } = [];
     internal long WalkedCoordinateEpoch { get; init; }
     internal IReadOnlyList<GroundHypothesisAtlasLine> RecordedLocalWalk { get; init; } = [];
@@ -117,6 +119,10 @@ internal sealed class WindowsLiveWorldPipeline
     private bool arrivalHasCompetingPlacement;
     private LiveDoorwayTransition? newRoomDoorway;
     private RecoveryDisposition recoveryDisposition;
+    private bool placementPending;
+    private bool canResumeLocalTracking;
+    private (double First, double Last, int Count, long CoordinateEpoch)? recoverySamples;
+    private long recoveryCoordinateEpoch;
     private long lastCaptureId = -1;
     private double lastGlobalSearchAt = double.NegativeInfinity;
     private double lastPersistenceAt = double.NegativeInfinity;
@@ -331,6 +337,7 @@ internal sealed class WindowsLiveWorldPipeline
                 placedRoomStartedAt = null;
                 doorwaySource = null;
                 newRoomDoorway = null;
+                ResetLocalRecovery();
                 recoveryDisposition = RecoveryDisposition.AwaitSafeNewWorld;
                 lastCaptureId = -1;
                 lastGlobalSearchAt = double.NegativeInfinity;
@@ -345,6 +352,7 @@ internal sealed class WindowsLiveWorldPipeline
                 doorwaySource = roomId is { } departingRoom && placedRoomStartedAt is { } started
                     ? (departingRoom, started) : null;
                 placedRoomStartedAt = null;
+                ResetLocalRecovery();
                 examinedDoorway = null;
                 unmatchedArrivalSearches = 0;
                 arrivalHasCompetingPlacement = false;
@@ -363,7 +371,7 @@ internal sealed class WindowsLiveWorldPipeline
                 {
                     recoveryDisposition = RecoveryDisposition.FindSavedRoom;
                 }
-                else if (HasSearchableReference(activeTracker, resolvedRoomId))
+                else if (activeTracker.HasRecoveryReference(resolvedRoomId))
                 {
                     recoveryDisposition = RecoveryDisposition.SearchReference;
                 }
@@ -402,12 +410,21 @@ internal sealed class WindowsLiveWorldPipeline
                     "live-world skipped: stale world timestamp"));
             }
 
+            var locallyRecovered = canResumeLocalTracking && ObserveLocalRecovery(request);
             if (recoveryDisposition == RecoveryDisposition.AwaitNewWorldBoundary)
             {
-                return Publish(PendingRecovery(
-                    request,
-                    activeTracker,
-                    "recovery pending: no searchable reference or new-world boundary"));
+                if (!locallyRecovered)
+                    return Publish(PendingRecovery(request, activeTracker, "recovery pending: no searchable reference or new-world boundary"));
+                BeginLocalRecovery(activeTracker, request.WalkedCoordinateEpoch);
+            }
+            if (placementPending)
+            {
+                if (!HasMeasuredLocalReference(request))
+                    return Publish(PendingRecovery(request, activeTracker, "recovery pending: local motion is unmeasured"));
+                if (recoveryCoordinateEpoch != request.WalkedCoordinateEpoch)
+                {
+                    BeginLocalRecovery(activeTracker, request.WalkedCoordinateEpoch);
+                }
             }
             if (recoveryDisposition == RecoveryDisposition.AwaitSafeNewWorld)
             {
@@ -476,38 +493,38 @@ internal sealed class WindowsLiveWorldPipeline
                         return Publish(PendingRecovery(request, activeTracker,
                             "new Atlas room provisionally placed; awaiting a normal frame"));
                     }
-                    return Publish(PendingRecovery(
-                        request,
-                        activeTracker,
-                        recovery.Review.Rejections.Count == 0
-                            ? "recovery pending"
-                            : $"recovery pending: {string.Join(',', recovery.Review.Rejections)}"));
+                    if (!locallyRecovered || recovery.MatchedReferenceKeyframeId is not null
+                        || recovery.Review.Rejections.Contains(LiveWorldTrackerRejection.AmbiguousPlacement))
+                    {
+                        return Publish(PendingRecovery(request, activeTracker,
+                            recovery.Review.Rejections.Count == 0
+                                ? "recovery pending"
+                                : $"recovery pending: {string.Join(',', recovery.Review.Rejections)}"));
+                    }
+                    BeginLocalRecovery(activeTracker, request.WalkedCoordinateEpoch);
+                    basisTicket = worldBasis.Observe(request.LocalPose, request.MonotonicTimestamp);
+                    if (basisTicket is null) return Fail("local recovery basis ticket was invalid");
+                    globalSearchDue = false;
                 }
-                if (captureGeneration != request.CaptureGeneration)
+                else
                 {
-                    return Publish(PendingRecovery(
-                        request,
-                        activeTracker,
-                        "recovery generation expired"));
+                    if (captureGeneration != request.CaptureGeneration)
+                        return Publish(PendingRecovery(request, activeTracker, "recovery generation expired"));
+                    if (!IsWorkCurrent(processEpoch)) return Cancelled();
+                    if (!worldBasis.ConfirmPlacement(basisTicket.Value, placement.CameraPose))
+                        return Publish(PendingRecovery(request, activeTracker, "recovery basis expired"));
+                    if (!IsWorkCurrent(processEpoch)) return Cancelled();
+                    if (findSavedRoom)
+                    {
+                        placedRoomIds[requestedRoomId] = placement.RoomId;
+                        roomId = placement.RoomId;
+                    }
+                    ResetLocalRecovery();
+                    recoveryDisposition = RecoveryDisposition.None;
+                    placedRoomStartedAt ??= request.MonotonicTimestamp;
+                    LastError = null;
+                    return Publish(ConfirmedRecovery(request, activeTracker, placement));
                 }
-                if (!IsWorkCurrent(processEpoch)) return Cancelled();
-                if (!worldBasis.ConfirmPlacement(basisTicket.Value, placement.CameraPose))
-                {
-                    return Publish(PendingRecovery(
-                        request,
-                        activeTracker,
-                        "recovery basis expired"));
-                }
-                if (!IsWorkCurrent(processEpoch)) return Cancelled();
-                if (findSavedRoom)
-                {
-                    placedRoomIds[requestedRoomId] = placement.RoomId;
-                    roomId = placement.RoomId;
-                }
-                recoveryDisposition = RecoveryDisposition.None;
-                placedRoomStartedAt ??= request.MonotonicTimestamp;
-                LastError = null;
-                return Publish(ConfirmedRecovery(request, activeTracker, placement));
             }
 
             if (worldBasis.TrackingState == WorldBasisTrackingState.Recovering)
@@ -565,6 +582,15 @@ internal sealed class WindowsLiveWorldPipeline
                 var searchForClosure = globalSearchDue;
                 if (searchForClosure) lastGlobalSearchAt = request.MonotonicTimestamp;
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
+                LiveWorldRecoveryPlacement? restoredPlacement = null;
+                if (searchForClosure && placementPending && priorSnapshot.UsesSwiftWireFormat)
+                {
+                    // The original Mac landmark IDs do not describe our regenerated
+                    // features. Confirm placement without writing a fabricated edge.
+                    restoredPlacement = activeTracker.Recover(request.Frame, request.LocalPose,
+                        request.SolveWidth, request.GroundAlignmentExclusions, resolvedRoomId).ConfirmedPlacement;
+                    searchForClosure = false;
+                }
                 var update = activeTracker.Ingest(
                     source.Id,
                     storedTimestamp,
@@ -581,17 +607,20 @@ internal sealed class WindowsLiveWorldPipeline
                     roomId: resolvedRoomId,
                     placedCameraPose: worldPose,
                     walkedGround: groundEvidence,
-                    captureEvidence: request.WorldEvidence);
+                    captureEvidence: request.WorldEvidence,
+                    placementPending: placementPending);
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 transactionObserver?.Invoke("ingest");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 if (newRoomDoorway is { } pendingDoor && request.MonotonicTimestamp - pendingDoor.ArrivalCaptureTimestamp > 3)
                     newRoomDoorway = null;
 
-                var doorwayAligned = update.AcceptedClosure is null && newRoomDoorway is { } doorway
+                var localRecoveryPlaced = update.AcceptedClosure is not null
+                    || restoredPlacement is not null && activeTracker.PlaceRecoveredIsland(restoredPlacement);
+                var doorwayAligned = !localRecoveryPlaced && newRoomDoorway is { } doorway
                     && activeTracker.AlignNewRoomThroughDoorway(doorway);
                 if (doorwayAligned) newRoomDoorway = null;
-                var requiresRebuild = doorwayAligned || update.AcceptedClosure is not null;
+                var requiresRebuild = doorwayAligned || localRecoveryPlaced;
                 var durableSnapshot = WithCompositionExclusions(activeTracker.Snapshot);
                 GroundTruthAtlasMosaic? rebuiltAtlas = null;
                 if (requiresRebuild)
@@ -617,19 +646,21 @@ internal sealed class WindowsLiveWorldPipeline
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 Volatile.Write(ref hasDurableEvidence, true);
                 lastWorldTrackerTimestamp = request.MonotonicTimestamp;
+                if (localRecoveryPlaced) placementPending = false;
                 placedRoomStartedAt ??= request.MonotonicTimestamp;
                 var committed = durableSnapshot.Observations[^1];
-                if (!projectedWalkedGround.TryGetValue(resolvedRoomId, out var publishedGround)
-                    || requiresRebuild)
+                IReadOnlyList<GroundHypothesisAtlasLine> publishedGround = [];
+                if (!placementPending && (!projectedWalkedGround.TryGetValue(resolvedRoomId, out publishedGround!)
+                    || requiresRebuild))
                 {
                     publishedGround = LiveWorldWalkedGround.ProjectRoom(durableSnapshot, resolvedRoomId);
                 }
-                else if (groundEvidence.Count != 0)
+                else if (!placementPending && groundEvidence.Count != 0)
                 {
                     publishedGround = GroundStrokeGeometry.Coalesce(
                         publishedGround.Concat(LiveWorldWalkedGround.ProjectObservation(committed)));
                 }
-                projectedWalkedGround[resolvedRoomId] = publishedGround;
+                if (!placementPending) projectedWalkedGround[resolvedRoomId] = publishedGround;
                 walkedScope = scope;
                 committedLocalWalk = groundEvidence.Count == 0
                     ? priorWalk : GroundStrokeGeometry.Coalesce(priorWalk.Concat(walked));
@@ -666,9 +697,12 @@ internal sealed class WindowsLiveWorldPipeline
                     update.AcceptedClosure,
                     null,
                     rebuiltAtlas,
-                    doorwayAligned ? "live-world doorway floor aligned"
+                    placementPending ? "live-world measured evidence saved; placement pending"
+                        : doorwayAligned ? "live-world doorway floor aligned"
+                        : restoredPlacement is not null && localRecoveryPlaced ? "live-world local recovery placed"
                         : update.AcceptedClosure is null ? "live-world committed" : "live-world loop closure committed")
                 {
+                    PlacementPending = placementPending,
                     WalkedGround = publishedGround,
                     WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
                     RecordedLocalWalk = committedLocalWalk
@@ -695,14 +729,57 @@ internal sealed class WindowsLiveWorldPipeline
                 return;
             }
             worldBasis.LoseLocalTracking();
+            ResetLocalRecovery();
+            canResumeLocalTracking = roomId.HasValue && placedRoomStartedAt.HasValue;
             tracker.BeginRecoveryEpoch();
             recoveryDisposition = roomId is { } activeRoom
-                                  && HasSearchableReference(tracker, activeRoom)
+                                  && tracker.HasRecoveryReference(activeRoom)
                 ? RecoveryDisposition.SearchReference
                 : tracker.Snapshot.Observations.Count == 0 ? RecoveryDisposition.AwaitSafeNewWorld
                 : RecoveryDisposition.AwaitNewWorldBoundary;
             lastGlobalSearchAt = double.NegativeInfinity;
         }
+    }
+
+    private static bool HasMeasuredLocalReference(WindowsLiveWorldFrame request) =>
+        request.WorldEvidence is { LocalReferenceTimestamp: { } reference } evidence
+        && evidence.CaptureTimestamp == request.MonotonicTimestamp
+        && request.MonotonicTimestamp - reference is > 0 and <= .75;
+
+    private bool ObserveLocalRecovery(WindowsLiveWorldFrame request)
+    {
+        if (!HasMeasuredLocalReference(request))
+        {
+            recoverySamples = null;
+            return false;
+        }
+        var now = request.MonotonicTimestamp;
+        var epoch = request.WalkedCoordinateEpoch;
+        (double First, double Last, int Count, long CoordinateEpoch) samples =
+            recoverySamples is { } previous && previous.CoordinateEpoch == epoch && now - previous.Last is > 0 and <= .25
+                ? (previous.First, now, previous.Count + 1, epoch)
+                : (now, now, 1, epoch);
+        recoverySamples = samples;
+        return samples.Count >= 3 && now - samples.First >= .08;
+    }
+
+    private void BeginLocalRecovery(LiveWorldTracker activeTracker, long coordinateEpoch)
+    {
+        // A relative solve can keep collecting images. Its inherited display
+        // offset has no authority over the already composed mosaic.
+        worldBasis.BeginLocalEpoch(worldBasis.Snapshot.WorldFromLocal);
+        activeTracker.BeginRecoveryEpoch();
+        ResetLocalRecovery();
+        placementPending = true;
+        recoveryCoordinateEpoch = coordinateEpoch;
+        recoveryDisposition = RecoveryDisposition.None;
+    }
+
+    private void ResetLocalRecovery()
+    {
+        placementPending = false;
+        canResumeLocalTracking = false;
+        recoverySamples = null;
     }
 
     private bool IsWorkCurrent(long processEpoch) =>
@@ -772,7 +849,8 @@ internal sealed class WindowsLiveWorldPipeline
             null,
             "live-world skipped: persistence cadence")
         {
-            WalkedGround = projectedWalkedGround.TryGetValue(committedRoomId, out var ground) ? ground : [],
+            PlacementPending = placementPending,
+            WalkedGround = !placementPending && projectedWalkedGround.TryGetValue(committedRoomId, out var ground) ? ground : [],
             WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
             RecordedLocalWalk = walkedScope == (request.CaptureGeneration, committedRoomId, request.WalkedCoordinateEpoch)
                 ? committedLocalWalk : []
@@ -833,6 +911,7 @@ internal sealed class WindowsLiveWorldPipeline
             placedRoomStartedAt = null;
             doorwaySource = null;
             newRoomDoorway = null;
+            ResetLocalRecovery();
             recoveryDisposition = RecoveryDisposition.None;
             lastCaptureId = -1;
             lastGlobalSearchAt = double.NegativeInfinity;
@@ -922,20 +1001,6 @@ internal sealed class WindowsLiveWorldPipeline
         return true;
     }
 
-    private static bool HasSearchableReference(LiveWorldTracker tracker, int roomId)
-    {
-        var snapshot = tracker.Snapshot;
-        if (snapshot.UsesSwiftWireFormat) return tracker.HasRecoveryReference(roomId);
-
-        var observations = snapshot.Observations
-            .Where(value => value.RoomId == roomId)
-            .Select(value => value.Id)
-            .ToHashSet();
-        return snapshot.Keyframes.Any(keyframe =>
-            observations.Contains(keyframe.ObservationId)
-            && snapshot.Landmarks.Count(value => value.KeyframeId == keyframe.Id) >= 6);
-    }
-
     private static AtlasPoint Corrected(AtlasPoint pose, AtlasPoint correction) => new(
         pose.X + correction.X,
         pose.Y + correction.Y);
@@ -993,8 +1058,10 @@ internal sealed class WindowsLiveWorldPipeline
             throw new InvalidDataException("Live-world atlas geometry is invalid.");
 
         var rebuilt = new GroundTruthAtlasMosaic(pixelsPerWorldUnit, tileSize, sourceTopInsetFraction: 0);
+        var unplaced = snapshot.UnplacedObservationIds();
         foreach (var observation in snapshot.Observations.OrderBy(value => value.Id))
         {
+            if (unplaced.Contains(observation.Id)) continue;
             var source = loadSource(observation.SourceObservationId);
             if (source.Width != observation.SourceWidth || source.Height != observation.SourceHeight)
                 throw new InvalidDataException($"Live-world observation {observation.Id} has incorrect source dimensions.");

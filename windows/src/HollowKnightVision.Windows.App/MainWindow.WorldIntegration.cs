@@ -19,7 +19,7 @@ public partial class MainWindow
             if (lostGeneration >= 0) pipeline.NotifyTrackingLoss((ulong)lostGeneration);
             var result = pipeline.Process(frame);
             if (result.CaptureGeneration != (ulong)Interlocked.Read(ref recentCaptureGeneration)) return;
-            if (result.AllowsAtlasWrite)
+            if (result.AllowsAtlasComposition)
             {
                 if (result.RebuiltAtlas is { } replacement)
                 {

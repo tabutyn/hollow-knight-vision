@@ -37,7 +37,8 @@ public static class LiveWorldWalkedGround
 
     public static IReadOnlyList<GroundHypothesisAtlasLine> ProjectRoom(LiveWorldSnapshot snapshot, int room)
     {
-        var observations = snapshot.Observations.Where(observation => observation.RoomId == room);
+        var unplaced = snapshot.UnplacedObservationIds();
+        var observations = snapshot.Observations.Where(observation => observation.RoomId == room && !unplaced.Contains(observation.Id));
         var nativeIslands = snapshot.TrackingIslands.ToDictionary(island => island.Id);
         return GroundStrokeGeometry.Coalesce(observations.SelectMany(observation =>
             ProjectObservation(observation).Concat(ProjectIslandWalks(observation, nativeIslands))));

@@ -174,6 +174,7 @@ public sealed class LiveWorldTracker
     {
         recoveryEpoch = recoveryEpoch < int.MaxValue ? recoveryEpoch + 1 : 0;
         pendingRecovery = null;
+        pendingClosure = null;
     }
 
     /// <summary>
@@ -290,7 +291,8 @@ public sealed class LiveWorldTracker
         int roomId = 0,
         AtlasPoint? placedCameraPose = null,
         IReadOnlyList<LiveWorldWalkedFloor>? walkedGround = null,
-        LiveWorldCaptureEvidence? captureEvidence = null)
+        LiveWorldCaptureEvidence? captureEvidence = null,
+        bool placementPending = false)
     {
         ArgumentNullException.ThrowIfNull(frame);
         var excluded = exclusions?.ToArray() ?? [];
@@ -301,6 +303,7 @@ public sealed class LiveWorldTracker
             || placedCameraPose is { } placement && !Finite(placement)
             || !double.IsFinite(solveWidth) || solveWidth <= 0
             || roomId < 0
+            || (placementPending && captureEvidence is null)
             || excluded.Any(rectangle => !Valid(rectangle)))
         {
             throw Error(LiveWorldTrackerError.InvalidScan, "Live-world scan is invalid.");
@@ -346,7 +349,7 @@ public sealed class LiveWorldTracker
             ObservedPlayerBounds = captureEvidence?.PlayerBounds
         };
         ReplaceSnapshot(observations: [.. Snapshot.Observations, observation],
-            trackingIslands: CurrentTrackingIslands(observation));
+            trackingIslands: CurrentTrackingIslands(observation, placementPending));
         currentVisitObservationIds.Add(observationId);
         cumulativeTravel[observationId] = travel;
         lastObservationId = observationId;
@@ -492,7 +495,7 @@ public sealed class LiveWorldTracker
         return true;
     }
 
-    private IReadOnlyList<LiveTrackingIsland> CurrentTrackingIslands(LiveWorldObservation observation)
+    private IReadOnlyList<LiveTrackingIsland> CurrentTrackingIslands(LiveWorldObservation observation, bool placementPending)
     {
         var islands = Snapshot.TrackingIslands;
         if (islands.Count == 0 && !Snapshot.UsesSwiftWireFormat)
@@ -514,7 +517,8 @@ public sealed class LiveWorldTracker
             observation.OptimizedPose.Y - observation.LocalPose.Y);
         var last = islands.LastOrDefault();
         var previous = Snapshot.Observations.LastOrDefault();
-        if (last is { Placement: LiveIslandPlacement.Estimated } && previous is { CaptureTimestamp: { } priorTime }
+        if (last is { Placement: LiveIslandPlacement.Estimated or LiveIslandPlacement.Connected }
+            && last.RequiresPlacement == placementPending && previous is { CaptureTimestamp: { } priorTime }
             && currentVisitObservationIds.Contains(previous.Id)
             && last.Members[^1].ObservationId == previous.Id
             && last.RoomId == observation.RoomId
@@ -528,7 +532,8 @@ public sealed class LiveWorldTracker
 
         var id = NextId(islands.Select(value => value.Id));
         return [.. islands, new LiveTrackingIsland(id, observation.RoomId, observation.Timestamp,
-            basis, LiveIslandPlacement.Estimated, default, "measured-local-tracking", [member])];
+            basis, LiveIslandPlacement.Estimated, default,
+            placementPending ? LiveTrackingIsland.RecoveryBreakReason : "measured-local-tracking", [member])];
     }
 
     private IReadOnlyList<CachedReference> EligibleReferences(
@@ -541,7 +546,8 @@ public sealed class LiveWorldTracker
         var minimumTravelAfterClosure = Math.Max(
             observation.SolveWidth * KeyframeTravelFraction,
             1);
-        if (lastAcceptedClosureTravel is { } lastClosure
+        var placementPending = Snapshot.TrackingIslands.LastOrDefault()?.RequiresPlacement == true;
+        if (!placementPending && lastAcceptedClosureTravel is { } lastClosure
             && travelDistance - lastClosure < minimumTravelAfterClosure)
         {
             return [];
@@ -557,6 +563,7 @@ public sealed class LiveWorldTracker
         {
             return [];
         }
+        var unplaced = Snapshot.UnplacedObservationIds();
         return references.Values.Where(candidate =>
         {
             if (!observations.TryGetValue(candidate.ObservationId, out var referenced)
@@ -569,9 +576,10 @@ public sealed class LiveWorldTracker
             }
             return candidate.RoomId == observation.RoomId
                 && currentIslandMembers?.Contains(candidate.ObservationId) != true
-                && !closedReferenceKeyframeIds.Contains(candidate.KeyframeId)
-                && (!currentVisitObservationIds.Contains(candidate.ObservationId)
-                    || travelDistance - referenceTravel >= minimumTravel);
+                && !unplaced.Contains(candidate.ObservationId)
+                && (placementPending || (!closedReferenceKeyframeIds.Contains(candidate.KeyframeId)
+                    && (!currentVisitObservationIds.Contains(candidate.ObservationId)
+                        || travelDistance - referenceTravel >= minimumTravel)));
         }).OrderBy(value => value.KeyframeId).ToArray();
     }
 
@@ -674,6 +682,19 @@ public sealed class LiveWorldTracker
         return keyframeId;
     }
 
+    public bool PlaceRecoveredIsland(LiveWorldRecoveryPlacement placement)
+    {
+        if (Snapshot.TrackingIslands.LastOrDefault()?.RequiresPlacement != true
+            || Snapshot.Observations.LastOrDefault() is not { } frame
+            || placement.RoomId != frame.RoomId)
+        {
+            return false;
+        }
+
+        PlaceNewObservation(frame, placement.CameraPose);
+        return true;
+    }
+
     private AtlasPoint PlaceNewObservation(LiveWorldObservation observation, AtlasPoint measuredPose)
     {
         // Move the current island as a unit. The stored members keep their
@@ -687,6 +708,12 @@ public sealed class LiveWorldTracker
             poses[member.ObservationId] = new AtlasPoint(previous.X + correction.X, previous.Y + correction.Y);
         }
         Snapshot = Snapshot.ReplaceOptimizedPoses(poses, Snapshot.MapRevision);
+        var island = Snapshot.TrackingIslands[^1];
+        if (island.RequiresPlacement)
+        {
+            ReplaceSnapshot(trackingIslands: [.. Snapshot.TrackingIslands.Take(Snapshot.TrackingIslands.Count - 1),
+                island with { Placement = LiveIslandPlacement.Connected }]);
+        }
         RefreshReferences();
         return new AtlasPoint(measuredPose.X - observation.RawPose.X, measuredPose.Y - observation.RawPose.Y);
     }
@@ -879,9 +906,13 @@ public sealed class LiveWorldTracker
             new LiveWorldTrackerReview(points, lines, rejections.ToArray()));
     }
 
-    private IEnumerable<CachedReference> RecoveryReferences() =>
-        restoredRecoveryReferences.Values.OfType<CachedReference>().Concat(
-            references.Values.Where(value => !restoredRecoveryReferences.ContainsKey(value.KeyframeId)));
+    private IEnumerable<CachedReference> RecoveryReferences()
+    {
+        var unplaced = Snapshot.UnplacedObservationIds();
+        return restoredRecoveryReferences.Values.OfType<CachedReference>()
+            .Concat(references.Values.Where(value => !restoredRecoveryReferences.ContainsKey(value.KeyframeId)))
+            .Where(reference => !unplaced.Contains(reference.ObservationId));
+    }
 
     private (CachedReference Reference, GlobalFeatureMatch Match)? RecoveryMatch(
         BgraFrame frame,

@@ -195,11 +195,12 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             if (measuredGround)
             {
                 worldEvidence = LiveWorldCaptureEvidence.FromGround(timestamp, frame.Width, frame.Height,
-                    floors, ground.LineReviews, knight, contact.MeasuredFoot, contact.Floor);
+                    floors, ground.LineReviews, knight, contact.MeasuredFoot, contact.Floor) with
+                { LocalReferenceTimestamp = ground.LocalReferenceTimestamp };
             }
             else if (publishesScenery)
             {
-                worldEvidence = new LiveWorldCaptureEvidence(timestamp);
+                worldEvidence = new LiveWorldCaptureEvidence(timestamp) { LocalReferenceTimestamp = selectedScene?.ReferenceTimestamp };
             }
         }
         return new(observation, ground, estimate, localCamera, room, terrain, contact,

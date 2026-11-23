@@ -525,8 +525,11 @@ uses the visual room transition and checks the saved imagery for a competing
 match. Modded mode also uses the receiver's room name. After a confirmed horizontal
 loading cut, a new room starts provisionally beyond the saved Atlas. Windows
 corrects doorway height when it saves measured floor and foot contact on both
-sides. The horizontal separation stays provisional. Older Normal Atlases that
-only saved tiles keep their direct image composition.
+sides. The horizontal separation stays provisional. After a tracking loss
+within a placed room, Windows can save fresh local measurements while their
+placement is pending. The saved Atlas stays in place. Later confirmation
+against placed images adds the measured section to the Atlas. Older Normal
+Atlases that only saved tiles keep their direct image composition.
 
 ## Label examples and dataset export from the CLI
 

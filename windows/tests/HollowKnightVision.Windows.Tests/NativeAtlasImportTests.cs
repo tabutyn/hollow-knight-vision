@@ -476,6 +476,110 @@ internal static class NativeAtlasImportTests
         }
     }
 
+    internal static void TestLocalRecoveryRetainsEvidenceUntilAPlacedMatch()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-local-recovery-");
+        try
+        {
+            var pipeline = new WindowsLiveWorldPipeline(root.FullName);
+            var store = new LiveWorldSessionStore(root.FullName);
+            const int placedTexture = 71;
+            const int newTexture = 901;
+            WindowsLiveWorldFrame Measured(long id, double time, int texture, double x)
+            {
+                var frame = FloorFrame(id, texture, true, 135, false, false);
+                return frame with
+                {
+                    Timestamp = time,
+                    MonotonicTimestamp = time,
+                    LocalPose = new AtlasPoint(x, 0),
+                    WorldEvidence = frame.WorldEvidence! with { CaptureTimestamp = time, LocalReferenceTimestamp = time - .05 }
+                };
+            }
+
+            Check(pipeline.Process(Measured(1, .5, placedTexture, 80)).AllowsAtlasWrite,
+                "the original image is placed");
+            pipeline.NotifyTrackingLoss(1);
+            Check(!pipeline.Process(Measured(2, .625, newTexture, 120) with { WorldEvidence = null }).AllowsAtlasWrite,
+                "a frame with no measured reference stays pending");
+            Check(!pipeline.Process(Measured(3, .75, newTexture, 122)).AllowsAtlasWrite
+                && !pipeline.Process(Measured(4, .84, newTexture, 124)).AllowsAtlasWrite,
+                "local recovery needs independent measured samples");
+            var resumed = pipeline.Process(Measured(5, .94, newTexture, 126));
+            Check(resumed is { AllowsAtlasWrite: true, PlacementPending: true, RebuiltAtlas: null }
+                && resumed.WalkedGround.Count == 0, $"the reacquired evidence saves provisionally ({resumed.Diagnostic})");
+            Check(pipeline.Process(Measured(6, 1.09, newTexture, 128)) is
+                    { AllowsAtlasWrite: true, PlacementPending: true }, "the next local measurement is recorded");
+
+            var pending = store.Load().Snapshot;
+            Check(pending.UnplacedObservationIds().SetEquals([1, 2])
+                && pending.TrackingIslands[^1].Members.Count == 2,
+                "the adjacent measurements survive reopen with a common unplaced owner");
+            var composed = new List<int>();
+            _ = WindowsLiveWorldPipeline.RebuildAtlas(pending,
+                id => { composed.Add(id); return store.Source(id); }, 1, 256);
+            Check(composed.SequenceEqual([0]), "unplaced screenshots cannot overwrite the saved mosaic");
+            var reopening = new WindowsLiveWorldPipeline(root.FullName);
+            var replayed = reopening.Process(Measured(7, 1.4, newTexture, 128) with { CaptureGeneration = 2 });
+            var repeated = reopening.Process(Measured(8, 1.7, newTexture, 128) with { CaptureGeneration = 2 });
+            Check(replayed.ConfirmedRecoveryPose is null && repeated.ConfirmedRecoveryPose is null
+                && !repeated.AllowsAtlasWrite, "a saved unplaced image cannot localize a new capture");
+
+            _ = pipeline.Process(Measured(9, 1.24, placedTexture, 130));
+            var located = pipeline.Process(Measured(10, 1.54, placedTexture, 130));
+            Check(located is { AllowsAtlasWrite: true, PlacementPending: false, RebuiltAtlas.TileCount: > 0 }
+                && located.AcceptedClosure is not null, $"two matches to placed imagery reconnect the new island ({located.Diagnostic})");
+            var confirmed = store.Load().Snapshot;
+            Check(confirmed.TrackingIslands[^1].Placement == LiveIslandPlacement.Connected
+                && confirmed.UnplacedObservationIds().Count == 0
+                && confirmed.Observations[0].OptimizedPose == new AtlasPoint(80, 0)
+                && confirmed.Observations[1].OptimizedPose == new AtlasPoint(76, 0)
+                && confirmed.Observations[2].OptimizedPose == new AtlasPoint(78, 0),
+                "reconnection moves only the measured island and retains its relative geometry");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    internal static void TestImportedWorldPlacesMeasuredRecoveryThroughRegeneratedFeatures()
+    {
+        WithRecoveryFixture(identicalRooms: false, (root, before) =>
+        {
+            var pipeline = new WindowsLiveWorldPipeline(root);
+            _ = pipeline.Process(ResumeFrame(1, 71));
+            Check(pipeline.Process(ResumeFrame(2, 71)).ConfirmedRecoveryPose == new AtlasPoint(100, 20),
+                "the Swift world is initially located by regenerated features");
+            pipeline.NotifyTrackingLoss(1);
+
+            WindowsLiveWorldFrame Measured(long id, double time, int texture, double x)
+            {
+                var frame = FloorFrame(id, texture, true, 135, false, false);
+                return frame with
+                {
+                    Timestamp = time,
+                    MonotonicTimestamp = time,
+                    LocalPose = new AtlasPoint(x, 0),
+                    WorldEvidence = frame.WorldEvidence! with { CaptureTimestamp = time, LocalReferenceTimestamp = time - .05 }
+                };
+            }
+
+            _ = pipeline.Process(Measured(3, .75, 901, 124));
+            _ = pipeline.Process(Measured(4, .84, 901, 125));
+            Check(pipeline.Process(Measured(5, 1.05, 901, 126)).PlacementPending,
+                "relative measurements can be saved when a Mac reference is out of view");
+            _ = pipeline.Process(Measured(6, 1.2, 901, 128));
+            _ = pipeline.Process(Measured(7, 1.35, 71, 130));
+            var placed = pipeline.Process(Measured(8, 1.65, 71, 130));
+            var saved = new LiveWorldSessionStore(root).Load().Snapshot;
+            Check(placed is { AllowsAtlasWrite: true, PlacementPending: false, RebuiltAtlas.TileCount: > 0 }
+                && placed.CameraPose == new AtlasPoint(100, 20)
+                && saved.UnplacedObservationIds().Count == 0, $"a measured group is placed by restored imagery ({placed.Diagnostic})");
+            Check(saved.Observations.Take(before.Observations.Count).Select(row => row.OptimizedPose)
+                .SequenceEqual(before.Observations.Select(row => row.OptimizedPose))
+                && saved.LoopClosureEdges.Count == before.LoopClosureEdges.Count,
+                "the original positions and landmark relationships remain intact");
+        });
+    }
+
     private static WindowsLiveWorldFrame FloorFrame(long id, int seed, bool rightSide, int row, bool airborne, bool competing)
     {
         var request = ResumeFrame(id, seed);

@@ -401,6 +401,8 @@ var tests = new List<(string Name, Action Run)>
     ("measured walks retain ground beneath a hidden edge in the saved Atlas", NativeAtlasImportTests.TestMeasuredWalkSavesFloorUnderAHiddenEdge),
     ("restored Atlas aligns doorway floors only with measured foot contact on both sides", NativeAtlasImportTests.TestDoorwayFloorAlignsOnlyWithMeasuredContactOnBothSides),
     ("Windows Atlas stitches a measured doorway and preserves saved legacy coordinates", NativeAtlasImportTests.TestWindowsAtlasExtendsAndAlignsWithoutMovingLegacyFrames),
+    ("same-room recovery retains measured evidence until placed imagery confirms it", NativeAtlasImportTests.TestLocalRecoveryRetainsEvidenceUntilAPlacedMatch),
+    ("same-room recovery reconnects a Mac Atlas through rebuilt visual references", NativeAtlasImportTests.TestImportedWorldPlacesMeasuredRecoveryThroughRegeneratedFeatures),
     ("live world round trip and optimization preserve raw evidence", LiveWorldModelParityTests.TestRoundTripAndPoseReplacementPreserveRawEvidence),
     ("live world legacy observations preserve raw pose in epoch zero", LiveWorldModelParityTests.TestLegacyObservationDecodesIntoEpochZeroWithoutMovingItsWorldPose),
     ("live world invalid models are rejected", LiveWorldModelParityTests.TestInvalidModelsAreRejected),

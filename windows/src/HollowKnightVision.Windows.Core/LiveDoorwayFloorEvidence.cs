@@ -83,7 +83,7 @@ internal static class LiveDoorwayFloorEvidence
             Surface floor, bool rightSide)
         {
             if (!owners.TryGetValue(endpoint.Id, out var owner)
-                || owner.Island.Placement == LiveIslandPlacement.LegacyUnknown || !owner.Member.Measured)
+                || owner.Island.Placement == LiveIslandPlacement.LegacyUnknown || owner.Island.RequiresPlacement || !owner.Member.Measured)
             {
                 return [];
             }

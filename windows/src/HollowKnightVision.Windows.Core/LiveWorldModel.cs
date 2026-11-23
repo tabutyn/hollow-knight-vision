@@ -273,6 +273,11 @@ public sealed record LiveWorldSnapshot
     public IReadOnlyList<LiveDoorwayFloorConstraint> DoorwayFloorConstraints { get; }
     [JsonIgnore] public bool UsesSwiftWireFormat => SchemaVersion >= 2;
 
+    public IReadOnlySet<int> UnplacedObservationIds() => TrackingIslands
+        .Where(island => island.RequiresPlacement)
+        .SelectMany(island => island.Members.Select(member => member.ObservationId))
+        .ToHashSet();
+
     public IReadOnlyList<StencilRect> CompositionMasks(LiveWorldObservation observation) =>
         observation.ExcludedRects.Select(rectangle =>
         {

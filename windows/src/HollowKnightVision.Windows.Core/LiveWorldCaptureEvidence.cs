@@ -7,6 +7,8 @@ public sealed record LiveWorldCaptureEvidence(
     LiveObservedFloorCandidates? FloorCandidates = null,
     WorldRect? PlayerBounds = null)
 {
+    public double? LocalReferenceTimestamp { get; init; }
+
     internal static LiveWorldCaptureEvidence FromGround(
         double timestamp,
         int width,
