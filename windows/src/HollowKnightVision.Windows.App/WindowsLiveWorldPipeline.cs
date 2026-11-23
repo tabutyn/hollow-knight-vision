@@ -526,7 +526,8 @@ internal sealed class WindowsLiveWorldPipeline
                 if (update.AcceptedClosure is not null)
                 {
                     if (!IsWorkCurrent(processEpoch)) return Cancelled();
-                    rebuiltAtlas = RebuildAtlas(activeStore, durableSnapshot, request);
+                    rebuiltAtlas = RebuildAtlas(durableSnapshot, activeStore.Source,
+                        request.AtlasPixelsPerWorldUnit, request.AtlasTileSize);
                     if (!IsWorkCurrent(processEpoch)) return Cancelled();
                     transactionObserver?.Invoke("closure-rebuild");
                     if (!IsWorkCurrent(processEpoch)) return Cancelled();
@@ -824,7 +825,9 @@ internal sealed class WindowsLiveWorldPipeline
             snapshot.Keyframes,
             snapshot.Landmarks,
             snapshot.RelativeMotionEdges,
-            snapshot.LoopClosureEdges);
+            snapshot.LoopClosureEdges,
+            snapshot.TrackingIslands,
+            snapshot.DoorwayFloorConstraints);
     }
 
     private static IReadOnlyList<WorldRect> CompositionRects(
@@ -833,40 +836,24 @@ internal sealed class WindowsLiveWorldPipeline
                 new AtlasPoint(rectangle.X, rectangle.Y),
                 new WorldSize(rectangle.Width, rectangle.Height))).ToArray();
 
-    private static GroundTruthAtlasMosaic RebuildAtlas(
-        LiveWorldSessionStore activeStore,
+    internal static GroundTruthAtlasMosaic RebuildAtlas(
         LiveWorldSnapshot snapshot,
-        WindowsLiveWorldFrame request)
+        Func<int, BgraFrame> loadSource,
+        double pixelsPerWorldUnit,
+        int tileSize)
     {
-        if (!double.IsFinite(request.AtlasPixelsPerWorldUnit)
-            || request.AtlasPixelsPerWorldUnit <= 0
-            || request.AtlasTileSize <= 0)
-        {
+        if (!double.IsFinite(pixelsPerWorldUnit) || pixelsPerWorldUnit <= 0 || tileSize <= 0)
             throw new InvalidDataException("Live-world atlas geometry is invalid.");
-        }
-        var rebuilt = new GroundTruthAtlasMosaic(
-            request.AtlasPixelsPerWorldUnit,
-            request.AtlasTileSize,
-            sourceTopInsetFraction: 0);
+
+        var rebuilt = new GroundTruthAtlasMosaic(pixelsPerWorldUnit, tileSize, sourceTopInsetFraction: 0);
         foreach (var observation in snapshot.Observations.OrderBy(value => value.Id))
         {
-            var source = activeStore.Source(observation.SourceObservationId);
-            var exclusions = SceneRegions.PixelRectangles(
-                source.Width,
-                source.Height,
-                observation.ExcludedRects.Select(value => new StencilRect(
-                    value.X,
-                    value.Y,
-                    value.Width,
-                    value.Height))).ToArray();
-            if (!rebuilt.AddFrame(
-                    source,
-                    AtlasTelemetry(source, observation),
-                    exclusions))
-            {
-                throw new InvalidDataException(
-                    $"Live-world observation {observation.Id} could not be rebuilt.");
-            }
+            var source = loadSource(observation.SourceObservationId);
+            if (source.Width != observation.SourceWidth || source.Height != observation.SourceHeight)
+                throw new InvalidDataException($"Live-world observation {observation.Id} has incorrect source dimensions.");
+            var masks = SceneRegions.PixelRectangles(source.Width, source.Height, snapshot.CompositionMasks(observation));
+            if (!rebuilt.AddFrame(source, AtlasTelemetry(source, observation), masks))
+                throw new InvalidDataException($"Live-world observation {observation.Id} could not be rebuilt.");
         }
         return rebuilt;
     }
@@ -896,9 +883,9 @@ internal sealed class WindowsLiveWorldPipeline
             CameraTargetX: observation.OptimizedPose.X,
             CameraTargetY: observation.OptimizedPose.Y,
             CameraTargetZ: 0,
-            OrthographicSize: frame.Height / 2.0,
-            PixelsPerWorldUnitX: 1,
-            PixelsPerWorldUnitY: 1,
+            OrthographicSize: frame.Height * observation.SolveWidth / (2 * frame.Width),
+            PixelsPerWorldUnitX: frame.Width / observation.SolveWidth,
+            PixelsPerWorldUnitY: frame.Width / observation.SolveWidth,
             HeroScreenX: null,
             HeroScreenY: null,
             ProjectionPixelWidth: frame.Width,

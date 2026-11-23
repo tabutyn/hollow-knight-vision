@@ -5746,7 +5746,8 @@ public partial class MainWindow : Window
                                     liveWorldPipeline.LastError
                                     ?? "The loaded live-world pipeline could not be opened.");
                             }
-                        });
+                        },
+                        saveTile: SaveBitmap);
                 }
                 catch (Exception replacementError)
                 {

@@ -48,6 +48,7 @@ public sealed record SessionManifest
     public Guid SessionId { get; init; }
     public IReadOnlyList<StoredFrameObservation> Observations { get; init; }
     public int NextObservationId { get; init; }
+    [JsonIgnore] public bool UsesSwiftWireFormat { get; internal init; }
 }
 
 public enum SceneSessionStoreError
@@ -226,13 +227,15 @@ public sealed class SceneSessionStore
             imagePath,
             cameraPosition,
             solveWidth,
-            excludedRects.ToArray(),
+            currentManifest.UsesSwiftWireFormat
+                ? excludedRects.Select(mask => LiveWorldJson.FlipMask(mask, frame.Height)).ToArray()
+                : excludedRects.ToArray(),
             poseRevision);
-        var nextManifest = new SessionManifest(
-            currentManifest.SchemaVersion,
-            currentManifest.SessionId,
-            [.. currentManifest.Observations, observation],
-            nextObservationId);
+        var nextManifest = currentManifest with
+        {
+            Observations = [.. currentManifest.Observations, observation],
+            NextObservationId = nextObservationId
+        };
         var targetPath = EvidencePath(imagePath);
         DeleteUnreferencedEvidence(
             targetPath,
@@ -377,15 +380,13 @@ public sealed class SceneSessionStore
 
     private void WriteManifest(SessionManifest manifest) => AtomicFile.Write(
         ManifestPath,
-        JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptions));
+        LiveWorldJson.WriteManifest(manifest));
 
     private SessionManifest ReadManifest()
     {
         try
         {
-            var manifest = JsonSerializer.Deserialize<SessionManifest>(
-                    File.ReadAllBytes(ManifestPath), JsonOptions)
-                ?? throw new InvalidDataException("Scene session manifest is empty.");
+            var manifest = LiveWorldJson.ReadManifest(File.ReadAllBytes(ManifestPath));
             if (manifest.SchemaVersion != SessionManifest.CurrentSchemaVersion)
             {
                 throw Error(

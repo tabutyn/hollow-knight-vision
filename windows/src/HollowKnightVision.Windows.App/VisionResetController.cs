@@ -99,14 +99,52 @@ internal static class VisionResetController
     }
 
     internal static ActiveAtlasReplacement<ValidatedPersistedAtlas> LoadNamedAtlasForCurrentProfile(
-        AtlasStateStore states, AtlasSavedState state, string active, Action<string>? activateWorld = null) =>
+        AtlasStateStore states,
+        AtlasSavedState state,
+        string active,
+        Action<string>? activateWorld = null,
+        Action<BgraFrame, string>? saveTile = null) =>
         ReplaceActiveAtlas(states, state, active, ReadPersistedAtlas,
             copyDirectory: (source, staging) =>
             {
-                CopyDirectoryDurably(source, staging);
+                if (!File.Exists(Path.Combine(source, "atlas.json"))
+                    && File.Exists(Path.Combine(source, "manifest.json"))
+                    && saveTile is not null)
+                {
+                    StageMacAtlas(source, staging, state.CreatedAt, saveTile);
+                }
+                else
+                {
+                    CopyDirectoryDurably(source, staging);
+                }
                 SaveProfileAtlas.PreserveOwner(active, staging);
             },
             activateWorld: activateWorld);
+
+    private static void StageMacAtlas(
+        string source,
+        string staging,
+        DateTimeOffset createdAt,
+        Action<BgraFrame, string> saveTile)
+    {
+        var evidenceRoot = Path.Combine(staging, "live-world");
+        CopyDirectoryDurably(source, evidenceRoot);
+        var snapshot = LiveWorldSessionStore.ValidateExisting(evidenceRoot).Snapshot;
+        if (!snapshot.UsesSwiftWireFormat)
+            throw new InvalidDataException("This Atlas is missing Windows tiles and has no supported macOS snapshot.");
+
+        using var evidence = SceneSessionStore.OpenReadOnly(evidenceRoot);
+        var entries = evidence.Manifest.Observations.ToDictionary(entry => entry.Id);
+        var mosaic = WindowsLiveWorldPipeline.RebuildAtlas(snapshot, id => evidence.Source(entries[id]),
+            pixelsPerWorldUnit: 1, tileSize: LiveTiledAtlas.TileSize);
+        foreach (var tile in mosaic.Snapshot())
+        {
+            var name = FormattableString.Invariant($"tile_{tile.Coordinate.X}_{tile.Coordinate.Y}.bmp");
+            saveTile(tile.Frame, Path.Combine(staging, name));
+        }
+        WritePersistedAtlasMetadata(staging, new(mosaic.AcceptedFrameCount, createdAt,
+            mosaic.TileSize, mosaic.PixelsPerWorldUnit));
+    }
 
     internal static void WritePersistedAtlasMetadata(string directory, PersistedAtlasMetadata metadata)
     {

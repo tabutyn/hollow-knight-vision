@@ -511,6 +511,15 @@ The recorder uses camera telemetry, omits the top HUD band, blends repeated
 observations, and writes 256x256 BGRA BMP tiles plus `atlas.json`. Output must
 be new or empty, so existing atlas evidence is never overwritten silently.
 
+## Restore a macOS Game Play Atlas on Windows
+
+For a version 2 or 3 Atlas, copy the named save directory with its `state.json` and `world` from macOS
+`~/Library/Application Support/HollowKnightVision/atlas-states-v1` into Windows
+`%LOCALAPPDATA%\HollowKnightVision\atlas-v1\states`. In Game Play, open Atlas
+settings, select the state, and choose **Load**. Windows rebuilds its tiles from
+the saved captures and preserves the original map, tracking islands, walked
+ground, and doorway evidence in the active copy.
+
 ## Label examples and dataset export from the CLI
 
 The WPF Label workspace is the normal authoring path. Equivalent commands are

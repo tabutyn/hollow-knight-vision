@@ -35,10 +35,37 @@ public static class LiveWorldWalkedGround
         return walked.SelectMany(line => GroundStrokeGeometry.ExcludeColumns(line, covered, clearance: Math.BitIncrement(2d)));
     }
 
-    public static IReadOnlyList<GroundHypothesisAtlasLine> ProjectRoom(LiveWorldSnapshot snapshot, int room) =>
-        GroundStrokeGeometry.Coalesce(snapshot.Observations
-            .Where(observation => observation.RoomId == room)
-            .SelectMany(ProjectObservation));
+    public static IReadOnlyList<GroundHypothesisAtlasLine> ProjectRoom(LiveWorldSnapshot snapshot, int room)
+    {
+        var observations = snapshot.Observations.Where(observation => observation.RoomId == room);
+        var nativeIslands = snapshot.TrackingIslands.ToDictionary(island => island.Id);
+        return GroundStrokeGeometry.Coalesce(observations.SelectMany(observation =>
+            ProjectObservation(observation).Concat(ProjectIslandWalks(observation, nativeIslands))));
+    }
+
+    private static IEnumerable<GroundHypothesisAtlasLine> ProjectIslandWalks(
+        LiveWorldObservation observation,
+        IReadOnlyDictionary<int, LiveTrackingIsland> islands)
+    {
+        if (observation.GroundGeometry is not { } geometry) yield break;
+
+        foreach (var line in geometry.Lines.Where(line => line.SegmentId == long.MaxValue))
+            yield return ProjectSpan(line, observation.OptimizedPose);
+
+        foreach (var walk in geometry.WalkedIslands ?? [])
+        {
+            if (walk.Owner.RoomId != observation.RoomId) continue;
+            var origin = islands.TryGetValue(walk.Owner.Id, out var island)
+                && island.RoomId == walk.Owner.RoomId && island.StartedAt == walk.Owner.StartedAt
+                ? island.WorldFromLocal : walk.Owner.WorldFromLocal;
+            foreach (var span in walk.Spans) yield return ProjectSpan(span, origin);
+        }
+    }
+
+    private static GroundHypothesisAtlasLine ProjectSpan(LiveGroundLineEvidence line, AtlasPoint origin) =>
+        new(WalkedGroundMemory.WalkedSegmentId,
+            new(origin.X + line.Start.X, origin.Y + line.Start.Y),
+            new(origin.X + line.End.X, origin.Y + line.End.Y));
 
     public static IEnumerable<GroundHypothesisAtlasLine> ProjectObservation(LiveWorldObservation observation) =>
         (observation.WalkedGround ?? []).Select(floor => new GroundHypothesisAtlasLine(

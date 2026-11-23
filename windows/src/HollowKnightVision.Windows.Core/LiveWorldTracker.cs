@@ -332,7 +332,15 @@ public sealed class LiveWorldTracker
         {
             WalkedGround = walkedGround is { Count: > 0 } ? walkedGround.ToArray() : null
         };
-        ReplaceSnapshot(observations: [.. Snapshot.Observations, observation]);
+        var islands = Snapshot.TrackingIslands;
+        if (Snapshot.UsesSwiftWireFormat)
+        {
+            // The Windows capture supplies pose evidence but has no Swift island
+            // lifecycle. Preserve existing measured groups and mark the new owner unknown.
+            var islandId = NextId(islands.Select(value => value.Id));
+            islands = [.. islands, LiveTrackingIsland.Legacy(islandId, observation)];
+        }
+        ReplaceSnapshot(observations: [.. Snapshot.Observations, observation], trackingIslands: islands);
         currentVisitObservationIds.Add(observationId);
         cumulativeTravel[observationId] = travel;
         lastObservationId = observationId;
@@ -438,7 +446,9 @@ public sealed class LiveWorldTracker
         closedReferenceKeyframeIds.Add(reference.KeyframeId);
         lastAcceptedClosureTravel = travel;
         ReplaceSnapshot(loopEdges: [.. Snapshot.LoopClosureEdges, closure]);
-        var correction = Optimize(observationId);
+        var correction = Snapshot.UsesSwiftWireFormat
+            ? PlaceNewObservation(observation, match.ProposedCameraPose)
+            : Optimize(observationId);
         return Update(correction, closure, [], reference, match);
     }
 
@@ -574,6 +584,17 @@ public sealed class LiveWorldTracker
         var rebuilt = ReferenceFor(keyframe);
         if (rebuilt is not null) references[keyframe.Id] = rebuilt;
         return keyframeId;
+    }
+
+    private AtlasPoint PlaceNewObservation(LiveWorldObservation observation, AtlasPoint measuredPose)
+    {
+        // This observation has its own unverified island. A verified image
+        // match may move it, while the existing rigid islands keep their geometry.
+        var poses = Snapshot.Observations.ToDictionary(value => value.Id, value => value.OptimizedPose);
+        poses[observation.Id] = measuredPose;
+        Snapshot = Snapshot.ReplaceOptimizedPoses(poses, Snapshot.MapRevision);
+        RefreshReferences();
+        return new AtlasPoint(measuredPose.X - observation.RawPose.X, measuredPose.Y - observation.RawPose.Y);
     }
 
     private AtlasPoint Optimize(int observationId)
@@ -800,7 +821,8 @@ public sealed class LiveWorldTracker
         IReadOnlyList<LiveWorldKeyframe>? keyframes = null,
         IReadOnlyList<LiveWorldLandmark>? landmarks = null,
         IReadOnlyList<LiveWorldRelativeMotionEdge>? relativeEdges = null,
-        IReadOnlyList<LiveWorldLoopClosureEdge>? loopEdges = null)
+        IReadOnlyList<LiveWorldLoopClosureEdge>? loopEdges = null,
+        IReadOnlyList<LiveTrackingIsland>? trackingIslands = null)
     {
         Snapshot = new LiveWorldSnapshot(
             Snapshot.SchemaVersion,
@@ -810,7 +832,9 @@ public sealed class LiveWorldTracker
             keyframes ?? Snapshot.Keyframes,
             landmarks ?? Snapshot.Landmarks,
             relativeEdges ?? Snapshot.RelativeMotionEdges,
-            loopEdges ?? Snapshot.LoopClosureEdges);
+            loopEdges ?? Snapshot.LoopClosureEdges,
+            trackingIslands ?? Snapshot.TrackingIslands,
+            Snapshot.DoorwayFloorConstraints);
     }
 
     private void RestoreRuntimeState()
