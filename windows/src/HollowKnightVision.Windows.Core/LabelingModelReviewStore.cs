@@ -36,6 +36,7 @@ public sealed record LabelingTrainingRunSummary
     public string? PredictionsFilename { get; init; }
     public string? BaseRunIdentifier { get; init; }
     public string[]? ClassIdentifiers { get; init; }
+    public string[]? TrainedClassIdentifiers { get; init; }
     public LabelingTrainingMetricSummary? TrainingMetrics { get; init; }
     public int ValidationAnnotationCount { get; init; }
     public LabelingTrainingMetricSummary? ValidationMetrics { get; init; }

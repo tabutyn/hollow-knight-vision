@@ -5,8 +5,20 @@ public sealed record LabelingModelSemanticVersion(int Major, int Minor)
     [System.Text.Json.Serialization.JsonIgnore] public string DisplayName => $"v{Major}.{Minor}";
 }
 public sealed record LabelingModelRestorePoint(string ClassIdentifier, LabelingModelSemanticVersion Version,
-    Guid SourceRunIdentifier, DateTimeOffset CreatedAt, string ModelFilename, string? CheckpointFilename = null);
-public sealed record LabelingActiveModelArtifact(string ClassIdentifier, LabelingModelSemanticVersion Version, string ModelPath);
+    Guid SourceRunIdentifier, DateTimeOffset CreatedAt, string ModelFilename, string? CheckpointFilename = null,
+    string[]? TrainedClassIdentifiers = null)
+{
+    public bool Equals(LabelingModelRestorePoint? other) => other is not null
+        && ClassIdentifier == other.ClassIdentifier && Version == other.Version && SourceRunIdentifier == other.SourceRunIdentifier
+        && CreatedAt == other.CreatedAt && ModelFilename == other.ModelFilename && CheckpointFilename == other.CheckpointFilename
+        && (TrainedClassIdentifiers is null ? other.TrainedClassIdentifiers is null
+            : other.TrainedClassIdentifiers is { } otherClasses && TrainedClassIdentifiers.SequenceEqual(otherClasses));
+
+    public override int GetHashCode() =>
+        HashCode.Combine(ClassIdentifier, Version, SourceRunIdentifier, CreatedAt, ModelFilename, CheckpointFilename);
+}
+public sealed record LabelingActiveModelArtifact(string ClassIdentifier, LabelingModelSemanticVersion Version, string ModelPath,
+    IReadOnlySet<string>? TrainedClassIdentifiers = null);
 
 public static class LabelingDevelopmentCandidatePolicy
 {
@@ -134,8 +146,11 @@ public sealed class LabelingModelVersionStore(string rootDirectory)
                 throw new InvalidDataException("Model artifact filenames must be distinct.");
             foreach (var filename in filenames) ModelStoreJson.Component(filename);
             var version = new LabelingModelSemanticVersion(record.RestorePoints.Select(point => point.Version.Major).DefaultIfEmpty(0).Max() + 1, 0);
+            var evidence = summary.TrainedClassIdentifiers is { } declared
+                ? LabelingTrainingEvidence.Canonical(declared) : LabelingTrainingEvidence.PositiveClasses(candidate.DatasetDirectory);
+            var trainedClasses = (evidence ?? LabelingTrainingEvidence.Canonical([])).Order(StringComparer.Ordinal).ToArray();
             var point = new LabelingModelRestorePoint(summary.ClassIdentifier, version, candidate.Id,
-                now ?? DateTimeOffset.UtcNow, summary.ModelFilename, summary.CheckpointFilename);
+                now ?? DateTimeOffset.UtcNow, summary.ModelFilename, summary.CheckpointFilename, trainedClasses);
             var destination = PointDirectory(point);
             if (Directory.Exists(destination) || File.Exists(destination)) throw new IOException($"Model restore point {version.DisplayName} already exists.");
             var staging = ModelStoreJson.Child(RootDirectory, summary.ClassIdentifier, $".staging-{version.DisplayName}-{Guid.NewGuid():N}");
@@ -147,7 +162,7 @@ public sealed class LabelingModelVersionStore(string rootDirectory)
                 if (summary.CheckpointFilename is { } checkpoint && File.Exists(ModelStoreJson.Child(candidate.RunDirectory, checkpoint)))
                     File.Copy(ModelStoreJson.Child(candidate.RunDirectory, checkpoint), ModelStoreJson.Child(staging, checkpoint));
                 // ONNX inference needs class metadata alongside the model; retain review evidence too.
-                ModelStoreJson.Write(ModelStoreJson.Child(staging, "training.json"), summary);
+                ModelStoreJson.Write(ModelStoreJson.Child(staging, "training.json"), summary with { TrainedClassIdentifiers = trainedClasses });
                 if (summary.PredictionsFilename is { } predictions && candidate.PredictionReview is { } review)
                     ModelStoreJson.Write(ModelStoreJson.Child(staging, predictions), review);
                 ModelStoreJson.Write(ModelStoreJson.Child(staging, "restore-point.json"), point);
@@ -229,14 +244,24 @@ public sealed class LabelingModelVersionStore(string rootDirectory)
             var artifacts = Load().Objects.OrderBy(pair => pair.Key, StringComparer.Ordinal)
                 .Select(pair => pair.Value.RestorePoints.FirstOrDefault(point => point.Version.Major == pair.Value.ActiveMajorVersion))
                 .OfType<LabelingModelRestorePoint>().Select(point => new LabelingActiveModelArtifact(point.ClassIdentifier,
-                    point.Version, ModelStoreJson.Child(PointDirectory(point), point.ModelFilename))).ToArray();
+                    point.Version, ModelStoreJson.Child(PointDirectory(point), point.ModelFilename), TrainedClasses(point))).ToArray();
             return artifacts.FirstOrDefault(artifact => artifact.ClassIdentifier == SharedObjectModel) is { } shared ? [shared] : artifacts;
         }
     }
+    private IReadOnlySet<string> TrainedClasses(LabelingModelRestorePoint point)
+    {
+        if (point.TrainedClassIdentifiers is { } recorded) return LabelingTrainingEvidence.Canonical(recorded);
+        var trainingRoot = Path.Combine(Path.GetDirectoryName(RootDirectory)!, "training-v1");
+        return LabelingTrainingEvidence.FromRun(PointDirectory(point), trainingRoot)
+            ?? LabelingTrainingEvidence.FromRun(Path.Combine(trainingRoot, "runs", point.SourceRunIdentifier.ToString("D")), trainingRoot)
+            ?? LabelingTrainingEvidence.FromRun(Path.Combine(trainingRoot, "runs", point.SourceRunIdentifier.ToString("N")), trainingRoot)
+            ?? LabelingTrainingEvidence.Canonical([]);
+    }
+
     public bool HasTrainedGameplayModel(IReadOnlySet<Guid> exampleIds, IReadOnlyList<LabelingModelCandidate> candidates)
     {
         if (exampleIds.Count == 0) return false;
-        lock (gate) return ActiveModelArtifacts().Any(artifact => File.Exists(artifact.ModelPath)
+        lock (gate) return ActiveModelArtifacts().Any(artifact => artifact.TrainedClassIdentifiers is { Count: > 0 } && File.Exists(artifact.ModelPath)
             && RestorePoints(artifact.ClassIdentifier).FirstOrDefault(point => point.Version == artifact.Version) is { } point
             && candidates.FirstOrDefault(candidate => candidate.Id == point.SourceRunIdentifier)?.PredictionReview?.Examples
                 .Any(example => exampleIds.Contains(example.ExampleIdentifier)) == true);

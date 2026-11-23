@@ -21,6 +21,7 @@ public static class GameplayGymObservationEncoder
             throw new InvalidDataException("Unknown observation schema or visual model configuration.");
         var (directories, artifacts) = DetectorRuns(supportRoot, detectorDirectory);
         using var detector = new OnnxObjectDetectorSet(directories, artifacts);
+        if (!detector.HasModels) throw new InvalidDataException("Game Play Gym requires an ONNX detector with trained classes.");
         using var localizers = new Localizers(localizerDirectories);
         var stencils = AutoNavigationRunner.CreateGymStencilSource(supportRoot);
         var visual = new BotVisualGymObservationSource();
@@ -113,7 +114,7 @@ public static class GameplayGymObservationEncoder
                         $"Supply a Windows ONNX run directory for {LocalizerClasses[i]}.");
                     var model = new OnnxObjectDetector(paths[i]);
                     models[i] = model;
-                    if (!model.ClassIdentifiers.Any(id => Canonical(id) == LocalizerClasses[i]))
+                    if (!model.TrainedClassIdentifiers.Contains(LocalizerClasses[i]))
                         throw new InvalidDataException($"The ONNX localizer does not include {LocalizerClasses[i]}.");
                 }
             }

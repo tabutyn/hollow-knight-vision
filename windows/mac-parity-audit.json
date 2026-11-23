@@ -134,6 +134,7 @@
     { "source": "macos/Sources/HollowKnightVision/LabelingCampaignView.swift", "status": "partial", "notes": "Model Summary displays collection bars and held-out accuracy history on both platforms, sharing all eleven translated instruction/chart strings. Mac dark-mode chart rendering inspected. Windows panel compiles and native app checks passed, but chart-specific Windows rendering assertions remain to be added." }
   ],
   "testMappings": [
+    { "mac": "LabelingTrainingEvidenceTests.testLegacyEvidenceRequiresPositiveTrainingBoxes", "windows": "windows/tests/HollowKnightVision.Windows.Tests/ModelVersionTests.cs:TestTrainingEvidenceSurvivesPromotionAndRestoresLegacyRuns" },
     { "mac": "MenuStencilTests.testSelectorRefinementCannotWalkAwayFromOriginalPrediction", "windows": "windows/tests/HollowKnightVision.Windows.Tests/MenuTrackerTests.cs:TestSelectorRefinementStaysNearTheCapturedReference" },
     { "mac": "MenuStencilTests.testSavedBadSelectorPositionsResetToTrustedLanguageReference", "windows": "windows/tests/HollowKnightVision.Windows.Tests/MenuTrackerTests.cs:TestSelectorRefinementStaysNearTheCapturedReference" },
     { "mac": "MenuStencilLocalityTests.testTrackingCannotWalkAwayFromReferenceThroughSmallFrameShifts", "windows": "windows/tests/HollowKnightVision.Windows.Tests/MenuTrackerTests.cs:TestTrackingStaysNearCapturedPositions" },
