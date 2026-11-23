@@ -609,6 +609,7 @@ var tests = new List<(string Name, Action Run)>
     ("Windows releases stale bot inputs and drops ownership on manual control or focus loss", ForwarderPauseTests.TestBotOwnershipAndExpiration),
     ("Windows bridge renews pause leases blocks input and resumes on close", ForwarderPauseTests.TestLeaseTransport),
     ("room reset stays capability-gated and waits for its scene acknowledgement", ForwarderPauseTests.TestRoomResetTransport),
+    ("Atlas overlays clear on real receiver messages without a camera", ForwarderPauseTests.TestAtlasPathsUseReceiverMenuWithoutCamera),
     ("pause capability and receiver disconnect gate labeling without breaking controls", ForwarderPauseTests.TestUnsupportedAndDisconnectedReceiver),
     ("closing a paused bridge is bounded even when sending is blocked", ForwarderPauseTests.TestBlockedShutdown),
     ("recent captures retain the newest 64 with unique identities", RecentFrameTests.TestCapacityAndOrdering),

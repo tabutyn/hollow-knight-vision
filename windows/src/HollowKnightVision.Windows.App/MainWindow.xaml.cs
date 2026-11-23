@@ -2975,6 +2975,7 @@ public partial class MainWindow : Window
             && atlasPathEvidence.ObserveReceiver(sample.SessionId, sample.AtlasGameplayActive, observedAt)
             && !Dispatcher.HasShutdownStarted)
             _ = Dispatcher.BeginInvoke(RefreshAtlasPathVisibility, DispatcherPriority.Render);
+        if (!sample.CameraAvailable) return;
         Volatile.Read(ref stepCapture)?.Trace("truth", -1, sample.UnityFrame, observedAt);
         if (Volatile.Read(ref replayVision) is { } replayFrame)
             ObserveReplayDecision(inputPathDivergenceMonitor.AppendGroundTruth(sample, observedAt, new PlaybackFrameSize(replayFrame.Width, replayFrame.Height)));
