@@ -34,6 +34,8 @@ internal static class BotVisualKnightMemoryTests
         Require(history.Append(predicted, observed, 1.21) is not null, "A brief detector interruption must allow bounded input.");
         Require(continued.Features[4] < .5 && history.Append(continued, observed, 1.81) is not null
             && history.Append(continued, observed, 1.91) is null, "Policy input must expire at the last sighting's deadline.");
+        Require(memory.Resolve(Row(1.9, null, camera: .035), observed).KnightPrediction is null,
+            "At the policy deadline, the producer must stop recording predicted rows.");
     }
 
     internal static void TestWeakCueNeverRenewsTrackAndRoomChangeClearsIt()

@@ -62,7 +62,8 @@ public sealed class BotVisualKnightMemory
         var elapsed = raw.CaptureTimestamp - previous.Observation.CaptureTimestamp;
         var compensated = previous.Camera.HasValue && context.Camera.HasValue;
         var horizon = compensated ? .6 : .35;
-        if (age <= 0 || elapsed <= 0 || age + (raw.AvailableAt - raw.CapturedAt) >= horizon) return raw;
+        // The producer and leased action must agree at the deadline despite capture clock rounding.
+        if (age <= 0 || elapsed <= 0 || raw.AvailableAt - (raw.CapturedAt + horizon - age) >= -1e-6) return raw;
 
         var changedControl = previousAction is { } action && previous.Action is { } oldAction
             && (action.Horizontal != oldAction.Horizontal || action.Jump != oldAction.Jump);
