@@ -15,9 +15,11 @@ public partial class MainWindow
     private IReadOnlyList<BotCaptureReviewFrame> botReview = [];
     private int botReviewIndex;
     private bool changingBotCapture;
-    private string BotCaptureRoot => Path.Combine(
+    private bool refreshingBotModels;
+    private string BotRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "HollowKnightVision", "bot-v1", "demonstrations");
+        "HollowKnightVision", "bot-v1");
+    private string BotCaptureRoot => Path.Combine(BotRoot, "demonstrations");
 
     private static double BotCaptureClock() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
 
@@ -125,6 +127,7 @@ public partial class MainWindow
 
     private void RefreshBotLibrary()
     {
+        RefreshBotModels();
         var sessions = BotCaptureSession.Library(BotCaptureRoot);
         var runs = sessions.Select(session => session.ReplayId ?? session.Id).Distinct().Count();
         BotCaptureSummary.Text = $"{runs} training runs · {sessions.Count(session => session.BotDomain == "hacker")} Hacker clips · {sessions.Count(session => session.BotDomain == "gameplay")} Game Play clips";
@@ -135,6 +138,32 @@ public partial class MainWindow
             Path.Combine(BotCaptureRoot, BotCaptureSession.DirectoryName(session.Id)))).ToArray();
         BotCaptureClips.ItemsSource = clips;
         BotCaptureClips.SelectedItem = clips.FirstOrDefault(clip => clip.Folder == previous) ?? clips.FirstOrDefault();
+    }
+
+    private async void RefreshBotModels()
+    {
+        if (refreshingBotModels) return;
+        refreshingBotModels = true;
+        try
+        {
+            var root = BotRoot;
+            BotModelSummary.Text = await Task.Run(() =>
+                $"Hacker · {Describe(BotCaptureDomain.Hacker)}    Game Play · {Describe(BotCaptureDomain.Gameplay)}");
+
+            string Describe(BotCaptureDomain domain)
+            {
+                try
+                {
+                    return new BotModelStore(root, domain).LoadPlayback()?.Policy.Name ?? "No verified checkpoint";
+                }
+                catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                    or System.Text.Json.JsonException)
+                {
+                    return "Checkpoint unavailable";
+                }
+            }
+        }
+        finally { refreshingBotModels = false; }
     }
 
     private async void BotCaptureClips_Changed(object sender, SelectionChangedEventArgs e)
