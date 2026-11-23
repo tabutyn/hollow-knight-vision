@@ -271,6 +271,7 @@ var tests = new List<(string Name, Action Run)>
     ("input player Ops wire round trips", InputBridgeParityTests.TestPlayerOpsWireRoundTrip),
     ("input snapshot wire codec preserves versioned state", InputBridgeParityTests.TestWireCodecRoundTripsVersionedSnapshot),
     ("input checkpoint control messages round trip", InputBridgeParityTests.TestCheckpointControlMessagesRoundTrip),
+    ("native bot policy projects the same observation columns as PPO", BotPolicyTests.TestProjectedPolicyUsesOnlySelectedHistoryColumns),
     ("native bot verification checks action heads and bound checkpoint hashes", BotPolicyTests.TestNativePolicyChecksActionsAndCheckpointHashes),
     ("Hacker Gym uses authored geometry and preserves fixed objectives and camera gaps", HackerGymObservationTests.TestFixedRouteAndCameraDropout),
     ("Game Play Gym builds a pixel-only Atlas and recovers masked Knight observations", GameplayGymVisualTests.TestVisualFootprintAndMaskedKnightRecovery),

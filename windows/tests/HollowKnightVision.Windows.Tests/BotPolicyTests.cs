@@ -43,6 +43,40 @@ internal static class BotPolicyTests
     }
 
 
+    internal static void TestProjectedPolicyUsesOnlySelectedHistoryColumns()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-projected-policy-");
+        try
+        {
+            var root = temporary.FullName;
+            var width = WriteRuntime(root, inputColumns: [3, 21], schemaVersion: 2);
+            var policy = BotNativePolicy.Load(root);
+            var observation = new float[width];
+            observation[0] = -4;
+            observation[1] = 4;
+            observation[3] = .8f;
+            observation[21] = -.6f;
+            var logits = policy.Logits(observation);
+            if (Math.Abs(logits[2] - 2 * MathF.Tanh(.8f)) > .00001f
+                || Math.Abs(logits[9] - MathF.Tanh(.6f)) > .00001f
+                || BotNativePolicy.Action(logits).Buttons != (InputButtons.Right | InputButtons.Down | InputButtons.ActionX))
+            {
+                throw new InvalidOperationException("Projected inference must use the declared history columns.");
+            }
+            Reject(() => _ = policy.Logits(new float[2]));
+            foreach (var invalid in new int[][] { [], [-1, 21], [3, width], [3, 3], [21, 3] })
+            {
+                WriteRuntime(root, inputColumns: invalid, schemaVersion: 2);
+                Reject(() => _ = BotNativePolicy.Load(root));
+            }
+            WriteRuntime(root, inputColumns: [3, 21]);
+            Reject(() => _ = BotNativePolicy.Load(root));
+            WriteRuntime(root, schemaVersion: 2);
+            Reject(() => _ = BotNativePolicy.Load(root));
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
     internal static void TestObservationHistoryRejectsStaleFramesAndResetsAtDiscontinuities()
     {
         var features = new double[BotRecordingContract.FeatureNames.Count];
@@ -261,7 +295,7 @@ internal static class BotPolicyTests
         }
     }
 
-    private static int WriteRuntime(string root, bool alwaysAttack = false)
+    private static int WriteRuntime(string root, bool alwaysAttack = false, int[]? inputColumns = null, int schemaVersion = 1)
     {
         var fields = BotPolicyContract.Names(BotPolicyContract.LandingVersion)!;
         var width = fields.Count * BotRecordingContract.HistoryLength;
@@ -269,9 +303,10 @@ internal static class BotPolicyTests
         File.WriteAllText(checkpoint, "fixture checkpoint");
         string Hash(byte[] e) => Convert.ToHexString(SHA256.HashData(e)).ToLowerInvariant();
         var digest = Hash(File.ReadAllBytes(checkpoint));
-        var weights = new float[width * 2];
+        var inputs = inputColumns is null ? width : Math.Max(2, inputColumns.Length);
+        var weights = new float[inputs * 2];
         weights[0] = 1;
-        weights[width + 1] = -1;
+        weights[inputs + 1] = -1;
         var final = new float[20];
         final[4] = 2;
         final[10] = 1;
@@ -281,11 +316,11 @@ internal static class BotPolicyTests
         if (alwaysAttack) biases[9] = 10;
         var model = new
         {
-            schemaVersion = 1, observationSchemaVersion = 16, modelName = "Fixture",
+            schemaVersion, observationSchemaVersion = 16, modelName = "Fixture", inputColumns,
             featureNames = fields, historyLength = 4, actionSizes = new[] { 3, 3, 2, 2 },
             sourceCheckpointSHA256 = digest, layers = new[]
             {
-                new { inputSize = width, outputSize = 2, activation = "tanh", weights, biases = new float[2] },
+                new { inputSize = inputs, outputSize = 2, activation = "tanh", weights, biases = new float[2] },
                 new { inputSize = 2, outputSize = 10, activation = "linear", weights = final, biases }
             }
         };

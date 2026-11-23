@@ -15,7 +15,8 @@ import torch
 install = Path(sys.argv[1]).resolve()
 sys.path.insert(0, str(install / "training/BotPython"))
 from bot_policy_continuation import playback_checkpoint
-from export_bot_policy import export_policy
+from bot_projected_ppo import warm_start
+from export_bot_policy import export_policy, write_parity_fixture
 from gym_general_training import train_batch
 from hacker_gym import EpisodeScore, save_json
 from hkv_bot_dataset import ACTION_SIZES, HISTORY_LENGTH, LANDING_GEOMETRY_POLICY_VERSION, SCHEMAS
@@ -118,6 +119,19 @@ def verify_ppo_publication(root, vision):
     assert checkpoint.parent == models and playback_checkpoint(models, "hacker") == checkpoint
     assert sha(checkpoint / "model.zip") != manifest["modelSHA256"]
     print("PASS installed Windows Gym trained 128 PPO decisions, verified native export, and selected the new checkpoint.")
+
+    projection = [0, room.observation_space.shape[0] - 1]
+    projected = warm_start(learner, room, projection, seed=11)
+    compact = work / "projected"
+    compact.mkdir()
+    projected.save(compact / "model.zip")
+    save_json(compact / "manifest.json", manifest | dict(modelSHA256=sha(compact / "model.zip")))
+    runtime, exported = export_policy(compact)
+    assert runtime["schemaVersion"] == 2 and runtime["inputColumns"] == projection
+    fixture = compact / "parity.json"
+    write_parity_fixture(exported, fixture, observations=np.stack(observations))
+    subprocess.run([vision, "--hacker-gym-observations", "verify", compact, fixture], check=True, timeout=45)
+    print("PASS installed Windows runtime matched PPO logits and decisions with projected observation columns.")
 
 
 if __name__ == "__main__":

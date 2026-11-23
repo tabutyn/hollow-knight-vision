@@ -43,7 +43,7 @@ public sealed class BotNativePolicy
         int HistoryLength, int[] ActionSizes, Layer[] Layers,
         [property: JsonPropertyName("sourceCheckpointSHA256")] string SourceSha256,
         bool? SupportsMaskedKnight = null, SecondaryPolicy? PitPolicy = null, SecondaryPolicy? AtlasPolicy = null,
-        JsonElement? RecoveryManeuver = null);
+        JsonElement? RecoveryManeuver = null, int[]? InputColumns = null);
     private sealed record Fixture(float[][] Inputs, float[][] Logits, int[][] Actions);
 
     private BotNativePolicy(Document document) => this.document = document;
@@ -57,13 +57,14 @@ public sealed class BotNativePolicy
         RequireHash(SHA256.HashData(policyData), manifest.PolicySha256, "Bot policy verification failed.");
         RequireHash(HashFile(Path.Combine(directory, "model.zip")), manifest.SourceSha256, "Bot checkpoint verification failed.");
         var document = Decode<Document>(policyData);
-        if (document.SchemaVersion != 1 || document.SourceSha256 != manifest.SourceSha256
+        if (document.SourceSha256 != manifest.SourceSha256
             || BotPolicyContract.Names(document.ObservationSchemaVersion) is not { } names
             || document.FeatureNames is null || !document.FeatureNames.SequenceEqual(names)
             || document.ActionSizes is null || !document.ActionSizes.SequenceEqual(BotRecordingContract.ActionSizes)
             || document.HistoryLength != BotRecordingContract.HistoryLength || string.IsNullOrWhiteSpace(document.ModelName))
             throw new InvalidDataException("The bot policy uses an incompatible observation contract.");
-        ValidateLayers(document.Layers, names.Count * document.HistoryLength, 10, document.ObservationSchemaVersion == BotPolicyContract.LandingVersion ? 518 : 512);
+        var inputs = InputWidth(document, names.Count * document.HistoryLength);
+        ValidateLayers(document.Layers, inputs, 10, document.ObservationSchemaVersion == BotPolicyContract.LandingVersion ? 518 : 512);
         if (document.PitPolicy is { } pit)
         {
             if (document.RecoveryManeuver is not null)
@@ -97,6 +98,8 @@ public sealed class BotNativePolicy
                 for (var i = 0; i < width; i++) current[step * width + i] = input[step * stepSize + i];
         }
         else current = input.ToArray();
+        if (document.InputColumns is { } columns)
+            current = columns.Select(index => current[index]).ToArray();
 
         foreach (var layer in document.Layers)
         {
@@ -145,6 +148,18 @@ public sealed class BotNativePolicy
                 throw new InvalidDataException($"Native bot inference disagreed with the trainer on fixture row {i + 1}.");
         }
         return fixture.Inputs.Length;
+    }
+
+    private static int InputWidth(Document policy, int observationWidth)
+    {
+        if (policy.SchemaVersion == 1 && policy.InputColumns is null) return observationWidth;
+        if (policy.SchemaVersion == 2 && policy.InputColumns is { Length: > 0 } columns
+            && columns.All(index => index >= 0 && index < observationWidth)
+            && columns.Zip(columns.Skip(1)).All(pair => pair.First < pair.Second))
+        {
+            return columns.Length;
+        }
+        throw new InvalidDataException("Invalid policy input layout.");
     }
 
     private static void ValidateLayers(Layer[]? layers, int input, int output, int maximumWidth)
