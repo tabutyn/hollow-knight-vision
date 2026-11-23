@@ -99,6 +99,73 @@ internal static class BotPolicyTests
         }
     }
 
+    internal static void TestStartupSkipIsLatchedUntilFreshGameplay()
+    {
+        var startup = new BotStartupNavigation(0);
+        Expect(Observe(0, "main-title", "main-title.start-game"), InputButtons.None, BotStartupPhase.Menu);
+        Expect(Observe(.20, "main-title", "main-title.start-game"), InputButtons.ActionZ, BotStartupPhase.Menu);
+        Expect(Observe(.9, "select-profile", "select-profile.clear-save"), InputButtons.None, BotStartupPhase.Menu);
+        Expect(Observe(1.12, "select-profile", "select-profile.clear-save"), InputButtons.None, BotStartupPhase.Menu);
+        Expect(Observe(1.25, "select-profile", "select-profile.slot-4"), InputButtons.None, BotStartupPhase.Menu);
+        Expect(Observe(1.48, "select-profile", "select-profile.slot-4"), InputButtons.ActionZ, BotStartupPhase.LeavingProfile);
+        Expect(Observe(1.7, "quit-game", null), InputButtons.None, BotStartupPhase.LeavingProfile);
+        Expect(Observe(2.16, "brightness", null), InputButtons.ActionX, BotStartupPhase.Opening);
+        Expect(Observe(2.9, "select-profile", "select-profile.slot-1"), InputButtons.ActionZ, BotStartupPhase.Opening);
+        Expect(Observe(3.6, "quit-game", null, receiverGameplay: true), InputButtons.None, BotStartupPhase.Opening);
+        Expect(Observe(3.7, null, null, hud: true), InputButtons.None, BotStartupPhase.Opening);
+        Expect(Observe(3.8, null, null), InputButtons.ActionX, BotStartupPhase.Opening);
+        Expect(Observe(4.0, null, null, hud: true), InputButtons.None, BotStartupPhase.Opening);
+        Expect(Observe(4.15, null, null, hud: true), InputButtons.None, BotStartupPhase.Opening);
+        Expect(Observe(4.3, null, null, hud: true), InputButtons.None, BotStartupPhase.Gameplay);
+
+        BotStartupDecision Observe(double frame, string? menu, string? choice, bool hud = false, bool receiverGameplay = false) =>
+            startup.Observe(frame, frame + .01, hud, receiverGameplay, menu, choice);
+        static void Expect(BotStartupDecision decision, InputButtons buttons, BotStartupPhase phase)
+        {
+            if (decision.Buttons != buttons || decision.Phase != phase)
+                throw new InvalidOperationException($"Expected {phase}/{buttons} but saw {decision.Phase}/{decision.Buttons}.");
+        }
+    }
+
+    internal static void TestLivePolicyPreservesAttackAndRevokesInvalidPerception()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-bot-playback-");
+        try
+        {
+            WriteRuntime(temporary.FullName, alwaysAttack: true);
+            var policy = new BotPolicyPlayback(BotNativePolicy.Load(temporary.FullName), BotCaptureDomain.Hacker);
+            var features = new double[BotRecordingContract.FeatureNames.Count];
+            features[0] = .8;
+            features[1] = .6;
+            features[4] = 1;
+            features[6] = 1;
+            var last = InputButtons.None;
+            for (var i = 0; i < 5; i++)
+            {
+                var capture = 1 + i * .1;
+                if (!policy.WantsObservation(capture) || policy.WantsObservation(capture + .03))
+                    throw new InvalidOperationException("Bot decisions must follow the observation clock.");
+                var observation = new BotCaptureObservation(capture, capture, capture + .002, 1, 2, 0,
+                    features, [], "human-authored") { DetectionTimestamp = capture };
+                var action = policy.Decide(observation, last, capture + .01);
+                if (action is not { } decision || decision.Deadline - capture > .2)
+                    throw new InvalidOperationException("A valid observation should supply a bounded bot decision.");
+                last = decision.Action.Buttons;
+                if ((last & InputButtons.ActionX) == 0)
+                    throw new InvalidOperationException("The runtime changed the model's held attack.");
+            }
+            var stale = new BotCaptureObservation(1.51, 1.51, 1.512, 1, 2, 0, features, [], "human-authored")
+                { DetectionTimestamp = 1.51 };
+            if (policy.Decide(stale, last, 1.92) is not null)
+                throw new InvalidOperationException("Stale perception renewed the bot.");
+            var wrongDomain = new BotCaptureObservation(1.51, 1.51, 1.512, 1, 2, 0, features, [], "detected")
+                { DetectionTimestamp = 1.51 };
+            if (policy.Decide(wrongDomain, last, 1.52) is not null)
+                throw new InvalidOperationException("Visual observations must not drive the Hacker checkpoint.");
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
     internal static void TestNewestNativeModelIsSelectedWithinEachDomain()
     {
         var temporary = Directory.CreateTempSubdirectory("hkv-model-selection-");
@@ -170,7 +237,7 @@ internal static class BotPolicyTests
         }
     }
 
-    private static int WriteRuntime(string root)
+    private static int WriteRuntime(string root, bool alwaysAttack = false)
     {
         var fields = BotPolicyContract.Names(BotPolicyContract.LandingVersion)!;
         var width = fields.Count * BotRecordingContract.HistoryLength;
@@ -187,6 +254,7 @@ internal static class BotPolicyTests
         final[19] = 1;
         var biases = new float[10];
         biases[6] = 3;
+        if (alwaysAttack) biases[9] = 10;
         var model = new
         {
             schemaVersion = 1, observationSchemaVersion = 16, modelName = "Fixture",

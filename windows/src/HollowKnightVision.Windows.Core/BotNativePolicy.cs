@@ -10,6 +10,13 @@ public readonly record struct BotPolicyAction(int Horizontal, int Aim, int Jump,
         | (Aim == 1 ? InputButtons.Up : Aim == 2 ? InputButtons.Down : InputButtons.None)
         | (Jump == 1 ? InputButtons.ActionZ : InputButtons.None) | (Attack == 1 ? InputButtons.ActionX : InputButtons.None);
     public int[] Values => [Horizontal, Aim, Jump, Attack];
+
+    public static BotPolicyAction FromButtons(InputButtons buttons) => new(
+        (buttons & (InputButtons.Left | InputButtons.Right)) switch { InputButtons.Left => 1, InputButtons.Right => 2, _ => 0 },
+        (buttons & (InputButtons.Up | InputButtons.Down)) switch { InputButtons.Up => 1, InputButtons.Down => 2, _ => 0 },
+        (buttons & InputButtons.ActionZ) != 0 ? 1 : 0,
+        (buttons & InputButtons.ActionX) != 0 ? 1 : 0);
+
 }
 
 /// <summary>Verifies and evaluates the shared PPO runtime export without Python or the game.</summary>

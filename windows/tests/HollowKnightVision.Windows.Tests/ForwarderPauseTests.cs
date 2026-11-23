@@ -66,6 +66,82 @@ internal static class ForwarderPauseTests
             "Closing the bridge did not explicitly resume its paused game.");
     }
 
+    public static void TestBotOwnershipAndExpiration() => BotOwnershipAndExpiration().GetAwaiter().GetResult();
+
+    private static async Task BotOwnershipAndExpiration()
+    {
+        await using var fixture = new Fixture(pauseSupported: true);
+        var forwarder = fixture.Forwarder;
+        await Until(() => forwarder.PauseState == GamePauseState.Ready);
+        await fixture.Next("state");
+
+        var owner = forwarder.BeginBotControl() ?? throw new Exception("Bot control did not start.");
+        await Expect(InputButtons.None);
+        Check(forwarder.OwnsBotControl(owner) && forwarder.BeginBotControl() is null);
+        Check(!await forwarder.StartRecordingAsync(), "Bot input could enter a demonstration.");
+        Check(!forwarder.RenewBotControl(owner, InputButtons.Left, Clock() - .1), "Expired evidence was authorized.");
+        Check(forwarder.RenewBotControl(owner, InputButtons.Right | InputButtons.ActionX, Clock() + .26));
+        await Expect(InputButtons.Right | InputButtons.ActionX);
+        await Until(() => forwarder.CaptureMovement() == (InputButtons.Right | InputButtons.ActionX));
+        await Until(() => forwarder.CaptureMovement() == InputButtons.None);
+        forwarder.Heartbeat();
+        await Expect(InputButtons.None);
+        Check(forwarder.OwnsBotControl(owner), "A short observation gap should retain session ownership.");
+
+        Check(forwarder.RenewBotControl(owner, InputButtons.ActionX, Clock() + .23));
+        await Expect(InputButtons.ActionX);
+        forwarder.Press(InputButtons.Left);
+        await Expect(InputButtons.Left);
+        Check(!forwarder.OwnsBotControl(owner) && !forwarder.RenewBotControl(owner, InputButtons.Right, Clock() + .23),
+            "A late policy decision overrode the player's input.");
+        forwarder.Release(InputButtons.Left);
+        await Expect(InputButtons.None, enabled: true);
+
+        var next = forwarder.BeginBotControl() ?? throw new Exception("Bot control did not restart.");
+        await Expect(InputButtons.None);
+        forwarder.EndBotControl(owner);
+        Check(forwarder.OwnsBotControl(next), "An old controller ended a newer session.");
+        var gate = (SemaphoreSlim)typeof(WindowsGameControlForwarder).GetField("outboundGate", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(forwarder)!;
+        await gate.WaitAsync();
+        try
+        {
+            var expires = Clock() + .09;
+            Check(forwarder.RenewBotControl(next, InputButtons.ActionZ, expires));
+            await Until(() => Clock() >= expires);
+        }
+        finally { gate.Release(); }
+        await Expect(InputButtons.None);
+
+        await gate.WaitAsync();
+        try
+        {
+            Check(forwarder.RenewBotControl(next, InputButtons.ActionZ, Clock() + .30));
+            forwarder.ReleaseAll(); // The dashboard uses this on focus loss.
+        }
+        finally { gate.Release(); }
+        await Expect(InputButtons.None);
+        Check(!forwarder.OwnsBotControl(next), "Focus loss left the bot armed.");
+
+        var final = forwarder.BeginBotControl() ?? throw new Exception("Bot control did not restart.");
+        await Expect(InputButtons.None);
+        Check(forwarder.RenewBotControl(final, InputButtons.ActionX, Clock() + .30));
+        await Expect(InputButtons.ActionX);
+        Check(forwarder.SetLabelPauseActive(true));
+        await Expect(InputButtons.None);
+        await fixture.Next("pause");
+        Check(!forwarder.OwnsBotControl(final));
+
+        async Task Expect(InputButtons buttons, bool? enabled = null)
+        {
+            var snapshot = ReceiverWireCodec.DecodeLine<ReceiverInputSnapshot>(await fixture.Next("state"));
+            Check(snapshot.Enabled == (enabled ?? buttons != InputButtons.None) && snapshot.HeldButtons == buttons,
+                $"Expected {buttons}, got {snapshot.HeldButtons} (enabled {snapshot.Enabled}).");
+        }
+
+        static double Clock() => System.Diagnostics.Stopwatch.GetTimestamp() / (double)System.Diagnostics.Stopwatch.Frequency;
+    }
+
     public static void TestUnsupportedAndDisconnectedReceiver() => UnsupportedAndDisconnected().GetAwaiter().GetResult();
     public static void TestBlockedShutdown() => BlockedShutdown().GetAwaiter().GetResult();
     private static async Task BlockedShutdown()

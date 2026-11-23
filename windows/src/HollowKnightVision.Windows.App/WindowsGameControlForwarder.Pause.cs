@@ -26,8 +26,9 @@ internal sealed partial class WindowsGameControlForwarder
             if (command is null) return true;
             if (active)
             {
+                DropBotControlLocked();
                 heldButtons = InputButtons.None; isEnabled = false; awaitingFreshPress = true;
-                QueueState(receiver, connectionFault, false, InputButtons.None);
+                QueueState(receiver, connectionFault, false, InputButtons.None, inputEpoch);
             }
             _ = SendPauseOrderedAsync(receiver, connectionFault, command, lifetime.Token);
             return true;

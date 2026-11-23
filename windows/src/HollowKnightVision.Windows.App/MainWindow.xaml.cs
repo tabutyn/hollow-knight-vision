@@ -913,6 +913,7 @@ public partial class MainWindow : Window
         inputHeartbeat.Tick += (_, _) =>
         {
             gameControls.Heartbeat();
+            CheckBotOwnership();
             SyncLabelPauseState();
             UpdateModeAvailability();
         };
@@ -1491,8 +1492,13 @@ public partial class MainWindow : Window
             if (!isRepeat) CycleAtlasFraming();
             return true;
         }
-        if (isRepeat) return false;
         var showingSettings = SettingsOverlay.Visibility == Visibility.Visible;
+        if (key == Key.B && modifiers == ModifierKeys.None && !showingSettings && workspace is "Gameplay" or "Hacker")
+        {
+            if (!isRepeat) _ = ToggleBotPlaybackAsync();
+            return true;
+        }
+        if (isRepeat) return false;
         if (key == Key.R && modifiers == ModifierKeys.None && CanResetRoom()
             && (showingSettings ? SettingsSystemTab.IsSelected : workspace is "Gameplay" or "Hacker" or "Ops"))
         {
@@ -1586,6 +1592,7 @@ public partial class MainWindow : Window
     private void ReleaseForwardedInput()
     {
         forwardedKeys.Clear();
+        Interlocked.Exchange(ref botPlayback, null);
         gameControls.ReleaseAll();
         if (passingPrimaryMouse)
         {
@@ -1933,6 +1940,7 @@ public partial class MainWindow : Window
             hackerPathLinks.CancelSelection();
             InvalidatePendingHackerWork();
         }
+        if (destination != workspace) StopBotPlayback();
         if (destination is "Label" or "Model" or "Bot") ReleaseForwardedInput();
         if (destination is not ("Gameplay" or "Hacker")) SendPointerExit();
         workspace = destination;
@@ -3436,13 +3444,16 @@ public partial class MainWindow : Window
                 terrainContact.Wall));
         }
         else groundHypothesisState.Paths.Suspend();
-        if (admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay")
+        var botGameplay = admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";
+        var activeBot = Volatile.Read(ref botPlayback) is null ? null
+            : ObserveBotStartup(frame, captureGeneration, captureTimestamp, botGameplay, receiverTelemetry, recognition.Menu, hudStencil);
+        if (botGameplay)
         {
             CaptureBotObservations(frame, captureGeneration, recognition.Generation, captureTimestamp,
                 WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0),
                 renderedGameFrame, receiverTelemetry, recognition.Objects.MeasuredBatch, ground, terrain,
                 groundAnalysis is not null, visualObservation.GroundVerified ? groundDisplayCamera : null, hudStencil,
-                terrainContact.MeasuredFoot, movementButtons);
+                terrainContact.MeasuredFoot, movementButtons, activeBot);
         }
         if (inputPathDivergenceMonitor.IsAcceptingSamples
             && renderedGameFrame is { } renderedFrame)
@@ -3893,6 +3904,7 @@ public partial class MainWindow : Window
 
     private void StopVision()
     {
+        StopBotPlayback();
         CancelGroundTruthGesture();
         prepareLabelWhenPaused = false;
         if (gameMode == GameRuntimeMode.Modded) _ = gameControls.SetLabelPauseActive(false);

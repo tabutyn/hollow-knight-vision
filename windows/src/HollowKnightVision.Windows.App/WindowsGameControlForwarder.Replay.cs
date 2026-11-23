@@ -57,6 +57,7 @@ internal sealed partial class WindowsGameControlForwarder
             fault = connectionFault;
             replayCancellation = cancellation;
             replayFinished = finished;
+            DropBotControlLocked();
             heldButtons = InputButtons.None;
             isEnabled = false;
             awaitingFreshPress = true;

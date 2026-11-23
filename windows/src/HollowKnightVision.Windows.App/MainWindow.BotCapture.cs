@@ -26,23 +26,37 @@ public partial class MainWindow
     private void CaptureBotObservations(BgraFrame frame, long generation, long visualGeneration, double timestamp,
         int roomId, ulong roomRevision, int? renderedFrame, ReceiverGroundTruthSample? receiverTelemetry,
         LiveObjectDetectionBatch? batch, IReadOnlyList<DetectedFloorLine> floors, TerrainWallDetection terrain,
-        bool analyzedTerrain, AtlasPoint? camera, HudStencilResult? hud, AtlasPoint? measuredFoot, InputButtons? input)
+        bool analyzedTerrain, AtlasPoint? camera, HudStencilResult? hud, AtlasPoint? measuredFoot, InputButtons? input,
+        BotRun? run)
     {
         var capture = Volatile.Read(ref botCapture);
-        if (capture is null || !capture.WantsFrame(generation, timestamp)) return;
+        if (capture?.WantsFrame(generation, timestamp) != true) capture = null;
+        var playback = run is null ? null : Volatile.Read(ref run.Loaded)?.Policy;
+        if (playback?.WantsObservation(timestamp) != true) playback = null;
+        if (capture is null && playback is null) return;
+
         if (batch?.CaptureGeneration == visualGeneration) batch = batch with { CaptureGeneration = generation };
         else batch = null;
         var time = new BotCaptureTiming(timestamp, BotCaptureClock(), generation, roomId, roomRevision);
-        var exact = capture.CapturesHacker
-            ? BotObservationBuilder.Hacker(frame, renderedFrame, receiverTelemetry, capture.Authored, time, input) : null;
-        var visual = BotObservationBuilder.Gameplay(frame, time, batch, floors, terrain.Walls, analyzedTerrain,
-            camera, hud, measuredFoot, input, exact?.BlueHealthOutcomes);
-        capture.TryRecord(frame, visual, exact);
+        var authored = capture is { CapturesHacker: true } ? capture.Authored
+            : playback is not null && run?.Domain == BotCaptureDomain.Hacker ? run.Authored : null;
+        var exact = authored is null ? null : BotObservationBuilder.Hacker(frame, renderedFrame, receiverTelemetry, authored, time, input);
+        var visual = capture is not null || playback is not null && run?.Domain == BotCaptureDomain.Gameplay
+            ? BotObservationBuilder.Gameplay(frame, time, batch, floors, terrain.Walls, analyzedTerrain,
+                camera, hud, measuredFoot, input, exact?.BlueHealthOutcomes) : null;
+        if (capture is not null) capture.TryRecord(frame, visual!, exact);
+        if (run is not null && playback is not null)
+            DriveBotFrame(run, playback, run.Domain == BotCaptureDomain.Hacker ? exact : visual, input);
     }
 
     private async void PathRecording_Click(object sender, RoutedEventArgs e)
     {
         if (changingBotCapture || gameControls.IsReplaying) return;
+        if (Volatile.Read(ref botPlayback) is not null)
+        {
+            SetStatus("Stop the bot with B before recording a demonstration.");
+            return;
+        }
         changingBotCapture = true;
         try
         {
