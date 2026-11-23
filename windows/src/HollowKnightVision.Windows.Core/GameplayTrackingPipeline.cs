@@ -195,7 +195,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             if (measuredGround)
             {
                 worldEvidence = LiveWorldCaptureEvidence.FromGround(timestamp, frame.Width, frame.Height,
-                    floors, ground.LineReviews, knight, contact.MeasuredFoot);
+                    floors, ground.LineReviews, knight, contact.MeasuredFoot, contact.Floor);
             }
             else if (publishesScenery)
             {

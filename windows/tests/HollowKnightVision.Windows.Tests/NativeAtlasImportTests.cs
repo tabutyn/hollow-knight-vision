@@ -293,6 +293,17 @@ internal static class NativeAtlasImportTests
         });
     }
 
+    internal static void TestMeasuredWalkSavesFloorUnderAHiddenEdge()
+    {
+        var observed = LiveWorldCaptureEvidence.FromGround(2, 320, 180, [], [], null, null,
+            supportedFloor: new CleanFloorLine(135, new PixelSpan(65, 119)));
+        Check(observed.FloorCandidates is null && observed.GroundGeometry!.Lines.SequenceEqual([
+            new LiveGroundLineEvidence(long.MaxValue, new(65, 45), new(120, 45))]),
+            "independent ground contact saves the observed traversal span");
+        var missing = LiveWorldCaptureEvidence.FromGround(3, 320, 180, [], [], null, null);
+        Check(missing.GroundGeometry is null, "no current measurement cannot recreate a hidden floor");
+    }
+
     internal static void TestDoorwayFloorAlignsOnlyWithMeasuredContactOnBothSides()
     {
         foreach (var (direction, airborne, competingSurface) in new[]

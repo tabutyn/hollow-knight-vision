@@ -14,7 +14,8 @@ public sealed record LiveWorldCaptureEvidence(
         IReadOnlyList<DetectedFloorLine> detections,
         IReadOnlyList<GroundLinePresenceReview> reviews,
         PixelRect? knight,
-        AtlasPoint? measuredFoot)
+        AtlasPoint? measuredFoot,
+        CleanFloorLine? supportedFloor = null)
     {
         var imageSpan = new PixelSpan(0, width - 1);
         var candidates = detections.SelectMany((floor, index) => Capture(floor, index, imageSpan))
@@ -22,7 +23,19 @@ public sealed record LiveWorldCaptureEvidence(
         var observed = reviews.Where(review => review.State == GroundLinePresenceState.Confirmed)
             .SelectMany(review => detections.Where(floor => Math.Abs(floor.Row - review.Line.Row) <= 2)
                 .SelectMany(floor => Capture(floor, review.Id, review.Line.XSpan)))
-            .Distinct().ToArray();
+            .Distinct().ToList();
+        if (supportedFloor is { } floor && floor.Row >= 0 && floor.Row < height)
+        {
+            // Grounded traversal provides independent evidence even when the
+            // sprite or foreground hides the edge beneath the Knight.
+            var right = Math.Min(floor.XSpan.EndInclusive, width - 1);
+            if (floor.XSpan.Start < right)
+            {
+                var y = height - floor.Row;
+                observed.Add(new LiveGroundLineEvidence(long.MaxValue,
+                    new(floor.XSpan.Start, y), new(right + 1, y)));
+            }
+        }
         WorldRect? player = null;
         if (knight is { Width: > 0, Height: > 0 } box && measuredFoot is { } foot
             && foot.X >= box.X && foot.X <= box.Right && foot.Y > box.Y && foot.Y <= height)
@@ -31,7 +44,7 @@ public sealed record LiveWorldCaptureEvidence(
         }
 
         return new LiveWorldCaptureEvidence(timestamp,
-            observed.Length == 0 ? null : new LiveWorldGroundGeometry(observed),
+            observed.Count == 0 ? null : new LiveWorldGroundGeometry(observed),
             candidates.Length == 0 ? null : new LiveObservedFloorCandidates(candidates), player);
 
         IEnumerable<LiveGroundLineEvidence> Capture(DetectedFloorLine floor, int segment, PixelSpan range)

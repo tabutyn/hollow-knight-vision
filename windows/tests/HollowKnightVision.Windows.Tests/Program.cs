@@ -398,6 +398,7 @@ var tests = new List<(string Name, Action Run)>
     ("imported Atlas holds identical scenery shared by different rooms", NativeAtlasImportTests.TestImportedAtlasRejectsIdenticalSceneryAcrossRooms),
     ("a confirmed doorway extends a restored Atlas without overwriting old rooms", NativeAtlasImportTests.TestImportedAtlasExtendsThroughAConfirmedDoorway),
     ("a tentative doorway match prevents duplication of a saved room", NativeAtlasImportTests.TestImportedAtlasKeepsSearchingForAKnownDoorwayArrival),
+    ("measured walks retain ground beneath a hidden edge in the saved Atlas", NativeAtlasImportTests.TestMeasuredWalkSavesFloorUnderAHiddenEdge),
     ("restored Atlas aligns doorway floors only with measured foot contact on both sides", NativeAtlasImportTests.TestDoorwayFloorAlignsOnlyWithMeasuredContactOnBothSides),
     ("live world round trip and optimization preserve raw evidence", LiveWorldModelParityTests.TestRoundTripAndPoseReplacementPreserveRawEvidence),
     ("live world legacy observations preserve raw pose in epoch zero", LiveWorldModelParityTests.TestLegacyObservationDecodesIntoEpochZeroWithoutMovingItsWorldPose),
