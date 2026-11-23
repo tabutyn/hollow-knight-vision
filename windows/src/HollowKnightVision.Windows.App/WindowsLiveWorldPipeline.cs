@@ -53,6 +53,7 @@ internal sealed record WindowsLiveWorldPipelineResult(
     internal bool AllowsAtlasComposition => AllowsAtlasWrite && !PlacementPending;
     internal bool PlacementPending { get; init; }
     public IReadOnlyList<GroundHypothesisAtlasLine> WalkedGround { get; init; } = [];
+    internal IReadOnlyList<GroundHypothesisAtlasLine>? SavedGround { get; init; }
     internal long WalkedCoordinateEpoch { get; init; }
     internal IReadOnlyList<GroundHypothesisAtlasLine> RecordedLocalWalk { get; init; } = [];
 
@@ -135,8 +136,10 @@ internal sealed class WindowsLiveWorldPipeline
     // explicit InvalidatePendingWork call closes admission until Reopen succeeds.
     private bool acceptsWork = true;
     private bool hasDurableEvidence;
+    private IReadOnlyList<GroundHypothesisAtlasLine> savedGround = [];
 
     internal bool HasDurableEvidence => Volatile.Read(ref hasDurableEvidence);
+    internal IReadOnlyList<GroundHypothesisAtlasLine> SavedGround => Volatile.Read(ref savedGround);
 
     internal WindowsLiveWorldPipeline(string rootDirectory)
         : this(rootDirectory, transactionObserver: null, transactionFault: null) { }
@@ -715,8 +718,12 @@ internal sealed class WindowsLiveWorldPipeline
                 var basis = worldBasis.Snapshot.WorldFromLocal;
                 if (!placementPending) lastPlacedVerticalBasis = basis.Y;
                 LastError = null;
+                var projected = !placementPending && (requiresRebuild || committed.GroundGeometry is not null
+                    || groundEvidence.Count != 0)
+                    ? LiveWorldGroundOverlay.Project(durableSnapshot) : SavedGround;
                 transactionObserver?.Invoke("publish");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
+                Volatile.Write(ref savedGround, projected);
                 return new WindowsLiveWorldPipelineResult(
                     WindowsLiveWorldPipelineState.Committed,
                     request.CaptureGeneration,
@@ -736,6 +743,7 @@ internal sealed class WindowsLiveWorldPipeline
                 {
                     PlacementPending = placementPending,
                     WalkedGround = publishedGround,
+                    SavedGround = projected,
                     WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
                     RecordedLocalWalk = committedLocalWalk
                 };
@@ -883,6 +891,7 @@ internal sealed class WindowsLiveWorldPipeline
         {
             PlacementPending = placementPending,
             WalkedGround = !placementPending && projectedWalkedGround.TryGetValue(committedRoomId, out var ground) ? ground : [],
+            SavedGround = SavedGround,
             WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
             RecordedLocalWalk = walkedScope == (request.CaptureGeneration, committedRoomId, request.WalkedCoordinateEpoch)
                 ? committedLocalWalk : []
@@ -918,6 +927,7 @@ internal sealed class WindowsLiveWorldPipeline
             var reopened = new LiveWorldSessionStore(rootDirectory);
             var reopenedTracker = reopened.LoadTracker();
             var snapshot = reopenedTracker.Snapshot;
+            var restoredGround = LiveWorldGroundOverlay.Project(snapshot);
             var manifest = new SceneSessionStore(reopened.RootDirectory).Manifest;
             var reopenedCompositionExclusions = manifest.Observations.ToDictionary(
                 observation => observation.Id,
@@ -953,6 +963,7 @@ internal sealed class WindowsLiveWorldPipeline
                 ? double.NegativeInfinity
                 : snapshot.Observations.Max(value => value.Timestamp);
             Volatile.Write(ref hasDurableEvidence, snapshot.Observations.Count != 0);
+            Volatile.Write(ref savedGround, restoredGround);
             LastError = null;
             return true;
         }
@@ -960,6 +971,7 @@ internal sealed class WindowsLiveWorldPipeline
         {
             store = null;
             tracker = null;
+            Volatile.Write(ref savedGround, []);
             LastError = $"live-world reopen failed: {error.Message}";
             return false;
         }

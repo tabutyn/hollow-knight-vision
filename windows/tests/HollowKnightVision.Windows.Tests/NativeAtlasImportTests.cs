@@ -127,6 +127,9 @@ internal static class NativeAtlasImportTests
                 {
                     var pipeline = new WindowsLiveWorldPipeline(Path.Combine(folder, "live-world"));
                     Check(pipeline.Reopen(), "the desktop can resume the imported live world");
+                    Check(pipeline.SavedGround.Any(line => line.SegmentId != WalkedGroundMemory.WalkedSegmentId
+                        && line.AtlasStart == new AtlasPoint(-270, -110)),
+                        "confirmed green ground accompanies imported Atlas tiles before the first live frame");
                 },
                 saveTile: HollowKnightVision.Windows.Host.BmpWriter.Write);
 

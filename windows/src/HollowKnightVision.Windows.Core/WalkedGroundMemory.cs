@@ -3,7 +3,7 @@ namespace HollowKnightVision.Windows.Core;
 /// <summary>Floor previously measured by foot contact in each registered room.</summary>
 public sealed class WalkedGroundMemory
 {
-    public const int WalkedSegmentId = int.MaxValue;
+    public const long WalkedSegmentId = long.MaxValue;
     private readonly Dictionary<string, GroundHypothesisAtlasLine[]> rooms = new(StringComparer.Ordinal);
 
     public void Reset() => rooms.Clear();

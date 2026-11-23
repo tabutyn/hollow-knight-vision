@@ -13,6 +13,11 @@ namespace HollowKnightVision.Windows.App;
 /// </summary>
 internal static class GroundFeatureOverlayPresentation
 {
+    internal readonly record struct AtlasProjection(double Scale, double OriginX, double OriginY)
+    {
+        internal Point ToCanvas(AtlasPoint p) => new(p.X * Scale - OriginX, -p.Y * Scale - OriginY);
+    }
+
     internal static int DrawLive(
         Canvas canvas,
         GroundHypothesisTrackingResult hypotheses,
@@ -73,8 +78,13 @@ internal static class GroundFeatureOverlayPresentation
         }
     }
 
+    internal static void DrawSavedAtlas(Canvas canvas, AtlasProjection projection,
+        IReadOnlyList<GroundHypothesisAtlasLine> lines) => DrawLines(canvas, lines, projection.ToCanvas);
+
     internal static void DrawAtlas(Canvas canvas, AtlasPoint camera, ViewportSize capture, ViewportRect live,
-        IReadOnlyList<GroundHypothesisAtlasLine> lines, IReadOnlyList<GroundHypothesisAtlasFeature> features)
+        IReadOnlyList<GroundHypothesisAtlasLine> lines, IReadOnlyList<GroundHypothesisAtlasFeature> features,
+        AtlasProjection savedProjection = default, IReadOnlyList<GroundHypothesisAtlasLine>? saved = null,
+        PixelRect? knight = null)
     {
         if (!capture.IsUsable || !live.IsUsable || !double.IsFinite(camera.X) || !double.IsFinite(camera.Y))
             return;
@@ -82,6 +92,21 @@ internal static class GroundFeatureOverlayPresentation
         var scaleY = live.Height / capture.Height;
         Point Project(AtlasPoint p) => new(live.X + (p.X - camera.X) * scaleX,
             live.Y + (capture.Height + camera.Y - p.Y) * scaleY);
+        if (saved is { Count: > 0 })
+        {
+            AtlasPoint InLiveCoordinates(AtlasPoint p)
+            {
+                var point = savedProjection.ToCanvas(p);
+                return new(camera.X + (point.X - live.X) / scaleX,
+                    camera.Y + capture.Height - (point.Y - live.Y) / scaleY);
+            }
+            var projected = saved.Select(line => line with
+            {
+                AtlasStart = InLiveCoordinates(line.AtlasStart),
+                AtlasEnd = InLiveCoordinates(line.AtlasEnd)
+            }).ToArray();
+            lines = LiveWorldGroundOverlay.CombineWithLive(projected, lines, (int)capture.Height, knight);
+        }
         foreach (var feature in features)
         {
             if (!double.IsFinite(feature.AtlasPosition.X) || !double.IsFinite(feature.AtlasPosition.Y)) continue;
@@ -98,13 +123,19 @@ internal static class GroundFeatureOverlayPresentation
             canvas.Children.Add(marker);
         }
 
+        DrawLines(canvas, lines, Project);
+    }
+
+    private static void DrawLines(Canvas canvas, IReadOnlyList<GroundHypothesisAtlasLine> lines,
+        Func<AtlasPoint, Point> project)
+    {
         const DashboardFeatureReviewLineKind kind = DashboardFeatureReviewLineKind.PersistentGround;
         var brush = Brush(kind);
         var opacity = DashboardFeatureReviewPalette.Rgba(kind).Alpha;
         foreach (var ground in lines)
         {
-            var a = Project(ground.AtlasStart);
-            var b = Project(ground.AtlasEnd);
+            var a = project(ground.AtlasStart);
+            var b = project(ground.AtlasEnd);
             canvas.Children.Add(new Line
             {
                 X1 = a.X, Y1 = a.Y, X2 = b.X, Y2 = b.Y,

@@ -111,6 +111,7 @@ internal static class Program
         TestMainWindowHasProductTitle();
         TestGroundFeatureOverlayStartsVisible();
         TestGroundFeatureOverlayUsesMacReviewPalette();
+        TestSavedGroundOverlayAlignsWithAtlasWithoutALiveFrame();
         TestTerrainCornersKeepVerticalWallStrokesHidden();
         RuntimeModeTests.Run();
         HudStencilTests.Run();
@@ -2093,6 +2094,31 @@ internal static class Program
         Check(Canvas.GetLeft(patch) == -29 && Canvas.GetTop(patch) == ground.Y1,
             "The tracking patch and floor did not share the atlas projection.");
         Console.WriteLine("PASS live and persistent ground boxes and walked floor use the atlas projection");
+    }
+
+    private static void TestSavedGroundOverlayAlignsWithAtlasWithoutALiveFrame()
+    {
+        var canvas = new Canvas();
+        var projection = new GroundFeatureOverlayPresentation.AtlasProjection(2, -256, -512);
+        var saved = new GroundHypothesisAtlasLine(7, new(-15, -12), new(80, -12));
+        GroundFeatureOverlayPresentation.DrawSavedAtlas(canvas, projection, [saved]);
+        AssertStroke();
+
+        canvas.Children.Clear();
+        var localCamera = new AtlasPoint(10, 22);
+        var live = new GroundHypothesisAtlasLine(12, new(315, 191), new(410, 191));
+        GroundFeatureOverlayPresentation.DrawAtlas(canvas, localCamera, new(640, 360),
+            new(-384, 152, 1280, 720), [live], [], projection, [saved]);
+        AssertStroke();
+        Console.WriteLine("PASS saved green floor uses the atlas tile frame and replaces jittered live duplicates");
+
+        void AssertStroke()
+        {
+            var stroke = canvas.Children.OfType<Line>().Single();
+            Check(stroke.X1 == 226 && stroke.X2 == 416 && stroke.Y1 == 536 && stroke.Y2 == 536
+                && stroke.Stroke is SolidColorBrush brush && brush.Color == Color.FromRgb(69, 255, 120),
+                "Saved floor must draw one green stroke in the tile frame before and after live placement.");
+        }
     }
 
     private static void TestTerrainCornersKeepVerticalWallStrokesHidden()

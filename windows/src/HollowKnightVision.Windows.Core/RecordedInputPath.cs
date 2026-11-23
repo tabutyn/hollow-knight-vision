@@ -32,7 +32,7 @@ public sealed record RecordedTrackingSample
     public int InlierCount { get; init; }
     [JsonPropertyName("residualRMS")] public double? ResidualRms { get; init; }
     [JsonPropertyName("visibleLineIDs")] public IReadOnlyList<int> VisibleLineIds { get; init; } = [];
-    [JsonPropertyName("atlasLineIDs")] public IReadOnlyList<int> AtlasLineIds { get; init; } = [];
+    [JsonPropertyName("atlasLineIDs")] public IReadOnlyList<long> AtlasLineIds { get; init; } = [];
     public double? GroundTrackingMilliseconds { get; init; }
     public double? SignalMeanPeak { get; init; }
     public double? SignalVisibleFraction { get; init; }
@@ -276,7 +276,7 @@ public sealed record InputPathTrackingObservation
     public int InlierCount { get; init; }
     public double? ResidualRms { get; init; }
     public IReadOnlyList<int> VisibleLineIds { get; init; } = [];
-    public IReadOnlyList<int> AtlasLineIds { get; init; } = [];
+    public IReadOnlyList<long> AtlasLineIds { get; init; } = [];
     public int LocalTextureSupport { get; init; }
     public double? LocalTextureError { get; init; }
     public string? LocalMatchSource { get; init; }

@@ -664,6 +664,7 @@ public partial class MainWindow : Window
     private GroundTruthMatchedContext? latestGroundTruthContext;
     private BgraFrame? gameplayLiveFrame;
     private bool gameplayFrameRegistered;
+    private IReadOnlyList<GroundHypothesisAtlasLine> gameplaySavedGround = [];
     private ReceiverGroundTruthSample? gameplayLiveTelemetry;
     private int? gameplayAtlasMinimumTileX;
     private int? gameplayAtlasMinimumTileY;
@@ -777,6 +778,8 @@ public partial class MainWindow : Window
         public GroundHypothesisTrackingResult GroundHypotheses { get; init; } =
             GroundHypothesisTrackingResult.Empty;
         public IReadOnlyList<GroundHypothesisAtlasLine> GroundDisplayLines { get; init; } = [];
+        public IReadOnlyList<GroundHypothesisAtlasLine>? SavedGround { get; init; }
+        public PixelRect? GroundDisplayKnight { get; init; }
         public AtlasPoint GroundDisplayCamera { get; init; }
         public IReadOnlyList<PixelRect> MeasuredPlatformPatches { get; init; } = [];
         public TerrainWallDetection Terrain { get; init; } = TerrainWallDetection.Empty;
@@ -3415,6 +3418,8 @@ public partial class MainWindow : Window
                 ProfileLaunch = profileLaunch,
                 GroundHypotheses = groundHypotheses,
                 GroundDisplayLines = groundDisplayLines,
+                SavedGround = liveWorldResult?.SavedGround,
+                GroundDisplayKnight = masks.GroundKnight,
                 GroundDisplayCamera = groundDisplayCamera,
                 MeasuredPlatformPatches = platformPatches,
                 Terrain = terrain,
@@ -3510,6 +3515,7 @@ public partial class MainWindow : Window
         var acceptsGameplayPlacement = gameplayPresentation.TryAcceptAnalysis(result.Frame);
         if (acceptsGameplayPlacement)
         {
+            if (result.SavedGround is { } savedGround) gameplaySavedGround = savedGround;
             Volatile.Write(ref recognizedMenuContext, result.MenuContext);
             gameplayPathPresentation = result.Paths is { } paths
                 ? new(result.Frame.CaptureId, result.Frame.Width, result.Frame.Height, paths) : null;
@@ -3712,8 +3718,14 @@ public partial class MainWindow : Window
         GroundFeatureOverlayPresentation.DrawAtlas(GameplayGroundCanvas, result.GroundDisplayCamera,
             new(result.Frame.Width, result.Frame.Height),
             new(Canvas.GetLeft(GameplayImage), Canvas.GetTop(GameplayImage), GameplayImage.Width, GameplayImage.Height),
-            result.GroundDisplayLines, result.GroundHypotheses.AtlasFeatures);
+            result.GroundDisplayLines, result.GroundHypotheses.AtlasFeatures,
+            SavedGroundProjection, gameplaySavedGround, result.GroundDisplayKnight);
     }
+
+    private GroundFeatureOverlayPresentation.AtlasProjection SavedGroundProjection => new(
+        gameplayAtlas.PixelsPerWorldUnit,
+        (gameplayAtlasMinimumTileX ?? 0) * (double)gameplayAtlas.TileSize,
+        (gameplayAtlasMinimumTileY ?? 0) * (double)gameplayAtlas.TileSize);
 
     private void DetectionExtendSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
@@ -5521,6 +5533,7 @@ public partial class MainWindow : Window
         activeAtlasPersistenceBlocked = false;
         Volatile.Write(ref gameplayAtlasRequiresFullRewrite, false);
         ClearGameplayAtlasRuntime(reopenLiveWorld);
+        gameplaySavedGround = liveWorldPipeline?.SavedGround ?? [];
         if (gameplayAtlas.TileCount > 0
             && GameplayOutputGate.CanShowRestoredAtlas(
                 hasFreshGameFrame,
@@ -5532,6 +5545,8 @@ public partial class MainWindow : Window
                 GameplayAtlasCanvas, gameplayTileImages, gameplayAtlas, delta,
                 ref gameplayAtlasMinimumTileX, ref gameplayAtlasMinimumTileY,
                 GameplayImage, gameplayLiveFrame, gameplayLiveTelemetry);
+            if (GroundFeaturesCheck.IsChecked == true)
+                GroundFeatureOverlayPresentation.DrawSavedAtlas(GameplayGroundCanvas, SavedGroundProjection, gameplaySavedGround);
             gameplayRenderedRevision = delta.Revision;
         }
     }
@@ -5885,6 +5900,7 @@ public partial class MainWindow : Window
         inputPathMotionTracker.Reset();
         latestMotion = null;
         gameplayFrameRegistered = false;
+        gameplaySavedGround = [];
         gameplayLiveFrame = null;
         gameplayLiveTelemetry = null;
         Interlocked.Exchange(ref gameplayAtlasPresentationPending, null);

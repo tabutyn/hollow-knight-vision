@@ -40,9 +40,22 @@ public static class LiveWorldWalkedGround
         var unplaced = snapshot.UnplacedObservationIds();
         var observations = snapshot.Observations.Where(observation => observation.RoomId == room && !unplaced.Contains(observation.Id));
         var nativeIslands = snapshot.TrackingIslands.ToDictionary(island => island.Id);
-        return GroundStrokeGeometry.Coalesce(observations.SelectMany(observation =>
-            ProjectObservation(observation).Concat(ProjectIslandWalks(observation, nativeIslands))));
+        return ProjectPlaced(observations, nativeIslands);
     }
+
+    internal static IReadOnlyList<GroundHypothesisAtlasLine> ProjectPlaced(
+        IEnumerable<LiveWorldObservation> observations,
+        IReadOnlyDictionary<int, LiveTrackingIsland> islands, bool centered = false) =>
+        GroundStrokeGeometry.Coalesce(observations.SelectMany(observation =>
+        {
+            var offset = centered ? LiveWorldGroundOverlay.ImageOriginOffset(observation) : default;
+            return ProjectObservation(observation).Concat(ProjectIslandWalks(observation, islands))
+                .Select(line => line with
+                {
+                    AtlasStart = new(line.AtlasStart.X + offset.X, line.AtlasStart.Y + offset.Y),
+                    AtlasEnd = new(line.AtlasEnd.X + offset.X, line.AtlasEnd.Y + offset.Y),
+                });
+        }));
 
     private static IEnumerable<GroundHypothesisAtlasLine> ProjectIslandWalks(
         LiveWorldObservation observation,
