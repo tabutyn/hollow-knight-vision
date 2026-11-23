@@ -109,8 +109,7 @@ internal static class VisualSceneDiscontinuityTrackerTests
         for (var index = 0; index < 40; index++)
         {
             var image = index < 8 ? original : index < 18 ? Black : arrival;
-            var transition = new TransitionFrameDecision(index < 8 || index >= 18, index == 18);
-            var result = rooms.Observe(6, true, transition, image, index * .05, InputButtons.Right, Departure);
+            var result = rooms.Observe(6, true, image, index * .05, InputButtons.Right, Departure);
             if (index < 18) Check(result.Id == "normal:6:room:0");
             if (index is >= 8 and < 23) Check(!result.AllowsAtlasWrite);
             if (result.Cut is not null)
@@ -124,7 +123,7 @@ internal static class VisualSceneDiscontinuityTrackerTests
         var saved = rooms.RecentDoorwayCut(1.95);
         Check(saved is not null && saved.Direction == VisualRoomDirection.Right);
         Check(rooms.RecentDoorwayCut(saved!.ArrivalTimestamp + 3.1) is null);
-        var newCapture = rooms.Observe(7, true, new(true, false), arrival, 2.2, InputButtons.None, Departure);
+        var newCapture = rooms.Observe(7, true, arrival, 2.2, InputButtons.None, Departure);
         Check(newCapture.Id == "normal:7:room:0" && newCapture.AllowsAtlasWrite
             && rooms.RecentDoorwayCut(2.2) is null);
     }
@@ -136,16 +135,125 @@ internal static class VisualSceneDiscontinuityTrackerTests
         for (var index = 0; index < 40; index++)
         {
             var image = index is >= 8 and < 18 ? Black : original;
-            // Atlas admission may resume one capture after matching the old scenery.
-            var transition = new TransitionFrameDecision(index < 8 || index >= 19, index == 19);
-            var result = rooms.Observe(6, true, transition, image, index * .05, InputButtons.Right, Departure);
+            var result = rooms.Observe(6, true, image, index * .05, InputButtons.Right, Departure);
             Check(result.Id == "normal:6:room:0" && result.Cut is null);
         }
-        var unrelatedLaterFade = rooms.Observe(6, true, new(true, true), original, 3.5, InputButtons.None, Departure);
-        Check(unrelatedLaterFade.Id == "normal:6:room:1");
-        var inactive = rooms.Observe(6, false, new(false, false), Black, 3.6, InputButtons.Right, Departure);
+        var afterGap = rooms.Observe(6, true, original, 3.5, InputButtons.None, Departure);
+        Check(afterGap.Id == "normal:6:room:0");
+        var inactive = rooms.Observe(6, false, Black, 3.6, InputButtons.Right, Departure);
         Check(inactive.AllowsAtlasWrite && inactive.Cut is null);
     }
+
+    internal static void TestAtlasKeepsRoomOnUnprovenLoading()
+    {
+        var departure = Texture(1);
+        var arrival = Texture(2);
+        var hud = (byte[])Black.Luma.Clone();
+        for (var y = 2; y < 5; y++)
+        for (var x = 5; x < 13; x++) hud[y * Width + x] = 230;
+        var darkWithHud = new LowResolutionMotionGrid(Width, Height, hud);
+        Check(!VisualSceneDiscontinuityTracker.IsCompleteBlackout(darkWithHud));
+
+        foreach (var (description, first, middle, movement, blackFrames, captureGap) in new[]
+        {
+            ("startup in black", Black, Black, InputButtons.Right, 10, 0d),
+            ("no directional departure", departure, Black, InputButtons.None, 10, 0d),
+            ("brief capture glitch", departure, Black, InputButtons.Right, 2, 0d),
+            ("dark gameplay with a visible HUD", departure, darkWithHud, InputButtons.Right, 10, 0d),
+            ("capture gap before visible loading", departure, Black, InputButtons.Right, 10, .75),
+            ("long capture gap during loading", departure, Black, InputButtons.Right, 10, 4d),
+        })
+        {
+            var rooms = new GameplayTrackingPipeline.NormalAtlasRoomIdentity();
+            var admission = new GameplayFrameAdmission();
+            var resumes = 0;
+            for (var index = 0; index < 8 + blackFrames + 16; index++)
+            {
+                var image = index < 8 ? first : index < 8 + blackFrames ? middle : arrival;
+                var gapIndex = captureGap > 3 ? 13 : 8;
+                var time = index * .05 + (index >= gapIndex ? captureGap : 0);
+                var frame = admission.Observe(Profile(image), true, 6);
+                if (frame.Transition.ResumedAfterTransition) resumes++;
+                var result = rooms.Observe(6, true, image, time, movement, Departure);
+                Check(result.Id == "normal:6:room:0" && result.Cut is null,
+                    $"The Atlas invented a room during {description}.");
+                if (index == 7 + blackFrames + 16)
+                    Check(frame.AllowsAtlasWrite && result.AllowsAtlasWrite, $"Gameplay never resumed after {description}.");
+            }
+            Check(resumes == 1, $"The capture did not exercise a tracking resume after {description}.");
+            Check(rooms.RecentDoorwayCut(2) is null);
+        }
+    }
+
+    internal static void TestLoadingRetainsEvidenceAcrossBoundedCaptureGaps()
+    {
+        foreach (var newScenery in new[] { false, true })
+        foreach (var blackAfterGap in new[] { false, true })
+        {
+            var tracker = new VisualSceneDiscontinuityTracker();
+            tracker.Observe(Texture(1), 0, VisualRoomDirection.Right, Departure);
+            for (var i = 1; i <= 6; i++) tracker.Observe(Black, i * .05, null, Departure);
+            Check(tracker.IsPending);
+            var arrival = Texture(newScenery ? 2UL : 1UL);
+            var cuts = new List<VisualSceneDiscontinuityTracker.Cut>();
+            for (var i = 0; i < 20; i++)
+            {
+                var image = blackAfterGap && i < 4 ? Black : arrival;
+                if (tracker.Observe(image, 1 + i * .05, null, Departure) is { } cut) cuts.Add(cut);
+            }
+            Check(cuts.Count == (newScenery ? 1 : 0));
+            if (newScenery)
+                Check(cuts.Single() is { DepartureTimestamp: 0, Direction: VisualRoomDirection.Right });
+        }
+    }
+
+    internal static void TestArrivalRequiresStableNewTextureEvenWithSimilarShading()
+    {
+        var source = Shaded(1);
+        var dimmed = new LowResolutionMotionGrid(Width, Height, source.Luma.Select(value => (byte)(value * .8)).ToArray());
+        Check(Sequence(new(), source, Black, Shaded(2)).Count == 1, "Common shading hid a texture change.");
+        Check(Sequence(new(), source, Black, dimmed).Count == 0, "An exposure change looked like a new room.");
+
+        var tracker = new VisualSceneDiscontinuityTracker();
+        var departure = Texture(1);
+        for (var i = 0; i < 45; i++)
+        {
+            var grid = i < 8 ? departure : i < 18 ? Black : Texture((ulong)(i + 100));
+            Check(tracker.Observe(grid, i * .05, VisualRoomDirection.Right, Departure) is null,
+                "Flickering novel scenery did not establish a stable arrival.");
+        }
+
+        static LowResolutionMotionGrid Shaded(ulong seed)
+        {
+            var detail = Texture(seed);
+            return new(Width, Height, detail.Luma.Select((value, index) => (byte)Math.Clamp(
+                110 + 65 * Math.Sin(index % Width / 15d) + 35 * Math.Cos(index / Width / 11d)
+                + (value - 128) * .16, 0, 255)).ToArray());
+        }
+    }
+
+    internal static void TestLongBlackoutWaitsForStableNewScenery()
+    {
+        var source = Texture(1);
+        foreach (var newScenery in new[] { false, true })
+        {
+            var tracker = new VisualSceneDiscontinuityTracker();
+            var arrival = newScenery ? Texture(2) : source;
+            var cuts = 0;
+            for (var i = 0; i < 200; i++)
+            {
+                var grid = i < 8 ? source : i < 180 ? Black : arrival;
+                if (tracker.Observe(grid, i * .05, i < 8 ? VisualRoomDirection.Right : null, Departure) is not null)
+                    cuts++;
+                if (i is >= 8 and < 180) Check(tracker.IsPending);
+            }
+            Check(cuts == (newScenery ? 1 : 0));
+        }
+    }
+
+    private static FrameSignalProfile Profile(LowResolutionMotionGrid grid) =>
+        new(grid.Luma.Length, grid.Luma.Count(value => value >= 5), grid.Luma.Count(value => value >= 16),
+            grid.Luma.Average(value => (double)value), grid);
 
     private static List<VisualSceneDiscontinuityTracker.Cut> Sequence(VisualSceneDiscontinuityTracker tracker,
         LowResolutionMotionGrid departure, LowResolutionMotionGrid blackout, LowResolutionMotionGrid arrival, int blackFrames = 10)
@@ -182,8 +290,8 @@ internal static class VisualSceneDiscontinuityTrackerTests
         return new(Width, Height, pixels);
     }
 
-    private static void Check(bool value)
+    private static void Check(bool value, string message = "Visual scene discontinuity assertion failed.")
     {
-        if (!value) throw new InvalidOperationException("Visual scene discontinuity assertion failed.");
+        if (!value) throw new InvalidOperationException(message);
     }
 }
