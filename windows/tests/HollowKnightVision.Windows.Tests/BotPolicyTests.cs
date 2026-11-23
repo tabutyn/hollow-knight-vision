@@ -167,7 +167,8 @@ internal static class BotPolicyTests
         try
         {
             WriteRuntime(temporary.FullName, alwaysAttack: true);
-            var policy = new BotPolicyPlayback(BotNativePolicy.Load(temporary.FullName), BotCaptureDomain.Gameplay);
+            var native = BotNativePolicy.Load(temporary.FullName);
+            var policy = new BotPolicyPlayback(native, BotCaptureDomain.Gameplay);
             var memory = new BotVisualKnightMemory();
             for (var i = 0; i < 6; i++)
             {
@@ -179,16 +180,20 @@ internal static class BotPolicyTests
             }
             var predicted = memory.Resolve(BotVisualKnightMemoryTests.Row(1.6, null, camera: .01) with
                 { DetectionTimestamp = null, Issues = ["missing-knight", "stale-or-missing-detection"] });
-            var decision = policy.Decide(predicted, InputButtons.Right, 1.61);
+            var update = policy.Evaluate(predicted, InputButtons.Right, 1.61);
+            var decision = update?.Decision;
             if (decision is null || !decision.Value.Action.Buttons.HasFlag(InputButtons.ActionX)
                 || Math.Abs(decision.Value.Deadline - 1.7) > 1e-6
-                || policy.Decide(predicted, InputButtons.Right, 1.71) is not null)
+                || !update!.StatusAt(1.61).EndsWith(" · estimating Knight", StringComparison.Ordinal)
+                || update.StatusAt(1.71) != "Bot waiting for a fresh observation"
+                || policy.Evaluate(predicted, InputButtons.Right, 1.71) is not null)
                 throw new InvalidOperationException("The policy action must be leased only through its real visual sighting's deadline.");
             var forged = predicted with { KnightPrediction = predicted.KnightPrediction! with { LastSeenAt = 1.3 } };
-            if (policy.Decide(forged, InputButtons.Right, 1.61) is not null)
+            if (new BotPolicyPlayback(native, BotCaptureDomain.Gameplay).Decide(forged, InputButtons.Right, 1.61) is not null)
                 throw new InvalidOperationException("Inconsistent prediction provenance must not renew control.");
             var expired = memory.Resolve(BotVisualKnightMemoryTests.Row(1.71, null, camera: .01));
-            if (policy.Decide(expired, InputButtons.None, 1.72) is not null)
+            if (policy.Evaluate(expired, InputButtons.None, 1.72) is not
+                { Decision: null, Status: "Bot waiting for Knight detection" })
                 throw new InvalidOperationException("The policy must release control after a longer occlusion.");
             var returned = memory.Resolve(BotVisualKnightMemoryTests.Row(1.8, .45, camera: .01));
             if (policy.Decide(returned, InputButtons.None, 1.81) is not { Action.Buttons: var resumed }
@@ -196,6 +201,46 @@ internal static class BotPolicyTests
                 throw new InvalidOperationException("A measured reacquisition should resume trained controls.");
         }
         finally { temporary.Delete(recursive: true); }
+    }
+
+    internal static void TestPlaybackWaitingStatusNamesMissingEvidence()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-bot-playback-status-");
+        try
+        {
+            WriteRuntime(temporary.FullName);
+            var native = BotNativePolicy.Load(temporary.FullName);
+            var gameplay = new BotPolicyPlayback(native, BotCaptureDomain.Gameplay);
+            var hacker = new BotPolicyPlayback(native, BotCaptureDomain.Hacker);
+            var row = BotVisualKnightMemoryTests.Row(100, .3);
+            Expect(gameplay, row with { Issues = ["missing-terrain-analysis"] }, 100.02, "ground lines");
+            Expect(gameplay, BotVisualKnightMemoryTests.Row(100.1, null), 100.12, "Knight detection");
+            Expect(gameplay, BotVisualKnightMemoryTests.Row(100.2, null) with { Issues = ["stale-capture", "missing-knight"] }, 100.22, "a fresh capture");
+            Expect(gameplay, BotVisualKnightMemoryTests.Row(100.3, .3), 101, "a fresh capture");
+            Expect(gameplay, BotVisualKnightMemoryTests.Row(100.4, null) with { Issues = ["stale-or-missing-detection", "missing-knight"] }, 100.42,
+                "fresh object detection");
+            Expect(gameplay, null, 100.5, "a fresh frame");
+            Expect(gameplay, row with { CaptureTimestamp = 101 }, 100.5, "a fresh capture");
+            Expect(gameplay, BotVisualKnightMemoryTests.Row(100.6, .3), 100.62, "current game controls", previous: null);
+            Expect(hacker, null, 100.5, "mod actor telemetry");
+            Expect(hacker, row, 100.02, "authored terrain");
+            var authored = BotVisualKnightMemoryTests.Row(100.1, .3) with { TerrainSource = "human-authored" };
+            Expect(hacker, authored with { Issues = ["invalid-hacker-actors"] }, 100.12, "mod actor telemetry");
+            Expect(hacker, authored with { CaptureTimestamp = 100.2, Issues = ["missing-hacker-knight"] }, 100.22, "the mod Knight position");
+            Expect(hacker, authored with { CaptureTimestamp = 100.3, Issues = ["missing-hacker-enemies"] }, 100.32, "mod enemy positions");
+            Expect(hacker, authored with { CaptureTimestamp = 100.4, Issues = ["room-transition"] }, 100.42, "the room transition");
+            if (new BotPolicyAction().DisplayName != "neutral" || new BotPolicyAction(2, 0, 0, 1).DisplayName != "right + attack")
+                throw new InvalidOperationException("A chosen neutral or combined action should be readable in playback.");
+        }
+        finally { temporary.Delete(recursive: true); }
+
+        static void Expect(BotPolicyPlayback playback, BotCaptureObservation? row, double now,
+            string missing, InputButtons? previous = InputButtons.None)
+        {
+            var update = playback.Evaluate(row, previous, now);
+            if (update is not { Decision: null } || update.StatusAt(now) != $"Bot waiting for {missing}")
+                throw new InvalidOperationException($"Expected the status to identify {missing}, got {update?.Status ?? "<ignored>"}.");
+        }
     }
 
     internal static void TestLivePolicyPreservesAttackAndRevokesInvalidPerception()
@@ -229,9 +274,9 @@ internal static class BotPolicyTests
                 { DetectionTimestamp = 1.51 };
             if (policy.Decide(stale, last, 1.92) is not null)
                 throw new InvalidOperationException("Stale perception renewed the bot.");
-            var wrongDomain = new BotCaptureObservation(1.51, 1.51, 1.512, 1, 2, 0, features, [], "detected")
-                { DetectionTimestamp = 1.51 };
-            if (policy.Decide(wrongDomain, last, 1.52) is not null)
+            var wrongDomain = new BotCaptureObservation(1.62, 1.62, 1.622, 1, 2, 0, features, [], "detected")
+                { DetectionTimestamp = 1.62 };
+            if (policy.Decide(wrongDomain, last, 1.63) is not null)
                 throw new InvalidOperationException("Visual observations must not drive the Hacker checkpoint.");
         }
         finally { temporary.Delete(recursive: true); }
@@ -308,7 +353,7 @@ internal static class BotPolicyTests
         }
     }
 
-    private static int WriteRuntime(string root, bool alwaysAttack = false, int[]? inputColumns = null, int schemaVersion = 1)
+    internal static int WriteRuntime(string root, bool alwaysAttack = false, int[]? inputColumns = null, int schemaVersion = 1)
     {
         var fields = BotPolicyContract.Names(BotPolicyContract.LandingVersion)!;
         var width = fields.Count * BotRecordingContract.HistoryLength;

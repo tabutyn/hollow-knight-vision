@@ -34,6 +34,14 @@ internal sealed partial class WindowsGameControlForwarder
         lock (stateLock) return botOwner == owner && CanDriveBotLocked;
     }
 
+    internal bool ApplyBotPlayback(Guid owner, BotPlaybackUpdate? update)
+    {
+        if (update is null) return true;
+        if (update.Decision is { } decision) return RenewBotControl(owner, decision.Action.Buttons, decision.Deadline);
+        NeutralizeBotControl(owner);
+        return true;
+    }
+
     internal bool RenewBotControl(Guid owner, InputButtons buttons, double deadline)
     {
         lock (stateLock)
