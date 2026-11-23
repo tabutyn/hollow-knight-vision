@@ -48,6 +48,7 @@ if (args is ["--train-bot-probe", var installedVision])
 var tests = new List<(string Name, Action Run)>
 {
     ("bot training admits separate published clips in the selected domain", BotTrainingTests.TestTrainingPlanSeparatesDomains),
+    ("bot capture dates round-trip with macOS and earlier Windows clips", BotCaptureTests.TestReadsMacAndPreviousWindowsCaptureDates),
     ("labeling campaign batches and honest validation history", LabelingCampaignTests.TestBatchesAndValidationHistory),
     ("labeling campaign counts distinct positive captures", LabelingCampaignTests.TestCaptureCountsAndTrainingSnapshot),
     ("warmed CUDA search reuses large host staging arrays", GroundComputeProcessingTests.TestCudaHostStagingAllocation),

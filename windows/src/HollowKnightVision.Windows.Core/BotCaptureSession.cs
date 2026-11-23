@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -6,7 +7,7 @@ using System.Threading.Channels;
 namespace HollowKnightVision.Windows.Core;
 
 public sealed record BotCaptureManifest(
-    int SchemaVersion, Guid Id, double CreatedAt, double StartedAt, string GameMode, string DetectorVersion,
+    int SchemaVersion, Guid Id, DateTimeOffset CreatedAt, double StartedAt, string GameMode, string DetectorVersion,
     string InputSource, string Status, double Duration, int ObservationCount, int UsableObservationCount,
     int InputEventCount, int ImageCount, string BotDomain,
     [property: JsonPropertyName("replayID")] Guid? ReplayId,
@@ -35,7 +36,8 @@ public sealed class BotCaptureSession
     private static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new CaptureDateConverter() }
     };
     private static readonly DateTimeOffset SwiftDateOrigin = new(2001, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private const double SamplingTolerance = .005;
@@ -53,7 +55,7 @@ public sealed class BotCaptureSession
     private readonly string detector;
     private readonly Guid? replay;
     private readonly long generation;
-    private readonly double created;
+    private readonly DateTimeOffset created;
     private readonly Channel<Sample> pending = Channel.CreateBounded<Sample>(new BoundedChannelOptions(8)
     {
         SingleReader = true,
@@ -84,7 +86,7 @@ public sealed class BotCaptureSession
         detector = detectorVersion;
         replay = replayId;
         Authored = authored.Clone();
-        created = (DateTimeOffset.UtcNow - SwiftDateOrigin).TotalSeconds;
+        created = DateTimeOffset.UtcNow;
         staging = Path.Combine(this.root, $".pending-demo-{Guid.NewGuid():N}");
 
         Clip? visual = null;
@@ -271,6 +273,24 @@ public sealed class BotCaptureSession
     }
 
     private static string Name(RecordedGameButton button) => button.ToString().ToLowerInvariant();
+
+    private sealed class CaptureDateConverter : JsonConverter<DateTimeOffset>
+    {
+        public override DateTimeOffset Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.String && reader.TryGetDateTimeOffset(out var date)) return date;
+            if (reader.TokenType == JsonTokenType.Number && reader.TryGetDouble(out var seconds) && double.IsFinite(seconds))
+            {
+                // Earlier Windows clips wrote seconds since Apple's 2001 reference date.
+                try { return SwiftDateOrigin.AddSeconds(seconds); }
+                catch (ArgumentOutOfRangeException) { }
+            }
+            throw new JsonException("Invalid bot capture date.");
+        }
+
+        public override void Write(Utf8JsonWriter writer, DateTimeOffset value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture));
+    }
 
     private sealed class Clip : IDisposable
     {

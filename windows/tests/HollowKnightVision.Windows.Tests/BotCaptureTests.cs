@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using HollowKnightVision.Windows.Core;
 
 internal static class BotCaptureTests
@@ -107,6 +108,28 @@ internal static class BotCaptureTests
                 File.AppendAllText(Path.Combine(folder, "events.jsonl"), """{"imagePath":"../outside.png"}""" + "\n");
                 Check(BotCaptureSession.Review(folder).Count == 1, "Review should only open paths inside the capture.");
             }
+        });
+    }
+
+    internal static void TestReadsMacAndPreviousWindowsCaptureDates()
+    {
+        WithLibrary(root =>
+        {
+            var pair = WriteFixture(root);
+            var recent = pair.Published[0];
+            var legacy = pair.Published[1];
+            var manifest = Path.Combine(root, BotCaptureSession.DirectoryName(legacy.Id), "manifest.json");
+            var date = JsonNode.Parse(File.ReadAllText(manifest))!.AsObject();
+            Check(date["createdAt"]!.GetValue<string>().EndsWith('Z')
+                && !date["createdAt"]!.GetValue<string>().Contains('.'), "New dates must use the Mac's ISO 8601 format.");
+            date["createdAt"] = 3600;
+            File.WriteAllText(manifest, date.ToJsonString());
+            var clips = BotCaptureSession.Library(root);
+            Check(clips.Count == 2 && clips[0].Id == recent.Id && clips[1].Id == legacy.Id
+                && clips[1].CreatedAt == new DateTimeOffset(2001, 1, 1, 1, 0, 0, TimeSpan.Zero),
+                "Current Mac dates and existing Windows numeric dates must sort by actual capture time.");
+            Check(BotCaptureSession.Review(Path.GetDirectoryName(manifest)!).Count == 1,
+                "Older Windows clips must still open for review.");
         });
     }
 
