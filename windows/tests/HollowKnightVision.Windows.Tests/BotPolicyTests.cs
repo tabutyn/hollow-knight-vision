@@ -169,8 +169,14 @@ internal static class BotPolicyTests
             WriteRuntime(temporary.FullName, alwaysAttack: true);
             var policy = new BotPolicyPlayback(BotNativePolicy.Load(temporary.FullName), BotCaptureDomain.Gameplay);
             var memory = new BotVisualKnightMemory();
-            policy.Decide(memory.Resolve(BotVisualKnightMemoryTests.Row(1, .3, camera: 0)), InputButtons.Right, 1.01);
-            policy.Decide(memory.Resolve(BotVisualKnightMemoryTests.Row(1.1, .31, camera: .01)), InputButtons.Right, 1.11);
+            for (var i = 0; i < 6; i++)
+            {
+                var time = 1 + i / 10d;
+                var row = memory.Resolve(BotVisualKnightMemoryTests.Row(time, i < 2 ? .30 + i * .01 : null, camera: .01));
+                if (policy.Decide(row, InputButtons.Right, time + .01) is not { Action.Buttons: var buttons }
+                    || !buttons.HasFlag(InputButtons.ActionX))
+                    throw new InvalidOperationException("The trained controls should continue through a brief visual occlusion.");
+            }
             var predicted = memory.Resolve(BotVisualKnightMemoryTests.Row(1.6, null, camera: .01) with
                 { DetectionTimestamp = null, Issues = ["missing-knight", "stale-or-missing-detection"] });
             var decision = policy.Decide(predicted, InputButtons.Right, 1.61);
@@ -181,6 +187,13 @@ internal static class BotPolicyTests
             var forged = predicted with { KnightPrediction = predicted.KnightPrediction! with { LastSeenAt = 1.3 } };
             if (policy.Decide(forged, InputButtons.Right, 1.61) is not null)
                 throw new InvalidOperationException("Inconsistent prediction provenance must not renew control.");
+            var expired = memory.Resolve(BotVisualKnightMemoryTests.Row(1.71, null, camera: .01));
+            if (policy.Decide(expired, InputButtons.None, 1.72) is not null)
+                throw new InvalidOperationException("The policy must release control after a longer occlusion.");
+            var returned = memory.Resolve(BotVisualKnightMemoryTests.Row(1.8, .45, camera: .01));
+            if (policy.Decide(returned, InputButtons.None, 1.81) is not { Action.Buttons: var resumed }
+                || !resumed.HasFlag(InputButtons.ActionX))
+                throw new InvalidOperationException("A measured reacquisition should resume trained controls.");
         }
         finally { temporary.Delete(recursive: true); }
     }

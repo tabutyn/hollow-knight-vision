@@ -58,6 +58,8 @@ public sealed record BotCaptureObservation(
     public string Type => "observation";
     public double? DetectionTimestamp { get; init; }
     [JsonPropertyName("detectionFrameID")] public long? DetectionFrameId { get; init; }
+    // Runtime identity for the same detection batch before its clock is translated.
+    [JsonIgnore] internal double? DetectionSourceTimestamp { get; init; }
     public string? ModelVersion { get; init; }
     public double? BestKnightConfidence { get; init; }
     public int? HumanTerrainCount { get; init; }
@@ -212,6 +214,7 @@ public static class BotObservationBuilder
         {
             DetectionTimestamp = fresh ? timing.CaptureTimestamp - age : null,
             DetectionFrameId = fresh ? batch!.SourceFrameIdentifier : null,
+            DetectionSourceTimestamp = fresh ? batch!.SourceTimestamp : null,
             ModelVersion = best?.ModelVersion?.DisplayName,
             BestKnightConfidence = best?.Confidence,
             HumanTerrainCount = 0,

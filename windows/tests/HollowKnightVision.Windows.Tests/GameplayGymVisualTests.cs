@@ -54,10 +54,34 @@ internal static class GameplayGymVisualTests
             throw new InvalidOperationException("A recovered room must establish fresh coverage after the blackout.");
     }
 
+    internal static void TestGymReportsCorrectionsOnlyForAnExistingVisualEstimate()
+    {
+        var source = new BotVisualGymObservationSource();
+        var pixels = Scene();
+        var cold = source.Observe(Frame(pixels, 0), 0, InputButtons.None, frame => Detect(frame, true, .3f), hud: null);
+        if (cold.WeakKnightCorrection is not null)
+            throw new InvalidOperationException("A weak candidate must not count as a correction without a measured track.");
+
+        for (var i = 1; i < 10; i++)
+            source.Observe(Frame(pixels, i), i / 10d, InputButtons.None, frame => Detect(frame, true), hud: null);
+        var weak = source.Observe(Frame(pixels, 10), 1, InputButtons.None, frame => Detect(frame, true, .3f), hud: null);
+        if (weak is not { WeakKnightCorrection: true, Observation: { KnightSource: "visual-predicted", Grounded: null } estimated }
+            || Math.Abs(estimated.KnightPrediction!.LastSeenAt - .9) > 1e-6)
+            throw new InvalidOperationException("The Gym observation should report a weak correction without renewing the measured sighting.");
+
+        var motion = source.Observe(Frame(pixels, 11), 1.1, InputButtons.None, frame => Detect(frame, false), hud: null);
+        if (motion is not { WeakKnightCorrection: null, Observation.KnightSource: "visual-predicted" })
+            throw new InvalidOperationException("Motion-only estimates must not count as weak detection corrections.");
+
+        var fresh = source.Observe(Frame(pixels, 12), 1.2, InputButtons.None, frame => Detect(frame, true), hud: null);
+        if (fresh is not { WeakKnightCorrection: null, Observation.KnightSource: "visual" })
+            throw new InvalidOperationException("A measured reacquisition is not a weak correction.");
+    }
+
     private static BgraFrame Frame(byte[] pixels, int index) =>
         new(Width, Height, Width * 4, pixels, index, DateTimeOffset.UnixEpoch.AddSeconds(index / 10d));
 
-    private static IReadOnlyList<ObjectDetection> Detect(BgraFrame frame, bool knight)
+    private static IReadOnlyList<ObjectDetection> Detect(BgraFrame frame, bool knight, float knightConfidence = .96f)
     {
         var result = new List<ObjectDetection>
         {
@@ -66,7 +90,7 @@ internal static class GameplayGymVisualTests
             new("world.lifeblood-cacoon", new(.48, .57, .045, .11), .93f) { SourceFrameIdentifier = frame.CaptureId }
         };
         if (knight)
-            result.Add(new("game.playable-knight", new(.26, .53, .045, .14), .96f) { SourceFrameIdentifier = frame.CaptureId });
+            result.Add(new("game.playable-knight", new(.26, .53, .045, .14), knightConfidence) { SourceFrameIdentifier = frame.CaptureId });
         return result;
     }
 

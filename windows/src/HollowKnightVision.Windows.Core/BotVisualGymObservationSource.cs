@@ -5,6 +5,7 @@ namespace HollowKnightVision.Windows.Core;
 public sealed record BotVisualGymReading(BotCaptureObservation? Observation, IReadOnlyList<string> Issues, float? KnightConfidence)
 {
     public BotVisualCameraDiagnostic? Camera { get; init; }
+    public bool? WeakKnightCorrection => Observation?.KnightPrediction?.UsedWeakDetection;
 }
 
 public sealed record BotVisualCameraDiagnostic(string PoseSource, bool GroundVerified, bool AllowsAtlasWrite,

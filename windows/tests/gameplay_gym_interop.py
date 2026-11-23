@@ -22,9 +22,16 @@ def fixture_detector(directory):
     directory.mkdir(parents=True)
     boxes = [[.26, .61, .80], [.53, .58, .57], [.045, .06, .045], [.14, .11, .11]]
     scores = [[.96, 0, 0], [0, .91, 0], [0, 0, .88]]
-    values = [helper.make_tensor("scores", TensorProto.FLOAT, [1, 3, 1, 3], sum(scores, [])),
+    weak_scores = [[.30, 0, 0], scores[1], scores[2]]
+    values = [helper.make_tensor("strong", TensorProto.FLOAT, [1, 3, 1, 3], sum(scores, [])),
+              helper.make_tensor("weak", TensorProto.FLOAT, [1, 3, 1, 3], sum(weak_scores, [])),
+              helper.make_tensor("corner", TensorProto.INT64, [4], [0, 0, 0, 0]),
+              helper.make_tensor("threshold", TensorProto.FLOAT, [], [.95]),
               helper.make_tensor("boxes", TensorProto.FLOAT, [1, 4, 1, 3], sum(boxes, []))]
-    graph = helper.make_graph([], "fixture-detector",
+    nodes = [helper.make_node("GatherND", ["image", "corner"], ["marker"]),
+             helper.make_node("Greater", ["marker", "threshold"], ["weak_frame"]),
+             helper.make_node("Where", ["weak_frame", "weak", "strong"], ["scores"])]
+    graph = helper.make_graph(nodes, "fixture-detector",
         [helper.make_tensor_value_info("image", TensorProto.FLOAT, [1, 3, HEIGHT, WIDTH])],
         [helper.make_tensor_value_info("scores", TensorProto.FLOAT, [1, 3, 1, 3]),
          helper.make_tensor_value_info("boxes", TensorProto.FLOAT, [1, 4, 1, 3])], values)
@@ -48,12 +55,20 @@ def pixels():
 
 
 def run(command, frames, env, rgb, image):
+    weak_frame = bytearray(image)
+    # The first red pixel in the top-down tensor selects the weak fixture.
+    weak_frame[-WIDTH * 3] = 255
     replies = EncoderReplies()
     with subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as encoder:
         try:
             rows = []
             for index, request in enumerate(frames):
-                rgb.write_bytes(bytes(len(image)) if index == 3 else image)
+                if index == 2:
+                    rgb.write_bytes(weak_frame)
+                elif index == 3:
+                    rgb.write_bytes(bytes(len(image)))
+                else:
+                    rgb.write_bytes(image)
                 payload = json.dumps(request).encode() + b"\n"
                 reply = replies.request(encoder, payload, timeout=20)
                 assert reply, encoder.stderr.read().decode()
@@ -92,6 +107,9 @@ def check(encoder_command, root):
     assert baseline[0]["pathReachable"] and not changed[0]["pathReachable"]
     assert baseline[0]["knight"] == "visual" and baseline[0]["floors"] > 0, baseline[0] | {"input": "omitted"}
     assert baseline[0]["healthKnown"] is False and changed[0]["healthKnown"] is False
+    assert "weakKnightCorrection" not in baseline[0]
+    assert baseline[2]["knight"] == "visual-predicted" and baseline[2].get("weakKnightCorrection") is True
+    assert changed[2].get("weakKnightCorrection") is True and "input" in baseline[2]
     assert baseline[3]["issues"] == ["transition-blackout"] and "input" not in baseline[3]
     assert any("input" in row for row in baseline[4:]), "Visual perception did not recover after the blackout."
     assert any(row["atlas"] for row in baseline[4:]), "Verified pixel geometry never established an Atlas footprint."

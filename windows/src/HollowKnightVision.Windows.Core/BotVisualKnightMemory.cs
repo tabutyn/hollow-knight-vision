@@ -166,8 +166,10 @@ public sealed class BotVisualKnightMemory
     private static AtlasPoint? WeakKnightCenter(LiveObjectDetectionBatch? batch, BotCaptureObservation row,
         Track previous, double frameHeight, AtlasPoint estimate)
     {
-        // DetectionTimestamp is already translated to the capture clock by the observation builder.
+        // Verify the batch in its original clock before using the translated
+        // timestamp for the age check.
         if (batch is null || batch.CaptureGeneration != row.Generation || batch.SourceFrameIdentifier != row.DetectionFrameId
+            || batch.SourceTimestamp != row.DetectionSourceTimestamp
             || row.DetectionTimestamp is not { } seen || seen <= previous.SeenAt
             || row.CaptureTimestamp - seen is not (>= 0 and <= .05)) return null;
         var width = previous.Observation.Features[2];

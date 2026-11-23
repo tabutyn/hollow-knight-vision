@@ -11,7 +11,8 @@ public static class GameplayGymObservationEncoder
     private sealed record Reply(IReadOnlyList<string> Issues, bool PathReachable, string Knight, int Floors, int Walls,
         bool Atlas, bool HealthKnown, bool CrawlidLocalizerActive, bool KnightLocalizerActive, bool DepositLocalizerActive,
         float? KnightConfidence = null, int? VisibleMasks = null, string? Input = null,
-        double? PathProgress = null, double? PathAlignment = null, BotVisualCameraDiagnostic? PathDebug = null);
+        double? PathProgress = null, double? PathAlignment = null, BotVisualCameraDiagnostic? PathDebug = null,
+        bool? WeakKnightCorrection = null);
 
     public static void Run(int version, string rgbPath, bool allowMaskedKnight, string supportRoot,
         string labelsPath, TextReader input, TextWriter output, string? detectorDirectory = null,
@@ -56,7 +57,8 @@ public static class GameplayGymObservationEncoder
                 row?.DetectedTerrain?.Floors.Count ?? 0, row?.DetectedTerrain?.Walls.Count ?? 0,
                 row?.AtlasView is not null, visibleHealth.HasValue, localizers.Active(0),
                 localizers.Active(1), localizers.Active(2), result.KnightConfidence, visibleHealth,
-                HackerGymObservationEncoder.Encode(vector), authored?.PathProgress, authored?.PathAlignment, trace ? result.Camera : null);
+                HackerGymObservationEncoder.Encode(vector), authored?.PathProgress, authored?.PathAlignment, trace ? result.Camera : null,
+                result.WeakKnightCorrection);
             HackerGymObservationEncoder.Write(output, reply);
         }
 
