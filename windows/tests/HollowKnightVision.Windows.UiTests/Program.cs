@@ -94,7 +94,7 @@ internal static class Program
         TestModeSelection();
         TestBottomControlScope();
         TestFramingGroupsAreMutuallyExclusive();
-        TestHackerInteractionModes();
+        TestHackerTerrainControls();
         TestWorkspaceShortcuts();
         TestPathRecordingAvailability();
         TestWorkspaceExitShortcut();
@@ -943,7 +943,7 @@ internal static class Program
         System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
         var source = xml.Descendants(ns + "Style").Single(item => (string?)item.Attribute(x + "Key") == "Segment");
         var style = (Style)System.Windows.Markup.XamlReader.Parse(source.ToString());
-        foreach (var group in new[] { "GameplayFraming", "HackerFraming", "HackerSettingsMode", "LabelMode", "ModelTab" })
+        foreach (var group in new[] { "GameplayFraming", "HackerFraming", "LabelMode", "ModelTab" })
         {
             var controls = xml.Descendants(ns + "RadioButton").Where(item => (string?)item.Attribute("GroupName") == group).ToArray();
             Check(controls.Length >= 3, $"Missing segmented mode group {group}.");
@@ -1025,24 +1025,22 @@ internal static class Program
         Console.WriteLine("PASS Gameplay and Hacker framing groups are mutually exclusive");
     }
 
-    private static void TestHackerInteractionModes()
+    private static void TestHackerTerrainControls()
     {
-        var expected = new[] { "Ground", "Rooms", "Fit", "Free Fly", "Current" };
-        Check(DashboardValues("HackerInteractionModes").SequenceEqual(expected),
-            "Hacker interaction policy order drifted.");
+        var expected = new[] { "View", "Ground", "Wall", "Spike", "Door", "Rooms" };
+        Check(DashboardValues("HackerEditingTargets").SequenceEqual(expected), "Unexpected Hacker editing targets.");
         var xml = MainWindowSource();
         System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
-        var controls = xml.Descendants(ns + "RadioButton")
-            .Where(item => (string?)item.Attribute("GroupName") == "HackerSettingsMode")
-            .Select(item => (string?)item.Attribute("Content")).ToArray();
-        Check(controls.SequenceEqual(expected), "Hacker settings do not use the canonical mode order.");
-        foreach (var mode in expected)
-        {
-            var expectedFraming = mode is "Fit" or "Current" ? mode : "Free Fly";
-            Check(Dashboard<string>("HackerFramingMode", mode) == expectedFraming,
-                $"Hacker {mode} did not map to {expectedFraming} framing.");
-        }
-        Console.WriteLine("PASS Hacker interactions form one ordered framing group");
+        System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var picker = xml.Descendants(ns + "ComboBox").Single(item => (string?)item.Attribute(x + "Name") == "HackerTerrainTarget");
+        Check(picker.Elements(ns + "ComboBoxItem").Select(item => (string?)item.Attribute("Content")).SequenceEqual(expected),
+            "The Hacker terrain menu and editing targets disagree.");
+        var modes = xml.Descendants(ns + "RadioButton").ToLookup(item => (string?)item.Attribute("GroupName"),
+            item => (string?)item.Attribute("Content"));
+        Check(modes["GroundMode"].SequenceEqual(new[] { "Add", "Modify", "Delete" }), "Unexpected terrain editing controls.");
+        Check(modes["HackerFraming"].SequenceEqual(new[] { "Free Fly", "Fit", "Current" }) && !modes.Contains("HackerSettingsMode"),
+            "Hacker camera controls should appear only in the framing toolbar.");
+        Console.WriteLine("PASS Hacker terrain editing and camera framing have separate controls");
     }
 
     private static void TestWorkspaceShortcuts()

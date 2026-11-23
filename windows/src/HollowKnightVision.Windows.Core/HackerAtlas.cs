@@ -178,7 +178,34 @@ public sealed record HackerAtlasRoom(
     HackerAtlasRect Bounds)
 {
     public IReadOnlyList<HackerAtlasLayer> AtlasTiles { get; init; } = [];
+    public HackerTerrainProjection? TerrainProjection { get; init; }
     public HackerAtlasRect WorldBounds => Bounds.Offset(Position.X, Position.Y);
+}
+
+public sealed record HackerTerrainProjection(AtlasPoint PixelsPerWorldUnit, AtlasPoint LocalOrigin)
+{
+    public static HackerTerrainProjection FromFrame(HackerPreparedFrame frame, AtlasPoint atlasOrigin)
+    {
+        var camera = frame.CameraTransform;
+        var bounds = frame.LiveBounds;
+        var projected = HackerAtlasCameraPlacement.CameraPosition(camera);
+        return new(new(camera.PixelsPerWorldUnitX, camera.PixelsPerWorldUnitY),
+            new(bounds.MinX + bounds.Width / 2 - atlasOrigin.X - projected.X,
+                bounds.MinY + bounds.Height / 2 - atlasOrigin.Y - projected.Y));
+    }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsValid => double.IsFinite(PixelsPerWorldUnit.X) && PixelsPerWorldUnit.X > 0
+        && double.IsFinite(PixelsPerWorldUnit.Y) && PixelsPerWorldUnit.Y > 0
+        && double.IsFinite(LocalOrigin.X) && double.IsFinite(LocalOrigin.Y);
+
+    public AtlasPoint WorldToAtlas(AtlasPoint world, AtlasPoint roomPosition) => new(
+        roomPosition.X + LocalOrigin.X + world.X * PixelsPerWorldUnit.X,
+        roomPosition.Y + LocalOrigin.Y + world.Y * PixelsPerWorldUnit.Y);
+
+    public AtlasPoint AtlasToWorld(AtlasPoint atlas, AtlasPoint roomPosition) => new(
+        (atlas.X - roomPosition.X - LocalOrigin.X) / PixelsPerWorldUnit.X,
+        (atlas.Y - roomPosition.Y - LocalOrigin.Y) / PixelsPerWorldUnit.Y);
 }
 
 public sealed record HackerAtlasLayer(
@@ -694,10 +721,11 @@ public sealed class HackerAtlasPipeline
 
     private sealed class RoomState
     {
-        internal RoomState(string sceneName, AtlasPoint position, HudStencilTemplate? hudTemplate)
+        internal RoomState(HackerPreparedFrame prepared, HudStencilTemplate? hudTemplate)
         {
-            SceneName = sceneName;
-            Position = position;
+            SceneName = prepared.SceneName;
+            Position = new(prepared.LiveBounds.MinX, prepared.LiveBounds.MinY);
+            TerrainProjection = HackerTerrainProjection.FromFrame(prepared, Position);
             HudStencilTracker = new(hudTemplate);
             Composer = new LiveTiledAtlas(
                 anchorPosition: new AtlasPoint(0, 0),
@@ -708,6 +736,7 @@ public sealed class HackerAtlasPipeline
         internal Guid Id { get; } = Guid.NewGuid();
         internal string SceneName { get; }
         internal AtlasPoint Position { get; }
+        internal HackerTerrainProjection TerrainProjection { get; }
         internal LiveTiledAtlas Composer { get; }
         internal HudStencilTracker HudStencilTracker { get; set; }
         internal FadeReference? FadeReference { get; set; }
@@ -763,10 +792,7 @@ public sealed class HackerAtlasPipeline
                 {
                     return null;
                 }
-                state = new RoomState(
-                    prepared.SceneName,
-                    new AtlasPoint(prepared.LiveBounds.MinX, prepared.LiveBounds.MinY),
-                    hudTemplate);
+                state = new RoomState(prepared, hudTemplate);
                 rooms[prepared.SceneName] = state;
             }
 
@@ -845,6 +871,7 @@ public sealed class HackerAtlasPipeline
                     room.Position,
                     contentBounds)
                 {
+                    TerrainProjection = room.TerrainProjection,
                     AtlasTiles = snapshot.Tiles.Select(tile => new HackerAtlasLayer(
                         tile.Id,
                         tile.Image,

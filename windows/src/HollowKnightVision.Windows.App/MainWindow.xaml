@@ -282,22 +282,30 @@
                     </Grid>
                 </Grid>
 
-                <!-- Hacker: atlas occupies the full canvas. Ground toolbar is conditional. -->
+                <!-- Hacker: terrain editing and camera framing are separate controls. -->
                 <Grid x:Name="HackerPanel" Visibility="Collapsed">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                    <Border x:Name="HackerGroundToolbar" Grid.Row="0" Style="{StaticResource Toolbar}" Visibility="Collapsed">
-                        <DockPanel>
-                            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
-                                <UniformGrid Width="290" Columns="4">
+                    <Border x:Name="HackerGroundToolbar" Grid.Row="0" Style="{StaticResource Toolbar}">
+                        <StackPanel Orientation="Horizontal">
+                            <ComboBox x:Name="HackerTerrainTarget" SelectedIndex="0" MinWidth="92"
+                                      AutomationProperties.Name="Edit Hacker Atlas" SelectionChanged="HackerTerrainTarget_Changed">
+                                <ComboBoxItem Content="View"/>
+                                <ComboBoxItem Content="Ground"/>
+                                <ComboBoxItem Content="Wall"/>
+                                <ComboBoxItem Content="Spike"/>
+                                <ComboBoxItem Content="Door"/>
+                                <ComboBoxItem Content="Rooms"/>
+                            </ComboBox>
+                            <StackPanel x:Name="HackerTerrainActions" Orientation="Horizontal" Visibility="Collapsed">
+                                <UniformGrid Width="240" Columns="3">
                                     <RadioButton x:Name="GroundAddButton" Content="Add" GroupName="GroundMode" Style="{StaticResource Segment}" IsChecked="True" Click="GroundMode_Click"/>
                                     <RadioButton x:Name="GroundModifyButton" Content="Modify" GroupName="GroundMode" Style="{StaticResource Segment}" Click="GroundMode_Click"/>
                                     <RadioButton x:Name="GroundDeleteButton" Content="Delete" GroupName="GroundMode" Style="{StaticResource Segment}" Click="GroundMode_Click"/>
-                                    <RadioButton x:Name="GroundNegativeButton" Content="Negative" GroupName="GroundMode" Style="{StaticResource Segment}" Click="GroundMode_Click"/>
                                 </UniformGrid>
                                 <Button x:Name="GroundUndoButton" Content="Undo" IsEnabled="False" Margin="8,0,3,0" Click="GroundUndo_Click"/>
-                                <TextBlock x:Name="GroundCountText" Text="+0  −0" FontFamily="Consolas" Foreground="#999999" VerticalAlignment="Center" Margin="8,0"/>
+                                <TextBlock x:Name="GroundCountText" Text="0" FontFamily="Consolas" Foreground="#999999" VerticalAlignment="Center" Margin="8,0"/>
                             </StackPanel>
-                        </DockPanel>
+                        </StackPanel>
                     </Border>
                     <Grid x:Name="HackerViewportPanel" Grid.Row="1" Background="Black"
                           MouseMove="GameViewport_MouseMove" MouseLeave="GameViewport_MouseLeave"
@@ -421,10 +429,6 @@
                                 <TextBlock Text="Manage Hacker Atlas" FontWeight="SemiBold"/>
                                 <Button Content="Delete Atlas" HorizontalAlignment="Left" Foreground="#FF6868" Click="HackerDeleteAtlas_Click"/>
                             </StackPanel>
-                            <WrapPanel x:Name="HackerControlsPanel" Visibility="Collapsed" Margin="0,12">
-                                <RadioButton Content="Ground" Tag="Ground" GroupName="HackerSettingsMode" Style="{StaticResource Segment}" Checked="CameraMode_Checked" Click="HackerMode_Click"/><RadioButton Content="Rooms" Tag="Rooms" GroupName="HackerSettingsMode" Style="{StaticResource Segment}" Checked="CameraMode_Checked" Click="HackerMode_Click"/>
-                                <RadioButton Content="Fit" Tag="Fit" GroupName="HackerSettingsMode" Style="{StaticResource Segment}" Checked="CameraMode_Checked" Click="HackerMode_Click"/><RadioButton Content="Free Fly" Tag="Free Fly" GroupName="HackerSettingsMode" Style="{StaticResource Segment}" Checked="CameraMode_Checked" Click="HackerMode_Click"/><RadioButton Content="Current" Tag="Current" GroupName="HackerSettingsMode" Style="{StaticResource Segment}" Checked="CameraMode_Checked" Click="HackerMode_Click"/>
-                            </WrapPanel>
                             <TextBlock x:Name="OpsSettingsTitle" Text="Ops" FontWeight="SemiBold" Visibility="Collapsed"/>
                 <!-- Ops: exact Mac PlayerOpsView copy. -->
                 <Grid x:Name="OpsPanel" Visibility="Collapsed">

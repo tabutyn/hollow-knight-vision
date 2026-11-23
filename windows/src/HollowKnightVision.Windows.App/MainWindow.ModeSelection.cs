@@ -19,7 +19,7 @@ public partial class MainWindow
         {
             if (gameplayFraming != mode) GameplayFraming_Click(sender, e);
         }
-        else if (hackerInteractionMode != mode) HackerMode_Click(sender, e);
+        else if (hackerFraming != mode) HackerMode_Click(sender, e);
     }
 
     // Keep the visual selection tied to actual mode changes, including a pan

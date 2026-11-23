@@ -451,8 +451,8 @@ internal static class DashboardPresentationPolicy
         ["Gameplay", "Label", "Stencil", "Model", "Hacker", "Ops"];
     internal static IReadOnlyList<string> BottomWorkspaces { get; } =
         ["Gameplay", "Label", "Stencil", "Model", "Hacker"];
-    internal static IReadOnlyList<string> HackerInteractionModes { get; } =
-        ["Ground", "Rooms", "Fit", "Free Fly", "Current"];
+    internal static IReadOnlyList<string> HackerEditingTargets { get; } =
+        ["View", "Ground", "Wall", "Spike", "Door", "Rooms"];
 
     internal static bool ShowsFraming(
         string workspace,
@@ -478,14 +478,6 @@ internal static class DashboardPresentationPolicy
         string? recognizedContext) =>
         workspace == "Gameplay" && mode == GameRuntimeMode.Modded
         && IsGameplay(recognizedContext);
-
-    internal static string HackerFramingMode(string interactionMode) =>
-        interactionMode switch
-        {
-            "Fit" => "Fit",
-            "Current" => "Current",
-            _ => "Free Fly"
-        };
 
     internal static string? WorkspaceForShortcut(Key key) => key switch
     {
@@ -638,16 +630,11 @@ public partial class MainWindow : Window
         get => gameplayFramingValue;
         set { gameplayFramingValue = value; SelectModeButtons(GameplayControlsPanel, value); }
     }
-    private string hackerInteractionModeValue = "Fit";
-    private string hackerInteractionMode
+    private string hackerFramingValue = "Fit";
+    private string hackerFraming
     {
-        get => hackerInteractionModeValue;
-        set
-        {
-            hackerInteractionModeValue = value;
-            SelectModeButtons(HackerCameraControlsPanel, value);
-            SelectModeButtons(HackerControlsPanel, value);
-        }
+        get => hackerFramingValue;
+        set { hackerFramingValue = value; SelectModeButtons(HackerCameraControlsPanel, value); }
     }
     private bool pointerWithinLiveFrame;
     private bool passingPrimaryMouse;
@@ -671,9 +658,6 @@ public partial class MainWindow : Window
     private HackerPreparedFrame? hackerLivePrepared;
     private HackerAtlasOutput? hackerAtlasOutput;
     private bool hackerPreviewActive;
-    private Point? groundDragStart;
-    private GroundTruthCameraTransform? groundDragTransform;
-    private GroundTruthRect groundDragBounds;
     private EditableBox? modifyingBox;
     private Point? modifyDragStart;
     private EditableBox? modifyOriginal;
@@ -875,7 +859,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         gameControls.GroundTruthReceived += OnReceiverGroundTruth;
         gameplayFraming = gameplayFramingValue;
-        hackerInteractionMode = hackerInteractionModeValue;
+        hackerFraming = hackerFramingValue;
         _ = WindowsDpiAwareness.TryEnablePerMonitorV2();
         var visibleFrame = SystemParameters.WorkArea;
         restoredWindowBounds = new Rect(
@@ -905,11 +889,11 @@ public partial class MainWindow : Window
         viewportAnimationTimer.Start();
         HackerViewportPanel.SizeChanged += (_, _) =>
             ApplyViewport(AtlasCanvas, HackerViewportPanel,
-                DashboardPresentationPolicy.HackerFramingMode(hackerInteractionMode),
+                hackerFraming,
                 HackerLiveImage);
         AtlasCanvas.LostMouseCapture += (_, _) =>
         {
-            if (groundDragStart is not null) CancelGroundTruthGesture();
+            if (groundDragRoom is not null) CancelGroundTruthGesture();
         };
         PreviewKeyDown += MainWindow_PreviewKeyDown;
         PreviewKeyUp += MainWindow_PreviewKeyUp;
@@ -1364,7 +1348,7 @@ public partial class MainWindow : Window
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (!IsActive) return;
         if (FirstResponderConsumesTextInput() && !(SettingsOverlay.Visibility == Visibility.Visible && key is Key.Left or Key.Right or Key.Up or Key.Down)) return;
-        if (workspace == "Hacker" && hackerInteractionMode == "Ground"
+        if (workspace == "Hacker" && EditsHackerTerrain
             && key == Key.Z && !e.IsRepeat
             && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
         {
@@ -1507,14 +1491,13 @@ public partial class MainWindow : Window
                 return true;
             }
         }
-        if (workspace == "Hacker" && hackerInteractionMode == "Ground")
+        if (workspace == "Hacker" && EditsHackerTerrain)
         {
             var mode = key switch
             {
                 Key.D1 or Key.NumPad1 => GroundAddButton,
                 Key.D2 or Key.NumPad2 => GroundModifyButton,
                 Key.D3 or Key.NumPad3 => GroundDeleteButton,
-                Key.D4 or Key.NumPad4 => GroundNegativeButton,
                 _ => null
             };
             if (mode is not null)
@@ -1571,19 +1554,15 @@ public partial class MainWindow : Window
 
     private void GameViewport_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (workspace == "Hacker" && hackerInteractionMode == "Ground")
-        {
-            GroundEditorMouseDown(e);
-            return;
-        }
-        if (workspace == "Hacker" && hackerInteractionMode == "Rooms")
+        if (workspace == "Hacker" && EditsHackerTerrain && GroundEditorMouseDown(e)) return;
+        if (workspace == "Hacker" && hackerEditingTarget == "Rooms")
         {
             RoomEditorMouseDown(e);
             return;
         }
         if (GameplayViewportPolicy.CanPan(workspace == "Gameplay"
                 ? gameplayFraming
-                : DashboardPresentationPolicy.HackerFramingMode(hackerInteractionMode)))
+                : hackerFraming))
         {
             var surface = workspace == "Gameplay" ? GameplayAtlasCanvas : AtlasCanvas;
             AdvanceViewportAnimations();
@@ -1593,7 +1572,7 @@ public partial class MainWindow : Window
             e.Handled = true;
             if ((workspace == "Gameplay"
                     ? gameplayFraming
-                    : DashboardPresentationPolicy.HackerFramingMode(hackerInteractionMode)) != "Current") return;
+                    : hackerFraming) != "Current") return;
         }
         if (!ForwardsGamePointer()) return;
         var normalized = NormalizedGamePointer(e);
@@ -1613,12 +1592,12 @@ public partial class MainWindow : Window
 
     private void GameViewport_MouseMove(object sender, MouseEventArgs e)
     {
-        if (workspace == "Hacker" && hackerInteractionMode == "Ground" && groundDragStart is not null)
+        if (workspace == "Hacker" && EditsHackerTerrain && groundDragRoom is not null)
         {
             GroundEditorMouseMove(e);
             return;
         }
-        if (workspace == "Hacker" && hackerInteractionMode == "Rooms"
+        if (workspace == "Hacker" && hackerEditingTarget == "Rooms"
             && activeRoom is not null && roomDragStart is { } roomStart
             && e.LeftButton == MouseButtonState.Pressed)
         {
@@ -1660,7 +1639,7 @@ public partial class MainWindow : Window
                 if (currentPointer is null) lastForwardedPointer = null;
             }
             if (workspace == "Gameplay") gameplayFraming = "Free Fly";
-            else hackerInteractionMode = "Free Fly";
+            else hackerFraming = "Free Fly";
             var matrix = viewportPanMatrix;
             matrix.OffsetX += current.X - panStart.X;
             matrix.OffsetY += current.Y - panStart.Y;
@@ -1693,7 +1672,7 @@ public partial class MainWindow : Window
 
     private void GameViewport_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (workspace == "Hacker" && hackerInteractionMode == "Ground" && groundDragStart is not null)
+        if (workspace == "Hacker" && EditsHackerTerrain && groundDragRoom is not null)
         {
             GroundEditorMouseUp(e);
             return;
@@ -1731,8 +1710,7 @@ public partial class MainWindow : Window
     private bool ForwardsGamePointer() => workspace switch
     {
         "Gameplay" => GameplayViewportPolicy.ForwardsGamePointer(gameplayFraming),
-        "Hacker" => hackerInteractionMode is "Fit" or "Current"
-            && GameplayViewportPolicy.ForwardsGamePointer(hackerInteractionMode),
+        "Hacker" => hackerEditingTarget == "View" && GameplayViewportPolicy.ForwardsGamePointer(hackerFraming),
         _ => false
     };
 
@@ -1764,7 +1742,7 @@ public partial class MainWindow : Window
     {
         var mode = workspace == "Gameplay"
             ? gameplayFraming
-            : DashboardPresentationPolicy.HackerFramingMode(hackerInteractionMode);
+            : hackerFraming;
         if (mode is not ("Current" or "Free Fly") || e.Delta == 0 || viewportPanStart is not null) return;
         var surface = workspace == "Gameplay" ? GameplayAtlasCanvas : AtlasCanvas;
         var host = workspace == "Gameplay" ? GameplayPanel : HackerViewportPanel;
@@ -1921,8 +1899,6 @@ public partial class MainWindow : Window
         HackerPanel.Visibility = destination == "Hacker" ? Visibility.Visible : Visibility.Collapsed;
 
         GameplayControlsPanel.Visibility = destination == "Gameplay"
-            ? Visibility.Visible : Visibility.Collapsed;
-        HackerControlsPanel.Visibility = destination == "Hacker"
             ? Visibility.Visible : Visibility.Collapsed;
         PathRecordingButton.Visibility = DashboardPresentationPolicy.ShowsPathRecording(
                 destination, gameMode, recognizedMenuContext)
@@ -2464,22 +2440,10 @@ public partial class MainWindow : Window
     private void HackerMode_Click(object sender, RoutedEventArgs e)
     {
         var mode = (sender as FrameworkElement)?.Tag?.ToString();
-        if (hackerInteractionMode == "Ground" && mode != "Ground")
-            CancelGroundTruthGesture();
-        hackerInteractionMode = mode ?? hackerInteractionMode;
-        HackerGroundToolbar.Visibility = mode == "Ground"
-            ? Visibility.Visible : Visibility.Collapsed;
-        if (mode == "Ground")
-        {
-            ReleaseForwardedInput();
-            SelectGroundTruthMode();
-            _ = PresentLatestGroundTruthContext();
-        }
-        else if (mode is "Rooms" or "Free Fly") SendPointerExit();
-        RedrawHackerEdits();
-        ApplyViewport(AtlasCanvas, HackerViewportPanel,
-            DashboardPresentationPolicy.HackerFramingMode(hackerInteractionMode), HackerLiveImage,
-            explicitRequest: true);
+        if (mode is not ("Fit" or "Current" or "Free Fly")) return;
+        hackerFraming = mode;
+        if (mode == "Free Fly") SendPointerExit();
+        ApplyViewport(AtlasCanvas, HackerViewportPanel, hackerFraming, HackerLiveImage, explicitRequest: true);
     }
 
     private async void PathRecording_Click(object sender, RoutedEventArgs e)
@@ -4063,10 +4027,7 @@ public partial class MainWindow : Window
         groundTruthLabels.Mode = GroundModifyButton.IsChecked == true
             ? GroundTruthEditingMode.Modify
             : GroundDeleteButton.IsChecked == true
-                ? GroundTruthEditingMode.Delete
-                : GroundNegativeButton.IsChecked == true
-                    ? GroundTruthEditingMode.Negative
-                    : GroundTruthEditingMode.Add;
+                ? GroundTruthEditingMode.Delete : GroundTruthEditingMode.Add;
     }
 
     private void GroundUndo_Click(object sender, RoutedEventArgs e)
@@ -4084,129 +4045,6 @@ public partial class MainWindow : Window
         GroundUndoButton.IsEnabled = groundTruthLabels.CanUndo;
         PresentGroundTruthPersistenceError();
         RedrawHackerEdits();
-    }
-
-    private void GroundEditorMouseDown(MouseButtonEventArgs e)
-    {
-        if (!TryGroundTruthPointer(
-                e.GetPosition(AtlasCanvas),
-                out var point,
-                out var tolerance,
-                out var transform,
-                out var liveBounds)) return;
-        SelectGroundTruthMode();
-        groundTruthLabels.Handle(
-            GroundTruthPointerPhase.Began,
-            point,
-            tolerance,
-            transform,
-            liveBounds);
-        groundDragStart = e.GetPosition(AtlasCanvas);
-        groundDragTransform = transform;
-        groundDragBounds = liveBounds;
-        Mouse.Capture(AtlasCanvas, CaptureMode.Element);
-        GroundUndoButton.IsEnabled = groundTruthLabels.CanUndo;
-        PresentGroundTruthPersistenceError();
-        RedrawHackerEdits();
-        e.Handled = true;
-    }
-
-    private void GroundEditorMouseMove(MouseEventArgs e)
-    {
-        if (groundDragStart is null || e.LeftButton != MouseButtonState.Pressed
-            || groundDragTransform is not { } transform
-            || !TryGroundTruthPointer(
-                e.GetPosition(AtlasCanvas),
-                transform,
-                groundDragBounds,
-                out var point,
-                out var tolerance)) return;
-        groundTruthLabels.Handle(
-            GroundTruthPointerPhase.Changed,
-            point,
-            tolerance,
-            transform,
-            groundDragBounds);
-        RedrawHackerEdits();
-        e.Handled = true;
-    }
-
-    private void GroundEditorMouseUp(MouseButtonEventArgs e)
-    {
-        var completed = false;
-        if (groundDragStart is not null
-            && groundDragTransform is { } transform
-            && TryGroundTruthPointer(
-                e.GetPosition(AtlasCanvas),
-                transform,
-                groundDragBounds,
-                out var point,
-                out var tolerance))
-        {
-            groundTruthLabels.Handle(
-                GroundTruthPointerPhase.Ended,
-                point,
-                tolerance,
-                transform,
-                groundDragBounds);
-            completed = true;
-        }
-        if (!completed) groundTruthLabels.CancelGesture();
-        groundDragStart = null;
-        groundDragTransform = null;
-        Mouse.Capture(null);
-        GroundUndoButton.IsEnabled = groundTruthLabels.CanUndo;
-        PresentGroundTruthPersistenceError();
-        RedrawHackerEdits();
-        e.Handled = true;
-    }
-
-    private void CancelGroundTruthGesture()
-    {
-        groundTruthLabels.CancelGesture();
-        groundDragStart = null;
-        groundDragTransform = null;
-        if (ReferenceEquals(Mouse.Captured, AtlasCanvas)) Mouse.Capture(null);
-        if (GroundUndoButton is not null)
-            GroundUndoButton.IsEnabled = groundTruthLabels.CanUndo;
-        if (HackerOverlayCanvas is not null) RedrawHackerEdits();
-    }
-
-    private bool TryGroundTruthPointer(
-        Point canvasPoint,
-        out AtlasPoint controllerPoint,
-        out double controllerTolerance,
-        out GroundTruthCameraTransform transform,
-        out GroundTruthRect liveBounds)
-    {
-        controllerPoint = default;
-        controllerTolerance = 0;
-        if (!TryGroundTruthContext(out transform, out liveBounds)) return false;
-        return TryGroundTruthPointer(
-            canvasPoint,
-            transform,
-            liveBounds,
-            out controllerPoint,
-            out controllerTolerance);
-    }
-
-    private bool TryGroundTruthPointer(
-        Point canvasPoint,
-        GroundTruthCameraTransform transform,
-        GroundTruthRect liveBounds,
-        out AtlasPoint controllerPoint,
-        out double controllerTolerance)
-    {
-        var global = ToAtlasGlobal(canvasPoint);
-        var roomPosition = HackerScenePosition(transform.SceneName);
-        var world = new AtlasPoint(
-            (global.X - roomPosition.X) / transform.PixelsPerWorldUnitX,
-            -(global.Y + roomPosition.Y) / transform.PixelsPerWorldUnitY);
-        controllerPoint = transform.WorldToAtlas(world, liveBounds);
-        var zoom = Math.Abs((AtlasCanvas.RenderTransform as MatrixTransform)?.Matrix.M11 ?? 1);
-        if (!double.IsFinite(zoom) || zoom <= 0) zoom = 1;
-        controllerTolerance = 8 / zoom;
-        return true;
     }
 
     private bool TryGroundTruthContext(
@@ -4407,7 +4245,8 @@ public partial class MainWindow : Window
                         room.Left,
                         -room.Bottom,
                         Math.Max(1, room.Right - room.Left),
-                        Math.Max(1, room.Bottom - room.Top))))
+                        Math.Max(1, room.Bottom - room.Top)))
+                { TerrainProjection = room.TerrainProjection })
                 .ToArray();
         var byName = coreRooms.ToDictionary(room => room.SceneName, StringComparer.Ordinal);
         var byId = coreRooms.ToDictionary(room => room.Id);
@@ -4496,65 +4335,8 @@ public partial class MainWindow : Window
         HackerOverlayCanvas.Children.Clear();
         var originX = (hackerAtlasMinimumTileX ?? 0) * HackerAtlasTileSize;
         var originY = (hackerAtlasMinimumTileY ?? 0) * HackerAtlasTileSize;
-        if (hackerInteractionMode == "Ground")
-        {
-            var positiveBrush = new SolidColorBrush(Color.FromRgb(69, 255, 120));
-            var negativeBrush = new SolidColorBrush(Color.FromRgb(255, 46, 46));
-            foreach (var line in legacyGroundEdits.Where(RenderableLegacyGroundLine))
-            {
-                HackerOverlayCanvas.Children.Add(new Line
-                {
-                    X1 = line.X0 - originX,
-                    Y1 = line.Y0 - originY,
-                    X2 = line.X1 - originX,
-                    Y2 = line.Y1 - originY,
-                    Stroke = line.IsNegative ? negativeBrush : positiveBrush,
-                    StrokeThickness = 4,
-                    Opacity = .75,
-                    IsHitTestVisible = false
-                });
-            }
-            if (TryGroundTruthContext(out var transform, out var liveBounds))
-            {
-                var roomPosition = HackerScenePosition(transform.SceneName);
-                var anchor = hackerLivePrepared?.AnchorPosition ?? new AtlasPoint(0, 0);
-                foreach (var line in groundTruthLabels.OverlayLines(transform, liveBounds))
-                {
-                    var firstWorld = transform.AtlasToWorld(line.Start, liveBounds);
-                    var lastWorld = transform.AtlasToWorld(line.End, liveBounds);
-                    HackerOverlayCanvas.Children.Add(new Line
-                    {
-                        X1 = firstWorld.X * transform.PixelsPerWorldUnitX - anchor.X
-                            + roomPosition.X - originX,
-                        Y1 = -(firstWorld.Y * transform.PixelsPerWorldUnitY - anchor.Y
-                            + roomPosition.Y) - originY,
-                        X2 = lastWorld.X * transform.PixelsPerWorldUnitX - anchor.X
-                            + roomPosition.X - originX,
-                        Y2 = -(lastWorld.Y * transform.PixelsPerWorldUnitY - anchor.Y
-                            + roomPosition.Y) - originY,
-                        Stroke = line.Kind switch
-                        {
-                            GroundTruthOverlayLineKind.PositiveGroundTruth => positiveBrush,
-                            GroundTruthOverlayLineKind.NegativeGroundTruth => negativeBrush,
-                            GroundTruthOverlayLineKind.SelectedGroundTruth => Brushes.White,
-                            _ => Brushes.White
-                        },
-                        StrokeThickness = 4
-                    });
-                }
-                var sceneLines = groundTruthLabels.Document.Lines.Where(line => !line.SeededFromDetector
-                    && string.Equals(line.SceneName, transform.SceneName, StringComparison.Ordinal));
-                GroundCountText.Text = $"+{sceneLines.Count(line => line.Kind == GroundTruthLineKind.Positive)
-                    + legacyGroundEdits.Count(line => !line.IsNegative)}  "
-                    + $"−{sceneLines.Count(line => line.Kind == GroundTruthLineKind.Negative)
-                    + legacyGroundEdits.Count(line => line.IsNegative)}";
-            }
-            else GroundCountText.Text = $"+{legacyGroundEdits.Count(line => !line.IsNegative)}  "
-                + $"−{legacyGroundEdits.Count(line => line.IsNegative)}";
-            GroundUndoButton.IsEnabled = groundTruthLabels.CanUndo;
-            HackerGroundToolbar.ToolTip = groundTruthLabels.Error;
-        }
-        if (hackerInteractionMode == "Rooms")
+        RenderHackerTerrain(originX, originY);
+        if (hackerEditingTarget == "Rooms")
         {
             var topology = BuildHackerRoomLayout();
             foreach (var room in topology.Rooms.Values)
@@ -6461,7 +6243,7 @@ public partial class MainWindow : Window
         AtlasPreviewText.Text =
             $"ATLAS  •  {tiles.Length} tiles  •  {maximumX - minimumX + 1}×{maximumY - minimumY + 1}";
         ApplyViewport(AtlasCanvas, HackerViewportPanel,
-            DashboardPresentationPolicy.HackerFramingMode(hackerInteractionMode),
+            hackerFraming,
             HackerLiveImage);
     }
 
@@ -6580,6 +6362,7 @@ public partial class MainWindow : Window
             edit.Bottom = -room.Bounds.MinY;
             edit.LayoutX = room.Position.X;
             edit.LayoutY = room.Position.Y;
+            edit.TerrainProjection = room.TerrainProjection;
         }
 
         var names = output.Rooms.ToDictionary(room => room.Id, room => room.SceneName);
@@ -6708,7 +6491,7 @@ public partial class MainWindow : Window
         ApplyViewport(
             AtlasCanvas,
             HackerViewportPanel,
-            DashboardPresentationPolicy.HackerFramingMode(hackerInteractionMode),
+            hackerFraming,
             HackerLiveImage);
     }
 
@@ -6781,7 +6564,7 @@ public partial class MainWindow : Window
         if (applyViewport)
         {
             ApplyViewport(AtlasCanvas, HackerViewportPanel,
-                DashboardPresentationPolicy.HackerFramingMode(hackerInteractionMode),
+                hackerFraming,
                 HackerLiveImage);
         }
     }
@@ -7167,6 +6950,7 @@ public partial class MainWindow : Window
         public double Bottom { get; set; }
         public double LayoutX { get; set; }
         public double LayoutY { get; set; }
+        public HackerTerrainProjection? TerrainProjection { get; set; }
         public double OffsetX { get; set; }
         public double OffsetY { get; set; }
         public HashSet<string> Connections { get; set; } = new(StringComparer.Ordinal);
