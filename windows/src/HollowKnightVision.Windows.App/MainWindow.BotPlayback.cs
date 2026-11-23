@@ -22,9 +22,10 @@ public partial class MainWindow
         internal BotDemoSession? Demo { get; } = archive is null ? null : new(archive, startedAt);
         internal BotStartupNavigation Startup { get; } = new(startedAt);
         internal LoadedBot? Loaded;
+        internal BotPlaybackUpdate PlaybackUpdate = new(BotPlaybackUpdate.WaitingForFrame);
+        internal string? DisplayedPlaybackStatus; // UI thread
         // The vision analysis worker owns these fields.
         internal bool Playing;
-        internal bool AnnouncedModel;
         internal string? ReportedDemoStatus;
         internal BotDemoSaveBackup? ReportedBackup;
     }
@@ -113,6 +114,14 @@ public partial class MainWindow
             StopBotPlayback("Bot stopped. Press B to start again.");
         else if (run.Demo is not null && !Volatile.Read(ref run.Playing) && BotCaptureClock() - run.StartedAt > 720)
             StopBotPlayback("Bot Demo timed out.");
+        else if ((run.StartedInGameplay || Volatile.Read(ref run.Playing))
+            && Volatile.Read(ref run.Loaded) is { Policy: not null } loaded)
+        {
+            var status = Volatile.Read(ref run.PlaybackUpdate).StatusAt(BotCaptureClock());
+            if (status == run.DisplayedPlaybackStatus) return;
+            run.DisplayedPlaybackStatus = status;
+            SetStatus($"{status} · {loaded.ModelName} · B to stop");
+        }
     }
 
     private BotRun? ObserveBotStartup(BgraFrame frame, long generation, double capturedAt, bool admitted,
@@ -173,18 +182,11 @@ public partial class MainWindow
             EndBotFromWorker(run, loaded.Issue ?? "No verified checkpoint is available.");
             return null;
         }
-        if (!run.AnnouncedModel)
-        {
-            run.AnnouncedModel = true;
-            Dispatcher.InvokeAsync(() =>
-            {
-                if (ReferenceEquals(Volatile.Read(ref botPlayback), run))
-                    SetStatus($"Bot active with {loaded.ModelName}. Press B to stop.");
-            });
-        }
         if (admitted && receiver?.AtlasGameplayActive != false) return run;
         loaded.Policy.ResetHistory();
         gameControls.NeutralizeBotControl(run.Owner);
+        if (run.PlaybackUpdate.Status != "Bot waiting for gameplay")
+            Volatile.Write(ref run.PlaybackUpdate, new("Bot waiting for gameplay"));
         return null;
     }
 
@@ -205,11 +207,14 @@ public partial class MainWindow
     {
         try
         {
-            if (row is not null && previous.HasValue && playback.Decide(row, previous.Value, BotCaptureClock()) is { } decision
-                && gameControls.RenewBotControl(run.Owner, decision.Action.Buttons, decision.Deadline))
-                return;
-            if (row is null || !previous.HasValue) playback.ResetHistory();
-            gameControls.NeutralizeBotControl(run.Owner);
+            var update = playback.Evaluate(row, previous, BotCaptureClock());
+            if (!gameControls.ApplyBotPlayback(run.Owner, update))
+            {
+                playback.ResetHistory();
+                gameControls.NeutralizeBotControl(run.Owner);
+                update = new(BotPlaybackUpdate.WaitingForFrame);
+            }
+            if (update is not null) Volatile.Write(ref run.PlaybackUpdate, update);
         }
         catch (Exception error) when (error is InvalidDataException or InvalidOperationException)
         {

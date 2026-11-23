@@ -68,7 +68,68 @@ internal static class ForwarderPauseTests
 
     public static void TestBotOwnershipAndExpiration() => BotOwnershipAndExpiration().GetAwaiter().GetResult();
 
+    public static void TestBotPlaybackWaitsAndIgnoresDelayedEvidence() => BotPlaybackWaitsAndIgnoresDelayedEvidence().GetAwaiter().GetResult();
+
     public static void TestAtlasPathsUseReceiverMenuWithoutCamera() => AtlasPathsUseReceiverMenuWithoutCamera().GetAwaiter().GetResult();
+
+    private static async Task BotPlaybackWaitsAndIgnoresDelayedEvidence()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-bot-evidence-lease-");
+        try
+        {
+            BotPolicyTests.WriteRuntime(temporary.FullName, alwaysAttack: true);
+            var playback = new BotPolicyPlayback(BotNativePolicy.Load(temporary.FullName), BotCaptureDomain.Hacker);
+            await using var fixture = new Fixture(pauseSupported: true);
+            var forwarder = fixture.Forwarder;
+            await Until(() => forwarder.PauseState == GamePauseState.Ready);
+            await fixture.Next("state");
+            var owner = forwarder.BeginBotControl() ?? throw new Exception("Bot control did not start.");
+            await Expect(InputButtons.None);
+            Check(new BotPlaybackUpdate(BotPlaybackUpdate.WaitingForFrame).Decision is null);
+
+            var first = Authored(Clock() - .01);
+            var fresh = Apply(first);
+            Check(fresh?.Decision is { } decision && decision.Action.Buttons.HasFlag(InputButtons.ActionX)
+                && decision.Deadline <= first.CapturedAt + .2);
+            await Expect(fresh!.Decision!.Value.Action.Buttons);
+            Check(Apply(Authored(first.CaptureTimestamp - 1) with { AvailableAt = Clock(), Issues = ["stale-capture"] }) is null);
+            Check(Apply(first with { Issues = ["missing-terrain-analysis"] }) is null);
+            Check(forwarder.CaptureMovement() == fresh.Decision.Value.Action.Buttons,
+                "Delayed or duplicate evidence released the current controls.");
+
+            var missing = Apply(Authored(Clock()) with { Issues = ["missing-knight"] });
+            Check(missing is { Decision: null, Status: "Bot waiting for Knight detection" });
+            await Expect(InputButtons.None);
+            Check(forwarder.OwnsBotControl(owner) && Apply(first) is null, "Waiting lost ownership or enabled a replayed observation.");
+
+            var recovered = Apply(Authored(Clock()));
+            Check(recovered?.Decision is { Action.Buttons: not InputButtons.None }, "Fresh terrain and Knight evidence should resume playback.");
+            await Expect(recovered!.Decision!.Value.Action.Buttons);
+            forwarder.EndBotControl(owner);
+            await Expect(InputButtons.None);
+            Check(!forwarder.OwnsBotControl(owner) && !forwarder.ApplyBotPlayback(owner, recovered),
+                "A stopped session accepted another policy action.");
+
+            BotPlaybackUpdate? Apply(BotCaptureObservation row)
+            {
+                var update = playback.Evaluate(row, forwarder.CaptureMovement(), Clock());
+                Check(forwarder.ApplyBotPlayback(owner, update), "The receiver input lease was not renewed.");
+                return update;
+            }
+
+            async Task Expect(InputButtons buttons)
+            {
+                var wire = ReceiverWireCodec.DecodeLine<ReceiverInputSnapshot>(await fixture.Next("state"));
+                Check(wire.HeldButtons == buttons && wire.Enabled == (buttons != InputButtons.None),
+                    $"Expected wire input {buttons} but received {wire.HeldButtons}.");
+            }
+        }
+        finally { temporary.Delete(recursive: true); }
+
+        static BotCaptureObservation Authored(double time) => BotVisualKnightMemoryTests.Row(time, .3) with
+            { TerrainSource = "human-authored", HumanTerrainCount = 2, KnightSource = "hacker-frame" };
+        static double Clock() => System.Diagnostics.Stopwatch.GetTimestamp() / (double)System.Diagnostics.Stopwatch.Frequency;
+    }
 
     private static async Task AtlasPathsUseReceiverMenuWithoutCamera()
     {

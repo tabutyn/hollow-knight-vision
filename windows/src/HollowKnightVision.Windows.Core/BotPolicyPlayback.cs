@@ -2,11 +2,21 @@ namespace HollowKnightVision.Windows.Core;
 
 public readonly record struct BotPlaybackDecision(BotPolicyAction Action, double Deadline);
 
+public sealed record BotPlaybackUpdate(string Status, BotPlaybackDecision? Decision = null)
+{
+    public const string WaitingForFrame = "Bot waiting for a fresh frame";
+    internal const string WaitingForObservation = "Bot waiting for a fresh observation";
+
+    public string StatusAt(double now) => Decision is { Deadline: var deadline } && now >= deadline
+        ? WaitingForObservation : Status;
+}
+
 /// <summary>Runs the selected model against fresh evidence and bounds each action to that evidence.</summary>
 public sealed class BotPolicyPlayback(BotNativePolicy policy, BotCaptureDomain domain)
 {
     private readonly BotObservationHistory history = new(policy.Version);
     private double lastAttempt = double.NegativeInfinity;
+    private (long Generation, double Timestamp)? newestCapture;
 
     public bool WantsObservation(double capturedAt)
     {
@@ -18,20 +28,57 @@ public sealed class BotPolicyPlayback(BotNativePolicy policy, BotCaptureDomain d
 
     public void ResetHistory() => history.Reset();
 
-    public BotPlaybackDecision? Decide(BotCaptureObservation row, InputButtons previous, double now)
+    public BotPlaybackDecision? Decide(BotCaptureObservation row, InputButtons previous, double now) =>
+        Evaluate(row, previous, now)?.Decision;
+
+    // An absent update leaves the active action and its deadline alone.
+    public BotPlaybackUpdate? Evaluate(BotCaptureObservation? row, InputButtons? previous, double now)
     {
-        if (row.TerrainSource != (domain == BotCaptureDomain.Hacker ? "human-authored" : "detected"))
-        {
-            history.Reset();
+        if (row is null)
+            return WaitFor(domain == BotCaptureDomain.Hacker
+                ? "Bot waiting for mod actor telemetry" : BotPlaybackUpdate.WaitingForFrame);
+        if (!double.IsFinite(row.CaptureTimestamp) || row.CaptureTimestamp > now)
+            return WaitFor("Bot waiting for a fresh capture");
+        if (newestCapture is { } latest && row.Generation == latest.Generation && row.CaptureTimestamp <= latest.Timestamp)
             return null;
-        }
-        var features = history.Append(row, BotPolicyAction.FromButtons(previous), now,
+        newestCapture = (row.Generation, row.CaptureTimestamp);
+        if (!previous.HasValue) return WaitFor("Bot waiting for current game controls");
+        if (row.TerrainSource != (domain == BotCaptureDomain.Hacker ? "human-authored" : "detected"))
+            return WaitFor(domain == BotCaptureDomain.Hacker
+                ? "Bot waiting for authored terrain" : "Bot waiting for detected terrain");
+
+        var features = history.Append(row, BotPolicyAction.FromButtons(previous.Value), now,
             allowMaskedKnight: domain == BotCaptureDomain.Gameplay && policy.SupportsMaskedKnight);
-        if (features is null) return null;
-        var action = BotNativePolicy.Action(policy.Logits(features));
+        if (features is null) return WaitFor(Reason(row, now));
         var deadline = Math.Min(now + .18,
             Math.Min(row.KnightPredictionDeadline,
                 Math.Min(row.CapturedAt + BotRecordingContract.MaximumCaptureAge, row.AvailableAt + .25)));
-        return now < deadline ? new(action, deadline) : null;
+        if (now >= deadline) return WaitFor(Reason(row, now));
+        var action = BotNativePolicy.Action(policy.Logits(features));
+        var tracking = row.KnightPrediction is not null ? " · estimating Knight"
+            : row.HasMaskedKnightEvidence ? " · Knight occluded" : "";
+        return new($"Bot · {action.DisplayName}{tracking}", new(action, deadline));
+    }
+
+    private BotPlaybackUpdate WaitFor(string status)
+    {
+        history.Reset();
+        return new(status);
+    }
+
+    private static string Reason(BotCaptureObservation row, double now)
+    {
+        var issues = row.Issues;
+        if (issues.Contains("stale-capture") || now - row.CapturedAt is not (>= 0 and <= BotRecordingContract.MaximumCaptureAge))
+            return "Bot waiting for a fresh capture";
+        if (issues.Contains("stale-or-missing-detection")) return "Bot waiting for fresh object detection";
+        if (issues.Contains("missing-hacker-actor-telemetry") || issues.Contains("invalid-hacker-actors"))
+            return "Bot waiting for mod actor telemetry";
+        if (issues.Contains("missing-hacker-knight")) return "Bot waiting for the mod Knight position";
+        if (issues.Contains("missing-hacker-enemies")) return "Bot waiting for mod enemy positions";
+        if (issues.Contains("missing-knight") || now >= row.KnightPredictionDeadline) return "Bot waiting for Knight detection";
+        if (issues.Contains("missing-terrain-analysis")) return "Bot waiting for ground lines";
+        if (issues.Contains("room-transition")) return "Bot waiting for the room transition";
+        return BotPlaybackUpdate.WaitingForObservation;
     }
 }

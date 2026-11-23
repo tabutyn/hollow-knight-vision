@@ -10,6 +10,13 @@ public readonly record struct BotPolicyAction(int Horizontal, int Aim, int Jump,
         | (Aim == 1 ? InputButtons.Up : Aim == 2 ? InputButtons.Down : InputButtons.None)
         | (Jump == 1 ? InputButtons.ActionZ : InputButtons.None) | (Attack == 1 ? InputButtons.ActionX : InputButtons.None);
     public int[] Values => [Horizontal, Aim, Jump, Attack];
+    public string DisplayName => this == default ? "neutral" : string.Join(" + ", new[]
+    {
+        Horizontal == 1 ? "left" : Horizontal == 2 ? "right" : null,
+        Aim == 1 ? "up" : Aim == 2 ? "down" : null,
+        Jump == 1 ? "jump" : null,
+        Attack == 1 ? "attack" : null
+    }.OfType<string>());
 
     public static BotPolicyAction FromButtons(InputButtons buttons) => new(
         (buttons & (InputButtons.Left | InputButtons.Right)) switch { InputButtons.Left => 1, InputButtons.Right => 2, _ => 0 },
