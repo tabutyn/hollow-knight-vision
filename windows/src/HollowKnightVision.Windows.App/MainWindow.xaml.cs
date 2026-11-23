@@ -732,6 +732,7 @@ public partial class MainWindow : Window
         internal GroundSemanticAtlas SemanticAtlas { get; } = new();
         internal GroundReferenceTracker ReferenceTracker { get; } = new();
         internal WalkedGroundTracker WalkedGround { get; } = new();
+        internal long WalkedCoordinateEpoch { get; private set; }
         internal GroundPlatformPatches PlatformPatches { get; } = new();
         internal string? ReceiverSceneName { get; private set; }
         internal int FrameWidth { get; private set; }
@@ -756,7 +757,7 @@ public partial class MainWindow : Window
                     receiverSceneName,
                     StringComparison.Ordinal))
             {
-                Reset(preserveWalkedGround: true);
+                Reset();
                 FrameWidth = width;
                 FrameHeight = height;
             }
@@ -771,10 +772,16 @@ public partial class MainWindow : Window
             PlatformPatches.Reset();
         }
 
+        internal void ResetWalkedCoordinateEpoch()
+        {
+            WalkedCoordinateEpoch++;
+            WalkedGround.Reset();
+        }
+
         internal void Reset(bool preserveWalkedGround = false)
         {
             if (preserveWalkedGround) WalkedGround.BreakContinuity();
-            else WalkedGround.Reset();
+            else ResetWalkedCoordinateEpoch();
             PlatformPatches.Reset();
             NeedsCameraAnchor = true;
             Tracker.Reset();
@@ -3318,7 +3325,8 @@ public partial class MainWindow : Window
         var cameraCorrection = groundHypotheses.GlobalCorrection;
         if (cameraCorrection is { } correction && correction.X * correction.X + correction.Y * correction.Y > 9)
         {
-            groundHypothesisState.WalkedGround.BreakContinuity();
+            if (gameMode == GameRuntimeMode.Modded) groundHypothesisState.ResetWalkedCoordinateEpoch();
+            else groundHypothesisState.WalkedGround.BreakContinuity();
             groundHypothesisState.PlatformPatches.Reset();
         }
         if (groundAnalysis is not null)
@@ -3329,11 +3337,8 @@ public partial class MainWindow : Window
             ? groundHypothesisState.PlatformPatches.Observe(groundAnalysis, ground, hypothesisExclusions,
                 visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null, captureTimestamp)
             : [];
-        IReadOnlyList<GroundHypothesisAtlasLine> groundDisplayLines = admission.AdmitsTracking
-            ? GroundStrokeGeometry.VisibleLines(groundHypotheses.AtlasLines, groundHypotheses.LineReviews,
-                groundHypothesisState.WalkedGround.InRoom(atlasRoomId), groundDisplayCamera,
-                frame.Height, masks.GroundKnight)
-            : [];
+        var localWalkedGround = groundHypothesisState.WalkedGround.InRoom(atlasRoomId);
+        var walkedCoordinateEpoch = groundHypothesisState.WalkedCoordinateEpoch;
         var atlasCaptureIdentity = FormattableString.Invariant(
             $"{captureGeneration}:{frame.CaptureId}:{BitConverter.DoubleToInt64Bits(captureTimestamp):X16}");
         var atlasCompositionExclusions = LiveAtlasTransitionMaskPolicy.Merge(
@@ -3354,14 +3359,11 @@ public partial class MainWindow : Window
         {
             Interlocked.Exchange(ref pendingWorldTrackingLoss, (long)liveWorldGeneration);
         }
-        if (gameplayAdmitted && gameMode == GameRuntimeMode.Modded)
+        if (gameMode == GameRuntimeMode.Modded)
         {
-            if (receiverTelemetry is not { SceneName: { Length: > 0 } roomName }
-                || liveWorldPipeline is null)
-            {
+            if (string.IsNullOrWhiteSpace(receiverScene) || liveWorldPipeline is null)
                 gameplayAdmitted = false;
-            }
-            else
+            else if (gameplayAdmitted)
             {
                 var localPose = new AtlasPoint(
                     visualTelemetry.CameraX,
@@ -3391,25 +3393,41 @@ public partial class MainWindow : Window
                     Exclusions: compositionExclusions,
                     GroundAlignmentExclusions: groundAlignmentExclusions,
                     CaptureGeneration: liveWorldGeneration,
-                    RoomName: roomName,
+                    RoomName: receiverScene,
                     AtlasPixelsPerWorldUnit: gameplayAtlas.PixelsPerWorldUnit,
-                    AtlasTileSize: gameplayAtlas.TileSize, StableTrackingVerified: visualObservation.GroundVerified), visualTelemetry, atlasCompositionExclusions, atlasRoomId, atlasCaptureIdentity);
-                liveWorldResult = CurrentWorldResult(liveWorldGeneration, roomName);
-                gameplayAdmitted = liveWorldResult?.State is WindowsLiveWorldPipelineState.Committed or WindowsLiveWorldPipelineState.Throttled;
-                if (liveWorldResult?.CaptureGeneration == liveWorldGeneration
-                    && liveWorldResult.State is WindowsLiveWorldPipelineState.Committed
-                        or WindowsLiveWorldPipelineState.Throttled)
+                    AtlasTileSize: gameplayAtlas.TileSize, StableTrackingVerified: visualObservation.GroundVerified)
                 {
+                    WalkedGround = localWalkedGround,
+                    WalkedCoordinateEpoch = walkedCoordinateEpoch
+                }, visualTelemetry, atlasCompositionExclusions, atlasRoomId, atlasCaptureIdentity);
+            }
+            if (receiverScene is { Length: > 0 })
+            {
+                liveWorldResult = CurrentWorldResult(liveWorldGeneration, receiverScene);
+                var placed = liveWorldResult?.State is WindowsLiveWorldPipelineState.Committed
+                    or WindowsLiveWorldPipelineState.Throttled;
+                gameplayAdmitted &= placed;
+                if (placed)
+                {
+                    var basis = liveWorldResult!.WorldBasisOffset;
                     visualTelemetry = visualTelemetry with
                     {
-                        CameraX = localPose.X + liveWorldResult.WorldBasisOffset.X,
-                        CameraY = localPose.Y + liveWorldResult.WorldBasisOffset.Y,
-                        CameraTargetX = localPose.X + liveWorldResult.WorldBasisOffset.X,
-                        CameraTargetY = localPose.Y + liveWorldResult.WorldBasisOffset.Y
+                        CameraX = visualTelemetry.CameraX + basis.X,
+                        CameraY = visualTelemetry.CameraY + basis.Y,
+                        CameraTargetX = visualTelemetry.CameraTargetX + basis.X,
+                        CameraTargetY = visualTelemetry.CameraTargetY + basis.Y
                     };
+                    var recorded = liveWorldResult.WalkedCoordinateEpoch == walkedCoordinateEpoch
+                        ? liveWorldResult.RecordedLocalWalk : [];
+                    localWalkedGround = LiveWorldWalkedGround.MergeForDisplay(
+                        localWalkedGround, recorded, liveWorldResult.WalkedGround, basis);
                 }
             }
         }
+        IReadOnlyList<GroundHypothesisAtlasLine> groundDisplayLines = admission.AdmitsTracking
+            ? GroundStrokeGeometry.VisibleLines(groundHypotheses.AtlasLines, groundHypotheses.LineReviews,
+                localWalkedGround, groundDisplayCamera, frame.Height, masks.GroundKnight)
+            : [];
         if (inputPathDivergenceMonitor.IsAcceptingSamples
             && renderedGameFrame is { } renderedFrame)
         {

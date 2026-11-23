@@ -218,6 +218,10 @@ var tests = new List<(string Name, Action Run)>
     ("live-world pipeline corrupt persistent world blocks atlas", TestCorruptPersistentWorldBlocksAtlasInsteadOfFallingBackToMemory),
     ("live-world pipeline discards delayed world timestamp without rewinding visit", TestDelayedWorldTimestampIsDiscardedWithoutRewindingTrackerVisit),
     ("live-world pipeline recovery remains transient until a normal frame", TestRecoverySearchIsTransientAndReturnsConfirmedWorldPlacement),
+    ("walked ground follows its saved observation poses across store reopen", LiveWorldWalkedGroundTests.TestWalkedGroundSurvivesStoreReopenAndFollowsOnlyItsOwningPose),
+    ("walked ground stages fresh columns and uses corrected persisted geometry", LiveWorldWalkedGroundTests.TestOnlyFreshWalkedColumnsAreCommittedAndAlreadySavedSpansFollowWorldCorrection),
+    ("invalid saved walked ground is rejected", LiveWorldWalkedGroundTests.TestInvalidPersistedWalkedGeometryFailsSnapshotValidation),
+    ("live-world pipeline persists fresh walked ground and restores it on recovery", TestPipelinePersistsWalkedFloorAndRestoresItOnRecovery),
     ("live-world pipeline enforces bounded persistence cadence", TestPipelineCadenceSuppressesDuplicatePersistence),
     ("live-world pipeline rejects stale capture generations", TestPipelineRejectsStaleCaptureGeneration),
     ("live-world pipeline rolls back stale CAS and suppresses publication", TestPipelineRollsBackAfterCasFailureAndSuppressesPublication),
@@ -9145,6 +9149,56 @@ static void TestRecoverySearchIsTransientAndReturnsConfirmedWorldPlacement()
     });
 }
 
+static void TestPipelinePersistsWalkedFloorAndRestoresItOnRecovery()
+{
+    WithTemporaryDirectory(root =>
+    {
+        const string room = "Tutorial_01";
+        var texture = PipelineTexturePixels(71);
+        GroundHypothesisAtlasLine Span(double left, double right) =>
+            new(WalkedGroundMemory.WalkedSegmentId, new(left, 80), new(right, 80));
+        var original = Span(10, 100);
+        var extended = Span(10, 120);
+        var pipeline = new LiveWorldPipelineReflection(root, _ => { });
+        var initial = pipeline.Process(PipelineTextureFrameFromPixels(1, texture), 100, 1, 1, room,
+            walkedGround: [original]);
+        Equal("Committed", initial.State);
+        True(initial.WalkedGround.SequenceEqual([original]));
+        var throttled = pipeline.Process(PipelineTextureFrameFromPixels(2, texture), 101, 1.05, 1, room,
+            walkedGround: [extended]);
+        Equal("Throttled", throttled.State);
+        True(throttled.WalkedGround.SequenceEqual([original]));
+        var advanced = pipeline.Process(PipelineTextureFrameFromPixels(3, texture), 102, 1.30, 1, room,
+            walkedGround: [extended]);
+        Equal("Committed", advanced.State);
+        True(advanced.WalkedGround.SequenceEqual([extended]));
+        var saved = new LiveWorldSessionStore(root).Load().Snapshot;
+        True(saved.Observations[1].WalkedGround!.SequenceEqual([new LiveWorldWalkedFloor(100, 120, 80)]));
+
+        var reopened = new LiveWorldPipelineReflection(root, _ => { });
+        var raw = new AtlasPoint(80, 0);
+        var first = reopened.Process(PipelineTextureFrameFromPixels(4, texture), 103, 1.60, 1, room, localPose: raw);
+        Equal("PendingRecovery", first.State);
+        True(first.WalkedGround.Count == 0);
+        var confirmed = reopened.Process(PipelineTextureFrameFromPixels(5, texture), 104, 1.90, 1, room, localPose: raw);
+        True(confirmed.ConfirmedRecoveryPose is not null);
+        var placed = reopened.Process(PipelineTextureFrameFromPixels(6, texture), 105, 2.20, 1, room, localPose: raw,
+            walkedGround: [Span(200, 220)]);
+        Equal("Committed", placed.State);
+        var archive = new LiveWorldSessionStore(root).Load().Snapshot;
+        ClosePoint(raw, archive.Observations[^1].RawPose, .000_001);
+        ClosePoint(placed.CameraPose, archive.Observations[^1].OptimizedPose, .000_001);
+        CloseWithin(140, placed.WalkedGround.Max(line => line.AtlasEnd.X), .01);
+        True(placed.WalkedGround.SequenceEqual(LiveWorldWalkedGround.ProjectRoom(archive,
+            archive.Observations[^1].RoomId)));
+        var uncertain = reopened.Process(PipelineTextureFrameFromPixels(7, PipelineTexturePixels(911)),
+            106, 2.50, 1, room, stableTrackingVerified: false, localPose: raw,
+            walkedGround: [Span(100, 400)]);
+        Equal("Committed", uncertain.State);
+        True(new LiveWorldSessionStore(root).Load().Snapshot.Observations[^1].WalkedGround is null);
+    });
+}
+
 static void TestPipelineCadenceSuppressesDuplicatePersistence()
 {
     WithTemporaryDirectory(root =>
@@ -9242,10 +9296,14 @@ static void TestPipelinePublishesClosureOnlyAfterRebuildAndCommit()
         var secondTexture = PipelineTexturePixels(811);
         Equal("Committed", pipeline.Process(
             PipelineTextureFrameFromPixels(1, firstTexture), 100, 1, 1, "Tutorial_01",
-            localPose: new AtlasPoint(0, 0)).State);
+            localPose: new AtlasPoint(0, 0),
+            walkedGround: [new GroundHypothesisAtlasLine(WalkedGroundMemory.WalkedSegmentId,
+                new(0, 70), new(120, 70))]).State);
         Equal("Committed", pipeline.Process(
             PipelineTextureFrameFromPixels(2, secondTexture), 101, 1.3, 1, "Tutorial_01",
-            localPose: new AtlasPoint(160, 0)).State);
+            localPose: new AtlasPoint(160, 0),
+            walkedGround: [new GroundHypothesisAtlasLine(WalkedGroundMemory.WalkedSegmentId,
+                new(160, 70), new(280, 70))]).State);
         Equal("Committed", pipeline.Process(
             PipelineTextureFrameFromPixels(3, firstTexture), 102, 1.6, 1, "Tutorial_01",
             localPose: new AtlasPoint(0, 0)).State);
@@ -9255,6 +9313,10 @@ static void TestPipelinePublishesClosureOnlyAfterRebuildAndCommit()
 
         Equal("Committed", closure.State);
         True(closure.AcceptedClosure is not null);
+        var rebuiltWorld = new LiveWorldSessionStore(root).Load().Snapshot;
+        True(closure.WalkedGround.Count == 2);
+        True(closure.WalkedGround.SequenceEqual(LiveWorldWalkedGround.ProjectRoom(rebuiltWorld,
+            rebuiltWorld.Observations[0].RoomId)));
         var rebuildIndex = stages.LastIndexOf("closure-rebuild");
         var commitIndex = stages.FindIndex(rebuildIndex + 1, value => value == "commit");
         var basisIndex = stages.FindIndex(commitIndex + 1, value => value == "closure-basis");
@@ -9749,7 +9811,8 @@ internal sealed record LiveWorldPipelineReflectionResult(
     AtlasPoint WorldBasisOffset,
     AtlasPoint? ConfirmedRecoveryPose,
     bool AllowsAtlasWrite,
-    bool HasRebuiltAtlas);
+    bool HasRebuiltAtlas,
+    IReadOnlyList<GroundHypothesisAtlasLine> WalkedGround);
 
 internal sealed record LiveRoomBoundaryEvidenceReflectionResult(
     VisualRoomBoundaryEvidence? Evidence,
@@ -9815,7 +9878,9 @@ internal sealed class LiveWorldPipelineReflection
         bool stableTrackingVerified = true,
         AtlasPoint? localPose = null,
         IReadOnlyList<StencilRect>? exclusions = null,
-        IReadOnlyList<StencilRect>? groundAlignmentExclusions = null)
+        IReadOnlyList<StencilRect>? groundAlignmentExclusions = null,
+        IReadOnlyList<GroundHypothesisAtlasLine>? walkedGround = null,
+        long walkedCoordinateEpoch = 0)
     {
         var request = FrameConstructor.Invoke(
         [
@@ -9833,6 +9898,12 @@ internal sealed class LiveWorldPipelineReflection
             64,
             stableTrackingVerified
         ]);
+        if (walkedGround is not null)
+        {
+            const BindingFlags properties = BindingFlags.Instance | BindingFlags.NonPublic;
+            FrameType.GetProperty("WalkedGround", properties)!.SetValue(request, walkedGround);
+            FrameType.GetProperty("WalkedCoordinateEpoch", properties)!.SetValue(request, walkedCoordinateEpoch);
+        }
         var result = Invoke(ProcessMethod, pipeline, request);
         var type = result.GetType();
         return new LiveWorldPipelineReflectionResult(
@@ -9858,7 +9929,8 @@ internal sealed class LiveWorldPipelineReflection
                 : null,
             type.GetProperty("AllowsAtlasWrite", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                     ?.GetValue(result) is true,
-            type.GetProperty("RebuiltAtlas")?.GetValue(result) is not null);
+            type.GetProperty("RebuiltAtlas")?.GetValue(result) is not null,
+            (IReadOnlyList<GroundHypothesisAtlasLine>)type.GetProperty("WalkedGround")!.GetValue(result)!);
     }
 
     internal void NotifyTrackingLoss(ulong captureGeneration) =>

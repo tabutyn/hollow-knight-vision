@@ -110,12 +110,12 @@ public static class GroundStrokeGeometry
         if (walked.Count == 0) return edges;
         var knightHeight = GroundClearance.KnightHeight(imageHeight, knight);
         var footprints = walked.OrderBy(line => line.AtlasStart.X).ToArray();
-        return [.. walked, .. edges.SelectMany(line => ClipWalked(line, footprints, knightHeight))];
+        return [.. walked, .. edges.SelectMany(line => ExcludeColumns(line, footprints, knightHeight))];
     }
 
     // Each real footprint supersedes detector strokes in its columns, without
     // erasing an unvisited platform next to it or above the available headroom.
-    private static IEnumerable<GroundHypothesisAtlasLine> ClipWalked(GroundHypothesisAtlasLine line,
+    internal static IEnumerable<GroundHypothesisAtlasLine> ExcludeColumns(GroundHypothesisAtlasLine line,
         IReadOnlyList<GroundHypothesisAtlasLine> walked, double clearance)
     {
         var start = line.AtlasStart.X;

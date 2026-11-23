@@ -279,7 +279,9 @@ public sealed class LiveWorldTracker
         ulong captureGeneration = 0,
         ulong localEpoch = 0,
         ulong basisRevision = 0,
-        int roomId = 0)
+        int roomId = 0,
+        AtlasPoint? placedCameraPose = null,
+        IReadOnlyList<LiveWorldWalkedFloor>? walkedGround = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         var excluded = exclusions?.ToArray() ?? [];
@@ -287,6 +289,7 @@ public sealed class LiveWorldTracker
             || !double.IsFinite(timestamp)
             || frame.Width <= 0 || frame.Height <= 0
             || !Finite(proposedCameraPose)
+            || placedCameraPose is { } placement && !Finite(placement)
             || !double.IsFinite(solveWidth) || solveWidth <= 0
             || roomId < 0
             || excluded.Any(rectangle => !Valid(rectangle)))
@@ -320,12 +323,15 @@ public sealed class LiveWorldTracker
                 new AtlasPoint(rectangle.X, rectangle.Y),
                 new WorldSize(rectangle.Width, rectangle.Height))).ToArray(),
             proposedCameraPose,
-            proposedCameraPose,
+            placedCameraPose ?? proposedCameraPose,
             localPose ?? proposedCameraPose,
             captureGeneration,
             localEpoch,
             basisRevision,
-            roomId);
+            roomId) with
+        {
+            WalkedGround = walkedGround is { Count: > 0 } ? walkedGround.ToArray() : null
+        };
         ReplaceSnapshot(observations: [.. Snapshot.Observations, observation]);
         currentVisitObservationIds.Add(observationId);
         cumulativeTravel[observationId] = travel;
@@ -534,7 +540,7 @@ public sealed class LiveWorldTracker
         var featureReference = matcher.MakeReference(
             ReferenceId(keyframeId),
             frame,
-            observation.RawPose,
+            observation.OptimizedPose,
             observation.SolveWidth,
             excluding: observation.ExcludedRects.Select(rectangle => new StencilRect(
                 rectangle.X,
@@ -553,8 +559,8 @@ public sealed class LiveWorldTracker
                     observation.SourceObservationId,
                     feature.SamplePoint,
                     new AtlasPoint(
-                        observation.RawPose.X + feature.SamplePoint.X * sampleScale,
-                        observation.RawPose.Y
+                        observation.OptimizedPose.X + feature.SamplePoint.X * sampleScale,
+                        observation.OptimizedPose.Y
                             + (featureReference.SampleHeight - feature.SamplePoint.Y) * sampleScale),
                     feature.Descriptor.Select(value => (float)value).ToArray(),
                     feature.Depth,
@@ -681,6 +687,7 @@ public sealed class LiveWorldTracker
         var optimized = Snapshot.Observations.ToDictionary(
             value => value.Id,
             value => value.OptimizedPose);
+        var sampledEpochs = samples.Select(sample => sample.VisitId).ToHashSet();
         foreach (var observation in roomObservations)
         {
             var epochId = epochIds.GetValueOrDefault(
@@ -688,6 +695,7 @@ public sealed class LiveWorldTracker
                     observation.CaptureGeneration,
                     observation.LocalEpoch),
                 visitId);
+            if (!sampledEpochs.Contains(epochId)) continue;
             optimized[observation.Id] = PoseCorrectionInterpolator.RefinedPose(
                 observation.RawPose,
                 observation.Timestamp,

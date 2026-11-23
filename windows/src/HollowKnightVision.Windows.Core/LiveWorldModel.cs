@@ -60,6 +60,8 @@ public sealed record LiveWorldObservation(
     AtlasPoint RawPose,
     AtlasPoint OptimizedPose)
 {
+    public IReadOnlyList<LiveWorldWalkedFloor>? WalkedGround { get; init; }
+
     public static LiveWorldObservation Create(
         int id,
         int sourceObservationId,
@@ -118,7 +120,10 @@ internal sealed class LiveWorldObservationJsonConverter
             payload.BasisRevision,
             payload.RoomId,
             payload.RawPose,
-            payload.OptimizedPose);
+            payload.OptimizedPose)
+        {
+            WalkedGround = payload.WalkedGround
+        };
     }
 
     public override void Write(
@@ -141,7 +146,8 @@ internal sealed class LiveWorldObservationJsonConverter
             BasisRevision = value.BasisRevision,
             RoomId = value.RoomId,
             RawPose = value.RawPose,
-            OptimizedPose = value.OptimizedPose
+            OptimizedPose = value.OptimizedPose,
+            WalkedGround = value.WalkedGround
         }, options);
 
     private sealed class Payload
@@ -161,6 +167,8 @@ internal sealed class LiveWorldObservationJsonConverter
         public int RoomId { get; init; }
         [JsonRequired] public AtlasPoint RawPose { get; init; }
         [JsonRequired] public AtlasPoint OptimizedPose { get; init; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyList<LiveWorldWalkedFloor>? WalkedGround { get; init; }
     }
 }
 
@@ -443,6 +451,8 @@ public sealed record LiveWorldSnapshot
         && double.IsFinite(observation.SolveWidth) && observation.SolveWidth > 0
         && Finite(observation.LocalPose) && Finite(observation.RawPose)
         && Finite(observation.OptimizedPose)
+        && (observation.WalkedGround is null
+            || observation.WalkedGround.All(floor => floor.IsValid(observation.OptimizedPose)))
         && observation.ExcludedRects.All(rectangle =>
             double.IsFinite(rectangle.X) && double.IsFinite(rectangle.Y)
             && double.IsFinite(rectangle.Width) && double.IsFinite(rectangle.Height)

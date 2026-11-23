@@ -28,7 +28,11 @@ internal sealed record WindowsLiveWorldFrame(
     string? RoomName,
     double AtlasPixelsPerWorldUnit,
     int AtlasTileSize,
-    bool StableTrackingVerified = true);
+    bool StableTrackingVerified = true)
+{
+    internal IReadOnlyList<GroundHypothesisAtlasLine> WalkedGround { get; init; } = [];
+    internal long WalkedCoordinateEpoch { get; init; }
+}
 
 internal sealed record WindowsLiveWorldPipelineResult(
     WindowsLiveWorldPipelineState State,
@@ -43,6 +47,9 @@ internal sealed record WindowsLiveWorldPipelineResult(
     string Diagnostic)
 {
     internal bool AllowsAtlasWrite => State == WindowsLiveWorldPipelineState.Committed;
+    public IReadOnlyList<GroundHypothesisAtlasLine> WalkedGround { get; init; } = [];
+    internal long WalkedCoordinateEpoch { get; init; }
+    internal IReadOnlyList<GroundHypothesisAtlasLine> RecordedLocalWalk { get; init; } = [];
 
     internal static WindowsLiveWorldPipelineResult NotApplicable(
         WindowsLiveWorldFrame frame,
@@ -87,6 +94,9 @@ internal sealed class WindowsLiveWorldPipeline
     private readonly Func<string, bool>? transactionFault;
     private readonly Dictionary<int, string> roomNames = [];
     private readonly Dictionary<int, IReadOnlyList<WorldRect>> compositionExclusions = [];
+    private readonly Dictionary<int, IReadOnlyList<GroundHypothesisAtlasLine>> projectedWalkedGround = [];
+    private (ulong Capture, int Room, long CoordinateEpoch)? walkedScope;
+    private IReadOnlyList<GroundHypothesisAtlasLine> committedLocalWalk = [];
     private LiveWorldSessionStore? store;
     private LiveWorldTracker? tracker;
     private WorldBasisController worldBasis = new();
@@ -457,17 +467,19 @@ internal sealed class WindowsLiveWorldPipeline
             if (request.MonotonicTimestamp - lastPersistenceAt
                 < PersistenceIntervalSeconds)
             {
-                return Publish(Throttled(request, activeTracker));
+                return Publish(Throttled(request, activeTracker, resolvedRoomId));
             }
             lastPersistenceAt = request.MonotonicTimestamp;
 
             var worldPose = resolvedObservation.Value.WorldPose;
-            // The raw graph pose belongs to the capture. A later recovery can
-            // revise worldFromLocal, but must not rewrite older ground-anchored
-            // evidence to that newer basis. The corrected world pose remains
-            // the presentation/atlas placement returned below.
+            // Keep raw motion in the capture basis. The placed pose belongs to
+            // the image and to any ground geometry recorded with that image.
             var capturePose = resolvedObservation.Value.Ticket.LocalPose;
             var priorSnapshot = activeTracker.Snapshot;
+            var scope = (request.CaptureGeneration, resolvedRoomId, request.WalkedCoordinateEpoch);
+            IReadOnlyList<GroundHypothesisAtlasLine> priorWalk = walkedScope == scope ? committedLocalWalk : [];
+            IReadOnlyList<GroundHypothesisAtlasLine> walked = request.StableTrackingVerified ? request.WalkedGround : [];
+            var groundEvidence = LiveWorldWalkedGround.NewEvidence(walked, priorWalk, capturePose);
             try
             {
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
@@ -503,7 +515,9 @@ internal sealed class WindowsLiveWorldPipeline
                     captureGeneration: persistentCaptureGeneration,
                     localEpoch: resolvedObservation.Value.Ticket.LocalEpoch,
                     basisRevision: resolvedObservation.Value.Ticket.BasisRevision,
-                    roomId: resolvedRoomId);
+                    roomId: resolvedRoomId,
+                    placedCameraPose: worldPose,
+                    walkedGround: groundEvidence);
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 transactionObserver?.Invoke("ingest");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
@@ -530,11 +544,27 @@ internal sealed class WindowsLiveWorldPipeline
                 transactionObserver?.Invoke("commit");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 lastWorldTrackerTimestamp = request.MonotonicTimestamp;
+                var committed = durableSnapshot.Observations[^1];
+                if (!projectedWalkedGround.TryGetValue(resolvedRoomId, out var publishedGround)
+                    || update.AcceptedClosure is not null)
+                {
+                    publishedGround = LiveWorldWalkedGround.ProjectRoom(durableSnapshot, resolvedRoomId);
+                }
+                else if (groundEvidence.Count != 0)
+                {
+                    publishedGround = GroundStrokeGeometry.Coalesce(
+                        publishedGround.Concat(LiveWorldWalkedGround.ProjectObservation(committed)));
+                }
+                projectedWalkedGround[resolvedRoomId] = publishedGround;
+                walkedScope = scope;
+                committedLocalWalk = groundEvidence.Count == 0
+                    ? priorWalk : GroundStrokeGeometry.Coalesce(priorWalk.Concat(walked));
+
                 if (update.AcceptedClosure is not null
                     && (!IsWorkCurrent(processEpoch)
                         || !worldBasis.ConfirmPlacement(
                             resolvedObservation.Value.Ticket,
-                            Corrected(worldPose, update.Correction))))
+                            committed.OptimizedPose)))
                 {
                     if (!IsWorkCurrent(processEpoch)) return Cancelled();
                     throw new InvalidOperationException(
@@ -556,7 +586,7 @@ internal sealed class WindowsLiveWorldPipeline
                     WindowsLiveWorldPipelineState.Committed,
                     request.CaptureGeneration,
                     Corrected(request.LocalPose, basis),
-                    update.Correction,
+                    new AtlasPoint(committed.OptimizedPose.X - worldPose.X, committed.OptimizedPose.Y - worldPose.Y),
                     basis,
                     update.Revision,
                     update.AcceptedClosure,
@@ -564,7 +594,12 @@ internal sealed class WindowsLiveWorldPipeline
                     rebuiltAtlas,
                     update.AcceptedClosure is null
                         ? "live-world committed"
-                        : "live-world loop closure committed");
+                        : "live-world loop closure committed")
+                {
+                    WalkedGround = publishedGround,
+                    WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
+                    RecordedLocalWalk = committedLocalWalk
+                };
             }
             catch (Exception error)
             {
@@ -651,7 +686,8 @@ internal sealed class WindowsLiveWorldPipeline
 
     private WindowsLiveWorldPipelineResult Throttled(
         WindowsLiveWorldFrame request,
-        LiveWorldTracker activeTracker) => new(
+        LiveWorldTracker activeTracker,
+        int committedRoomId) => new WindowsLiveWorldPipelineResult(
             WindowsLiveWorldPipelineState.Throttled,
             request.CaptureGeneration,
             Corrected(request.LocalPose, worldBasis.Snapshot.WorldFromLocal),
@@ -661,7 +697,13 @@ internal sealed class WindowsLiveWorldPipeline
             null,
             null,
             null,
-            "live-world skipped: persistence cadence");
+            "live-world skipped: persistence cadence")
+        {
+            WalkedGround = projectedWalkedGround.TryGetValue(committedRoomId, out var ground) ? ground : [],
+            WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
+            RecordedLocalWalk = walkedScope == (request.CaptureGeneration, committedRoomId, request.WalkedCoordinateEpoch)
+                ? committedLocalWalk : []
+        };
 
     private WindowsLiveWorldPipelineResult Failed(
         WindowsLiveWorldFrame request,
@@ -699,6 +741,9 @@ internal sealed class WindowsLiveWorldPipeline
             store = reopened;
             tracker = new LiveWorldTracker(state.Snapshot);
             compositionExclusions.Clear();
+            projectedWalkedGround.Clear();
+            walkedScope = null;
+            committedLocalWalk = [];
             foreach (var (observationId, exclusions) in reopenedCompositionExclusions)
                 compositionExclusions.Add(observationId, exclusions);
             var maximumGeneration = state.Snapshot.Observations.Count == 0
