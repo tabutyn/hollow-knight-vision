@@ -448,9 +448,9 @@ internal sealed class LabelingEditorDraft
 internal static class DashboardPresentationPolicy
 {
     internal static IReadOnlyList<string> Workspaces { get; } =
-        ["Gameplay", "Label", "Stencil", "Model", "Hacker", "Ops"];
+        ["Gameplay", "Label", "Stencil", "Model", "Hacker", "Bot", "Ops"];
     internal static IReadOnlyList<string> BottomWorkspaces { get; } =
-        ["Gameplay", "Label", "Stencil", "Model", "Hacker"];
+        ["Gameplay", "Label", "Stencil", "Model", "Hacker", "Bot"];
     internal static IReadOnlyList<string> HackerEditingTargets { get; } =
         ["Objective", "Ground", "Wall", "Spike", "Door", "Rooms", "Path"];
 
@@ -497,6 +497,10 @@ internal static class DashboardPresentationPolicy
         mode == GameRuntimeMode.Modded
         && (workspace == "Hacker"
             || workspace == "Gameplay" && IsGameplay(recognizedContext));
+
+    internal static bool ShowsBotCapture(string workspace, GameRuntimeMode mode, string? recognizedContext) =>
+        workspace == "Gameplay" && IsGameplay(recognizedContext)
+        || workspace == "Hacker" && mode == GameRuntimeMode.Modded;
 
     internal static bool ShouldExitWorkspace(
         string workspace,
@@ -1019,9 +1023,6 @@ public partial class MainWindow : Window
                 inputHeartbeat.Start();
             }
 
-            PathRecordingButton.Visibility = DashboardPresentationPolicy.ShowsPathRecording(
-                workspace, gameMode, recognizedMenuContext)
-                ? Visibility.Visible : Visibility.Collapsed;
             if (latestAtlas is not null)
             {
                 try
@@ -1565,8 +1566,8 @@ public partial class MainWindow : Window
             SelectWorkspace(destination);
             return true;
         }
-        if (key == Key.K && DashboardPresentationPolicy.ShowsPathRecording(
-                workspace, gameMode, recognizedMenuContext))
+        if (key == Key.K && (botCapture is not null
+            || DashboardPresentationPolicy.ShowsBotCapture(workspace, gameMode, recognizedMenuContext)))
         {
             PathRecording_Click(this, new RoutedEventArgs());
             return true;
@@ -1910,9 +1911,9 @@ public partial class MainWindow : Window
         if (destination == "Label" && workspace == "Label") return LabelPanel.IsEnabled;
         var enteringLabel = destination == "Label";
         if (labelCapture.State is GamePauseState.Pausing or GamePauseState.Resuming
-            || enteringLabel && (!labelCapture.CanToggle || gameControls.IsRecording))
+            || enteringLabel && (!labelCapture.CanToggle || gameControls.IsRecording || botCapture is not null))
         {
-            SetStatus(gameControls.IsRecording ? "Stop path recording before labeling."
+            SetStatus(gameControls.IsRecording || botCapture is not null ? "Stop capture before labeling."
                 : "Labeling is waiting for a clean game frame and compatible pause controls.");
             RefreshWorkspaceSelection();
             return false;
@@ -1932,19 +1933,17 @@ public partial class MainWindow : Window
             hackerPathLinks.CancelSelection();
             InvalidatePendingHackerWork();
         }
-        if (destination is "Label" or "Model") ReleaseForwardedInput();
+        if (destination is "Label" or "Model" or "Bot") ReleaseForwardedInput();
         if (destination is not ("Gameplay" or "Hacker")) SendPointerExit();
         workspace = destination;
         if (leavingLabel) EndLabelSession();
         GameplayPanel.Visibility = destination == "Gameplay" ? Visibility.Visible : Visibility.Collapsed;
         LabelPanel.Visibility = destination == "Label" ? Visibility.Visible : Visibility.Collapsed;
         ModelPanel.Visibility = destination == "Model" ? Visibility.Visible : Visibility.Collapsed;
+        BotPanel.Visibility = destination == "Bot" ? Visibility.Visible : Visibility.Collapsed;
         HackerPanel.Visibility = destination == "Hacker" ? Visibility.Visible : Visibility.Collapsed;
 
         GameplayControlsPanel.Visibility = destination == "Gameplay"
-            ? Visibility.Visible : Visibility.Collapsed;
-        PathRecordingButton.Visibility = DashboardPresentationPolicy.ShowsPathRecording(
-                destination, gameMode, recognizedMenuContext)
             ? Visibility.Visible : Visibility.Collapsed;
 
         RefreshWorkspaceSelection();
@@ -1955,6 +1954,7 @@ public partial class MainWindow : Window
         RefreshGuidance();
         UpdateModeAvailability();
         if (destination == "Model") RefreshModelWorkspace();
+        if (destination == "Bot") RefreshBotLibrary();
         if (destination == "Ops") RefreshOps();
         if (destination == "Hacker")
         {
@@ -1976,6 +1976,7 @@ public partial class MainWindow : Window
         GameplayWorkspaceButton.IsChecked = workspace == "Gameplay";
         LabelWorkspaceButton.IsChecked = workspace == "Label";
         ModelWorkspaceButton.IsChecked = workspace == "Model";
+        BotWorkspaceButton.IsChecked = workspace == "Bot";
         HackerWorkspaceButton.IsChecked = workspace == "Hacker";
         OpsWorkspaceButton.IsChecked = workspace == "Ops";
         StencilsWorkspaceButton.IsChecked = workspace == "Stencil";
@@ -1993,7 +1994,7 @@ public partial class MainWindow : Window
         if (initialization is null) return;
         HackerPathCanvas.Visibility = ShowsHackerPaths ? Visibility.Visible : Visibility.Collapsed;
         UpdateGameplayPathVisibility();
-        PresentLabelPauseControls(LabelPanel, LabelWorkspaceButton, labelCapture, gameControls.IsRecording);
+        PresentLabelPauseControls(LabelPanel, LabelWorkspaceButton, labelCapture, gameControls.IsRecording || botCapture is not null);
         GameplayControlsPanel.Visibility = visionCancellation is not null
             && DashboardPresentationPolicy.ShowsGameplayFraming(
                 workspace, initialization.IsFirstPhaseComplete, recognizedMenuContext)
@@ -2002,9 +2003,12 @@ public partial class MainWindow : Window
             && DashboardPresentationPolicy.ShowsHackerFraming(
                 workspace, recognizedMenuContext)
             ? Visibility.Visible : Visibility.Collapsed;
-        PathRecordingButton.Visibility = DashboardPresentationPolicy.ShowsPathRecording(
-                workspace, gameMode, recognizedMenuContext)
+        PathRecordingButton.Visibility = botCapture is not null
+            || DashboardPresentationPolicy.ShowsBotCapture(workspace, gameMode, recognizedMenuContext)
             ? Visibility.Visible : Visibility.Collapsed;
+        var replayVisibility = DashboardPresentationPolicy.ShowsPathRecording(workspace, gameMode, recognizedMenuContext)
+            ? Visibility.Visible : Visibility.Collapsed;
+        ReplayInputPathButton.Visibility = StepReplayButton.Visibility = replayVisibility;
         ModelWorkspaceButton.Visibility = initialization.IsFirstPhaseComplete ? Visibility.Visible : Visibility.Collapsed;
         StencilDetectionCheck.IsEnabled = initialization.IsFirstPhaseComplete;
         ObjectDetectionCheck.IsEnabled = initialization.IsFirstPhaseComplete && trainedGameplayModelReady;
@@ -2493,39 +2497,6 @@ public partial class MainWindow : Window
         ApplyViewport(AtlasCanvas, HackerViewportPanel, hackerFraming, HackerLiveImage, explicitRequest: true);
     }
 
-    private async void PathRecording_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            if (gameControls.IsReplaying) return;
-            if (!gameControls.IsRecording)
-            {
-                if (!await gameControls.StartRecordingAsync())
-                {
-                    SetStatus("Updated game receiver is not ready.");
-                    return;
-                }
-                PathRecordingButton.Background = Brushes.Firebrick;
-                SetStatus("Recording input path. Press K to stop.");
-                return;
-            }
-            var path = gameControls.StopRecording();
-            if (path is null) return;
-            var directory = IOPath.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                "HollowKnightVision", "paths");
-            var output = new RecordedInputPathStore(directory).Save(path);
-            InputPathText.Text = output;
-            PathRecordingButton.ClearValue(BackgroundProperty);
-            SetStatus($"Input path saved: {output}");
-        }
-        catch (Exception error)
-        {
-            PathRecordingButton.ClearValue(BackgroundProperty);
-            ShowError(error);
-        }
-    }
-
     private async void StartGameplay_Click(object sender, RoutedEventArgs e)
     {
         StartGameplayButton.IsEnabled = false;
@@ -2646,6 +2617,8 @@ public partial class MainWindow : Window
                     var movement = gameMode == GameRuntimeMode.Normal
                         ? normalGameInput?.CaptureMovement() : gameControls.CaptureMovement();
                     if (!labelCapture.Accept(frame, labelRevision)) continue;
+                    if (gameMode == GameRuntimeMode.Normal)
+                        Volatile.Read(ref botCapture)?.ObserveNativeInput(movement, captureTimestamp);
                     gameplayPresentation.Capture(frame);
                     var bitmap = FrameBitmap(frame);
                     var firstFreshGameFrame = !hasFreshGameFrame;
@@ -2733,6 +2706,7 @@ public partial class MainWindow : Window
             if (ReferenceEquals(visionCancellation, cancellation))
             {
                 visionCancellation = null;
+                await AbandonBotCaptureAsync();
                 StartVisionButton.IsEnabled = true;
                 StopVisionButton.IsEnabled = false;
             }
@@ -3462,6 +3436,14 @@ public partial class MainWindow : Window
                 terrainContact.Wall));
         }
         else groundHypothesisState.Paths.Suspend();
+        if (admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay")
+        {
+            CaptureBotObservations(frame, captureGeneration, recognition.Generation, captureTimestamp,
+                WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0),
+                renderedGameFrame, receiverTelemetry, recognition.Objects.MeasuredBatch, ground, terrain,
+                groundAnalysis is not null, visualObservation.GroundVerified ? groundDisplayCamera : null, hudStencil,
+                terrainContact.MeasuredFoot, movementButtons);
+        }
         if (inputPathDivergenceMonitor.IsAcceptingSamples
             && renderedGameFrame is { } renderedFrame)
         {

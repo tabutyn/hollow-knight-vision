@@ -238,6 +238,21 @@ public sealed record ReceiverCheckpointAcknowledgement(
     RecordedGameCheckpoint? Checkpoint,
     string? Failure);
 
+public sealed record ReceiverActorState(int Id, string Name, double ScreenX, double ScreenY, double Width, double Height)
+{
+    [JsonIgnore]
+    public bool IsValid => new[] { ScreenX, ScreenY, Width, Height }.All(value =>
+        double.IsFinite(value) && Math.Abs(value) <= 1_000_000) && Width >= 0 && Height >= 0;
+}
+
+public sealed record BotEnemyOutcomes(Guid Epoch, int Damage, int Kills);
+public sealed record BotBlueHealthOutcomes(Guid Epoch, int Gained);
+
+public sealed record ReceiverActorTelemetry(
+    int Version, ReceiverActorState? Hero, IReadOnlyList<ReceiverActorState>? Enemies,
+    IReadOnlyList<ReceiverActorState>? GeoCaches = null, IReadOnlyList<ReceiverActorState>? LifebloodCocoons = null,
+    BotEnemyOutcomes? EnemyOutcomes = null, int? HeroHealth = null);
+
 public sealed record ReceiverGroundTruthSample(
     int Version,
     string Type,
@@ -272,6 +287,10 @@ public sealed record ReceiverGroundTruthSample(
     int ScreenHeight,
     [property: JsonPropertyName("controlledFrameID")] Guid? ControlledFrameId = null)
 {
+    public ReceiverActorTelemetry? Actors { get; init; }
+    public BotBlueHealthOutcomes? BlueHealthOutcomes { get; init; }
+    public bool? AtlasGameplayActive { get; init; }
+
     public bool HasFiniteCoordinates()
     {
         var values = new[]

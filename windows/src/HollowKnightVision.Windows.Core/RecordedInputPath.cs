@@ -320,6 +320,7 @@ public sealed class InputPathRecorder
     }
 
     public bool IsRecording { get { lock (gate) return session is not null; } }
+    public (Guid Id, double StartedAt)? Recording { get { lock (gate) return session is { } s ? (s.Id, s.StartedAt) : null; } }
 
     public bool Start(double? timestamp = null, DateTimeOffset? createdAt = null,
         Guid? id = null, Guid? sourcePathId = null, int? replayIteration = null,

@@ -1040,7 +1040,7 @@ internal static class Program
     {
         var workspaces = DashboardValues("Workspaces");
         Check(DashboardValues("BottomWorkspaces").SequenceEqual(
-            new[] { "Gameplay", "Label", "Stencil", "Model", "Hacker" }),
+            new[] { "Gameplay", "Label", "Stencil", "Model", "Hacker", "Bot" }),
             "Bottom controls exposed Ops or omitted a dashboard workspace.");
         foreach (var workspace in workspaces)
         foreach (var complete in new[] { false, true })
@@ -1168,7 +1168,7 @@ internal static class Program
 
     private static void TestWorkspaceShortcuts()
     {
-        var expected = new[] { "Gameplay", "Label", "Stencil", "Model", "Hacker", "Ops" };
+        var expected = new[] { "Gameplay", "Label", "Stencil", "Model", "Hacker", "Bot", "Ops" };
         Check(DashboardValues("Workspaces").SequenceEqual(expected),
             "Workspace policy order drifted.");
         var xml = MainWindowSource();
@@ -1205,6 +1205,14 @@ internal static class Program
               && !Shows("Gameplay", GameRuntimeMode.Normal, "Gameplay")
               && !Shows("Hacker", GameRuntimeMode.Normal, null),
             "Recording escaped its Gameplay/Hacker modded scope.");
+        bool Captures(string workspace, GameRuntimeMode mode, string? context) =>
+            Dashboard<bool>("ShowsBotCapture", workspace, mode, context);
+        Check(Captures("Gameplay", GameRuntimeMode.Normal, "game")
+            && Captures("Gameplay", GameRuntimeMode.Modded, "game")
+            && Captures("Hacker", GameRuntimeMode.Modded, "game")
+            && !Captures("Bot", GameRuntimeMode.Modded, "game")
+            && !Captures("Gameplay", GameRuntimeMode.Normal, "Main Title"),
+            "Bot capture should cover both gameplay workspaces and hide in menus.");
         Console.WriteLine("PASS K path recording is available only in valid modded contexts");
     }
 

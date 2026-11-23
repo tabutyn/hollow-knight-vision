@@ -283,6 +283,23 @@
                     </Grid>
                 </Grid>
 
+                <Grid x:Name="BotPanel" Visibility="Collapsed" Margin="16">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <TextBlock Text="Summary" FontSize="20" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="BotCaptureSummary" Grid.Row="1" Margin="0,10,0,12" Foreground="#B5C2CC"/>
+                    <DataGrid x:Name="BotCaptureClips" Grid.Row="2" IsReadOnly="True" AutoGenerateColumns="False"
+                              EnableRowVirtualization="True" HeadersVisibility="Column"
+                              Background="#12181D" Foreground="#ECF0F2" RowBackground="#161F25" AlternatingRowBackground="#192329">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Domain" Binding="{Binding Domain}" Width="140"/>
+                            <DataGridTextColumn Header="Duration" Binding="{Binding Duration}" Width="90"/>
+                            <DataGridTextColumn Header="Samples" Binding="{Binding Samples}" Width="90"/>
+                            <DataGridTextColumn Header="Usable" Binding="{Binding Usable}" Width="90"/>
+                            <DataGridTextColumn Header="Capture folder" Binding="{Binding Folder}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+
                 <!-- Hacker: terrain editing and camera framing are separate controls. -->
                 <Grid x:Name="HackerPanel" Visibility="Collapsed">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
@@ -347,14 +364,15 @@
                 <RadioButton x:Name="StencilsWorkspaceButton" GroupName="Workspace" Content="Stencil" Style="{StaticResource Segment}" Checked="StencilsWorkspace_Click"/>
                 <RadioButton x:Name="ModelWorkspaceButton" GroupName="Workspace" Content="Model" Style="{StaticResource Segment}" Checked="ModelWorkspace_Click"/>
                 <RadioButton x:Name="HackerWorkspaceButton" GroupName="Workspace" Content="Hacker" Style="{StaticResource Segment}" Checked="HackerWorkspace_Click"/>
+                <RadioButton x:Name="BotWorkspaceButton" GroupName="Workspace" Content="Bot" Style="{StaticResource Segment}" Checked="BotWorkspace_Click"/>
                 <RadioButton x:Name="OpsWorkspaceButton" Visibility="Collapsed" GroupName="Workspace" Content="Ops" Style="{StaticResource Segment}" Checked="OpsWorkspace_Click"/>
             </StackPanel>
             <TextBlock x:Name="StencilGuidanceText" Grid.Column="1" Foreground="#5AA7FF" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="10,0"
                        ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
             <StackPanel Grid.Column="2" Orientation="Horizontal">
-                <Button x:Name="PathRecordingButton" Content="K" Click="PathRecording_Click"/>
+                <Button x:Name="PathRecordingButton" Content="K" ToolTip="Start or stop a bot capture" Click="PathRecording_Click"/>
                 <Button x:Name="ReplayInputPathButton" Content="Replay" ToolTip="Replay a recorded input path"
-                        Visibility="{Binding Visibility, ElementName=PathRecordingButton}" Click="ReplayInputPath_Click">
+                        Visibility="Collapsed" Click="ReplayInputPath_Click">
                     <Button.ContextMenu><ContextMenu>
                         <MenuItem x:Name="ReplayFullTraceItem" Header="Record full replay" Tag="full-trace" IsCheckable="True" IsChecked="True" Click="ReplayEvaluation_Click"/>
                         <MenuItem x:Name="ReplayFailFastItem" Header="Stop when tracking diverges" Tag="fail-fast" IsCheckable="True" Click="ReplayEvaluation_Click"/>
@@ -362,7 +380,7 @@
                 </Button>
                 <Button x:Name="StepReplayButton" Content="Step 1s" Click="TrackingStep_Click"
                         ToolTip="Replay one second; stop on any frame over 5 pixels or a missed 30 fps frame."
-                        Visibility="{Binding Visibility, ElementName=PathRecordingButton}">
+                        Visibility="Collapsed">
                     <Button.ContextMenu><ContextMenu>
                         <MenuItem Header="Restart step replay from beginning" Click="RestartTrackingSteps_Click"/>
                         <MenuItem Header="Leave step replay and resume game" Click="LeaveTrackingSteps_Click"/>

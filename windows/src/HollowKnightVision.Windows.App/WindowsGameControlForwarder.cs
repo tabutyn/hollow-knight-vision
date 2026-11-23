@@ -84,6 +84,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         get => inputPathRecorder.IsRecording;
     }
 
+    internal (Guid Id, double StartedAt)? Recording => inputPathRecorder.Recording;
+
     internal async Task<bool> StartRecordingAsync(CancellationToken cancellationToken = default)
     {
         ReceiverClient active;

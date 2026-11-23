@@ -3,6 +3,8 @@ namespace HollowKnightVision.Windows.Core;
 public sealed record LiveObjectDetectionSnapshot(IReadOnlyList<ObjectDetection> Tracked,
     IReadOnlyList<ObjectDetection> Raw, IReadOnlyList<ObjectDetection> Masks, BgraFrame? PixelDiagnostic)
 {
+    public LiveObjectDetectionBatch? MeasuredBatch { get; init; }
+
     public static LiveObjectDetectionSnapshot Empty { get; } = new([], [], [], null);
 }
 
@@ -38,6 +40,11 @@ public sealed class LiveObjectDetectionPipeline
         var displayed = LiveObjectDetectionFreshness.Detections(tracked, generation, timestamp);
         var model = LiveObjectDetectionFreshness.Detections(raw, generation, timestamp);
         return new(displayed, model, MovingObjectMask.Detections(displayed, measured, previous, generation, timestamp),
-            model.Count > 0 ? pixels : null);
+            model.Count > 0 ? pixels : null)
+        {
+            MeasuredBatch = measured is { } latest && latest.CaptureGeneration == generation
+                && timestamp >= latest.SourceTimestamp && timestamp - latest.SourceTimestamp <= LiveObjectDetectionFreshness.MaximumAge
+                ? latest : null
+        };
     }
 }

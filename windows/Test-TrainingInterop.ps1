@@ -66,6 +66,42 @@ print('PASS Windows PNG/JSON -> shared Python reader, normalized coordinates, kn
 '@
   & $Python -B -c $validation $trainerRoot $dataset
   if ($LASTEXITCODE -ne 0) { throw 'Windows/Python dataset interchange assertions failed.' }
+  $botFixture = Join-Path $fixtureRoot 'paired-captures'
+  $botSource = Join-Path $repositoryRoot 'macos\BotPython'
+  & $Dotnet $tests --export-bot-capture-probe $botFixture
+  if ($LASTEXITCODE -ne 0) { throw 'Windows paired capture export failed.' }
+  $botValidation = @'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import hkv_bot_dataset as bot
+sessions = {manifest["botDomain"]: (manifest, observations, inputs)
+            for manifest, observations, inputs in
+            (bot.read_session(folder) for folder in Path(sys.argv[2]).glob("demo-*"))}
+assert set(sessions) == {"hacker", "gameplay"}
+hm, hacker, controls = sessions["hacker"]
+gm, gameplay, visual_controls = sessions["gameplay"]
+assert hm["replayID"] == gm["replayID"] and gm["pairedClipID"] == hm["id"] and hm["pairedClipID"] == gm["id"]
+assert controls == visual_controls
+assert [f["captureTimestamp"] for f in hacker] == [f["captureTimestamp"] for f in gameplay]
+assert all("detectedTerrain" not in f and f["authoredTerrain"]["walls"][0]["solidSide"] == 0
+           and f["authoredTerrain"]["doors"] and f["authoredTerrain"]["spikes"] and f["geoCaches"]
+           for f in hacker)
+assert all("authoredTerrain" not in f and f["detectedTerrain"]["walls"][0]["solidSide"] == 1
+           and f["geoCaches"] == [] for f in gameplay)
+bot.paired_measurements(gm, gameplay, hm, hacker)
+assert all(f["enemyOutcomes"] == other["enemyOutcomes"] for f, other in zip(gameplay, hacker))
+for manifest, observations, inputs in sessions.values():
+    for version in (bot.SCHEMA_VERSION, bot.GROUND_CONTACT_POLICY_VERSION, bot.LANDING_GEOMETRY_POLICY_VERSION):
+        rows, rejected = bot.examples(manifest, observations, inputs, policy_version=version)
+        assert len(rows) == 6 and not rejected
+        assert all(len(row["observation"]) == bot.HISTORY_LENGTH * len(bot.SCHEMAS[version]) for row in rows)
+        assert sum(row["blueHealthGained"] for row in rows) == 2
+        assert [row["continuedAttack"] for row in rows] == [False, True, True, False, True, True]
+print("PASS Windows paired PNG and event capture -> shared bot exporter, typed terrain, held attacks and blue health")
+'@
+  & $Python -B -c $botValidation $botSource $botFixture
+  if ($LASTEXITCODE -ne 0) { throw 'Windows bot capture interoperability failed.' }
 } finally {
   foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
   if (Test-Path -LiteralPath $fixtureRoot) {

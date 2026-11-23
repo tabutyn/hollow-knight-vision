@@ -26,6 +26,13 @@ if (args is ["--export-dataset-probe", var probeRoot])
     return;
 }
 
+if (args is ["--export-bot-capture-probe", var captureRoot])
+{
+    if (BotCaptureTests.WriteFixture(captureRoot).Published.Count != 2)
+        throw new InvalidOperationException("The Bot capture probe did not produce both domains.");
+    return;
+}
+
 var tests = new List<(string Name, Action Run)>
 {
     ("labeling campaign batches and honest validation history", LabelingCampaignTests.TestBatchesAndValidationHistory),
@@ -235,6 +242,10 @@ var tests = new List<(string Name, Action Run)>
     ("input player Ops wire round trips", InputBridgeParityTests.TestPlayerOpsWireRoundTrip),
     ("input snapshot wire codec preserves versioned state", InputBridgeParityTests.TestWireCodecRoundTripsVersionedSnapshot),
     ("input checkpoint control messages round trip", InputBridgeParityTests.TestCheckpointControlMessagesRoundTrip),
+    ("bot actor payload and exact camera separate paired domains", BotCaptureTests.TestExactHackerSourcesStaySeparateFromVisualSources),
+    ("fresh visual terrain retains training evidence through Knight occlusion", BotCaptureTests.TestFreshTerrainMakesOccludedKnightUsable),
+    ("paired captures publish immediate evidence while invalid clips are discarded", BotCaptureTests.TestPairedEvidencePublishesOnceAndHazardClipsAreDiscarded),
+    ("native controls produce edges and interrupted bot captures are discarded", BotCaptureTests.TestNativeControlsAndInterruptedCapture),
     ("input ground truth telemetry provides projection scale", InputBridgeParityTests.TestGroundTruthTelemetryDecodesAndProvidesProjectionScale),
     ("input player pose playback preserves recorded truth", InputBridgeParityTests.TestPlayerPosePlaybackEncodesRecordedGroundTruth),
     ("hacker atlas synchronizer requires matching Unity frame in either arrival order", TestSynchronizerRequiresMatchingUnityFrameInEitherArrivalOrder),
