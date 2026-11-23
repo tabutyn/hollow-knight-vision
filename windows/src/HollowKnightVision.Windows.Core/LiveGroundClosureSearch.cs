@@ -8,11 +8,13 @@ internal sealed class LiveGroundClosureSearch
     private const int RecentReferences = 8;
 
     internal sealed record Source(int KeyframeId, LiveWorldObservation Observation);
-    internal sealed record Match(int KeyframeId, AtlasPoint CameraPose);
+    internal sealed record Match(int KeyframeId, AtlasPoint CameraPose, GlobalFeatureReference Reference,
+        IReadOnlyList<int> Inliers, double Ambiguity, double ResidualPixels);
 
     private sealed record Appearance(GlobalFeatureReference Features, CalibratedSceneMotionTracker.Grid? Grid);
     private sealed record Candidate(Source Source, GlobalFeatureReference Features, CalibratedSceneMotionTracker.Grid? Grid);
-    private sealed record PoseProposal(Candidate Reference, AtlasPoint Pose, double Confidence, double Residual);
+    private sealed record PoseProposal(Candidate Reference, AtlasPoint Pose, double Confidence, double Residual,
+        IReadOnlyList<int> Inliers, double Ambiguity = 0);
 
     private readonly GlobalFeatureMatcher matcher = new();
     private readonly Dictionary<int, Appearance?> appearances = [];
@@ -51,7 +53,8 @@ internal sealed class LiveGroundClosureSearch
 
         var proposal = scenery is not null
             ? new PoseProposal(candidates.First(candidate => candidate.Features.Id == scenery.ReferenceId),
-                scenery.ProposedCameraPose, scenery.Confidence, scenery.Residual)
+                scenery.ProposedCameraPose, scenery.Confidence, scenery.Residual, scenery.InlierReferenceFeatureIds,
+                scenery.AmbiguityRatio)
             : ProposeFromPatches(candidates, Grid(current, exclusions), solveWidth);
         if (proposal is null) return null;
 
@@ -59,7 +62,9 @@ internal sealed class LiveGroundClosureSearch
         var saved = reference.Observation;
         var verification = GroundPlaneClosureVerifier.Verify(loadImage(saved.SourceObservationId),
             saved.GroundGeometry!.Lines, saved.OptimizedPose, current, currentGround, proposal.Pose, solveWidth);
-        return verification is null ? null : new Match(reference.KeyframeId, verification.CameraPose);
+        return verification is null ? null : new Match(reference.KeyframeId, verification.CameraPose,
+            proposal.Reference.Features, proposal.Inliers, proposal.Ambiguity,
+            proposal.Residual * solveWidth / proposal.Reference.Features.SampleWidth);
     }
 
     private static IEnumerable<Source> SelectSources(IReadOnlyList<Source> sources)
@@ -82,12 +87,12 @@ internal sealed class LiveGroundClosureSearch
                 || !matcher.PermitsPatchProposal(candidate.Features)) continue;
 
             var features = candidate.Features.Features.Take(80).ToArray();
-            var fits = new List<(AtlasPoint Point, CalibratedSceneMotionTracker.PatchFit Fit)>();
+            var fits = new List<(int FeatureId, AtlasPoint Point, CalibratedSceneMotionTracker.PatchFit Fit)>();
             foreach (var feature in features)
             {
                 var point = feature.SamplePoint with { Y = prior.Height - 1 - feature.SamplePoint.Y };
                 if (CalibratedSceneMotionTracker.FitPatch(prior, current, point) is { } fit)
-                    fits.Add((point, fit));
+                    fits.Add((feature.Id, point, fit));
             }
             if (fits.Count < 6) continue;
             var dx = Median(fits.Select(value => value.Fit.Motion.X));
@@ -104,14 +109,17 @@ internal sealed class LiveGroundClosureSearch
                 * (1 - Math.Min(.9, residual / .65));
             var origin = candidate.Features.CameraPose;
             var scale = solveWidth / current.Width;
-            proposals.Add(new(candidate, new AtlasPoint(origin.X - dx * scale, origin.Y + dy * scale), confidence, residual));
+            proposals.Add(new(candidate, new AtlasPoint(origin.X - dx * scale, origin.Y + dy * scale),
+                confidence, residual, agreeing.Select(value => value.FeatureId).ToArray()));
         }
         var ranked = proposals.OrderByDescending(value => value.Confidence).ThenBy(value => value.Residual)
             .ThenBy(value => value.Reference.Source.KeyframeId).ToArray();
         if (ranked.FirstOrDefault() is not { } best) return null;
         var separate = Math.Max(solveWidth * .025, 4);
-        return ranked.Skip(1).Any(value => value.Confidence >= best.Confidence * .80
-            && Distance(value.Pose.X - best.Pose.X, value.Pose.Y - best.Pose.Y) > separate) ? null : best;
+        var rival = ranked.Skip(1).FirstOrDefault(value =>
+            Distance(value.Pose.X - best.Pose.X, value.Pose.Y - best.Pose.Y) > separate);
+        var ambiguity = rival is null ? 0 : rival.Confidence / best.Confidence;
+        return ambiguity >= .80 ? null : best with { Ambiguity = ambiguity };
     }
 
     private static CalibratedSceneMotionTracker.Grid? Grid(BgraFrame frame, IReadOnlyList<StencilRect> masks) =>

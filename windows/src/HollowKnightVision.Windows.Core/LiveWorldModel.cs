@@ -204,7 +204,11 @@ public sealed record LiveWorldLandmark(
     AtlasPoint WorldPoint,
     IReadOnlyList<float> Descriptor,
     double Depth,
-    double DepthConfidence);
+    double DepthConfidence)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool GroundClosureOnly { get; init; }
+}
 
 public sealed record LiveWorldRelativeMotionEdge(
     int Id,

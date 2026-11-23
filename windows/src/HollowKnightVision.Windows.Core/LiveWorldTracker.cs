@@ -120,7 +120,7 @@ public sealed class LiveWorldTracker
         AtlasPoint Correction,
         int MissedFrames);
 
-    private sealed record GroundRecoveryVote(int KeyframeId, int RoomId, ulong LocalEpoch,
+    private sealed record GroundRecoveryVote(int ReferenceIslandId, int TargetIslandId,
         double Timestamp, AtlasPoint Correction);
 
     private const double KeyframeTravelFraction = 0.25;
@@ -157,6 +157,7 @@ public sealed class LiveWorldTracker
     }
 
     public LiveWorldSnapshot Snapshot { get; private set; }
+    public bool LatestIslandAwaitsPlacement => Snapshot.TrackingIslands.LastOrDefault()?.RequiresPlacement == true;
 
     public bool HasRecoveryReference(int roomId) =>
         RecoveryReferences().Any(reference => reference.RoomId == roomId);
@@ -444,6 +445,15 @@ public sealed class LiveWorldTracker
         }
 
         pendingClosure = null;
+        LiveIslandComponents? components = null;
+        LiveIslandComponents.LinkPlan? plan = null;
+        if (placementPending || Snapshot.TrackingIslands.LastOrDefault()?.Placement == LiveIslandPlacement.Connected)
+        {
+            components = new(Snapshot);
+            plan = PlanLink(components, reference.ObservationId, observation, match.ProposedCameraPose);
+            if (plan is null)
+                return Update(default, null, [LiveWorldTrackerRejection.InconsistentConfirmation], reference, match);
+        }
         var currentKeyframeId = AddKeyframe(observation, frame);
         if (!Snapshot.Observations.Any(value => value.Id == reference.ObservationId)
             || match.InlierReferenceFeatureIds.Count < 3)
@@ -464,9 +474,15 @@ public sealed class LiveWorldTracker
         closedReferenceKeyframeIds.Add(reference.KeyframeId);
         lastAcceptedClosureTravel = travel;
         ReplaceSnapshot(loopEdges: [.. Snapshot.LoopClosureEdges, closure]);
-        var correction = Snapshot.TrackingIslands.Count != 0
-            ? PlaceNewObservation(observation, match.ProposedCameraPose)
-            : Optimize(observationId);
+        AtlasPoint correction;
+        if (components is not null && plan is not null)
+        {
+            ApplyIslandLink(components, plan);
+            correction = Difference(Snapshot.Observations[^1].OptimizedPose, observation.RawPose);
+        }
+        else
+            correction = Snapshot.TrackingIslands.Count != 0
+                ? PlaceNewObservation(observation, match.ProposedCameraPose) : Optimize(observationId);
         return Update(correction, closure, [], reference, match);
     }
 
@@ -692,24 +708,25 @@ public sealed class LiveWorldTracker
     }
 
     /// <summary>
-    /// Searches placed images in the current room for a scenery proposal with
-    /// independent ground support. Two fresh captures must agree on the correction.
+    /// Records a rigid link after two captures independently verify the floor
+    /// of another component in the current room.
     /// </summary>
-    public LiveWorldRecoveryPlacement? RecoverFromGround(
+    public LiveWorldLoopClosureEdge? LinkGroundRecovery(
         BgraFrame maskedFrame, IReadOnlyList<StencilRect> exclusions,
         Func<int, BgraFrame> loadImage, Func<int, IReadOnlyList<WorldRect>> loadExclusions,
         bool isConfirmationProbe)
     {
-        if (Snapshot.TrackingIslands.LastOrDefault()?.RequiresPlacement != true
+        if (Snapshot.TrackingIslands.LastOrDefault() is not { RequiresPlacement: true } target
             || Snapshot.Observations.LastOrDefault() is not { CaptureTimestamp: { } timestamp } current
             || (current.ObservedFloorCandidates?.Lines ?? current.GroundGeometry?.Lines) is not { Count: > 0 } ground)
             return null;
         if (groundRecoveryVote is { } previous && timestamp <= previous.Timestamp) return null;
 
-        var unplaced = Snapshot.UnplacedObservationIds();
+        var components = new LiveIslandComponents(Snapshot);
         var observations = Snapshot.Observations.Where(observation => observation.RoomId == current.RoomId
             && observation.SolveWidth == current.SolveWidth && observation.GroundGeometry?.Lines.Count > 0
-            && !unplaced.Contains(observation.Id)).ToDictionary(observation => observation.Id);
+            && components.Owner(observation.Id) is { } owner
+            && !components.SameRigidComponent(owner.Id, target.Id)).ToDictionary(observation => observation.Id);
         var sources = new List<LiveGroundClosureSearch.Source>();
         foreach (var keyframe in Snapshot.Keyframes)
             if (observations.TryGetValue(keyframe.ObservationId, out var observation))
@@ -724,16 +741,48 @@ public sealed class LiveWorldTracker
             return null;
         }
 
-        var correction = new AtlasPoint(match.CameraPose.X - current.RawPose.X, match.CameraPose.Y - current.RawPose.Y);
+        var source = sources.First(candidate => candidate.KeyframeId == match.KeyframeId).Observation;
+        var referenceIsland = components.Owner(source.Id)!;
+        var correction = Difference(match.CameraPose, current.RawPose);
         var consistency = Math.Max(current.SolveWidth * .0125, 4);
-        var confirmation = groundRecoveryVote is { } vote && vote.RoomId == current.RoomId
-            && vote.LocalEpoch == current.LocalEpoch && timestamp - vote.Timestamp <= .5
-            ? LiveWorldRecoveryConfirmation.ReferenceIds(vote.KeyframeId, vote.Correction,
-                match.KeyframeId, correction, consistency)
-            : null;
-        groundRecoveryVote = confirmation is null
-            ? new(match.KeyframeId, current.RoomId, current.LocalEpoch, timestamp, correction) : null;
-        return confirmation is null ? null : new(match.CameraPose, correction, confirmation) { RoomId = current.RoomId };
+        var confirmed = groundRecoveryVote is { } vote && vote.TargetIslandId == target.Id
+            && timestamp - vote.Timestamp <= .5 && Distance(vote.Correction, correction) <= consistency
+            && components.SameRigidComponent(vote.ReferenceIslandId, referenceIsland.Id);
+        groundRecoveryVote = confirmed ? null : new(referenceIsland.Id, target.Id, timestamp, correction);
+        if (!confirmed || PlanLink(components, source.Id, current, match.CameraPose) is not { } plan)
+            return null;
+
+        var targetKeyframe = AddKeyframe(current, maskedFrame);
+        var landmarks = Snapshot.Landmarks.ToList();
+        var sourceLandmarks = landmarks.Where(landmark => landmark.KeyframeId == match.KeyframeId).ToList();
+        var support = new List<int>();
+        var nextLandmark = NextId(landmarks.Select(landmark => landmark.Id));
+        var inliers = match.Inliers.ToHashSet();
+        foreach (var feature in match.Reference.Features.Where(feature => inliers.Contains(feature.Id)))
+        {
+            var descriptor = feature.Descriptor.Select(value => (float)value).ToArray();
+            var landmark = sourceLandmarks.FirstOrDefault(item =>
+                item.SamplePoint == feature.SamplePoint && item.Descriptor.SequenceEqual(descriptor));
+            if (landmark is null)
+            {
+                var scale = source.SolveWidth / match.Reference.SampleWidth;
+                landmark = new LiveWorldLandmark(nextLandmark++, match.KeyframeId, source.SourceObservationId,
+                    feature.SamplePoint, new AtlasPoint(
+                        source.OptimizedPose.X + feature.SamplePoint.X * scale,
+                        source.OptimizedPose.Y + (match.Reference.SampleHeight - feature.SamplePoint.Y) * scale),
+                    descriptor, feature.Depth, feature.DepthConfidence) { GroundClosureOnly = true };
+                landmarks.Add(landmark);
+                sourceLandmarks.Add(landmark);
+            }
+            support.Add(landmark.Id);
+        }
+        var delta = Difference(match.CameraPose, source.OptimizedPose);
+        var closure = new LiveWorldLoopClosureEdge(NextId(Snapshot.LoopClosureEdges.Select(edge => edge.Id)),
+            match.KeyframeId, targetKeyframe, support, delta.X, delta.Y, support.Count, match.Ambiguity)
+            { ResidualPixels = match.ResidualPixels };
+        ReplaceSnapshot(landmarks: landmarks, loopEdges: [.. Snapshot.LoopClosureEdges, closure]);
+        ApplyIslandLink(components, plan);
+        return closure;
     }
 
     public bool PlaceRecoveredIsland(LiveWorldRecoveryPlacement placement)
@@ -745,9 +794,44 @@ public sealed class LiveWorldTracker
             return false;
         }
 
-        PlaceNewObservation(frame, placement.CameraPose);
+        var components = new LiveIslandComponents(Snapshot);
+        if (placement.ConfirmationReferenceKeyframeIds.Count == 0
+            || Snapshot.Keyframes.FirstOrDefault(keyframe => keyframe.Id == placement.ConfirmationReferenceKeyframeIds[^1])
+                is not { } reference
+            || PlanLink(components, reference.ObservationId, frame, placement.CameraPose) is not { } plan)
+            return false;
+        ApplyIslandLink(components, plan);
         return true;
     }
+
+    private static LiveIslandComponents.LinkPlan? PlanLink(LiveIslandComponents components,
+        int source, LiveWorldObservation target, AtlasPoint cameraPose) =>
+        components.Owner(source) is { } from && components.Owner(target.Id) is { } to
+            ? components.Plan(from.Id, to.Id, Difference(cameraPose, target.OptimizedPose),
+                Math.Max(target.SolveWidth * (4.0 / 640), 0.5))
+            : null;
+
+    private void ApplyIslandLink(LiveIslandComponents components, LiveIslandComponents.LinkPlan plan)
+    {
+        if (plan.Shifts.Values.Any(shift => shift != default))
+        {
+            var poses = Snapshot.Observations.ToDictionary(observation => observation.Id, observation =>
+            {
+                var shift = plan.Shifts.GetValueOrDefault(components.Owner(observation.Id)!.Id);
+                return new AtlasPoint(observation.OptimizedPose.X + shift.X, observation.OptimizedPose.Y + shift.Y);
+            });
+            Snapshot = Snapshot.ReplaceOptimizedPoses(poses, Snapshot.MapRevision);
+        }
+        if (Snapshot.TrackingIslands.Any(island => island.RequiresPlacement && plan.PlacedIslands.Contains(island.Id)))
+        {
+            ReplaceSnapshot(trackingIslands: Snapshot.TrackingIslands.Select(island =>
+                island.RequiresPlacement && plan.PlacedIslands.Contains(island.Id)
+                    ? island with { Placement = LiveIslandPlacement.Connected } : island).ToArray());
+        }
+        RefreshReferences();
+    }
+
+    private static AtlasPoint Difference(AtlasPoint a, AtlasPoint b) => new(a.X - b.X, a.Y - b.Y);
 
     private AtlasPoint PlaceNewObservation(LiveWorldObservation observation, AtlasPoint measuredPose)
     {
@@ -762,12 +846,6 @@ public sealed class LiveWorldTracker
             poses[member.ObservationId] = new AtlasPoint(previous.X + correction.X, previous.Y + correction.Y);
         }
         Snapshot = Snapshot.ReplaceOptimizedPoses(poses, Snapshot.MapRevision);
-        var island = Snapshot.TrackingIslands[^1];
-        if (island.RequiresPlacement)
-        {
-            ReplaceSnapshot(trackingIslands: [.. Snapshot.TrackingIslands.Take(Snapshot.TrackingIslands.Count - 1),
-                island with { Placement = LiveIslandPlacement.Connected }]);
-        }
         RefreshReferences();
         return new AtlasPoint(measuredPose.X - observation.RawPose.X, measuredPose.Y - observation.RawPose.Y);
     }
@@ -1076,7 +1154,7 @@ public sealed class LiveWorldTracker
             value => value.Id == keyframe.ObservationId);
         if (observation is null) return null;
         var storedLandmarks = Snapshot.Landmarks
-            .Where(value => value.KeyframeId == keyframe.Id)
+            .Where(value => value.KeyframeId == keyframe.Id && !value.GroundClosureOnly)
             .OrderBy(value => value.Id)
             .ToArray();
         if (storedLandmarks.Length < 6) return null;

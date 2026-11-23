@@ -527,10 +527,11 @@ loading cut, a new room starts provisionally beyond the saved Atlas. Windows
 corrects doorway height when it saves measured floor and foot contact on both
 sides. The horizontal separation stays provisional. After a tracking loss
 within a placed room, Windows can save fresh local measurements while their
-placement is pending. The saved Atlas stays in place. When narrow floor
-landmarks are insufficient, scenery features and textured patches can propose
-a position. Two fresh captures must independently align their floor texture
-with the placed map before the recovered section is added. Older Normal
+placement is pending. When narrow floor landmarks are insufficient, scenery
+features and textured patches can propose a link. Two fresh captures must
+independently align floor texture before Windows saves the link. Linked
+sections move together when an image match connects them to placed imagery.
+Doorway floor evidence constrains elevation independently. Older Normal
 Atlases that only saved tiles keep their direct image composition.
 
 ## Label examples and dataset export from the CLI

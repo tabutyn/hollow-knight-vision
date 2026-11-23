@@ -33,9 +33,9 @@ public partial class MainWindow
                     CameraX = result.CameraPose.X, CameraY = result.CameraPose.Y,
                     CameraTargetX = result.CameraPose.X, CameraTargetY = result.CameraPose.Y
                 }, exclusions, roomId: roomId, captureGeneration: frame.CaptureGeneration, captureIdentity: captureIdentity);
-                if (result.AcceptedClosure is { } closure)
-                    gameControls.RecordLoopClosure(frame.Timestamp, result.Revision, result.AppliedCorrection, closure);
             }
+            if (result.AcceptedClosure is { } closure)
+                gameControls.RecordLoopClosure(frame.Timestamp, result.Revision, result.AppliedCorrection, closure);
             Volatile.Write(ref completedWorld, new(frame, result));
         });
     }

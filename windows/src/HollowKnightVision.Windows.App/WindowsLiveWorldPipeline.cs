@@ -617,20 +617,22 @@ internal sealed class WindowsLiveWorldPipeline
 
                 var groundConfirmationProbe = !globalSearchDue
                     && activeTracker.CanConfirmGroundRecovery(request.MonotonicTimestamp);
-                var groundPlacement = (globalSearchDue || groundConfirmationProbe)
+                var groundClosure = (globalSearchDue || groundConfirmationProbe)
                     && placementPending && update.AcceptedClosure is null
                     && restoredPlacement is null
-                    ? activeTracker.RecoverFromGround(request.MaskedFrame, request.Exclusions, activeStore.Source,
+                    ? activeTracker.LinkGroundRecovery(request.MaskedFrame, request.Exclusions, activeStore.Source,
                         id => compositionExclusions[id], groundConfirmationProbe)
                     : null;
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
-                var confirmedLocalPlacement = groundPlacement ?? restoredPlacement;
-                var localRecoveryPlaced = update.AcceptedClosure is not null
-                    || confirmedLocalPlacement is not null && activeTracker.PlaceRecoveredIsland(confirmedLocalPlacement);
+                var acceptedClosure = groundClosure ?? update.AcceptedClosure;
+                var restored = restoredPlacement is not null && activeTracker.PlaceRecoveredIsland(restoredPlacement);
+                var localRecoveryPlaced = (acceptedClosure is not null || restored)
+                    && !activeTracker.LatestIslandAwaitsPlacement;
                 var doorwayAligned = !localRecoveryPlaced && newRoomDoorway is { } doorway
                     && activeTracker.AlignNewRoomThroughDoorway(doorway);
                 if (doorwayAligned) newRoomDoorway = null;
                 var requiresRebuild = doorwayAligned || localRecoveryPlaced;
+                var requiresBasisUpdate = requiresRebuild || groundClosure is not null;
                 var durableSnapshot = WithCompositionExclusions(activeTracker.Snapshot);
                 GroundTruthAtlasMosaic? rebuiltAtlas = null;
                 if (requiresRebuild)
@@ -675,7 +677,7 @@ internal sealed class WindowsLiveWorldPipeline
                 committedLocalWalk = groundEvidence.Count == 0
                     ? priorWalk : GroundStrokeGeometry.Coalesce(priorWalk.Concat(walked));
 
-                if (requiresRebuild
+                if (requiresBasisUpdate
                     && (!IsWorkCurrent(processEpoch)
                         || !worldBasis.ConfirmPlacement(
                             resolvedObservation.Value.Ticket,
@@ -685,7 +687,7 @@ internal sealed class WindowsLiveWorldPipeline
                     throw new InvalidOperationException(
                         "The committed Atlas correction belonged to an expired world basis.");
                 }
-                if (requiresRebuild)
+                if (requiresBasisUpdate)
                 {
                     if (!IsWorkCurrent(processEpoch)) return Cancelled();
                     transactionObserver?.Invoke(doorwayAligned ? "doorway-basis" : "closure-basis");
@@ -704,13 +706,14 @@ internal sealed class WindowsLiveWorldPipeline
                     new AtlasPoint(committed.OptimizedPose.X - worldPose.X, committed.OptimizedPose.Y - worldPose.Y),
                     basis,
                     durableSnapshot.MapRevision,
-                    update.AcceptedClosure,
+                    acceptedClosure,
                     null,
                     rebuiltAtlas,
-                    placementPending ? "live-world measured evidence saved; placement pending"
+                    placementPending ? (groundClosure is null ? "live-world measured evidence saved; placement pending"
+                        : "live-world measured sections linked; placement pending")
                         : doorwayAligned ? "live-world doorway floor aligned"
-                        : groundPlacement is not null && localRecoveryPlaced ? "live-world ground-verified recovery placed"
-                        : restoredPlacement is not null && localRecoveryPlaced ? "live-world local recovery placed"
+                        : groundClosure is not null ? "live-world ground-verified recovery placed"
+                        : restored ? "live-world local recovery placed"
                         : update.AcceptedClosure is null ? "live-world committed" : "live-world loop closure committed")
                 {
                     PlacementPending = placementPending,

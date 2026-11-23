@@ -655,6 +655,99 @@ internal static class NativeAtlasImportTests
         finally { root.Delete(recursive: true); }
     }
 
+    internal static void TestMeasuredAtlasLinksSurviveUntilTheirGroupIsPlaced()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-relative-atlas-link-");
+        try
+        {
+            var pipeline = new WindowsLiveWorldPipeline(root.FullName);
+            var store = new LiveWorldSessionStore(root.FullName);
+            WindowsLiveWorldFrame Measured(long id, double time, int texture, double x)
+            {
+                var request = FloorFrame(id, texture, true, 135, false, false);
+                return request with
+                {
+                    Timestamp = time,
+                    MonotonicTimestamp = time,
+                    LocalPose = new(x, 0),
+                    GroundAlignmentExclusions = [new(0, 0, request.Frame.Width, request.Frame.Height)],
+                    WorldEvidence = request.WorldEvidence! with { CaptureTimestamp = time, LocalReferenceTimestamp = time - .05 }
+                };
+            }
+
+            Check(pipeline.Process(Measured(1, .5, 71, 80)).AllowsAtlasComposition, "initial placed map");
+            pipeline.NotifyTrackingLoss(1);
+            _ = pipeline.Process(Measured(2, .7, 901, 220));
+            _ = pipeline.Process(Measured(3, .81, 901, 220));
+            Check(pipeline.Process(Measured(4, .95, 901, 220)).PlacementPending, "first unplaced section");
+            pipeline.NotifyTrackingLoss(1);
+            _ = pipeline.Process(Measured(5, 1.15, 901, 400));
+            _ = pipeline.Process(Measured(6, 1.28, 901, 400));
+            var firstVote = pipeline.Process(Measured(7, 1.42, 901, 400));
+            Check(firstVote.PlacementPending && firstVote.AcceptedClosure is null,
+                "one image in the second section must remain tentative");
+            var relative = pipeline.Process(Measured(8, 1.57, 901, 400));
+            Check(relative is { PlacementPending: true, AcceptedClosure: not null, RebuiltAtlas: null }
+                && !relative.AllowsAtlasComposition && relative.CameraPose == new AtlasPoint(220, 0),
+                $"two images link the unplaced sections without showing them ({relative.Diagnostic})");
+
+            var saved = store.LoadTracker();
+            var before = saved.Snapshot;
+            var source = before.Observations[1];
+            var arrival = before.Observations[2];
+            var components = new LiveIslandComponents(before);
+            Check(before.LoopClosureEdges.Count == 1 && before.UnplacedObservationIds().SetEquals([1, 2, 3])
+                && components.SameRigidComponent(components.Owner(source.Id)!.Id, components.Owner(arrival.Id)!.Id)
+                && before.Landmarks.Count >= 6 && before.Landmarks.All(landmark => landmark.GroundClosureOnly)
+                && !saved.HasRecoveryReference(source.RoomId),
+                "saved edges retain verified support without widening the unverified matcher");
+            Check(source.OptimizedPose == arrival.OptimizedPose && before.Observations[0].OptimizedPose == new AtlasPoint(80, 0),
+                "the relative correction preserves the existing anchor");
+
+            var one = pipeline.Process(Measured(9, 1.72, 71, 410));
+            Check(one.PlacementPending, "the anchored match needs a separate confirmation");
+            var placed = pipeline.Process(Measured(10, 1.87, 71, 410));
+            Check(placed is { AllowsAtlasComposition: true, AcceptedClosure: not null, RebuiltAtlas.TileCount: > 0 },
+                $"the anchored match publishes the whole linked component ({placed.Diagnostic})");
+            var after = store.Load().Snapshot;
+            Check(after.LoopClosureEdges.Count == 2 && after.UnplacedObservationIds().Count == 0
+                && after.Observations[0].OptimizedPose == new AtlasPoint(80, 0)
+                && after.Observations[1].OptimizedPose == new AtlasPoint(70, 0)
+                && after.Observations[2].OptimizedPose == new AtlasPoint(70, 0),
+                "the two unplaced sections move together to the placed map");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    internal static void TestAtlasLinksPreserveDoorwayAxesAndFixedPlacements()
+    {
+        WithFixture((root, store, _) =>
+        {
+            var original = store.Load().Snapshot;
+            var islands = original.TrackingIslands.Select(island => island.Id == TargetIsland
+                ? island with { BreakReason = LiveTrackingIsland.RecoveryBreakReason }
+                : island).ToArray();
+            var pending = new LiveWorldSnapshot(original.SchemaVersion, original.MapRevision, original.AnchoredObservationId,
+                original.Observations, original.Keyframes, original.Landmarks, original.RelativeMotionEdges,
+                original.LoopClosureEdges, islands, original.DoorwayFloorConstraints);
+            var components = new LiveIslandComponents(pending);
+            Check(!components.SameRigidComponent(SourceIsland, TargetIsland)
+                && components.Plan(SourceIsland, TargetIsland, new(20, 5), tolerance: 4) is null,
+                "a doorway links elevation only, and an image cannot contradict it");
+            var forward = components.Plan(SourceIsland, TargetIsland, new(20, 0), tolerance: 4);
+            var reverse = components.Plan(TargetIsland, SourceIsland, new(-20, 0), tolerance: 4);
+            Check(forward is not null && reverse is not null
+                && forward.Shifts.Count == 1 && forward.Shifts[TargetIsland] == new AtlasPoint(20, 0)
+                && forward.Shifts.SequenceEqual(reverse.Shifts)
+                && forward.PlacedIslands.SetEquals([SourceIsland, TargetIsland]),
+                "an image can establish horizontal placement in either direction without changing the measured floor");
+            var anchored = new LiveIslandComponents(original);
+            Check(anchored.Plan(SourceIsland, TargetIsland, new(3, 3), tolerance: 4) is null
+                && anchored.Plan(SourceIsland, TargetIsland, new(2, 2), tolerance: 4)?.Shifts.Count == 0,
+                "fixed placements require consistent two-axis evidence");
+        });
+    }
+
     private static WindowsLiveWorldFrame FloorFrame(long id, int seed, bool rightSide, int row, bool airborne, bool competing)
     {
         var request = ResumeFrame(id, seed);

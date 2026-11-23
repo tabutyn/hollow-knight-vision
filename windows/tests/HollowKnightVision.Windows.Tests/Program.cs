@@ -404,6 +404,8 @@ var tests = new List<(string Name, Action Run)>
     ("same-room recovery retains measured evidence until placed imagery confirms it", NativeAtlasImportTests.TestLocalRecoveryRetainsEvidenceUntilAPlacedMatch),
     ("same-room recovery reconnects a Mac Atlas through rebuilt visual references", NativeAtlasImportTests.TestImportedWorldPlacesMeasuredRecoveryThroughRegeneratedFeatures),
     ("same-room recovery verifies broad scenery matches against saved floor texture", NativeAtlasImportTests.TestSameRoomRecoveryVerifiesBroadMatchesWithFloorTexture),
+    ("measured Atlas sections keep their relative link until the group is placed", NativeAtlasImportTests.TestMeasuredAtlasLinksSurviveUntilTheirGroupIsPlaced),
+    ("Atlas image links preserve measured doorway axes and fixed placements", NativeAtlasImportTests.TestAtlasLinksPreserveDoorwayAxesAndFixedPlacements),
     ("new doorway spacing excludes measured sections awaiting placement", NativeAtlasImportTests.TestDoorwaySpacingUsesOnlyPlacedImages),
     ("floor texture refines both axes of an Atlas closure", GroundPlaneClosureVerifierTests.TestMeasuredFloorRefinesBroadSceneryProposal),
     ("background displacement cannot place the Atlas floor", GroundPlaneClosureVerifierTests.TestBackgroundDisplacementDoesNotEstablishGroundConnection),
