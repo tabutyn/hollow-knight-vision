@@ -6,6 +6,7 @@ namespace HollowKnightVision.Windows.App;
 internal sealed record GameplayPathPresentation(long CaptureId, int Width, int Height, GameplayPathView View)
 {
     internal GameplayPathTracker? Tracker { get; init; }
+    internal double CapturedAt { get; init; }
 
     internal bool IsCurrent(bool enabled, string? context, long latestCaptureId, bool registered) =>
         enabled && context is "game" or "Gameplay" && CaptureId <= latestCaptureId

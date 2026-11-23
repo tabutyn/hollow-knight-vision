@@ -68,6 +68,42 @@ internal static class ForwarderPauseTests
 
     public static void TestBotOwnershipAndExpiration() => BotOwnershipAndExpiration().GetAwaiter().GetResult();
 
+    public static void TestAtlasPathsUseReceiverMenuWithoutCamera() => AtlasPathsUseReceiverMenuWithoutCamera().GetAwaiter().GetResult();
+
+    private static async Task AtlasPathsUseReceiverMenuWithoutCamera()
+    {
+        await using var fixture = new Fixture(pauseSupported: true);
+        var forwarder = fixture.Forwarder;
+        var evidence = new AtlasPathFrameEvidence();
+        var received = Channel.CreateUnbounded<double>();
+        forwarder.GroundTruthReceived += (sample, observedAt) =>
+        {
+            evidence.ObserveReceiver(sample.SessionId, sample.AtlasGameplayActive, observedAt);
+            received.Writer.TryWrite(observedAt);
+        };
+        await Until(() => forwarder.PauseState == GamePauseState.Ready);
+        var active = ReceiverWireCodec.DecodeLine<ReceiverGroundTruthSample>(
+            """{"version":2,"type":"groundTruth","sessionID":"193f132f-ae84-423b-ac82-1bcd65dc1fe1","sequence":1,"unityFrame":40,"sceneName":"Tutorial_01","cameraAvailable":true,"atlasGameplayActive":true}""");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+        await fixture.SendGroundTruth(active);
+        var first = await received.Reader.ReadAsync(deadline.Token);
+        Check(evidence.AdmitsGameplay(40, first, modded: true));
+
+        await fixture.SendGroundTruth(active with { Sequence = 2, CameraAvailable = false, AtlasGameplayActive = false });
+        var paused = await received.Reader.ReadAsync(deadline.Token);
+        Check(!evidence.AdmitsGameplay(40, first, modded: true)
+            && !evidence.AdmitsHacker(1, 40, first, active.SessionId, true, true),
+            "A menu without a camera sample must retire the current overlays.");
+        Check(forwarder.TryGetFreshGroundTruth(TimeSpan.FromSeconds(4), out var camera) && camera.Sequence == 1,
+            "A camera-less menu sample must not replace the last camera reference.");
+        await fixture.SendGroundTruth(active with { Sequence = 3, UnityFrame = 41 });
+        var resumed = await received.Reader.ReadAsync(deadline.Token);
+        Check(resumed > paused && !evidence.AdmitsGameplay(40, first, modded: true)
+            && evidence.AdmitsGameplay(41, resumed, modded: true)
+            && evidence.AdmitsHacker(1, 41, resumed, active.SessionId, true, true),
+            "A resume authorizes only fresh gameplay frames.");
+    }
+
     private static async Task BotOwnershipAndExpiration()
     {
         await using var fixture = new Fixture(pauseSupported: true);
@@ -305,6 +341,8 @@ internal static class ForwarderPauseTests
         internal async Task AcknowledgePlayerOps(ReceiverPlayerOpsCommand command, string? scene = null) =>
             await writer!.WriteAsync(ReceiverWireCodec.EncodeLine(new ReceiverPlayerOpsAcknowledgement(
                 2, "playerOpsAck", command.SessionId, command.CommandId, true, null, null, null, scene)));
+        internal Task SendGroundTruth(ReceiverGroundTruthSample sample) =>
+            writer!.WriteAsync(ReceiverWireCodec.EncodeLine(sample));
         internal Task CloseForwarder() => closeTask ??= Forwarder.DisposeAsync().AsTask();
         internal void Disconnect() { peer?.Close(); listener.Stop(); }
         public async ValueTask DisposeAsync()

@@ -9,11 +9,14 @@ public partial class MainWindow
 {
     private bool atlasPathsEnabled = true;
     private GameplayPathPresentation? gameplayPathPresentation;
+    private readonly AtlasPathFrameEvidence atlasPathEvidence = new();
 
     private bool ShowsGameplayPaths =>
         workspace == "Gameplay" && visionCancellation is not null && labelCapture.State is not (GamePauseState.Pausing or GamePauseState.Paused or GamePauseState.Resuming)
-        && gameplayPathPresentation?.IsCurrent(Volatile.Read(ref atlasPathsEnabled), recognizedMenuContext,
-            latestPresentedCaptureId, gameplayFrameRegistered) == true;
+        && gameplayPathPresentation is { } path
+        && atlasPathEvidence.AdmitsGameplay(path.CaptureId, path.CapturedAt, gameMode == GameRuntimeMode.Modded)
+        && path.IsCurrent(Volatile.Read(ref atlasPathsEnabled), recognizedMenuContext,
+            latestPresentedCaptureId, gameplayFrameRegistered);
 
     private void RenderGameplayPaths()
     {
@@ -49,6 +52,7 @@ public partial class MainWindow
     private void ResetGameplayPaths()
     {
         gameplayPathPresentation = null;
+        atlasPathEvidence.ResetGameplayPreview();
         GameplayPathCanvas.Children.Clear();
         GameplayPathCanvas.Visibility = Visibility.Collapsed;
     }

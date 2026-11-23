@@ -667,17 +667,14 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
             var sample = ReceiverWireCodec.DecodeLine<ReceiverGroundTruthSample>(line);
             if (!sample.HasFiniteCoordinates()) continue;
             var observedAt = MonotonicSeconds();
-            inputPathRecorder.RecordGroundTruth(sample, observedAt);
-            if (sample.CameraAvailable)
+            lock (stateLock)
             {
-                lock (stateLock)
-                {
-                    if (!ReferenceEquals(receiver, client)) continue;
-                    var received = new ReceivedGroundTruth(sample, observedAt);
-                    Volatile.Write(ref latestGroundTruth, received);
-                }
-                PublishGroundTruth(sample, observedAt);
+                if (!ReferenceEquals(receiver, client)) continue;
+                if (sample.CameraAvailable)
+                    Volatile.Write(ref latestGroundTruth, new ReceivedGroundTruth(sample, observedAt));
             }
+            inputPathRecorder.RecordGroundTruth(sample, observedAt);
+            PublishGroundTruth(sample, observedAt);
         }
         throw new IOException("Receiver closed the connection.");
     }

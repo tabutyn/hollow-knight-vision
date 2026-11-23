@@ -4,14 +4,26 @@ public static class FrameRegionRenderer
 {
     private const double MinimumFeatureMarkerSize = 8;
     private const double KnightMarkerPadding = 2;
+    private const int SignalWidth = 64;
 
-    public static bool ContainsGameplaySignal(BgraFrame frame) => SignalProfile(frame).HasGameplaySignal;
+    public static bool ContainsGameplaySignal(BgraFrame frame)
+    {
+        var height = SignalHeight(frame);
+        var pixels = new ImageStencilPixels(frame, SignalWidth, height);
+        var needed = FrameSignalProfile.RequiredSignalSamples(SignalWidth * height);
+        for (var y = 0; y < height; y++)
+        for (var x = 0; x < SignalWidth; x++)
+        {
+            var (red, green, blue) = pixels.Rgb(x, y)!.Value;
+            if ((red >= 5 || green >= 5 || blue >= 5) && --needed == 0) return true;
+        }
+        return false;
+    }
 
     public static FrameSignalProfile SignalProfile(BgraFrame frame)
     {
-        const int width = 64;
-        var height = Math.Max(16, checked((int)Math.Round((double)width * frame.Height / frame.Width,
-            MidpointRounding.AwayFromZero)));
+        const int width = SignalWidth;
+        var height = SignalHeight(frame);
         // Preserve the full source aspect ratio; do not use the 16:9 editor crop.
         var pixels = new ImageStencilPixels(frame, width, height);
         var peak = new byte[checked(width * height)];
@@ -30,6 +42,9 @@ public static class FrameRegionRenderer
         return new(peak.Length, signaled, visible, (double)total / peak.Length,
             new(width, height, luma), EdgeBlackBands(peak, width, height));
     }
+
+    private static int SignalHeight(BgraFrame frame) => Math.Max(16,
+        checked((int)Math.Round((double)SignalWidth * frame.Height / frame.Width, MidpointRounding.AwayFromZero)));
 
     private static FrameEdgeBlackBands EdgeBlackBands(byte[] peaks, int width, int height)
     {
