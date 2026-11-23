@@ -168,6 +168,9 @@ internal static class AtlasPlatformGraphTests
         var landed = route.Observe(graph, new(142, 25), true, target, 1.2);
         Require(landed.FirstOrDefault() == new AtlasPathPoint(142, 45) && landed.LastOrDefault() == target,
             "After landing, the route should advance onto the destination platform.");
+        var below = new HackerAtlasRoute().Observe(graph, new(190, -2), true, target, 1.2);
+        Require(below.FirstOrDefault() == new AtlasPathPoint(190, 45) && below.LastOrDefault() == target,
+            "A grounded preview should retain the previous two-Knight-height walk tolerance.");
 
         route.Observe(graph, new(94, 0), true, target, 1.3);
         Require(route.Observe(graph, highFeet, false, target, 1.9).Count == 0,

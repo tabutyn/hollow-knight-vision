@@ -20,7 +20,7 @@ public sealed class HackerAtlasRoute
         objective = target;
         lastTime = time;
         navigator.Follow(graph, feet, grounded, measured: false, admitted: null, walked: [],
-            fixedObjective: target, fixedObjectiveOnGround: false);
+            fixedObjective: target, fixedObjectiveOnGround: false, previewRadius: 2 * graph.KnightHeight);
         return navigator.SelectedRoute;
     }
 

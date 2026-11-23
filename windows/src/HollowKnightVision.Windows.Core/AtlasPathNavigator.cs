@@ -61,7 +61,7 @@ internal sealed class AtlasPathNavigator
 
     internal AtlasPathHint? Follow(AtlasPlatformGraph graph, AtlasPathPoint feet, bool? grounded, bool measured,
         Func<AtlasPathPoint, AtlasPathPoint, bool>? admitted, IReadOnlyList<AtlasPathPlatform> walked,
-        AtlasPathPoint? fixedObjective = null, bool fixedObjectiveOnGround = true)
+        AtlasPathPoint? fixedObjective = null, bool fixedObjectiveOnGround = true, int? previewRadius = null)
     {
         automatic = !fixedObjective.HasValue;
         SelectedRoute = [];
@@ -69,7 +69,8 @@ internal sealed class AtlasPathNavigator
         var position = new AtlasPathPoint(feet.X, feet.Y + h);
         var floor = grounded == false ? null : graph.NearestStroke(position, grounded == true ? h : Math.Max(2, h / 3), walkOnly: true);
         var airborne = floor is null && grounded != true ? ProjectFlight(graph, position) : null;
-        var nearest = floor ?? airborne?.Stroke ?? graph.NearestStroke(position, h);
+        var nearest = floor ?? airborne?.Stroke ?? graph.NearestStroke(position, previewRadius ?? h,
+            walkOnly: previewRadius.HasValue && grounded == true);
         HasStartProjection = nearest.HasValue;
         if (nearest is not { } startStroke)
         {
