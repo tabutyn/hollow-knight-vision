@@ -140,7 +140,8 @@ public sealed record RecordedInputPath
         IReadOnlyList<RecordedCoarseMotionSample>? coarseMotionSamples = null,
         IReadOnlyList<RecordedLowResolutionFrame>? lowResolutionFrames = null,
         IReadOnlyList<RecordedLoopClosureEvent>? loopClosures = null,
-        IReadOnlyDictionary<string, string>? runtimeMetadata = null)
+        IReadOnlyDictionary<string, string>? runtimeMetadata = null,
+        RecordedVisualFrameArchive? visualFrameArchive = null)
     {
         SchemaVersion = schemaVersion;
         Id = id;
@@ -156,6 +157,7 @@ public sealed record RecordedInputPath
         LowResolutionFrames = lowResolutionFrames;
         LoopClosures = loopClosures;
         RuntimeMetadata = runtimeMetadata;
+        VisualFrameArchive = visualFrameArchive;
     }
 
     public int SchemaVersion { get; }
@@ -172,6 +174,8 @@ public sealed record RecordedInputPath
     public IReadOnlyList<RecordedLowResolutionFrame>? LowResolutionFrames { get; }
     public IReadOnlyList<RecordedLoopClosureEvent>? LoopClosures { get; }
     public IReadOnlyDictionary<string, string>? RuntimeMetadata { get; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public RecordedVisualFrameArchive? VisualFrameArchive { get; }
 
     [JsonIgnore] public int UnverifiedSampleCount => TrackingSamples.Count(sample => !sample.PoseVerified);
     [JsonIgnore] public int GlobalCorrectionCount => TrackingSamples.Count(sample =>

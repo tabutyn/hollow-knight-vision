@@ -55,6 +55,7 @@ internal static class Program
         TestRejectedMenuDoesNotDrawStencils();
         ControlledStepCaptureTests.Run();
         ReplayLifecycleTests.Run();
+        TestVisualReplayInspectionSkipsNormalStartup();
         TestWorldReplayRequiresExplicitReturningIntent();
         TestWorldReplayCreatesRequestedReport();
         TestWorldReplayBadArgumentsAndFailureExitCodes();
@@ -127,7 +128,7 @@ internal static class Program
         GpuCaptureTests.TestMappedBounds();
         GpuCaptureTests.RunIfRequested();
         if (args.Contains("--input")) TestBackgroundKeyDelivery();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 76 : 75)}");
+        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 77 : 76)}");
         Application.Current.Shutdown();
     }
 
@@ -273,6 +274,33 @@ internal static class Program
         Check(normalOwnership.Target is null && normalOwnership.HeldKeys.Count == 0,
             "Model review navigation acquired normal-game handoff ownership.");
         Console.WriteLine("PASS testModelReviewNavigationAndExitAreReservedFromGameRelay");
+    }
+
+    private static void TestVisualReplayInspectionSkipsNormalStartup()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"hkv-visual-replay-host-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "path-legacy.json");
+            new RecordedInputPathStore(root).Save(new RecordedInputPath(RecordedInputPath.CurrentSchemaVersion,
+                Guid.NewGuid(), DateTimeOffset.UnixEpoch, 1, null, null, null, []), path);
+            using var output = new StringWriter();
+            using var errors = new StringWriter();
+            Task<int> Run(params string[] arguments) => HostProgram.RunAsync(arguments,
+                normalRunner: _ => throw new InvalidOperationException("Offline inspection attempted normal startup."),
+                standardOutput: output, standardError: errors);
+
+            if (Run("--inspect-visual-replay", path).GetAwaiter().GetResult() != 2)
+                throw new InvalidOperationException("A legacy recording should report an unavailable image archive.");
+            using var report = JsonDocument.Parse(output.ToString());
+            if (report.RootElement.GetProperty("archiveAvailable").GetBoolean())
+                throw new InvalidOperationException("The offline inspection reported image evidence for a legacy recording.");
+            if (Run("--inspect-visual-replay").GetAwaiter().GetResult() != 64
+                || Run("--inspect-visual-replay", Path.Combine(root, "missing.json")).GetAwaiter().GetResult() != 1)
+                throw new InvalidOperationException("Offline visual replay usage and read failures returned the wrong exit codes.");
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     private static void TestWorldReplayRequiresExplicitReturningIntent()

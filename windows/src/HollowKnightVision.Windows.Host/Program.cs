@@ -128,6 +128,28 @@ internal static class Program
         TextWriter? standardError = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
+        if (arguments.Contains("--inspect-visual-replay", StringComparer.Ordinal))
+        {
+            var output = standardOutput ?? Console.Out;
+            var errors = standardError ?? Console.Error;
+            if (arguments is not ["--inspect-visual-replay", var path])
+            {
+                errors.WriteLine("Expected --inspect-visual-replay PATH.");
+                return Task.FromResult(64);
+            }
+            try
+            {
+                var report = VisualReplayArchiveReader.Inspect(path);
+                output.WriteLine(JsonSerializer.Serialize(report, WorldReplayJsonOptions));
+                return Task.FromResult(report.Complete ? 0 : 2);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                or JsonException or ArgumentException)
+            {
+                errors.WriteLine($"Visual replay inspection failed. {error.Message}");
+                return Task.FromResult(1);
+            }
+        }
         if (arguments is ["--recover-bot-blockades", var capturePath])
         {
             try
@@ -639,6 +661,8 @@ internal static class Program
         Console.WriteLine("""
             Hollow Knight Vision Windows capture bootstrap
 
+            --inspect-visual-replay PATH
+                                    Verify a saved input path's exact frame archive offline.
             --probe                 Locate the game window without capturing pixels.
             --receiver-probe        Verify the in-game receiver and print its capabilities.
             --ground-truth-once     Print one Hacker camera/hero telemetry sample.
