@@ -197,6 +197,101 @@ internal static class MenuTrackerTests
         Near(32, result.Anchors.Single().Rect.Y);
     }
 
+    internal static void TestPlainMenuSelectorBoxesFollowTheMatchedWords()
+    {
+        var heading = Variant();
+        var word = Variant(ForeignPattern);
+        var decoration = Variant(ThirdPattern);
+        const string creditsId = "extras.credits";
+        const string menuStyleId = "extras.menu-style";
+        var title = new Anchor("extras.extras", "Extras", new(16, 12, 4, 4), null, [heading], heading);
+        var credits = new Anchor(creditsId, "Credits", new(74, 44, 4, 4), null, [word], word);
+        var style = new Anchor(menuStyleId, "Menu Style", new(74, 76, 4, 4), null, [word], word);
+        var left = new PositionedSelector(new(60, 76, 4, 4), [decoration]);
+        var right = new PositionedSelector(new(88, 76, 4, 4), [decoration]);
+        var options = new Option[]
+        {
+            new(creditsId, "Credits", credits.Bounds, null, left, right),
+            new(menuStyleId, "Menu Style", style.Bounds, null, left, right)
+        };
+        var scene = new Scene("extras", 156, 112, title, [title, credits, style], options,
+            new Dictionary<string, IReadOnlyList<Variant>>(), null);
+        var tracker = new MenuStencilTracker(new([scene], 156, 112, 0, 112, []));
+        var frame = Frame(156, 112, (16, 12, Pattern), (76, 46, ForeignPattern), (74, 76, ForeignPattern),
+            (60, 76, ThirdPattern), (88, 76, ThirdPattern));
+        for (var step = 0; step < 12; step++)
+        {
+            var result = tracker.Observe(frame, step * .25)!;
+            Check(result.IsMatch && result.SelectedOption == "Menu Style", "The Credits row latched on to Menu Style.");
+            var anchor = result.Anchors.Single(item => item.ClassIdentifier == creditsId);
+            var text = anchor.Reference!.VerifiedBounds(anchor.Rect);
+            foreach (var region in result.SelectorSearchRegions.Where(item => item.OptionIdentifier == creditsId))
+            {
+                Near(text.MidY, region.Rect.MidY);
+                Check(region.Side == MenuSelectorSide.Left ? region.Rect.MidX < text.X : region.Rect.MidX > text.Right,
+                    "The selector preview must flank its matched text.");
+            }
+        }
+    }
+
+    internal static void TestSelectorRefinementStaysNearTheCapturedReference()
+    {
+        using var fixture = new CalibrationFixture();
+        var tracker = fixture.Tracker();
+        for (var i = 0; i <= 10; i++) tracker.Observe(Image(18, 20, 56, 20), i * .25);
+        var stored = MenuStencilCalibration.Load(fixture.Output)!.FindScene("main-title")!.Selectors.Single();
+        Near(18, stored.LeftRect.X);
+        for (var i = 0; i <= 12; i++)
+        {
+            var result = tracker.Observe(Image(21, 20, 59, 20), 3 + i * .25)!;
+            foreach (var candidate in result.SelectorCandidates)
+            {
+                var original = candidate.Name.EndsWith("left", StringComparison.Ordinal) ? 12 : 50;
+                Check(Math.Abs(candidate.Rect.MidX - original) <= 8, "A candidate walked beyond its original reference.");
+            }
+        }
+        var updated = MenuStencilCalibration.Load(fixture.Output)!.FindScene("main-title")!.Selectors.Single();
+        Near(18, updated.LeftRect.X);
+        var recovered = tracker.Observe(Image(7, 20, 45, 20), 7)!;
+        Check(recovered.SelectedOption == "Fixture Option", "The original reference did not recover a valid match.");
+        Near(7, recovered.SelectorCandidates[0].Rect.X);
+
+        var english = new StencilRect(20, 20, 4, 4);
+        var french = english.Offset(40, 1);
+        var saved = new PositionedSelector(english.Offset(15, -9), [],
+            new Dictionary<string, StencilRect> { ["en"] = english.Offset(20, 0), ["fr"] = french.Offset(2, 1) },
+            ReferenceBounds: english, LocalizedReferenceBounds: new Dictionary<string, StencilRect> { ["fr"] = french });
+        Equal(english, saved.BoundsFor("en"));
+        Equal(french.Offset(2, 1), saved.BoundsFor("fr"));
+    }
+
+    internal static void TestTrackingStaysNearCapturedPositions()
+    {
+        var titleVariant = Variant();
+        var rowVariant = Variant(ForeignPattern);
+        foreach (var context in new[] { "brightness", "clear-save", "quit-game", "quit-to-menu" })
+        {
+            var title = new Anchor($"{context}.title", "Title", new(24, 24, 4, 4), null, [titleVariant], titleVariant);
+            var yes = new Anchor("shared.yes", "Yes", new(70, 48, 4, 4), null, [rowVariant], rowVariant);
+            var no = new Anchor("shared.no", "No", new(70, 64, 4, 4), null, [rowVariant], rowVariant);
+            var scene = new Scene(context, 160, 120, title, [title, yes, no], [],
+                new Dictionary<string, IReadOnlyList<Variant>>(), null);
+            var catalog = new MenuStencilCatalog([scene], 160, 120, 0, 120, []);
+            foreach (var horizontal in new[] { true, false })
+            {
+                var tracker = new MenuStencilTracker(catalog);
+                BgraFrame Shifted(int x, int y) => Frame(160, 120, (24 + x, 24 + y, Pattern),
+                    (70 + x, 48 + y, ForeignPattern), (70 + x, 64 + y, ForeignPattern));
+                Check(tracker.Observe(Shifted(0, 0), 0)?.IsMatch == true, $"{context} did not match its captured frame.");
+                MenuStencilResult? result = null;
+                for (var step = 1; step <= 22; step++)
+                    result = tracker.Observe(Shifted(horizontal ? 2 * step : 0, horizontal ? 0 : 2 * step), step / 10d);
+                Check(result?.IsMatch != true, $"{context} followed a series of displacements away from its reference.");
+                Check(tracker.Observe(Shifted(2, 2), 3)?.IsMatch == true, $"{context} failed to reacquire after small capture jitter.");
+            }
+        }
+    }
+
     internal static void TestDialogPoseUsesStableRows()
     {
         var variant = Variant(); var foreign = Variant(ForeignPattern);

@@ -35,6 +35,7 @@ jobs:
         run: |
           python3 macos/test-analyze-input-paths.py
           python3 macos/test-camera-diagnostics.py
+          python3 macos/test-score-visual-replay.py
           python3 macos/test-report-gpu-coverage.py
       - name: Build macOS app bundle
         env:

@@ -4,7 +4,7 @@ public static class StencilLabelSelectionPolicy
 {
     public static IReadOnlyList<MenuStencilLabel> AvailableLabels(string context,
         IReadOnlyList<LabelingExampleAnnotation> rectangles, bool modded, bool hidesCompleted,
-        bool includesDeferredLabels = false, IReadOnlyList<MenuStencilLabel>? custom = null)
+        IReadOnlyList<MenuStencilLabel>? custom = null)
     {
         var definitions = LabelingContractCatalog.Contexts.FirstOrDefault(item => item.Identifier == context)?.Labels ?? [];
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -13,10 +13,10 @@ public static class StencilLabelSelectionPolicy
             var identifier = LabelingClassIdentity.CanonicalIdentifier(definition.Identifier);
             if (!seen.Add(identifier) || (!modded && identifier == "shared.mods")
                 || !LabelingHudStencilPolicy.IsLabelable(context, identifier)) return false;
-            // The shared contract allows zero during phase one. Once deferred
-            // labeling is enabled, one positive Clear Save box finishes this task.
+            // Recognition accepts an empty profile. Setup needs one positive
+            // Clear Save stencil on its occupied-slot reference.
             if (hidesCompleted && identifier == "select-profile.clear-save")
-                return includesDeferredLabels && !rectangles.Any(item => !item.IsHardNegative
+                return !rectangles.Any(item => !item.IsHardNegative
                     && LabelingClassIdentity.CanonicalIdentifier(item.ClassIdentifier) == identifier);
             return !hidesCompleted || context == "game"
                 || !LabelingContractEvaluator.ShouldAdvance(identifier, context, rectangles);

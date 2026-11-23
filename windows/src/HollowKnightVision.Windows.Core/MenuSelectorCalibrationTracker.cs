@@ -12,6 +12,7 @@ public sealed record MenuSelectorCorrection(string ContextIdentifier, string Opt
 public sealed class MenuSelectorCalibrationTracker
 {
     private readonly string? calibrationPath, mirrorPath;
+    private readonly bool allowWrites;
     private sealed record Sample(MenuSelectorBounds Bounds, double Timestamp);
     private readonly Dictionary<string, MenuSelectorBounds> learnedBounds = new(StringComparer.Ordinal);
     private string? pendingKey;
@@ -24,10 +25,11 @@ public sealed class MenuSelectorCalibrationTracker
         explicitPath is null ? null : Path.GetFullPath(explicitPath);
 
     public MenuSelectorCalibrationTracker(string? calibrationPath = null, string? mirrorPath = null,
-        MenuStencilCalibration? fallbackCalibration = null)
+        MenuStencilCalibration? fallbackCalibration = null, bool allowWrites = true)
     {
         this.calibrationPath = ResolveCalibrationPath(false, calibrationPath);
         this.mirrorPath = mirrorPath is null ? null : Path.GetFullPath(mirrorPath);
+        this.allowWrites = allowWrites;
         Calibration = this.calibrationPath is null ? null
             : MenuStencilCalibration.Load(this.calibrationPath) ?? fallbackCalibration ?? MenuStencilCalibration.LoadDefault();
     }
@@ -116,6 +118,11 @@ public sealed class MenuSelectorCalibrationTracker
 
     private bool Commit(MenuStencilCalibration value, string failureDiagnostic)
     {
+        if (!allowWrites)
+        {
+            Calibration = value;
+            return true;
+        }
         try
         {
             value.Write(calibrationPath!);

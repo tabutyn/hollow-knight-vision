@@ -32,6 +32,7 @@ public static class ReceiverProtocol
     public const string PlayerPosePlaybackCapability = "player-pose-playback-v1";
     public const string GroundTruthCapability = "ground-truth-telemetry-v1";
     public const string PlayerOpsCapability = "player-ops-v1";
+    public const string RoomResetCapability = "room-reset-v1";
 }
 
 public sealed record ReceiverCapabilityRequest(
@@ -237,6 +238,21 @@ public sealed record ReceiverCheckpointAcknowledgement(
     RecordedGameCheckpoint? Checkpoint,
     string? Failure);
 
+public sealed record ReceiverActorState(int Id, string Name, double ScreenX, double ScreenY, double Width, double Height)
+{
+    [JsonIgnore]
+    public bool IsValid => new[] { ScreenX, ScreenY, Width, Height }.All(value =>
+        double.IsFinite(value) && Math.Abs(value) <= 1_000_000) && Width >= 0 && Height >= 0;
+}
+
+public sealed record BotEnemyOutcomes(Guid Epoch, int Damage, int Kills);
+public sealed record BotBlueHealthOutcomes(Guid Epoch, int Gained);
+
+public sealed record ReceiverActorTelemetry(
+    int Version, ReceiverActorState? Hero, IReadOnlyList<ReceiverActorState>? Enemies,
+    IReadOnlyList<ReceiverActorState>? GeoCaches = null, IReadOnlyList<ReceiverActorState>? LifebloodCocoons = null,
+    BotEnemyOutcomes? EnemyOutcomes = null, int? HeroHealth = null);
+
 public sealed record ReceiverGroundTruthSample(
     int Version,
     string Type,
@@ -271,6 +287,10 @@ public sealed record ReceiverGroundTruthSample(
     int ScreenHeight,
     [property: JsonPropertyName("controlledFrameID")] Guid? ControlledFrameId = null)
 {
+    public ReceiverActorTelemetry? Actors { get; init; }
+    public BotBlueHealthOutcomes? BlueHealthOutcomes { get; init; }
+    public bool? AtlasGameplayActive { get; init; }
+
     public bool HasFiniteCoordinates()
     {
         var values = new[]
@@ -398,8 +418,13 @@ public sealed record ReceiverPlayerOpsCommand(
     public static ReceiverPlayerOpsCommand Apply(Guid sessionId, PlayerTestState state) =>
         new(ReceiverProtocol.ControlVersion, "playerOps", sessionId, Guid.NewGuid(), "apply", state.Normalized());
 
+    public const string ResetRoomOperation = "resetRoom";
+
     public static ReceiverPlayerOpsCommand RestoreEnemies(Guid sessionId) =>
         new(ReceiverProtocol.ControlVersion, "playerOps", sessionId, Guid.NewGuid(), "restoreEnemies", null);
+
+    public static ReceiverPlayerOpsCommand ResetRoom(Guid sessionId) =>
+        new(ReceiverProtocol.ControlVersion, "playerOps", sessionId, Guid.NewGuid(), ResetRoomOperation, null);
 }
 
 public sealed record ReceiverPlayerOpsAcknowledgement(
@@ -410,7 +435,12 @@ public sealed record ReceiverPlayerOpsAcknowledgement(
     bool Accepted,
     PlayerTestState? State,
     int? EnemiesRestored,
-    string? Failure);
+    string? Failure,
+    string? ResetScene = null)
+{
+    [JsonIgnore]
+    public bool ConfirmsRoomReset => Accepted && !string.IsNullOrWhiteSpace(ResetScene);
+}
 
 public static class ReceiverWireCodec
 {

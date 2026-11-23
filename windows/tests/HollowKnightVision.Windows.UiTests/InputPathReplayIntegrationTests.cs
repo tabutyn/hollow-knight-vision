@@ -105,14 +105,20 @@ internal static class InputPathReplayIntegrationTests
             Interlocked.Increment(ref creations);
             return new ReceiverClient(port: port);
         });
+        var archiveRoot = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"hkv-receiver-frame-archive-{Guid.NewGuid():N}");
         try
         {
         bridge.Start();
         await Until(() => bridge.PlayerOpsAvailable && bridge.HasFreshGroundTruth, timeout.Token);
         Check(bridge.ForwardPointer("moved", .5, .5), "Pointer test capability was not negotiated.");
-        Check(await bridge.StartRecordingAsync(timeout.Token), "Full checkpoint capture did not start recording.");
+        Check(await bridge.StartRecordingAsync(timeout.Token, archiveRoot), "Full checkpoint capture did not start recording.");
+        var recordingStart = bridge.Recording!.Value.StartedAt;
+        RecordFrame(bridge, recordingStart, 901);
         await Task.Delay(60, timeout.Token);
-        var captured = bridge.StopRecording();
+        var captured = await bridge.StopRecordingAsync();
+        Check(captured?.VisualFrameArchive is { Complete: true, SavedFrameCount: 1 }, "Manual capture lost the visual archive.");
+        var captureReader = new VisualReplayArchiveReader(archiveRoot, captured!.VisualFrameArchive!, captured.Id);
+        Check(captureReader.Manifest.Frames.Single().RenderedGameFrame == 901, "Manual capture lost its exact frame marker.");
         Check(captures == 1 && captured?.StartCheckpoint?.EntryGateName == "left1"
             && captured.StartCheckpoint.Enemies?.Single().Hp == 5 && captured.StartCheckpoint.ScenesVisited?.Single() == "Tutorial_01"
             && captured.StartCheckpoint.EnteredTutorialFirstTime == true && captured.StartCheckpoint.SceneMasks?.Count == 12, "Receiver checkpoint fields were discarded.");
@@ -173,7 +179,7 @@ internal static class InputPathReplayIntegrationTests
             prepare: (restored, ct) => {
                 Check(restores == (restored ? 1 : 0), "Preparation/restoration order changed.");
                 phases.Add(restored); return Task.CompletedTask;
-            });
+            }, beginEvaluation: start => RecordFrame(bridge, start, 902), visualArchiveRoot: archiveRoot);
         if (!reject)
         {
             await Until(() => states.Any(state => state.Enabled && state.HeldButtons == InputButtons.Right), timeout.Token);
@@ -200,6 +206,11 @@ internal static class InputPathReplayIntegrationTests
         {
             Check(recording?.SourcePathId == path.Id && recording.ReplayIteration == 1, "Replay evidence lost source identity.");
             Check(recording!.GroundTruthTrace.Count > 0, "Replay lost live ground truth.");
+            Check(recording.VisualFrameArchive is { SavedFrameCount: 1 } archive && archive.Complete == !cancel,
+                "Replay visual archive misreported completion.");
+            var replayReader = new VisualReplayArchiveReader(archiveRoot, recording.VisualFrameArchive!,
+                recording.Id, requireComplete: !cancel);
+            Check(replayReader.Manifest.Frames.Single().RenderedGameFrame == 902, "Replay lost its exact frame marker.");
             recording.Validate();
             Check(poses.Count > 0, "No actual playerPose messages were sent.");
             Check(poses.Select(p => p.Sequence).SequenceEqual(poses.Select(p => p.Sequence).Order().Distinct()), "Pose sequences did not increase.");
@@ -211,9 +222,22 @@ internal static class InputPathReplayIntegrationTests
         }
         }
         }
-        finally { await bridge.DisposeAsync(); }
+        finally
+        {
+            await bridge.DisposeAsync();
+            if (Directory.Exists(archiveRoot)) Directory.Delete(archiveRoot, recursive: true);
+        }
         try { await serverTask.WaitAsync(timeout.Token); }
         catch (IOException) { /* Closing the client can reset the peer with telemetry in flight. */ }
+    }
+
+    private static void RecordFrame(WindowsGameControlForwarder bridge, double time, int marker)
+    {
+        var frame = new BgraFrame(2, 1, 8, [0, 0, 0, 255, 9, 8, 7, 255], marker, DateTimeOffset.UnixEpoch);
+        bridge.RecordVisualFrame(frame, time, time, 1, marker);
+        bridge.RecordVisualStage("visionStarted", time, 1);
+        bridge.RecordVisualGroundInput(time, 1, frame.Height, GameplaySceneMasks.Create(frame, [], null), InputButtons.Right);
+        bridge.RecordVisualStage("visionCompleted", time, 1);
     }
 
     private static async Task Until(Func<bool> condition, CancellationToken token)

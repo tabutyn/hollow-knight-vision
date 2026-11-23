@@ -3,9 +3,9 @@ name: Windows
 on:
   push:
     branches: [main]
-    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", "global.json", ".github/workflows/windows.yml"]
+    paths: ["windows/**", "macos/BotPython/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", "global.json", ".github/workflows/windows.yml"]
   pull_request:
-    paths: ["windows/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", "global.json", ".github/workflows/windows.yml"]
+    paths: ["windows/**", "macos/BotPython/**", "macos/TrainingPython/**", "macos/Sources/**", "macos/Tests/**", "macos/hollow-knight-input-receiver/**", "models/**", "global.json", ".github/workflows/windows.yml"]
 
 jobs:
   build-test:
@@ -19,16 +19,56 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - name: Build and test Windows app
+      - name: Build and measure Windows test coverage
         run: |
           dotnet --version
-          .\build-windows.ps1 -Configuration Release
+          $tools = Join-Path $env:RUNNER_TEMP 'hkv-coverage'
+          dotnet tool install --tool-path $tools coverlet.console --version 10.1.0
+          if ($LASTEXITCODE -ne 0) { throw 'Could not install Coverlet.' }
+          .\build-windows.ps1 -Configuration Release -CoverageDirectory artifacts/coverage `
+            -Coverlet (Join-Path $tools 'coverlet.exe')
       - name: Report remaining Mac parity obligations
         run: .\Test-MacParity.ps1
       - name: Install training dependencies
         run: .\setup-training-windows.ps1
-      - name: Verify shared trainer and Windows dataset interchange
-        run: .\Test-TrainingInterop.ps1
+      - name: Verify and measure native trainer interchange coverage
+        run: |
+          $installed = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision'
+          $staging = Join-Path $env:RUNNER_TEMP ('hkv-interop-coverage-' + [Guid]::NewGuid().ToString('N'))
+          $coverlet = Join-Path $env:RUNNER_TEMP 'hkv-coverage\coverlet.exe'
+          $report = Join-Path (Resolve-Path artifacts/coverage) 'trainer-interop.info'
+          try {
+            # Instrument a copy of the hash-verified installation.
+            Copy-Item -LiteralPath $installed -Destination $staging -Recurse
+            $assembly = Join-Path $staging 'HollowKnightVision.Windows.Host.dll'
+            $verifier = Join-Path $staging 'HollowKnightVision.Windows.Host.exe'
+            $targetArgs = '-NoProfile -File "{0}" -NativeVerifier "{1}"' -f (Resolve-Path .\Test-TrainingInterop.ps1), $verifier
+            & $coverlet $assembly --target (Get-Command pwsh).Source --targetargs $targetArgs `
+              --include '[HollowKnightVision.Windows.Host]*' --include '[HollowKnightVision.Windows.Core]*' `
+              --include-test-assembly --format lcov --output $report
+            if ($LASTEXITCODE -ne 0) { throw 'Instrumented Windows trainer interchange failed.' }
+            $records = (Get-Content -LiteralPath $report -Raw) -split '(?m)^end_of_record\r?$'
+            foreach ($file in @('GameplayGymObservationEncoder', 'HackerGymObservationEncoder')) {
+              $record = $records | Where-Object { $_ -match "(?m)^SF:[^\r\n]*[\\/]${file}\.cs\r?$" }
+              if (-not ($record -match '(?m)^DA:[0-9]+,[1-9][0-9]*')) {
+                throw "Native trainer fixture produced no executable hits in $file."
+              }
+            }
+          } finally {
+            if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+          }
+      - name: Publish measured Windows coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: HollowKnightVision-Windows-coverage
+          path: windows/artifacts/coverage/
+          if-no-files-found: error
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify installed Windows Gym trainer
+        run: .\Test-BotGymTrainer.ps1
       - name: Publish
         run: dotnet publish src/HollowKnightVision.Windows.App/HollowKnightVision.Windows.App.csproj -c Release -r win-x64 --self-contained false -o artifacts/publish
       - uses: actions/upload-artifact@v4

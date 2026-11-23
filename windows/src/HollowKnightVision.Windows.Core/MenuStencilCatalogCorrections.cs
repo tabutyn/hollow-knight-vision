@@ -86,7 +86,10 @@ public sealed partial class MenuStencilCatalogBuilder
                 localized[target.Language] = bounds.Value;
                 var variants = selector.Variants.ToList();
                 if (pixels.Reference(bounds.Value) is { } reference) variants.Add(MakeVariant($"human-selector-correction.{target.Language}", reference, language: target.Language));
-                return selector with { LocalizedBounds = localized, Variants = variants };
+                var references = (selector.LocalizedReferenceBounds ?? selector.LocalizedBounds)?
+                    .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal) ?? new(StringComparer.Ordinal);
+                references[target.Language] = bounds.Value;
+                return selector with { LocalizedBounds = localized, LocalizedReferenceBounds = references, Variants = variants };
             }
             options[optionIndex] = option with { LeftSelector = Correct(option.LeftSelector, left), RightSelector = Correct(option.RightSelector, right) };
             scenes[sceneIndex] = scene with { Options = options };

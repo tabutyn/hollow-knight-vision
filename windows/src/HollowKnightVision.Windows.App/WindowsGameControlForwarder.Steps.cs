@@ -71,6 +71,7 @@ internal sealed partial class WindowsGameControlForwarder
                 throw new InvalidOperationException("Step replay requires receiver 0.9.4 or newer with controlled-frame, checkpoint and pause support.");
             active = receiver; fault = connectionFault; replayCancellation = cancellation; replayFinished = finished;
             stepPauseOwned = true;
+            DropBotControlLocked();
             heldButtons = InputButtons.None; isEnabled = false; awaitingFreshPress = true;
         }
         try

@@ -85,6 +85,9 @@ internal static class HudStencilTests
             (full.X + index * template.HealthPitch) / 640, full.Y / 360, full.Width / 640, full.Height / 360)).ToArray();
         var nineFull = fixtures.Single(item => item.Health?.SequenceEqual(new[] { 9, 0, 0 }) == true);
         var capturedFrame = Frame(nineFull);
+        TestHealthSurvivesChangingCaptureAspect(capturedFrame, template);
+        TestReacquiresInsetAndDisplacedHealthRow(capturedFrame, template);
+        TestSingleDisplacedIconCannotEstablishNewRow(capturedFrame, template);
         var captured = HudStencilTemplate.Captured(capturedFrame, annotations, "fixture-capture");
         Check(captured?.SourceExampleID == "fixture-capture", "Two health labels did not build a captured template.");
         Check(captured!.Health.Length == 2 && captured.ManaMain.Length == 0 && captured.ManaReserves.Length == 0,
@@ -92,13 +95,14 @@ internal static class HudStencilTests
         foreach (var fixture in fixtures.Where(item => (item.Health?.FirstOrDefault() ?? 0) >= 2))
             Check(new HudStencilTracker(captured).Observe(Frame(fixture), true, 1, 1)?.EstablishesGameplay == true,
                 $"{fixture.Id}: captured template cannot establish gameplay after health changes.");
+        TestFilledOnlyReferenceRecognizesLifeblood(fixtures, captured);
         Check(new HudStencilTracker(captured).Observe(Frame(nineFull), true, 1, 1)!.Health.Count == 9,
             "Captured two-label pitch did not extrapolate all nine masks.");
         Check(HudStencilTemplate.Captured(first, annotations.Take(1), "incomplete") is null, "One label incorrectly unlocks HUD detection.");
         Check(HudStencilTemplate.Captured(blank, annotations, "blank") is null, "Blank patches incorrectly unlock HUD detection.");
         Check(HudStencilTemplate.Captured(first, [annotations[0], annotations[0]], "overlap") is null, "Overlapping labels accepted.");
         Console.WriteLine("PASS Two captured health labels extrapolate nine icons without stock reference pixels");
-        TestCapturedHUDUnlocksFirstCampaignWithoutModelOrClearSave(fixtures, capturedFrame, template);
+        TestCapturedHUDUnlocksFirstCampaignWithoutModelOrLaterMenus(fixtures, capturedFrame, template);
         TestRecognizer(capturedFrame, Frame(nineFull), annotations);
         TestAtlasMasks(first, one);
         var twoHealth = new HudStencilResult([new(0, "full", default, .9), new(1, "full", default, .9)], null, [], [], [], default, false, 1);
@@ -120,7 +124,122 @@ internal static class HudStencilTests
         Console.WriteLine("Windows Hacker atlas parity regressions passed: 9");
     }
 
-    private static void TestCapturedHUDUnlocksFirstCampaignWithoutModelOrClearSave(
+    private static void TestFilledOnlyReferenceRecognizesLifeblood(Fixture[] fixtures, HudStencilTemplate captured)
+    {
+        foreach (var fixture in fixtures.Where(item => item.Health is [1, > 0, > 0]))
+        {
+            var result = Require(new HudStencilTracker(captured).Observe(Frame(fixture), true, 1, 1));
+            Check(result.EstablishesGameplay && result.Health.Any(match => match.Kind == "lifeblood"),
+                $"{fixture.Id} lost gameplay recognition with one white icon and lifeblood.");
+            Check(result.Health.All(match => match.Kind != "empty"), "Unlabeled empty cells were counted as health.");
+        }
+    }
+
+    private static void TestHealthSurvivesChangingCaptureAspect(BgraFrame reference, HudStencilTemplate template)
+    {
+        (int Height, double Scale)[] layouts = [(360, 1), (402, 1), (480, 1), (480, .75), (360, 1)];
+        var tracker = new HudStencilTracker(template);
+        for (var step = 0; step < layouts.Length; step++)
+        {
+            var (height, scale) = layouts[step];
+            var width = (int)(640 * scale);
+            var stride = width * 4;
+            var game = CpuBgraNormalizer.Normalize(reference, width, (int)(360 * scale));
+            var top = (int)(Math.Max(0, (height - 400) / 2) * scale);
+            var bytes = new byte[stride * (int)(height * scale)];
+            for (var row = 0; row < game.Height; row++)
+                game.Pixels.AsSpan(row * stride, stride).CopyTo(bytes.AsSpan((top + row) * stride));
+            var raw = new BgraFrame(width, (int)(height * scale), stride, bytes, step,
+                DateTimeOffset.UnixEpoch.AddSeconds(step));
+            var presented = CpuBgraNormalizer.Normalize(raw);
+            var hud = Require(tracker.Observe(presented, true, step, 1));
+            Check(hud.EstablishesGameplay && (scale < 1 || Counts(hud).SequenceEqual(new[] { 9, 0, 0 })),
+                $"Changing capture size to {raw.Width}×{raw.Height} lost the health row.");
+        }
+    }
+
+    private static void TestReacquiresInsetAndDisplacedHealthRow(BgraFrame reference, HudStencilTemplate template)
+    {
+        const double scale = 343d / 360;
+        var tracker = new HudStencilTracker(template);
+        var original = Require(tracker.Observe(reference, true, 0, 1));
+        var inset = LayoutHud(reference, scale, 0);
+        var recovered = Require(tracker.Observe(inset, true, 1, 1));
+        Check(Counts(recovered).SequenceEqual(new[] { 9, 0, 0 }), "The inset lost health icons.");
+        var cached = Require(tracker.Observe(inset, true, 1.05, 1));
+        Check(recovered.Health.SequenceEqual(cached.Health), "The cached scale did not follow the inset.");
+        for (var index = 0; index < recovered.Health.Count; index++)
+        {
+            var expected = original.Health[index].Rect;
+            var actual = recovered.Health[index].Rect;
+            Check(actual.MidX - (expected.MidX * scale + reference.Width * (1 - scale) / 2) is > -2 and < 2
+                && actual.MidY - (expected.MidY * scale + reference.Height * (1 - scale)) is > -2 and < 2,
+                "Inset health match was drawn over the wrong pixels.");
+        }
+        var restored = Require(tracker.Observe(reference, true, 2, 1));
+        Check(restored.Health.SequenceEqual(original.Health), "The reference layout did not recover.");
+
+        var boxes = recovered.Health.Take(2).Select(match => match.Rect).Select(rect =>
+        {
+            var x = Math.Floor(rect.X);
+            var y = Math.Floor(rect.Y);
+            return new LabelingExampleAnnotation(Guid.NewGuid(), "game.health",
+                x / inset.Width, y / inset.Height,
+                (Math.Ceiling(rect.Right) - x) / inset.Width, (Math.Ceiling(rect.Bottom) - y) / inset.Height);
+        });
+        var insetTemplate = Require(HudStencilTemplate.Captured(inset, boxes, "inset-reference"));
+        var insetTracker = new HudStencilTracker(insetTemplate);
+        var fromInset = Require(insetTracker.Observe(reference, true, 1, 1));
+        Check(fromInset.Health.Select(match => match.Index).SequenceEqual(Enumerable.Range(0, 9)),
+            "A stencil captured in the inset layout skipped the real first icon.");
+        var moved = Require(insetTracker.Observe(LayoutHud(reference, 1, -21), true, 2, 1));
+        Check(moved.Health.Count == 9, "A new display moved the health row outside its previous band.");
+    }
+
+    private static void TestSingleDisplacedIconCannotEstablishNewRow(BgraFrame reference, HudStencilTemplate template)
+    {
+        var first = template.Health[0].Bounds;
+        var onlyOne = new byte[reference.Pixels.Length];
+        for (var row = (int)first.Y; row < (int)first.Bottom; row++)
+        {
+            var start = row * reference.Stride + (int)first.X * 4;
+            reference.Pixels.AsSpan(start, (int)first.Width * 4)
+                .CopyTo(onlyOne.AsSpan(start + 20 * reference.Stride));
+        }
+        var tracker = new HudStencilTracker(template);
+        var image = new BgraFrame(reference.Width, reference.Height, reference.Stride, onlyOne,
+            reference.CaptureId, reference.ObservedAt);
+        var found = Require(tracker.Observe(image, true, 1, 1));
+        Check(found.Health.Count == 0 && !found.EstablishesGameplay, "A single icon invented a new health row.");
+    }
+
+    private static BgraFrame LayoutHud(BgraFrame source, double scale, double offsetY)
+    {
+        var left = source.Width * (1 - scale) / 2;
+        var top = source.Height * (1 - scale) + offsetY;
+        var output = new byte[source.Pixels.Length];
+        for (var y = 0; y < source.Height; y++)
+        for (var x = 0; x < source.Width; x++)
+        {
+            var originX = (x + .5 - left) / scale - .5;
+            var originY = (y + .5 - top) / scale - .5;
+            if (originX < 0 || originX >= source.Width - 1 || originY < 0 || originY >= source.Height - 1) continue;
+            var sx = (int)originX;
+            var sy = (int)originY;
+            var dx = originX - sx;
+            var dy = originY - sy;
+            for (var channel = 0; channel < 4; channel++)
+            {
+                var from = sy * source.Stride + sx * 4 + channel;
+                var upper = source.Pixels[from] * (1 - dx) + source.Pixels[from + 4] * dx;
+                var lower = source.Pixels[from + source.Stride] * (1 - dx) + source.Pixels[from + source.Stride + 4] * dx;
+                output[y * source.Stride + x * 4 + channel] = (byte)Math.Round(upper * (1 - dy) + lower * dy);
+            }
+        }
+        return new(source.Width, source.Height, source.Stride, output, source.CaptureId, source.ObservedAt);
+    }
+
+    private static void TestCapturedHUDUnlocksFirstCampaignWithoutModelOrLaterMenus(
         Fixture[] fixtures,
         BgraFrame image,
         HudStencilTemplate bundled)
@@ -153,7 +272,7 @@ internal static class HudStencilTests
                 var context = StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal)
                     .Single(item => item.Identifier == contextIdentifier);
                 var boxes = context.Requirements
-                    .Where(requirement => !requirement.ModdedOnly && requirement.Identifier != StencilInitializationPolicy.DeferredProfileClass)
+                    .Where(requirement => !requirement.ModdedOnly)
                     .SelectMany(requirement => Enumerable.Range(0, requirement.Count).Select(_ =>
                         new LabelingExampleAnnotation(Guid.NewGuid(), requirement.Identifier, .1, .2, .1, .04)))
                     .ToArray();
@@ -167,8 +286,8 @@ internal static class HudStencilTests
                 "Gameplay HUD was not the next Phase 1 campaign step.");
             Check(coordinator.Guidance(null, null) == "Enter gameplay, make health icons visible, press L.",
                 "Gameplay HUD navigation guidance differs from Mac.");
-            Check(coordinator.Guidance("select-profile", null)?.Contains("Press L", StringComparison.Ordinal) == true,
-                "Completed Select Profile guidance does not return the user with L.");
+            Check(coordinator.Guidance("select-profile", null)?.Contains("Select Profile", StringComparison.Ordinal) == true,
+                "Completed Select Profile guidance lost its screen name.");
 
             var health = Enumerable.Range(0, 2).Select(offset =>
                 new LabelingExampleAnnotation(Guid.NewGuid(), "game.health",
@@ -198,7 +317,7 @@ internal static class HudStencilTests
             Refresh(coordinator.LanguageIdentifier);
             Check(!coordinator.IsFirstPhaseComplete && !coordinator.HasUsableHUD,
                 "A language change must relock incomplete references.");
-            Console.WriteLine("PASS Captured HUD unlocks Phase 1 without model training or Clear Save");
+            Console.WriteLine("PASS Captured HUD unlocks Phase 1 after the profile stencil is complete");
         }
         finally
         {
@@ -715,6 +834,10 @@ internal static class HudStencilTests
             Check((bool)reference.GetValue(recognizer)!, "Live recognizer rejected valid saved labels.");
             Check((string?)detect.Invoke(recognizer, [live]) == "game", "Live recognizer did not use the captured HUD matcher.");
             Check(((HudStencilResult)result.GetValue(recognizer)!).Health.Count == 9, "Live recognizer still detects only the two labeled icons.");
+            var inset = LayoutHud(live, 343d / 360, 0);
+            Check((string?)detect.Invoke(recognizer, [inset]) == "game"
+                && ((HudStencilResult)result.GetValue(recognizer)!).Health.Count == 9,
+                "Changing window layout lost fresh gameplay evidence in the live recognizer.");
             var observe = type.GetMethod("Observe", BindingFlags.NonPublic | BindingFlags.Instance)!;
             var blankPixels = new byte[live.Width * live.Height * 4];
             var blank = new BgraFrame(live.Width, live.Height, live.Width * 4, blankPixels, 2, live.ObservedAt.AddSeconds(1));

@@ -72,7 +72,7 @@ def export_policy(model_directory, output_directory=None):
     return payload, model
 
 
-def write_parity_fixture(model, output, dataset=None):
+def write_parity_fixture(model, output, dataset=None, *, observations=None):
     import numpy as np
     import torch
     rng = np.random.default_rng(1234)
@@ -81,11 +81,12 @@ def write_parity_fixture(model, output, dataset=None):
                              rng.uniform(-1, 1, (15, width)).astype(np.float32)])
     if dataset:
         with np.load(dataset, allow_pickle=False) as archive:
-            recorded = archive['observations']
-            if recorded.ndim != 2 or recorded.shape[1] != width or not np.isfinite(recorded).all():
-                raise ValueError('Invalid parity dataset')
-            selected = np.linspace(0, len(recorded) - 1, min(32, len(recorded)), dtype=int)
-            inputs = np.concatenate([inputs, recorded[selected].astype(np.float32)])
+            observations = archive['observations']
+    if observations is not None:
+        if observations.ndim != 2 or observations.shape[1] != width or not np.isfinite(observations).all():
+            raise ValueError('Invalid parity dataset')
+        selected = np.linspace(0, len(observations) - 1, min(32, len(observations)), dtype=int)
+        inputs = np.concatenate([inputs, observations[selected].astype(np.float32)])
     logits, actions = [], []
     with torch.no_grad():
         # Playback makes one decision at a time. Batched matrix multiplication can

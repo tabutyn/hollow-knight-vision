@@ -35,9 +35,14 @@ def archive_coverage(report, manifest):
             'note': 'Unavailable images are explicit gaps. They supply neither predicted poses nor successful tracking samples.'}
 
 
-def local_measurement_availability(samples, selected_count):
+def local_measurement_availability(samples, selected_count, ground_only=False):
     """Local image support is availability, never proof of global accuracy."""
-    measured = sum(sample.get('island', {}).get('measured') is True for sample in samples)
+    def supported(sample):
+        if ground_only:
+            return sample.get('poseVerified') is True and sample.get('hasConfirmedGround') is True
+        return sample.get('island', {}).get('measured') is True
+
+    measured = sum(supported(sample) for sample in samples)
     spans, start, last, first = [], None, None, None
     capture_gaps = []
     for sample in samples:
@@ -48,7 +53,7 @@ def local_measurement_availability(samples, selected_count):
             first = timestamp
         if last is not None and timestamp-last > .1:
             capture_gaps.append(timestamp-last)
-        if sample.get('island', {}).get('measured') is True:
+        if supported(sample):
             if start is not None:
                 spans.append(dict(startSeconds=start-first, endSeconds=timestamp-first,
                                   durationSeconds=timestamp-start, recovered=True))
@@ -123,17 +128,25 @@ def motion_diagnostics(frames):
                 note='No new reference origins or trajectory fit. Windows never cross reference epochs or exact-reference gaps over 100 ms. Overall camera errors retain room placement and entry transients.')
 
 
-def screenshot_errors(snapshot, frames, capture_origin, world_origin):
+def point_coordinates(point):
+    """Windows persists AtlasPoint as an object, while Swift encodes CGPoint as an array."""
+    return (point['x'], point['y']) if isinstance(point, dict) else point
+
+
+def screenshot_errors(snapshot, frames, capture_origin, world_origin, world_uses_capture_uptime=False):
     """Join persisted observations to the exact capture time, with no refitting."""
     ordered = sorted(frames, key=lambda f: f['timestamp'])
     times = [f['timestamp'] for f in ordered]
     rows, missing = [], 0
-    ownership = {member['observationID']: (island, member)
+    ownership = {member.get('observationID', member.get('observationId')): (island, member)
                  for island in snapshot.get('trackingIslands', []) for member in island['members']}
+    # The Windows world stores LiveIslandPlacement as an enum ordinal.
+    windows_placements = {0: 'reference', 1: 'connected', 2: 'estimated', 3: 'legacyUnknown'}
     for observation in snapshot['observations']:
         capture_time = observation.get('captureTimestamp')
         if capture_time is None:
-            capture_time = observation['timestamp'] - world_origin + capture_origin
+            capture_time = observation['timestamp'] if world_uses_capture_uptime else (
+                observation['timestamp'] - world_origin + capture_origin)
         i = bisect.bisect_left(times, capture_time)
         candidates = ordered[max(0, i-1):min(len(ordered), i+1)]
         match = min(candidates, key=lambda f: abs(f['timestamp']-capture_time), default=None)
@@ -141,14 +154,15 @@ def screenshot_errors(snapshot, frames, capture_origin, world_origin):
         if match is None or abs(match['timestamp']-capture_time) > .000002:
             missing += 1
             continue
-        pose = observation['optimizedPose']
+        pose = point_coordinates(observation['optimizedPose'])
         error = [pose[axis]-match['expected'][axis] for axis in (0, 1)]
         island, member = ownership.get(observation['id'], ({}, {}))
+        placement = island.get('placement', 'legacyUnknown')
         rows.append({'observationID': observation['id'], 'offset': match['offset'],
-                     'roomID': observation['roomID'], 'errorXY': error,
-                     'rawErrorPixels': math.dist(observation['rawPose'], match['expected']) if 'rawPose' in observation else None,
+                     'roomID': observation.get('roomID', observation.get('roomId')), 'errorXY': error,
+                     'rawErrorPixels': math.dist(point_coordinates(observation['rawPose']), match['expected']) if 'rawPose' in observation else None,
                      'errorPixels': math.hypot(*error), 'islandID': island.get('id'),
-                     'placement': island.get('placement', 'legacyUnknown'),
+                     'placement': windows_placements.get(placement, placement),
                      'expectedPose': match['expected'], 'referenceEpoch': match.get('epoch'),
                      'sceneName': match.get('truth', {}).get('sceneName'),
                      'measured': member.get('measured', False)})
@@ -165,10 +179,10 @@ def screenshot_errors(snapshot, frames, capture_origin, world_origin):
 def loop_constraint_errors(snapshot, screenshots):
     """Score accepted edges against independent poses, with no island realignment."""
     rows = {row['observationID']: row for row in screenshots['rows']}
-    keys = {key['id']: key['observationID'] for key in snapshot.get('keyframes', [])}
+    keys = {key['id']: key.get('observationID', key.get('observationId')) for key in snapshot.get('keyframes', [])}
     edges = []
     for edge in snapshot.get('loopClosureEdges', []):
-        first, second = rows.get(keys.get(edge['fromKeyframeID'])), rows.get(keys.get(edge['toKeyframeID']))
+        first, second = rows.get(keys.get(edge.get('fromKeyframeID', edge.get('fromKeyframeId')))), rows.get(keys.get(edge.get('toKeyframeID', edge.get('toKeyframeId'))))
         result = {'id': edge['id'], 'support': edge['support'], 'errorPixels': None}
         if not first or not second or first['referenceEpoch'] is None or second['referenceEpoch'] is None:
             result['status'] = 'missing-reference'
@@ -188,7 +202,7 @@ def loop_constraint_errors(snapshot, screenshots):
 
 
 def validate_corrected_world(baseline, corrected):
-    fields = ('id', 'sourceObservationID', 'timestamp', 'captureTimestamp', 'rawPose', 'roomID',
+    fields = ('id', 'sourceObservationID', 'sourceObservationId', 'timestamp', 'captureTimestamp', 'rawPose', 'roomID', 'roomId',
               'sourceWidth', 'sourceHeight', 'solveWidth', 'groundGeometry', 'observedFloorCandidates',
               'observedPlayerBounds')
     immutable = lambda world: [{key: o.get(key) for key in fields} for o in world['observations']]
@@ -286,9 +300,12 @@ def score(reference_path, replay_dir, corrected_world=None, reference_origins=No
         origins = load_fixed_origins(reference_origins, reference, fingerprint(reference_path))
         frames, coverage = fixed_origin_frames(frames, coverage, origins)
     camera = summarize_exact(joined, first['width'], first['height'], frames_and_coverage=(frames, coverage))
-    capture_origin = first['capturedAt'] - reference['coarseMotionSamples'][0]['offset']
-    world_origin = datetime.datetime.fromisoformat(reference['createdAt'].replace('Z', '+00:00')).timestamp()-978307200
-    screenshots = screenshot_errors(snapshot, frames, capture_origin, world_origin)
+    world_uses_capture_uptime = report.get('worldSnapshotTimestampDomain') == 'capture-uptime'
+    capture_origin = world_origin = 0
+    if not world_uses_capture_uptime:
+        capture_origin = first['capturedAt'] - reference['coarseMotionSamples'][0]['offset']
+        world_origin = datetime.datetime.fromisoformat(reference['createdAt'].replace('Z', '+00:00')).timestamp()-978307200
+    screenshots = screenshot_errors(snapshot, frames, capture_origin, world_origin, world_uses_capture_uptime)
     result = {'schemaVersion': 1, 'sourcePathID': report['sourcePathID'],
               'pixels': [first['width'], first['height']],
               'referencePathSHA256': fingerprint(reference_path),
@@ -299,7 +316,8 @@ def score(reference_path, replay_dir, corrected_world=None, reference_origins=No
               'visualDigest': report['visualDigest'], 'coverage': coverage,
               'archiveCoverage': archive_coverage(report, manifest),
               'localMeasurementAvailability': local_measurement_availability(
-                  output['trackingSamples'], report.get('selectedFrameCount', report['frames'])),
+                  output['trackingSamples'], report.get('selectedFrameCount', report['frames']),
+                  ground_only=world_uses_capture_uptime),
               'camera': camera, 'persistedScreenshots': screenshots,
               'motion': motion_diagnostics(frames),
               'processing': {'offlineFramesPerSecond': report['framesPerSecond'],

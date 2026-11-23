@@ -9,7 +9,6 @@ import logging
 import math
 import os
 from pathlib import Path
-import selectors
 import subprocess
 import tempfile
 import time
@@ -19,6 +18,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from bot_training_ipc import EncoderReplies
 from hkv_bot_dataset import ACTION_SIZES, HELD_ATTACK_COST, HISTORY_LENGTH, SCHEMAS
 
 START = "Tutorial_01"
@@ -173,7 +173,7 @@ class HackerGym(gym.Env):
 
     def __init__(self, *, game, vision, labels, version, domain="hacker", supports_masked=False, max_steps=1200, stall_steps=100, deadline=math.inf,
                  visual_confirmation=None, training_render_hz=60, knight_confirmation=None, deposit_confirmation=None,
-                 path_connections=None, exit_path_objective=None):
+                 path_connections=None, exit_path_objective=None, visual_support_root=None):
         if training_render_hz not in (60, 120):
             raise ValueError("Training render rate must be 60 or 120 Hz")
         self.training_render_hz = training_render_hz
@@ -185,6 +185,7 @@ class HackerGym(gym.Env):
         self.visual_confirmation = visual_confirmation
         self.knight_confirmation = knight_confirmation
         self.deposit_confirmation = deposit_confirmation
+        self.visual_support_root = visual_support_root
         self.path_connections = Path(path_connections) if path_connections is not None else None
         if exit_path_objective is not None and (len(exit_path_objective) != 2 or not all(math.isfinite(v) for v in exit_path_objective)):
             raise ValueError("Invalid fixed exit objective")
@@ -193,6 +194,7 @@ class HackerGym(gym.Env):
         self.action_space = spaces.MultiDiscrete(ACTION_SIZES)
         self.observation_space = spaces.Box(-4, 4, (len(SCHEMAS[version]) * HISTORY_LENGTH,), np.float32)
         self.worker = self.encoder = self.temp = None
+        self.encoder_replies = EncoderReplies()
         self.last_frame = None
         self.last_control_gap = 0
         self.path_progress = None
@@ -230,13 +232,11 @@ class HackerGym(gym.Env):
             message = dict(ticks=frame["ticks"], previous=previous, width=frame["pixelWidth"], height=frame["pixelHeight"], sample=frame)
         else:
             message = dict(sample=frame, ticks=frame["ticks"], health=frame["health"], previous=previous)
-        self.encoder.stdin.write(json.dumps(message).encode() + b"\n")
-        self.encoder.stdin.flush()
-        with selectors.DefaultSelector() as readable:
-            readable.register(self.encoder.stdout, selectors.EVENT_READ)
-            if not readable.select(timeout=45 if frame["step"] == 0 else 12):
-                raise TimeoutError(f"{self.domain} observation encoder timed out")
-        line = self.encoder.stdout.readline()
+        try:
+            line = self.encoder_replies.request(self.encoder, json.dumps(message).encode() + b"\n",
+                                                timeout=45 if frame["step"] == 0 else 12)
+        except TimeoutError:
+            raise TimeoutError(f"{self.domain} observation encoder timed out") from None
         if not line:
             raise RuntimeError(f"Installed Vision exited before encoding the {self.domain} frame")
         result = json.loads(line)
@@ -348,13 +348,16 @@ class HackerGym(gym.Env):
         encoder_temp = self.directory / "encoder-tmp"
         encoder_temp.mkdir()
         encoder_env = dict(os.environ, TMPDIR=str(encoder_temp), HKV_GYM_LABELS=str(self.labels))
+        if self.visual_support_root is not None:
+            encoder_env["HKV_GYM_VISUAL_SUPPORT_ROOT"] = str(self.visual_support_root)
         if self.path_connections is not None:
             encoder_env["HKV_ATLAS_PATH_CONNECTIONS"] = str(self.path_connections)
         if self.exit_path_objective is not None:
             encoder_env.update(HKV_GYM_EXIT_X=str(self.exit_path_objective[0]), HKV_GYM_EXIT_Y=str(self.exit_path_objective[1]))
         self.encoder = subprocess.Popen(encoder_args, env=encoder_env, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         self.worker = subprocess.Popen([self.game, "-batchmode", *([] if visual else ["-nographics"]), "-screen-width", "960",
-            "-screen-height", "540", "-logFile", self.directory / "unity.log"], cwd=self.directory,
+            "-screen-height", "540", "-logFile", self.directory / "unity.log"],
+            cwd=self.game.parent if os.name == "nt" else self.directory,
             env=dict(os.environ, HKV_GYM_DIRECTORY=str(self.directory), SteamAppId="367520", SteamGameId="367520"),
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -402,6 +405,7 @@ class HackerGym(gym.Env):
             if process.stdout:
                 process.stdout.close()
         self.worker = self.encoder = self.last_frame = None
+        self.encoder_replies.close()
         if self.temp is not None:
             self.temp.cleanup()
             self.temp = None

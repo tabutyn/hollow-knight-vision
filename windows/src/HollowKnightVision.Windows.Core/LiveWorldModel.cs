@@ -17,7 +17,9 @@ public enum LiveWorldModelError
     DanglingKeyframeId,
     DanglingLandmarkId,
     InvalidGeometry,
-    UnanchoredWorld
+    UnanchoredWorld,
+    InvalidIslandMembership,
+    InvalidDoorwayFloorConstraint
 }
 
 public sealed class LiveWorldModelException(
@@ -60,6 +62,12 @@ public sealed record LiveWorldObservation(
     AtlasPoint RawPose,
     AtlasPoint OptimizedPose)
 {
+    public IReadOnlyList<LiveWorldWalkedFloor>? WalkedGround { get; init; }
+    public double? CaptureTimestamp { get; init; }
+    public LiveWorldGroundGeometry? GroundGeometry { get; init; }
+    public LiveObservedFloorCandidates? ObservedFloorCandidates { get; init; }
+    public WorldRect? ObservedPlayerBounds { get; init; }
+
     public static LiveWorldObservation Create(
         int id,
         int sourceObservationId,
@@ -118,7 +126,14 @@ internal sealed class LiveWorldObservationJsonConverter
             payload.BasisRevision,
             payload.RoomId,
             payload.RawPose,
-            payload.OptimizedPose);
+            payload.OptimizedPose)
+        {
+            WalkedGround = payload.WalkedGround,
+            CaptureTimestamp = payload.CaptureTimestamp,
+            GroundGeometry = payload.GroundGeometry,
+            ObservedFloorCandidates = payload.ObservedFloorCandidates,
+            ObservedPlayerBounds = payload.ObservedPlayerBounds
+        };
     }
 
     public override void Write(
@@ -141,7 +156,12 @@ internal sealed class LiveWorldObservationJsonConverter
             BasisRevision = value.BasisRevision,
             RoomId = value.RoomId,
             RawPose = value.RawPose,
-            OptimizedPose = value.OptimizedPose
+            OptimizedPose = value.OptimizedPose,
+            WalkedGround = value.WalkedGround,
+            CaptureTimestamp = value.CaptureTimestamp,
+            GroundGeometry = value.GroundGeometry,
+            ObservedFloorCandidates = value.ObservedFloorCandidates,
+            ObservedPlayerBounds = value.ObservedPlayerBounds
         }, options);
 
     private sealed class Payload
@@ -161,6 +181,16 @@ internal sealed class LiveWorldObservationJsonConverter
         public int RoomId { get; init; }
         [JsonRequired] public AtlasPoint RawPose { get; init; }
         [JsonRequired] public AtlasPoint OptimizedPose { get; init; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyList<LiveWorldWalkedFloor>? WalkedGround { get; init; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public double? CaptureTimestamp { get; init; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public LiveWorldGroundGeometry? GroundGeometry { get; init; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public LiveObservedFloorCandidates? ObservedFloorCandidates { get; init; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public WorldRect? ObservedPlayerBounds { get; init; }
     }
 }
 
@@ -174,7 +204,11 @@ public sealed record LiveWorldLandmark(
     AtlasPoint WorldPoint,
     IReadOnlyList<float> Descriptor,
     double Depth,
-    double DepthConfidence);
+    double DepthConfidence)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool GroundClosureOnly { get; init; }
+}
 
 public sealed record LiveWorldRelativeMotionEdge(
     int Id,
@@ -192,22 +226,29 @@ public sealed record LiveWorldLoopClosureEdge(
     double DeltaX,
     double DeltaY,
     int Support,
-    double Ambiguity);
+    double Ambiguity)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? ResidualPixels { get; init; }
+}
 
 /// <summary>Validated, versioned pose graph with stable visual-room ownership.</summary>
 public sealed record LiveWorldSnapshot
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 3;
+    private const int WindowsTrackingSchema = 1;
 
     public LiveWorldSnapshot(
-        int schemaVersion = CurrentSchemaVersion,
+        int schemaVersion = WindowsTrackingSchema,
         int mapRevision = 0,
         int? anchoredObservationId = null,
         IReadOnlyList<LiveWorldObservation>? observations = null,
         IReadOnlyList<LiveWorldKeyframe>? keyframes = null,
         IReadOnlyList<LiveWorldLandmark>? landmarks = null,
         IReadOnlyList<LiveWorldRelativeMotionEdge>? relativeMotionEdges = null,
-        IReadOnlyList<LiveWorldLoopClosureEdge>? loopClosureEdges = null)
+        IReadOnlyList<LiveWorldLoopClosureEdge>? loopClosureEdges = null,
+        IReadOnlyList<LiveTrackingIsland>? trackingIslands = null,
+        IReadOnlyList<LiveDoorwayFloorConstraint>? doorwayFloorConstraints = null)
     {
         SchemaVersion = schemaVersion;
         MapRevision = mapRevision;
@@ -217,6 +258,10 @@ public sealed record LiveWorldSnapshot
         Landmarks = landmarks ?? [];
         RelativeMotionEdges = relativeMotionEdges ?? [];
         LoopClosureEdges = loopClosureEdges ?? [];
+        TrackingIslands = trackingIslands ?? (UsesSwiftWireFormat
+            ? Observations.Select(value => LiveTrackingIsland.Legacy(value.Id, value)).ToArray()
+            : []);
+        DoorwayFloorConstraints = doorwayFloorConstraints ?? [];
         Validate();
     }
 
@@ -228,6 +273,21 @@ public sealed record LiveWorldSnapshot
     public IReadOnlyList<LiveWorldLandmark> Landmarks { get; }
     public IReadOnlyList<LiveWorldRelativeMotionEdge> RelativeMotionEdges { get; }
     public IReadOnlyList<LiveWorldLoopClosureEdge> LoopClosureEdges { get; }
+    public IReadOnlyList<LiveTrackingIsland> TrackingIslands { get; }
+    public IReadOnlyList<LiveDoorwayFloorConstraint> DoorwayFloorConstraints { get; }
+    [JsonIgnore] public bool UsesSwiftWireFormat => SchemaVersion >= 2;
+
+    public IReadOnlySet<int> UnplacedObservationIds() => TrackingIslands
+        .Where(island => island.RequiresPlacement)
+        .SelectMany(island => island.Members.Select(member => member.ObservationId))
+        .ToHashSet();
+
+    public IReadOnlyList<StencilRect> CompositionMasks(LiveWorldObservation observation) =>
+        observation.ExcludedRects.Select(rectangle =>
+        {
+            var mask = new StencilRect(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height);
+            return UsesSwiftWireFormat ? LiveWorldJson.FlipMask(mask, observation.SourceHeight) : mask;
+        }).ToArray();
 
     public LiveWorldSnapshot ReplaceOptimizedPoses(
         IReadOnlyDictionary<int, AtlasPoint> poses,
@@ -274,6 +334,15 @@ public sealed record LiveWorldSnapshot
                         * landmark.Depth)
             };
         }).ToArray();
+        var movedIslands = TrackingIslands.Select(island =>
+        {
+            var firstMember = island.Members[0];
+            var previous = originals[firstMember.ObservationId].OptimizedPose;
+            var next = replacements[firstMember.ObservationId].OptimizedPose;
+            return island with { WorldFromLocal = new AtlasPoint(
+                island.WorldFromLocal.X + (next.X - previous.X),
+                island.WorldFromLocal.Y + (next.Y - previous.Y)) };
+        }).ToArray();
         return new LiveWorldSnapshot(
             SchemaVersion,
             MapRevision + 1,
@@ -282,7 +351,9 @@ public sealed record LiveWorldSnapshot
             Keyframes,
             movedLandmarks,
             RelativeMotionEdges,
-            LoopClosureEdges);
+            LoopClosureEdges,
+            movedIslands,
+            DoorwayFloorConstraints);
     }
 
     public LiveWorldSnapshot TranslateRoom(int roomId, CameraVector translation)
@@ -303,7 +374,7 @@ public sealed record LiveWorldSnapshot
 
     public void Validate()
     {
-        if (SchemaVersion != CurrentSchemaVersion)
+        if (SchemaVersion is < WindowsTrackingSchema or > CurrentSchemaVersion)
         {
             throw Error(
                 LiveWorldModelError.UnsupportedSchema,
@@ -339,6 +410,7 @@ public sealed record LiveWorldSnapshot
         }
 
         var observationById = Observations.ToDictionary(value => value.Id);
+        ValidateIslands(observationById);
         var keyframeIds = Keyframes.Select(value => value.Id).ToHashSet();
         foreach (var keyframe in Keyframes)
         {
@@ -428,27 +500,73 @@ public sealed record LiveWorldSnapshot
                 || fromObservation.RoomId != toObservation.RoomId
                 || edge.LandmarkIds.Any(id => landmarkById[id].KeyframeId != edge.FromKeyframeId)
                 || !double.IsFinite(edge.DeltaX) || !double.IsFinite(edge.DeltaY)
-                || edge.Support < 3 || !double.IsFinite(edge.Ambiguity) || edge.Ambiguity < 0)
+                || edge.Support < 3 || !double.IsFinite(edge.Ambiguity) || edge.Ambiguity < 0
+                || (edge.ResidualPixels is { } residual && (!double.IsFinite(residual) || residual < 0)))
             {
                 throw Error(LiveWorldModelError.InvalidGeometry, "Loop edge is invalid.");
             }
         }
     }
 
+    private void ValidateIslands(IReadOnlyDictionary<int, LiveWorldObservation> observations)
+    {
+        if (!UsesSwiftWireFormat && TrackingIslands.Count == 0 && DoorwayFloorConstraints.Count == 0)
+            return;
+
+        var islandIds = new HashSet<int>();
+        var owners = new Dictionary<int, (LiveTrackingIsland Island, LiveIslandMember Member)>();
+        foreach (var island in TrackingIslands)
+        {
+            if (island is not { IsValid: true } || !islandIds.Add(island.Id))
+                throw Error(LiveWorldModelError.InvalidIslandMembership, "Invalid or duplicated Atlas island.");
+            foreach (var member in island.Members)
+            {
+                if (member is null || !observations.TryGetValue(member.ObservationId, out var observation)
+                    || observation.RoomId != island.RoomId || !Finite(member.LocalPose)
+                    || !owners.TryAdd(member.ObservationId, (island, member)))
+                {
+                    throw Error(LiveWorldModelError.InvalidIslandMembership, "Atlas island contains an invalid member.");
+                }
+                var dx = observation.OptimizedPose.X - member.LocalPose.X - island.WorldFromLocal.X;
+                var dy = observation.OptimizedPose.Y - member.LocalPose.Y - island.WorldFromLocal.Y;
+                if (dx * dx + dy * dy > 1e-12)
+                    throw Error(LiveWorldModelError.InvalidIslandMembership, "Atlas island placement disagrees with its member.");
+            }
+        }
+        if (owners.Count != observations.Count)
+            throw Error(LiveWorldModelError.InvalidIslandMembership, "An observation is missing its Atlas island.");
+
+        var doorwayIds = new HashSet<int>();
+        foreach (var doorway in DoorwayFloorConstraints)
+        {
+            if (doorway is null || !doorwayIds.Add(doorway.Id) || !doorway.IsValid(observations, owners))
+                throw Error(LiveWorldModelError.InvalidDoorwayFloorConstraint, "Invalid or duplicated doorway floor evidence.");
+        }
+    }
+
     private static bool Valid(LiveWorldObservation observation) =>
         observation.Id >= 0 && observation.SourceObservationId >= 0 && observation.RoomId >= 0
         && double.IsFinite(observation.Timestamp)
+        && (observation.CaptureTimestamp is null || double.IsFinite(observation.CaptureTimestamp.Value))
         && observation.SourceWidth > 0 && observation.SourceHeight > 0
         && observation.SampleWidth > 0
         && double.IsFinite(observation.SolveWidth) && observation.SolveWidth > 0
         && Finite(observation.LocalPose) && Finite(observation.RawPose)
         && Finite(observation.OptimizedPose)
-        && observation.ExcludedRects.All(rectangle =>
-            double.IsFinite(rectangle.X) && double.IsFinite(rectangle.Y)
-            && double.IsFinite(rectangle.Width) && double.IsFinite(rectangle.Height)
-            && rectangle.Width >= 0 && rectangle.Height >= 0);
+        && (observation.GroundGeometry is null || observation.GroundGeometry.IsValid(observation))
+        && (observation.ObservedFloorCandidates is null || observation.ObservedFloorCandidates.IsValid(observation))
+        && (observation.ObservedPlayerBounds is not { } player ||
+            ValidRect(player) && player.Width > 0 && player.Height > 0)
+        && (observation.WalkedGround is null
+            || observation.WalkedGround.All(floor => floor.IsValid(observation.OptimizedPose)))
+        && observation.ExcludedRects is not null && observation.ExcludedRects.All(ValidRect);
 
-    private static bool Finite(AtlasPoint point) =>
+    private static bool ValidRect(WorldRect rectangle) =>
+        double.IsFinite(rectangle.X) && double.IsFinite(rectangle.Y)
+        && double.IsFinite(rectangle.Width) && double.IsFinite(rectangle.Height)
+        && rectangle.Width >= 0 && rectangle.Height >= 0;
+
+    internal static bool Finite(AtlasPoint point) =>
         double.IsFinite(point.X) && double.IsFinite(point.Y);
 
     private static void Unique(IEnumerable<int> identifiers, LiveWorldModelError duplicateError)
@@ -479,9 +597,6 @@ public sealed record LiveWorldSnapshot
 /// <summary>Atomic compare-and-swap persistence for a validated live-world graph.</summary>
 public sealed class LiveWorldSnapshotStore
 {
-    private static readonly JsonSerializerOptions JsonOptions =
-        LabelingExampleStore.CreateJsonOptions();
-
     public LiveWorldSnapshotStore(string rootDirectory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootDirectory);
@@ -496,9 +611,7 @@ public sealed class LiveWorldSnapshotStore
         if (!File.Exists(SnapshotPath)) return new LiveWorldSnapshot();
         try
         {
-            var snapshot = JsonSerializer.Deserialize<LiveWorldSnapshot>(
-                File.ReadAllBytes(SnapshotPath), JsonOptions)
-                ?? throw new InvalidDataException("Empty live-world snapshot.");
+            var snapshot = LiveWorldJson.ReadSnapshot(File.ReadAllBytes(SnapshotPath));
             snapshot.Validate();
             return snapshot;
         }
@@ -523,7 +636,7 @@ public sealed class LiveWorldSnapshotStore
                 actualRevision: snapshot.MapRevision);
         }
         Directory.CreateDirectory(RootDirectory);
-        AtomicFile.Write(SnapshotPath, JsonSerializer.SerializeToUtf8Bytes(snapshot, JsonOptions));
+        AtomicFile.Write(SnapshotPath, LiveWorldJson.WriteSnapshot(snapshot));
         return true;
     }
 }

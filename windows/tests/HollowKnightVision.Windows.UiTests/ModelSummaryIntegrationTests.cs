@@ -70,9 +70,8 @@ internal static class ModelSummaryIntegrationTests
         using var fixture = new Fixture(); var first = fixture.Save(Box("enemies.crawlid"), Box("enemies.crawlid", .7), Box("enemies.crawlid", .55, true)); var last = fixture.Save();
         var candidate = Candidate(first, last); var examples = fixture.Store.Load(); var classes = LabelingObjectReferencePolicy.ModelClasses([new("custom.bench", "Bench")]);
         var session = new LabelingModelSummarySession(); session.SetContent(examples, candidate, classes.Select(item => item.Identifier), "game.playable-knight");
-        var reviewSession = new LabelingScreenshotReviewSession(fixture.Store); reviewSession.Reload();
-        var selected = ""; var changes = 0; var trainable = false; SavedLabelingExample? opened = null;
-        var panel = new ModelSummaryReviewPanel(session, key => key, id => { selected = id; changes++; trainable = reviewSession.CanTrainSelectedClass(id); }, example => opened = example);
+        var selected = ""; var changes = 0; SavedLabelingExample? opened = null;
+        var panel = new ModelSummaryReviewPanel(session, key => key, id => { selected = id; changes++; }, example => opened = example);
         panel.Refresh(["custom.bench"]); var window = Show(panel);
         try
         {
@@ -81,7 +80,7 @@ internal static class ModelSummaryIntegrationTests
                 "Summary omitted unlabeled classes or included non-model HUD errors.");
             Check(Find<TextBlock>(panel, "SummaryFailurePosition").Text == "0 / 0" && !Find<Button>(panel, "SummaryNextFailure").IsEnabled, "Summary invented an initial failure selection.");
             Choose(errors, "enemies.crawlid");
-            Check(changes == 1 && selected == "enemies.crawlid" && trainable && session.SelectedFailure?.Id == last.Id, "Priority selection did not update shared object/training/failure state exactly once.");
+            Check(changes == 1 && selected == "enemies.crawlid" && session.SelectedFailure?.Id == last.Id, "Priority selection did not update shared object and failure state exactly once.");
             Check(Find<TextBlock>(panel, "SummaryObjectTitle").Text == "Crawlid" && Find<TextBlock>(panel, "SummaryFailurePosition").Text == "1 / 2", "Summary header does not describe its selected failure.");
             foreach (var list in new[] { least, errors })
             {
@@ -105,8 +104,8 @@ internal static class ModelSummaryIntegrationTests
             session.SetContent(examples, candidate, classes.Select(item => item.Identifier), selected); panel.Refresh(["custom.bench"], atlas); Pump();
             Check(session.SelectedFailure?.Id == first.Id && session.PositionText == "2 / 2", "Refreshing Summary reset the failure position.");
             Choose(least, "custom.bench");
-            Check(!trainable && session.FailureExamples.Count == 0 && Find<TextBlock>(panel, "SummaryEmptyReview").IsVisible
-                && !Find<Button>(panel, "SummaryOpenScreenshot").IsVisible, "Unlabeled class retained another object's errors or enabled training.");
+            Check(selected == "custom.bench" && session.FailureExamples.Count == 0 && Find<TextBlock>(panel, "SummaryEmptyReview").IsVisible
+                && !Find<Button>(panel, "SummaryOpenScreenshot").IsVisible, "Unlabeled class retained another object's errors.");
             Check(changes == 2, "Programmatic refresh triggered object-selection callbacks.");
         }
         finally { window.Close(); }

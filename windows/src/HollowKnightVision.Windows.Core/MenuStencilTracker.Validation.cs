@@ -8,7 +8,11 @@ public sealed partial class MenuStencilTracker
     {
         var scored = new List<(Anchor Anchor, Score Score)>();
         var threshold = ValidationThresholdFor(scene.ContextIdentifier);
-        var dx = IsDialog(scene.ContextIdentifier) ? 8 : 4; var dy = IsDialog(scene.ContextIdentifier) ? 12 : 6;
+        var dialog = IsDialog(scene.ContextIdentifier);
+        var dx = dialog ? 8 : 4;
+        var dy = dialog ? 12 : 6;
+        // The Yes and No rows establish the dialog's pose independently of its heading.
+        var anchorOffset = dialog ? default : trackedOffset;
         foreach (var anchor in scene.Anchors)
         {
             if (anchor.ClassIdentifier == scene.Probe.ClassIdentifier)
@@ -16,15 +20,15 @@ public sealed partial class MenuStencilTracker
                 if (BestScore(VariantsFor(anchor.Variants, probe.Language), pixels, probe.Rect, 2, 2) is { } fullProbe) scored.Add((anchor, fullProbe));
                 continue;
             }
-            var score = BestScore(VariantsFor(anchor.Variants, probe.Language), pixels, anchor.Bounds.Offset(trackedOffset.X, trackedOffset.Y), dx, dy, anchor.Bounds);
+            var score = BestScore(VariantsFor(anchor.Variants, probe.Language), pixels, anchor.Bounds.Offset(anchorOffset.X, anchorOffset.Y), dx, dy, anchor.Bounds);
             if ((score?.Confidence ?? double.NegativeInfinity) < AnchorThreshold && anchor.CalibratedBounds is { } calibratedBounds)
             {
-                var calibrated = BestScore(VariantsFor(anchor.Variants, probe.Language), pixels, calibratedBounds.Offset(trackedOffset.X, trackedOffset.Y), dx, dy, anchor.Bounds);
+                var calibrated = BestScore(VariantsFor(anchor.Variants, probe.Language), pixels, calibratedBounds.Offset(anchorOffset.X, anchorOffset.Y), dx, dy, anchor.Bounds);
                 if (calibrated is not null && calibrated.Confidence > (score?.Confidence ?? double.NegativeInfinity)) score = calibrated;
             }
             if (score is not null) scored.Add((anchor, score));
         }
-        if (IsDialog(scene.ContextIdentifier))
+        if (dialog)
         {
             var stableRows = scored.Where(item => item.Anchor.ClassIdentifier is "shared.yes" or "shared.no" && item.Score.Confidence >= threshold).ToArray();
             if (stableRows.Length == 2)
@@ -48,10 +52,17 @@ public sealed partial class MenuStencilTracker
         var confidence = weighted.Sum(item => item.Value) / Math.Max(1, weighted.Sum(item => item.Weight));
         var required = Math.Min(scene.ContextIdentifier == "options" ? 4 : 2, scene.Anchors.Count);
         if (confidence < threshold || accepted < required) return null;
+        if (scene.ContextIdentifier == "inventory" && scored.Count(item =>
+            item.Anchor.ClassIdentifier.StartsWith(InventoryCornerPrefix, StringComparison.Ordinal)
+            && item.Score.Confidence >= InventoryCornerThreshold) < 2) return null;
+        var checkedSlots = new List<int>();
+        var occupiedSlots = new List<int>();
         var anchors = WithRepeatedProfileActions(scene, pixels, image, probe.Language,
             scored.Select(item => new MenuStencilMatch(item.Anchor.ClassIdentifier, item.Anchor.Name,
-                OutputRect(item.Score.Rect, image, scene), item.Score.Confidence, item.Score.Reference)).ToArray());
-        var currentBounds = scored.ToDictionary(item => item.Anchor.ClassIdentifier, item => item.Score.Rect, StringComparer.Ordinal);
+                OutputRect(item.Score.Rect, image, scene), item.Score.Confidence, item.Score.Reference)).ToArray(), checkedSlots, occupiedSlots);
+        var currentBounds = scored.ToDictionary(item => item.Anchor.ClassIdentifier,
+            item => item.Score.Reference.VerifiedBounds(item.Score.Rect), StringComparer.Ordinal);
+        verifiedAnchorBounds[scene.ContextIdentifier] = currentBounds;
         var selection = DetectSelection(scene, probe.Language, pixels, image, timestamp, false, currentBounds);
         if (selection.Name is { } selectedName && scene.Options.FirstOrDefault(option => option.Name == selectedName) is { } selectedOption
             && anchors.FirstOrDefault(anchor => anchor.Name == selectedName) is { } selectedAnchor
@@ -62,19 +73,34 @@ public sealed partial class MenuStencilTracker
         }
         return new(scene.ContextIdentifier, true, confidence, selection.Name, anchors, selection.Matches, selection.Regions,
             selection.LanguageEvidence, selection.ForegroundEvidence, (double)accepted / Math.Max(1, scored.Count), phase,
-            comparisons, timestamp, probe.Language ?? trackedLanguage);
+            comparisons, timestamp, probe.Language ?? trackedLanguage)
+        {
+            SelectedOptionIdentifier = FindSelectedIdentifier(scene, selection.Name),
+            CheckedProfileSlots = checkedSlots,
+            OccupiedProfileSlots = occupiedSlots
+        };
     }
 
     private MenuStencilResult? TrackedResult(Scene scene, Score probe, ImageStencilPixels pixels, BgraFrame image, double timestamp)
     {
         if (lastValidated is not { } previous) return null;
+        if (verifiedAnchorBounds.TryGetValue(scene.ContextIdentifier, out var bounds))
+            bounds[scene.Probe.ClassIdentifier] = probe.Reference.VerifiedBounds(probe.Rect);
         var selection = DetectSelection(scene, trackedLanguage, pixels, image, timestamp, true);
+        var checkedSlots = new List<int>();
+        var occupiedSlots = new List<int>();
         var anchors = WithRepeatedProfileActions(scene, pixels, image, trackedLanguage,
             previous.Anchors.Select(match => match.ClassIdentifier == scene.Probe.ClassIdentifier
-                ? match with { Rect = OutputRect(probe.Rect, image, scene), Confidence = probe.Confidence, Reference = probe.Reference } : match).ToArray());
+                ? match with { Rect = OutputRect(probe.Rect, image, scene), Confidence = probe.Confidence, Reference = probe.Reference } : match).ToArray(),
+            checkedSlots, occupiedSlots);
         var result = new MenuStencilResult(scene.ContextIdentifier, true, probe.Confidence, selection.Name, anchors,
             selection.Matches, selection.Regions, selection.LanguageEvidence, selection.ForegroundEvidence, previous.SceneEvidenceRatio,
-            MenuStencilPhase.Tracking, comparisons, timestamp, trackedLanguage);
+            MenuStencilPhase.Tracking, comparisons, timestamp, trackedLanguage)
+        {
+            SelectedOptionIdentifier = FindSelectedIdentifier(scene, selection.Name),
+            CheckedProfileSlots = checkedSlots,
+            OccupiedProfileSlots = occupiedSlots
+        };
         lastValidated = result; return result;
     }
 

@@ -83,6 +83,66 @@ internal static class VisualGroundIntegrationTests
         Near(20, observed.CameraPosition.Value.Y);
     }
 
+    public static void TestMeasuredCoarseFallbackDrivesPresentationWithoutWritingAtlas()
+    {
+        static LowResolutionMotionGrid Scene(int shift)
+        {
+            const int width = 32, height = 18;
+            var luma = new byte[width * height];
+            for (var y = 0; y < height; y++)
+            for (var x = 0; x < width; x++)
+            {
+                var sourceX = x - shift;
+                if (sourceX is >= 0 and < width)
+                    luma[y * width + x] = (byte)((sourceX * 37 + y * 61 + sourceX * y * 3) % 211 + 22);
+            }
+            return new(width, height, luma);
+        }
+
+        var visual = new VisualGameplayTracker();
+        var ground = new GroundHypothesisTracker(minimumObservationSeconds: 0);
+        var texture = Texture();
+        var reference = Scene(0);
+        VisualGameplayObservation? verified = null;
+        for (var index = 0; index <= 20; index++)
+            verified = visual.ObserveGroundAnchored(Frame(index, index * .05), null, texture, Lines(),
+                [], true, groundTracker: ground, captureTimestamp: index * .05, sceneGrid: reference);
+        Check(verified!.GroundVerified, "Ground did not establish a trusted camera.");
+        var stoppedMasked = new LowResolutionTranslationDiagnostic(null, null, null, ExactIdentity: true);
+        var floorlessTexture = Texture(seed: 123);
+        var fallback = visual.ObserveGroundAnchored(Frame(21, 1.05), null, floorlessTexture, [],
+            [], true, groundTracker: ground, captureTimestamp: 1.05, sceneGrid: Scene(-1),
+            expectedDirection: VisualRoomDirection.Right);
+        Check(fallback.Source == "coarse-presentation" && !fallback.GroundVerified && !fallback.AllowsAtlasWrite,
+            $"Expected presentation-only coarse motion, got {fallback.Source} with {fallback.FloorlessEvidence}.");
+        Check(fallback.FloorlessEvidence is { CoarseMeasured: true, CoarseReferenceTimestamp: 1,
+            SelectedSource: FloorlessPoseCandidateSource.CoarseCaptureRate }, "Missing measured coarse lineage.");
+        Near(verified.Telemetry.CameraX + 10, fallback.Telemetry.CameraX, .5);
+
+        visual.PauseGroundVerification();
+        var resumed = visual.ObserveGroundAnchored(Frame(22, 1.10), stoppedMasked, floorlessTexture, [],
+            [], true, groundTracker: ground, captureTimestamp: 1.10, sceneGrid: Scene(-4),
+            expectedDirection: VisualRoomDirection.Right);
+        Check(!resumed.AllowsAtlasWrite && resumed.FloorlessEvidence is null, "Coarse reference crossed a blackout.");
+        Near(fallback.Telemetry.CameraX, resumed.Telemetry.CameraX, .01);
+
+        _ = visual.ObserveGroundAnchored(Frame(23, 1.15), stoppedMasked, floorlessTexture, [],
+            [], true, groundTracker: ground, captureTimestamp: 1.15, sceneGrid: Scene(-4),
+            expectedDirection: VisualRoomDirection.Right);
+        var stopped = visual.ObserveGroundAnchored(Frame(24, 1.20), stoppedMasked, floorlessTexture, [],
+            [], true, groundTracker: ground, captureTimestamp: 1.20, sceneGrid: Scene(-5),
+            expectedDirection: VisualRoomDirection.Right);
+        Check(stopped.FloorlessEvidence is { CoarsePosition: { }, CoarseMeasured: true,
+            SelectedSource: FloorlessPoseCandidateSource.MaskedRegistration },
+            "The coarse estimate displaced strong masked evidence.");
+        Near(resumed.Telemetry.CameraX, stopped.Telemetry.CameraX, .01);
+        var gap = visual.ObserveGroundAnchored(Frame(25, 1.25), null, floorlessTexture, [],
+            [], true, groundTracker: ground, captureTimestamp: 1.25, sceneGrid: Scene(-6),
+            expectedDirection: VisualRoomDirection.Right);
+        Check(gap.Source == "coarse-presentation" && !gap.AllowsAtlasWrite, "The coarse fallback lost the next capture.");
+        Near(stopped.Telemetry.CameraX + 10, gap.Telemetry.CameraX, .5);
+    }
+
     public static void TestDirectRecoveryUsesFourCurrentVisibleCells()
     {
         foreach (var background in new[] { false, true })

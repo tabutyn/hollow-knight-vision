@@ -20,6 +20,10 @@ public sealed record VisualRoomSnapshot(
     IReadOnlyList<VisualRoomPortal> Portals,
     VisualRoomCompositionBounds CompositionBounds)
 {
+    public bool CoarseMotionMeasured { get; init; }
+    public double? CoarseMeasurementTimestamp { get; init; }
+    public double? CoarseReferenceTimestamp { get; init; }
+
     public string StatusText => IsTransitioning && TransitionDirection is { } direction
         ? $"{RoomName} → {direction.Label()}"
         : RoomName;
@@ -716,11 +720,20 @@ public sealed class LowResolutionTransitionOdometry
     private int predictedSteps;
     private int predictedVerticalSteps;
     private bool hasReliableCameraVelocityLineage;
+    private bool requiresHorizontalPrediction;
+    private bool requiresVerticalPrediction;
 
     public double WorldDeltaX { get; private set; }
     public double WorldDeltaY { get; private set; }
     public int SampleCount { get; private set; }
     public bool IsArmed => reference is not null;
+    public double? ReferenceTimestamp => reference?.Timestamp;
+    public double? LastObservationTimestamp { get; private set; }
+    public double? LastReferenceTimestamp { get; private set; }
+    public bool LastEstimateIsComplete { get; private set; }
+    public bool LastHorizontalMeasured { get; private set; }
+    public bool LastVerticalMeasured { get; private set; }
+    public bool LastEstimateIsMeasured => LastEstimateIsComplete && LastHorizontalMeasured && LastVerticalMeasured;
     public LowResolutionTransitionTravel Travel => new(
         WorldDeltaX,
         SampleCount,
@@ -741,6 +754,9 @@ public sealed class LowResolutionTransitionOdometry
         lastVerticalMeasuredAt = null;
         predictedVerticalSteps = 0;
         hasReliableCameraVelocityLineage = false;
+        requiresHorizontalPrediction = requiresVerticalPrediction = false;
+        LastObservationTimestamp = LastReferenceTimestamp = null;
+        LastEstimateIsComplete = LastHorizontalMeasured = LastVerticalMeasured = false;
     }
 
     public void Arm(LowResolutionMotionGrid? grid, double timestamp)
@@ -758,6 +774,8 @@ public sealed class LowResolutionTransitionOdometry
             || !double.IsFinite(value.Timestamp)
             || !double.IsFinite(value.Velocity.X)
             || !double.IsFinite(value.Velocity.Y)) return;
+        requiresHorizontalPrediction = Math.Abs(value.Velocity.X) >= 5;
+        requiresVerticalPrediction = Math.Abs(value.Velocity.Y) >= 5;
         var seeded = false;
         if (expectedDirection is { } direction
             && Math.Abs(value.Velocity.X) is >= 5 and <= 1_000
@@ -797,6 +815,9 @@ public sealed class LowResolutionTransitionOdometry
         }
         var age = timestamp - prior.Timestamp;
         if (age < MinimumSampleAge) return null;
+        LastObservationTimestamp = timestamp;
+        LastReferenceTimestamp = prior.Timestamp;
+        LastEstimateIsComplete = LastHorizontalMeasured = LastVerticalMeasured = false;
         reference = new Sample(grid, timestamp);
         if (age > MaximumSampleAge)
         {
@@ -840,77 +861,41 @@ public sealed class LowResolutionTransitionOdometry
                 predictedVertical?.Confidence ?? 0);
             if (predictedHorizontal is not null) predictedSteps++;
             if (predictedVertical is not null) predictedVerticalSteps++;
+            LastEstimateIsComplete = (predictedHorizontal is not null || !requiresHorizontalPrediction)
+                && (predictedVertical is not null || !requiresVerticalPrediction);
             return stepX;
         }
         var measuredStepX = -motion.ScreenShiftX * pixelScale;
         var measuredStepY = motion.ScreenShiftY * pixelScale;
         if (!double.IsFinite(measuredStepX) || !double.IsFinite(measuredStepY)) return null;
-        var verticalPrediction = PredictedVerticalStep(age, timestamp, pixelScale);
-        var usesPredictedVertical = verticalPrediction is { } predictedY
-            && ShouldUsePredictedVertical(measuredStepY, predictedY.Step);
-        var acceptedStepY = usesPredictedVertical
-            ? verticalPrediction!.Value.Step
-            : measuredStepY;
-
-        if (expectedDirection is { } expected
-            && hasReliableCameraVelocityLineage
-            && !StepAgrees(measuredStepX, expected)
-            && PredictedHorizontalStep(age, timestamp, pixelScale, expectedDirection)
-                is { } contradictionPrediction)
-        {
-            WorldDeltaX += contradictionPrediction.Step;
-            WorldDeltaY += acceptedStepY;
-            SampleCount++;
-            confidenceTotal += Math.Max(
-                contradictionPrediction.Confidence,
-                usesPredictedVertical ? verticalPrediction?.Confidence ?? 0 : motion.Confidence);
-            predictedSteps++;
-            if (usesPredictedVertical) predictedVerticalSteps++;
-            else RememberMeasuredVerticalVelocity(measuredStepY, age, timestamp, motion.Confidence);
-            return contradictionPrediction.Step;
-        }
-
+        var acceptedStepX = measuredStepX;
+        var acceptedConfidence = motion.Confidence;
         if (!AcceptsDirection(motion, expectedDirection))
         {
-            if (PredictedHorizontalStep(age, timestamp, pixelScale, expectedDirection)
-                is { } directionPrediction)
+            if (PredictedHorizontalStep(age, timestamp, pixelScale, expectedDirection) is not { } prediction)
             {
-                WorldDeltaX += directionPrediction.Step;
-                WorldDeltaY += acceptedStepY;
-                SampleCount++;
-                confidenceTotal += Math.Max(
-                    directionPrediction.Confidence,
-                    usesPredictedVertical ? verticalPrediction?.Confidence ?? 0 : motion.Confidence);
-                predictedSteps++;
-                if (usesPredictedVertical) predictedVerticalSteps++;
-                else RememberMeasuredVerticalVelocity(
-                    measuredStepY, age, timestamp, motion.Confidence);
-                return directionPrediction.Step;
+                ClearVelocityPrediction();
+                lastExpectedDirection = expectedDirection;
+                return null;
             }
-            ClearVelocityPrediction();
-            lastExpectedDirection = expectedDirection;
-            return null;
+            acceptedStepX = prediction.Step;
+            acceptedConfidence = prediction.Confidence;
+            predictedSteps++;
+        }
+        else
+        {
+            LastHorizontalMeasured = true;
+            RememberMeasuredVelocity(measuredStepX, age, timestamp, motion.Confidence, expectedDirection);
         }
 
-        var horizontalPrediction = PredictedHorizontalStep(
-            age, timestamp, pixelScale, expectedDirection);
-        var usesPredictedHorizontal = horizontalPrediction is { } predictedX
-            && ShouldUsePredictedHorizontal(measuredStepX, predictedX.Step);
-        var acceptedStepX = usesPredictedHorizontal
-            ? horizontalPrediction!.Value.Step
-            : measuredStepX;
         WorldDeltaX += acceptedStepX;
-        WorldDeltaY += acceptedStepY;
+        WorldDeltaY += measuredStepY;
         SampleCount++;
-        confidenceTotal += Math.Max(
-            usesPredictedHorizontal ? horizontalPrediction?.Confidence ?? 0 : motion.Confidence,
-            usesPredictedVertical ? verticalPrediction?.Confidence ?? 0 : motion.Confidence);
-        if (usesPredictedHorizontal) predictedSteps++;
-        else RememberMeasuredVelocity(
-            measuredStepX, age, timestamp, motion.Confidence, expectedDirection);
-        if (usesPredictedVertical) predictedVerticalSteps++;
-        else RememberMeasuredVerticalVelocity(
-            measuredStepY, age, timestamp, motion.Confidence);
+        confidenceTotal += acceptedConfidence;
+        RememberMeasuredVerticalVelocity(measuredStepY, age, timestamp, motion.Confidence);
+        requiresHorizontalPrediction = Math.Abs(acceptedStepX) >= .25;
+        requiresVerticalPrediction = Math.Abs(measuredStepY) >= .25;
+        LastVerticalMeasured = LastEstimateIsComplete = true;
         return acceptedStepX;
     }
 
@@ -940,7 +925,7 @@ public sealed class LowResolutionTransitionOdometry
         if (!hasReliableCameraVelocityLineage || age <= 0
             || !double.IsFinite(stepY) || Math.Abs(stepY) < .25)
         {
-            if (Math.Abs(stepY) < .25) predictedVerticalSteps++;
+            if (Math.Abs(stepY) < .25) ClearVerticalVelocityPrediction();
             return;
         }
         var velocity = stepY / age;
@@ -1020,15 +1005,6 @@ public sealed class LowResolutionTransitionOdometry
         return ordered[ordered.Length / 2].WorldPixelsPerSecond;
     }
 
-    private static bool ShouldUsePredictedVertical(double measured, double predicted) =>
-        Math.Abs(predicted) >= 4
-        && (measured * predicted < 0 || Math.Abs(measured) < Math.Abs(predicted) * .35);
-
-    private static bool ShouldUsePredictedHorizontal(double measured, double predicted) =>
-        Math.Abs(predicted) >= 4
-        && measured * predicted > 0
-        && Math.Abs(measured) < Math.Abs(predicted) * .85;
-
     private PredictedStep? PredictedHorizontalStep(
         double age,
         double timestamp,
@@ -1105,12 +1081,8 @@ public sealed class VisualRoomTransitionTracker
     private PendingTransition? pending;
     private readonly LowResolutionRoomMotionTracker motionTracker = new();
     private readonly LowResolutionTransitionOdometry transitionOdometry = new();
-    private readonly LowResolutionTransitionOdometry floorlessOdometry = new();
+    private readonly FloorlessCameraMotion floorlessMotion = new();
     private readonly LowResolutionPlaceMemory placeMemory = new();
-    private AtlasPoint? floorlessAnchorWorldPose;
-    private AtlasPoint? floorlessWorldPose;
-    private bool floorlessPoseMeasured;
-    private ulong floorlessPoseRevision;
     private MotionSample? previousMotionSample;
     private FrameEdgeBlackBands? previousEdgeBlackBands;
     private LowResolutionMotionGrid? latestCoarseMotionGrid;
@@ -1130,18 +1102,7 @@ public sealed class VisualRoomTransitionTracker
     {
         lock (sync)
         {
-            if (roomID != activeRoomID
-                || coarsePoseRevision != floorlessPoseRevision
-                || !double.IsFinite(correction.X) || !double.IsFinite(correction.Y)
-                || floorlessAnchorWorldPose is not { } anchor
-                || floorlessWorldPose is not { } position
-                || !floorlessPoseMeasured) return false;
-            floorlessAnchorWorldPose = new AtlasPoint(
-                anchor.X + correction.X, anchor.Y + correction.Y);
-            floorlessWorldPose = new AtlasPoint(
-                position.X + correction.X, position.Y + correction.Y);
-            floorlessPoseRevision = unchecked(floorlessPoseRevision + 1);
-            return true;
+            return roomID == activeRoomID && floorlessMotion.ApplyCorrection(correction, coarsePoseRevision);
         }
     }
 
@@ -1407,7 +1368,8 @@ public sealed class VisualRoomTransitionTracker
         double solveWidth,
         double timestamp,
         bool groundTrackingReliable = true,
-        LowResolutionCameraVelocitySeed? reliableCameraVelocity = null)
+        LowResolutionCameraVelocitySeed? reliableCameraVelocity = null,
+        VisualCameraPoseSample? completedPose = null)
     {
         ArgumentNullException.ThrowIfNull(profile);
         lock (sync)
@@ -1442,15 +1404,8 @@ public sealed class VisualRoomTransitionTracker
                 latestCoarseMotionGrid = profile.MotionGrid;
                 latestCoarseMotionEstimate = screenMotion;
                 UpdateFloorlessTraversal(
-                    groundTrackingReliable,
-                    horizontalInput,
-                    screenMotion,
-                    priorMotionSample,
-                    profile.MotionGrid,
-                    currentWorldPose,
-                    reliableCameraVelocity,
-                    solveWidth,
-                    timestamp);
+                    groundTrackingReliable, horizontalInput ?? screenMotion?.Direction,
+                    profile.MotionGrid, currentWorldPose, reliableCameraVelocity, solveWidth, timestamp, completedPose);
                 var solveHeight = frameSize.Height / frameSize.Width * solveWidth;
                 var entranceDirection = pending?.Direction
                     ?? EligibleDepartureDirection(timestamp, true, screenMotion)
@@ -1490,7 +1445,7 @@ public sealed class VisualRoomTransitionTracker
                         pending = new PendingTransition(
                             activeRoomID,
                             direction,
-                            floorlessAnchorWorldPose ?? currentWorldPose,
+                            floorlessMotion.Anchor ?? currentWorldPose,
                             solveWidth,
                             solveHeight,
                             PendingKind.Blackout,
@@ -1640,7 +1595,7 @@ public sealed class VisualRoomTransitionTracker
                     pending = new PendingTransition(
                         activeRoomID,
                         fadeDirection,
-                        floorlessAnchorWorldPose ?? currentWorldPose,
+                        floorlessMotion.Anchor ?? currentWorldPose,
                         solveWidth,
                         solveHeight,
                         PendingKind.Fade,
@@ -1671,7 +1626,7 @@ public sealed class VisualRoomTransitionTracker
                 pending = new PendingTransition(
                     activeRoomID,
                     transitionDirection,
-                    floorlessAnchorWorldPose ?? currentWorldPose,
+                    floorlessMotion.Anchor ?? currentWorldPose,
                     solveWidth,
                     solveHeight,
                     PendingKind.Appearance,
@@ -1729,14 +1684,13 @@ public sealed class VisualRoomTransitionTracker
                 value.LeftDoorYRange,
                 value.RightDoorYRange))
             .ToArray();
-        AtlasPoint? floorlessPublishedPose = floorlessPoseMeasured
-            ? floorlessWorldPose
-            : null;
+        var floorlessPublishedPose = floorlessMotion.PublishedPose;
         AtlasPoint? transitionWorldPose = pending is { } activePending
             ? floorlessPublishedPose ?? new AtlasPoint(
                 activePending.DepartureWorldPose.X + transitionOdometry.WorldDeltaX,
                 activePending.DepartureWorldPose.Y + transitionOdometry.WorldDeltaY)
             : null;
+        var controllingOdometry = floorlessPublishedPose is not null ? floorlessMotion.Odometry : transitionOdometry;
         return new VisualRoomSnapshot(
             activeRoomID,
             $"Room {activeRoomID + 1}",
@@ -1747,82 +1701,49 @@ public sealed class VisualRoomTransitionTracker
             transitionWorldPose,
             activationWorldPose,
             floorlessPublishedPose,
-            floorlessPoseRevision,
+            floorlessMotion.Revision,
             latestCoarseMotionGrid,
             latestCoarseMotionEstimate,
             latestCoarsePlaceMatch,
             floorlessPublishedPose is not null
                 || pending is not null && transitionOdometry.SampleCount > 0,
             publicPortals,
-            CompositionBoundsLocked(activeRoomID));
+            CompositionBoundsLocked(activeRoomID))
+        {
+            CoarseMotionMeasured = controllingOdometry.LastEstimateIsMeasured,
+            CoarseMeasurementTimestamp = controllingOdometry.LastObservationTimestamp,
+            CoarseReferenceTimestamp = controllingOdometry.LastReferenceTimestamp
+        };
     }
 
     private void UpdateFloorlessTraversal(
         bool groundTrackingReliable,
-        VisualRoomDirection? horizontalInput,
-        LowResolutionRoomMotionEstimate? screenMotion,
-        MotionSample? priorMotionSample,
+        VisualRoomDirection? direction,
         LowResolutionMotionGrid? currentGrid,
         AtlasPoint currentWorldPose,
         LowResolutionCameraVelocitySeed? reliableCameraVelocity,
         double solveWidth,
-        double timestamp)
+        double timestamp,
+        VisualCameraPoseSample? completedPose)
     {
+        floorlessMotion.Observe(currentGrid, timestamp, solveWidth, currentWorldPose,
+            groundTrackingReliable, direction, reliableCameraVelocity, completedPose);
         if (groundTrackingReliable)
         {
-            placeMemory.Remember(
-                currentGrid, activeRoomID, currentWorldPose, timestamp);
+            placeMemory.Remember(currentGrid, activeRoomID, currentWorldPose, timestamp);
+            placeMemory.ClearPending();
             latestCoarsePlaceMatch = null;
-            ResetFloorlessTraversal();
             return;
         }
-        if (floorlessAnchorWorldPose is null)
-        {
-            floorlessPoseRevision = unchecked(floorlessPoseRevision + 1);
-            floorlessAnchorWorldPose = currentWorldPose;
-            floorlessWorldPose = currentWorldPose;
-            floorlessOdometry.Arm(
-                priorMotionSample?.Grid ?? currentGrid,
-                priorMotionSample?.Timestamp ?? timestamp);
-            floorlessOdometry.PrimeHorizontalVelocity(
-                reliableCameraVelocity,
-                horizontalInput ?? screenMotion?.Direction);
-        }
-        if (floorlessOdometry.Observe(
-            currentGrid,
-            timestamp,
-            solveWidth,
-            horizontalInput ?? screenMotion?.Direction) is not null)
-        {
-            floorlessPoseMeasured = true;
-        }
-        if (floorlessAnchorWorldPose is { } anchor)
-        {
-            floorlessWorldPose = new AtlasPoint(
-                anchor.X + floorlessOdometry.WorldDeltaX,
-                anchor.Y + floorlessOdometry.WorldDeltaY);
-        }
-        latestCoarsePlaceMatch = placeMemory.Observe(
-            currentGrid, activeRoomID, solveWidth, timestamp);
+        latestCoarsePlaceMatch = placeMemory.Observe(currentGrid, activeRoomID, solveWidth, timestamp);
         if (latestCoarsePlaceMatch is { } match)
-        {
-            floorlessPoseRevision = unchecked(floorlessPoseRevision + 1);
-            floorlessAnchorWorldPose = match.CameraPosition;
-            floorlessWorldPose = match.CameraPosition;
-            floorlessPoseMeasured = true;
-            floorlessOdometry.Arm(currentGrid, timestamp);
-        }
+            floorlessMotion.ReanchorAtPlace(match.CameraPosition, currentGrid, timestamp);
     }
 
     private void ResetFloorlessTraversal()
     {
-        if (floorlessAnchorWorldPose is not null || floorlessPoseMeasured)
-            floorlessPoseRevision = unchecked(floorlessPoseRevision + 1);
-        floorlessOdometry.Reset();
+        floorlessMotion.ResetTraversal();
         placeMemory.ClearPending();
-        floorlessAnchorWorldPose = null;
-        floorlessWorldPose = null;
-        floorlessPoseMeasured = false;
     }
 
     private static VisualRoomDirection? BoundaryDirection(
@@ -2024,7 +1945,7 @@ public sealed class VisualRoomTransitionTracker
                 transition.DepartureWorldPose.X + fallbackSourceX - arrival.X,
                 transition.DepartureWorldPose.Y);
         }
-        if (floorlessOdometry.SampleCount > 0 && floorlessWorldPose is { } floorless)
+        if (floorlessMotion.Odometry.SampleCount > 0 && floorlessMotion.Position is { } floorless)
             return floorless;
         if (transitionOdometry.SampleCount == 0) return null;
         return new AtlasPoint(
@@ -2033,7 +1954,7 @@ public sealed class VisualRoomTransitionTracker
     }
 
     private LowResolutionTransitionTravel? MeasuredTransitionTravel() =>
-        new[] { transitionOdometry.Travel, floorlessOdometry.Travel }
+        new[] { transitionOdometry.Travel, floorlessMotion.Odometry.Travel }
             .Where(value => value.SampleCount >= 2 && value.MeanConfidence >= .12)
             .OrderByDescending(value => Math.Abs(value.WorldDeltaX))
             .FirstOrDefault();
@@ -2114,7 +2035,8 @@ public sealed class VisualRoomTransitionTracker
         motionTracker.Reset();
         transitionOdometry.Reset();
         if (resetPlaceMemory) placeMemory.Reset();
-        ResetFloorlessTraversal();
+        floorlessMotion.Reset();
+        placeMemory.ClearPending();
         previousMotionSample = null;
         previousEdgeBlackBands = null;
         latestCoarseMotionGrid = null;

@@ -16,9 +16,11 @@ public sealed partial class MenuStencilTracker
         bool recordsCalibration, IReadOnlyDictionary<string, StencilRect>? anchorBounds = null, IReadOnlySet<string>? excluded = null)
     {
         if (scene.Options.Count == 0) return new(null, [], [], 0, 0);
+        anchorBounds ??= verifiedAnchorBounds.GetValueOrDefault(scene.ContextIdentifier);
         Row? Pair(Option option, int radiusX, int radiusY)
         {
             if (option.LeftSelector is not { } leftSelector || option.RightSelector is not { } rightSelector
+                || SelectorReferenceBounds(scene, option, language) is not { } reference
                 || SelectorBounds(scene, option, language) is not { } configured || RowBand(scene, option, language) is not { } rowBand) return null;
             var genericLeft = scene.SelectorVariants.GetValueOrDefault("left") ?? [];
             var genericRight = scene.SelectorVariants.GetValueOrDefault("right") ?? [];
@@ -26,12 +28,18 @@ public sealed partial class MenuStencilTracker
             StencilRect? verifiedText = anchorBounds?.TryGetValue(option.ClassIdentifier, out var currentText) == true ? currentText : null;
             var textBounds = verifiedText ?? scene.Anchors.FirstOrDefault(anchor => anchor.ClassIdentifier == option.ClassIdentifier)?.Variants
                     .FirstOrDefault(variant => variant.LanguageIdentifier == language && variant.NominalBounds is not null)?.NominalBounds ?? option.Bounds;
+            var align = MenuSelectorPlacement.AlignsWithText(scene.ContextIdentifier, option.ClassIdentifier);
             Score? ScoreSelector(IReadOnlyList<Variant> variants, StencilRect bounds, bool usesFallback, MenuSelectorSide side, ImageStencilForegroundMask? mask)
             {
                 var expected = bounds.Offset(trackedOffset.X, trackedOffset.Y);
                 var text = verifiedText ?? textBounds.Offset(trackedOffset.X, trackedOffset.Y);
+                var isLeft = side == MenuSelectorSide.Left;
+                var origin = (isLeft ? reference.Left : reference.Right).Offset(trackedOffset.X, trackedOffset.Y);
                 bool Accepts(StencilRect candidate) => candidate.MidY >= rowBand.Lower && candidate.MidY <= rowBand.Upper
-                    && (side == MenuSelectorSide.Left ? candidate.MidX < text.X : candidate.MidX > text.Right);
+                    && MenuSelectorPlacement.IsLocal(candidate, origin)
+                    && (!align || Math.Abs(candidate.MidY - text.MidY) <= SelectorSearchRadiusY)
+                    && (isLeft ? (align ? candidate.Right <= text.X : candidate.MidX < text.X)
+                        : (align ? candidate.X >= text.Right : candidate.MidX > text.Right));
                 var primary = BestScore(usesFallback ? variants.Take(1).ToArray() : variants, pixels, expected, radiusX, radiusY, accepts: Accepts, idleMask: mask);
                 if (primary is null) return null;
                 if (!usesFallback || variants.Count <= 1 || primary.Confidence >= SelectorThreshold
@@ -55,8 +63,9 @@ public sealed partial class MenuStencilTracker
                     && ScoreSelector(variants, selector.Bounds, positioned, side, mask) is { } deployed && deployed.Confidence > score.Confidence + .03) return deployed;
                 return score;
             }
-            var left = LocalizedScore(leftSelector, configured.Left, genericLeft, MenuSelectorSide.Left);
-            var right = LocalizedScore(rightSelector, configured.Right, genericRight, MenuSelectorSide.Right);
+            var recovering = radiusX > SelectorSearchRadiusX || radiusY > SelectorSearchRadiusY;
+            var left = LocalizedScore(leftSelector, recovering ? reference.Left : configured.Left, genericLeft, MenuSelectorSide.Left);
+            var right = LocalizedScore(rightSelector, recovering ? reference.Right : configured.Right, genericRight, MenuSelectorSide.Right);
             if (left is null || right is null) return null;
             var matches = new MenuStencilMatch[]
             {
@@ -106,9 +115,30 @@ public sealed partial class MenuStencilTracker
 
     private MenuSelectorBounds? SelectorBounds(Scene scene, Option option, string? language)
     {
-        MenuSelectorBounds? configured = option.LeftSelector is not null && option.RightSelector is not null
-            ? new(option.LeftSelector.BoundsFor(language), option.RightSelector.BoundsFor(language)) : null;
-        return calibration.CurrentBounds(scene.ContextIdentifier, option.ClassIdentifier, language, configured);
+        if (SelectorReferenceBounds(scene, option, language) is not { } reference) return null;
+        var configured = new MenuSelectorBounds(option.LeftSelector!.BoundsFor(language), option.RightSelector!.BoundsFor(language));
+        var current = calibration.CurrentBounds(scene.ContextIdentifier, option.ClassIdentifier, language, configured) ?? configured;
+        var align = MenuSelectorPlacement.AlignsWithText(scene.ContextIdentifier, option.ClassIdentifier);
+        StencilRect Place(StencilRect candidate, StencilRect origin)
+        {
+            var bounded = MenuSelectorPlacement.Resolve(candidate, origin);
+            return align ? bounded.Offset(0, origin.MidY - bounded.MidY) : bounded;
+        }
+        return new(Place(current.Left, reference.Left), Place(current.Right, reference.Right));
+    }
+
+    private MenuSelectorBounds? SelectorReferenceBounds(Scene scene, Option option, string? language)
+    {
+        if (option.LeftSelector is not { } left || option.RightSelector is not { } right) return null;
+        var reference = new MenuSelectorBounds(left.ReferenceFor(language), right.ReferenceFor(language));
+        if (!MenuSelectorPlacement.AlignsWithText(scene.ContextIdentifier, option.ClassIdentifier)) return reference;
+        var anchor = scene.Anchors.FirstOrDefault(item => item.ClassIdentifier == option.ClassIdentifier);
+        var bounds = verifiedAnchorBounds.GetValueOrDefault(scene.ContextIdentifier);
+        var text = bounds?.TryGetValue(option.ClassIdentifier, out var matched) == true
+            ? matched.Offset(-trackedOffset.X, -trackedOffset.Y)
+            : anchor?.Variants.FirstOrDefault(item => item.LanguageIdentifier == language)?.NominalBounds ?? option.Bounds;
+        return new(MenuSelectorPlacement.BesideText(reference.Left, text, isLeft: true),
+            MenuSelectorPlacement.BesideText(reference.Right, text, isLeft: false));
     }
     private (double Lower, double Upper)? RowBand(Scene scene, Option option, string? language)
     {

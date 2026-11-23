@@ -64,7 +64,8 @@ public sealed partial class MenuStencilTracker
         var selection = baseStrong ? resolved : pool.MaxBy(item => SelectorConfidence(item.Result));
         var resultWithSelection = selection is null ? baseResult : baseResult with
         {
-            SelectedOption = selection.Result.SelectedOption, SelectorCandidates = selection.Result.SelectorCandidates,
+            SelectedOption = selection.Result.SelectedOption, SelectedOptionIdentifier = selection.Result.SelectedOptionIdentifier,
+            SelectorCandidates = selection.Result.SelectorCandidates,
             SelectorSearchRegions = selection.Result.SelectorSearchRegions, SelectorLanguageEvidenceCount = selection.Result.SelectorLanguageEvidenceCount,
             SelectorForegroundEvidenceCount = selection.Result.SelectorForegroundEvidenceCount, ComparisonCount = comparisons,
             LanguageIdentifier = resolved.Candidate.Score.Language ?? preferredLanguage ?? trackedLanguage

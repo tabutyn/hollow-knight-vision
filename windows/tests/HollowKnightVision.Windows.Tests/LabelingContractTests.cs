@@ -47,11 +47,10 @@ internal static class LabelingContractTests
         Check(!rules.Any(item => LabelingHudStencilPolicy.ClassIdentifiers.Any(id => item.Id.EndsWith(id, StringComparison.Ordinal))));
         Check(LabelingContractEvaluator.Evaluate(Example("gameplay-hud", "game.health")).Any(item => item.IsBreach));
         Check(LabelingContractEvaluator.Evaluate(Example("gameplay-hud", "game.health", "game.health")).All(item => !item.IsBreach));
-        var review = new LabelingScreenshotReviewSession(new LabelingExampleStore(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())));
-        review.SetExamples([Example("game", "game.health", "game.mana", "game.geo")]);
-        Check(!review.HasGameplayLabels && !review.CanTrainModel());
-        review.SetExamples([knight]);
-        Check(review.HasGameplayLabels && review.CanTrainModel());
+        var classes = LabelingSharedModelPolicy.ClassIdentifiers();
+        Check(!LabelingSharedModelPolicy.HasPositiveGameplayEvidence(
+            [Example("game", "game.health", "game.mana", "game.geo")], classes));
+        Check(LabelingSharedModelPolicy.HasPositiveGameplayEvidence([knight], classes));
     }
 
     public static void TestAdvanceAndExemptions()

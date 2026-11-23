@@ -178,7 +178,12 @@ public sealed class LowResolutionRoomMotionTracker
         var wide = wideLimit > 3 && needsWide
             ? BestTranslationAttempt(reference, current, wideLimit, requiredImprovement)
             : null;
-        var fallback = narrow.Motion ?? wide?.Motion;
+        // In a dark landing the floor may lie entirely beyond the ordinary scoring band.
+        var edge = narrow.Motion is null && wide?.Motion is null
+            && (RequiresVisibilityMask(reference) || RequiresVisibilityMask(current))
+            ? BestTranslationAttempt(reference, current, wideLimit, requiredImprovement, usesVisibleExtent: true)
+            : null;
+        var fallback = narrow.Motion ?? wide?.Motion ?? edge?.Motion;
         if (fallback is null)
         {
             return new LowResolutionTranslationDiagnostic(
@@ -230,7 +235,8 @@ public sealed class LowResolutionRoomMotionTracker
         LowResolutionMotionGrid reference,
         LowResolutionMotionGrid current,
         int verticalShiftLimit,
-        double requiredImprovement)
+        double requiredImprovement,
+        bool usesVisibleExtent = false)
     {
         if (reference.Width != current.Width || reference.Height != current.Height
             || reference.Width <= MaximumShift * 2 + 4
@@ -238,6 +244,9 @@ public sealed class LowResolutionRoomMotionTracker
         {
             return TranslationAttempt.Rejected(LowResolutionTranslationRejection.IncompatibleGrid);
         }
+        if (usesVisibleExtent && !HasVisibleEdgeSupport(reference, current))
+            return TranslationAttempt.Rejected(LowResolutionTranslationRejection.InsufficientOverlap);
+
         var usesVisibilityMask = RequiresVisibilityMask(reference)
             || RequiresVisibilityMask(current);
         var normalizedReference = Normalize(reference, usesVisibilityMask);
@@ -247,10 +256,12 @@ public sealed class LowResolutionRoomMotionTracker
         {
             return TranslationAttempt.Rejected(LowResolutionTranslationRejection.InsufficientTexture);
         }
-        var yStart = Math.Max(verticalShiftLimit, reference.Height / 6);
-        var yEnd = Math.Min(reference.Height - verticalShiftLimit, reference.Height * 5 / 6);
-        var xStart = MaximumShift;
-        var xEnd = reference.Width - MaximumShift;
+        var yStart = usesVisibleExtent ? Math.Max(1, reference.Height / 6)
+            : Math.Max(verticalShiftLimit, reference.Height / 6);
+        var yEnd = usesVisibleExtent ? reference.Height - 1
+            : Math.Min(reference.Height - verticalShiftLimit, reference.Height * 5 / 6);
+        var xStart = usesVisibleExtent ? 1 : MaximumShift;
+        var xEnd = reference.Width - xStart;
 
         double Score(int shiftX, int shiftY, int sampleStride)
         {
@@ -261,9 +272,15 @@ public sealed class LowResolutionRoomMotionTracker
             {
                 for (var x = xStart; x < xEnd; x += sampleStride)
                 {
-                    available++;
                     var referenceIndex = y * reference.Width + x;
-                    var currentIndex = (y + shiftY) * current.Width + x + shiftX;
+                    if (usesVisibleExtent && normalizedReference.Visible?[referenceIndex] == false) continue;
+                    available++;
+                    var currentX = x + shiftX;
+                    var currentY = y + shiftY;
+                    if (usesVisibleExtent && (currentX < 1 || currentX >= current.Width - 1
+                        || currentY < 1 || currentY >= current.Height - 1))
+                        continue;
+                    var currentIndex = currentY * current.Width + currentX;
                     if (normalizedReference.Visible is not null
                         && (!normalizedReference.Visible[referenceIndex]
                             || normalizedCurrent.Visible?[currentIndex] != true))
@@ -290,7 +307,8 @@ public sealed class LowResolutionRoomMotionTracker
                     Score(shiftX, shiftY, 2)));
             }
         }
-        coarseScores.Sort((first, second) => first.Score.CompareTo(second.Score));
+        coarseScores.Sort((first, second) =>
+            first.Key.Rank(first.Score).CompareTo(second.Key.Rank(second.Score)));
         var fullKeys = coarseScores.Take(MaximumFullScoreCandidates)
             .Select(item => item.Key).ToHashSet();
         var zeroKey = new TranslationKey(0, 0);
@@ -308,7 +326,7 @@ public sealed class LowResolutionRoomMotionTracker
             }
         }
         var scores = fullKeys.ToDictionary(key => key, key => Score(key.X, key.Y, 1));
-        var best = scores.MinBy(pair => pair.Value);
+        var best = scores.MinBy(pair => pair.Key.Rank(pair.Value));
         if (!scores.TryGetValue(zeroKey, out var zero) || !double.IsFinite(zero)
             || zero <= 0 || !double.IsFinite(best.Value))
         {
@@ -320,15 +338,17 @@ public sealed class LowResolutionRoomMotionTracker
         var improvement = (zero - best.Value) / zero;
         var second = scores.Where(pair => pair.Key != best.Key)
             .Select(pair => pair.Value).DefaultIfEmpty(zero).Min();
+        if (!double.IsFinite(second))
+            return TranslationAttempt.Rejected(LowResolutionTranslationRejection.InsufficientOverlap);
         var uniqueness = Math.Max(0, (second - best.Value) / Math.Max(0.0001, second));
         var residual = SubcellResidual(
             normalizedReference.Values,
             normalizedCurrent.Values,
             reference.Width,
-            xStart,
-            xEnd,
-            yStart,
-            yEnd,
+            usesVisibleExtent ? Math.Max(xStart, 1 - best.Key.X) : xStart,
+            usesVisibleExtent ? Math.Min(xEnd, current.Width - 1 - best.Key.X) : xEnd,
+            usesVisibleExtent ? Math.Max(yStart, 1 - best.Key.Y) : yStart,
+            usesVisibleExtent ? Math.Min(yEnd, current.Height - 1 - best.Key.Y) : yEnd,
             best.Key.X,
             best.Key.Y,
             normalizedReference.Visible,
@@ -357,6 +377,31 @@ public sealed class LowResolutionRoomMotionTracker
                 + Math.Min(0.25, Length(refinedX, refinedY) * 0.25));
         return new TranslationAttempt(
             new LowResolutionMotionVector(refinedX, refinedY, confidence), null);
+    }
+
+    private static bool HasVisibleEdgeSupport(LowResolutionMotionGrid reference, LowResolutionMotionGrid current)
+    {
+        // Require enough visible scenery at the edge to rule out a small light or actor.
+        static (int Visible, int Edge) Count(LowResolutionMotionGrid grid)
+        {
+            var visible = 0;
+            var edge = 0;
+            for (var y = Math.Max(1, grid.Height / 6); y < grid.Height - 1; y++)
+            for (var x = 1; x < grid.Width - 1; x++)
+            {
+                if (grid.Luma[y * grid.Width + x] <= 16) continue;
+                visible++;
+                if (y >= grid.Height * 5 / 6 || x < MaximumShift || x >= grid.Width - MaximumShift)
+                    edge++;
+            }
+            return (visible, edge);
+        }
+
+        var first = Count(reference);
+        var second = Count(current);
+        var required = Math.Max(96, reference.Width * reference.Height / 20);
+        return Math.Min(first.Visible, second.Visible) >= required
+            && Math.Max(first.Edge, second.Edge) >= reference.Width;
     }
 
     private static (double X, double Y) SubcellResidual(
@@ -446,7 +491,11 @@ public sealed class LowResolutionRoomMotionTracker
 
     private sealed record Sample(double Timestamp, LowResolutionMotionGrid Grid);
     private sealed record Vote(double Timestamp, LowResolutionRoomMotionEstimate Estimate);
-    private readonly record struct TranslationKey(int X, int Y);
+    private readonly record struct TranslationKey(int X, int Y)
+    {
+        internal (double Score, int Distance, int Y, int X) Rank(double score) =>
+            (score, Math.Abs(X) + Math.Abs(Y), Y, X);
+    }
     private sealed record TranslationAttempt(
         LowResolutionMotionVector? Motion,
         LowResolutionTranslationRejection? Rejection,

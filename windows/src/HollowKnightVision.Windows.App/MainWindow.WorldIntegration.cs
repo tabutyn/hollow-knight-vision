@@ -19,7 +19,7 @@ public partial class MainWindow
             if (lostGeneration >= 0) pipeline.NotifyTrackingLoss((ulong)lostGeneration);
             var result = pipeline.Process(frame);
             if (result.CaptureGeneration != (ulong)Interlocked.Read(ref recentCaptureGeneration)) return;
-            if (result.AllowsAtlasWrite)
+            if (result.AllowsAtlasComposition)
             {
                 if (result.RebuiltAtlas is { } replacement)
                 {
@@ -33,9 +33,9 @@ public partial class MainWindow
                     CameraX = result.CameraPose.X, CameraY = result.CameraPose.Y,
                     CameraTargetX = result.CameraPose.X, CameraTargetY = result.CameraPose.Y
                 }, exclusions, roomId: roomId, captureGeneration: frame.CaptureGeneration, captureIdentity: captureIdentity);
-                if (result.AcceptedClosure is { } closure)
-                    gameControls.RecordLoopClosure(frame.Timestamp, result.Revision, result.AppliedCorrection, closure);
             }
+            if (result.AcceptedClosure is { } closure)
+                gameControls.RecordLoopClosure(frame.Timestamp, result.Revision, result.AppliedCorrection, closure);
             Volatile.Write(ref completedWorld, new(frame, result));
         });
     }

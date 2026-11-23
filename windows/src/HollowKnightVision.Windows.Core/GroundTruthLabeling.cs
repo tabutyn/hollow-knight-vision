@@ -82,7 +82,30 @@ public enum GroundTruthLineKind
 {
     Positive,
     Negative,
+    Wall,
+    Spike,
+    Door,
+    DoorVertical,
 }
+
+public enum GroundTruthTerrainTool
+{
+    Ground,
+    Wall,
+    Spike,
+    Door,
+}
+
+public enum TerrainLineEnd
+{
+    Start,
+    End,
+}
+
+public sealed record GroundTruthDoorLatch(
+    [property: JsonPropertyName("groundID"), JsonRequired] Guid GroundId,
+    [property: JsonRequired] TerrainLineEnd End,
+    [property: JsonRequired] double Fraction);
 
 [method: JsonConstructor]
 public sealed record GroundTruthWorldLine(
@@ -94,33 +117,91 @@ public sealed record GroundTruthWorldLine(
     [property: JsonRequired] GroundTruthLineKind Kind,
     [property: JsonRequired] bool SeededFromDetector)
 {
-    public GroundTruthWorldLine(
-        string sceneName,
-        double minimumWorldX,
-        double maximumWorldX,
-        double worldY,
-        GroundTruthLineKind kind,
-        bool seededFromDetector)
-        : this(
-            Guid.NewGuid(),
-            sceneName,
-            minimumWorldX,
-            maximumWorldX,
-            worldY,
-            kind,
-            seededFromDetector)
-    {
-    }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? EndWorldY { get; init; }
+
+    [JsonPropertyName("startCornerID"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? StartCornerId { get; init; }
+
+    [JsonPropertyName("endCornerID"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? EndCornerId { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public GroundTruthDoorLatch? GroundLatch { get; init; }
+
+    public GroundTruthWorldLine(string sceneName, double minimumWorldX, double maximumWorldX,
+        double worldY, GroundTruthLineKind kind, bool seededFromDetector)
+        : this(Guid.NewGuid(), sceneName, minimumWorldX, maximumWorldX, worldY, kind, seededFromDetector) { }
 
     [JsonIgnore]
-    public GroundTruthWorldLine Standardized => this with
+    public bool IsVertical => Kind is GroundTruthLineKind.Wall or GroundTruthLineKind.DoorVertical;
+
+    [JsonIgnore]
+    public AtlasPoint Start => new(MinimumWorldX, WorldY);
+
+    [JsonIgnore]
+    public AtlasPoint End => new(MaximumWorldX, EndWorldY ?? WorldY);
+
+    [JsonIgnore]
+    public GroundTruthWorldLine Standardized => IsVertical || MinimumWorldX <= MaximumWorldX ? this : this with
     {
-        MinimumWorldX = Math.Min(MinimumWorldX, MaximumWorldX),
-        MaximumWorldX = Math.Max(MinimumWorldX, MaximumWorldX)
+        MinimumWorldX = MaximumWorldX,
+        MaximumWorldX = MinimumWorldX,
+        StartCornerId = EndCornerId,
+        EndCornerId = StartCornerId
     };
+
+    internal AtlasPoint PointAt(TerrainLineEnd end) => end == TerrainLineEnd.Start ? Start : End;
+    internal Guid? CornerAt(TerrainLineEnd end) => end == TerrainLineEnd.Start ? StartCornerId : EndCornerId;
+
+    internal GroundTruthWorldLine WithCorner(TerrainLineEnd end, Guid? id) => end == TerrainLineEnd.Start
+        ? this with { StartCornerId = id } : this with { EndCornerId = id };
+
+    internal GroundTruthWorldLine WithExtent(double first, double last, double across)
+    {
+        var low = Math.Min(first, last);
+        var high = Math.Max(first, last);
+        return IsVertical
+            ? this with { MinimumWorldX = across, MaximumWorldX = across, WorldY = low, EndWorldY = high }
+            : this with { MinimumWorldX = low, MaximumWorldX = high, WorldY = across, EndWorldY = null };
+    }
 }
 
-public sealed class GroundTruthLineDocument : IEquatable<GroundTruthLineDocument>
+/// <summary>Room-local calibration in the shared macOS and Windows terrain document.</summary>
+public sealed record GroundTruthRoomProjection(
+    [property: JsonPropertyName("roomID"), JsonRequired] Guid RoomId,
+    [property: JsonRequired] double PixelsPerWorldUnitX,
+    [property: JsonRequired] double PixelsPerWorldUnitY,
+    [property: JsonRequired, JsonConverter(typeof(GroundTruthLocalOriginConverter))] AtlasPoint LocalOrigin)
+{
+    internal bool IsValid => double.IsFinite(PixelsPerWorldUnitX) && PixelsPerWorldUnitX > 0
+        && double.IsFinite(PixelsPerWorldUnitY) && PixelsPerWorldUnitY > 0
+        && double.IsFinite(LocalOrigin.X) && double.IsFinite(LocalOrigin.Y);
+}
+
+internal sealed class GroundTruthLocalOriginConverter : JsonConverter<AtlasPoint>
+{
+    public override AtlasPoint Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        // Swift's CGPoint stores two unkeyed coordinates in this field.
+        if (reader.TokenType != JsonTokenType.StartArray
+            || !reader.Read() || reader.TokenType != JsonTokenType.Number || !reader.TryGetDouble(out var x)
+            || !reader.Read() || reader.TokenType != JsonTokenType.Number || !reader.TryGetDouble(out var y)
+            || !reader.Read() || reader.TokenType != JsonTokenType.EndArray)
+            throw new JsonException("Invalid ground-truth room origin");
+        return new(x, y);
+    }
+
+    public override void Write(Utf8JsonWriter writer, AtlasPoint value, JsonSerializerOptions options)
+    {
+        writer.WriteStartArray();
+        writer.WriteNumberValue(value.X);
+        writer.WriteNumberValue(value.Y);
+        writer.WriteEndArray();
+    }
+}
+
+public sealed partial class GroundTruthLineDocument : IEquatable<GroundTruthLineDocument>
 {
     public const int CurrentSchemaVersion = 2;
 
@@ -133,52 +214,95 @@ public sealed class GroundTruthLineDocument : IEquatable<GroundTruthLineDocument
     [JsonRequired]
     public List<GroundTruthWorldLine> Lines { get; set; } = [];
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, GroundTruthRoomProjection>? RoomProjections { get; set; }
+
+    // Optional v2 collections preserve the floor-only contract used by replay tools.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<GroundTruthWorldLine>? Walls { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<GroundTruthWorldLine>? Spikes { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<GroundTruthWorldLine>? Doors { get; set; }
+
+    [JsonIgnore]
+    public IEnumerable<GroundTruthWorldLine> AuthoredLines => AllLines.Where(line => !line.SeededFromDetector);
+
+    private IEnumerable<GroundTruthWorldLine> AllLines => Lines.Concat(Walls ?? []).Concat(Spikes ?? []).Concat(Doors ?? []);
+
     public void Validate()
     {
-        if (SchemaVersion != CurrentSchemaVersion
-            || Lines is null
-            || Lines.Count > 20_000
-            || SeededScenes is null
+        if (SchemaVersion != CurrentSchemaVersion || Lines is null || SeededScenes is null
             || SeededScenes.Any(scene => string.IsNullOrEmpty(scene) || scene.Length > 256)
-            || Lines.Any(line => line is null)
-            || Lines.Select(line => line.Id).Distinct().Count() != Lines.Count)
-        {
+            || Lines.Count + (long)(Walls?.Count ?? 0) + (Spikes?.Count ?? 0) + (Doors?.Count ?? 0) > 20_000
+            || Lines.Any(line => line?.Kind is not (GroundTruthLineKind.Positive or GroundTruthLineKind.Negative))
+            || (Walls ?? []).Any(line => line?.Kind != GroundTruthLineKind.Wall)
+            || (Spikes ?? []).Any(line => line?.Kind != GroundTruthLineKind.Spike)
+            || (Doors ?? []).Any(line => line?.Kind is not (GroundTruthLineKind.Door or GroundTruthLineKind.DoorVertical)))
             throw new GroundTruthLineStoreException("Invalid ground-label document");
-        }
 
-        foreach (var line in Lines)
+        if (RoomProjections?.Any(entry => entry.Key.Length == 0 || entry.Value is not { IsValid: true }) == true)
+            throw new GroundTruthLineStoreException("Invalid room projection");
+
+        var ids = new HashSet<Guid>();
+        foreach (var line in AllLines)
         {
-            if (line is null
-                || line.Id == Guid.Empty
-                || string.IsNullOrEmpty(line.SceneName)
+            var endY = line.End.Y;
+            if (line.Id == Guid.Empty || !ids.Add(line.Id) || string.IsNullOrEmpty(line.SceneName)
                 || line.SceneName.Length > 256
-                || !Enum.IsDefined(line.Kind)
-                || !double.IsFinite(line.MinimumWorldX)
-                || !double.IsFinite(line.MaximumWorldX)
-                || !double.IsFinite(line.WorldY)
-                || Math.Abs(line.MinimumWorldX) > 1_000_000
-                || Math.Abs(line.MaximumWorldX) > 1_000_000
-                || Math.Abs(line.WorldY) > 1_000_000
-                || line.MaximumWorldX < line.MinimumWorldX
-                || line.MaximumWorldX - line.MinimumWorldX > 100_000)
-            {
-                throw new GroundTruthLineStoreException(
-                    "Invalid world-space ground line");
-            }
+                || !IsWorldCoordinate(line.MinimumWorldX) || !IsWorldCoordinate(line.MaximumWorldX)
+                || !IsWorldCoordinate(line.WorldY) || !IsWorldCoordinate(endY)
+                || line.MaximumWorldX < line.MinimumWorldX || line.MaximumWorldX - line.MinimumWorldX > 100_000
+                || (line.IsVertical
+                    ? line.EndWorldY is null || line.MinimumWorldX != line.MaximumWorldX
+                        || endY < line.WorldY || endY - line.WorldY > 100_000
+                    : line.EndWorldY is not null))
+                throw new GroundTruthLineStoreException("Invalid world-space terrain line");
         }
+        ValidateAttachments();
     }
+
+    private static bool IsWorldCoordinate(double value) => double.IsFinite(value) && Math.Abs(value) <= 1_000_000;
+
+    internal void AddLine(GroundTruthWorldLine line)
+    {
+        var lines = line.Kind switch
+        {
+            GroundTruthLineKind.Wall => Walls ??= [],
+            GroundTruthLineKind.Spike => Spikes ??= [],
+            GroundTruthLineKind.Door or GroundTruthLineKind.DoorVertical => Doors ??= [],
+            _ => Lines
+        };
+        lines.Add(line);
+    }
+
+    internal IReadOnlyList<GroundTruthWorldLine> LinesFor(GroundTruthTerrainTool tool) => tool switch
+    {
+        GroundTruthTerrainTool.Wall => Walls ?? [],
+        GroundTruthTerrainTool.Spike => Spikes ?? [],
+        GroundTruthTerrainTool.Door => Doors ?? [],
+        _ => Lines
+    };
 
     public GroundTruthLineDocument Clone() => new()
     {
         SchemaVersion = SchemaVersion,
         SeededScenes = new HashSet<string>(SeededScenes, StringComparer.Ordinal),
-        Lines = [.. Lines]
+        Lines = [.. Lines],
+        RoomProjections = RoomProjections is null ? null : new(RoomProjections, StringComparer.Ordinal),
+        Walls = Walls is null ? null : [.. Walls],
+        Spikes = Spikes is null ? null : [.. Spikes],
+        Doors = Doors is null ? null : [.. Doors]
     };
 
     public bool Equals(GroundTruthLineDocument? other) => other is not null
-        && SchemaVersion == other.SchemaVersion
-        && SeededScenes.SetEquals(other.SeededScenes)
-        && Lines.SequenceEqual(other.Lines);
+        && SchemaVersion == other.SchemaVersion && SeededScenes.SetEquals(other.SeededScenes)
+        && Lines.SequenceEqual(other.Lines) && (Walls ?? []).SequenceEqual(other.Walls ?? [])
+        && (Spikes ?? []).SequenceEqual(other.Spikes ?? []) && (Doors ?? []).SequenceEqual(other.Doors ?? [])
+        && SortedRoomProjections().SequenceEqual(other.SortedRoomProjections());
+
+    private IEnumerable<KeyValuePair<string, GroundTruthRoomProjection>> SortedRoomProjections() =>
+        RoomProjections is null ? [] : RoomProjections.OrderBy(entry => entry.Key, StringComparer.Ordinal);
 
     public override bool Equals(object? obj) => Equals(obj as GroundTruthLineDocument);
 
@@ -187,7 +311,8 @@ public sealed class GroundTruthLineDocument : IEquatable<GroundTruthLineDocument
         var hash = new HashCode();
         hash.Add(SchemaVersion);
         foreach (var scene in SeededScenes.Order(StringComparer.Ordinal)) hash.Add(scene);
-        foreach (var line in Lines) hash.Add(line);
+        foreach (var line in AllLines) hash.Add(line);
+        foreach (var projection in SortedRoomProjections()) hash.Add(projection);
         return hash.ToHashCode();
     }
 }
@@ -291,6 +416,8 @@ public enum GroundTruthOverlayLineKind
     PositiveGroundTruth,
     NegativeGroundTruth,
     SelectedGroundTruth,
+    SpikeGroundTruth,
+    DoorGroundTruth,
 }
 
 public readonly record struct GroundTruthOverlayLine(
@@ -309,93 +436,25 @@ public static class GroundTruthLineProjection
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(transform);
-        IEnumerable<GroundTruthWorldLine> lines = document.Lines;
-        if (draft is not null) lines = lines.Append(draft);
-        var result = new List<GroundTruthOverlayLine>();
-        foreach (var line in lines)
-        {
-            if (line.SceneName != transform.SceneName) continue;
-            var start = transform.WorldToAtlas(
-                new AtlasPoint(line.MinimumWorldX, line.WorldY),
-                liveBounds);
-            var end = transform.WorldToAtlas(
-                new AtlasPoint(line.MaximumWorldX, line.WorldY),
-                liveBounds);
-            if (!Finite(start) || !Finite(end)) continue;
-            var kind = line.Id == selectedId
-                ? GroundTruthOverlayLineKind.SelectedGroundTruth
-                : line.Kind == GroundTruthLineKind.Positive
-                    ? GroundTruthOverlayLineKind.PositiveGroundTruth
-                    : GroundTruthOverlayLineKind.NegativeGroundTruth;
-            result.Add(new(start, end, kind));
-        }
-        return result;
+        var lines = draft is null ? document.AuthoredLines : document.AuthoredLines.Append(draft);
+        return lines.Where(line => line.SceneName == transform.SceneName)
+            .Select(line => new GroundTruthOverlayLine(
+                transform.WorldToAtlas(line.Start, liveBounds),
+                transform.WorldToAtlas(line.End, liveBounds),
+                OverlayKind(line, selectedId)))
+            .Where(line => Finite(line.Start) && Finite(line.End)).ToArray();
     }
 
-    public static IReadOnlyList<GroundTruthWorldLine> SeedLines(
-        IReadOnlyList<GroundHypothesisAtlasLine> atlasLines,
-        IReadOnlyList<GroundLinePresenceReview> lineReviews,
-        GroundTruthCameraTransform transform,
-        GroundTruthRect liveBounds)
-    {
-        ArgumentNullException.ThrowIfNull(atlasLines);
-        ArgumentNullException.ThrowIfNull(lineReviews);
-        ArgumentNullException.ThrowIfNull(transform);
-        var result = new List<GroundTruthWorldLine>();
-        foreach (var line in atlasLines)
+    public static GroundTruthOverlayLineKind OverlayKind(GroundTruthWorldLine line, Guid? selectedId) =>
+        line.Id == selectedId ? GroundTruthOverlayLineKind.SelectedGroundTruth : line.Kind switch
         {
-            var first = transform.AtlasToWorld(line.AtlasStart, liveBounds);
-            var last = transform.AtlasToWorld(line.AtlasEnd, liveBounds);
-            AppendSeed(new(
-                transform.SceneName,
-                Math.Min(first.X, last.X),
-                Math.Max(first.X, last.X),
-                (first.Y + last.Y) * .5,
-                GroundTruthLineKind.Positive,
-                seededFromDetector: true), transform.PixelsPerWorldUnitY, result);
-        }
+            GroundTruthLineKind.Negative => GroundTruthOverlayLineKind.NegativeGroundTruth,
+            GroundTruthLineKind.Spike => GroundTruthOverlayLineKind.SpikeGroundTruth,
+            GroundTruthLineKind.Door or GroundTruthLineKind.DoorVertical => GroundTruthOverlayLineKind.DoorGroundTruth,
+            _ => GroundTruthOverlayLineKind.PositiveGroundTruth
+        };
 
-        foreach (var review in GroundLineDetector.FeatureHypothesisPresenceReviews(
-                     lineReviews))
-        {
-            var y = review.Line.Row + .5;
-            var first = transform.ScreenToWorld(
-                new AtlasPoint(review.Line.XSpan.Start, y));
-            var last = transform.ScreenToWorld(
-                new AtlasPoint(review.Line.XSpan.EndInclusive + 1, y));
-            AppendSeed(new(
-                transform.SceneName,
-                Math.Min(first.X, last.X),
-                Math.Max(first.X, last.X),
-                (first.Y + last.Y) * .5,
-                GroundTruthLineKind.Positive,
-                seededFromDetector: true), transform.PixelsPerWorldUnitY, result);
-        }
-        return result;
-    }
-
-    private static void AppendSeed(
-        GroundTruthWorldLine proposed,
-        double pixelsPerWorldUnit,
-        List<GroundTruthWorldLine> result)
-    {
-        var rowTolerance = 3 / Math.Max(1, pixelsPerWorldUnit);
-        var duplicate = result.Any(existing =>
-        {
-            if (Math.Abs(existing.WorldY - proposed.WorldY) > rowTolerance)
-                return false;
-            var overlap = Math.Min(existing.MaximumWorldX, proposed.MaximumWorldX)
-                - Math.Max(existing.MinimumWorldX, proposed.MinimumWorldX);
-            var shorter = Math.Min(
-                existing.MaximumWorldX - existing.MinimumWorldX,
-                proposed.MaximumWorldX - proposed.MinimumWorldX);
-            return overlap >= Math.Max(0, shorter * .6);
-        });
-        if (!duplicate) result.Add(proposed.Standardized);
-    }
-
-    private static bool Finite(AtlasPoint point) =>
-        double.IsFinite(point.X) && double.IsFinite(point.Y);
+    private static bool Finite(AtlasPoint point) => double.IsFinite(point.X) && double.IsFinite(point.Y);
 }
 
 public enum GroundTruthPointerPhase
@@ -416,32 +475,25 @@ public enum GroundTruthEditingMode
 /// <summary>Platform-neutral world-line editing and persistence state.</summary>
 public sealed class GroundTruthLabelController
 {
-    private sealed record Snapshot(
-        GroundTruthLineDocument Document,
-        Guid? SelectedId);
-
-    private enum ModificationPart
-    {
-        Start,
-        End,
-        Whole,
-    }
-
+    private sealed record Snapshot(GroundTruthLineDocument Document, Guid? SelectedId);
     private readonly GroundTruthLineStore store;
     private readonly List<Snapshot> history = [];
+    private GroundTruthEditingMode mode = GroundTruthEditingMode.Add;
+    private GroundTruthTerrainTool tool;
+    private GroundTruthLineDocument? preview;
+    private GroundTruthWorldLine? newLine;
     private GroundTruthWorldLine? original;
-    private ModificationPart? modificationPart;
-    private AtlasPoint? gestureStartWorld;
-    private bool mutatedOnBegin;
-    private int? gestureHistoryIndex;
+    private TerrainLineEnd? modificationEnd;
+    private TerrainHandle? startTarget;
+    private AtlasPoint? gestureStart;
+    private AtlasPoint gestureTolerance;
+    private Guid? selectedBeforeGesture;
+    private string? gestureScene;
 
     public GroundTruthLabelController(GroundTruthLineStore? store = null)
     {
         this.store = store ?? new GroundTruthLineStore();
-        try
-        {
-            Document = this.store.Load();
-        }
+        try { Document = this.store.Load(); }
         catch (Exception error)
         {
             Document = new();
@@ -449,92 +501,64 @@ public sealed class GroundTruthLabelController
         }
     }
 
-    public GroundTruthEditingMode Mode { get; set; } = GroundTruthEditingMode.Add;
-    public GroundTruthLineDocument Document { get; private set; }
-    public Guid? SelectedId { get; private set; }
-    public GroundTruthWorldLine? Draft { get; private set; }
-    public string? Error { get; private set; }
-    public bool CanUndo => history.Count != 0;
-    public bool HasActiveGesture =>
-        gestureHistoryIndex is not null
-        || gestureStartWorld is not null
-        || Draft is not null;
-    public int VisiblePositiveCount => Document.Lines.Count(
-        line => line.Kind == GroundTruthLineKind.Positive);
-    public int VisibleNegativeCount => Document.Lines.Count(
-        line => line.Kind == GroundTruthLineKind.Negative);
-
-    public void Enter(
-        IReadOnlyList<GroundHypothesisAtlasLine> atlasLines,
-        IReadOnlyList<GroundLinePresenceReview> lineReviews,
-        GroundTruthCameraTransform? transform,
-        GroundTruthRect liveBounds)
+    public GroundTruthEditingMode Mode
     {
-        if (transform is null)
+        get => mode;
+        set
         {
-            Error = "Camera transform unavailable";
-            return;
+            if (mode == value) return;
+            CancelGesture();
+            mode = value;
         }
-        if (Document.SeededScenes.Contains(transform.SceneName))
-        {
-            Error = null;
-            return;
-        }
-        var seeds = GroundTruthLineProjection.SeedLines(
-            atlasLines,
-            lineReviews,
-            transform,
-            liveBounds);
-        if (seeds.Count == 0)
-        {
-            Error = "Waiting for solved ground lines";
-            return;
-        }
-        RecordSnapshot();
-        Document.Lines.AddRange(seeds);
-        Document.SeededScenes.Add(transform.SceneName);
-        Persist();
     }
 
-    public IReadOnlyList<GroundTruthOverlayLine> OverlayLines(
-        GroundTruthCameraTransform? transform,
-        GroundTruthRect liveBounds) => transform is null
-            ? []
-            : GroundTruthLineProjection.OverlayLines(
-                Document,
-                transform,
-                liveBounds,
-                SelectedId,
-                Draft);
+    public GroundTruthTerrainTool Tool
+    {
+        get => tool;
+        set
+        {
+            if (tool == value) return;
+            CancelGesture();
+            ClearSelection();
+            tool = value;
+        }
+    }
 
-    /// <summary>
-    /// Atomically imports stable-ID legacy lines. Repeating the import after a
-    /// marker-write failure is safe; an ID collision with different content is
-    /// rejected instead of silently replacing either copy.
-    /// </summary>
+    public GroundTruthLineDocument Document { get; private set; }
+    public Guid? SelectedId { get; private set; }
+    public GroundTruthWorldLine? Draft => newLine is { } line ? preview?.FindLine(line.Id) : null;
+    public string? Error { get; private set; }
+    public bool CanUndo => history.Count != 0;
+    public bool HasActiveGesture => gestureStart is not null;
+    public int VisiblePositiveCount => Document.AuthoredLines.Count(line => line.Kind == GroundTruthLineKind.Positive);
+    public int VisibleNegativeCount => Document.AuthoredLines.Count(line => line.Kind == GroundTruthLineKind.Negative);
+    public IEnumerable<GroundTruthWorldLine> VisibleLines => (preview ?? Document).AuthoredLines;
+
+    public int LineCount(string sceneName) =>
+        Document.LinesFor(Tool).Count(line => !line.SeededFromDetector && line.SceneName == sceneName);
+
+    public IReadOnlyList<GroundTruthOverlayLine> OverlayLines(GroundTruthCameraTransform? transform,
+        GroundTruthRect liveBounds) => transform is null ? []
+        : GroundTruthLineProjection.OverlayLines(preview ?? Document, transform, liveBounds, SelectedId, draft: null);
+
+    /// <summary>Atomically imports legacy floor lines with stable identities.</summary>
     public bool ImportLegacyLines(IReadOnlyList<GroundTruthWorldLine> lines)
     {
         ArgumentNullException.ThrowIfNull(lines);
         try
         {
             var candidate = Document.Clone();
-            var existing = candidate.Lines.ToDictionary(line => line.Id);
             foreach (var source in lines)
             {
                 var line = source.Standardized;
-                if (existing.TryGetValue(line.Id, out var prior))
+                if (candidate.FindLine(line.Id) is { } prior)
                 {
                     if (prior != line)
-                    {
-                        throw new GroundTruthLineStoreException(
-                            $"Legacy ground-label ID collision: {line.Id}");
-                    }
+                        throw new GroundTruthLineStoreException($"Legacy ground-label ID collision: {line.Id}");
                     continue;
                 }
                 candidate.Lines.Add(line);
-                existing.Add(line.Id, line);
             }
-            candidate.Validate();
             store.Save(candidate);
             Document = candidate;
             Error = null;
@@ -547,278 +571,250 @@ public sealed class GroundTruthLabelController
         }
     }
 
-    public void Handle(
-        GroundTruthPointerPhase phase,
-        AtlasPoint atlasPoint,
-        double atlasTolerance,
-        GroundTruthCameraTransform? transform,
-        GroundTruthRect liveBounds)
+    public void Handle(GroundTruthPointerPhase phase, AtlasPoint atlasPoint, double atlasTolerance,
+        GroundTruthCameraTransform? transform, GroundTruthRect liveBounds)
     {
         if (transform is null)
         {
             Error = "Camera transform unavailable";
             return;
         }
-        var world = transform.AtlasToWorld(atlasPoint, liveBounds);
-        var toleranceX = Math.Max(
-            2 / transform.PixelsPerWorldUnitX,
-            atlasTolerance / transform.PixelsPerWorldUnitX);
-        var toleranceY = Math.Max(
-            2 / transform.PixelsPerWorldUnitY,
-            atlasTolerance / transform.PixelsPerWorldUnitY);
-        switch (phase)
+        HandleWorld(phase, transform.AtlasToWorld(atlasPoint, liveBounds), atlasTolerance,
+            transform.SceneName, new(transform.PixelsPerWorldUnitX, transform.PixelsPerWorldUnitY));
+    }
+
+    public void HandleWorld(GroundTruthPointerPhase phase, AtlasPoint world, double atlasTolerance,
+        string sceneName, AtlasPoint pixelsPerWorldUnit)
+    {
+        if (!double.IsFinite(world.X) || !double.IsFinite(world.Y) || string.IsNullOrWhiteSpace(sceneName)
+            || !double.IsFinite(pixelsPerWorldUnit.X) || !double.IsFinite(pixelsPerWorldUnit.Y)
+            || pixelsPerWorldUnit.X <= 0 || pixelsPerWorldUnit.Y <= 0) return;
+        if (phase == GroundTruthPointerPhase.Began)
         {
-            case GroundTruthPointerPhase.Began:
-                Begin(world, toleranceX, toleranceY, transform.SceneName);
-                break;
-            case GroundTruthPointerPhase.Changed:
-                Change(world);
-                break;
-            case GroundTruthPointerPhase.Ended:
-                Change(world);
-                Finish(4 / transform.PixelsPerWorldUnitX);
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(phase));
+            var radius = double.IsFinite(atlasTolerance) ? Math.Max(2, atlasTolerance) : 2;
+            Begin(world, new(radius / pixelsPerWorldUnit.X, radius / pixelsPerWorldUnit.Y), sceneName);
+            return;
         }
+        if (sceneName != gestureScene) return;
+        Change(world);
+        if (phase == GroundTruthPointerPhase.Ended) Finish(world, pixelsPerWorldUnit);
     }
 
     public void Undo()
     {
-        var cancelledActiveGesture = HasActiveGesture;
-        CancelGesture();
-        if (cancelledActiveGesture) return;
+        if (HasActiveGesture) { CancelGesture(); return; }
         if (history.Count == 0) return;
-        var index = history.Count - 1;
-        var snapshot = history[index];
-        history.RemoveAt(index);
-        Document = snapshot.Document.Clone();
+        var snapshot = history[^1];
+        if (!TrySave(snapshot.Document)) return;
+        Document = snapshot.Document;
         SelectedId = snapshot.SelectedId;
-        Draft = null;
-        Persist();
+        history.RemoveAt(history.Count - 1);
     }
 
     public void ClearSelection() => SelectedId = null;
 
     public void CancelGesture()
     {
-        if (gestureHistoryIndex is { } index
-            && index >= 0 && index < history.Count)
-        {
-            var snapshot = history[index];
-            history.RemoveAt(index);
-            Document = snapshot.Document.Clone();
-            SelectedId = snapshot.SelectedId;
-            if (mutatedOnBegin) Persist();
-        }
-        Draft = null;
-        original = null;
-        modificationPart = null;
-        gestureStartWorld = null;
-        mutatedOnBegin = false;
-        gestureHistoryIndex = null;
+        if (HasActiveGesture) SelectedId = selectedBeforeGesture;
+        ResetGesture();
     }
 
-    private void Begin(
-        AtlasPoint world,
-        double toleranceX,
-        double toleranceY,
-        string sceneName)
+    private void ResetGesture()
+    {
+        preview = null;
+        newLine = null;
+        original = null;
+        modificationEnd = null;
+        gestureStart = null;
+        startTarget = null;
+        gestureScene = null;
+    }
+
+    private void Begin(AtlasPoint world, AtlasPoint tolerance, string sceneName)
     {
         CancelGesture();
-        gestureStartWorld = world;
-        mutatedOnBegin = false;
-        var hit = NearestLine(world, sceneName, toleranceX, toleranceY);
+        selectedBeforeGesture = SelectedId;
+        gestureStart = world;
+        gestureScene = sceneName;
+        gestureTolerance = tolerance;
+        var hit = Mode == GroundTruthEditingMode.Add ? null : NearestLine(world, sceneName);
         switch (Mode)
         {
             case GroundTruthEditingMode.Add:
-                SelectedId = null;
-                Draft = new(
-                    sceneName,
-                    world.X,
-                    world.X,
-                    world.Y,
-                    GroundTruthLineKind.Positive,
-                    seededFromDetector: false);
-                break;
             case GroundTruthEditingMode.Negative:
-                if (hit is not null)
+                if (Mode == GroundTruthEditingMode.Negative)
                 {
-                    RecordGestureSnapshot();
-                    hit = hit with { Kind = GroundTruthLineKind.Negative };
-                    Replace(hit);
-                    SelectedId = hit.Id;
-                    mutatedOnBegin = true;
-                    Persist();
+                    if (Tool != GroundTruthTerrainTool.Ground) return;
+                    if (hit is not null)
+                    {
+                        preview = Document.Clone();
+                        preview.ReplaceLine(hit with { Kind = GroundTruthLineKind.Negative, StartCornerId = null, EndCornerId = null });
+                        preview.PruneCorners(hit);
+                        preview.UpdateLatchedDoors();
+                        SelectedId = hit.Id;
+                        return;
+                    }
                 }
-                else
+                else if (Tool is GroundTruthTerrainTool.Ground or GroundTruthTerrainTool.Wall)
                 {
-                    SelectedId = null;
-                    Draft = new(
-                        sceneName,
-                        world.X,
-                        world.X,
-                        world.Y,
-                        GroundTruthLineKind.Negative,
-                        seededFromDetector: false);
+                    startTarget = Document.NearestCorner(world, Tool == GroundTruthTerrainTool.Wall, sceneName, tolerance);
                 }
+                var origin = startTarget is { } target && Document.FindLine(target.LineId) is { } corner
+                    ? corner.PointAt(target.End) : world;
+                var kind = Mode == GroundTruthEditingMode.Negative ? GroundTruthLineKind.Negative : Tool switch
+                {
+                    GroundTruthTerrainTool.Wall => GroundTruthLineKind.Wall,
+                    GroundTruthTerrainTool.Spike => GroundTruthLineKind.Spike,
+                    GroundTruthTerrainTool.Door => GroundTruthLineKind.Door,
+                    _ => GroundTruthLineKind.Positive
+                };
+                newLine = new GroundTruthWorldLine(sceneName, origin.X, origin.X, origin.Y, kind, seededFromDetector: false);
+                SelectedId = null;
+                Change(origin);
                 break;
             case GroundTruthEditingMode.Delete:
-                if (hit is null)
-                {
-                    SelectedId = null;
-                    return;
-                }
-                RecordGestureSnapshot();
-                Document.Lines.RemoveAll(line => line.Id == hit.Id);
                 SelectedId = null;
-                mutatedOnBegin = true;
-                Persist();
+                if (hit is null) return;
+                preview = Document.Clone();
+                preview.RemoveLine(hit);
+                preview.UpdateLatchedDoors();
                 break;
             case GroundTruthEditingMode.Modify:
-                if (hit is null)
-                {
-                    SelectedId = null;
-                    return;
-                }
-                SelectedId = hit.Id;
+                SelectedId = hit?.Id;
                 original = hit;
-                RecordGestureSnapshot();
-                if (Math.Abs(world.X - hit.MinimumWorldX) <= toleranceX)
-                    modificationPart = ModificationPart.Start;
-                else if (Math.Abs(world.X - hit.MaximumWorldX) <= toleranceX)
-                    modificationPart = ModificationPart.End;
-                else modificationPart = ModificationPart.Whole;
+                if (hit is null) return;
+                var along = GroundTruthLineDocument.Components(world, hit.IsVertical).X;
+                var start = Math.Abs(along - GroundTruthLineDocument.Components(hit.Start, hit.IsVertical).X);
+                var end = Math.Abs(along - GroundTruthLineDocument.Components(hit.End, hit.IsVertical).X);
+                if (Math.Min(start, end) <= GroundTruthLineDocument.Components(tolerance, hit.IsVertical).X)
+                    modificationEnd = start <= end ? TerrainLineEnd.Start : TerrainLineEnd.End;
                 break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(Mode));
         }
     }
 
     private void Change(AtlasPoint world)
     {
-        if (Draft is { } draft)
+        if (gestureStart is not { } start || newLine is null && original is null) return;
+        var next = Document.Clone();
+        if (newLine is { } line)
         {
-            if (gestureStartWorld is not { } start) return;
-            Draft = draft with
+            if (Tool == GroundTruthTerrainTool.Door)
+                line = line with { Kind = Math.Abs(world.Y - start.Y) > Math.Abs(world.X - start.X)
+                    ? GroundTruthLineKind.DoorVertical : GroundTruthLineKind.Door };
+            var origin = GroundTruthLineDocument.Components(line.Start, line.IsVertical);
+            var along = GroundTruthLineDocument.Components(world, line.IsVertical).X;
+            var first = along >= origin.X ? TerrainLineEnd.Start : TerrainLineEnd.End;
+            var last = GroundTruthLineDocument.Opposite(first);
+            line = line.WithExtent(origin.X, along, origin.Y);
+            next.AddLine(line);
+            if (startTarget is { } initial) next.Join(new(line.Id, first), initial);
+            if (Mode == GroundTruthEditingMode.Add && IsCornerMember(line)
+                && Document.NearestCorner(line.PointAt(last), line.IsVertical, line.SceneName, gestureTolerance, startTarget) is { } end)
+                next.Join(new(line.Id, last), end);
+        }
+        else if (original is { } source)
+        {
+            var a = GroundTruthLineDocument.Components(source.Start, source.IsVertical);
+            var b = GroundTruthLineDocument.Components(source.End, source.IsVertical);
+            var delta = GroundTruthLineDocument.Components(new(world.X - start.X, world.Y - start.Y), source.IsVertical);
+            if (modificationEnd is { } end)
             {
-                MinimumWorldX = Math.Min(start.X, world.X),
-                MaximumWorldX = Math.Max(start.X, world.X),
-                WorldY = start.Y
-            };
-            return;
+                var handle = new TerrainHandle(source.Id, end);
+                next.Move(handle, source.IsVertical, (end == TerrainLineEnd.Start ? a.X : b.X) + delta.X);
+                if (source.CornerAt(end) is not null || Tool == GroundTruthTerrainTool.Wall && !source.IsVertical)
+                    next.Move(handle, !source.IsVertical, a.Y + delta.Y);
+                if (IsCornerMember(source) && source.CornerAt(end) is null
+                    && next.FindLine(source.Id) is { } edited
+                    && next.NearestCorner(edited.PointAt(end), source.IsVertical, source.SceneName, gestureTolerance) is { } target)
+                    next.Join(handle, target, keepTarget: !source.IsVertical);
+            }
+            else if (source.StartCornerId is not null || source.EndCornerId is not null)
+            {
+                next.Move(new(source.Id, TerrainLineEnd.Start), !source.IsVertical, a.Y + delta.Y);
+            }
+            else next.ReplaceLine(source.WithExtent(a.X + delta.X, b.X + delta.X, a.Y + delta.Y));
         }
-        if (Mode != GroundTruthEditingMode.Modify
-            || original is not { } source
-            || gestureStartWorld is not { } gestureStart
-            || modificationPart is not { } part)
+
+        if (Tool == GroundTruthTerrainTool.Door && (newLine?.Id ?? original?.Id) is { } id
+            && next.FindLine(id) is { } door)
         {
-            return;
+            var latch = modificationEnd is { } end
+                ? original?.GroundLatch is { } previous && previous.End != end ? previous
+                    : next.NearestGroundLatch(door, [end], gestureTolerance)
+                : next.NearestGroundLatch(door, GroundTruthLineDocument.Ends, gestureTolerance);
+            next.ReplaceLine(door with { GroundLatch = latch });
         }
-        var changed = source;
-        switch (part)
-        {
-            case ModificationPart.Start:
-                changed = changed with
-                {
-                    MinimumWorldX = Math.Min(world.X, changed.MaximumWorldX)
-                };
-                break;
-            case ModificationPart.End:
-                changed = changed with
-                {
-                    MaximumWorldX = Math.Max(world.X, changed.MinimumWorldX)
-                };
-                break;
-            case ModificationPart.Whole:
-                var dx = world.X - gestureStart.X;
-                changed = changed with
-                {
-                    MinimumWorldX = changed.MinimumWorldX + dx,
-                    MaximumWorldX = changed.MaximumWorldX + dx,
-                    WorldY = changed.WorldY + world.Y - gestureStart.Y
-                };
-                break;
-            default:
-                throw new ArgumentOutOfRangeException();
-        }
-        Replace(changed.Standardized);
+        next.UpdateLatchedDoors();
+        preview = next;
     }
 
-    private void Finish(double minimumLength)
+    private static bool IsCornerMember(GroundTruthWorldLine line) =>
+        line.Kind is GroundTruthLineKind.Positive or GroundTruthLineKind.Wall;
+
+    private void Finish(AtlasPoint world, AtlasPoint scale)
     {
         try
         {
-            if (Draft is { } draft)
+            if (preview is not { } next || next.Equals(Document)) return;
+            if (newLine is { } line)
             {
-                if (draft.MaximumWorldX - draft.MinimumWorldX < minimumLength)
-                    return;
-                RecordSnapshot();
-                draft = draft.Standardized;
-                Document.Lines.Add(draft);
-                SelectedId = draft.Id;
-                Persist();
+                if (next.FindLine(line.Id) is not { } added || gestureStart is not { } start) return;
+                var vertical = added.IsVertical;
+                var minimum = 4 / GroundTruthLineDocument.Components(scale, vertical).X;
+                if (Math.Abs(GroundTruthLineDocument.Components(world, vertical).X
+                             - GroundTruthLineDocument.Components(start, vertical).X) < minimum
+                    || GroundTruthLineDocument.Components(added.End, vertical).X
+                        - GroundTruthLineDocument.Components(added.Start, vertical).X < minimum) return;
             }
-            else if (Mode == GroundTruthEditingMode.Modify && original is not null)
-            {
-                Persist();
-            }
-            else if (mutatedOnBegin)
-            {
-                Persist();
-            }
+            if (!TrySave(next)) { SelectedId = selectedBeforeGesture; return; }
+            history.Add(new(Document, selectedBeforeGesture));
+            if (history.Count > 100) history.RemoveAt(0);
+            Document = next;
+            SelectedId = newLine?.Id ?? original?.Id ?? SelectedId;
         }
-        finally
+        finally { ResetGesture(); }
+    }
+
+    private GroundTruthWorldLine? NearestLine(AtlasPoint world, string sceneName)
+    {
+        IEnumerable<GroundTruthWorldLine> candidates = Document.LinesFor(Tool);
+        if (Tool == GroundTruthTerrainTool.Wall && Mode == GroundTruthEditingMode.Modify)
+            candidates = candidates.Concat(Document.Lines.Where(line => line.Kind == GroundTruthLineKind.Positive));
+        GroundTruthWorldLine? best = null;
+        var rank = double.PositiveInfinity;
+        foreach (var line in candidates)
         {
-            Draft = null;
-            original = null;
-            modificationPart = null;
-            gestureStartWorld = null;
-            mutatedOnBegin = false;
-            gestureHistoryIndex = null;
+            if (line.SeededFromDetector || line.SceneName != sceneName) continue;
+            var p = GroundTruthLineDocument.Components(world, line.IsVertical);
+            var a = GroundTruthLineDocument.Components(line.Start, line.IsVertical);
+            var b = GroundTruthLineDocument.Components(line.End, line.IsVertical);
+            var tolerance = GroundTruthLineDocument.Components(gestureTolerance, line.IsVertical);
+            var across = Math.Abs(p.Y - a.Y) / tolerance.Y;
+            if (across > 1 || p.X < a.X - tolerance.X || p.X > b.X + tolerance.X) continue;
+            var endpoint = Math.Min(Math.Abs(p.X - a.X), Math.Abs(p.X - b.X)) / tolerance.X;
+            var distance = Math.Sqrt(endpoint * endpoint + across * across);
+            var groundEndpointInWallMode = Tool == GroundTruthTerrainTool.Wall && !line.IsVertical;
+            if (groundEndpointInWallMode && distance > 1) continue;
+            var score = Mode == GroundTruthEditingMode.Modify && endpoint <= 1 ? distance : 3 + across;
+            if (score >= rank) continue;
+            best = line;
+            rank = score;
         }
+        return best;
     }
 
-    private GroundTruthWorldLine? NearestLine(
-        AtlasPoint point,
-        string sceneName,
-        double toleranceX,
-        double toleranceY) => Document.Lines
-        .Where(line => line.SceneName == sceneName
-            && Math.Abs(line.WorldY - point.Y) <= toleranceY
-            && point.X >= line.MinimumWorldX - toleranceX
-            && point.X <= line.MaximumWorldX + toleranceX)
-        .OrderBy(line => Math.Abs(line.WorldY - point.Y))
-        .FirstOrDefault();
-
-    private void Replace(GroundTruthWorldLine line)
-    {
-        var index = Document.Lines.FindIndex(item => item.Id == line.Id);
-        if (index >= 0) Document.Lines[index] = line;
-    }
-
-    private void RecordSnapshot()
-    {
-        history.Add(new(Document.Clone(), SelectedId));
-        if (history.Count > 100) history.RemoveAt(0);
-    }
-
-    private void RecordGestureSnapshot()
-    {
-        RecordSnapshot();
-        gestureHistoryIndex = history.Count - 1;
-    }
-
-    private void Persist()
+    private bool TrySave(GroundTruthLineDocument candidate)
     {
         try
         {
-            store.Save(Document);
+            store.Save(candidate);
             Error = null;
+            return true;
         }
         catch (Exception error)
         {
             Error = error.Message;
+            return false;
         }
     }
 }

@@ -17,9 +17,23 @@ public partial class MainWindow
         // without a mouse Click. Do not let highlighted and active modes drift.
         if (button.GroupName == "GameplayFraming")
         {
-            if (gameplayFraming != mode) GameplayFraming_Click(sender, e);
+            if (GameplayViewportPolicy.FramingButton(gameplayFraming) != mode) GameplayFraming_Click(sender, e);
         }
-        else if (hackerInteractionMode != mode) HackerMode_Click(sender, e);
+        else if (GameplayViewportPolicy.FramingButton(hackerFraming) != mode) HackerMode_Click(sender, e);
+    }
+
+    private void CycleAtlasFraming()
+    {
+        if (workspace == "Hacker")
+        {
+            hackerFraming = GameplayViewportPolicy.NextTabPreset(hackerFraming);
+            ApplyViewport(AtlasCanvas, HackerViewportPanel, hackerFraming, HackerLiveImage, explicitRequest: true);
+        }
+        else
+        {
+            gameplayFraming = GameplayViewportPolicy.NextTabPreset(gameplayFraming);
+            ApplyViewport(GameplayAtlasCanvas, GameplayPanel, gameplayFraming, GameplayImage, explicitRequest: true);
+        }
     }
 
     // Keep the visual selection tied to actual mode changes, including a pan

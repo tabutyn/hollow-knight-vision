@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace HollowKnightVision.Windows.Core;
 
-public sealed record AtlasSavedState(Guid Id, string Name, DateTimeOffset CreatedAt);
+public sealed record AtlasSavedState(Guid Id, string Name, DateTimeOffset CreatedAt, SaveProfileAtlas? Profile = null);
 
 public sealed record AtlasAutoSaveSummary(
     int RegistrationCount,
@@ -117,6 +117,7 @@ public sealed class AtlasStateStore
                     AtlasStateStoreError.MissingState,
                     "Atlas copy did not create a world directory.");
             }
+            state = state with { Profile = SaveProfileAtlas.Read(worldDirectory) };
             WriteState(Path.Combine(stagingDirectory, "state.json"), state);
             Directory.Move(stagingDirectory, stateDirectory);
             return state;
@@ -172,6 +173,7 @@ public sealed class AtlasStateStore
         try
         {
             Directory.Move(archivePath, stagedWorldDirectory);
+            state = state with { Profile = SaveProfileAtlas.Read(stagedWorldDirectory) };
             WriteState(Path.Combine(stagingDirectory, "state.json"), state);
             Directory.Move(stagingDirectory, stateDirectory);
             return state;
@@ -264,7 +266,7 @@ public sealed class AtlasStateStore
     {
         var state = JsonSerializer.Deserialize<AtlasSavedState>(File.ReadAllBytes(path), JsonOptions)
             ?? throw new JsonException("Atlas state metadata is empty.");
-        if (state.Id == Guid.Empty || string.IsNullOrWhiteSpace(state.Name))
+        if (state.Id == Guid.Empty || string.IsNullOrWhiteSpace(state.Name) || state.Profile is { IsValid: false })
         {
             throw new AtlasStateStoreException(
                 AtlasStateStoreError.MissingState,

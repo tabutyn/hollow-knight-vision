@@ -28,7 +28,7 @@ internal static class ForwarderPauseTests
         Check(pressed.Enabled && pressed.HeldButtons == InputButtons.ActionZ);
         forwarder.ReleaseAll(); await fixture.Next("state");
         Check(await forwarder.StartRecordingAsync() && !forwarder.SetLabelPauseActive(true), "Label pause interrupted an input recording.");
-        Check(forwarder.StopRecording() is not null);
+        Check(await forwarder.StopRecordingAsync() is not null);
         Check(forwarder.SetLabelPauseActive(true));
         var neutral = ReceiverWireCodec.DecodeLine<ReceiverInputSnapshot>(await fixture.Next("state"));
         var first = ReceiverWireCodec.DecodeLine<ReceiverPauseCommand>(await fixture.Next("pause"));
@@ -64,6 +64,82 @@ internal static class ForwarderPauseTests
         await fixture.CloseForwarder();
         Check(ReceiverWireCodec.DecodeLine<ReceiverPauseCommand>(await fixture.Next("resume")).SessionId == closing.SessionId,
             "Closing the bridge did not explicitly resume its paused game.");
+    }
+
+    public static void TestBotOwnershipAndExpiration() => BotOwnershipAndExpiration().GetAwaiter().GetResult();
+
+    private static async Task BotOwnershipAndExpiration()
+    {
+        await using var fixture = new Fixture(pauseSupported: true);
+        var forwarder = fixture.Forwarder;
+        await Until(() => forwarder.PauseState == GamePauseState.Ready);
+        await fixture.Next("state");
+
+        var owner = forwarder.BeginBotControl() ?? throw new Exception("Bot control did not start.");
+        await Expect(InputButtons.None);
+        Check(forwarder.OwnsBotControl(owner) && forwarder.BeginBotControl() is null);
+        Check(!await forwarder.StartRecordingAsync(), "Bot input could enter a demonstration.");
+        Check(!forwarder.RenewBotControl(owner, InputButtons.Left, Clock() - .1), "Expired evidence was authorized.");
+        Check(forwarder.RenewBotControl(owner, InputButtons.Right | InputButtons.ActionX, Clock() + .26));
+        await Expect(InputButtons.Right | InputButtons.ActionX);
+        await Until(() => forwarder.CaptureMovement() == (InputButtons.Right | InputButtons.ActionX));
+        await Until(() => forwarder.CaptureMovement() == InputButtons.None);
+        forwarder.Heartbeat();
+        await Expect(InputButtons.None);
+        Check(forwarder.OwnsBotControl(owner), "A short observation gap should retain session ownership.");
+
+        Check(forwarder.RenewBotControl(owner, InputButtons.ActionX, Clock() + .23));
+        await Expect(InputButtons.ActionX);
+        forwarder.Press(InputButtons.Left);
+        await Expect(InputButtons.Left);
+        Check(!forwarder.OwnsBotControl(owner) && !forwarder.RenewBotControl(owner, InputButtons.Right, Clock() + .23),
+            "A late policy decision overrode the player's input.");
+        forwarder.Release(InputButtons.Left);
+        await Expect(InputButtons.None, enabled: true);
+
+        var next = forwarder.BeginBotControl() ?? throw new Exception("Bot control did not restart.");
+        await Expect(InputButtons.None);
+        forwarder.EndBotControl(owner);
+        Check(forwarder.OwnsBotControl(next), "An old controller ended a newer session.");
+        var gate = (SemaphoreSlim)typeof(WindowsGameControlForwarder).GetField("outboundGate", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(forwarder)!;
+        await gate.WaitAsync();
+        try
+        {
+            var expires = Clock() + .09;
+            Check(forwarder.RenewBotControl(next, InputButtons.ActionZ, expires));
+            await Until(() => Clock() >= expires);
+        }
+        finally { gate.Release(); }
+        await Expect(InputButtons.None);
+
+        await gate.WaitAsync();
+        try
+        {
+            Check(forwarder.RenewBotControl(next, InputButtons.ActionZ, Clock() + .30));
+            forwarder.ReleaseAll(); // The dashboard uses this on focus loss.
+        }
+        finally { gate.Release(); }
+        await Expect(InputButtons.None);
+        Check(!forwarder.OwnsBotControl(next), "Focus loss left the bot armed.");
+
+        var final = forwarder.BeginBotControl() ?? throw new Exception("Bot control did not restart.");
+        await Expect(InputButtons.None);
+        Check(forwarder.RenewBotControl(final, InputButtons.ActionX, Clock() + .30));
+        await Expect(InputButtons.ActionX);
+        Check(forwarder.SetLabelPauseActive(true));
+        await Expect(InputButtons.None);
+        await fixture.Next("pause");
+        Check(!forwarder.OwnsBotControl(final));
+
+        async Task Expect(InputButtons buttons, bool? enabled = null)
+        {
+            var snapshot = ReceiverWireCodec.DecodeLine<ReceiverInputSnapshot>(await fixture.Next("state"));
+            Check(snapshot.Enabled == (enabled ?? buttons != InputButtons.None) && snapshot.HeldButtons == buttons,
+                $"Expected {buttons}, got {snapshot.HeldButtons} (enabled {snapshot.Enabled}).");
+        }
+
+        static double Clock() => System.Diagnostics.Stopwatch.GetTimestamp() / (double)System.Diagnostics.Stopwatch.Frequency;
     }
 
     public static void TestUnsupportedAndDisconnectedReceiver() => UnsupportedAndDisconnected().GetAwaiter().GetResult();
@@ -110,6 +186,61 @@ internal static class ForwarderPauseTests
         }
     }
 
+    public static void TestRoomResetTransport() => RoomResetTransport().GetAwaiter().GetResult();
+
+    private static async Task RoomResetTransport()
+    {
+        foreach (var supported in new[] { false, true })
+        {
+            await using var fixture = new Fixture(pauseSupported: true, roomResetSupported: supported);
+            var forwarder = fixture.Forwarder;
+            await Until(() => forwarder.PlayerOpsAvailable);
+            await fixture.Next("state");
+            Check(forwarder.RoomResetAvailable == supported);
+            if (!supported)
+            {
+                Check(await forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.ResetRoom) is null);
+                var query = forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.Query);
+                var queryCommand = ReceiverWireCodec.DecodeLine<ReceiverPlayerOpsCommand>(await fixture.Next("playerOps"));
+                Check(queryCommand.Operation == "query");
+                await fixture.AcknowledgePlayerOps(queryCommand);
+                Check((await query)?.Accepted == true);
+                continue;
+            }
+
+            Check(await forwarder.StartRecordingAsync());
+            Check(await forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.ResetRoom) is null);
+            Check(await forwarder.StopRecordingAsync() is not null);
+            var recorded = new RecordedInputPath(RecordedInputPath.CurrentSchemaVersion,
+                Guid.NewGuid(), DateTimeOffset.UtcNow, .1, null, null, null, [], runtimeMetadata: null);
+
+            var reset = forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.ResetRoom);
+            var command = ReceiverWireCodec.DecodeLine<ReceiverPlayerOpsCommand>(await fixture.Next("playerOps"));
+            Check(command.Operation == "resetRoom" && command.State is null);
+            Check(await forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.Query) is null);
+            Check(!await forwarder.StartRecordingAsync());
+            try
+            {
+                await forwarder.ReplayPathAsync(recorded, 0, restoreCheckpoint: false, _ => { });
+                throw new Exception("Replay started during room reset.");
+            }
+            catch (InvalidOperationException error) when (error.Message.Contains("stop recording before replaying"))
+            {
+            }
+            await fixture.AcknowledgePlayerOps(command with { SessionId = Guid.NewGuid() }, "wrong");
+            await fixture.AcknowledgePlayerOps(command, "Tutorial_01");
+            var result = await reset.WaitAsync(TimeSpan.FromSeconds(4));
+            Check(result?.ConfirmsRoomReset == true && result.ResetScene == "Tutorial_01");
+            Check(!(result! with { Accepted = false }).ConfirmsRoomReset);
+            Check(!(result! with { ResetScene = " " }).ConfirmsRoomReset);
+
+            var nextReset = forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.ResetRoom);
+            var next = ReceiverWireCodec.DecodeLine<ReceiverPlayerOpsCommand>(await fixture.Next("playerOps"));
+            await fixture.AcknowledgePlayerOps(next);
+            Check((await nextReset) is { Accepted: true, ConfirmsRoomReset: false });
+        }
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly TcpListener listener = new(IPAddress.Loopback, 0);
@@ -121,14 +252,14 @@ internal static class ForwarderPauseTests
         private Task? closeTask;
         internal readonly ConcurrentQueue<string> Seen = new();
         internal readonly WindowsGameControlForwarder Forwarder;
-        internal Fixture(bool pauseSupported)
+        internal Fixture(bool pauseSupported, bool? roomResetSupported = null)
         {
             listener.Start(); var port = ((IPEndPoint)listener.LocalEndpoint).Port;
             // Never use the real receiver port; this fixture owns an ephemeral loopback listener.
             Forwarder = new WindowsGameControlForwarder(() => new ReceiverClient(port: port));
-            serving = Serve(pauseSupported); Forwarder.Start();
+            serving = Serve(pauseSupported, roomResetSupported); Forwarder.Start();
         }
-        private async Task Serve(bool pauseSupported)
+        private async Task Serve(bool pauseSupported, bool? roomResetSupported)
         {
             try
             {
@@ -140,6 +271,8 @@ internal static class ForwarderPauseTests
                 var hello = ReceiverWireCodec.DecodeLine<ReceiverCapabilityRequest>((await reader.ReadLineAsync(lifetime.Token))!);
                 var capabilities = new List<string> { "input-state-v1", ReceiverProtocol.MenuShortcutsCapability, ReceiverProtocol.PointerCapability, ReceiverProtocol.PlayerCheckpointCapability };
                 if (pauseSupported) capabilities.Add(ReceiverProtocol.PauseCapability);
+                if (roomResetSupported.HasValue) capabilities.Add(ReceiverProtocol.PlayerOpsCapability);
+                if (roomResetSupported == true) capabilities.Add(ReceiverProtocol.RoomResetCapability);
                 await output.WriteAsync(ReceiverWireCodec.EncodeLine(new ReceiverCapabilitiesAcknowledgement(2, "capabilitiesAck",
                     hello.SessionId, capabilities, pauseSupported ? 2000 : 0)));
                 while (await reader.ReadLineAsync(lifetime.Token) is { } line)
@@ -169,6 +302,9 @@ internal static class ForwarderPauseTests
         internal async Task Acknowledge(ReceiverPauseCommand command, bool paused) =>
             await writer!.WriteAsync(ReceiverWireCodec.EncodeLine(new ReceiverPauseAcknowledgement(2,
                 command.Type == "pause" ? "pauseAck" : "resumeAck", command.SessionId, command.CommandId, paused)));
+        internal async Task AcknowledgePlayerOps(ReceiverPlayerOpsCommand command, string? scene = null) =>
+            await writer!.WriteAsync(ReceiverWireCodec.EncodeLine(new ReceiverPlayerOpsAcknowledgement(
+                2, "playerOpsAck", command.SessionId, command.CommandId, true, null, null, null, scene)));
         internal Task CloseForwarder() => closeTask ??= Forwarder.DisposeAsync().AsTask();
         internal void Disconnect() { peer?.Close(); listener.Stop(); }
         public async ValueTask DisposeAsync()

@@ -26,8 +26,38 @@ if (args is ["--export-dataset-probe", var probeRoot])
     return;
 }
 
+if (args is ["--export-bot-capture-probe", var captureRoot])
+{
+    if (BotCaptureTests.WriteFixture(captureRoot).Published.Count != 2)
+        throw new InvalidOperationException("The Bot capture probe did not produce both domains.");
+    return;
+}
+
+if (args is ["--export-hacker-gym-probe", var gymRoot])
+{
+    HackerGymObservationTests.Export(gymRoot);
+    return;
+}
+
+if (args is ["--train-bot-probe", var installedVision])
+{
+    await BotTrainingTests.TrainFromWindowsCaptures(installedVision);
+    return;
+}
+
 var tests = new List<(string Name, Action Run)>
 {
+    ("bot training admits separate published clips in the selected domain", BotTrainingTests.TestTrainingPlanSeparatesDomains),
+    ("bot capture dates round-trip with macOS and earlier Windows clips", BotCaptureTests.TestReadsMacAndPreviousWindowsCaptureDates),
+    ("desktop bot clips share only the exact authored route", HackerGymObservationTests.TestDesktopRouteIsSharedOnlyWithExactlyMatchedVisualRows),
+    ("visual bot coverage respects masks and placement discontinuities", HackerGymObservationTests.TestVisualCoverageDoesNotCreditMasksOrPlacementGaps),
+    ("blockade tracking compensation and crossing work in both directions", BotBlockadeTests.TestCameraCompensationAndCrossingInBothDirections),
+    ("blockade tracking needs fresh measured contacts in the current chart", BotBlockadeTests.TestRequiresFreshGroundContactsAndResetsCoordinates),
+    ("saved clips recover only causal legacy blockade evidence", BotBlockadeTests.TestLegacyReplayUsesOnlyPriorInputAndLeavesRecordedRowsIntact),
+    ("visual Knight memory uses measured motion and current geometry", BotVisualKnightMemoryTests.TestVisualPredictionUsesMeasuredMotionAndCurrentGeometry),
+    ("weak cues cannot renew visual Knight memory across rooms", BotVisualKnightMemoryTests.TestWeakCueNeverRenewsTrackAndRoomChangeClearsIt),
+    ("Game Play policy input expires with the last measured Knight", BotPolicyTests.TestGamePlayInputExpiresWithLastMeasuredKnight),
+    ("Game Play Gym exposes measured blockade inputs", GameplayGymVisualTests.TestGamePlayGymUsesVisualBlockadeEvidence),
     ("labeling campaign batches and honest validation history", LabelingCampaignTests.TestBatchesAndValidationHistory),
     ("labeling campaign counts distinct positive captures", LabelingCampaignTests.TestCaptureCountsAndTrainingSnapshot),
     ("warmed CUDA search reuses large host staging arrays", GroundComputeProcessingTests.TestCudaHostStagingAllocation),
@@ -122,6 +152,7 @@ var tests = new List<(string Name, Action Run)>
     ("camera coordinate conversion preserves registration and correction round trips", GroundCameraSolverTests.TestCameraCoordinateConversion),
     ("bidirectional subpixel registration preserves fractional motion and rejects flat pixels", GroundSubpixelTests.TestSymmetricTranslation),
     ("ground texture recent majority overrides a sparse foreground anchor", GroundCameraSolverTests.TestRecentMajorityOverridesSparseForegroundAnchor),
+    ("ground texture recovers horizontal motion from a stationary weak anchor", GroundCameraSolverTests.TestRecentMotionCanRecoverAStationaryWeakAnchor),
     ("ground texture sustained fallback retains a longer reference without freezing camera motion", GroundCameraSolverTests.TestSustainedFallbackRetainsBaseline),
     ("ground texture independent patch consensus rejects foreground parallax", GroundCameraSolverTests.TestPatchConsensusRejectsForeground),
     ("ground texture ReferencePromotionRequiresCleanSparseOrBroadMatch", GroundCameraSolverTests.TestReferencePromotion),
@@ -169,6 +200,11 @@ var tests = new List<(string Name, Action Run)>
     ("ground presence votes measure observable time rather than frames", GroundLinePresenceTests.TestVotesMeasureTimeNotFrameCount),
     ("ground presence hides stale rejected projections under confirmed floor", GroundLinePresenceTests.TestConfirmedLineHidesOverlappingStaleRejectedProjection),
     ("ground feature review renders only confirmed presence", GroundLinePresenceTests.TestFeatureHypothesesRenderOnlyConfirmedLines),
+    ("ground surface nearby ridges with interleaved evidence produce one line", GroundSurfaceEvidenceTests.TestNearbyRidgesWithInterleavedEvidenceProduceOneLine),
+    ("ground surface caption strokes cannot extend an adjacent platform", GroundSurfaceEvidenceTests.TestCaptionStrokesCannotExtendAnAdjacentPlatform),
+    ("ground surface rejects single bright strokes over darker scenery", GroundSurfaceEvidenceTests.TestTransientBrightStrokeCannotStandInForLitPlatform),
+    ("ground surface separates lit platforms across a bright opening", GroundSurfaceEvidenceTests.TestBrightOpeningSeparatesTwoPlatformsWithLitCaps),
+    ("ground surface refines overhanging and underestimated endpoints", GroundSurfaceEvidenceTests.TestLocalKernelTrimsOverhangAndRecoversAnUnderestimatedEndpoint),
     ("ground surface strong core retains weak endpoints", GroundSurfaceEvidenceTests.TestStrongCoreKeepsWeakEndpointsButWeakOnlyLineIsRejected),
     ("ground surface fragments cannot borrow support across a step", GroundSurfaceEvidenceTests.TestSplitFragmentCannotBorrowBodySupportAcrossStep),
     ("ground surface bottom band keeps clipped floor and rejects decoration", GroundSurfaceEvidenceTests.TestVisibleBottomBandRejectsDecorationAndKeepsClippedFloor),
@@ -218,6 +254,16 @@ var tests = new List<(string Name, Action Run)>
     ("live-world pipeline corrupt persistent world blocks atlas", TestCorruptPersistentWorldBlocksAtlasInsteadOfFallingBackToMemory),
     ("live-world pipeline discards delayed world timestamp without rewinding visit", TestDelayedWorldTimestampIsDiscardedWithoutRewindingTrackerVisit),
     ("live-world pipeline recovery remains transient until a normal frame", TestRecoverySearchIsTransientAndReturnsConfirmedWorldPlacement),
+    ("walked ground follows its saved observation poses across store reopen", LiveWorldWalkedGroundTests.TestWalkedGroundSurvivesStoreReopenAndFollowsOnlyItsOwningPose),
+    ("walked ground stages fresh columns and uses corrected persisted geometry", LiveWorldWalkedGroundTests.TestOnlyFreshWalkedColumnsAreCommittedAndAlreadySavedSpansFollowWorldCorrection),
+    ("invalid saved walked ground is rejected", LiveWorldWalkedGroundTests.TestInvalidPersistedWalkedGeometryFailsSnapshotValidation),
+    ("saved floor has one median row", LiveWorldGroundOverlayTests.TestEightNearbyMeasurementsProduceOneFloorEstimate),
+    ("saved floor measurement clusters have bounded spread and one vote per image", LiveWorldGroundOverlayTests.TestHeightClustersAreBoundedAndEachObservationVotesOnce),
+    ("saved floor preserves gaps and room and island boundaries", LiveWorldGroundOverlayTests.TestNearbySegmentsCombineOnlyWithinTheirRoomAndIslandWithoutFillingGaps),
+    ("placed, measured saved floor follows its revised pose", LiveWorldGroundOverlayTests.TestProjectsOnlyPlacedMeasuredEvidenceThroughRevisedPoses),
+    ("walked floor supersedes saved and live edge duplicates", LiveWorldGroundOverlayTests.TestWalkedFloorReplacesOverlappingSavedAndLiveEvidence),
+    ("saved path ground and footprints respect room and placement", LiveWorldGroundOverlayTests.TestNavigationUsesOnlyPlacedGroundAndCameraFootprintsFromItsRoom),
+    ("live-world pipeline persists fresh walked ground and restores it on recovery", TestPipelinePersistsWalkedFloorAndRestoresItOnRecovery),
     ("live-world pipeline enforces bounded persistence cadence", TestPipelineCadenceSuppressesDuplicatePersistence),
     ("live-world pipeline rejects stale capture generations", TestPipelineRejectsStaleCaptureGeneration),
     ("live-world pipeline rolls back stale CAS and suppresses publication", TestPipelineRollsBackAfterCasFailureAndSuppressesPublication),
@@ -231,6 +277,19 @@ var tests = new List<(string Name, Action Run)>
     ("input player Ops wire round trips", InputBridgeParityTests.TestPlayerOpsWireRoundTrip),
     ("input snapshot wire codec preserves versioned state", InputBridgeParityTests.TestWireCodecRoundTripsVersionedSnapshot),
     ("input checkpoint control messages round trip", InputBridgeParityTests.TestCheckpointControlMessagesRoundTrip),
+    ("native bot policy projects the same observation columns as PPO", BotPolicyTests.TestProjectedPolicyUsesOnlySelectedHistoryColumns),
+    ("native bot verification checks action heads and bound checkpoint hashes", BotPolicyTests.TestNativePolicyChecksActionsAndCheckpointHashes),
+    ("Hacker Gym uses authored geometry and preserves fixed objectives and camera gaps", HackerGymObservationTests.TestFixedRouteAndCameraDropout),
+    ("Game Play Gym builds a pixel-only Atlas and recovers masked Knight observations", GameplayGymVisualTests.TestVisualFootprintAndMaskedKnightRecovery),
+    ("bot startup latches cutscene skipping until fresh gameplay", BotPolicyTests.TestStartupSkipIsLatchedUntilFreshGameplay),
+    ("bot policy preserves attack and rejects stale observations and wrong domains", BotPolicyTests.TestLivePolicyPreservesAttackAndRevokesInvalidPerception),
+    ("bot runtime keeps four fresh history frames and expires stale input", BotPolicyTests.TestObservationHistoryRejectsStaleFramesAndResetsAtDiscontinuities),
+    ("bot checkpoint selection finds the latest native export independently for each domain", BotPolicyTests.TestNewestNativeModelIsSelectedWithinEachDomain),
+    ("bot actor payload and exact camera separate paired domains", BotCaptureTests.TestExactHackerSourcesStaySeparateFromVisualSources),
+    ("fresh visual terrain retains training evidence through Knight occlusion", BotCaptureTests.TestFreshTerrainMakesOccludedKnightUsable),
+    ("paired captures publish immediate evidence while invalid clips are discarded", BotCaptureTests.TestPairedEvidencePublishesOnceAndHazardClipsAreDiscarded),
+    ("native controls produce edges and interrupted bot captures are discarded", BotCaptureTests.TestNativeControlsAndInterruptedCapture),
+    ("bot clip preview uses the saved image and domain", BotCaptureTests.TestReviewUsesTheSavedDomainAndSafeLocalImage),
     ("input ground truth telemetry provides projection scale", InputBridgeParityTests.TestGroundTruthTelemetryDecodesAndProvidesProjectionScale),
     ("input player pose playback preserves recorded truth", InputBridgeParityTests.TestPlayerPosePlaybackEncodesRecordedGroundTruth),
     ("hacker atlas synchronizer requires matching Unity frame in either arrival order", TestSynchronizerRequiresMatchingUnityFrameInEitherArrivalOrder),
@@ -241,6 +300,12 @@ var tests = new List<(string Name, Action Run)>
     ("input acknowledgement measures only state changes", InputAcknowledgementTrackerTests.TestAcknowledgementTrackerMeasuresOnlyMatchedStateChanges),
     ("input acknowledgement rejects mismatch and stale identity", InputAcknowledgementTrackerTests.TestAcknowledgementTrackerRejectsMismatchAndOldOrUnknownAcknowledgements),
     ("input acknowledgement bounds pending state and calculates p95", InputAcknowledgementTrackerTests.TestAcknowledgementTrackerBoundsPendingStatesAndCalculatesRollingP95),
+    ("visual replay verifies pixels timing and exact frame identity", VisualReplayArchiveTests.TestInspectionKeepsPixelsTimingAndExactCaptureIdentity),
+    ("visual replay reports partial and legacy recordings", VisualReplayArchiveTests.TestPartialArchiveAndLegacyPathRemainReadable),
+    ("visual replay rejects mismatched checksums and archive metadata", VisualReplayArchiveTests.TestCorruptedOrSwappedFrameEvidenceIsRejected),
+    ("input recording links a lossless visual archive and capture metadata", VisualReplayArchiveTests.TestRecorderLinksLosslessArchiveToTheSavedPath),
+    ("visual archive writer bounds pending images and drains without reordering", VisualReplayArchiveTests.TestWriterBoundsRetainedFramesAndDrainsInCaptureOrder),
+    ("visual archive distinguishes cancellation and write failure", VisualReplayArchiveTests.TestWriterRecordsCancellationAndWriteFailures),
     ("input replay refreshes receiver lease during long holds", InputPathRecorderTests.TestPlaybackMaintainsLeaseAcrossLongHolds),
     ("input path records deduplicated transitions and closes held buttons", InputPathRecorderTests.TestRecordsDeduplicatedTransitionsAndClosesHeldButtons),
     ("input path reads recordings without capture diagnostics", InputPathRecorderTests.TestPathWithoutCaptureDiagnosticsRemainsReadable),
@@ -294,6 +359,8 @@ var tests = new List<(string Name, Action Run)>
     ("floorless selector uses larger agreeing capture step", LiveTrackingTimingParityTests.TestFloorlessSelectorUsesLargerAgreeingCaptureRateStep),
     ("floorless selector preserves stop and vertical travel", LiveTrackingTimingParityTests.TestFloorlessSelectorKeepsMaskedHorizontalStopAndCoarseVerticalTravel),
     ("floorless selector accepts absolute place match", LiveTrackingTimingParityTests.TestFloorlessSelectorAlwaysAcceptsAbsolutePlaceMatch),
+    ("close horizontal candidates keep masked vertical motion", LiveTrackingTimingParityTests.TestFloorlessSelectorKeepsFineVerticalMotionWhenHorizontalTravelAgrees),
+    ("floorless selection preserves vertical travel against input", LiveTrackingTimingParityTests.TestFloorlessSelectorAllowsVerticalCameraChangeAgainstHorizontalInput),
     ("ground motion evidence rejects coordinate-only seed", LiveTrackingTimingParityTests.TestGroundMotionEvidenceRejectsCoordinateSeedWithoutPixelMeasurement),
     ("presentation prediction advances caps and expires", LiveTrackingTimingParityTests.TestPredictionAdvancesCurrentFrameButIsBoundedAndExpires),
     ("presentation velocity rejects corrections and losses", LiveTrackingTimingParityTests.TestCorrectionAndLossNeverBecomePresentationVelocity),
@@ -330,6 +397,32 @@ var tests = new List<(string Name, Action Run)>
     ("background correction requires close agreement for mid-sized motion", BoundedBackgroundSearchTests.TestMidSizedCorrectionsMustAgreeClosely),
     ("frame telemetry ring retains newest samples for p95", FramePipelineTelemetryTests.TestBoundedRingRetainsNewestSamplesForP95),
     ("frame telemetry rejects negative and nonfinite durations", FramePipelineTelemetryTests.TestRejectsNegativeAndNonFiniteDurations),
+    ("Swift v3 live Atlas preserves rigid islands and doorway evidence after Windows capture", NativeAtlasImportTests.TestNativeAtlasPersistsMasksIslandsAndDoorway),
+    ("Swift live Atlas rejects corrupt capture ownership and reads prior schema", NativeAtlasImportTests.TestCorruptNativeAtlasAndLegacyOwners),
+    ("named Mac Atlas restore rebuilds Windows tiles and reopens the production world", NativeAtlasImportTests.TestNamedAtlasRestoreRebuildsTheWindowsMosaic),
+    ("imported Atlas resumes in the room confirmed by two images", NativeAtlasImportTests.TestImportedAtlasRequiresTwoMatchesInTheSameRoom),
+    ("imported Atlas holds identical scenery shared by different rooms", NativeAtlasImportTests.TestImportedAtlasRejectsIdenticalSceneryAcrossRooms),
+    ("a confirmed doorway extends a restored Atlas without overwriting old rooms", NativeAtlasImportTests.TestImportedAtlasExtendsThroughAConfirmedDoorway),
+    ("a tentative doorway match prevents duplication of a saved room", NativeAtlasImportTests.TestImportedAtlasKeepsSearchingForAKnownDoorwayArrival),
+    ("measured walks retain ground beneath a hidden edge in the saved Atlas", NativeAtlasImportTests.TestMeasuredWalkSavesFloorUnderAHiddenEdge),
+    ("restored Atlas aligns doorway floors only with measured foot contact on both sides", NativeAtlasImportTests.TestDoorwayFloorAlignsOnlyWithMeasuredContactOnBothSides),
+    ("Windows Atlas stitches a measured doorway and preserves saved legacy coordinates", NativeAtlasImportTests.TestWindowsAtlasExtendsAndAlignsWithoutMovingLegacyFrames),
+    ("same-room recovery retains measured evidence until placed imagery confirms it", NativeAtlasImportTests.TestLocalRecoveryRetainsEvidenceUntilAPlacedMatch),
+    ("same-room recovery reconnects a Mac Atlas through rebuilt visual references", NativeAtlasImportTests.TestImportedWorldPlacesMeasuredRecoveryThroughRegeneratedFeatures),
+    ("same-room recovery verifies broad scenery matches against saved floor texture", NativeAtlasImportTests.TestSameRoomRecoveryVerifiesBroadMatchesWithFloorTexture),
+    ("reopened Atlas recovers from saved floor imagery without narrow landmarks", NativeAtlasImportTests.TestReopenedAtlasRecoversFromFloorWithoutNarrowLandmarks),
+    ("floor-only recovery rejects competing rooms and stale votes", NativeAtlasImportTests.TestFloorOnlyRecoveryRejectsCompetingRoomsAndStaleVotes),
+    ("measured Atlas sections keep their relative link until the group is placed", NativeAtlasImportTests.TestMeasuredAtlasLinksSurviveUntilTheirGroupIsPlaced),
+    ("Atlas image links preserve measured doorway axes and fixed placements", NativeAtlasImportTests.TestAtlasLinksPreserveDoorwayAxesAndFixedPlacements),
+    ("a doorway never inherits the vertical correction of an unplaced Atlas section", NativeAtlasImportTests.TestDoorwayDoesNotInheritUnplacedVerticalCorrection),
+    ("new doorway spacing excludes measured sections awaiting placement", NativeAtlasImportTests.TestDoorwaySpacingUsesOnlyPlacedImages),
+    ("floor texture refines both axes of an Atlas closure", GroundPlaneClosureVerifierTests.TestMeasuredFloorRefinesBroadSceneryProposal),
+    ("background displacement cannot place the Atlas floor", GroundPlaneClosureVerifierTests.TestBackgroundDisplacementDoesNotEstablishGroundConnection),
+    ("black and repeating floors cannot verify an Atlas closure", GroundPlaneClosureVerifierTests.TestBlackAndPeriodicFloorsAreNotUniqueEvidence),
+    ("Atlas ground verification respects observed spans around an occluder", GroundPlaneClosureVerifierTests.TestObservedSpansExcludeMovingOccluder),
+    ("Atlas closure rejects missing or wrong-height floor evidence", GroundPlaneClosureVerifierTests.TestUnobservedOrWrongElevationFloorCannotValidateProposal),
+    ("Atlas ground verification rejects a clipped optimum", GroundPlaneClosureVerifierTests.TestSearchBoundaryDoesNotAcceptClippedOptimum),
+    ("Atlas patch proposals handle exposure changes after features fail", GroundPlaneClosureVerifierTests.TestPatchProposalSurvivesExposureChange),
     ("live world round trip and optimization preserve raw evidence", LiveWorldModelParityTests.TestRoundTripAndPoseReplacementPreserveRawEvidence),
     ("live world legacy observations preserve raw pose in epoch zero", LiveWorldModelParityTests.TestLegacyObservationDecodesIntoEpochZeroWithoutMovingItsWorldPose),
     ("live world invalid models are rejected", LiveWorldModelParityTests.TestInvalidModelsAreRejected),
@@ -458,10 +551,9 @@ var tests = new List<(string Name, Action Run)>
     ("summary selection survives refreshes while filtering deleted and non-gameplay failures", ReviewAnalysisTests.TestSummarySession),
     ("persisted candidate review loads and failed analysis cannot partially replace state", ReviewAnalysisTests.TestPersistedReviewAndAtomicFailure),
     ("screenshot review filters gameplay and preserves ordered clamped selection", ScreenshotReviewTests.TestSelectionAndOrdering),
-    ("contract review persists exemptions and blocks training across all breached screenshots", ScreenshotReviewTests.TestExemptionsAndTraining),
-    ("failed or stale exemption writes preserve contract and training state", ScreenshotReviewTests.TestFailedAndStaleExemptionWrites),
+    ("sparse gameplay screenshots allow training and keep legacy exemptions intact", ScreenshotReviewTests.TestSparseGameplayExamplesAndLegacyExemptions),
     ("confirmed screenshot deletion confines targets and retains failed selections", ScreenshotReviewTests.TestConfirmedDeletionAndFailures),
-    ("known-empty and negative labels cannot invent trainable positive examples", ScreenshotReviewTests.TestKnownEmptyNegativeAndCanonicalTraining),
+    ("training requires positive gameplay evidence from the active vocabulary", ScreenshotReviewTests.TestTrainingUsesPositiveGameplayVocabulary),
     ("review colors match canonical equal-hue classes and UTF-8 fallback", ScreenshotReviewTests.TestVisualIdentity),
     ("object references use positive boxes in oldest-first order with preferred fallback", ObjectReferenceTests.TestPositiveOrderingAndFallback),
     ("preferred object references persist canonically without unchanged writes", ObjectReferenceTests.TestReferencePreferences),
@@ -472,7 +564,7 @@ var tests = new List<(string Name, Action Run)>
     ("stencil choices preserve Mac menu order and restore undone labels", StencilSelectionTests.TestMenuOrderAndUndo),
     ("stencil selector pairs and HUD health need two positive boxes and remain editable", StencilSelectionTests.TestPositivePairsRemainEditable),
     ("gameplay labels remain repeatable and normal mode omits Mods", StencilSelectionTests.TestGameplayRepeatabilityAndMods),
-    ("fresh profiles defer Clear Save and selector classes deduplicate canonically", StencilSelectionTests.TestDeferredAndCanonicalDuplicates),
+    ("Clear Save is available until labeled and selector classes deduplicate canonically", StencilSelectionTests.TestRequiredClearSaveAndCanonicalDuplicates),
     ("context inference repairs clear complete gameplay mismatches", ContextInferenceTests.TestClearMultiObjectMismatch),
     ("context inference requires a complete contract instead of shared overlap", ContextInferenceTests.TestCompleteContractNotOverlap),
     ("context repair rejects ties excess missing and unexpected positive labels", ContextInferenceTests.TestAmbiguityCountsAndNegatives),
@@ -489,7 +581,9 @@ var tests = new List<(string Name, Action Run)>
     ("label pause resolves late acknowledgements and disconnects safely", LabelPauseTests.TestAcknowledgementRaces),
     ("frozen labels own their clean image and invalidate pre-pause work", LabelPauseTests.TestFrozenFrameOwnership),
     ("normal labeling freezes locally and paused startup accepts only one image", LabelPauseTests.TestNormalAndMissingFirstFrame),
+    ("Windows releases stale bot inputs and drops ownership on manual control or focus loss", ForwarderPauseTests.TestBotOwnershipAndExpiration),
     ("Windows bridge renews pause leases blocks input and resumes on close", ForwarderPauseTests.TestLeaseTransport),
+    ("room reset stays capability-gated and waits for its scene acknowledgement", ForwarderPauseTests.TestRoomResetTransport),
     ("pause capability and receiver disconnect gate labeling without breaking controls", ForwarderPauseTests.TestUnsupportedAndDisconnectedReceiver),
     ("closing a paused bridge is bounded even when sending is blocked", ForwarderPauseTests.TestBlockedShutdown),
     ("recent captures retain the newest 64 with unique identities", RecentFrameTests.TestCapacityAndOrdering),
@@ -555,6 +649,8 @@ var tests = new List<(string Name, Action Run)>
     ("black-band runs tolerate one gap but reject broad all-black omissions", FrameSignalTests.TestBlackBandRunRules),
     ("transition edge masks are straight rectangles with intact black interiors", FrameSignalTests.TestRectangularOmissions),
     ("live admission blocks HUD-only writes and reseeds after blackouts", FrameSignalTests.TestLiveAtlasAdmission),
+    ("controller tutorial prompt is excluded from atlas and ground at capture resolution", GameplayTutorialPromptTests.TestPromptIsExcludedFromAtlasAndGround),
+    ("tutorial band preserves scenery without a complete prompt", GameplayTutorialPromptTests.TestPromptBandRetainsSceneryWithoutCompletePrompt),
     ("scene model regions own only the highest-confidence exact Knight class", SceneRegionTests.TestMovingKnightOnly),
     ("weak Knight masks require the explicit ground policy", SceneRegionTests.TestWeakKnightPolicy),
     ("legacy HUD geometry and conditional exclusions match Mac", SceneRegionTests.TestHudGeometry),
@@ -601,7 +697,7 @@ var tests = new List<(string Name, Action Run)>
     ("live menu capture store preserves portable language schema and bounds paths", MenuLiveCaptureTests.TestPortableStore),
     ("menu search cadence limits untracked work and resets immediately", MenuTrackerTests.TestCadence),
     ("menu selector pairs require bilateral evidence including faded arrows", MenuTrackerTests.TestPairEvidence),
-    ("deferred Clear Save stays incomplete and guides into model training", StencilGuidanceParityTests.TestDeferredProfileAndModelGuidance),
+    ("Clear Save belongs to the initial stencil setup before model training", StencilGuidanceParityTests.TestRequiredProfileAndModelGuidance),
     ("Clear Save ignores another slot's calibration and follows every row", MenuCatalogTests.TestClearSaveMovesBetweenSlots),
     ("Clear Save probe searches every profile row", MenuTrackerTests.TestClearSaveOffsets),
     ("solved menu search regions stay narrow and scale with capture", MenuTrackerTests.TestSearchRegions),
@@ -615,6 +711,9 @@ var tests = new List<(string Name, Action Run)>
     ("menu language changes reacquire and catalog refresh retains language", MenuTrackerTests.TestLanguageChangeAndCatalogRefresh),
     ("two-column menu rows share a nonzero selector band", MenuTrackerTests.TestTwoColumnRowBand),
     ("Clear Save modal takes ownership while its parent heading remains visible", MenuTrackerTests.TestModalTakesParentOwnership),
+    ("plain menu selector boxes follow the matched words", MenuTrackerTests.TestPlainMenuSelectorBoxesFollowTheMatchedWords),
+    ("menu selector calibration stays near the captured reference", MenuTrackerTests.TestSelectorRefinementStaysNearTheCapturedReference),
+    ("menu tracking stays near the captured stencil after gradual shifts", MenuTrackerTests.TestTrackingStaysNearCapturedPositions),
     ("dialog selector search pose follows stable rows rather than animated title", MenuTrackerTests.TestDialogPoseUsesStableRows),
     ("synthetic stable selector matches persist measured product calibration", MenuTrackerTests.TestStableSelectorMatchPersistsProductCalibration),
     ("synthetic intermittent selector matches do not persist calibration", MenuTrackerTests.TestIntermittentSelectorMatchesDoNotPersistCalibration),
@@ -675,6 +774,8 @@ var tests = new List<(string Name, Action Run)>
     ("model promotion rejects unsafe paths and preserves existing state", ModelVersionTests.TestPromotionSafety),
     ("dashboard model lifecycle restores and promotes without duplicating versions", ModelVersionTests.TestLifecycle),
     ("completed compact Python run IDs promote and retain checkpoint lineage", ModelVersionTests.TestCompactTrainingRunIdentifiers),
+    ("training evidence survives model promotion and restores legacy runs", ModelVersionTests.TestTrainingEvidenceSurvivesPromotionAndRestoresLegacyRuns),
+    ("untrained detector heads do not consume live or raw detection slots", ModelVersionTests.TestOnlyTrainedClassesConsumeDetectionSlots),
     ("durable ONNX promotion preserves real inference after source removal", ModelVersionTests.TestDurableOnnxInference),
     ("failed model registry commit rolls back only the new restore point", ModelVersionTests.TestRegistryFailureRollback),
     ("HUD shield masks atlas and motion without cropping the whole top edge", TestHudAtlasExclusions),
@@ -690,7 +791,7 @@ var tests = new List<(string Name, Action Run)>
     ("viewport translation settler supports zero duration", TestTranslationSettlerSupportsZeroDuration),
     ("viewport basis correction settles atlas while live pan remains authoritative", TestBasisCorrectionSettlesAtlasWhileLivePanRemainsAuthoritative),
     ("viewport room boundary uses a thin cyan line", DashboardPresentationParityTests.TestRoomBoundaryUsesThinCyanLine),
-    ("viewport persistent ground palette uses purple", DashboardPresentationParityTests.TestGroundReviewPaletteUsesPurpleForPersistentTileAndLine),
+    ("viewport palette uses green ground lines and purple patch boxes", DashboardPresentationParityTests.TestGroundReviewPaletteKeepsGreenLinesAndPurplePatches),
     ("viewport live ground palette matches legend", DashboardPresentationParityTests.TestLiveGroundReviewPaletteMatchesLegend),
     ("viewport feature markers stay screen constant", DashboardPresentationParityTests.TestFeatureMarkersRemainScreenConstantAcrossZoom),
     ("viewport ground feature uses outlined purple square", DashboardPresentationParityTests.TestGroundFeatureUsesOnePixelOutlinedPurpleSquare),
@@ -762,6 +863,22 @@ var tests = new List<(string Name, Action Run)>
     ("atlas parity permanently deletes autosave archive", AtlasStateStoreParityTests.TestDeletingAutoSaveArchivePermanentlyRemovesIt),
     ("atlas parity legacy trash purge preserves active named states", AtlasStateStoreParityTests.TestPurgingLegacyTrashDoesNotTouchActiveOrNamedStates),
     ("atlas parity disk usage counts registered image storage", AtlasStateStoreParityTests.TestAtlasDiskUsageCountsRegisteredImageStorage),
+    ("profile Atlas requires stable selected card and fresh Gameplay HUD", ProfileAtlasTests.TestRequiresStableProfileAndGameplay),
+    ("profile Atlas cancels on menu exit, capture reset and unconfirmed selection", ProfileAtlasTests.TestAbandonedSelectionsCannotSwitchAtlases),
+    ("profile Atlas adopts, switches and restores real raster tiles", ProfileAtlasTests.TestProfileAtlasRoundTrip),
+    ("profile Atlas keeps previous tiles when a saved profile is invalid or activation fails", ProfileAtlasTests.TestProfileAtlasRollback),
+    ("Hacker Atlas restores rooms, doorways and raster and continues compositing", HackerAtlasArchiveTests.TestRestoresPlaythroughAndContinuesCompositing),
+    ("Hacker Atlas archive rejects damaged tiles and preserves prior generation", HackerAtlasArchiveTests.TestArchiveWriteAndReadFailurePreserveLastGoodVersion),
+    ("Hacker Atlas profile preflight preserves both previous writers on failure", HackerAtlasArchiveTests.TestProfilePreflightKeepsBothWritersOnFailure),
+    ("Hacker named Atlas Save, Load, New and Delete preserve playthroughs", HackerAtlasArchiveTests.TestNamedStatesPreserveCurrentAndOriginalPlaythroughs),
+    ("Gameplay named Atlas load keeps the active save profile", ProfileAtlasTests.TestNamedGameplayLoadPreservesCurrentOwner),
+    ("Bot Demo archives only slot 4 and verifies source and copies", BotDemoTests.TestArchiveCopiesOnlySlotFourAndVerifiesSourceAndBackup),
+    ("Bot Demo reconciles versioned saves and rejects unverified clears", BotDemoTests.TestEmptySaveAndMismatchedFamiliesCannotAuthorizeClear),
+    ("Bot Demo navigates only to verified slot 4", BotDemoTests.TestMeasuredSlotAndVerifiedClear),
+    ("Bot Demo skips the opening and requires a fresh Gameplay HUD", BotDemoTests.TestEmptySlotSkipsOpeningAndRequiresFreshHud),
+    ("Bot Demo keeps skipping long opening sequences until the HUD", BotDemoTests.TestLongOpeningRetainsSkipActionsUntilHud),
+    ("Bot Demo aborts before confirmation when the save changes", BotDemoTests.TestSessionStopsIfGameSaveChangesBeforeConfirm),
+    ("Bot Demo uses fresh menu timing, selection and dialog geometry", BotDemoTests.TestVisionAdmitsOnlyFreshMeasuredEvidence),
     ("atlas replacement validates staging before active mutation", ActiveAtlasReplacementTests.TestValidatesStagingBeforeReplacingActive),
     ("atlas replacement returns the previous active archive", ActiveAtlasReplacementTests.TestSuccessfulSwapReturnsPreviousArchive),
     ("atlas pipeline load restores saved snapshot without mutating state", ActiveAtlasReplacementTests.TestPipelineLoadRestoresSavedSnapshotAndLeavesStateImmutable),
@@ -842,15 +959,37 @@ var tests = new List<(string Name, Action Run)>
     ("low resolution motion ignores moving visibility circle", VisualRoomLowResolutionMotionParityTests.TestLowResolutionMotionIgnoresMovingVisibilityCircle),
     ("moving visibility circle cannot create false motion", VisualRoomLowResolutionMotionParityTests.TestMovingVisibilityCircleCannotCreateFalseMotion),
     ("tiny visibility circle cannot create motion", VisualRoomLowResolutionMotionParityTests.TestTinyVisibilityCircleCannotCreateMotion),
+    ("dark landing tracks texture confined to bottom rows", VisualRoomLowResolutionMotionParityTests.TestDarkLandingTracksTextureConfinedToBottomRows),
+    ("dark bottom texture remains stationary when light changes", VisualRoomLowResolutionMotionParityTests.TestDarkBottomTextureDoesNotInventMotionWhenLightChanges),
+    ("black frames and tiny bottom remnants cannot establish motion", VisualRoomLowResolutionMotionParityTests.TestBlackFrameAndTinyBottomRemnantCannotEstablishMotion),
+    ("loading cuts require sustained blackout and stable new scenery", VisualSceneDiscontinuityTrackerTests.TestLoadingCutRequiresSustainedBlackoutAndStableNovelScenery),
+    ("fading back to the same scenery keeps ownership", VisualSceneDiscontinuityTrackerTests.TestFadeBackToSameSceneryDoesNotChangeOwnership),
+    ("a change on one side of the screen cannot establish a new room", VisualSceneDiscontinuityTrackerTests.TestOneChangingSideDoesNotDiscoverRoom),
+    ("black frames independently confirm blackout after a capture gap", VisualSceneDiscontinuityTrackerTests.TestBlackFramesAfterGapMustIndependentlyConfirmBlackout),
+    ("counter-steering during blackout keeps the visible departure", VisualSceneDiscontinuityTrackerTests.TestCounterSteeringAfterSceneryVanishesKeepsVisibleDeparture),
+    ("a loading glyph preserves blackout while a HUD or scattered scenery breaks it", VisualSceneDiscontinuityTrackerTests.TestTinyLoadingSpriteKeepsObservedBlackoutWithoutHidingHudOrScenery),
+    ("moving arrivals confirm across consecutive overlapping captures", VisualSceneDiscontinuityTrackerTests.TestMovingArrivalConfirmsThroughConsecutiveOverlappingImages),
+    ("the Atlas withholds unresolved loading and switches room ownership once", VisualSceneDiscontinuityTrackerTests.TestAtlasWithholdsUnresolvedLoadingAndSwitchesOwnershipOnce),
+    ("the Atlas keeps its room when loading evidence rejects a split", VisualSceneDiscontinuityTrackerTests.TestAtlasRetainsSameRoomAfterLoadingEvidenceRejectsTheSplit),
+    ("isolated visible patches require a comparable motion candidate", VisualRoomLowResolutionMotionParityTests.TestIsolatedVisiblePatchesRequireAComparableMotionCandidate),
     ("runtime-resolution motion retains fast vertical travel", VisualRoomLowResolutionMotionParityTests.TestRuntimeResolutionMotionRetainsFastVerticalTravel),
     ("floorless odometry accumulates through a moving fade circle", VisualRoomTransitionOdometryParityTests.TestFloorlessOdometryAccumulatesThroughMovingFadeCircle),
     ("floorless odometry bridges only short same-direction overlap loss", VisualRoomTransitionOdometryParityTests.TestFloorlessOdometryBridgesOnlyShortSameDirectionOverlapLoss),
-    ("reliable velocity handoff bridges initial fade mismatch", VisualRoomTransitionOdometryParityTests.TestReliableVelocityHandoffBridgesInitialFadeMismatch),
-    ("reliable velocity handoff bridges collapsed same-direction motion", VisualRoomTransitionOdometryParityTests.TestReliableVelocityHandoffBridgesCollapsedSameDirectionMotion),
+    ("velocity bridges rejected motion and preserves valid easing", VisualRoomTransitionOdometryParityTests.TestReliableVelocityBridgesRejectedMotionWithoutOverridingValidEasing),
+    ("observed camera slowdown wins over older velocity", VisualRoomTransitionOdometryParityTests.TestObservedCameraSlowdownOverridesOlderVelocity),
     ("reliable velocity handoff keeps strong same-direction measurement", VisualRoomTransitionOdometryParityTests.TestReliableVelocityHandoffKeepsStrongSameDirectionMeasurement),
-    ("reliable velocity handoff bridges weak vertical fade motion", VisualRoomTransitionOdometryParityTests.TestReliableVelocityHandoffBridgesWeakVerticalFadeMotion),
+    ("observed vertical travel and reversal win over older velocity", VisualRoomTransitionOdometryParityTests.TestObservedVerticalTravelAndReversalOverrideOlderVelocity),
     ("vertical handoff uses latest measured acceleration", VisualRoomTransitionOdometryParityTests.TestVerticalHandoffUsesLatestMeasuredAcceleration),
     ("vertical handoff survives input beginning mid-fall", VisualRoomTransitionOdometryParityTests.TestVerticalHandoffSurvivesInputBeginningMidFall),
+    ("coarse measurement lineage tracks actual measurements", VisualRoomTransitionOdometryParityTests.TestCoarseMeasurementLineageIsIndependentFromVelocityPredictionNeeds),
+    ("mixed-axis prediction is marked estimated", VisualRoomTransitionOdometryParityTests.TestCoarseMixedAxisPredictionDoesNotBecomeMeasuredLineage),
+    ("horizontal prediction cannot renew expired vertical travel", VisualRoomTransitionOdometryParityTests.TestHorizontalPredictionCannotRenewAnExpiredVerticalEstimate),
+    ("a measured vertical stop discards the fall velocity", VisualRoomTransitionOdometryParityTests.TestMeasuredVerticalStopCannotResurrectOldFallVelocity),
+    ("floorless odometry uses the completed reference pose", VisualRoomTransitionOdometryParityTests.TestFloorlessReferenceUsesCompletedCapturePoseInsteadOfNewerPrediction),
+    ("floorless odometry avoids double-counting vertical prediction", VisualRoomTransitionOdometryParityTests.TestFloorlessReferenceDoesNotDoubleVerticalFallPrediction),
+    ("a delayed solve updates the pending coarse reference", VisualRoomTransitionOdometryParityTests.TestDelayedSolveUpdatesReferenceBeforeFirstEligibleCoarseComparison),
+    ("stale floorless poses release control", VisualRoomTransitionOdometryParityTests.TestStaleFloorlessPoseReleasesPresentationAndResumesFromAcceptedTracking),
+    ("partial floorless predictions release control", VisualRoomTransitionOdometryParityTests.TestPartialFloorlessPredictionReleasesControlAndResumesFromCompletedPose),
     ("floorless odometry accumulates slow subcell travel", VisualRoomTransitionOdometryParityTests.TestFloorlessOdometryAccumulatesSlowSubcellTravelWithoutFreezing),
     ("low-resolution motion separates simultaneous vertical travel", VisualRoomTransitionOdometryParityTests.TestLowResolutionMotionSeparatesSimultaneousVerticalTravel),
     ("floorless odometry retains vertical travel without horizontal direction", VisualRoomTransitionOdometryParityTests.TestFloorlessOdometryRetainsVerticalTravelWithoutHorizontalDirection),
@@ -874,6 +1013,18 @@ var tests = new List<(string Name, Action Run)>
     ("visual ground recovery drives published camera and atlas", VisualGroundIntegrationTests.TestPersistentRecoveryDrivesPublishedCamera),
     ("visual ground provisional promotion requires bridge trust", VisualGroundIntegrationTests.TestProvisionalPromotionRequiresBridgeTrust),
     ("visual ground floorless reanchor clears stale texture", VisualGroundIntegrationTests.TestFloorlessReanchorClearsStaleTexture),
+    ("coarse floorless handoff stays presentation-only through blackout", VisualGroundIntegrationTests.TestMeasuredCoarseFallbackDrivesPresentationWithoutWritingAtlas),
+    ("scenery patch rejection handles ambiguity and foreground", CalibratedSceneMotionTests.TestBoundedPatchFitRejectsAmbiguityAndForeground),
+    ("durable scenery continuity requires the exact measured capture", CalibratedSceneMotionTests.TestMeasuredSceneContinuityRequiresTheSamePublishedReference),
+    ("ground placement checks preserve independent registration", CalibratedSceneMotionTests.TestGroundPlacementCheckPausesWritesWithoutDiscardingTrackedBasis),
+    ("a missed Atlas registration can reconnect to its exact previous capture", AtlasCaptureGapTests.TestOneMissCanReconnectOnlyToTheRetainedCapture),
+    ("calibrated scenery tolerates exposure changes and expires across a gap", CalibratedSceneMotionTests.TestExposureChangeAndMissingFrames),
+    ("distributed scenery motion survives moving occlusion", CalibratedSceneMotionTests.TestDistributedMotionSurvivesMovingOcclusion),
+    ("horizontal scenery calibration cannot constrain a fall", CalibratedSceneMotionTests.TestHorizontalCalibrationCannotSupplyVerticalMotion),
+    ("scenery patch replacement preserves measured axis lineage", CalibratedSceneMotionTests.TestPatchReplacementPreservesAxisLineage),
+    ("measured scenery scale outranks uncalibrated patches", CalibratedSceneMotionTests.TestUncalibratedPatchesCannotOutvoteMeasuredAxis),
+    ("gameplay scenery fallback uses only ground-calibrated axes", CalibratedSceneMotionTests.TestGameplayUsesOnlyCalibratedAxes),
+    ("gameplay scenery fallback calibrates from tracked ground", CalibratedSceneMotionTests.TestGameplayCalibratesSceneryFromTrackedGround),
     ("visual gameplay tracker emits receiver-free atlas poses", TestVisualGameplayTracker),
     ("visual gameplay tracker admits only bootstrapped verified ground poses", TestVisualGameplayGroundAdmission),
     ("transition bridge resumes without inventing a room offset", TransitionMotionBridgeTests.TestResumeAfterBlackout),
@@ -944,7 +1095,51 @@ var tests = new List<(string Name, Action Run)>
     ("ground truth line store round trips world lines", TestGroundTruthLineStoreRoundTripsWorldLines),
     ("ground truth add negative modify delete and undo stay horizontal", TestGroundTruthAddNegativeModifyDeleteAndUndoKeepHorizontalWorldLines),
     ("ground truth overlay uses positive negative and selected kinds", TestGroundTruthOverlayUsesPositiveNegativeAndSelectedKinds),
-    ("ground truth entering scene seeds only once", TestGroundTruthEnteringSceneSeedsOnlyOnce),
+    ("Hacker ground overlay and editor use authored lines only", TestGroundTruthRequiresAuthoredLines),
+    ("ground clearance drops nearby enclosed shorter floors", GroundClearanceTests.TestGroundClearanceRejectsOnlyEnclosedShorterFloors),
+    ("a short platform needs two adjacent unmasked views", GroundPlatformPatchTests.TestShortLedgeRequiresAdjacentUnmaskedTextureAndFullWidth),
+    ("platform texture follows the measured camera", GroundPlatformPatchTests.TestScrollingPlatformPatchesFollowTheCamera),
+    ("camera patches require a supporting floor", GroundPlatformPatchTests.TestCameraReferenceNeedsFloorSupportWithoutACompetingLongerRow),
+    ("walked dark ground remains continuous across occlusion and reversal", WalkedGroundTests.TestWalkedDarkGroundSurvivesOcclusionAndReversal),
+    ("Game Play combat effects cannot split a traversable floor", GameplayPathTests.TestCombatEdgesKeepPreviouslyExposedWalkContinuous),
+    ("Game Play paths use upper landings and corroborated contact", GameplayPathTests.TestLedgeAndContactOverrulePreviouslyExposedFloor),
+    ("Game Play walls need repeated observations and retire through clear crossings", GameplayPathTests.TestAStationaryFaceNeedsContinuousWitnessesAndCanBeRetired),
+    ("Game Play keeps temporary and registered paths separate across rooms", GameplayPathTests.TestFrameLocalPathsAndOtherRoomsDoNotPolluteRegisteredTerrain),
+    ("Game Play objectives advance through a jump shelf", GameplayPathTests.TestTheAutomaticObjectiveContinuesAcrossTheJumpShelf),
+    ("Game Play drops cannot route through unobserved space", GameplayPathTests.TestUnvisitedSpaceCannotConnectADropBetweenRegisteredPlatforms),
+    ("Game Play restores continuous saved floor and follows placement revisions", GameplayPathTests.TestSavedFloorKeepsAContinuousWorldPathAcrossReloadAndCorrection),
+    ("Game Play restores coverage for a previously observed descent", GameplayPathTests.TestRestoredCameraFootprintsAdmitOnlyThePreviouslyObservedDescent),
+    ("Game Play rejects a short combat edge at the end of a walked floor", GameplayPathTests.TestShortCombatEdgeAtWalkedEndpointDoesNotCreateAnotherLanding),
+    ("Game Play preserves long nearby platforms and divides their small overlap", GameplayPathTests.TestLongNearbySavedFloorsPreserveBothPlatformsAndDivideTheirSmallOverlap),
+    ("authored routes persist, reproject and delete as a whole", AtlasPathLinkStoreTests.TestConnectionsPersistReprojectAndDeleteAsAWhole),
+    ("manual route edits replace the same pair and stay in the room", AtlasPathLinkStoreTests.TestManualConnectionReplacesItsPairAndRespectsRoomSelection),
+    ("legacy and Mac route files load while failed edits preserve the saved file", AtlasPathLinkStoreTests.TestMacLegacyAndSceneLinksLoadAndInvalidOrUnwritableFileSurvives),
+    ("walked floor extents remove false jump seams", AtlasPlatformGraphTests.TestWalkedExtentsPreserveEvidenceAndRejectSpuriousJump),
+    ("path shelves use measured jump rise and wall clearance", AtlasPlatformGraphTests.TestJumpShelfUsesMeasuredRiseAndClearsWalls),
+    ("one-way falls do not climb or transfer onto a jump crossing", AtlasPlatformGraphTests.TestFallsDescendFromEitherLipWithoutClimbingOrCrossingShelves),
+    ("fall routes branch, avoid floors and drift back", AtlasPlatformGraphTests.TestFallsBranchAndSteerAroundIntermediateLedges),
+    ("doors, spikes and manual jumps constrain terrain routes", AtlasPlatformGraphTests.TestDoorsSpikesAndManualConnectionsConstrainTravel),
+    ("path rebuilding keeps only current terrain intersections", AtlasPlatformGraphTests.TestIncrementalIntersectionsStayEquivalentThroughFloorEdits),
+    ("path search reaches exact objectives while sharing fall shafts", AtlasPlatformGraphTests.TestExplicitRouteConnectsMidpointsAndShowsOneFallShaft),
+    ("visual walls join measured platform faces and respect masks", TerrainWallDetectionTests.TestPlatformFacesFollowTheVisibleMask),
+    ("visual walls use textured and strong isolated edges", TerrainWallDetectionTests.TestWallEvidenceUsesTexturedFacesAndStrongIsolatedEdges),
+    ("terrain corners use near visible endpoints", TerrainWallDetectionTests.TestCornerExtrapolationRespectsVisibleEndpoints),
+    ("wall contact requires corroborated blocked movement", TerrainWallDetectionTests.TestWallContactNeedsCorroboratedBlockedMotion),
+    ("wall contact extends visual faces and joins walked ground", TerrainWallDetectionTests.TestContactExtendsTheMatchingFaceAndJoinsWalkedGround),
+    ("occluded walk requires input and a continuous level camera", WalkedGroundTests.TestOccludedWalkNeedsInputAndAContinuousLevelCamera),
+    ("the Knight foot locator measures current mask pixels", WalkedGroundTests.TestFootUsesCurrentPixelsAndRejectsAmbiguousFaces),
+    ("walked ground matches observed elevation and owns its columns", WalkedGroundTests.TestWalkSnapsToAnObservedFloorAndReplacesOverlappingStrokes),
+    ("ground clearance trims overlapping platform tips", GroundClearanceTests.TestGroundClearanceTrimsOnlyShortSharedTips),
+    ("terrain edits preserve shared Mac room calibrations", HackerTerrainEditingTests.TestMacRoomCalibrationsSurviveTerrainEditAndUndo),
+    ("wall preview and persisted ground corners", HackerTerrainEditingTests.TestWallSnapsBothCornersAndCommitsOnRelease),
+    ("wall and floor move on constrained axes after reload", HackerTerrainEditingTests.TestWallAndFloorMoveOnTheirOwnAxesAfterReload),
+    ("wall tool modifies and attaches ground endpoints", HackerTerrainEditingTests.TestWallModifyCanAttachAGroundEndpoint),
+    ("terrain corners use nearby endpoints in the same room", HackerTerrainEditingTests.TestCornerRequiresNearbyEndpointInSameRoom),
+    ("horizontal and vertical doors follow their attached floor", HackerTerrainEditingTests.TestDoorsDrawOnEitherAxisAndFollowGround),
+    ("spikes remain separate from overlapping ground", HackerTerrainEditingTests.TestSpikesAreHorizontalAndIndependentOfGround),
+    ("authored terrain follows its room position in the atlas", HackerTerrainEditingTests.TestTerrainProjectionFollowsRoomPosition),
+    ("invalid terrain cannot replace saved labels", HackerTerrainEditingTests.TestInvalidTerrainCannotReplaceSavedLabels),
+    ("failed terrain save preserves committed lines and clears the preview", HackerTerrainEditingTests.TestFailedTerrainSaveKeepsTheCommittedDocument),
     ("ground truth store rejects malformed and missing document fields", TestGroundTruthStoreRejectsMalformedAndMissingDocumentFields),
     ("ground truth store rejects missing and invalid line fields", TestGroundTruthStoreRejectsMissingAndInvalidLineFields),
     ("ground truth failed atomic replace preserves old document", TestGroundTruthFailedAtomicReplacePreservesOldDocument),
@@ -1544,7 +1739,7 @@ static void TestStencilContractCoverage()
     Equal("gameplay-hud", normal.Select(step => step.ContextIdentifier).Distinct().ElementAt(2));
     Equal("clear-save", normal.Last().ContextIdentifier);
     True(normal.Any(step => step.ContextIdentifier == "select-profile" && step.ClassIdentifier == "select-profile.clear-save"));
-    True(!StencilInitializationPolicy.IsFirstPhaseStep(normal.Single(step => step.ClassIdentifier == "select-profile.clear-save")));
+    True(StencilInitializationPolicy.IsFirstPhaseStep(normal.Single(step => step.ClassIdentifier == "select-profile.clear-save")));
     True(normal.Where(step => StencilInitializationPolicy.Phase(step.ContextIdentifier) == 1)
         .All(step => step.ContextIdentifier is "main-title" or "select-profile" or "gameplay-hud"));
     foreach (var language in StencilInitializationCoordinator.SupportedLanguages) {
@@ -7941,30 +8136,39 @@ static void TestGroundTruthOverlayUsesPositiveNegativeAndSelectedKinds()
     True(overlay.All(line => line.Start.Y == line.End.Y));
 }
 
-static void TestGroundTruthEnteringSceneSeedsOnlyOnce()
+static void TestGroundTruthRequiresAuthoredLines()
 {
     WithTemporaryDirectory(root =>
     {
-        var controller = new GroundTruthLabelController(
-            new GroundTruthLineStore(Path.Combine(root, "world-lines.json")));
+        var store = new GroundTruthLineStore(Path.Combine(root, "world-lines.json"));
+        var oldDetection = new GroundTruthWorldLine("Tutorial_01", 1, 6, 2,
+            GroundTruthLineKind.Positive, seededFromDetector: true);
+        store.Save(new() { SeededScenes = ["Tutorial_01"], Lines = [oldDetection] });
+        var controller = new GroundTruthLabelController(store);
         var transform = GroundTruthTransform(new AtlasPoint(0, 0));
         var bounds = new GroundTruthRect(100, 200, 640, 360);
-        GroundLinePresenceReview[] reviews =
-        [
-            new(
-                1,
-                new CleanFloorLine(240, new PixelSpan(80, 500)),
-                GroundLinePresenceState.Confirmed,
-                VisibleSeconds: 3,
-                DetectedFraction: 1)
-        ];
+        var seededPosition = transform.WorldToAtlas(new AtlasPoint(3, 2), bounds);
+        Equal(0, controller.OverlayLines(transform, bounds).Count);
+        controller.Mode = GroundTruthEditingMode.Delete;
+        controller.Handle(GroundTruthPointerPhase.Began, seededPosition, 6, transform, bounds);
+        controller.Handle(GroundTruthPointerPhase.Ended, seededPosition, 6, transform, bounds);
+        True(store.Load().Lines.SequenceEqual([oldDetection]));
 
-        controller.Enter([], reviews, transform, bounds);
-        controller.Enter([], reviews, transform, bounds);
+        var start = transform.WorldToAtlas(new AtlasPoint(1, 2), bounds);
+        var end = transform.WorldToAtlas(new AtlasPoint(6, 2), bounds);
+        controller.Mode = GroundTruthEditingMode.Add;
+        controller.Handle(GroundTruthPointerPhase.Began, start, 6, transform, bounds);
+        controller.Handle(GroundTruthPointerPhase.Ended, end, 6, transform, bounds);
+        Equal(1, controller.OverlayLines(transform, bounds).Count);
+        Equal(1, store.Load().Lines.Count(line => !line.SeededFromDetector));
 
-        True(controller.Document.SeededScenes.SetEquals(["Tutorial_01"]));
-        Equal(1, controller.Document.Lines.Count);
-        True(controller.Document.Lines[0].SeededFromDetector);
+        controller.Mode = GroundTruthEditingMode.Delete;
+        controller.Handle(GroundTruthPointerPhase.Began, seededPosition, 6, transform, bounds);
+        controller.Handle(GroundTruthPointerPhase.Ended, seededPosition, 6, transform, bounds);
+        Equal(0, controller.OverlayLines(transform, bounds).Count);
+        var reopened = new GroundTruthLabelController(store);
+        Equal(0, reopened.OverlayLines(transform, bounds).Count);
+        True(store.Load().Lines.SequenceEqual([oldDetection]));
     });
 }
 
@@ -8861,7 +9065,7 @@ static void TestPipelineOrdersTransactionAndUsesMonotonicTimestamp()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         var result = pipeline.Process(
             PipelineTextureFrame(1, 17),
             wallTimestamp: 1_700_000_000,
@@ -8883,7 +9087,7 @@ static void TestPipelineSuppressesUnverifiedNewWorldAndLossWithoutReference()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         var unverified = pipeline.Process(
             PipelineSolidFrame(1), 100, 1, 1, "Tutorial_01",
             stableTrackingVerified: false);
@@ -8918,7 +9122,7 @@ static void TestGroundAnchoredObservationKeepsCapturePoseAcrossLaterBasisRevisio
     WithTemporaryDirectory(root =>
     {
         var pixels = PipelineTexturePixels(71);
-        var pipeline = new LiveWorldPipelineReflection(root, _ => { });
+        var pipeline = new LiveWorldPipelineHarness(root, _ => { });
         var initial = pipeline.Process(
             PipelineTextureFrameFromPixels(1, pixels), 100, 1, 1, "Tutorial_01",
             localPose: new AtlasPoint(20, 10));
@@ -8952,7 +9156,7 @@ static void TestAtlasWorldTrackerReceivesGroundAlignmentExclusions()
         var controlRoot = Path.Combine(root, "control");
         var splitRoot = Path.Combine(root, "split");
         var frame = PipelineTextureFrame(1, 71);
-        var control = new LiveWorldPipelineReflection(controlRoot, _ => { });
+        var control = new LiveWorldPipelineHarness(controlRoot, _ => { });
         Equal("Committed", control.Process(
             frame, 100, 1, 1, "Tutorial_01").State);
         True(new LiveWorldSessionStore(controlRoot).Load().Snapshot.Landmarks.Count > 0);
@@ -8965,7 +9169,7 @@ static void TestAtlasWorldTrackerReceivesGroundAlignmentExclusions()
         [
             new(0, 0, frame.Width, frame.Height)
         ];
-        var pipeline = new LiveWorldPipelineReflection(splitRoot, _ => { });
+        var pipeline = new LiveWorldPipelineHarness(splitRoot, _ => { });
         Equal("Committed", pipeline.Process(
             frame, 100, 1, 1, "Tutorial_01",
             exclusions: compositionExclusions,
@@ -8993,7 +9197,7 @@ static void TestPersistentAppendFailureDoesNotFallBackToTransientAtlasOrTracker(
     {
         var stages = new List<string>();
         var failAppend = true;
-        var pipeline = new LiveWorldPipelineReflection(
+        var pipeline = new LiveWorldPipelineHarness(
             root,
             stages.Add,
             stage => failAppend && stage == "append");
@@ -9026,7 +9230,7 @@ static void TestCorruptPersistentWorldBlocksAtlasInsteadOfFallingBackToMemory()
         var snapshotPath = Path.Combine(root, "scene.snapshot");
         var original = File.ReadAllBytes(snapshotPath);
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
 
         var failed = pipeline.Process(
             PipelineSolidFrame(1), 100, 1, 1, "Tutorial_01");
@@ -9044,7 +9248,7 @@ static void TestDelayedWorldTimestampIsDiscardedWithoutRewindingTrackerVisit()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         Equal("Committed", pipeline.Process(
             PipelineSolidFrame(1), 1_000, 100, 7, "Tutorial_01",
             localPose: new AtlasPoint(0, 0)).State);
@@ -9072,7 +9276,7 @@ static void TestRecoverySearchIsTransientAndReturnsConfirmedWorldPlacement()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         var pixels = PipelineTexturePixels(71);
         var initial = pipeline.Process(
             PipelineTextureFrameFromPixels(1, pixels), 100, 1, 1, "Tutorial_01");
@@ -9117,12 +9321,62 @@ static void TestRecoverySearchIsTransientAndReturnsConfirmedWorldPlacement()
     });
 }
 
+static void TestPipelinePersistsWalkedFloorAndRestoresItOnRecovery()
+{
+    WithTemporaryDirectory(root =>
+    {
+        const string room = "Tutorial_01";
+        var texture = PipelineTexturePixels(71);
+        GroundHypothesisAtlasLine Span(double left, double right) =>
+            new(WalkedGroundMemory.WalkedSegmentId, new(left, 80), new(right, 80));
+        var original = Span(10, 100);
+        var extended = Span(10, 120);
+        var pipeline = new LiveWorldPipelineHarness(root, _ => { });
+        var initial = pipeline.Process(PipelineTextureFrameFromPixels(1, texture), 100, 1, 1, room,
+            walkedGround: [original]);
+        Equal("Committed", initial.State);
+        True(initial.WalkedGround.SequenceEqual([original]));
+        var throttled = pipeline.Process(PipelineTextureFrameFromPixels(2, texture), 101, 1.05, 1, room,
+            walkedGround: [extended]);
+        Equal("Throttled", throttled.State);
+        True(throttled.WalkedGround.SequenceEqual([original]));
+        var advanced = pipeline.Process(PipelineTextureFrameFromPixels(3, texture), 102, 1.30, 1, room,
+            walkedGround: [extended]);
+        Equal("Committed", advanced.State);
+        True(advanced.WalkedGround.SequenceEqual([extended]));
+        var saved = new LiveWorldSessionStore(root).Load().Snapshot;
+        True(saved.Observations[1].WalkedGround!.SequenceEqual([new LiveWorldWalkedFloor(100, 120, 80)]));
+
+        var reopened = new LiveWorldPipelineHarness(root, _ => { });
+        var raw = new AtlasPoint(80, 0);
+        var first = reopened.Process(PipelineTextureFrameFromPixels(4, texture), 103, 1.60, 1, room, localPose: raw);
+        Equal("PendingRecovery", first.State);
+        True(first.WalkedGround.Count == 0);
+        var confirmed = reopened.Process(PipelineTextureFrameFromPixels(5, texture), 104, 1.90, 1, room, localPose: raw);
+        True(confirmed.ConfirmedRecoveryPose is not null);
+        var placed = reopened.Process(PipelineTextureFrameFromPixels(6, texture), 105, 2.20, 1, room, localPose: raw,
+            walkedGround: [Span(200, 220)]);
+        Equal("Committed", placed.State);
+        var archive = new LiveWorldSessionStore(root).Load().Snapshot;
+        ClosePoint(raw, archive.Observations[^1].RawPose, .000_001);
+        ClosePoint(placed.CameraPose, archive.Observations[^1].OptimizedPose, .000_001);
+        CloseWithin(140, placed.WalkedGround.Max(line => line.AtlasEnd.X), .01);
+        True(placed.WalkedGround.SequenceEqual(LiveWorldWalkedGround.ProjectRoom(archive,
+            archive.Observations[^1].RoomId)));
+        var uncertain = reopened.Process(PipelineTextureFrameFromPixels(7, PipelineTexturePixels(911)),
+            106, 2.50, 1, room, stableTrackingVerified: false, localPose: raw,
+            walkedGround: [Span(100, 400)]);
+        Equal("Committed", uncertain.State);
+        True(new LiveWorldSessionStore(root).Load().Snapshot.Observations[^1].WalkedGround is null);
+    });
+}
+
 static void TestPipelineCadenceSuppressesDuplicatePersistence()
 {
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         Equal("Committed", pipeline.Process(
             PipelineSolidFrame(1), 100, 10, 1, "Tutorial_01").State);
         var afterFirst = stages.Count;
@@ -9142,7 +9396,7 @@ static void TestPipelineRejectsStaleCaptureGeneration()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         Equal("Committed", pipeline.Process(
             PipelineSolidFrame(1), 100, 1, 2, "Tutorial_01").State);
         var publishedStages = stages.Count;
@@ -9170,7 +9424,7 @@ static void TestPipelineRollsBackAfterCasFailureAndSuppressesPublication()
     {
         var stages = new List<string>();
         var contended = false;
-        var pipeline = new LiveWorldPipelineReflection(root, stage =>
+        var pipeline = new LiveWorldPipelineHarness(root, stage =>
         {
             stages.Add(stage);
             if (stage != "ingest" || contended) return;
@@ -9209,15 +9463,19 @@ static void TestPipelinePublishesClosureOnlyAfterRebuildAndCommit()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineReflection(root, stages.Add);
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
         var firstTexture = PipelineTexturePixels(191);
         var secondTexture = PipelineTexturePixels(811);
         Equal("Committed", pipeline.Process(
             PipelineTextureFrameFromPixels(1, firstTexture), 100, 1, 1, "Tutorial_01",
-            localPose: new AtlasPoint(0, 0)).State);
+            localPose: new AtlasPoint(0, 0),
+            walkedGround: [new GroundHypothesisAtlasLine(WalkedGroundMemory.WalkedSegmentId,
+                new(0, 70), new(120, 70))]).State);
         Equal("Committed", pipeline.Process(
             PipelineTextureFrameFromPixels(2, secondTexture), 101, 1.3, 1, "Tutorial_01",
-            localPose: new AtlasPoint(160, 0)).State);
+            localPose: new AtlasPoint(160, 0),
+            walkedGround: [new GroundHypothesisAtlasLine(WalkedGroundMemory.WalkedSegmentId,
+                new(160, 70), new(280, 70))]).State);
         Equal("Committed", pipeline.Process(
             PipelineTextureFrameFromPixels(3, firstTexture), 102, 1.6, 1, "Tutorial_01",
             localPose: new AtlasPoint(0, 0)).State);
@@ -9227,6 +9485,10 @@ static void TestPipelinePublishesClosureOnlyAfterRebuildAndCommit()
 
         Equal("Committed", closure.State);
         True(closure.AcceptedClosure is not null);
+        var rebuiltWorld = new LiveWorldSessionStore(root).Load().Snapshot;
+        True(closure.WalkedGround.Count == 2);
+        True(closure.WalkedGround.SequenceEqual(LiveWorldWalkedGround.ProjectRoom(rebuiltWorld,
+            rebuiltWorld.Observations[0].RoomId)));
         var rebuildIndex = stages.LastIndexOf("closure-rebuild");
         var commitIndex = stages.FindIndex(rebuildIndex + 1, value => value == "commit");
         var basisIndex = stages.FindIndex(commitIndex + 1, value => value == "closure-basis");
@@ -9278,7 +9540,7 @@ static void TestLiveRoomBoundaryAuditWhenRequested()
             "The live room audit could not derive a chronological later room.");
     var leftRoomID = firstLaterRoom.RoomId;
 
-    var result = new LiveWorldPipelineReflection(root, _ => { })
+    var result = new LiveWorldPipelineHarness(root, _ => { })
         .BoundaryEvidence(leftRoomID, rightRoomID);
     if (result.PersistenceIssue is { Length: > 0 } issue)
     {
@@ -9360,7 +9622,7 @@ static void TestLiveRoomBoundaryAuditSelectsChronologicalPersistedEvidence()
             ]);
         True(store.Commit(snapshot, expectedRevision: 0, newRevision: 1));
 
-        var pipeline = new LiveWorldPipelineReflection(root, _ => { });
+        var pipeline = new LiveWorldPipelineHarness(root, _ => { });
         var result = pipeline.BoundaryEvidence(leftRoomID, rightRoomID);
         True(result.PersistenceIssue is null);
         var evidence = result.Evidence ?? throw new InvalidOperationException(
@@ -9490,15 +9752,18 @@ static void TestSynchronizerRequiresMatchingUnityFrameInEitherArrivalOrder()
         99,
         image,
         1.1,
-        false)) ?? throw new InvalidOperationException("Matching telemetry did not join its capture.");
+        false,
+        MovementButtons: InputButtons.Left)) ?? throw new InvalidOperationException("Matching telemetry did not join its capture.");
     Equal(99L, first.Sample.UnityFrame);
     Equal(99, first.Capture.UnityFrame);
+    True(first.Capture.MovementButtons == InputButtons.Left);
 
     True(synchronizer.Append(new HackerCapturedFrame(
         100,
         image,
         2,
-        true)) is null);
+        true,
+        MovementButtons: InputButtons.Right | InputButtons.ActionZ)) is null);
     True(synchronizer.Append(
         HackerSample(frame: 101, cameraX: 1),
         observedAt: 2.1) is null);
@@ -9508,6 +9773,7 @@ static void TestSynchronizerRequiresMatchingUnityFrameInEitherArrivalOrder()
             "Matching capture did not join its telemetry.");
     Equal(100, second.Capture.UnityFrame);
     Equal(100L, second.Sample.UnityFrame);
+    True(second.Capture.MovementButtons == (InputButtons.Right | InputButtons.ActionZ));
 }
 
 static void TestDirectCameraPlacementUsesIndependentXYProjectionScale()
@@ -9707,210 +9973,59 @@ static void ClosePoint(AtlasPoint expected, AtlasPoint actual, double tolerance 
     CloseWithin(expected.Y, actual.Y, tolerance);
 }
 
-internal sealed record LiveWorldPipelineReflectionResult(
+internal sealed record LiveWorldPipelineTestResult(
     string State,
     string Diagnostic,
     int Revision,
-    object? AcceptedClosure,
+    LiveWorldLoopClosureEdge? AcceptedClosure,
     AtlasPoint CameraPose,
     AtlasPoint AppliedCorrection,
     AtlasPoint WorldBasisOffset,
     AtlasPoint? ConfirmedRecoveryPose,
     bool AllowsAtlasWrite,
-    bool HasRebuiltAtlas);
+    bool HasRebuiltAtlas,
+    IReadOnlyList<GroundHypothesisAtlasLine> WalkedGround);
 
-internal sealed record LiveRoomBoundaryEvidenceReflectionResult(
-    VisualRoomBoundaryEvidence? Evidence,
-    string? PersistenceIssue);
-
-internal sealed class LiveWorldPipelineReflection
+internal sealed class LiveWorldPipelineHarness
 {
-    private static readonly Assembly AppAssembly = LoadAppAssembly();
-    private static readonly Type PipelineType = RequiredType(
-        "HollowKnightVision.Windows.App.WindowsLiveWorldPipeline");
-    private static readonly Type FrameType = RequiredType(
-        "HollowKnightVision.Windows.App.WindowsLiveWorldFrame");
-    private static readonly ConstructorInfo PipelineConstructor = PipelineType.GetConstructor(
-        BindingFlags.Instance | BindingFlags.NonPublic,
-        binder: null,
-        [typeof(string), typeof(Action<string>), typeof(Func<string, bool>)],
-        modifiers: null) ?? throw new MissingMethodException(
-            PipelineType.FullName,
-            ".ctor(string, Action<string>, Func<string, bool>)");
-    private static readonly ConstructorInfo FrameConstructor = FrameType.GetConstructors(
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-        .Single(constructor => constructor.GetParameters().Length == 13);
-    private static readonly MethodInfo ProcessMethod = PipelineType.GetMethod(
-        "Process",
-        BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new MissingMethodException(PipelineType.FullName, "Process");
-    private static readonly MethodInfo NotifyTrackingLossMethod = PipelineType.GetMethod(
-        "NotifyTrackingLoss",
-        BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new MissingMethodException(PipelineType.FullName, "NotifyTrackingLoss");
-    private static readonly MethodInfo InvalidatePendingWorkMethod = PipelineType.GetMethod(
-        "InvalidatePendingWork",
-        BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new MissingMethodException(PipelineType.FullName, "InvalidatePendingWork");
-    private static readonly MethodInfo ReopenMethod = PipelineType.GetMethod(
-        "Reopen",
-        BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new MissingMethodException(PipelineType.FullName, "Reopen");
-    private static readonly FieldInfo AcceptsWorkField = RequiredField(
-        "acceptsWork",
-        typeof(bool));
-    private static readonly MethodInfo BoundaryEvidenceMethod = PipelineType.GetMethod(
-        "BoundaryEvidence",
-        BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new MissingMethodException(PipelineType.FullName, "BoundaryEvidence");
+    private static readonly FieldInfo AcceptsWorkField = typeof(WindowsLiveWorldPipeline)
+        .GetField("acceptsWork", BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new MissingFieldException(nameof(WindowsLiveWorldPipeline), "acceptsWork");
 
-    private readonly object pipeline;
+    private readonly WindowsLiveWorldPipeline pipeline;
 
-    internal LiveWorldPipelineReflection(
-        string root,
-        Action<string> transactionObserver,
+    internal LiveWorldPipelineHarness(string root, Action<string> transactionObserver,
         Func<string, bool>? transactionFault = null)
     {
-        pipeline = PipelineConstructor.Invoke([root, transactionObserver, transactionFault]);
+        pipeline = new(root, transactionObserver, transactionFault);
     }
 
-    internal LiveWorldPipelineReflectionResult Process(
-        BgraFrame frame,
-        double wallTimestamp,
-        double monotonicTimestamp,
-        ulong captureGeneration,
-        string roomName,
-        bool stableTrackingVerified = true,
-        AtlasPoint? localPose = null,
-        IReadOnlyList<StencilRect>? exclusions = null,
-        IReadOnlyList<StencilRect>? groundAlignmentExclusions = null)
+    internal LiveWorldPipelineTestResult Process(BgraFrame frame, double wallTimestamp, double monotonicTimestamp,
+        ulong captureGeneration, string roomName, bool stableTrackingVerified = true, AtlasPoint? localPose = null,
+        IReadOnlyList<StencilRect>? exclusions = null, IReadOnlyList<StencilRect>? groundAlignmentExclusions = null,
+        IReadOnlyList<GroundHypothesisAtlasLine>? walkedGround = null, long walkedCoordinateEpoch = 0)
     {
-        var request = FrameConstructor.Invoke(
-        [
-            frame,
-            frame,
-            wallTimestamp,
-            monotonicTimestamp,
-            localPose ?? new AtlasPoint(0, 0),
-            160d,
-            exclusions ?? Array.Empty<StencilRect>(),
-            groundAlignmentExclusions ?? exclusions ?? Array.Empty<StencilRect>(),
-            captureGeneration,
-            roomName,
-            1d,
-            64,
-            stableTrackingVerified
-        ]);
-        var result = Invoke(ProcessMethod, pipeline, request);
-        var type = result.GetType();
-        return new LiveWorldPipelineReflectionResult(
-            type.GetProperty("State")?.GetValue(result)?.ToString()
-                ?? throw new MissingMemberException(type.FullName, "State"),
-            type.GetProperty("Diagnostic")?.GetValue(result) as string
-                ?? throw new MissingMemberException(type.FullName, "Diagnostic"),
-            type.GetProperty("Revision")?.GetValue(result) is int revision
-                ? revision
-                : throw new MissingMemberException(type.FullName, "Revision"),
-            type.GetProperty("AcceptedClosure")?.GetValue(result),
-            type.GetProperty("CameraPose")?.GetValue(result) is AtlasPoint cameraPose
-                ? cameraPose
-                : throw new MissingMemberException(type.FullName, "CameraPose"),
-            type.GetProperty("AppliedCorrection")?.GetValue(result) is AtlasPoint appliedCorrection
-                ? appliedCorrection
-                : throw new MissingMemberException(type.FullName, "AppliedCorrection"),
-            type.GetProperty("WorldBasisOffset")?.GetValue(result) is AtlasPoint basis
-                ? basis
-                : throw new MissingMemberException(type.FullName, "WorldBasisOffset"),
-            type.GetProperty("ConfirmedRecoveryPose")?.GetValue(result) is AtlasPoint confirmed
-                ? confirmed
-                : null,
-            type.GetProperty("AllowsAtlasWrite", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                    ?.GetValue(result) is true,
-            type.GetProperty("RebuiltAtlas")?.GetValue(result) is not null);
-    }
-
-    internal void NotifyTrackingLoss(ulong captureGeneration) =>
-        _ = Invoke(NotifyTrackingLossMethod, pipeline, captureGeneration);
-
-    internal void InvalidatePendingWork() =>
-        _ = Invoke(InvalidatePendingWorkMethod, pipeline);
-
-    internal bool Reopen() => Invoke(ReopenMethod, pipeline) is true;
-
-    internal bool AcceptsWork => AcceptsWorkField.GetValue(pipeline) is bool value
-        ? value
-        : throw new InvalidOperationException("Live-world work admission is not Boolean.");
-
-    internal LiveRoomBoundaryEvidenceReflectionResult BoundaryEvidence(
-        int leftRoomID,
-        int rightRoomID)
-    {
-        var result = Invoke(
-            BoundaryEvidenceMethod,
-            pipeline,
-            leftRoomID,
-            rightRoomID);
-        var type = result.GetType();
-        return new LiveRoomBoundaryEvidenceReflectionResult(
-            type.GetProperty("Evidence")?.GetValue(result)
-                as VisualRoomBoundaryEvidence,
-            type.GetProperty("PersistenceIssue")?.GetValue(result) as string);
-    }
-
-    private static object Invoke(MethodInfo method, object target, params object?[] arguments)
-    {
-        try
+        var request = new WindowsLiveWorldFrame(
+            frame, frame, wallTimestamp, monotonicTimestamp, localPose ?? default, 160,
+            exclusions ?? [], groundAlignmentExclusions ?? exclusions ?? [], captureGeneration, roomName, 1, 64,
+            stableTrackingVerified)
         {
-            return method.Invoke(target, arguments) ?? new object();
-        }
-        catch (TargetInvocationException error) when (error.InnerException is not null)
-        {
-            throw error.InnerException;
-        }
+            WalkedGround = walkedGround ?? [],
+            WalkedCoordinateEpoch = walkedCoordinateEpoch
+        };
+        var result = pipeline.Process(request);
+        return new(result.State.ToString(), result.Diagnostic, result.Revision, result.AcceptedClosure, result.CameraPose,
+            result.AppliedCorrection, result.WorldBasisOffset, result.ConfirmedRecoveryPose, result.AllowsAtlasWrite,
+            result.RebuiltAtlas is not null, result.WalkedGround);
     }
 
-    private static Type RequiredType(string name) =>
-        AppAssembly.GetType(name, throwOnError: true)
-        ?? throw new TypeLoadException(name);
+    internal void NotifyTrackingLoss(ulong captureGeneration) => pipeline.NotifyTrackingLoss(captureGeneration);
+    internal void InvalidatePendingWork() => pipeline.InvalidatePendingWork();
+    internal bool Reopen() => pipeline.Reopen();
+    internal bool AcceptsWork => AcceptsWorkField.GetValue(pipeline) is true;
 
-    private static FieldInfo RequiredField(string name, Type expectedType)
-    {
-        var field = PipelineType.GetField(
-            name,
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingFieldException(PipelineType.FullName, name);
-        if (field.FieldType != expectedType)
-        {
-            throw new InvalidOperationException(
-                $"{PipelineType.FullName}.{name} must be {expectedType.FullName}.");
-        }
-        return field;
-    }
-
-    private static Assembly LoadAppAssembly()
-    {
-        var configuration = Directory.GetParent(
-                AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar))?.Name
-            ?? "Release";
-        var windowsRoot = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory,
-            "..", "..", "..", "..", ".."));
-        var path = Path.Combine(
-            windowsRoot,
-            "src",
-            "HollowKnightVision.Windows.App",
-            "bin",
-            configuration,
-            "net8.0-windows10.0.19041.0",
-            "HollowKnightVision.Windows.dll");
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException(
-                "Build HollowKnightVision.Windows.App before running pipeline regressions.",
-                path);
-        }
-        return Assembly.LoadFrom(path);
-    }
+    internal WindowsLiveRoomBoundaryEvidenceResult BoundaryEvidence(int leftRoomId, int rightRoomId) =>
+        pipeline.BoundaryEvidence(leftRoomId, rightRoomId);
 }
 
 file static class GroundPixelsParityTests
@@ -10357,7 +10472,7 @@ file static class DashboardPresentationParityTests
         Check(DashboardFeatureReviewGeometry.LineWidth == 1);
     }
 
-    public static void TestGroundReviewPaletteUsesPurpleForPersistentTileAndLine()
+    public static void TestGroundReviewPaletteKeepsGreenLinesAndPurplePatches()
     {
         var tile = DashboardFeatureReviewPalette.Rgba(
             DashboardFeatureReviewMarkerKind.GroundFeature);
@@ -10368,9 +10483,8 @@ file static class DashboardPresentationParityTests
         Check(tile != selection);
         Check(tile.Blue > tile.Red);
         Check(tile.Red > tile.Green);
-        Check(tile.Red == line.Red);
-        Check(tile.Green == line.Green);
-        Check(tile.Blue == line.Blue);
+        Check(line == DashboardFeatureReviewPalette.Rgba(DashboardFeatureReviewLineKind.CurrentGround));
+        Check(line.Green > line.Blue && line.Blue > line.Red);
     }
 
     public static void TestLiveGroundReviewPaletteMatchesLegend()

@@ -1,4 +1,8 @@
-param([string]$Python, [string]$Dotnet = 'dotnet')
+param(
+  [string]$Python,
+  [string]$Dotnet = 'dotnet',
+  [string]$NativeVerifier = (Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\HollowKnightVision.Windows.Host.exe')
+)
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 if (-not $Python) {
@@ -9,6 +13,7 @@ if (-not $Python) {
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw 'Run setup-training-windows.ps1 or supply -Python.' }
 $tests = Join-Path $PSScriptRoot 'tests\HollowKnightVision.Windows.Tests\bin\Release\net8.0\HollowKnightVision.Windows.Tests.dll'
 if (-not (Test-Path -LiteralPath $tests -PathType Leaf)) { throw 'Run build-windows.ps1 before the trainer interchange check.' }
+if (-not (Test-Path -LiteralPath $NativeVerifier -PathType Leaf)) { throw 'The native Windows trainer verifier is missing.' }
 $trainerRoot = Join-Path $repositoryRoot 'macos\TrainingPython'
 $temporaryParent = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))
 $fixtureRoot = Join-Path $temporaryParent ('hkv-dataset-probe-' + [Guid]::NewGuid().ToString('N'))
@@ -66,6 +71,152 @@ print('PASS Windows PNG/JSON -> shared Python reader, normalized coordinates, kn
 '@
   & $Python -B -c $validation $trainerRoot $dataset
   if ($LASTEXITCODE -ne 0) { throw 'Windows/Python dataset interchange assertions failed.' }
+  $botFixture = Join-Path $fixtureRoot 'paired-captures'
+  $botSource = Join-Path $repositoryRoot 'macos\BotPython'
+  & $Python -B -m unittest discover -s $botSource -p test_training_ipc.py
+  if ($LASTEXITCODE -ne 0) { throw 'Bot worker subprocess pipes or checkpoint locking failed.' }
+  & $Dotnet $tests --export-bot-capture-probe $botFixture
+  if ($LASTEXITCODE -ne 0) { throw 'Windows paired capture export failed.' }
+  $botValidation = @'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import hkv_bot_dataset as bot
+sessions = {manifest["botDomain"]: (manifest, observations, inputs)
+            for manifest, observations, inputs in
+            (bot.read_session(folder) for folder in Path(sys.argv[2]).glob("demo-*"))}
+assert set(sessions) == {"hacker", "gameplay"}
+hm, hacker, controls = sessions["hacker"]
+gm, gameplay, visual_controls = sessions["gameplay"]
+assert hm["replayID"] == gm["replayID"] and gm["pairedClipID"] == hm["id"] and hm["pairedClipID"] == gm["id"]
+assert controls == visual_controls
+assert [f["captureTimestamp"] for f in hacker] == [f["captureTimestamp"] for f in gameplay]
+assert all("detectedTerrain" not in f and f["authoredTerrain"]["walls"][0]["solidSide"] == 0
+           and f["authoredTerrain"]["doors"] and f["authoredTerrain"]["spikes"] and f["geoCaches"]
+           for f in hacker)
+assert all("authoredTerrain" not in f and f["detectedTerrain"]["walls"][0]["solidSide"] == 1
+           and f["geoCaches"] == [] for f in gameplay)
+bot.paired_measurements(gm, gameplay, hm, hacker)
+assert all(f["enemyOutcomes"] == other["enemyOutcomes"] for f, other in zip(gameplay, hacker))
+for manifest, observations, inputs in sessions.values():
+    for version in (bot.SCHEMA_VERSION, bot.GROUND_CONTACT_POLICY_VERSION, bot.LANDING_GEOMETRY_POLICY_VERSION):
+        rows, rejected = bot.examples(manifest, observations, inputs, policy_version=version)
+        assert len(rows) == 6 and not rejected
+        assert all(len(row["observation"]) == bot.HISTORY_LENGTH * len(bot.SCHEMAS[version]) for row in rows)
+        assert sum(row["blueHealthGained"] for row in rows) == 2
+        assert [row["continuedAttack"] for row in rows] == [False, True, True, False, True, True]
+print("PASS Windows paired PNG and event capture -> shared bot exporter, typed terrain, held attacks and blue health")
+
+import copy
+import hashlib
+import json
+import torch
+
+input_fixtures = []
+for domain, (manifest, observations, inputs) in sessions.items():
+    enriched = copy.deepcopy(observations)
+    for index, row in enumerate(enriched):
+        row["atlasView"] = dict(left=.3, right=.74, camera=[3, -11], width=80.0,
+                                health=5 if index < 4 else None, missing=[i/14 for i in range(15)])
+        row["roadHint"] = dict(dx=.24, dy=-.44, clearance=.62, distance=.47, frontier=index % 2 == 0)
+        if index == 1:
+            row["hackerPathVersion"] = 1
+        elif index == 2:
+            row["atlasPathVersion"] = 1
+        elif index == 3:
+            row["pathProgress"] = .2
+        row["blockade"] = dict(dx=-.2, dy=.11, mark=dict(direction=-1, crossed=False,
+                               space="fixture", x=4, y=9, viewWidth=80))
+        row["joniBlessings"] = [dict(x=.7, y=.3, width=.05, height=.075)]
+        row["grounded"] = False
+        terrain = row["authoredTerrain" if domain == "hacker" else "detectedTerrain"]
+        w, y, h = terrain["width"], row["features"][1], row["features"][3]
+        x = row["features"][0]
+        floor = dict(minimumX=(x - h)*w + index*.11, maximumX=(x + h)*w + index*.11,
+                     y=(y - 1.35*h)*w + index*.16, confidence=1)
+        terrain["floors"] = [floor, dict(floor)]
+        if index == 0:
+            # An old observation omitted later wall inputs.
+            row["features"] = row["features"][:len(bot.LEGACY_FEATURE_NAMES)]
+        if index == 4:
+            row["roomID"] += 1
+            row["detectionTimestamp"] = row["captureTimestamp"] - .21
+        if index == 5:
+            row["roomID"] += 1
+            terrain["floors"] += [dict(minimumX=i, maximumX=i+3, y=i+1, confidence=1) for i in range(20)]
+        if index == 1 and domain == "gameplay":
+            row["features"][:5] = [0]*5
+            row["issues"] = ["missing-knight"]
+            row.pop("knightSource", None)
+    for sequence in (observations, enriched):
+        timeline = bot.ActionTimeline(inputs)
+        for version in sorted(bot.SCHEMAS):
+            rows, rejected = bot.examples(manifest, sequence, inputs, policy_version=version)
+            expected = {row["timestamp"]: row for row in rows}
+            fixture_rows = []
+            prior = None
+            for observation in sequence:
+                row = expected.get(observation["availableAt"])
+                action = (timeline.action_during(prior["timestamp"], row["timestamp"])[0]
+                          if prior and row and prior["segment"] == row["segment"] else None)
+                fixture_rows.append(dict(observation=observation, expected=row["observation"] if row else None,
+                                         previous=dict(zip(("horizontal","aim","jump","attack"), action or (0,0,0,0)))))
+                prior = row
+            assert len(rows) == (6 if sequence is observations else 5)
+            if version == bot.LANDING_GEOMETRY_POLICY_VERSION and sequence is enriched and domain == "hacker":
+                assert any(row["observation"][-6] and row["observation"][-1] for row in rows)
+            input_fixtures.append(dict(version=version, allowMaskedKnight=domain == "gameplay", rows=fixture_rows))
+(Path(sys.argv[2]) / "native-input-fixtures.json").write_text(json.dumps(input_fixtures))
+
+root = Path(sys.argv[2]) / "policy-fixtures"
+for version in (bot.SCHEMA_VERSION, bot.GROUND_CONTACT_POLICY_VERSION, bot.LANDING_GEOMETRY_POLICY_VERSION):
+    names = bot.SCHEMAS[version]
+    folder = root / str(version)
+    folder.mkdir(parents=True)
+    fake_checkpoint = b"native parity test"
+    (folder / "model.zip").write_bytes(fake_checkpoint)
+    digest = hashlib.sha256(fake_checkpoint).hexdigest()
+    width = len(names) * bot.HISTORY_LENGTH
+    generator = torch.Generator().manual_seed(version)
+    samples = torch.rand((8, width), generator=generator) - .5
+    weights = torch.rand((7, width), generator=generator) / width
+    hidden_bias = torch.rand((7,), generator=generator)
+    heads = torch.rand((sum(bot.ACTION_SIZES), 7), generator=generator)
+    biases = torch.rand((sum(bot.ACTION_SIZES),), generator=generator)
+    logits = torch.nn.functional.linear(torch.tanh(torch.nn.functional.linear(samples, weights, hidden_bias)), heads, biases)
+    actions = torch.stack([torch.argmax(head, dim=1) for head in torch.split(logits, bot.ACTION_SIZES, dim=1)], dim=1)
+    layers = []
+    for matrix, bias, activation in ((weights, hidden_bias, "tanh"), (heads, biases, "linear")):
+        layers.append(dict(inputSize=matrix.shape[1], outputSize=matrix.shape[0], activation=activation,
+                           weights=matrix.reshape(-1).tolist(), biases=bias.tolist()))
+    raw = json.dumps(dict(schemaVersion=1, observationSchemaVersion=version, modelName="CPU fixture",
+                          featureNames=names, historyLength=bot.HISTORY_LENGTH, actionSizes=bot.ACTION_SIZES,
+                          sourceCheckpointSHA256=digest, layers=layers)).encode()
+    (folder / "runtime-policy.json").write_bytes(raw)
+    (folder / "runtime-manifest.json").write_text(json.dumps(dict(schemaVersion=1, policyFile="runtime-policy.json",
+        policySHA256=hashlib.sha256(raw).hexdigest(), sourceCheckpointSHA256=digest)))
+    (folder / "fixture.json").write_text(json.dumps(dict(inputs=samples.tolist(), logits=logits.tolist(), actions=actions.tolist())))
+
+'@
+  & $Python -B -c $botValidation $botSource $botFixture
+  if ($LASTEXITCODE -ne 0) { throw 'Windows bot capture interoperability failed.' }
+  & $nativeVerifier --hacker-gym-observations verify-inputs (Join-Path $botFixture 'native-input-fixtures.json')
+  if ($LASTEXITCODE -ne 0) { throw 'Windows native observation history differs from shared trainer inputs.' }
+  $policyFixtures = Get-ChildItem -LiteralPath (Join-Path $botFixture 'policy-fixtures') -Directory
+  foreach ($entry in $policyFixtures) {
+    & $nativeVerifier --hacker-gym-observations verify $entry.FullName (Join-Path $entry.FullName 'fixture.json')
+    if ($LASTEXITCODE -ne 0) { throw "Native bot policy verification failed for schema $($entry.Name)." }
+  }
+  Write-Host 'PASS Windows native PPO action heads match CPU PyTorch for compact, grounded, and landing policies.'
+
+  $gymProbe = Join-Path $fixtureRoot 'hacker-gym'
+  & $Dotnet $tests --export-hacker-gym-probe $gymProbe
+  if ($LASTEXITCODE -ne 0) { throw 'Could not export the synthetic Hacker Gym receiver sequence.' }
+  & $Python -B (Join-Path $PSScriptRoot 'tests\hacker_gym_interop.py') $botSource $gymProbe $nativeVerifier
+  if ($LASTEXITCODE -ne 0) { throw 'Hacker Gym observation transport did not match the trainer protocol.' }
+  & $Python -B (Join-Path $PSScriptRoot 'tests\gameplay_gym_interop.py') $botSource $gymProbe $nativeVerifier
+  if ($LASTEXITCODE -ne 0) { throw 'Game Play Gym observation transport leaked telemetry into visual inputs or rejected pixel evidence.' }
+
 } finally {
   foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
   if (Test-Path -LiteralPath $fixtureRoot) {

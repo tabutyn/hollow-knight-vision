@@ -11,9 +11,12 @@ public sealed class OnnxObjectDetectorSet : IDisposable
         {
             foreach (var directory in runDirectories.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                var version = artifacts?.FirstOrDefault(item => string.Equals(
-                    Path.GetDirectoryName(Path.GetFullPath(item.ModelPath)), directory, StringComparison.OrdinalIgnoreCase))?.Version;
-                detectors.Add(new(directory, version));
+                var artifact = artifacts?.FirstOrDefault(item => string.Equals(
+                    Path.GetDirectoryName(Path.GetFullPath(item.ModelPath)), directory, StringComparison.OrdinalIgnoreCase));
+                if (artifact?.TrainedClassIdentifiers is { Count: 0 }) continue;
+                var detector = new OnnxObjectDetector(directory, artifact?.Version, artifact?.TrainedClassIdentifiers);
+                if (detector.TrainedClassIdentifiers.Count > 0) detectors.Add(detector);
+                else detector.Dispose();
             }
         }
         catch { Dispose(); throw; }

@@ -4,8 +4,11 @@ namespace HollowKnightVision.Windows.Core;
 
 public sealed partial class MenuStencilTracker
 {
+    private static string? FindSelectedIdentifier(Scene scene, string? name) =>
+        name is null ? null : scene.Options.FirstOrDefault(option => option.Name == name)?.ClassIdentifier;
+
     private IReadOnlyList<MenuStencilMatch> WithRepeatedProfileActions(Scene scene, ImageStencilPixels pixels,
-        BgraFrame image, string? language, IReadOnlyList<MenuStencilMatch> matches)
+        BgraFrame image, string? language, IReadOnlyList<MenuStencilMatch> matches, List<int> checkedSlots, List<int> occupiedSlots)
     {
         const string identifier = "select-profile.clear-save";
         if (scene.ContextIdentifier != "select-profile"
@@ -20,7 +23,10 @@ public sealed partial class MenuStencilTracker
             var score = BestScore(VariantsFor(reference.Variants, language), pixels, expected, 4, 6, reference.Bounds);
             // Empty slots have no Clear Save action. Require pixels at each row,
             // rather than displaying four copies of the annotated reference.
-            if (score is null || score.Confidence < AnchorThreshold) continue;
+            if (score is null || ProfileLaunchDetector.ParseSlot(option.ClassIdentifier, identifier + "-") is not { } slot) continue;
+            checkedSlots.Add(slot);
+            if (score.Confidence < AnchorThreshold) continue;
+            occupiedSlots.Add(slot);
             result.Add(new(identifier, option.Name, OutputRect(score.Rect, image, scene), score.Confidence, score.Reference));
         }
         return result;

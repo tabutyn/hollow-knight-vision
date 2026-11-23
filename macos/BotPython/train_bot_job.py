@@ -13,7 +13,7 @@ import uuid
 from hkv_bot_dataset import FEATURE_COUNT, FEATURE_NAMES, HELD_ATTACK_COST, HISTORY_LENGTH, SCHEMA_VERSION, SCHEMAS, collect, demonstration_controls, read_session, recover_exit_path, apply_exit_path_evidence, main as export_dataset
 from bot_audit import inspect as inspect_archive
 from train_behavior_cloning import fighting_frames, train
-from export_bot_policy import export_policy
+from export_bot_policy import export_policy, write_parity_fixture
 from bot_action_history import sequential_inputs
 from compact_markings import wall_present, mask_walls
 from bot_policy_continuation import gym_observations, playback_checkpoint, publication_lock, save_gym_observations
@@ -119,19 +119,24 @@ def snapshot_exit_path_evidence(source, sidecar, destination, replay_root=None):
 
 
 def run_job(root, selection, run_id, baseline=None, epochs=160, domain=None, wall_extractor=None, recovery_session=None,
-            upgrade_observations=False, follow_playback=False, exit_path=None, reuse_validation=False):
+            upgrade_observations=False, follow_playback=False, exit_path=None, reuse_validation=False, native_verifier=None):
     models = Path(root) / 'models'
     if domain is not None:
         models /= domain
     with publication_lock(models):
         if follow_playback:
-            baseline = playback_checkpoint(models, domain, Path(baseline) if baseline else None)
+            if native_verifier:
+                native = subprocess.check_output([native_verifier, "--bot-playback-checkpoint", root, domain],
+                                                 encoding="utf-8", timeout=45)
+                baseline = json.loads(native)
+            else:
+                baseline = playback_checkpoint(models, domain, Path(baseline) if baseline else None)
         return _run_job(root, selection, run_id, baseline, epochs, domain, wall_extractor, recovery_session,
-                        upgrade_observations, exit_path, reuse_validation)
+                        upgrade_observations, exit_path, reuse_validation, native_verifier)
 
 
 def _run_job(root, selection, run_id, baseline, epochs, domain, wall_extractor, recovery_session,
-             upgrade_observations, exit_path=None, reuse_validation=False):
+             upgrade_observations, exit_path=None, reuse_validation=False, native_verifier=None):
     import numpy as np
     from stable_baselines3 import PPO
     root = Path(root)
@@ -179,8 +184,14 @@ def _run_job(root, selection, run_id, baseline, epochs, domain, wall_extractor, 
             raise ValueError('Recording changed while snapshotting: ' + session_id)
         snapshot = snapshots / source.name
         manifest = json.loads((snapshot / "manifest.json").read_text())
-        if wall_extractor and any("driveDirection" not in o for o in read_session(snapshot)[1]):
-            result = subprocess.run([wall_extractor, "--recover-bot-blockades", str(snapshot)],
+        blockade_extractor = native_verifier or wall_extractor
+        if blockade_extractor and any(
+            o.get("driveDirection") is None or (
+                native_verifier and o.get("blockadeVersion") is None and o.get("blockadePose") is None
+                and o.get("terrainSource") == "detected")
+            for o in read_session(snapshot)[1]
+        ):
+            result = subprocess.run([blockade_extractor, "--recover-bot-blockades", str(snapshot)],
                                     stdout=subprocess.PIPE, check=True)
             evidence = json.loads(result.stdout)
             evidence["eventsSHA256"] = before["events.jsonl"]
@@ -359,6 +370,11 @@ def _run_job(root, selection, run_id, baseline, epochs, domain, wall_extractor, 
     predicted, _ = candidate.predict(x, deterministic=True)
     if not np.array_equal(native_actions, predicted):
         raise ValueError('Native export disagrees with Stable-Baselines3 on held-out actions')
+    if native_verifier:
+        fixture = run / "native-verification.json"
+        write_parity_fixture(candidate, fixture, observations=x)
+        subprocess.run([native_verifier, "--hacker-gym-observations", "verify", candidate_directory, fixture],
+                       check=True, timeout=45)
     # Mask only the new inputs across all four frames on the identical held-out decisions.
     frames = x.reshape(-1, HISTORY_LENGTH, FEATURE_COUNT)
     masked = frames.copy()
@@ -409,6 +425,7 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=160)
     parser.add_argument('--domain', choices=['hacker', 'gameplay'])
     parser.add_argument('--wall-extractor', type=Path)
+    parser.add_argument('--native-verifier', type=Path, help='Verify with the installed Windows policy host.')
     parser.add_argument('--recovery-session', help='A training clip to emphasize for a known occlusion failure')
     parser.add_argument('--upgrade-observations', action='store_true')
     parser.add_argument('--reuse-validation', action='store_true', help="Continue training with the parent's exact validation split.")
@@ -417,9 +434,12 @@ if __name__ == '__main__':
     parser.add_argument('--exit-path-connections', type=Path)
     parser.add_argument('--exit-path-objective', type=float, nargs=2, metavar=('X', 'Y'))
     args = parser.parse_args()
+    if args.native_verifier and not args.domain:
+        parser.error('Native verification requires a bot domain')
     exit_args = (args.exit_path_replay_root, args.exit_path_labels, args.exit_path_connections, args.exit_path_objective)
     if any(x is not None for x in exit_args) and (not all(x is not None for x in exit_args) or not args.wall_extractor):
         parser.error('Exit reconstruction requires --wall-extractor and all four --exit-path inputs')
     exit_path = exit_args if all(x is not None for x in exit_args) else None
     run_job(args.root, args.selection, args.run_id, args.baseline, args.epochs, args.domain, args.wall_extractor,
-            args.recovery_session, args.upgrade_observations, args.follow_playback, exit_path, args.reuse_validation)
+            args.recovery_session, args.upgrade_observations, args.follow_playback, exit_path, args.reuse_validation,
+            args.native_verifier)

@@ -31,6 +31,22 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+    <Content Include="../../setup-bot-trainer-windows.ps1;../../train-hacker-gym-windows.ps1;../../train-bot-windows.ps1">
+      <Link>training/%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="../../../macos/BotPython/*.py;../../../macos/BotPython/requirements.txt"
+             Exclude="../../../macos/BotPython/test_*.py">
+      <Link>training/BotPython/%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="../../../macos/score-visual-replay.py;../../../macos/camera_diagnostics.py">
+      <Link>diagnostics/%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <ProjectReference Include="../HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
     <ProjectReference Include="../HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj" />
     <Content Include="../../../models/shared-object-model/**">

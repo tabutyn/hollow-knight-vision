@@ -128,6 +128,168 @@ internal static class Program
         TextWriter? standardError = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
+        if (arguments.Contains("--replay-visual-archive", StringComparer.Ordinal))
+        {
+            VisualProductionReplayOptions options;
+            var errors = standardError ?? Console.Error;
+            try { options = VisualProductionReplayOptions.Parse(arguments); }
+            catch (ArgumentException error)
+            {
+                errors.WriteLine(error.Message);
+                return Task.FromResult(64);
+            }
+            try
+            {
+                var report = VisualProductionReplay.Run(options);
+                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(report, WorldReplayJsonOptions));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                or JsonException or ArgumentException or OverflowException or LiveWorldSessionStoreException)
+            {
+                errors.WriteLine($"Visual replay failed. {error.Message}");
+                return Task.FromResult(1);
+            }
+        }
+        if (arguments.Contains("--inspect-visual-replay", StringComparer.Ordinal))
+        {
+            var output = standardOutput ?? Console.Out;
+            var errors = standardError ?? Console.Error;
+            if (arguments is not ["--inspect-visual-replay", var path])
+            {
+                errors.WriteLine("Expected --inspect-visual-replay PATH.");
+                return Task.FromResult(64);
+            }
+            try
+            {
+                var report = VisualReplayArchiveReader.Inspect(path);
+                output.WriteLine(JsonSerializer.Serialize(report, WorldReplayJsonOptions));
+                return Task.FromResult(report.Complete ? 0 : 2);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                or JsonException or ArgumentException)
+            {
+                errors.WriteLine($"Visual replay inspection failed. {error.Message}");
+                return Task.FromResult(1);
+            }
+        }
+        if (arguments is ["--recover-bot-blockades", var capturePath])
+        {
+            try
+            {
+                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(
+                    BotBlockadeReplay.Recover(capturePath), WorldReplayJsonOptions));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                or JsonException or InvalidOperationException or KeyNotFoundException)
+            {
+                (standardError ?? Console.Error).WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
+        if (arguments is ["--bot-playback-checkpoint", var botRoot, ("gameplay" or "hacker") and var botDomain])
+        {
+            try
+            {
+                var selected = new BotModelStore(botRoot, botDomain == "hacker" ? BotCaptureDomain.Hacker : BotCaptureDomain.Gameplay)
+                    .LoadPlayback();
+                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(selected?.Directory));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException)
+            {
+                (standardError ?? Console.Error).WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
+        if (arguments is ["--gym-runtime-info", var domain, var gamePath, var supportPath])
+        {
+            try
+            {
+                var info = GymRuntimeInfo.Read(domain, gamePath, supportPath,
+                    Environment.GetEnvironmentVariable("HKV_GYM_VISUAL_MODEL_DIR"));
+                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(info, WorldReplayJsonOptions));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                or JsonException or ArgumentException or InvalidOperationException or KeyNotFoundException)
+            {
+                (standardError ?? Console.Error).WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
+        if (arguments is ["--hacker-gym-observations", "verify", var checkpoint, var fixture])
+        {
+            try
+            {
+                var count = BotNativePolicy.Load(checkpoint).Verify(fixture);
+                (standardOutput ?? Console.Out).WriteLine($"Verified {count} bot policy observations.");
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+            {
+                (standardError ?? Console.Error).WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
+        if (arguments is ["--hacker-gym-observations", "verify-inputs", var observations])
+        {
+            try
+            {
+                BotObservationParity.Verify(observations, standardOutput ?? Console.Out);
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+            {
+                (standardError ?? Console.Error).WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
+        if (arguments is ["--hacker-gym-observations", var gymVersion, var gymLabels, ..] && arguments.Length is 3 or 4)
+        {
+            try
+            {
+                if (!int.TryParse(gymVersion, out var version))
+                    throw new InvalidDataException("Expected the checkpoint observation version and ground labels path.");
+                HackerGymObservationEncoder.Run(version, gymLabels, Console.In, standardOutput ?? Console.Out,
+                    Environment.GetEnvironmentVariable("HKV_ATLAS_PATH_CONNECTIONS"),
+                    HackerGymObservationEncoder.FixedObjective(Environment.GetEnvironmentVariable("HKV_GYM_EXIT_X"),
+                        Environment.GetEnvironmentVariable("HKV_GYM_EXIT_Y")));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException
+                or JsonException or ArgumentException or GroundTruthLineStoreException)
+            {
+                (standardError ?? Console.Error).WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
+        if (arguments is ["--gameplay-gym-observations", var gameGymVersion, var pixels, var mask, ..]
+            && arguments.Length is >= 4 and <= 7)
+        {
+            try
+            {
+                if (!int.TryParse(gameGymVersion, out var version) || !bool.TryParse(mask, out var allowMask))
+                    throw new InvalidDataException("Expected observation schema, frame path and masked Knight support.");
+                var support = Environment.GetEnvironmentVariable("HKV_GYM_VISUAL_SUPPORT_ROOT") ?? Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HollowKnightVision");
+                var labels = Environment.GetEnvironmentVariable("HKV_GYM_LABELS")
+                    ?? throw new InvalidDataException("Missing Gym authored terrain labels.");
+                GameplayGymObservationEncoder.Run(version, pixels, allowMask, support, labels, Console.In,
+                    standardOutput ?? Console.Out, Environment.GetEnvironmentVariable("HKV_GYM_VISUAL_MODEL_DIR"),
+                    arguments.Skip(4).ToArray(), Environment.GetEnvironmentVariable("HKV_ATLAS_PATH_CONNECTIONS"),
+                    HackerGymObservationEncoder.FixedObjective(Environment.GetEnvironmentVariable("HKV_GYM_EXIT_X"),
+                        Environment.GetEnvironmentVariable("HKV_GYM_EXIT_Y")));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException
+                or JsonException or ArgumentException or GroundTruthLineStoreException or Microsoft.ML.OnnxRuntime.OnnxRuntimeException)
+            {
+                (standardError ?? Console.Error).WriteLine(error.Message);
+                return Task.FromResult(1);
+            }
+        }
         if (arguments is ["--tracking-step-verify-prefix", var prefixDirectory, var prefixSource])
         {
             try
@@ -522,6 +684,14 @@ internal static class Program
         Console.WriteLine("""
             Hollow Knight Vision Windows capture bootstrap
 
+            --inspect-visual-replay PATH
+                                    Verify a saved input path's exact frame archive offline.
+            --replay-visual-archive PATH --visual-replay-output DIRECTORY
+                                    Replay archived frames through Windows ground tracking and atlas placement.
+            --visual-replay-frame-limit N
+                                    Consider only the first N original archive entries.
+            --visual-replay-allow-incomplete
+                                    Retain reported gaps and process the remaining images.
             --probe                 Locate the game window without capturing pixels.
             --receiver-probe        Verify the in-game receiver and print its capabilities.
             --ground-truth-once     Print one Hacker camera/hero telemetry sample.

@@ -374,9 +374,11 @@ public sealed partial class GroundCameraSolver
                 && result.Support >= Math.Max(12, anchor.Support * 2)
                 && result.Error <= Math.Min(10, anchor.Error + 1)
                 && timestamp - alternative.Timestamp <= .2 && distance <= 6;
-            return (independentRecentConsensus || ((result.Support >= 6 || stronger)
+            var independentlySupported = independentRecentConsensus
+                || AllowsStationaryAnchorRecovery(anchor, result, timestamp - alternative.Timestamp);
+            return (independentlySupported || ((result.Support >= 6 || stronger)
                 && result.Error + 1 < anchor.Error * .65 && (stronger || distance <= 6)),
-                stronger || independentRecentConsensus);
+                stronger || independentlySupported);
         }
         if (before.Anchor is not { } anchor || before.Recent is not { } recent || anchor.Timestamp == recent.Timestamp)
         {
@@ -400,6 +402,16 @@ public sealed partial class GroundCameraSolver
         }
         return SolveFallback();
     }
+
+    // A recent, trusted view can measure real horizontal motion when a weak old
+    // anchor is stuck on stationary foreground. Require a denser, better match.
+    internal static bool AllowsStationaryAnchorRecovery(Solution anchor, Solution recent, double referenceAge) =>
+        recent.ReferenceTrusted && referenceAge is >= 0 and <= .08
+        && anchor.Support <= 8 && recent.Support >= Math.Max(10, anchor.Support + 4)
+        && Math.Abs(anchor.ImageTranslation.X) <= .25 && Math.Abs(recent.ImageTranslation.X) >= 2
+        && Math.Abs(recent.ImageTranslation.Y - anchor.ImageTranslation.Y) <= 1.5
+        && Length(Subtract(recent.ImageTranslation, anchor.ImageTranslation)) <= 32
+        && recent.Error + 1.5 <= anchor.Error;
 
     private CameraVector MotionScale(string source, CameraVector displacement)
     {

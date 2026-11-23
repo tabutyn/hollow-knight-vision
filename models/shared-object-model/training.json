@@ -83,6 +83,15 @@
   },
   "schemaVersion": 2,
   "startedAt": "2026-10-03T18:24:29Z",
+  "trainedClassIdentifiers": [
+    "enemies.crawlid",
+    "enemies.shade",
+    "enemies.vengfly",
+    "game.playable-knight",
+    "world.geo-deposit",
+    "world.lifeblood-cacoon",
+    "world.sign"
+  ],
   "trainingAnnotationCount": 201,
   "trainingBatchCountPerEpoch": 21,
   "trainingBatchSize": 4,

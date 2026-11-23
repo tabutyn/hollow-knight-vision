@@ -42,6 +42,119 @@ internal static class VisionResetController
         GroundTruthAtlasMosaic Mosaic,
         PersistedAtlasMetadata Metadata);
 
+    internal sealed record ProfileAtlasActivation(
+        SaveProfileAtlas Profile,
+        ActiveAtlasReplacement<ValidatedPersistedAtlas>? Replacement);
+
+    internal static ProfileAtlasActivation ActivateProfileAtlas(
+        AtlasStateStore states,
+        string activeDirectory,
+        ProfileLaunch launch,
+        int tileSize,
+        double pixelsPerWorldUnit,
+        Action<string>? activateWorld = null,
+        Action<SaveProfileAtlas, bool>? prepareProfile = null)
+    {
+        if (launch.Slot is < 1 or > 4) throw new ArgumentOutOfRangeException(nameof(launch));
+        var active = ValidatedActiveAtlasPath(states, activeDirectory);
+        RecoverInterruptedActiveAtlasPublication(states, active, ReadPersistedAtlas);
+        var previous = SaveProfileAtlas.Read(active);
+        var saved = launch.IsNew || previous?.Slot == launch.Slot ? [] : states.List();
+        var profile = SaveProfileAtlas.Target(launch, previous, saved);
+        if (previous == profile)
+        {
+            prepareProfile?.Invoke(profile, false);
+            return new(profile, null);
+        }
+        var restore = saved.FirstOrDefault(state => state.Profile == profile);
+        var adoptUnassigned = restore is null && previous is null && !launch.IsNew
+            && File.Exists(Path.Combine(active, "atlas.json"));
+        prepareProfile?.Invoke(profile, adoptUnassigned);
+        if (adoptUnassigned)
+        {
+            _ = ReadPersistedAtlas(active);
+            profile.Write(active);
+            return new(profile, null);
+        }
+
+        void ActivateProfileWorld(string world)
+        {
+            if (SaveProfileAtlas.Read(world) != profile)
+                throw new InvalidDataException("The saved Atlas belongs to a different playthrough.");
+            activateWorld?.Invoke(world);
+        }
+        if (restore is not null && SaveProfileAtlas.Read(states.WorldPath(restore)) != profile)
+            throw new InvalidDataException("The saved Atlas belongs to a different playthrough.");
+        var replacement = restore is not null
+            ? ReplaceActiveAtlas(states, restore, active, ReadPersistedAtlas, activateWorld: ActivateProfileWorld)
+            : PublishActiveAtlasGeneration(states, active, copyActiveWorld: false, retainPrevious: true,
+                staging =>
+                {
+                    WritePersistedAtlasMetadata(staging, new(0, DateTimeOffset.UtcNow, tileSize, pixelsPerWorldUnit));
+                    profile.Write(staging);
+                    _ = new LiveWorldSessionStore(Path.Combine(staging, "live-world")).Load();
+                },
+                ReadPersistedAtlas, activateWorld: ActivateProfileWorld);
+        return new(profile, replacement);
+    }
+
+    internal static ActiveAtlasReplacement<ValidatedPersistedAtlas> LoadNamedAtlasForCurrentProfile(
+        AtlasStateStore states,
+        AtlasSavedState state,
+        string active,
+        Action<string>? activateWorld = null,
+        Action<BgraFrame, string>? saveTile = null) =>
+        ReplaceActiveAtlas(states, state, active, ReadPersistedAtlas,
+            copyDirectory: (source, staging) =>
+            {
+                if (!File.Exists(Path.Combine(source, "atlas.json"))
+                    && File.Exists(Path.Combine(source, "manifest.json"))
+                    && saveTile is not null)
+                {
+                    StageMacAtlas(source, staging, state.CreatedAt, saveTile);
+                }
+                else
+                {
+                    CopyDirectoryDurably(source, staging);
+                }
+                SaveProfileAtlas.PreserveOwner(active, staging);
+            },
+            activateWorld: activateWorld);
+
+    private static void StageMacAtlas(
+        string source,
+        string staging,
+        DateTimeOffset createdAt,
+        Action<BgraFrame, string> saveTile)
+    {
+        var evidenceRoot = Path.Combine(staging, "live-world");
+        CopyDirectoryDurably(source, evidenceRoot);
+        var snapshot = LiveWorldSessionStore.ValidateExisting(evidenceRoot).Snapshot;
+        if (!snapshot.UsesSwiftWireFormat)
+            throw new InvalidDataException("This Atlas is missing Windows tiles and has no supported macOS snapshot.");
+
+        using var evidence = SceneSessionStore.OpenReadOnly(evidenceRoot);
+        var entries = evidence.Manifest.Observations.ToDictionary(entry => entry.Id);
+        var mosaic = WindowsLiveWorldPipeline.RebuildAtlas(snapshot, id => evidence.Source(entries[id]),
+            pixelsPerWorldUnit: 1, tileSize: LiveTiledAtlas.TileSize);
+        foreach (var tile in mosaic.Snapshot())
+        {
+            var name = FormattableString.Invariant($"tile_{tile.Coordinate.X}_{tile.Coordinate.Y}.bmp");
+            saveTile(tile.Frame, Path.Combine(staging, name));
+        }
+        WritePersistedAtlasMetadata(staging, new(mosaic.AcceptedFrameCount, createdAt,
+            mosaic.TileSize, mosaic.PixelsPerWorldUnit));
+    }
+
+    internal static void WritePersistedAtlasMetadata(string directory, PersistedAtlasMetadata metadata)
+    {
+        var encoded = JsonSerializer.SerializeToUtf8Bytes(metadata, new JsonSerializerOptions { WriteIndented = true });
+        using var stream = new FileStream(Path.Combine(directory, "atlas.json"),
+            FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
+        stream.Write(encoded);
+        stream.Flush(flushToDisk: true);
+    }
+
     internal sealed class PreviousActiveAtlasImportException(
         string recoverableArchiveDirectory,
         Exception innerException) : IOException(

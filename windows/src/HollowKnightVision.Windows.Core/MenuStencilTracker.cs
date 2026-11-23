@@ -13,6 +13,9 @@ public sealed record MenuStencilResult(string ContextIdentifier, bool IsMatch, d
     double SourceTimestamp, string? LanguageIdentifier)
 {
     public bool SelectedPairAccepted => SelectedOption is not null && SelectorCandidates.Count == 2;
+    public string? SelectedOptionIdentifier { get; init; }
+    public IReadOnlyList<int> CheckedProfileSlots { get; init; } = [];
+    public IReadOnlyList<int> OccupiedProfileSlots { get; init; } = [];
 }
 
 public sealed class MenuStencilSearchCadence(double minimumInterval)
@@ -35,9 +38,11 @@ public sealed partial class MenuStencilTracker
         SelectorThreshold = .48, SelectorEvidenceThreshold = .38, FadedSelectorEvidenceThreshold = .22,
         SelectorWinningMargin = .06;
     public const int SelectorMinimumForegroundPixels = 24, FadedSelectorMinimumForegroundPixels = 36,
-        SelectorSearchRadiusX = 4, SelectorSearchRadiusY = 4, SelectorRecoveryRadiusX = 40, SelectorRecoveryRadiusY = 10,
+        SelectorSearchRadiusX = 4, SelectorSearchRadiusY = 4,
+        SelectorRecoveryRadiusX = MenuSelectorPlacement.MaximumOffsetX, SelectorRecoveryRadiusY = MenuSelectorPlacement.MaximumOffsetY,
         ValidationInterval = 8, LossGraceFrames = 2, SceneChallengeCandidateLimit = 16;
-    private const double SelectorMaximumPairRowDelta = 5, SceneChallengeWinningMargin = .12;
+    private const double SelectorMaximumPairRowDelta = 5, SceneChallengeWinningMargin = .12, InventoryCornerThreshold = .65;
+    private const string InventoryCornerPrefix = "inventory.corner.";
     private sealed record Score(double Confidence, int Foreground, int BrightForeground, StencilRect Rect,
         ImageStencilReference Reference, string? Language, StencilRect? NominalBounds);
     private sealed record Candidate(Scene Scene, Score Score);
@@ -52,6 +57,7 @@ public sealed partial class MenuStencilTracker
     private Offset trackedOffset;
     private int missingProbeFrames, languageMissFrames, framesUntilValidation, comparisons;
     private MenuStencilResult? lastValidated;
+    private readonly Dictionary<string, Dictionary<string, StencilRect>> verifiedAnchorBounds = new(StringComparer.Ordinal);
     public string? SelectorCalibrationDiagnostic => calibration.Diagnostic;
 
     public MenuStencilTracker(MenuStencilCatalog? catalog = null, double minimumSearchInterval = 0,
@@ -64,6 +70,7 @@ public sealed partial class MenuStencilTracker
     {
         trackedContext = null; if (!preservingLanguage) { trackedLanguage = null; languageMissFrames = 0; }
         trackedOffset = default; missingProbeFrames = 0; framesUntilValidation = 0; lastValidated = null;
+        verifiedAnchorBounds.Clear();
         calibration.Reset(); cadence.Reset();
     }
     public void ReplaceCatalog(MenuStencilCatalog value)
@@ -87,8 +94,8 @@ public sealed partial class MenuStencilTracker
                 }
                 trackedOffset = parentOffset;
             }
-            var probe = BestScore(VariantsFor(scene.Probe.SearchProbeVariants, trackedLanguage), pixels,
-                scene.Probe.Bounds.Offset(trackedOffset.X, trackedOffset.Y), 4, 6, scene.Probe.Bounds);
+            // Reuse the captured positions so successive small false matches cannot move the search.
+            var probe = ReacquisitionProbes(scene, pixels, trackedLanguage).MaxBy(score => score.Confidence);
             if (probe is not null && IsDialog(context) && Validate(scene, probe, pixels, image, timestamp, MenuStencilPhase.Tracking) is { } dialogResult)
             {
                 missingProbeFrames = 0; trackedLanguage = probe.Language ?? trackedLanguage;
@@ -115,6 +122,8 @@ public sealed partial class MenuStencilTracker
                 var result = previous with
                 {
                     IsMatch = true, Confidence = probe?.Confidence ?? 0, SelectedOption = selection.Name ?? previous.SelectedOption,
+                    SelectedOptionIdentifier = FindSelectedIdentifier(scene, selection.Name) ?? previous.SelectedOptionIdentifier,
+                    CheckedProfileSlots = [], OccupiedProfileSlots = [],
                     SelectorCandidates = selection.Matches.Count == 0 ? previous.SelectorCandidates : selection.Matches,
                     SelectorSearchRegions = selection.Regions, SelectorLanguageEvidenceCount = selection.LanguageEvidence,
                     SelectorForegroundEvidenceCount = selection.Name is null ? previous.SelectorForegroundEvidenceCount : selection.ForegroundEvidence,
@@ -164,6 +173,8 @@ public sealed partial class MenuStencilTracker
             {
                 var candidate = bounds.Offset(x, y); if (accepts?.Invoke(candidate) == false) continue;
                 comparisons++; if (pixels.Compare(variant.Kernel, candidate) is not { } comparison) continue;
+                if (variant.Kernel.Kind.StartsWith(InventoryCornerPrefix, StringComparison.Ordinal)
+                    && (!comparison.SupportsCorrelation || comparison.NormalizedCorrelation < InventoryCornerThreshold)) continue;
                 var confidence = comparison.Confidence(.82, 105);
                 if (confidence > (best?.Confidence ?? double.NegativeInfinity))
                     best = new(confidence, 0, 0, candidate, variant.Reference, variant.LanguageIdentifier, variant.NominalBounds);

@@ -244,6 +244,91 @@ internal static class ModelVersionTests
         Equal("v2.0", store.Promote(second).Version.DisplayName);
     }
 
+    internal static void TestTrainingEvidenceSurvivesPromotionAndRestoresLegacyRuns()
+    {
+        using var fixture = new Fixture();
+        var current = fixture.Candidate(Shared, 200, "current");
+        var outOfDate = fixture.Candidate(Shared, 100, "legacy");
+        const string knight = "game.playable-knight";
+        const string enemy = "enemies.crawlid";
+        const string distractor = "world.sign";
+        current = current with { Summary = current.Summary with
+            { ClassIdentifiers = [knight, enemy, distractor], TrainedClassIdentifiers = [knight, enemy] } };
+        outOfDate = outOfDate with { Summary = outOfDate.Summary with
+            { ClassIdentifiers = [knight, enemy, distractor], TrainedClassIdentifiers = null } };
+        var training = Path.Combine(outOfDate.DatasetDirectory, "training");
+        var validation = Path.Combine(outOfDate.DatasetDirectory, "validation");
+        Directory.CreateDirectory(training);
+        Directory.CreateDirectory(validation);
+        File.WriteAllText(Path.Combine(training, "annotations.json"), """
+            [{"annotations":[
+                {"label":"game.playable-knight","coordinates":{"width":8,"height":12}},
+                {"label":"enemies.crawlid","coordinates":{"width":8,"height":12},"isNegative":true},
+                {"label":"world.sign","coordinates":{"width":0,"height":12}}
+            ]}]
+            """);
+        File.WriteAllText(Path.Combine(validation, "annotations.json"), """
+            [{"annotations":[{"label":"world.sign","coordinates":{"width":8,"height":12}}]}]
+            """);
+        var store = fixture.Store;
+        store.SynchronizeCandidates([outOfDate, current]);
+        var promotedLegacy = store.Promote(outOfDate);
+        Check(store.ActiveModelArtifacts().Single().TrainedClassIdentifiers!.SetEquals([knight]));
+        var promotedCurrent = store.Promote(current);
+        Check(store.ActiveModelArtifacts().Single().TrainedClassIdentifiers!.SetEquals([knight, enemy]));
+        Equal(promotedCurrent, store.Promote(current));
+        Directory.Delete(outOfDate.DatasetDirectory, recursive: true);
+        store.Activate(Shared, promotedLegacy.Version.Major);
+        Check(new LabelingModelVersionStore(store.RootDirectory).ActiveModelArtifacts().Single()
+            .TrainedClassIdentifiers!.SetEquals([knight]));
+
+        var registryFile = Path.Combine(store.RootDirectory, "registry.json");
+        var registry = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(registryFile))!;
+        foreach (var point in registry["objects"]![Shared]!["restorePoints"]!.AsArray())
+            point!.AsObject().Remove("trainedClassIdentifiers");
+        File.WriteAllText(registryFile, registry.ToJsonString());
+        var promotedDirectory = Path.GetDirectoryName(store.ActiveModelArtifacts().Single().ModelPath)!;
+        File.WriteAllText(Path.Combine(promotedDirectory, "training.json"), JsonSerializer.Serialize(outOfDate.Summary, Json));
+        var originalRun = Path.Combine(fixture.Root, "training-v1", "runs", outOfDate.Id.ToString("N"));
+        Directory.CreateDirectory(originalRun);
+        File.WriteAllText(Path.Combine(originalRun, "training.json"), JsonSerializer.Serialize(outOfDate.Summary with
+            { TrainedClassIdentifiers = [enemy] }, Json));
+        var reloaded = new LabelingModelVersionStore(store.RootDirectory);
+        Check(reloaded.ActiveModelArtifacts().Single().TrainedClassIdentifiers!.SetEquals([enemy]));
+        File.Delete(Path.Combine(originalRun, "training.json"));
+        Check(reloaded.ActiveModelArtifacts().Single().TrainedClassIdentifiers!.Count == 0);
+
+        var originalSplit = Path.Combine(fixture.Root, "training-v1", "datasets",
+            outOfDate.Summary.DatasetIdentifier.ToString("D"), "training");
+        Directory.CreateDirectory(originalSplit);
+        File.WriteAllText(Path.Combine(originalSplit, "annotations.json"), """
+            [{"annotations":[{"label":"game.playable-knight","coordinates":{"width":6,"height":8}}]}]
+            """);
+        Check(reloaded.ActiveModelArtifacts().Single().TrainedClassIdentifiers!.SetEquals([knight]));
+        File.WriteAllText(Path.Combine(promotedDirectory, "training.json"), JsonSerializer.Serialize(outOfDate.Summary with
+            { TrainedClassIdentifiers = [] }, Json));
+        Check(reloaded.ActiveModelArtifacts().Single().TrainedClassIdentifiers!.Count == 0);
+    }
+
+    internal static void TestOnlyTrainedClassesConsumeDetectionSlots()
+    {
+        const string knight = "game.playable-knight";
+        const string sign = "world.sign";
+        const string geo = "world.geo-deposit";
+        string[] outputs = [sign, knight, geo];
+        IReadOnlySet<string> trained = new HashSet<string>([knight, geo], StringComparer.Ordinal);
+        long[] scores = [1, 3, 1, 1], boxes = [1, 4, 1, 1];
+        float[] confidence = [.99f, .91f, .8f], rectangle = [.2f, .2f, .1f, .12f];
+        var filtered = DetectionDecoder.Decode(confidence, scores, rectangle, boxes, outputs, maximumDetections: 1,
+            useLivePolicy: true, trainedClassIdentifiers: trained);
+        Equal(knight, filtered.Single().ClassIdentifier);
+        var raw = DetectionDecoder.DecodeRaw(confidence, scores, rectangle, boxes, outputs, maximumDetections: 1,
+            trainedClassIdentifiers: trained);
+        Equal(knight, raw.Single().ClassIdentifier);
+        Check(DetectionDecoder.Decode(confidence, scores, rectangle, boxes, outputs,
+            trainedClassIdentifiers: new HashSet<string>()).Count == 0);
+    }
+
     internal static void TestDurableOnnxInference()
     {
         using var fixture = new Fixture();
@@ -328,7 +413,9 @@ internal static class ModelVersionTests
                 Id = Guid.NewGuid(), DatasetIdentifier = Guid.NewGuid(), ClassIdentifier = classId,
                 CompletedAt = DateTimeOffset.FromUnixTimeSeconds(time), ModelFilename = "Detector.onnx", ModelFormat = "onnx",
                 CheckpointFilename = checkpoint ? "Detector.pt" : null, BaseRunIdentifier = baseline?.ToString("D").ToUpperInvariant(),
-                ClassIdentifiers = ap?.Keys.ToArray() ?? [classId], PredictionsFilename = exampleId is null ? null : "predictions.json",
+                ClassIdentifiers = ap?.Keys.ToArray() ?? [classId],
+                TrainedClassIdentifiers = ap?.Keys.ToArray() ?? [classId == Shared ? "game.playable-knight" : classId],
+                PredictionsFilename = exampleId is null ? null : "predictions.json",
                 ValidationMetrics = new() { IsValid = true, AveragePrecisionAt50PercentIOUByClass = ap ?? new() { [classId] = .5 } },
                 AdditionalFields = new() { ["maximumIterations"] = JsonSerializer.SerializeToElement(100) }
             };

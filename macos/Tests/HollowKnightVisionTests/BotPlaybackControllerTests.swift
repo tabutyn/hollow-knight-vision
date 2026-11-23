@@ -243,14 +243,19 @@ final class BotPlaybackControllerTests: XCTestCase {
     func testFocusLossDisarmsWaitingBot() throws {
         var focused = true
         var releases = 0
+        let released = expectation(description: "Focus watchdog releases the controls")
         let controller = BotPlaybackController(policy: try policy(), now: { 100 }, hasFocus: { focused })
         controller.configure(canContinue: { true }, begin: { UUID() }, apply: { _, _, _ in true },
-            neutralize: { _ in }, end: { _ in releases += 1 })
-        controller.start(); focused = false
-        let checked = expectation(description: "Focus watchdog")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { checked.fulfill() }
-        wait(for: [checked], timeout: 1)
-        XCTAssertFalse(controller.isActive); XCTAssertEqual(releases, 1)
+            neutralize: { _ in }, end: { _ in
+                releases += 1
+                released.fulfill()
+            })
+        controller.start()
+        XCTAssertTrue(controller.isWaiting)
+        focused = false
+        wait(for: [released], timeout: 2)
+        XCTAssertFalse(controller.isActive)
+        XCTAssertEqual(releases, 1)
     }
 
     func testDelayedObservationCannotReplaceFreshHumanGroundInput() throws {

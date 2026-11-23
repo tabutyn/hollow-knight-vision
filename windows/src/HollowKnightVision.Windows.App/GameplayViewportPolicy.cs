@@ -221,7 +221,7 @@ internal sealed class GameplayViewportController
     {
         Mode = mode;
         Transform = ViewportTransform.Identity;
-        CurrentZoomMultiplier = 1;
+        CurrentZoomMultiplier = GameplayViewportPolicy.InitialCurrentZoom(mode);
         transition = null;
         fitFollowTarget = null;
         fitFollowLastAt = null;
@@ -243,7 +243,8 @@ internal sealed class GameplayViewportController
         Advance(timestamp);
         var changed = !string.Equals(Mode, mode, StringComparison.Ordinal)
             || explicitRequest;
-        if (changed && mode == "Current") CurrentZoomMultiplier = 1;
+        if (changed && GameplayViewportPolicy.FollowsCurrent(mode))
+            CurrentZoomMultiplier = GameplayViewportPolicy.InitialCurrentZoom(mode);
         Mode = mode;
 
         if (mode == "Free Fly")
@@ -352,7 +353,7 @@ internal sealed class GameplayViewportController
         double timestamp)
     {
         Advance(timestamp);
-        if (Mode != "Current") return Transform;
+        if (!GameplayViewportPolicy.FollowsCurrent(Mode)) return Transform;
         transition = null;
         fitFollowTarget = null;
         fitFollowLastAt = null;
@@ -452,7 +453,7 @@ internal sealed class GameplayViewportController
         if (!viewport.IsUsable) return null;
         if (mode == "Fit" && fitBounds is { IsUsable: true } fit)
             return Frame(viewport, fit, new(fit.CenterX, fit.CenterY), FitMargin);
-        if (mode == "Current" && followBounds is { IsUsable: true } follow)
+        if (GameplayViewportPolicy.FollowsCurrent(mode) && followBounds is { IsUsable: true } follow)
         {
             var center = focus is { IsFinite: true } point
                 ? point : new ViewportPoint(follow.CenterX, follow.CenterY);
@@ -508,7 +509,28 @@ internal static class GameplayViewportPolicy
             Math.Clamp(wheelDelta / 120, -32, 32)), 0.1, 8);
     }
 
-    internal static bool CanPan(string mode) => mode is "Current" or "Free Fly";
+    private const string CurrentNear = "Current Near";
+    private const string CurrentWide = "Current Wide";
+
+    internal static string NextTabPreset(string mode) => mode switch
+    {
+        CurrentNear => CurrentWide,
+        CurrentWide => "Fit",
+        _ => CurrentNear
+    };
+
+    internal static double InitialCurrentZoom(string mode) => mode switch
+    {
+        CurrentNear => 1 / 1.1,
+        CurrentWide => 0.5,
+        _ => 1
+    };
+
+    internal static bool FollowsCurrent(string mode) => mode is "Current" or CurrentNear or CurrentWide;
+
+    internal static string FramingButton(string mode) => FollowsCurrent(mode) ? "Current" : mode;
+
+    internal static bool CanPan(string mode) => mode == "Free Fly" || FollowsCurrent(mode);
     internal static bool ForwardsGamePointer(string mode) => mode != "Free Fly";
 
     // Unknown frames include fades and cutscenes. Do not interpret a missing

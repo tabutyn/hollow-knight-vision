@@ -3,7 +3,7 @@ namespace HollowKnightVision.Windows.Core;
 /// <summary>Mac SceneRegions policies, expressed in top-origin capture pixels.</summary>
 public sealed record SceneRegions(StencilRect? Knight, StencilRect Health, StencilRect Geo,
     StencilRect Mana, StencilRect? FocusPrompt = null, IReadOnlyList<StencilRect>? Particles = null,
-    IReadOnlyList<StencilRect>? HudStencilRects = null)
+    IReadOnlyList<StencilRect>? HudStencilRects = null, StencilRect? TutorialPrompt = null)
 {
     public const double DefaultKnightConfidence = .5;
     public const double GroundKnightConfidence = .05;
@@ -11,7 +11,7 @@ public sealed record SceneRegions(StencilRect? Knight, StencilRect Health, Stenc
     public static SceneRegions Startup() => new(null, default, default, default);
 
     public IReadOnlyList<StencilRect> OmittedRects =>
-        new[] { Knight, FocusPrompt }.OfType<StencilRect>()
+        new[] { Knight, FocusPrompt, TutorialPrompt }.OfType<StencilRect>()
             .Concat(HudStencilRects ?? [Health, Geo, Mana]).Concat(Particles ?? [])
             .Where(rect => rect.IsFinite && !rect.IsEmpty).ToArray();
 
@@ -133,8 +133,16 @@ public sealed record SceneRegions(StencilRect? Knight, StencilRect Health, Stenc
 public sealed record GameplaySceneMasks(SceneRegions AtlasRegions, SceneRegions GroundRegions,
     IReadOnlyList<PixelRect> AtlasExclusions, IReadOnlyList<PixelRect> GroundExclusions, PixelRect? GroundKnight)
 {
+    public static GameplaySceneMasks Create(BgraFrame frame, IReadOnlyList<ObjectDetection> detections,
+        HudStencilResult? hudStencil, IReadOnlyList<ObjectDetection>? movingMasks = null) =>
+        Create(frame.Width, frame.Height, detections, hudStencil, movingMasks, GameplayTutorialPromptMask.Find(frame));
+
     public static GameplaySceneMasks Create(int width, int height, IReadOnlyList<ObjectDetection> detections,
-        HudStencilResult? hudStencil, IReadOnlyList<ObjectDetection>? movingMasks = null)
+        HudStencilResult? hudStencil, IReadOnlyList<ObjectDetection>? movingMasks = null) =>
+        Create(width, height, detections, hudStencil, movingMasks, tutorialPrompt: null);
+
+    private static GameplaySceneMasks Create(int width, int height, IReadOnlyList<ObjectDetection> detections,
+        HudStencilResult? hudStencil, IReadOnlyList<ObjectDetection>? movingMasks, StencilRect? tutorialPrompt)
     {
         var extent = new StencilRect(0, 0, width, height);
         // Mac's live mapper and ground solver share unsmoothed motion masks,
@@ -142,6 +150,8 @@ public sealed record GameplaySceneMasks(SceneRegions AtlasRegions, SceneRegions 
         var atlas = movingMasks is null ? SceneRegions.AtlasGameplay(detections, extent, hudStencil: hudStencil)
             : SceneRegions.AtlasGameplay(movingMasks, extent, SceneRegions.GroundKnightConfidence, hudStencil);
         var ground = SceneRegions.AtlasGameplay(movingMasks ?? detections, extent, SceneRegions.GroundKnightConfidence, hudStencil);
+        atlas = atlas with { TutorialPrompt = tutorialPrompt };
+        ground = ground with { TutorialPrompt = tutorialPrompt };
         var knight = ground.Knight is { } rect ? SceneRegions.PixelRectangles(width, height, [rect]) : [];
         return new(atlas, ground, atlas.PixelExclusions(width, height), ground.PixelExclusions(width, height),
             knight.Count > 0 ? knight[0] : null);

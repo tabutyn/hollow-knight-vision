@@ -55,6 +55,12 @@ public static class LabelingSharedModelPolicy
             label => LabelingClassIdentity.CanonicalIdentifier(label.Identifier)));
         return identifiers;
     }
+
+    public static bool HasPositiveGameplayEvidence(IEnumerable<SavedLabelingExample> examples,
+        IReadOnlySet<string> classIdentifiers) => examples.Any(example =>
+            example.Manifest.ContextIdentifier == "game" && example.Manifest.Annotations.Any(annotation =>
+                !annotation.IsHardNegative
+                && classIdentifiers.Contains(LabelingClassIdentity.CanonicalIdentifier(annotation.ClassIdentifier))));
 }
 
 public static class LabelingObjectReferencePolicy

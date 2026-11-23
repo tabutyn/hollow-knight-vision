@@ -35,7 +35,7 @@ internal sealed partial class WindowsGameControlForwarder
     internal async Task ReplayPathAsync(RecordedInputPath path, int iteration, bool restoreCheckpoint,
         Action<RecordedInputPath> saveRecording, CancellationToken cancellationToken = default,
         Func<bool, CancellationToken, Task>? prepare = null, Action<double>? beginEvaluation = null,
-        string evaluationMode = "none")
+        string evaluationMode = "none", string? visualArchiveRoot = null)
     {
         var poses = InputPathPlayback.Poses(path);
         ArgumentNullException.ThrowIfNull(saveRecording);
@@ -47,7 +47,7 @@ internal sealed partial class WindowsGameControlForwarder
         lock (stateLock)
         {
             if (receiver is null || connectionFault is null || replayCancellation is not null || capturingCheckpoint
-                || inputPathRecorder.IsRecording || pause.BlocksInput)
+                || roomResetPending || inputPathRecorder.IsRecording || pause.BlocksInput)
                 throw new InvalidOperationException("Enter modded Gameplay and stop recording before replaying.");
             if (restoreCheckpoint && (path.StartCheckpoint is null || !checkpointAvailable))
                 throw new InvalidOperationException("Replay needs a saved start checkpoint and a compatible receiver.");
@@ -57,12 +57,14 @@ internal sealed partial class WindowsGameControlForwarder
             fault = connectionFault;
             replayCancellation = cancellation;
             replayFinished = finished;
+            DropBotControlLocked();
             heldButtons = InputButtons.None;
             isEnabled = false;
             awaitingFreshPress = true;
         }
         var token = cancellation.Token;
         var recordingStarted = false;
+        var completed = false;
         try
         {
             await SendReplayStateAsync(active, fault, InputButtons.None, token).ConfigureAwait(false);
@@ -77,7 +79,7 @@ internal sealed partial class WindowsGameControlForwarder
                 metadata: new Dictionary<string, string> {
                     ["playbackMode"] = poses.Length > 0 ? "recorded-player-poses-and-input" : "input-only",
                     ["pathPlaybackPreparation"] = prepare is not null ? "isolated-single-restore-settle-reset-v1" : restoreCheckpoint ? "restore-ack-only" : "none",
-                    ["evaluationMode"] = evaluationMode });
+                    ["evaluationMode"] = evaluationMode }, visualArchiveRoot: visualArchiveRoot);
             if (!recordingStarted) throw new InvalidOperationException("Replay recorder is already active.");
             beginEvaluation?.Invoke(start);
             var previous = InputButtons.None;
@@ -102,6 +104,7 @@ internal sealed partial class WindowsGameControlForwarder
                 }
                 finally { outboundGate.Release(); }
             }, token).ConfigureAwait(false);
+            completed = true;
         }
         finally
         {
@@ -114,13 +117,21 @@ internal sealed partial class WindowsGameControlForwarder
             {
                 try
                 {
-                    var recording = recordingStarted ? inputPathRecorder.Stop(MonotonicSeconds()) : null;
-                    lock (stateLock)
+                    RecordedInputPath? recording;
+                    try
                     {
-                        if (ReferenceEquals(replayCancellation, cancellation)) replayCancellation = null;
-                        heldButtons = InputButtons.None;
-                        isEnabled = false;
-                        awaitingFreshPress = true;
+                        recording = recordingStarted
+                            ? await StopRecordingAsync(cancelled: !completed).ConfigureAwait(false) : null;
+                    }
+                    finally
+                    {
+                        lock (stateLock)
+                        {
+                            if (ReferenceEquals(replayCancellation, cancellation)) replayCancellation = null;
+                            heldButtons = InputButtons.None;
+                            isEnabled = false;
+                            awaitingFreshPress = true;
+                        }
                     }
                     if (recording is not null) saveRecording(recording);
                 }

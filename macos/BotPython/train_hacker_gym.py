@@ -4,12 +4,13 @@ from __future__ import annotations
 import argparse
 import copy
 from collections import Counter, deque
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import fcntl
 import gzip
 import hashlib
 import json
+import os
 from pathlib import Path
 import signal
 import subprocess
@@ -33,6 +34,7 @@ from gym_landing_rehearsal import (LandingRehearsal, MINIMUM_SAFE_CLIMB, missed_
                                    missed_ledge_takeoff, nearby_landings, save_landings)
 from gym_platform_teacher import reachable_platform
 from gym_general_training import train_batch
+from bot_training_ipc import exclusive_file_lock
 from bot_policy_continuation import gym_observations, playback_checkpoint, publication_lock, save_gym_observations
 from gym_policy_search import SampledFrontier, learn_from_returns
 from gym_route_rehearsal import (playable_arrivals, reached_king_pass_destination, route_examples, route_files,
@@ -41,8 +43,13 @@ from hacker_gym import HackerGym, buttons, save_json
 from hkv_bot_dataset import ACTION_SIZES, SCHEMAS, demonstration_controls
 from train_bot_job import evaluate
 
-SUPPORT = Path.home() / "Library/Application Support/HollowKnightVision"
-VISION = Path("/Applications/Hollow Knight Vision.app/Contents/MacOS/HollowKnightVision")
+if os.name == "nt":
+    local_app_data = Path(os.environ["LOCALAPPDATA"])
+    SUPPORT = local_app_data / "HollowKnightVision"
+    VISION = local_app_data / "Programs/Hollow Knight Vision/HollowKnightVision.Windows.Host.exe"
+else:
+    SUPPORT = Path.home() / "Library/Application Support/HollowKnightVision"
+    VISION = Path("/Applications/Hollow Knight Vision.app/Contents/MacOS/HollowKnightVision")
 HEAD_START = np.cumsum([0] + ACTION_SIZES[:-1]).tolist()
 
 
@@ -52,6 +59,37 @@ def sha(path):
 
 def read(path):
     return json.loads(path.read_bytes())
+
+
+def windows_gym_identity(args):
+    command = [args.vision, "--gym-runtime-info", args.domain, args.game, args.support]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or "Windows Vision could not validate the Gym runtime.")
+    info = json.loads(result.stdout)
+    fields = ("visionSource", "receiver", "visualDetectorAndHUD") if args.domain == "gameplay" else ("visionSource", "receiver")
+    identity = {key: info[key] for key in fields}
+    if any(not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value.lower())
+           for value in identity.values()):
+        raise ValueError("The installed Windows Vision returned invalid Gym runtime evidence.")
+    return identity
+
+
+def gym_identity_reader(args):
+    if os.name == "nt":
+        return lambda: windows_gym_identity(args)
+    if f"--{args.domain}-gym-observations".encode() not in args.vision.read_bytes():
+        raise ValueError("Install the current Vision release with macos/build-app.sh")
+    build_info = args.vision.parents[1] / "Resources/runtime-build-info.json"
+    receiver = args.game.parents[1] / "Resources/Data/Managed/Mods/HollowKnightVisionInputReceiver/HollowKnightVisionInputReceiver.dll"
+
+    def identity():
+        result = dict(visionSource=read(build_info)["swiftSourceSHA256"], receiver=sha(receiver))
+        if args.domain == "gameplay":
+            result["visualDetectorAndHUD"] = visual_identity(args.support)
+        return result
+
+    return identity
 
 
 def reserve_holdouts(shared, domain):
@@ -1359,22 +1397,15 @@ def run(args):
     shared = args.support / "bot-v1/gym"
     shared.mkdir(parents=True, exist_ok=True)
     limit = time.monotonic() + args.hours * 3600
-    with (shared / "worker.lock").open("a+") as lock:
-        if getattr(args, "wait_for_worker", False):
-            def expired(*_):
-                raise TimeoutError("Gym worker wait reached the training time budget")
-            previous = signal.signal(signal.SIGALRM, expired)
-            try:
-                signal.setitimer(signal.ITIMER_REAL, args.hours * 3600)
-                fcntl.flock(lock, fcntl.LOCK_EX)
-            except TimeoutError:
-                print("The time budget expired while waiting for the Gym worker.", flush=True)
-                return
-            finally:
-                signal.setitimer(signal.ITIMER_REAL, 0)
-                signal.signal(signal.SIGALRM, previous)
-        else:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    wait = getattr(args, "wait_for_worker", False)
+    with ExitStack() as held:
+        try:
+            held.enter_context(exclusive_file_lock(shared / "worker.lock", wait=wait, deadline=limit if wait else None))
+        except TimeoutError:
+            if not wait:
+                raise
+            print("The time budget expired while waiting for the Gym worker.", flush=True)
+            return
         if time.monotonic() < limit:
             train_with_worker(args, shared, limit)
 
@@ -1404,6 +1435,8 @@ def checkpoint_path_inputs(run, objective):
 def train_with_worker(args, shared, limit):
     models = args.support / "bot-v1/models" / args.domain
     selected = args.base or playback_checkpoint(models, args.domain)
+    if selected is None:
+        raise ValueError(f"Train or select a verified {args.domain} checkpoint before launching Gym.")
     manifest = read(selected / "manifest.json")
     # Re-running the launcher after Vision activates a Gym winner resumes its original experiment.
     origin = manifest.get("gymEvidence", {}).get("base")
@@ -1423,22 +1456,16 @@ def train_with_worker(args, shared, limit):
     dataset = training_run / "dataset.npz"
     if not args.baseline_only and (not dataset.is_file() or sha(dataset) != manifest["datasetSHA256"]):
         raise ValueError("The verified expert dataset for the selected Hacker checkpoint is required")
-    if f"--{args.domain}-gym-observations".encode() not in args.vision.read_bytes():
-        raise ValueError("Install the current Vision release with macos/build-app.sh")
-    build_info = args.vision.parents[1] / "Resources/runtime-build-info.json"
-    native_source = read(build_info)["swiftSourceSHA256"]
-    receiver = args.game.parents[1] / "Resources/Data/Managed/Mods/HollowKnightVisionInputReceiver/HollowKnightVisionInputReceiver.dll"
+    runtime_identity = gym_identity_reader(args)
+    runtime = runtime_identity()
     identity = dict(domain=args.domain, base=base.name, checkpoint=manifest["modelSHA256"],
-                    visionSource=native_source, max_steps=args.max_steps, stall_steps=args.stall_steps,
-                    receiver=sha(receiver),
+                    max_steps=args.max_steps, stall_steps=args.stall_steps, **runtime,
                     scoring=9, objective=dict(scene="Tutorial_01", world=args.exit_path_objective) if args.exit_path_objective else None)
     general = args.method == "ppo"
     if general:
         identity.update(method="ppo", trainingSteps=args.training_steps, curriculum=2, startingPolicy=read(selected / "manifest.json").get("gymEvidence", {}).get("ppoOrigin", selected.name))
     if args.training_render_hz != 60:
         identity["trainingRenderHz"] = args.training_render_hz
-    if args.domain == "gameplay":
-        identity["visualDetectorAndHUD"] = visual_identity(args.support)
     identity["labels"] = sha(labels)
     identity["pathConnections"] = hashlib.sha256(connection_data).hexdigest()
     guided_library = route_library(shared, identity)
@@ -1490,13 +1517,12 @@ def train_with_worker(args, shared, limit):
                     supports_masked=read(checkpoint / "runtime-policy.json").get("supportsMaskedKnight", False),
                     max_steps=args.max_steps, stall_steps=args.stall_steps, deadline=limit,
                     training_render_hz=args.training_render_hz,
-                    path_connections=connection_snapshot, exit_path_objective=args.exit_path_objective)
+                    path_connections=connection_snapshot, exit_path_objective=args.exit_path_objective,
+                    visual_support_root=args.support if os.name == "nt" else None)
 
     def verify_environment():
-        if read(build_info)["swiftSourceSHA256"] != native_source or sha(receiver) != identity["receiver"]:
-            raise RuntimeError("Vision or receiver changed during the comparison. Relaunch to evaluate the new build.")
-        if args.domain == "gameplay" and visual_identity(args.support) != identity["visualDetectorAndHUD"]:
-            raise RuntimeError("Gameplay detector or HUD changed. Relaunch to evaluate the new inputs.")
+        if runtime_identity() != runtime:
+            raise RuntimeError("Vision, receiver, or visual inputs changed during the comparison. Relaunch to evaluate the new inputs.")
         if sha(snapshot) != identity["labels"] or sha(connection_snapshot) != identity["pathConnections"]:
             raise RuntimeError("The path connection snapshot changed during the comparison.")
 
@@ -2132,6 +2158,7 @@ def main():
     parser.add_argument("--wait-for-worker", action="store_true",
                         help="Queue this comparison behind the current Gym worker within the training time budget.")
     args = parser.parse_args()
+    args.game, args.vision, args.support = (path.resolve() for path in (args.game, args.vision, args.support))
     if not 0 < args.hours <= 168 or min(args.max_steps, args.stall_steps, 1 if args.rounds is None else args.rounds) < 1:
         parser.error("Use positive durations and limits")
     if args.training_steps < 128 or args.training_steps > 16384 or args.training_steps % 128:

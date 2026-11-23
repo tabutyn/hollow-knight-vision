@@ -511,6 +511,30 @@ The recorder uses camera telemetry, omits the top HUD band, blends repeated
 observations, and writes 256x256 BGRA BMP tiles plus `atlas.json`. Output must
 be new or empty, so existing atlas evidence is never overwritten silently.
 
+## Restore a macOS Game Play Atlas on Windows
+
+For a version 2 or 3 Atlas, copy the named save directory with its `state.json` and `world` from macOS
+`~/Library/Application Support/HollowKnightVision/atlas-states-v1` into Windows
+`%LOCALAPPDATA%\HollowKnightVision\atlas-v1\states`. In Game Play, open Atlas
+settings, select the state, and choose **Load**. Windows rebuilds its tiles from
+the saved captures and preserves the original map, tracking islands, walked
+ground, and doorway evidence in the active copy. When you return to gameplay,
+Windows verifies two fresh images against the saved scenery before resuming in
+a mapped room. Verified floor texture can locate the room when narrow-band
+landmarks are missing. New Windows Atlases use the same doorway placement. Normal mode
+uses the visual room transition and checks the saved imagery for a competing
+match. Modded mode also uses the receiver's room name. After a confirmed horizontal
+loading cut, a new room starts provisionally beyond the saved Atlas. Windows
+corrects doorway height when it saves measured floor and foot contact on both
+sides. The horizontal separation stays provisional. After a tracking loss
+within a placed room, Windows can save fresh local measurements while their
+placement is pending. When narrow floor landmarks are insufficient, scenery
+features and textured patches can propose a link. Two fresh captures must
+independently align floor texture before Windows saves the link. Linked
+sections move together when an image match connects them to placed imagery.
+Doorway floor evidence constrains elevation independently. Older Normal
+Atlases that only saved tiles keep their direct image composition.
+
 ## Label examples and dataset export from the CLI
 
 The WPF Label workspace is the normal authoring path. Equivalent commands are
@@ -648,6 +672,25 @@ When the file has a start checkpoint, Windows restores it through
 current game state. Playback drains receiver telemetry and always sends a
 neutral state on completion, cancellation, or failure.
 
+### Replay archived frames offline
+
+Modded **K** and full input replays save a frame archive beside the input path.
+From the installed build, replay the archived images and score the result against
+the source run's receiver measurements.
+
+```powershell
+$vision = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision'
+& "$vision\HollowKnightVision.Windows.Host.exe" --replay-visual-archive C:\path\to\path.json `
+  --visual-replay-output C:\path\to\new-replay
+py -3 "$vision\diagnostics\score-visual-replay.py" --reference C:\path\to\path.json `
+  --replay C:\path\to\new-replay
+```
+
+The replay saves a visual input-path trace, per-frame diagnostics and a fresh
+atlas. Use `--visual-replay-frame-limit 600` to cap the run. An incomplete archive
+requires `--visual-replay-allow-incomplete` and reports the original missing
+frame indices.
+
 ## CPU model training on Windows
 
 The shared incremental detector can train on Windows without Core ML and export
@@ -697,6 +740,33 @@ Pass `-BaseCheckpoint C:\path\to\Detector.pt` for an incremental run. The
 wrapper forces `--device cpu` and hides CUDA devices. The WPF Model workspace
 drives the same validator and trainer.
 
+### Train a bot from captures
+
+Record separate runs with **K**, then open **Bot**, choose **Game Play** or
+**Hacker**, and press **Train**. Vision sets up the CPU bot environment when
+needed. It keeps one or more complete clips for validation and verifies the
+export through the installed native policy host before selecting the newest
+checkpoint. A routine update uses at least two new clips so the active policy
+can be compared on recordings it has never trained on.
+
+### Live Gym PPO from an installed build
+
+Run the launcher against a modded Hollow Knight executable and a verified bot
+checkpoint for the selected domain. Game Play also uses an active Windows ONNX
+detector and the local HUD stencils. The trainer validates the installed native
+encoders and receiver before launching a private no-save game process.
+
+```powershell
+$training = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\training'
+& (Join-Path $training 'setup-bot-trainer-windows.ps1')
+& (Join-Path $training 'train-hacker-gym-windows.ps1') -Game 'C:\Games\Hollow Knight\hollow_knight.exe' --domain hacker --hours 1
+```
+
+Use `--domain gameplay` for visual training or `--help` for shared Gym options.
+The launcher resumes the latest compatible checkpoint for that domain or accepts
+`--base` to select one explicitly. PPO proposals pass the shared comparison and
+native inference checks before the trainer publishes a new policy.
+
 Windows has implementations for atlas persistence, state management,
 ground/room editing, input-path recording, training and player operations.
 These surfaces do not establish full Mac parity: menu calibration, model review,
@@ -708,6 +778,13 @@ See [WINDOWS_PORT.md](../macos/WINDOWS_PORT.md) for the dependency
 audit and ordered port plan.
 
 ### Stencil walkthrough and model workspace
+
+**Model → Screenshots** shows Game Play examples with their saved boxes and lets
+you open or delete them. An example with a positive label for a supported Game
+Play object enables shared model training. Each object is optional, including
+the Knight. Training uses Game Play examples, including known-empty frames and
+hard negatives for the selected vocabulary. Menu and HUD references continue
+to support stencil recognition.
 
 The gear opens a centered, scrollable Settings dialog with atlas actions, Debug View, Game language, and Factory Reset. Language names use their native spelling. Navigate to the screen named by the blue guidance in the single bottom row, then press **L** or **Label**. Game State is an optional overlay under Debug View. Free Fly, Fit, and Current appear only after Phase 1 while Gameplay is recognized in the Gameplay workspace; Ops also requires Modded mode and a recognized gameplay state. Required menu labels follow menu order and disappear from Add after their required boxes are present (two for selection decorations); Modify/Delete keep them editable. Gameplay objects remain repeatable and alone expose **+ Object**.
 

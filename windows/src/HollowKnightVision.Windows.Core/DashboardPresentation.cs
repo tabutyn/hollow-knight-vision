@@ -352,8 +352,8 @@ public static class DashboardFeatureReviewPalette
 
     public static DashboardRgba Rgba(DashboardFeatureReviewLineKind kind) => kind switch
     {
-        DashboardFeatureReviewLineKind.CurrentGround => new(.27, 1, .47, .95),
-        DashboardFeatureReviewLineKind.PersistentGround => new(.75, .31, 1, .86),
+        DashboardFeatureReviewLineKind.CurrentGround or DashboardFeatureReviewLineKind.PersistentGround
+            => new(.27, 1, .47, .95),
         DashboardFeatureReviewLineKind.RoomTransition => new(1, .52, .12, .95),
         DashboardFeatureReviewLineKind.RoomBoundary => new(.12, .90, 1, .95),
         DashboardFeatureReviewLineKind.PositiveGroundTruth => new(.27, 1, .47, 1),

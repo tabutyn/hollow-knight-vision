@@ -4,7 +4,8 @@ public sealed record HackerCapturedFrame(
     int UnityFrame,
     BgraFrame Image,
     double CapturedAt,
-    bool IntegratesAtlas);
+    bool IntegratesAtlas,
+    InputButtons? MovementButtons = null);
 
 public sealed record HackerMatchedFrame(
     HackerCapturedFrame Capture,
@@ -178,7 +179,34 @@ public sealed record HackerAtlasRoom(
     HackerAtlasRect Bounds)
 {
     public IReadOnlyList<HackerAtlasLayer> AtlasTiles { get; init; } = [];
+    public HackerTerrainProjection? TerrainProjection { get; init; }
     public HackerAtlasRect WorldBounds => Bounds.Offset(Position.X, Position.Y);
+}
+
+public sealed record HackerTerrainProjection(AtlasPoint PixelsPerWorldUnit, AtlasPoint LocalOrigin)
+{
+    public static HackerTerrainProjection FromFrame(HackerPreparedFrame frame, AtlasPoint atlasOrigin)
+    {
+        var camera = frame.CameraTransform;
+        var bounds = frame.LiveBounds;
+        var projected = HackerAtlasCameraPlacement.CameraPosition(camera);
+        return new(new(camera.PixelsPerWorldUnitX, camera.PixelsPerWorldUnitY),
+            new(bounds.MinX + bounds.Width / 2 - atlasOrigin.X - projected.X,
+                bounds.MinY + bounds.Height / 2 - atlasOrigin.Y - projected.Y));
+    }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsValid => double.IsFinite(PixelsPerWorldUnit.X) && PixelsPerWorldUnit.X > 0
+        && double.IsFinite(PixelsPerWorldUnit.Y) && PixelsPerWorldUnit.Y > 0
+        && double.IsFinite(LocalOrigin.X) && double.IsFinite(LocalOrigin.Y);
+
+    public AtlasPoint WorldToAtlas(AtlasPoint world, AtlasPoint roomPosition) => new(
+        roomPosition.X + LocalOrigin.X + world.X * PixelsPerWorldUnit.X,
+        roomPosition.Y + LocalOrigin.Y + world.Y * PixelsPerWorldUnit.Y);
+
+    public AtlasPoint AtlasToWorld(AtlasPoint atlas, AtlasPoint roomPosition) => new(
+        (atlas.X - roomPosition.X - LocalOrigin.X) / PixelsPerWorldUnit.X,
+        (atlas.Y - roomPosition.Y - LocalOrigin.Y) / PixelsPerWorldUnit.Y);
 }
 
 public sealed record HackerAtlasLayer(
@@ -484,6 +512,16 @@ public sealed class HackerFramePreparer
         }
     }
 
+    public void RestoreRoomAnchors(IEnumerable<HackerAtlasArchivedRoom> savedRooms)
+    {
+        lock (gate)
+        {
+            anchorPositions.Clear();
+            lastPlayableReference = null;
+            foreach (var room in savedRooms) anchorPositions.Add(room.SceneName, room.CameraAnchor);
+        }
+    }
+
     public HackerPreparedFrame? Process(HackerMatchedFrame match)
     {
         ArgumentNullException.ThrowIfNull(match);
@@ -694,21 +732,26 @@ public sealed class HackerAtlasPipeline
 
     private sealed class RoomState
     {
-        internal RoomState(string sceneName, AtlasPoint position, HudStencilTemplate? hudTemplate)
+        internal RoomState(Guid id, string sceneName, AtlasPoint position, AtlasPoint cameraAnchor, HackerTerrainProjection terrainProjection,
+            HudStencilTemplate? hudTemplate)
         {
+            Id = id;
             SceneName = sceneName;
             Position = position;
+            CameraAnchor = cameraAnchor;
+            TerrainProjection = terrainProjection;
             HudStencilTracker = new(hudTemplate);
-            Composer = new LiveTiledAtlas(
-                anchorPosition: new AtlasPoint(0, 0),
-                sourceCacheLimit: 48,
-                pixelPolicy: LiveTiledAtlasPixelPolicy.NewestQuilted);
         }
 
-        internal Guid Id { get; } = Guid.NewGuid();
+        internal Guid Id { get; }
         internal string SceneName { get; }
         internal AtlasPoint Position { get; }
-        internal LiveTiledAtlas Composer { get; }
+        internal AtlasPoint CameraAnchor { get; }
+        internal HackerTerrainProjection TerrainProjection { get; }
+        internal LiveTiledAtlas Composer { get; } = new(
+            anchorPosition: new AtlasPoint(0, 0),
+            sourceCacheLimit: 48,
+            pixelPolicy: LiveTiledAtlasPixelPolicy.NewestQuilted);
         internal HudStencilTracker HudStencilTracker { get; set; }
         internal FadeReference? FadeReference { get; set; }
         internal int? LastIntegratedUnityFrame { get; set; }
@@ -720,7 +763,54 @@ public sealed class HackerAtlasPipeline
     private HudStencilTemplate? hudTemplate;
     private HackerPreparedFrame? lastPlayableFrame;
     private long nextObservationId;
+    private long registrationCount;
     private ulong revision;
+    private DateTimeOffset createdAt = DateTimeOffset.UtcNow;
+
+    public ulong Revision { get { lock (gate) return revision; } }
+
+    public (long RegistrationCount, DateTimeOffset CreatedAt) SaveSummary
+    {
+        get { lock (gate) return (registrationCount, createdAt); }
+    }
+
+    public (HackerAtlasArchive Archive, ulong Revision) CaptureArchive(IReadOnlyDictionary<string, AtlasPoint> offsets)
+    {
+        lock (gate)
+        {
+            var archivedRooms = rooms.Values.OrderBy(room => room.SceneName, StringComparer.Ordinal).Select(room =>
+            {
+                var raster = room.Composer.PublishedForArchive;
+                return new HackerAtlasArchivedRoom(room.Id, room.SceneName, room.Position, room.CameraAnchor, room.TerrainProjection,
+                    raster.ContentBounds, raster.Tiles.Select(tile => new HackerAtlasArchivedTile(
+                        new AtlasTileCoordinate(tile.TileX, tile.TileY), tile.Image)).ToArray());
+            }).ToArray();
+            return (new HackerAtlasArchive(archivedRooms, connections.ToArray(), offsets, registrationCount, createdAt), revision);
+        }
+    }
+
+    public static HackerAtlasPipeline FromArchive(HackerAtlasArchive archive)
+    {
+        var pipeline = new HackerAtlasPipeline
+        {
+            createdAt = archive.CreatedAt,
+            registrationCount = archive.RegistrationCount,
+            revision = 1
+        };
+        foreach (var saved in archive.Rooms)
+        {
+            var room = new RoomState(saved.Id, saved.SceneName, saved.Position, saved.CameraAnchor, saved.TerrainProjection, null);
+            room.Composer.RestoreHackerTiles(saved.Tiles, saved.ContentBounds);
+            pipeline.rooms.Add(saved.SceneName, room);
+        }
+        pipeline.connections.AddRange(archive.Connections);
+        return pipeline;
+    }
+
+    public HackerAtlasOutput Snapshot()
+    {
+        lock (gate) return BuildOutput(lastPlayableFrame?.SceneName ?? string.Empty, lastPlayableFrame?.UnityFrame ?? 0);
+    }
 
     public void ConfigureHudTemplate(HudStencilTemplate? template)
     {
@@ -740,6 +830,8 @@ public sealed class HackerAtlasPipeline
             connections.Clear();
             lastPlayableFrame = null;
             nextObservationId = 0;
+            registrationCount = 0;
+            createdAt = DateTimeOffset.UtcNow;
             revision = unchecked(revision + 1);
         }
     }
@@ -763,11 +855,11 @@ public sealed class HackerAtlasPipeline
                 {
                     return null;
                 }
-                state = new RoomState(
-                    prepared.SceneName,
-                    new AtlasPoint(prepared.LiveBounds.MinX, prepared.LiveBounds.MinY),
-                    hudTemplate);
+                var origin = new AtlasPoint(prepared.LiveBounds.MinX, prepared.LiveBounds.MinY);
+                state = new RoomState(Guid.NewGuid(), prepared.SceneName, origin, prepared.AnchorPosition,
+                    HackerTerrainProjection.FromFrame(prepared, origin), hudTemplate);
                 rooms[prepared.SceneName] = state;
+                revision = unchecked(revision + 1);
             }
 
             if (IsFadeOrCutscene(prepared, profile, position, state.FadeReference))
@@ -831,8 +923,13 @@ public sealed class HackerAtlasPipeline
             return null;
         }
         state.LastIntegratedUnityFrame = prepared.UnityFrame;
+        registrationCount++;
         revision = unchecked(revision + 1);
+        return BuildOutput(prepared.SceneName, prepared.UnityFrame);
+    }
 
+    private HackerAtlasOutput BuildOutput(string sceneName, int unityFrame)
+    {
         var roomSnapshots = rooms.Values
             .OrderBy(room => room.SceneName, StringComparer.Ordinal)
             .Select(room =>
@@ -845,6 +942,7 @@ public sealed class HackerAtlasPipeline
                     room.Position,
                     contentBounds)
                 {
+                    TerrainProjection = room.TerrainProjection,
                     AtlasTiles = snapshot.Tiles.Select(tile => new HackerAtlasLayer(
                         tile.Id,
                         tile.Image,
@@ -883,8 +981,8 @@ public sealed class HackerAtlasPipeline
             atlasBounds,
             roomSnapshots,
             connections.ToArray(),
-            prepared.SceneName,
-            prepared.UnityFrame,
+            sceneName,
+            unityFrame,
             rooms.Count,
             rooms.Keys.Order(StringComparer.Ordinal).ToArray());
     }
@@ -915,6 +1013,7 @@ public sealed class HackerAtlasPipeline
             toSide,
             DoorwayCoordinate(previous, previousRoom, fromSide),
             DoorwayCoordinate(current, currentRoom, toSide)));
+        revision = unchecked(revision + 1);
     }
 
     private static HackerRoomSide TransitionSide(

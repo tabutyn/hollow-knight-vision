@@ -91,6 +91,23 @@ internal static class GroundCameraSolverTests
         Near(.44, (double)reference.GetType().GetProperty("Timestamp")!.GetValue(reference)!);
     }
 
+    public static void TestRecentMotionCanRecoverAStationaryWeakAnchor()
+    {
+        var anchor = new GroundCameraSolver.Solution(new(0, 0), 6, 13);
+        var recent = new GroundCameraSolver.Solution(new(-6, .1), 11, 10);
+        Check(GroundCameraSolver.AllowsStationaryAnchorRecovery(anchor, recent, .02));
+        Check(GroundCameraSolver.AllowsStationaryAnchorRecovery(anchor, recent with { ImageTranslation = new(6, .1) }, .02));
+        Check(!GroundCameraSolver.AllowsStationaryAnchorRecovery(anchor, recent with { ReferenceTrusted = false }, .02));
+        Check(!GroundCameraSolver.AllowsStationaryAnchorRecovery(anchor, recent, .1));
+        Check(!GroundCameraSolver.AllowsStationaryAnchorRecovery(anchor with { Support = 10 }, recent, .02));
+        Check(!GroundCameraSolver.AllowsStationaryAnchorRecovery(anchor with { ImageTranslation = new(2, 0) }, recent, .02));
+        Check(!GroundCameraSolver.AllowsStationaryAnchorRecovery(anchor, recent with { ImageTranslation = new(0, 0) }, .02));
+        Check(!GroundCameraSolver.AllowsStationaryAnchorRecovery(anchor, recent with { ImageTranslation = new(-6, 2) }, .02));
+        Check(!GroundCameraSolver.AllowsStationaryAnchorRecovery(anchor, recent with { ImageTranslation = new(-40, 0) }, .02));
+        Check(!GroundCameraSolver.AllowsStationaryAnchorRecovery(anchor, recent with { Support = 9 }, .02));
+        Check(!GroundCameraSolver.AllowsStationaryAnchorRecovery(anchor, recent with { Error = 12 }, .02));
+    }
+
     public static void TestRecentMajorityOverridesSparseForegroundAnchor()
     {
         const int width = 640, height = 100;

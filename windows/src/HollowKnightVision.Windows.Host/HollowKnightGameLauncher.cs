@@ -37,9 +37,7 @@ public static partial class HollowKnightGameLauncher
                 "The selected path is not a complete Hollow Knight installation.");
         }
         var loader = Path.Combine(managed, "MMHOOK_Assembly-CSharp.dll");
-        var receiver = Path.Combine(
-            managed, "Mods", "HollowKnightVisionInputReceiver",
-            "HollowKnightVisionInputReceiver.dll");
+        var receiver = ReceiverAssembly(executable);
         if (!requireModded && (File.Exists(loader) || File.Exists(receiver)))
         {
             throw new InvalidOperationException(
@@ -53,6 +51,10 @@ public static partial class HollowKnightGameLauncher
                 "HollowKnightVisionInputReceiver. Choose that executable with --game-path.");
         }
     }
+
+    internal static string ReceiverAssembly(string executable) => Path.Combine(
+        Path.GetDirectoryName(Path.GetFullPath(executable))!, "hollow_knight_Data", "Managed",
+        "Mods", "HollowKnightVisionInputReceiver", "HollowKnightVisionInputReceiver.dll");
 
     public static string? FindCompatibleExecutable(
         bool requireModded,

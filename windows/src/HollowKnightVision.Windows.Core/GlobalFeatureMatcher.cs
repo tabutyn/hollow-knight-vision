@@ -44,6 +44,11 @@ public sealed class GlobalFeatureMatcher
 
     public int LastSelfPlacementPairChecks { get; private set; }
     public bool LastSelfPlacementWasAmbiguous { get; private set; }
+    internal bool LastMatchWasAmbiguous { get; private set; }
+
+    internal bool PermitsPatchProposal(GlobalFeatureReference reference) =>
+        !HasAmbiguousSelfPlacement(reference.Id, reference.Features.Take(MaximumFeatures)
+            .Select(feature => new Corner(feature.SamplePoint, feature.Descriptor.ToArray(), feature.Strength)).ToArray());
 
     public GlobalFeatureReference? MakeReference(
         BgraFrame frame,
@@ -116,10 +121,28 @@ public sealed class GlobalFeatureMatcher
         IReadOnlyList<GlobalFeatureReference> references,
         Guid? preferredReferenceId = null,
         double? currentSolveWidth = null,
-        IReadOnlyList<StencilRect>? excluding = null)
+        IReadOnlyList<StencilRect>? excluding = null) =>
+        MatchReferences(frame, references, preferredReferenceId, currentSolveWidth, excluding, referenceRooms: null);
+
+    internal GlobalFeatureMatch? MatchAcrossRooms(
+        BgraFrame frame,
+        IReadOnlyList<GlobalFeatureReference> references,
+        double solveWidth,
+        IReadOnlyList<StencilRect> excluding,
+        IReadOnlyDictionary<Guid, int> referenceRooms) =>
+        MatchReferences(frame, references, null, solveWidth, excluding, referenceRooms);
+
+    private GlobalFeatureMatch? MatchReferences(
+        BgraFrame frame,
+        IReadOnlyList<GlobalFeatureReference> references,
+        Guid? preferredReferenceId,
+        double? currentSolveWidth,
+        IReadOnlyList<StencilRect>? excluding,
+        IReadOnlyDictionary<Guid, int>? referenceRooms)
     {
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(references);
+        LastMatchWasAmbiguous = false;
         var exclusions = excluding ?? [];
         if (currentSolveWidth is { } width && (!double.IsFinite(width) || width <= 0)
             || exclusions.Any(rectangle => !ValidRect(rectangle)))
@@ -158,14 +181,18 @@ public sealed class GlobalFeatureMatcher
         Candidate? runnerUp = null;
         for (var index = 1; index < candidates.Count; index++)
         {
-            if (Distance(candidates[index].Camera, best.Camera) <= distinctPlacementDistance) continue;
-            runnerUp = candidates[index];
+            var alternative = candidates[index];
+            var sameRoom = referenceRooms is null
+                || referenceRooms[alternative.Reference.Id] == referenceRooms[best.Reference.Id];
+            if (sameRoom && Distance(alternative.Camera, best.Camera) <= distinctPlacementDistance) continue;
+            runnerUp = alternative;
             break;
         }
         var ambiguity = Math.Min(
             1,
             (runnerUp?.Confidence ?? 0) / Math.Max(best.Confidence, double.Epsilon));
-        if (ambiguity >= AmbiguityLimit) return null;
+        LastMatchWasAmbiguous = ambiguity >= AmbiguityLimit;
+        if (LastMatchWasAmbiguous) return null;
         return new GlobalFeatureMatch(
             best.Reference.Id,
             best.Camera,

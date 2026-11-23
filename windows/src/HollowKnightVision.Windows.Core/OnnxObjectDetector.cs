@@ -44,7 +44,8 @@ public static class DetectionDecoder
         double nmsOverlap = DefaultNmsOverlap,
         int maximumPerClass = DefaultMaximumPerClass,
         int maximumDetections = DefaultMaximumDetections,
-        bool useLivePolicy = false)
+        bool useLivePolicy = false,
+        IReadOnlySet<string>? trainedClassIdentifiers = null)
     {
         ArgumentNullException.ThrowIfNull(scoreShape);
         ArgumentNullException.ThrowIfNull(boxShape);
@@ -73,6 +74,9 @@ public static class DetectionDecoder
         var candidates = new List<ObjectDetection>();
         for (var classIndex = 0; classIndex < classes; classIndex++)
         {
+            var identifier = classIdentifiers[classIndex];
+            if (trainedClassIdentifiers is not null
+                && !trainedClassIdentifiers.Contains(LabelingClassIdentity.CanonicalIdentifier(identifier))) continue;
             var classOffset = classIndex * plane;
             for (var y = 0; y < height; y++)
             {
@@ -90,7 +94,7 @@ public static class DetectionDecoder
                         boxes[plane + cell],
                         boxes[2 * plane + cell],
                         boxes[3 * plane + cell]);
-                    var candidate = new ObjectDetection(classIdentifiers[classIndex], box, confidence);
+                    var candidate = new ObjectDetection(identifier, box, confidence);
                     if (useLivePolicy)
                     {
                         if (LiveObjectDetectionPostprocessor.Prepare(candidate) is { } prepared) candidates.Add(prepared);
@@ -110,7 +114,8 @@ public static class DetectionDecoder
         IReadOnlyList<long> boxShape,
         IReadOnlyList<string> classIdentifiers,
         float confidenceFloor = DefaultConfidenceFloor,
-        int maximumDetections = 400)
+        int maximumDetections = 400,
+        IReadOnlySet<string>? trainedClassIdentifiers = null)
     {
         ArgumentNullException.ThrowIfNull(scoreShape);
         ArgumentNullException.ThrowIfNull(boxShape);
@@ -135,6 +140,9 @@ public static class DetectionDecoder
         var result = new List<ObjectDetection>();
         for (var classIndex = 0; classIndex < classes; classIndex++)
         {
+            var identifier = classIdentifiers[classIndex];
+            if (trainedClassIdentifiers is not null
+                && !trainedClassIdentifiers.Contains(LabelingClassIdentity.CanonicalIdentifier(identifier))) continue;
             for (var cell = 0; cell < plane; cell++)
             {
                 var confidence = scores[classIndex * plane + cell];
@@ -142,7 +150,7 @@ public static class DetectionDecoder
                 var box = new NormalizedBox(
                     boxes[cell], boxes[plane + cell], boxes[2 * plane + cell], boxes[3 * plane + cell]);
                 if (!Valid(box)) continue;
-                result.Add(new ObjectDetection(classIdentifiers[classIndex], box, confidence));
+                result.Add(new ObjectDetection(identifier, box, confidence));
             }
         }
         return result
@@ -183,9 +191,10 @@ public sealed class OnnxObjectDetector : IDisposable
 {
     private const int InputWidth = FrameGeometry.ReferenceWidth;
     private const int InputHeight = FrameGeometry.ReferenceHeight;
-    private readonly InferenceSession session;
+    private readonly InferenceSession? session;
 
-    public OnnxObjectDetector(string runDirectory, LabelingModelSemanticVersion? modelVersion = null)
+    public OnnxObjectDetector(string runDirectory, LabelingModelSemanticVersion? modelVersion = null,
+        IReadOnlySet<string>? trainedClassIdentifiers = null)
     {
         if (string.IsNullOrWhiteSpace(runDirectory)) throw new ArgumentException("Run directory is required.", nameof(runDirectory));
         RunDirectory = Path.GetFullPath(runDirectory);
@@ -207,8 +216,14 @@ public sealed class OnnxObjectDetector : IDisposable
             .Select(value => value!)
             .ToArray();
         if (ClassIdentifiers.Count == 0) throw new InvalidDataException("Training manifest has no classes.");
+        var parent = Directory.GetParent(RunDirectory);
+        var trainingRoot = parent?.Name == "runs" ? parent.Parent?.FullName : null;
+        var trained = trainedClassIdentifiers ?? LabelingTrainingEvidence.FromManifest(root, trainingRoot)
+            ?? LabelingTrainingEvidence.Canonical([]);
+        TrainedClassIdentifiers = LabelingTrainingEvidence.Canonical(ClassIdentifiers).Where(trained.Contains).ToHashSet(StringComparer.Ordinal);
         ModelPath = Path.Combine(RunDirectory, filename);
         if (!File.Exists(ModelPath)) throw new FileNotFoundException("ONNX model is missing.", ModelPath);
+        if (TrainedClassIdentifiers.Count == 0) return;
 
         using var options = new SessionOptions
         {
@@ -236,10 +251,12 @@ public sealed class OnnxObjectDetector : IDisposable
     public string ModelPath { get; }
     public LabelingModelSemanticVersion? ModelVersion { get; }
     public IReadOnlyList<string> ClassIdentifiers { get; }
+    public IReadOnlySet<string> TrainedClassIdentifiers { get; }
 
     public IReadOnlyList<ObjectDetection> Detect(BgraFrame source, bool raw = false)
     {
         ArgumentNullException.ThrowIfNull(source);
+        if (session is not { } loaded) return [];
         var frame = source.Width == InputWidth && source.Height == InputHeight
             ? source
             : CpuBgraNormalizer.Normalize(source, InputWidth, InputHeight);
@@ -249,25 +266,25 @@ public sealed class OnnxObjectDetector : IDisposable
             [1, 3, InputHeight, InputWidth]);
         var inputs = new Dictionary<string, OrtValue> { ["image"] = inputValue };
         using var runOptions = new RunOptions();
-        using var outputs = session.Run(runOptions, inputs, ["scores", "boxes"]);
+        using var outputs = loaded.Run(runOptions, inputs, ["scores", "boxes"]);
         var scoreShape = outputs[0].GetTensorTypeAndShape().Shape;
         var boxShape = outputs[1].GetTensorTypeAndShape().Shape;
         var detections = raw
             ? DetectionDecoder.DecodeRaw(
                 outputs[0].GetTensorDataAsSpan<float>(), scoreShape,
                 outputs[1].GetTensorDataAsSpan<float>(), boxShape,
-                ClassIdentifiers)
+                ClassIdentifiers, trainedClassIdentifiers: TrainedClassIdentifiers)
             : DetectionDecoder.Decode(
                 outputs[0].GetTensorDataAsSpan<float>(), scoreShape,
                 outputs[1].GetTensorDataAsSpan<float>(), boxShape,
-                ClassIdentifiers, useLivePolicy: true);
+                ClassIdentifiers, useLivePolicy: true, trainedClassIdentifiers: TrainedClassIdentifiers);
         return detections.Select(item => item with
         {
             SourceFrameIdentifier = source.CaptureId, ModelVersion = ModelVersion
         }).ToArray();
     }
 
-    public void Dispose() => session.Dispose();
+    public void Dispose() => session?.Dispose();
 
     private static float[] ToRgbTensor(BgraFrame frame)
     {

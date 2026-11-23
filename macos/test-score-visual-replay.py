@@ -16,6 +16,38 @@ class ScreenshotErrorTests(unittest.TestCase):
                     errorPixels=sum(x*x for x in error)**.5, epoch=epoch,
                     truth={'sceneName': str(epoch)}, tracking={'poseSource': 'ground'})
 
+    def test_windows_world_joins_uptime_and_scores_object_coordinates(self):
+        frames = [self.motion_frame(120.02, [10, 0], [0, 0]),
+                  self.motion_frame(120.04, [12, 0], [0, 0])]
+        snapshot = {
+            'observations': [
+                {'id': 3, 'timestamp': 120.02, 'roomId': 7,
+                 'rawPose': {'x': 12, 'y': 0}, 'optimizedPose': {'x': 10, 'y': 4}},
+                {'id': 4, 'timestamp': 120.04, 'roomId': 7,
+                 'optimizedPose': {'x': 12, 'y': 0}},
+            ],
+            'trackingIslands': [
+                {'id': 8, 'placement': 2, 'members': [{'observationId': 3, 'measured': True}]},
+                {'id': 9, 'placement': 1, 'members': [{'observationId': 4, 'measured': True}]},
+            ],
+            'keyframes': [{'id': 1, 'observationId': 3}, {'id': 2, 'observationId': 4}],
+            'loopClosureEdges': [{'id': 0, 'fromKeyframeId': 1, 'toKeyframeId': 2,
+                                  'deltaX': 3, 'deltaY': 0, 'support': 9}],
+        }
+        result = scorer.screenshot_errors(snapshot, frames, 100, 1000, world_uses_capture_uptime=True)
+        self.assertEqual(result['matched'], 2)
+        self.assertEqual(result['rows'][0]['roomID'], 7)
+        self.assertEqual(result['rows'][0]['errorPixels'], 4)
+        self.assertEqual(result['rows'][0]['rawErrorPixels'], 2)
+        self.assertEqual(result['rows'][0]['islandID'], 8)
+        self.assertEqual(result['rows'][0]['placement'], 'estimated')
+        self.assertEqual(result['estimatedOrUnmeasuredErrorPixels']['count'], 1)
+        self.assertEqual(result['globallyPlacedMeasuredErrorPixels']['count'], 1)
+        self.assertEqual(scorer.loop_constraint_errors(snapshot, result)['edges'][0]['errorPixels'], 1)
+        tracking = [{'captureTimestamp': 120.02, 'poseVerified': True, 'hasConfirmedGround': True},
+                    {'captureTimestamp': 120.04, 'poseVerified': True, 'hasConfirmedGround': False}]
+        self.assertEqual(scorer.local_measurement_availability(tracking, 2, ground_only=True)['locallyMeasuredFrames'], 1)
+
     def test_displacement_diagnostics_keep_fixed_offset_in_overall_scene_score(self):
         frames = [self.motion_frame(i*.05, [i, 0], [100, 20]) for i in range(31)]
         result = scorer.motion_diagnostics(frames)

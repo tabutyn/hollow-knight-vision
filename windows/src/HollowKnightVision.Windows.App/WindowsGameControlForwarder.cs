@@ -29,12 +29,24 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
     private bool menuShortcutsAvailable;
     private bool pointerAvailable;
     private bool playerOpsAvailable;
+    private bool roomResetAvailable;
+    private bool roomResetPending;
     private ReceivedGroundTruth? latestGroundTruth;
     private readonly Dictionary<Guid, TaskCompletionSource<ReceiverPlayerOpsAcknowledgement>>
         pendingPlayerOps = [];
     private readonly InputPathRecorder inputPathRecorder = new();
 
     internal event Action<ReceiverGroundTruthSample, double>? GroundTruthReceived;
+
+    internal InputButtons? CaptureMovement()
+    {
+        lock (stateLock)
+        {
+            if (receiver is null || replayCancellation is not null || pause.BlocksInput || roomResetPending)
+                return null;
+            return botOwner.HasValue ? (MonotonicSeconds() < botDeadline ? botApplied : InputButtons.None) : heldButtons;
+        }
+    }
 
     internal bool MenuShortcutsAvailable
     {
@@ -44,6 +56,11 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
     internal bool PlayerOpsAvailable
     {
         get { lock (stateLock) return playerOpsAvailable; }
+    }
+
+    internal bool RoomResetAvailable
+    {
+        get { lock (stateLock) return playerOpsAvailable && roomResetAvailable; }
     }
 
     internal double? InputAcknowledgementP95Seconds
@@ -67,13 +84,16 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         get => inputPathRecorder.IsRecording;
     }
 
-    internal async Task<bool> StartRecordingAsync(CancellationToken cancellationToken = default)
+    internal (Guid Id, double StartedAt)? Recording => inputPathRecorder.Recording;
+
+    internal async Task<bool> StartRecordingAsync(CancellationToken cancellationToken = default, string? visualArchiveRoot = null)
     {
         ReceiverClient active;
         lock (stateLock)
         {
             if (receiver is null || !checkpointAvailable || replayCancellation is not null || capturingCheckpoint
-                || inputPathRecorder.IsRecording || pause.BlocksInput || heldButtons != InputButtons.None) return false;
+                || roomResetPending || inputPathRecorder.IsRecording || pause.BlocksInput || botOwner.HasValue
+                || heldButtons != InputButtons.None) return false;
             active = receiver;
             capturingCheckpoint = true;
         }
@@ -84,22 +104,32 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
             {
                 if (!ReferenceEquals(active, receiver) || lifetime.IsCancellationRequested) return false;
                 return inputPathRecorder.Start(MonotonicSeconds(), DateTimeOffset.UtcNow, startCheckpoint: checkpoint,
-                    metadata: new Dictionary<string, string> { ["checkpointCapture"] = "receiver-acknowledged-v1", ["playbackMode"] = "recording" });
+                    metadata: new Dictionary<string, string> { ["checkpointCapture"] = "receiver-acknowledged-v1", ["playbackMode"] = "recording" },
+                    visualArchiveRoot: visualArchiveRoot);
             }
         }
         finally { lock (stateLock) capturingCheckpoint = false; }
     }
 
-    internal RecordedInputPath? StopRecording()
+    internal async Task<RecordedInputPath?> StopRecordingAsync(bool cancelled = false)
     {
+        Task<RecordedInputPath?> pending;
         lock (stateLock)
-        {
-            var result = inputPathRecorder.Stop(MonotonicSeconds());
-            if (result is null) return null;
-            result.Validate();
-            return result;
-        }
+            pending = inputPathRecorder.StopAsync(MonotonicSeconds(), cancelled);
+        var result = await pending.ConfigureAwait(false);
+        result?.Validate();
+        return result;
     }
+
+    internal void RecordVisualFrame(BgraFrame frame, double timestamp, double capturedAt, ulong generation, int? marker) =>
+        inputPathRecorder.RecordVisualFrame(frame, timestamp, capturedAt, generation, marker);
+
+    internal void RecordVisualStage(string stage, double timestamp, ulong generation) =>
+        inputPathRecorder.RecordVisualStage(stage, timestamp, generation);
+
+    internal void RecordVisualGroundInput(double timestamp, ulong generation, int imageHeight,
+        GameplaySceneMasks masks, InputButtons? buttons) =>
+        inputPathRecorder.RecordVisualGroundInput(timestamp, generation, imageHeight, masks, buttons);
 
     internal void RecordCoarseMotion(
         double captureTimestamp,
@@ -143,7 +173,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         double signalVisibleFraction,
         int? renderedGameFrame,
         bool atlasWriteAllowed, double groundMilliseconds, int roomId, ulong roomRevision,
-        string recoveryState, AtlasPoint? floorlessMaskedPosition, VisualRoomDirection? expectedDirection)
+        string recoveryState, FloorlessCameraEvidence? floorless, double? sceneMotionMilliseconds,
+        double? recoveredAtlasReferenceTimestamp)
     {
         lock (stateLock)
         {
@@ -152,8 +183,11 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                 captureTimestamp,
                 groundTrackingMilliseconds: groundMilliseconds,
                 roomId: roomId, roomRevision: roomRevision, placementRecoveryState: recoveryState,
-                floorlessMaskedPosition: floorlessMaskedPosition, floorlessExpectedDirection: expectedDirection,
-                floorlessSelectionSource: floorlessMaskedPosition is null ? null : "masked-registration",
+                floorlessCoarsePosition: floorless?.CoarsePosition,
+                floorlessMaskedPosition: floorless?.MaskedPosition, floorlessExpectedDirection: floorless?.ExpectedDirection,
+                floorlessSelectionSource: floorless?.SelectionName,
+                sceneMotion: floorless?.Scene, sceneMotionMilliseconds: sceneMotionMilliseconds,
+                recoveredAtlasReferenceTimestamp: recoveredAtlasReferenceTimestamp,
                 publishedCameraPosition: publishedCameraPosition,
                 poseSource: poseSource,
                 motionBridgeConfidence: motionBridgeConfidence,
@@ -163,6 +197,23 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                 renderedGameFrame: renderedGameFrame,
                 observedAt: MonotonicSeconds());
             inputPathRecorder.RecordAtlasAdmission(captureTimestamp, atlasWriteAllowed);
+        }
+    }
+
+    internal void RecordLoopClosure(
+        double captureTimestamp,
+        int worldRevision,
+        AtlasPoint correction,
+        LiveWorldLoopClosureEdge closure)
+    {
+        lock (stateLock)
+        {
+            inputPathRecorder.RecordLoopClosure(
+                captureTimestamp,
+                worldRevision,
+                new CameraVector(correction.X, correction.Y),
+                closure,
+                MonotonicSeconds());
         }
     }
 
@@ -194,11 +245,13 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         ReceiverClient? active;
         TaskCompletionSource? fault;
         InputButtons snapshot;
+        long epoch;
         lock (stateLock)
         {
             active = receiver;
             fault = connectionFault;
-            if (active is null || fault is null || (replayCancellation is not null || capturingCheckpoint) || pause.BlocksInput) return;
+            if (active is null || fault is null || (replayCancellation is not null || capturingCheckpoint) || roomResetPending || pause.BlocksInput) return;
+            DropBotControlLocked();
             if (awaitingFreshPress)
             {
                 awaitingFreshPress = false;
@@ -213,8 +266,9 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
             }
             snapshot = heldButtons;
             RecordTransition(button, RecordedInputTransition.Pressed);
+            epoch = inputEpoch;
         }
-        QueueState(active, fault, true, snapshot);
+        QueueState(active, fault, true, snapshot, epoch);
     }
 
     internal void Release(InputButtons button)
@@ -222,17 +276,19 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         ReceiverClient? active;
         TaskCompletionSource? fault;
         InputButtons snapshot;
+        long epoch;
         lock (stateLock)
         {
             active = receiver;
             fault = connectionFault;
-            if (active is null || fault is null || (replayCancellation is not null || capturingCheckpoint) || awaitingFreshPress || !isEnabled || pause.BlocksInput) return;
+            if (active is null || fault is null || (replayCancellation is not null || capturingCheckpoint) || awaitingFreshPress || !isEnabled || roomResetPending || pause.BlocksInput) return;
             snapshot = heldButtons & ~button;
             if (snapshot == heldButtons) return;
             heldButtons = snapshot;
             RecordTransition(button, RecordedInputTransition.Released);
+            epoch = inputEpoch;
         }
-        QueueState(active, fault, true, snapshot);
+        QueueState(active, fault, true, snapshot, epoch);
     }
 
     internal void Heartbeat()
@@ -240,32 +296,35 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         ReceiverClient? active;
         TaskCompletionSource? fault;
         InputButtons snapshot;
+        long epoch;
         lock (stateLock)
         {
             active = receiver;
             fault = connectionFault;
-            if (active is null || fault is null || (replayCancellation is not null || capturingCheckpoint) || awaitingFreshPress || !isEnabled || pause.BlocksInput) return;
+            if (botOwner is { } owner)
+            {
+                if (CanDriveBotLocked) QueueBotStateLocked(owner);
+                return;
+            }
+            if (active is null || fault is null || replayCancellation is not null || capturingCheckpoint
+                || awaitingFreshPress || !isEnabled || roomResetPending || pause.BlocksInput) return;
             snapshot = heldButtons;
+            epoch = inputEpoch;
         }
-        QueueState(active, fault, true, snapshot);
+        QueueState(active, fault, true, snapshot, epoch);
     }
 
     internal void ReleaseAll()
     {
         CancelReplay();
-        ReceiverClient? active;
-        TaskCompletionSource? fault;
         lock (stateLock)
         {
-            active = receiver;
-            fault = connectionFault;
+            DropBotControlLocked();
             heldButtons = InputButtons.None;
             isEnabled = false;
             awaitingFreshPress = true;
-        }
-        if (active is not null && fault is not null)
-        {
-            QueueState(active, fault, false, InputButtons.None);
+            if (receiver is { } active && connectionFault is { } fault)
+                QueueState(active, fault, false, InputButtons.None, inputEpoch);
         }
     }
 
@@ -297,13 +356,24 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         ReceiverClient active;
         TaskCompletionSource? fault;
         ReceiverPlayerOpsCommand command;
+        bool resetsRoom;
         TaskCompletionSource<ReceiverPlayerOpsAcknowledgement> pending;
         lock (stateLock)
         {
-            if (receiver is null || connectionFault is null || !playerOpsAvailable || replayCancellation is not null || capturingCheckpoint) return null;
+            if (receiver is null || connectionFault is null || !playerOpsAvailable
+                || replayCancellation is not null || capturingCheckpoint || roomResetPending) return null;
             active = receiver;
             fault = connectionFault;
             command = createCommand(active.SessionId);
+            resetsRoom = command.Operation == ReceiverPlayerOpsCommand.ResetRoomOperation;
+            if (resetsRoom && (!roomResetAvailable || pause.BlocksInput || inputPathRecorder.IsRecording))
+                return null;
+            if (resetsRoom && botOwner.HasValue)
+            {
+                DropBotControlLocked();
+                QueueState(active, fault, false, InputButtons.None, inputEpoch);
+            }
+            roomResetPending = resetsRoom;
             pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
             pendingPlayerOps[command.CommandId] = pending;
         }
@@ -320,7 +390,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                 outboundGate.Release();
             }
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(3));
+            timeout.CancelAfter(TimeSpan.FromSeconds(resetsRoom ? 15 : 3));
             return await pending.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -334,7 +404,11 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         }
         finally
         {
-            lock (stateLock) pendingPlayerOps.Remove(command.CommandId);
+            lock (stateLock)
+            {
+                pendingPlayerOps.Remove(command.CommandId);
+                if (resetsRoom) roomResetPending = false;
+            }
         }
     }
 
@@ -351,6 +425,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         {
             active = receiver;
             fault = connectionFault;
+            DropBotControlLocked();
             heldButtons = InputButtons.None;
             isEnabled = false;
             awaitingFreshPress = true;
@@ -373,8 +448,12 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
             try { await loop.ConfigureAwait(false); }
             catch (OperationCanceledException) { }
         }
-        outboundGate.Dispose();
-        lifetime.Dispose();
+        try { await StopRecordingAsync(cancelled: true).ConfigureAwait(false); }
+        finally
+        {
+            outboundGate.Dispose();
+            lifetime.Dispose();
+        }
     }
 
     private async Task RunConnectionLoopAsync(CancellationToken cancellationToken)
@@ -419,6 +498,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                     controlledFramesAvailable = capabilities.Capabilities.Contains(ControlledFrameReplay.Capability);
                     playerOpsAvailable = capabilities.Capabilities.Contains(
                         ReceiverProtocol.PlayerOpsCapability);
+                    roomResetAvailable = capabilities.Capabilities.Contains(
+                        ReceiverProtocol.RoomResetCapability);
                     pause.Negotiate(pending.SessionId, capabilities);
                 }
 
@@ -461,12 +542,14 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                         {
                             receiver = null;
                             connectionFault = null;
+                            DropBotControlLocked();
                             heldButtons = InputButtons.None;
                             isEnabled = false;
                             awaitingFreshPress = true;
                             menuShortcutsAvailable = false;
                             pointerAvailable = false;
                             playerOpsAvailable = false;
+                            roomResetAvailable = false;
                             checkpointAvailable = false;
                             posePlaybackAvailable = false;
                             replayCancellation?.Cancel();
@@ -568,12 +651,16 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
             {
                 var acknowledgement = ReceiverWireCodec
                     .DecodeLine<ReceiverPlayerOpsAcknowledgement>(line);
-                TaskCompletionSource<ReceiverPlayerOpsAcknowledgement>? pending;
                 lock (stateLock)
                 {
-                    pendingPlayerOps.TryGetValue(acknowledgement.CommandId, out pending);
+                    if (ReferenceEquals(receiver, client)
+                        && acknowledgement.Version == ReceiverProtocol.ControlVersion
+                        && acknowledgement.SessionId == client.SessionId
+                        && pendingPlayerOps.TryGetValue(acknowledgement.CommandId, out var pending))
+                    {
+                        pending.TrySetResult(acknowledgement);
+                    }
                 }
-                pending?.TrySetResult(acknowledgement);
                 continue;
             }
             if (type != "groundTruth") continue;
@@ -608,41 +695,39 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         ReceiverClient active,
         TaskCompletionSource fault,
         bool enabled,
-        InputButtons buttons) =>
-        _ = SendStateOrderedAsync(active, fault, enabled, buttons, lifetime.Token);
+        InputButtons buttons,
+        long epoch) =>
+        _ = SendStateOrderedAsync(active, fault, enabled, buttons, lifetime.Token, epoch);
 
     private async Task SendStateOrderedAsync(
         ReceiverClient active,
         TaskCompletionSource fault,
         bool enabled,
         InputButtons buttons,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? expectedEpoch = null)
     {
         try
         {
             await outboundGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                // A queued pre-label key state must not re-enable controls
-                // after the neutral state and pause command were requested.
-                lock (stateLock) if (pause.BlocksInput) { enabled = false; buttons = InputButtons.None; }
-                await active.SendStateAsync(
+                Task pending;
+                lock (stateLock)
+                {
+                    if (!ReferenceEquals(receiver, active) || expectedEpoch is { } epoch && epoch != inputEpoch) return;
+                    if (pause.BlocksInput || roomResetPending)
+                    {
+                        enabled = false;
+                        buttons = InputButtons.None;
+                    }
+                    pending = active.SendStateAsync(
                         enabled,
                         buttons,
                         cancellationToken,
-                        snapshot =>
-                        {
-                            lock (stateLock)
-                            {
-                                if (ReferenceEquals(receiver, active))
-                                {
-                                    inputAcknowledgements.RecordSent(
-                                        snapshot,
-                                        MonotonicSeconds());
-                                }
-                            }
-                        })
-                    .ConfigureAwait(false);
+                        snapshot => inputAcknowledgements.RecordSent(snapshot, MonotonicSeconds()));
+                }
+                await pending.ConfigureAwait(false);
             }
             finally
             {

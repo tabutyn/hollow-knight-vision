@@ -69,11 +69,6 @@ public sealed class LiveWorldSessionStore
     private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(10);
     private static readonly JsonSerializerOptions JsonOptions =
         LabelingExampleStore.CreateJsonOptions();
-    private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonOptions)
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     private SceneSessionStore sceneStore;
     private readonly Guid generationId;
     private readonly string lifecycleLockPath;
@@ -184,18 +179,20 @@ public sealed class LiveWorldSessionStore
                 imagePath,
                 rawCameraPose,
                 solveWidth,
-                exclusions,
+                current.Manifest.UsesSwiftWireFormat
+                    ? exclusions.Select(mask => LiveWorldJson.FlipMask(mask, maskedImage.Height)).ToArray()
+                    : exclusions,
                 current.SceneRevision);
-            var nextManifest = new SessionManifest(
-                current.Manifest.SchemaVersion,
-                current.Manifest.SessionId,
-                [.. current.Manifest.Observations, observation],
-                checked(nextObservationId + 1));
+            var nextManifest = current.Manifest with
+            {
+                Observations = [.. current.Manifest.Observations, observation],
+                NextObservationId = checked(nextObservationId + 1)
+            };
             beforeAppendManifestWrite?.Invoke(
                 Path.Combine(RootDirectory, ManifestFileName));
             AtomicFile.Write(
                 Path.Combine(RootDirectory, ManifestFileName),
-                JsonSerializer.SerializeToUtf8Bytes(nextManifest, ManifestJsonOptions));
+                LiveWorldJson.WriteManifest(nextManifest));
             return observation;
         }
         catch (Exception persistenceError)
@@ -221,10 +218,24 @@ public sealed class LiveWorldSessionStore
                 $"Stored source observation {observationId} does not exist.",
                 observationId: observationId);
         }
+        return ReadSource(current, observation);
+    }
+
+    public LiveWorldTracker LoadTracker()
+    {
+        using var lifecycleLock = AcquireLifecycleLock();
+        var current = OpenCurrentStoreUnderLock();
+        var snapshot = LoadCore(current).Snapshot;
+        if (!snapshot.UsesSwiftWireFormat) return new LiveWorldTracker(snapshot);
+
+        var sources = current.Manifest.Observations.ToDictionary(observation => observation.Id);
+        return new LiveWorldTracker(snapshot, id => ReadSource(current, sources[id]));
+    }
+
+    private BgraFrame ReadSource(SceneSessionStore current, StoredFrameObservation observation)
+    {
         var expectedPath = ContainedEvidencePath(observation.ImagePath);
-        return current.Source(
-            observation,
-            (handle, _) => ValidateOpenedHandlePath(handle, expectedPath));
+        return current.Source(observation, (handle, _) => ValidateOpenedHandlePath(handle, expectedPath));
     }
 
     public LiveWorldSessionState Load()
@@ -257,10 +268,7 @@ public sealed class LiveWorldSessionStore
         SessionManifest manifest;
         try
         {
-            manifest = JsonSerializer.Deserialize<SessionManifest>(
-                    ReadExistingFile(manifestPath),
-                    ManifestJsonOptions)
-                ?? throw new JsonException("Live-world manifest is empty.");
+            manifest = LiveWorldJson.ReadManifest(ReadExistingFile(manifestPath));
             ValidateManifest(manifest, root);
         }
         catch (LiveWorldSessionStoreException)
@@ -282,7 +290,7 @@ public sealed class LiveWorldSessionStore
                     LiveWorldSessionStoreError.CorruptSnapshot,
                     "Live-world evidence exists without a committed scene snapshot.");
             }
-            return new LiveWorldSessionState(new LiveWorldSnapshot(), 0);
+            return EmptyWorld(manifest, 0);
         }
 
         ExistingSceneSnapshotEnvelope envelope;
@@ -328,14 +336,17 @@ public sealed class LiveWorldSessionStore
         return new LiveWorldSessionState(snapshot, envelope.Revision);
     }
 
+    private static LiveWorldSessionState EmptyWorld(SessionManifest manifest, int revision) =>
+        new(manifest.UsesSwiftWireFormat
+            ? new LiveWorldSnapshot(schemaVersion: LiveWorldSnapshot.CurrentSchemaVersion)
+            : new LiveWorldSnapshot(), revision);
+
     private LiveWorldSessionState LoadCore(SceneSessionStore current)
     {
         var data = TranslateSnapshotStoreErrors(current.LoadScene);
         if (data is null)
         {
-            return new LiveWorldSessionState(
-                new LiveWorldSnapshot(),
-                current.SceneRevision);
+            return EmptyWorld(current.Manifest, current.SceneRevision);
         }
 
         var snapshot = DeserializeSnapshot(data);
@@ -373,7 +384,7 @@ public sealed class LiveWorldSessionStore
         using var lifecycleLock = AcquireLifecycleLock();
         var current = OpenCurrentStoreUnderLock();
         using var sourceHandles = ValidateSourceReferences(snapshot, current);
-        var encoded = JsonSerializer.SerializeToUtf8Bytes(snapshot, JsonOptions);
+        var encoded = LiveWorldJson.WriteSnapshot(snapshot);
         var committed = TranslateSnapshotStoreErrors(
             () => current.SaveScene(encoded, expectedRevision, newRevision));
         sceneStore = current;
@@ -458,6 +469,7 @@ public sealed class LiveWorldSessionStore
         var openedIds = new HashSet<int>();
         var storedById = current.Manifest.Observations.ToDictionary(
             value => value.Id);
+        ValidateCoordinateFormat(current.Manifest, snapshot);
         try
         {
             foreach (var observation in snapshot.Observations)
@@ -511,8 +523,7 @@ public sealed class LiveWorldSessionStore
     {
         try
         {
-            var snapshot = JsonSerializer.Deserialize<LiveWorldSnapshot>(data, JsonOptions)
-                ?? throw new JsonException("Live-world snapshot is empty.");
+            var snapshot = LiveWorldJson.ReadSnapshot(data);
             snapshot.Validate();
             return snapshot;
         }
@@ -542,6 +553,7 @@ public sealed class LiveWorldSessionStore
     {
         var handles = new DisposableHandles();
         var storedById = manifest.Observations.ToDictionary(value => value.Id);
+        ValidateCoordinateFormat(manifest, snapshot);
         try
         {
             foreach (var stored in manifest.Observations)
@@ -723,8 +735,9 @@ public sealed class LiveWorldSessionStore
                     expectedPath,
                     StringComparison.Ordinal)
                 || !paths.Add(observation.ImagePath)
-                || observation.RoomId != manifest.SessionId
-                || observation.VisitId != manifest.SessionId
+                || (manifest.UsesSwiftWireFormat
+                    ? observation.RoomId == Guid.Empty || observation.VisitId == Guid.Empty
+                    : observation.RoomId != manifest.SessionId || observation.VisitId != manifest.SessionId)
                 || !double.IsFinite(observation.Timestamp)
                 || !double.IsFinite(observation.CameraPosition.X)
                 || !double.IsFinite(observation.CameraPosition.Y)
@@ -1061,10 +1074,7 @@ public sealed class LiveWorldSessionStore
         if (!File.Exists(manifestPath)) return;
         try
         {
-            var manifest = JsonSerializer.Deserialize<SessionManifest>(
-                    File.ReadAllBytes(manifestPath),
-                    ManifestJsonOptions)
-                ?? throw new JsonException("Live-world manifest is empty.");
+            var manifest = LiveWorldJson.ReadManifest(File.ReadAllBytes(manifestPath));
             ValidateManifest(manifest, rootDirectory);
         }
         catch (LiveWorldSessionStoreException)
@@ -1258,6 +1268,12 @@ public sealed class LiveWorldSessionStore
         LiveWorldSessionStoreError.CorruptSessionManifest,
         message,
         innerException: innerException);
+
+    private static void ValidateCoordinateFormat(SessionManifest manifest, LiveWorldSnapshot snapshot)
+    {
+        if (manifest.Observations.Count > 0 && manifest.UsesSwiftWireFormat != snapshot.UsesSwiftWireFormat)
+            throw Error(LiveWorldSessionStoreError.CorruptSnapshot, "Atlas evidence and snapshot use different coordinate formats.");
+    }
 
     private static bool SameRectangles(
         IReadOnlyList<StencilRect> stored,

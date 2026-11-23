@@ -24,8 +24,8 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        // Plain offscreen WPF windows only: never instantiate MainWindow,
-        // launch Hollow Knight, or touch the user's labels/atlas/game saves.
+        // Tests use offscreen controls or an unshown Atlas window with temporary data.
+        // No test here starts Hollow Knight or connects a receiver.
         _ = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
         if (args.Contains("--input-only"))
@@ -52,8 +52,11 @@ internal static class Program
         }
         InputPathReplayIntegrationTests.Run();
         MenuParticleTests.Run();
+        TestRejectedMenuDoesNotDrawStencils();
         ControlledStepCaptureTests.Run();
         ReplayLifecycleTests.Run();
+        TestVisualReplayInspectionSkipsNormalStartup();
+        VisualProductionReplayTests.Run();
         TestWorldReplayRequiresExplicitReturningIntent();
         TestWorldReplayCreatesRequestedReport();
         TestWorldReplayBadArgumentsAndFailureExitCodes();
@@ -92,9 +95,14 @@ internal static class Program
         TestControlPointPixelsStayOutsideRectangleInnerArea();
         TestNegativeModeAndFreshProfileChoices();
         TestModeSelection();
+        TestSettingsSections();
+        AtlasWindowIntegrationTests.Run();
         TestBottomControlScope();
         TestFramingGroupsAreMutuallyExclusive();
-        TestHackerInteractionModes();
+        TestHackerTerrainControls();
+        TestHackerPathPresentation();
+        TestGameplayPathsFollowTheImageAndRespectMenuContext();
+        TestBotCapturePreviewColorsAndCoordinateOrientation();
         TestWorkspaceShortcuts();
         TestPathRecordingAvailability();
         TestWorkspaceExitShortcut();
@@ -103,6 +111,8 @@ internal static class Program
         TestMainWindowHasProductTitle();
         TestGroundFeatureOverlayStartsVisible();
         TestGroundFeatureOverlayUsesMacReviewPalette();
+        TestSavedGroundOverlayAlignsWithAtlasWithoutALiveFrame();
+        TestTerrainCornersKeepVerticalWallStrokesHidden();
         RuntimeModeTests.Run();
         HudStencilTests.Run();
         MenuIntegrationTests.Run();
@@ -120,7 +130,7 @@ internal static class Program
         GpuCaptureTests.TestMappedBounds();
         GpuCaptureTests.RunIfRequested();
         if (args.Contains("--input")) TestBackgroundKeyDelivery();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 72 : 71)}");
+        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 78 : 77)}");
         Application.Current.Shutdown();
     }
 
@@ -266,6 +276,33 @@ internal static class Program
         Check(normalOwnership.Target is null && normalOwnership.HeldKeys.Count == 0,
             "Model review navigation acquired normal-game handoff ownership.");
         Console.WriteLine("PASS testModelReviewNavigationAndExitAreReservedFromGameRelay");
+    }
+
+    private static void TestVisualReplayInspectionSkipsNormalStartup()
+    {
+        var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"hkv-visual-replay-host-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = System.IO.Path.Combine(root, "path-legacy.json");
+            new RecordedInputPathStore(root).Save(new RecordedInputPath(RecordedInputPath.CurrentSchemaVersion,
+                Guid.NewGuid(), DateTimeOffset.UnixEpoch, 1, null, null, null, [], trackingSamples: []), path);
+            using var output = new StringWriter();
+            using var errors = new StringWriter();
+            Task<int> Run(params string[] arguments) => HostProgram.RunAsync(arguments,
+                normalRunner: _ => throw new InvalidOperationException("Offline inspection attempted normal startup."),
+                standardOutput: output, standardError: errors);
+
+            if (Run("--inspect-visual-replay", path).GetAwaiter().GetResult() != 2)
+                throw new InvalidOperationException("A legacy recording should report an unavailable image archive.");
+            using var report = JsonDocument.Parse(output.ToString());
+            if (report.RootElement.GetProperty("archiveAvailable").GetBoolean())
+                throw new InvalidOperationException("The offline inspection reported image evidence for a legacy recording.");
+            if (Run("--inspect-visual-replay").GetAwaiter().GetResult() != 64
+                || Run("--inspect-visual-replay", System.IO.Path.Combine(root, "missing.json")).GetAwaiter().GetResult() != 1)
+                throw new InvalidOperationException("Offline visual replay usage and read failures returned the wrong exit codes.");
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     private static void TestWorldReplayRequiresExplicitReturningIntent()
@@ -936,6 +973,68 @@ internal static class Program
         ShowActivated = false, ShowInTaskbar = false, Background = Brushes.Black
     };
 
+    private static void TestSettingsSections()
+    {
+        var xml = MainWindowSource();
+        System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var root = xml.Descendants(ns + "TabControl")
+            .Single(item => (string?)item.Attribute(x + "Name") == "SettingsSections");
+        var tabs = root.Elements(ns + "TabItem").ToArray();
+        Check(tabs.Select(item => (string?)item.Attribute("Header")).SequenceEqual(["Atlas", "Debug View", "System"]),
+            "The settings sections are missing or out of order.");
+        Check(!root.Descendants(ns + "TextBlock").Any(item => ((string?)item.Attribute("Text")) is "Manage Atlas" or "Manage Hacker Atlas"),
+            "The Atlas page repeated its heading.");
+        var named = tabs.Select(tab => tab.Descendants().Select(item => (string?)item.Attribute(x + "Name"))
+            .OfType<string>().ToHashSet(StringComparer.Ordinal)).ToArray();
+        Check(named[0].Contains("AtlasStatesList") && named[1].Contains("GroundFeaturesCheck")
+            && named[2].Contains("OpsResetRoomButton") && named[2].Contains("SettingsLanguageCombo"),
+            "Controls appeared in the wrong settings section.");
+        var estimated = tabs[1].Descendants(ns + "CheckBox")
+            .Single(item => (string?)item.Attribute(x + "Name") == "EstimatedRoomConnectionsCheck");
+        Check((string?)estimated.Attribute("IsChecked") == "False"
+            && (string?)estimated.Attribute("Checked") == "EstimatedRoomConnections_Changed"
+            && (string?)estimated.Attribute("Unchecked") == "EstimatedRoomConnections_Changed",
+            "Estimated connections need a default-off debug toggle.");
+
+        var atlas = tabs[0].Descendants(ns + "StackPanel")
+            .Single(item => (string?)item.Attribute(x + "Name") == "AtlasManager");
+        Check(atlas.Descendants(ns + "Button").Select(item => (string?)item.Attribute("Click"))
+                .SequenceEqual(["AtlasSaveState_Click", "AtlasNew_Click", "AtlasDeleteState_Click", "AtlasLoadState_Click"]),
+            "Gameplay and Hacker must share one set of Atlas controls.");
+        Check(!tabs[0].Descendants(ns + "Button").Any(item => (string?)item.Attribute("Click") == "HackerDeleteAtlas_Click"),
+            "A separate Hacker delete control would shadow the shared Atlas manager.");
+
+        // The standalone test loads the production template without window-bound event handlers.
+        var markup = new System.Xml.Linq.XElement(root);
+        var events = new HashSet<string>(StringComparer.Ordinal)
+            { "Click", "SelectionChanged", "ValueChanged", "Checked", "Unchecked" };
+        foreach (var attribute in markup.DescendantsAndSelf().SelectMany(item => item.Attributes())
+            .Where(attribute => attribute.Name.Namespace == System.Xml.Linq.XNamespace.None
+                && events.Contains(attribute.Name.LocalName)).ToArray()) attribute.Remove();
+        var control = (TabControl)System.Windows.Markup.XamlReader.Parse(markup.ToString());
+        var window = Offscreen(control, 660, 440);
+        window.Show();
+        Pump();
+        try
+        {
+            Check(control.TabStripPlacement == Dock.Left && control.SelectedIndex == 0
+                && ((TabItem)control.SelectedItem).Header is "Atlas", "The left Atlas tab should be selected initially.");
+            control.SelectedIndex = 1;
+            Pump();
+            var debug = (TabItem)control.SelectedItem;
+            Check(debug.Header is "Debug View" && control.SelectedContent is ScrollViewer, "Debug View did not open.");
+            var toggle = ((StackPanel)((ScrollViewer)debug.Content).Content).Children.OfType<CheckBox>()
+                .Single(box => box.Name == "EstimatedRoomConnectionsCheck");
+            Check(toggle.IsChecked == false, "Estimated room connections became visible by default.");
+            control.SelectedIndex = 2;
+            Pump();
+            Check(((TabItem)control.SelectedItem).Header is "System", "System did not open.");
+        }
+        finally { window.Close(); }
+        Console.WriteLine("PASS settings opens Atlas, Debug View and System from a left tab column");
+    }
+
     private static void TestModeSelection()
     {
         var xml = System.Xml.Linq.XDocument.Load(System.IO.Path.Combine(AppContext.BaseDirectory, "MainWindow.source.xaml"));
@@ -943,7 +1042,7 @@ internal static class Program
         System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
         var source = xml.Descendants(ns + "Style").Single(item => (string?)item.Attribute(x + "Key") == "Segment");
         var style = (Style)System.Windows.Markup.XamlReader.Parse(source.ToString());
-        foreach (var group in new[] { "GameplayFraming", "HackerFraming", "HackerSettingsMode", "LabelMode", "ModelTab" })
+        foreach (var group in new[] { "GameplayFraming", "HackerFraming", "LabelMode", "ModelTab" })
         {
             var controls = xml.Descendants(ns + "RadioButton").Where(item => (string?)item.Attribute("GroupName") == group).ToArray();
             Check(controls.Length >= 3, $"Missing segmented mode group {group}.");
@@ -982,7 +1081,7 @@ internal static class Program
     {
         var workspaces = DashboardValues("Workspaces");
         Check(DashboardValues("BottomWorkspaces").SequenceEqual(
-            new[] { "Gameplay", "Label", "Stencil", "Model", "Hacker" }),
+            new[] { "Gameplay", "Label", "Stencil", "Model", "Hacker", "Bot" }),
             "Bottom controls exposed Ops or omitted a dashboard workspace.");
         foreach (var workspace in workspaces)
         foreach (var complete in new[] { false, true })
@@ -1025,29 +1124,124 @@ internal static class Program
         Console.WriteLine("PASS Gameplay and Hacker framing groups are mutually exclusive");
     }
 
-    private static void TestHackerInteractionModes()
+    private static void TestHackerTerrainControls()
     {
-        var expected = new[] { "Ground", "Rooms", "Fit", "Free Fly", "Current" };
-        Check(DashboardValues("HackerInteractionModes").SequenceEqual(expected),
-            "Hacker interaction policy order drifted.");
+        var expected = new[] { "Objective", "Ground", "Wall", "Spike", "Door", "Rooms", "Path" };
+        Check(DashboardValues("HackerEditingTargets").SequenceEqual(expected), "Unexpected Hacker editing targets.");
         var xml = MainWindowSource();
         System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
-        var controls = xml.Descendants(ns + "RadioButton")
-            .Where(item => (string?)item.Attribute("GroupName") == "HackerSettingsMode")
-            .Select(item => (string?)item.Attribute("Content")).ToArray();
-        Check(controls.SequenceEqual(expected), "Hacker settings do not use the canonical mode order.");
-        foreach (var mode in expected)
-        {
-            var expectedFraming = mode is "Fit" or "Current" ? mode : "Free Fly";
-            Check(Dashboard<string>("HackerFramingMode", mode) == expectedFraming,
-                $"Hacker {mode} did not map to {expectedFraming} framing.");
-        }
-        Console.WriteLine("PASS Hacker interactions form one ordered framing group");
+        System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var picker = xml.Descendants(ns + "ComboBox").Single(item => (string?)item.Attribute(x + "Name") == "HackerTerrainTarget");
+        Check(picker.Elements(ns + "ComboBoxItem").Select(item => (string?)item.Attribute("Content")).SequenceEqual(expected),
+            "The Hacker terrain menu and editing targets disagree.");
+        Check((string?)picker.Attribute("SelectedIndex") == "0", "Hacker should start with Objective selected.");
+        var pathToggle = xml.Descendants(ns + "CheckBox").Single(item => (string?)item.Attribute(x + "Name") == "AtlasPathsCheck");
+        Check((string?)pathToggle.Attribute("Checked") == "AtlasPaths_Changed"
+            && (string?)pathToggle.Attribute("Unchecked") == "AtlasPaths_Changed", "Atlas path visibility should repaint immediately.");
+        var pathCanvas = xml.Descendants(ns + "Canvas").Single(item => (string?)item.Attribute(x + "Name") == "HackerPathCanvas");
+        Check((string?)pathCanvas.Attribute("IsHitTestVisible") == "False", "Roads should leave pointer handling to Hacker.");
+        var modes = xml.Descendants(ns + "RadioButton").ToLookup(item => (string?)item.Attribute("GroupName"),
+            item => (string?)item.Attribute("Content"));
+        Check(modes["GroundMode"].SequenceEqual(new[] { "Add", "Modify", "Delete" }), "Unexpected terrain editing controls.");
+        Check(modes["HackerPathTool"].SequenceEqual(new[] { "Jump", "2 Jump", "Delete" }),
+            "Unexpected authored path editing tools.");
+        Check(modes["HackerFraming"].SequenceEqual(new[] { "Free Fly", "Fit", "Current" }) && !modes.Contains("HackerSettingsMode"),
+            "Hacker camera controls should appear only in the framing toolbar.");
+        Console.WriteLine("PASS Hacker terrain editing and camera framing have separate controls");
+    }
+
+    private static void TestHackerPathPresentation()
+    {
+        var canvas = new Canvas { Width = 160, Height = 150 };
+        var display = AtlasPathRouting.DisplayStrokes([
+            new(new(0, 0), new(360, 0), AtlasPathKind.Walk, true),
+            new(new(20, 0), new(20, 120), AtlasPathKind.Drop, false),
+            new(new(20, 60), new(20, 120), AtlasPathKind.Drop, false),
+            new(new(150, 0), new(150, 20), AtlasPathKind.DoubleJump, true),
+        ]);
+        var bounds = AtlasPathPresentation.Draw(canvas, display, 10, new(7, 130),
+            target: new(355, 0), route: [new(40, 0), new(100, 0), new(355, 0)]);
+        var lines = canvas.Children.OfType<Line>().ToArray();
+        var white = lines.Where(line => line.Stroke == Brushes.White).ToArray();
+        Check(white.Length == 3 && white.Any(line => line.X1 == 47 && line.X2 == 362 && line.Y1 == 130),
+            "Hacker should draw the full, continuous white route through an objective beyond the captured tile.");
+        var drop = lines.Where(line => line.Stroke == Brushes.DarkOrange).ToArray();
+        Check(drop.Length == 3 && drop.Count(line => line.X1 == line.X2) == 1
+            && drop.Where(line => line.X1 != line.X2).All(line => line.Y1 > line.Y2),
+            "A shared drop shaft should have one downward arrow.");
+        Check(bounds is { Right: >= 367 } && lines.All(line => !line.IsHitTestVisible),
+            "Fit should include authored paths outside the capture while leaving the pointer available.");
+        Console.WriteLine("PASS Hacker displays the full objective route and one arrow on a shared fall");
+    }
+
+    private static void TestGameplayPathsFollowTheImageAndRespectMenuContext()
+    {
+        var canvas = new Canvas();
+        var start = new AtlasPathPoint(80, 100);
+        var turn = new AtlasPathPoint(100, 100);
+        var end = new AtlasPathPoint(400, 100);
+        var view = new GameplayPathView(new(80, -25), [new(start, end, AtlasPathKind.Walk, true)],
+            10, new(end, start, turn));
+        var registered = new GameplayPathPresentation(11, 640, 360, view);
+        Check(registered.IsCurrent(true, "game", 12, registered: true),
+            "A registered road should keep its position when a newer capture arrives.");
+        Check(!registered.IsCurrent(true, "Main Title", 12, registered: true)
+            && !registered.IsCurrent(true, null, 12, registered: true)
+            && !registered.IsCurrent(false, "game", 12, registered: true)
+            && !registered.IsCurrent(true, "game", 12, registered: false)
+            && !registered.IsCurrent(true, "game", 10, registered: true),
+            "A road escaped the gameplay, registration, frame order, or Debug View gate.");
+        var temporary = registered with { View = view with { Camera = null } };
+        Check(temporary.IsCurrent(true, "game", 11, registered: false)
+            && !temporary.IsCurrent(true, "game", 12, registered: true),
+            "An image-local road must disappear as soon as the pixels advance.");
+
+        registered.Draw(canvas, new(200, 50, 320, 180));
+        var strokes = canvas.Children.OfType<Line>().ToArray();
+        Check(strokes.Any(line => line.Stroke == Brushes.Gold
+                    && line.X1 == 200 && line.X2 == 360 && line.Y1 == 167.5 && line.Y2 == 167.5)
+            && strokes.Any(line => line.Stroke == Brushes.White
+                    && line.X1 == 200 && line.X2 == 210 && line.Y1 == line.Y2)
+            && strokes.All(line => !line.IsHitTestVisible),
+            "The road and direction arrow must use the same camera origin and scale as the presented image.");
+
+        canvas.Children.Clear();
+        var saved = new GameplaySavedRoomPath(7, [new(12, new(260, 250), new(500, 250))], []);
+        var restored = new GameplayPathTracker().Observe(new GameplayPathFrame("returned", 0, 640, 360,
+            new(10, 20), [], [], TerrainWallDetection.Empty, null, null, null)
+        { Atlas = new(saved, new(550, 260), 1) }) ?? throw new InvalidOperationException("Missing restored path.");
+        var restoredPresentation = new GameplayPathPresentation(12, 640, 360, restored);
+        restoredPresentation.Draw(canvas, new(200, 50, 320, 180));
+        var road = canvas.Children.OfType<Line>().Single();
+        Check(restoredPresentation.IsCurrent(true, "Gameplay", 12, registered: true)
+            && road.Stroke == Brushes.Gold && road.X1 == 210 && road.X2 == 330 && road.Y1 == 133.5,
+            "A restored route must use the same viewport projection as the placed live image.");
+        Console.WriteLine("PASS Game Play roads use the live viewport, hide in menus, and show their direction");
+    }
+
+    private static void TestBotCapturePreviewColorsAndCoordinateOrientation()
+    {
+        var canvas = new Canvas();
+        var terrain = new BotScreenTerrain(80, 48, [new(5, 60, 12, 1)], [new(40, 10, 30, 0)],
+            [new(43, 10, 43, 22)], [new(12, 12, 14, 12)]);
+        var features = new double[BotRecordingContract.FeatureNames.Count];
+        features[0] = .5; features[1] = .25; features[2] = .1; features[3] = .2; features[4] = 1;
+        var authored = new BotCaptureReviewFrame("local.png", 0, terrain, true, features);
+        BotCapturePreview.Draw(canvas, authored, new(160, 96));
+        var strokes = canvas.Children.OfType<Line>().ToArray();
+        Check(strokes.Length == 4 && strokes.All(line => line.Stroke == Brushes.SpringGreen)
+            && strokes.Any(line => line.X1 == 80 && line.X2 == 80 && line.Y1 == 76 && line.Y2 == 36)
+            && canvas.Children.OfType<Rectangle>().Single().Stroke == Brushes.Gold,
+            "Hacker preview should show authored floor, wall, door, and spike geometry over the recorded Knight.");
+        BotCapturePreview.Draw(canvas, authored with { Authored = false }, new(160, 96));
+        Check(canvas.Children.OfType<Line>().All(line => line.Stroke == Brushes.DeepSkyBlue),
+            "Game Play preview should draw the detected geometry in blue.");
+        Console.WriteLine("PASS bot capture previews place authored green and detected blue terrain in capture coordinates");
     }
 
     private static void TestWorkspaceShortcuts()
     {
-        var expected = new[] { "Gameplay", "Label", "Stencil", "Model", "Hacker", "Ops" };
+        var expected = new[] { "Gameplay", "Label", "Stencil", "Model", "Hacker", "Bot", "Ops" };
         Check(DashboardValues("Workspaces").SequenceEqual(expected),
             "Workspace policy order drifted.");
         var xml = MainWindowSource();
@@ -1084,6 +1278,14 @@ internal static class Program
               && !Shows("Gameplay", GameRuntimeMode.Normal, "Gameplay")
               && !Shows("Hacker", GameRuntimeMode.Normal, null),
             "Recording escaped its Gameplay/Hacker modded scope.");
+        bool Captures(string workspace, GameRuntimeMode mode, string? context) =>
+            Dashboard<bool>("ShowsBotCapture", workspace, mode, context);
+        Check(Captures("Gameplay", GameRuntimeMode.Normal, "game")
+            && Captures("Gameplay", GameRuntimeMode.Modded, "game")
+            && Captures("Hacker", GameRuntimeMode.Modded, "game")
+            && !Captures("Bot", GameRuntimeMode.Modded, "game")
+            && !Captures("Gameplay", GameRuntimeMode.Normal, "Main Title"),
+            "Bot capture should cover both gameplay workspaces and hide in menus.");
         Console.WriteLine("PASS K path recording is available only in valid modded contexts");
     }
 
@@ -1199,7 +1401,34 @@ internal static class Program
         Near(1.32 * 1.12, zoomed.M11);
         Near(480, zoomed.Transform(new Point(1120, 680)).X);
         Near(300, zoomed.Transform(new Point(1120, 680)).Y);
-        Console.WriteLine("PASS production viewport transforms drive WPF Fit/Free Fly/Current projection");
+        const BindingFlags policies = BindingFlags.Static | BindingFlags.NonPublic;
+        var viewportPolicy = assembly.GetType(
+            "HollowKnightVision.Windows.App.GameplayViewportPolicy", throwOnError: true)!;
+        object? FromPolicy(string method, string mode) => viewportPolicy.GetMethod(method, policies)!.Invoke(null, [mode]);
+        var preset = (string)FromPolicy("NextTabPreset", "Free Fly")!;
+        Check(preset == (string)FromPolicy("NextTabPreset", "Current")!, "Current and Free Fly start the same Tab cycle.");
+        var tabController = Controller();
+        var tabViewport = Value(sizeType, 1280d, 720d);
+        var tabAtlas = Value(rectType, -80d, 0d, 1800d, 720d);
+        var tabLive = Value(rectType, 100d, 10d, 640d, 360d);
+        var tabFocus = Value(pointType, 420d, 190d);
+        var expectedScales = new[] { 1.76 / 1.1, .88, 1280d / 1800 * .9, 1.76 / 1.1 };
+        for (var index = 0; index < expectedScales.Length; index++)
+        {
+            var isFit = index == 2;
+            Check((string)FromPolicy("FramingButton", preset)! == (isFit ? "Fit" : "Current"),
+                "The viewport's Tab preset highlights the wrong camera button.");
+            _ = Call(tabController, "Configure", preset, tabViewport, tabAtlas, tabLive, tabFocus, (double)index, true);
+            var frame = MatrixFor(Call(tabController, "Advance", index + .999));
+            Near(expectedScales[index], frame.M11);
+            if (!isFit)
+            {
+                Near(640, frame.Transform(new Point(420, 190)).X);
+                Near(360, frame.Transform(new Point(420, 190)).Y);
+            }
+            preset = (string)FromPolicy("NextTabPreset", preset)!;
+        }
+        Console.WriteLine("PASS production viewport transforms drive WPF Fit, Free Fly, Current and both Tab zooms");
     }
 
     private static void TestLabelingViewportGeometry()
@@ -1432,13 +1661,13 @@ internal static class Program
         var freshProfileLabels = StencilLabelSelectionPolicy.AvailableLabels(
             "select-profile", Array.Empty<LabelingExampleAnnotation>(),
             modded: false, hidesCompleted: true);
-        Check(!freshProfileLabels.Any(label => label.Identifier == "select-profile.clear-save"),
-            "A fresh Select Profile unexpectedly offered deferred Clear Save labeling.");
-        var deferredProfileLabels = StencilLabelSelectionPolicy.AvailableLabels(
-            "select-profile", Array.Empty<LabelingExampleAnnotation>(),
-            modded: false, hidesCompleted: true, includesDeferredLabels: true);
-        Check(deferredProfileLabels.Any(label => label.Identifier == "select-profile.clear-save"),
-            "Select Profile did not offer Clear Save when deferred labels were included.");
+        Check(freshProfileLabels.Any(label => label.Identifier == "select-profile.clear-save"),
+            "Select Profile did not offer the required Clear Save label.");
+        var labeled = new LabelingExampleAnnotation(Guid.NewGuid(), "select-profile.clear-save", .1, .2, .3, .1);
+        var completedProfileLabels = StencilLabelSelectionPolicy.AvailableLabels(
+            "select-profile", [labeled], modded: false, hidesCompleted: true);
+        Check(!completedProfileLabels.Any(label => label.Identifier == "select-profile.clear-save"),
+            "A completed Clear Save stencil remained available in Add mode.");
 
         var requiredContexts = StencilInitializationPolicy.RequiredContexts
             .Select(context => context.Identifier).ToArray();
@@ -1775,6 +2004,23 @@ internal static class Program
         Console.WriteLine("PASS main window exposes product title");
     }
 
+    private static void TestRejectedMenuDoesNotDrawStencils()
+    {
+        var canvas = new Canvas();
+        var anchor = new MenuStencilMatch("brightness.title", "Brightness", new(12, 10, 80, 8), .9, null);
+        var region = new MenuStencilSelectorSearchRegion("shared.back", "Back", MenuSelectorSide.Left,
+            new(8, 32, 12, 12), false);
+        var result = new MenuStencilResult("brightness", false, .9, null, [anchor], [], [region], 0, 0, 0,
+            MenuStencilPhase.Searching, 1, 1, "en");
+        var draw = typeof(MainWindow).GetMethod("DrawMenuStencil", BindingFlags.Static | BindingFlags.NonPublic)!;
+        draw.Invoke(null, [canvas, result]);
+        if (canvas.Children.Count != 0)
+            throw new InvalidOperationException("Rejected menu candidates must not draw anchor or selector overlays.");
+        draw.Invoke(null, [canvas, result with { IsMatch = true }]);
+        if (canvas.Children.Count != 3)
+            throw new InvalidOperationException("A matching menu should draw the anchor and selector region.");
+    }
+
     private static void TestGroundFeatureOverlayStartsVisible()
     {
         var source = File.ReadAllText(System.IO.Path.Combine(
@@ -1808,9 +2054,13 @@ internal static class Program
             ],
         };
         var canvas = new Canvas();
-        var count = GroundFeatureOverlayPresentation.DrawLive(canvas, result);
-        Check(count == 4 && canvas.Children.Count == 4,
-            "The live renderer did not draw each accepted ground feature exactly once.");
+        var count = GroundFeatureOverlayPresentation.DrawLive(canvas, result,
+            [new(22, new(18, 54)), new(31, new(18, 54)), new(41, new(38, 55)), new(61, new(70, 85))],
+            [new(20, 22, 16, 12), new(70, 61, 16, 12)]);
+        Check(count == 4 && canvas.Children.Count == 4
+            && canvas.Children.OfType<Rectangle>().Any(rectangle => Canvas.GetLeft(rectangle) == 70)
+            && canvas.Children.OfType<Rectangle>().All(rectangle => Canvas.GetLeft(rectangle) != 50),
+            "The live renderer duplicated a patch or drew one without a measured platform.");
         Check(canvas.Children.OfType<Rectangle>().All(rectangle =>
                 rectangle.StrokeThickness == 1 && !rectangle.IsHitTestVisible),
             "Ground feature rectangles do not use the one-pixel non-interactive review style.");
@@ -1837,7 +2087,63 @@ internal static class Program
                 && atlasBrush.Color == Color.FromRgb(191, 79, 255)
                 && Math.Abs(persistent.Opacity - .95) < .001,
             "Persistent ground feature is not rendered with the Mac purple review color.");
-        Console.WriteLine("PASS live and persistent ground rectangles use Mac review palette");
+        canvas.Children.Clear();
+        var walked = new GroundHypothesisAtlasLine(WalkedGroundMemory.WalkedSegmentId,
+            new(20, 244), new(180, 244));
+        var camera = new AtlasPoint(50, 12);
+        var lines = GroundStrokeGeometry.VisibleLines([walked with { SegmentId = 7 }], [],
+            [walked], camera, 360, null);
+        GroundFeatureOverlayPresentation.DrawAtlas(canvas, camera, new(640, 360), new(17, -42, 1280, 1080),
+            lines, [atlasFeature with { AtlasPosition = new(35, 238) },
+                atlasFeature with { AtlasPosition = new(80, 238) },
+                atlasFeature with { AtlasPosition = new(35, 180) }]);
+        Check(canvas.Children.Count == 2, "Walked floor replaced its duplicate and should keep its patch box.");
+        var ground = canvas.Children.OfType<Line>().Single();
+        Check(ground.X1 == -43 && ground.X2 == 277 && ground.Y1 == 342 && ground.Y2 == 342
+            && ground.Stroke is SolidColorBrush groundBrush && groundBrush.Color == Color.FromRgb(69, 255, 120),
+            "The clean green line did not follow the live frame scale and position.");
+        var patch = canvas.Children.OfType<Rectangle>().Single();
+        Check(Canvas.GetLeft(patch) == -29 && Canvas.GetTop(patch) == ground.Y1,
+            "The tracking patch and floor did not share the atlas projection.");
+        Console.WriteLine("PASS live and persistent ground boxes and walked floor use the atlas projection");
+    }
+
+    private static void TestSavedGroundOverlayAlignsWithAtlasWithoutALiveFrame()
+    {
+        var canvas = new Canvas();
+        var projection = new GroundFeatureOverlayPresentation.AtlasProjection(2, -256, -512);
+        var saved = new GroundHypothesisAtlasLine(7, new(-15, -12), new(80, -12));
+        GroundFeatureOverlayPresentation.DrawSavedAtlas(canvas, projection, [saved]);
+        AssertStroke();
+
+        canvas.Children.Clear();
+        var localCamera = new AtlasPoint(10, 22);
+        var live = new GroundHypothesisAtlasLine(12, new(315, 191), new(410, 191));
+        GroundFeatureOverlayPresentation.DrawAtlas(canvas, localCamera, new(640, 360),
+            new(-384, 152, 1280, 720), [live], [], projection, [saved]);
+        AssertStroke();
+        Console.WriteLine("PASS saved green floor uses the atlas tile frame and replaces jittered live duplicates");
+
+        void AssertStroke()
+        {
+            var stroke = canvas.Children.OfType<Line>().Single();
+            Check(stroke.X1 == 226 && stroke.X2 == 416 && stroke.Y1 == 536 && stroke.Y2 == 536
+                && stroke.Stroke is SolidColorBrush brush && brush.Color == Color.FromRgb(69, 255, 120),
+                "Saved floor must draw one green stroke in the tile frame before and after live placement.");
+        }
+    }
+
+    private static void TestTerrainCornersKeepVerticalWallStrokesHidden()
+    {
+        var canvas = new Canvas();
+        var wall = new DetectedWall(20, 5, 30, true);
+        var terrain = new TerrainWallDetection([wall], [new(0, 0, 20, 30, 24), new(0, 1, 20, 5, 20)]);
+        GroundFeatureOverlayPresentation.DrawTerrainCorners(canvas, terrain);
+        var line = canvas.Children.OfType<Line>().Single();
+        Check(line.X1 == 24.5 && line.X2 == 20.5 && line.Y1 == 30.5 && line.Y2 == 30.5
+            && terrain.Walls.Single() == wall, "The overlay must draw the horizontal corner extension and retain its wall evidence.");
+        Check(canvas.Children.OfType<Rectangle>().Count() == 2, "Missing detected terrain corner markers.");
+        Console.WriteLine("PASS detected terrain renders horizontal joins and corner markers");
     }
 
     private static void TestBackgroundKeyDelivery()

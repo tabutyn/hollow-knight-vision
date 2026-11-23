@@ -19,7 +19,7 @@ public readonly record struct PixelSpan
 public readonly record struct CleanFloorLine(int Row, PixelSpan XSpan);
 
 public readonly record struct GroundHypothesisAtlasLine(
-    int SegmentId,
+    long SegmentId,
     AtlasPoint AtlasStart,
     AtlasPoint AtlasEnd);
 
@@ -29,7 +29,7 @@ public readonly record struct GroundHypothesisAtlasLine(
 /// </summary>
 public sealed class GroundSemanticAtlas
 {
-    private readonly Dictionary<int, Record> records = [];
+    private readonly Dictionary<long, Record> records = [];
 
     public void Reset() => records.Clear();
 

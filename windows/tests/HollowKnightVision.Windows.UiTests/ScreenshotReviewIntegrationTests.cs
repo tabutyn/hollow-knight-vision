@@ -64,15 +64,15 @@ internal static class ScreenshotReviewIntegrationTests
     }
     public static void Run()
     {
-        TestNavigationAndVirtualization(); TestContractsAndDeletion(); TestWriteAndDeleteFailures(); TestReviewImage();
-        Console.WriteLine("PASS Screenshot review navigation, virtualization, exemptions, confirmed deletion, failed writes and colored previews");
+        TestNavigationAndVirtualization(); TestPreviewAndConfirmedDeletion(); TestMissingImageAndStaleDeletion(); TestReviewImage();
+        Console.WriteLine("PASS Screenshot review navigation, virtualization, full-height preview, confirmed deletion and missing images");
     }
 
     private static void TestNavigationAndVirtualization()
     {
         using var fixture = new Fixture(); var examples = Enumerable.Range(0, 60).Select(_ => fixture.Save(ValidBoxes)).ToArray();
         var session = new LabelingScreenshotReviewSession(fixture.Store); session.Reload(); SavedLabelingExample? opened = null;
-        var panel = new ScreenshotReviewPanel(session, key => key, example => opened = example, _ => false, () => { }, _ => { });
+        var panel = new ScreenshotReviewPanel(session, key => key, example => opened = example, _ => false, _ => { });
         panel.Refresh("game.playable-knight"); var window = Show(panel);
         try
         {
@@ -92,61 +92,69 @@ internal static class ScreenshotReviewIntegrationTests
         finally { window.Close(); }
     }
 
-    private static void TestContractsAndDeletion()
+    private static void TestPreviewAndConfirmedDeletion()
     {
-        using var fixture = new Fixture(); var good = fixture.Save(ValidBoxes); var bad = fixture.Save(Box("game.playable-knight"), Box("game.playable-knight"), Box("world.sign"), Box("world.sign"));
-        var session = new LabelingScreenshotReviewSession(fixture.Store); session.Reload(); session.Select(bad.Id);
-        var allowDelete = false; var confirmations = 0; var changes = 0; LabelingScreenshotDeletionResult? deleted = null;
-        var panel = new ScreenshotReviewPanel(session, key => key, _ => { }, _ => { confirmations++; return allowDelete; }, () => changes++, result => deleted = result);
-        panel.Refresh("game.playable-knight"); var window = Show(panel);
+        using var fixture = new Fixture();
+        var sign = fixture.Save(Box("world.sign"));
+        var empty = fixture.Save();
+        var session = new LabelingScreenshotReviewSession(fixture.Store);
+        session.Reload();
+        session.Select(empty.Id);
+        var allowDelete = false;
+        var confirmations = 0;
+        LabelingScreenshotDeletionResult? deleted = null;
+        var panel = new ScreenshotReviewPanel(session, key => key, _ => { },
+            _ => { confirmations++; return allowDelete; }, result => deleted = result);
+        panel.Refresh("world.sign");
+        var window = Show(panel);
         try
         {
-            var failed = session.Evaluations(bad.Id).Where(item => item.IsBreach).Select(item => item.Id).ToArray();
-            foreach (var rule in failed) Click(Find<Button>(panel, "Contract_" + rule));
-            Check(changes == failed.Length && session.CanTrainSelectedClass("game.playable-knight"), "Contract controls did not update training admission.");
-            Check(new LabelingContractExemptionStore().Load(bad).SetEquals(failed), "Exemption buttons did not persist their checks.");
-            var selectedThumbnail = Children<ScreenshotReviewThumbnail>(panel).Single(item => ((ScreenshotReviewRow)item.DataContext).Example.Id == bad.Id);
-            Check(((SolidColorBrush)selectedThumbnail.BorderBrush).Color == Colors.DodgerBlue, "Exempt screenshot lost its blue outline.");
-            Click(Find<Button>(panel, "Contract_" + failed[0]));
-            Check(((SolidColorBrush)selectedThumbnail.BorderBrush).Color == Colors.IndianRed && !session.CanTrainSelectedClass("game.playable-knight"), "Removing exemption did not restore breach/training block.");
-            Render(panel, "screenshot-review-breach.png");
+            var selectedThumbnail = Children<ScreenshotReviewThumbnail>(panel)
+                .Single(item => ((ScreenshotReviewRow)item.DataContext).Example.Id == empty.Id);
+            var preview = Children<ReviewedLabelImage>(panel).Single();
+            Check(((SolidColorBrush)selectedThumbnail.BorderBrush).Color == Colors.Cyan
+                && preview.ActualHeight > 500, "Selection or preview was sized for the retired contract controls.");
+            Check(Children<TextBlock>(panel).All(item => item.Text != "Contracts")
+                && Children<Button>(panel).All(item => !AutomationProperties.GetAutomationId(item).StartsWith("Contract_")),
+                "Screenshots still shows contract controls.");
+            Render(panel, "screenshot-review-unlabeled.png");
             Click(Find<Button>(panel, "ReviewDeleteScreenshot"));
-            Check(confirmations == 1 && deleted is null && File.Exists(bad.ImagePath), "Cancelling confirmation deleted a screenshot.");
-            allowDelete = true; Click(Find<Button>(panel, "ReviewDeleteScreenshot"));
-            Check(deleted?.Deleted.SequenceEqual(new[] { bad.Id }) == true && !Directory.Exists(bad.DirectoryPath)
-                && File.Exists(good.ImagePath) && session.Selected?.Id == good.Id, "Confirmed deletion did not isolate and reconcile its target.");
-            Check(Children<Button>(panel).Where(item => AutomationProperties.GetAutomationId(item).StartsWith("Contract_")).All(item => !item.IsEnabled), "Satisfied checks can be newly exempted.");
-            var satisfied = Children<Button>(panel).First(item => AutomationProperties.GetAutomationId(item).StartsWith("Contract_"));
-            var chrome = (Border)satisfied.Template.FindName("ContractTermBorder", satisfied);
-            Check(chrome.Opacity == 1 && ((SolidColorBrush)chrome.Background).Color == Colors.Transparent, "Satisfied status was faded or used unreadable white disabled chrome.");
+            Check(confirmations == 1 && deleted is null && File.Exists(empty.ImagePath), "Cancelling confirmation deleted a screenshot.");
+            allowDelete = true;
             Click(Find<Button>(panel, "ReviewDeleteScreenshot"));
-            Check(session.Selected is null && !Find<Button>(panel, "ReviewDeleteScreenshot").IsEnabled && !Find<Button>(panel, "ReviewOpenScreenshot").IsEnabled, "Empty review retained enabled actions.");
+            Check(deleted?.Deleted.SequenceEqual(new[] { empty.Id }) == true && !Directory.Exists(empty.DirectoryPath)
+                && File.Exists(sign.ImagePath) && session.Selected?.Id == sign.Id, "Confirmed deletion did not isolate and reconcile its target.");
+            Click(Find<Button>(panel, "ReviewDeleteScreenshot"));
+            Check(session.Selected is null && !Find<Button>(panel, "ReviewDeleteScreenshot").IsEnabled
+                && !Find<Button>(panel, "ReviewOpenScreenshot").IsEnabled, "Empty review retained enabled actions.");
         }
         finally { window.Close(); }
     }
 
-    private static void TestWriteAndDeleteFailures()
+    private static void TestMissingImageAndStaleDeletion()
     {
-        using var fixture = new Fixture(); var bad = fixture.Save(Box("game.playable-knight"), Box("game.playable-knight"), Box("world.sign"), Box("world.sign"));
-        var session = new LabelingScreenshotReviewSession(fixture.Store); session.Reload(); var changes = 0;
-        var panel = new ScreenshotReviewPanel(session, key => key, _ => { }, _ => true, () => changes++, _ => { });
-        panel.Refresh("game.playable-knight"); var window = Show(panel);
+        using var fixture = new Fixture();
+        var example = fixture.Save(Box("world.sign"));
+        var session = new LabelingScreenshotReviewSession(fixture.Store);
+        session.Reload();
+        var panel = new ScreenshotReviewPanel(session, key => key, _ => { }, _ => true, _ => { });
+        panel.Refresh("world.sign");
+        var window = Show(panel);
         try
         {
-            var rule = session.Evaluations(bad.Id).First(item => item.IsBreach).Id;
-            var blocked = Path.Combine(bad.DirectoryPath, LabelingContractExemptionStore.Filename); Directory.CreateDirectory(blocked);
-            Click(Find<Button>(panel, "Contract_" + rule));
-            Check(Find<TextBlock>(panel, "ReviewError").Text.StartsWith("Exemption failed:") && changes == 0 && session.BreachCount == 1,
-                "Failed writes were hidden or allowed training.");
-            Directory.Delete(blocked); Click(Find<Button>(panel, "Contract_" + rule));
-            Check(Find<TextBlock>(panel, "ReviewError").Text == "" && changes == 1, "Retry did not clear the obsolete error.");
-            File.Delete(bad.ImagePath); panel.Refresh("game.playable-knight"); Pump();
-            Check(!Find<Button>(panel, "ReviewOpenScreenshot").IsEnabled && Find<Button>(panel, "ReviewDeleteScreenshot").IsEnabled, "Missing image cannot be managed without opening it.");
-            var path = Path.Combine(bad.DirectoryPath, LabelingExampleStore.ManifestFilename);
-            var manifest = JsonNode.Parse(File.ReadAllText(path))!; manifest["id"] = Guid.NewGuid(); File.WriteAllText(path, manifest.ToJsonString());
+            File.Delete(example.ImagePath);
+            panel.Refresh("world.sign");
+            Pump();
+            Check(!Find<Button>(panel, "ReviewOpenScreenshot").IsEnabled && Find<Button>(panel, "ReviewDeleteScreenshot").IsEnabled,
+                "Missing image cannot be managed without opening it.");
+            var path = Path.Combine(example.DirectoryPath, LabelingExampleStore.ManifestFilename);
+            var manifest = JsonNode.Parse(File.ReadAllText(path))!;
+            manifest["id"] = Guid.NewGuid();
+            File.WriteAllText(path, manifest.ToJsonString());
             Click(Find<Button>(panel, "ReviewDeleteScreenshot"));
             Check(Find<TextBlock>(panel, "ReviewError").Text.StartsWith("Delete screenshot failed:")
-                && session.Selected?.Id == bad.Id && Directory.Exists(bad.DirectoryPath), "Changed screenshot was deleted or its error disappeared.");
+                && session.Selected?.Id == example.Id && Directory.Exists(example.DirectoryPath),
+                "Changed screenshot was deleted or its error disappeared.");
         }
         finally { window.Close(); }
     }
