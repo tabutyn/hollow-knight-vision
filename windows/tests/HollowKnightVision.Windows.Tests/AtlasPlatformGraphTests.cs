@@ -178,6 +178,77 @@ internal static class AtlasPlatformGraphTests
             "Overlapping portions of a fall should draw one shaft and keep the landing branch.");
     }
 
+    internal static void TestAnExistingNodeCannotTransferThroughAnOverlappingJump()
+    {
+        var graph = new AtlasPlatformGraph([new(0, 40, 0), new(65, 105, 80), new(115, 160, 170)], [],
+            height: 20, width: 10, connections: [
+                new(new(40, 0), new(70, 80), true),
+                new(new(70, 80), new(125, 170), true)
+            ]);
+        var start = new AtlasPathPoint(70, 105);
+        var landing = new AtlasPathPoint(70, 100);
+        var target = new AtlasPathPoint(160, 190);
+        var rise = graph.Strokes.Single(stroke => stroke.Kind == DoubleJump
+            && stroke.A == landing && stroke.B == new AtlasPathPoint(70, 195));
+        var destination = graph.NearestStroke(target, 0, walkOnly: true)!.Value;
+        var route = AtlasPathRouting.FindRoute(graph, rise, start, destination, target);
+        Require(route.Take(2).SequenceEqual([start, landing]) && route.LastOrDefault() == target,
+            "An existing shelf node must use the landing before transferring to the next jump.");
+    }
+
+    internal static void TestRecordedKingsPassJumpKeepsAdviceAboveAndPastTheShelf()
+    {
+        var graph = new AtlasPlatformGraph([new(3245, 3291, 291), new(3324, 3384, 378)], [],
+            height: 28, width: 11, pixelsPerWorldUnit: new(22.224, 22.224));
+        (int X, int Y, bool Grounded)[] frames = [
+            (3267, 291, true), (3267, 291, true), (3267, 312, false), (3282, 347, false), (3301, 379, false),
+            (3319, 401, false), (3338, 413, false), (3349, 412, false), (3349, 400, false), (3349, 380, true)
+        ];
+        var navigation = new AtlasPathNavigator();
+        for (var index = 0; index < frames.Length; index++)
+        {
+            var frame = frames[index];
+            var path = navigation.Follow(graph, new(frame.X, frame.Y), frame.Grounded, measured: true,
+                admitted: null, walked: []);
+            Require(path is { Objective: { X: 3384, Y: 406 } }, $"Lost the route on recorded sample {index}.");
+            var hint = BotPathMotion.Road(path!.Value, graph.KnightHeight, 640, frontier: true);
+            if (index is 6 or 7) Require(hint.Dy < 0, "Above the shelf, the route should steer down to the landing.");
+            if (index == 9) Require(hint.Dx > 0, "After landing, the route should continue right.");
+        }
+    }
+
+    internal static void TestRecordedEarlyTakeoffKeepsRouteThroughIntermediateLanding()
+    {
+        const double scale = 22.22426;
+        static int Px(double value) => AtlasPathPoint.Round(value * scale);
+        var middle = new AtlasPathPlatform(Px(158.903), Px(161.881), Px(49.125));
+        var graph = new AtlasPlatformGraph(
+            [new(Px(156.024), Px(158.903), Px(44.081)), middle,
+             new(Px(152.098), Px(157.123), Px(54.143))],
+            [new(Px(158.903), Px(44.081), Px(49.125)), new(Px(161.881), Px(49.125), Px(54.644)),
+             new(Px(157.123), Px(51.933), Px(54.143))],
+            height: 28, width: 11, pixelsPerWorldUnit: new(scale, scale));
+        var destination = new AtlasPathPoint(Px(155), Px(54.143) + 28);
+        var start = new AtlasPathPoint(Px(156.94), Px(44.081) + 28);
+        var departure = graph.NearestStroke(start, 0, walkOnly: true)!.Value;
+        var arrival = graph.NearestStroke(destination, 0, walkOnly: true)!.Value;
+        var path = AtlasPathRouting.FindRoute(graph, departure, start, arrival, destination);
+        Require(path.Any(point => point.Y == middle.Y + 28 && middle.Contains(point.X)),
+            "The route must cross a measured landing between jumps.");
+        var navigation = new AtlasPathNavigator();
+        Require(Follow(156.94, 44.081, true).HasValue, "The route is missing at takeoff.");
+        var walking = Follow(160.76, 49.125, true);
+        Require(walking.HasValue && walking.Value.Next.X < walking.Value.Current.X,
+            "The route must head left toward the next takeoff after landing.");
+        Require(Follow(160.708, 51.762 - 1.28, false).HasValue
+            && Follow(160.439, 52.270 - 1.28, false).HasValue,
+            "Early takeoff lost the route to the upper ledge.");
+
+        AtlasPathHint? Follow(double x, double y, bool grounded) =>
+            navigation.Follow(graph, new(Px(x), Px(y)), grounded, measured: true,
+                admitted: null, walked: [], fixedObjective: destination);
+    }
+
     private static bool Reachable(AtlasPlatformGraph graph, AtlasPathPoint start, AtlasPathPoint goal,
         Func<AtlasPathPoint, bool>? admissible = null)
     {

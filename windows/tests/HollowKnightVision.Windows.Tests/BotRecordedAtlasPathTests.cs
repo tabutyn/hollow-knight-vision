@@ -89,6 +89,20 @@ internal static class BotRecordedAtlasPathTests
         Check(frames is [{ RoadHint: null, PathProgress: null }], "An unreachable endpoint became a substitute objective.");
     }
 
+    internal static void TestFallbackKnightSizeKeepsTheOriginalGap()
+    {
+        var measured = Row(1, 150);
+        measured = measured with
+        {
+            DetectedTerrain = measured.DetectedTerrain! with { Floors = [new(0, 200, 80, 1), new(218, 360, 80, 1)] }
+        };
+        var incomplete = measured.Features.ToArray();
+        incomplete[3] = .01;
+        var result = BotRecordedAtlasPath.Recover([measured with { Features = incomplete }], BotCaptureDomain.Gameplay);
+        Check(result.Single().RoadHint?.Distance == 226d / (4 * 640),
+            "The fallback Knight width filled a gap before a valid size was measured.");
+    }
+
     internal static void TestRecordedPathReaderSupportsLegacyFeaturesAndChecksCountsWithoutChangingFiles()
     {
         using var temp = new TempDirectory();
