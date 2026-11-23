@@ -181,9 +181,10 @@ public sealed class LiveWorldTracker
         lastObservationId = null;
     }
 
-    // Called on a freshly loaded tracker after a failed write in the same capture.
-    internal void ResumeCommittedVisit(ulong captureGeneration)
+    /// <summary>Restores the committed observations of a capture after a failed write.</summary>
+    public void ResumeCommittedVisit(ulong captureGeneration)
     {
+        BeginVisit();
         foreach (var observation in Snapshot.Observations)
         {
             if (observation.CaptureGeneration != captureGeneration) continue;
