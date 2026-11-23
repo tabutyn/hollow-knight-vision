@@ -28,7 +28,7 @@ internal static class ForwarderPauseTests
         Check(pressed.Enabled && pressed.HeldButtons == InputButtons.ActionZ);
         forwarder.ReleaseAll(); await fixture.Next("state");
         Check(await forwarder.StartRecordingAsync() && !forwarder.SetLabelPauseActive(true), "Label pause interrupted an input recording.");
-        Check(forwarder.StopRecording() is not null);
+        Check(await forwarder.StopRecordingAsync() is not null);
         Check(forwarder.SetLabelPauseActive(true));
         var neutral = ReceiverWireCodec.DecodeLine<ReceiverInputSnapshot>(await fixture.Next("state"));
         var first = ReceiverWireCodec.DecodeLine<ReceiverPauseCommand>(await fixture.Next("pause"));
@@ -210,7 +210,7 @@ internal static class ForwarderPauseTests
 
             Check(await forwarder.StartRecordingAsync());
             Check(await forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.ResetRoom) is null);
-            Check(forwarder.StopRecording() is not null);
+            Check(await forwarder.StopRecordingAsync() is not null);
             var recorded = new RecordedInputPath(RecordedInputPath.CurrentSchemaVersion,
                 Guid.NewGuid(), DateTimeOffset.UtcNow, .1, null, null, null, [], runtimeMetadata: null);
 

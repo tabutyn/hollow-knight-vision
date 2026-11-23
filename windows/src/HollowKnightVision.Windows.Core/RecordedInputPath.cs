@@ -295,6 +295,7 @@ public sealed class InputPathRecorder
         public Guid? SourcePathId { get; init; }
         public int? ReplayIteration { get; init; }
         public RecordedGameCheckpoint? StartCheckpoint { get; init; }
+        public VisualReplayArchiveWriter? VisualArchive { get; init; }
         public List<RecordedInputPathEvent> Events { get; } = [];
         public List<RecordedTrackingSample> TrackingSamples { get; } = [];
         public List<RecordedGroundTruthSample> GroundTruthSamples { get; } = [];
@@ -328,19 +329,45 @@ public sealed class InputPathRecorder
 
     public bool Start(double? timestamp = null, DateTimeOffset? createdAt = null,
         Guid? id = null, Guid? sourcePathId = null, int? replayIteration = null,
-        RecordedGameCheckpoint? startCheckpoint = null, IReadOnlyDictionary<string, string>? metadata = null)
+        RecordedGameCheckpoint? startCheckpoint = null, IReadOnlyDictionary<string, string>? metadata = null,
+        string? visualArchiveRoot = null)
     {
         lock (gate)
         {
             if (session is not null) return false;
+            var pathId = id ?? Guid.NewGuid();
             session = new Session
             {
-                Id = id ?? Guid.NewGuid(), CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
+                Id = pathId, CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
                 StartedAt = timestamp ?? MonotonicSeconds(), SourcePathId = sourcePathId,
-                ReplayIteration = replayIteration, StartCheckpoint = startCheckpoint, Metadata = metadata
+                ReplayIteration = replayIteration, StartCheckpoint = startCheckpoint, Metadata = metadata,
+                VisualArchive = visualArchiveRoot is null ? null
+                    : new VisualReplayArchiveWriter(visualArchiveRoot, pathId, MergedMetadata(metadata))
             };
             return true;
         }
+    }
+
+    public void RecordVisualFrame(BgraFrame frame, double timestamp, double capturedAt, ulong generation, int? renderedFrame)
+    {
+        lock (gate)
+            if (session is { VisualArchive: { } archive } current && !(timestamp < current.StartedAt))
+                archive.Append(frame, timestamp, capturedAt, generation, frame.Width, renderedFrame);
+    }
+
+    public void RecordVisualStage(string stage, double timestamp, ulong generation)
+    {
+        lock (gate)
+            if (session is { VisualArchive: { } archive } current && timestamp >= current.StartedAt)
+                archive.RecordStage(new(stage, timestamp, generation));
+    }
+
+    public void RecordVisualGroundInput(double timestamp, ulong generation, int imageHeight,
+        GameplaySceneMasks masks, InputButtons? buttons)
+    {
+        lock (gate)
+            if (session is { VisualArchive: { } archive } current && timestamp >= current.StartedAt)
+                archive.RecordGroundInput(VisualReplayGroundInput.FromTracking(timestamp, generation, imageHeight, masks, buttons));
     }
 
     public void RecordInput(RecordedGameButton button, bool isPressed, double? timestamp = null)
@@ -492,30 +519,44 @@ public sealed class InputPathRecorder
         }
     }
 
-    public RecordedInputPath? Stop(double? timestamp = null)
+    public RecordedInputPath? Stop(double? timestamp = null) =>
+        StopAsync(timestamp).GetAwaiter().GetResult();
+
+    public async Task<RecordedInputPath?> StopAsync(double? timestamp = null, bool cancelled = false)
     {
+        Session? current;
         lock (gate)
         {
-            if (session is not { } current) return null;
-            var duration = Offset(timestamp ?? MonotonicSeconds(), current.StartedAt);
-            foreach (var button in current.HeldButtons.OrderBy(ButtonWireName))
-                current.Events.Add(new RecordedInputPathEvent(duration, button, RecordedInputTransition.Released));
+            current = session;
             session = null;
-            return new RecordedInputPath(schemaVersion: RecordedInputPath.CurrentSchemaVersion,
-                id: current.Id, createdAt: current.CreatedAt, duration: duration,
-                sourcePathId: current.SourcePathId, replayIteration: current.ReplayIteration,
-                startCheckpoint: current.StartCheckpoint, events: current.Events.ToArray(),
-                trackingSamples: current.TrackingSamples.ToArray(),
-                groundTruthSamples: current.GroundTruthSamples.ToArray(),
-                coarseMotionSamples: current.CoarseMotionSamples.ToArray(),
-                lowResolutionFrames: current.LowResolutionFrames.ToArray(),
-                loopClosures: current.LoopClosures.ToArray(),
-                runtimeMetadata: runtimeMetadata.Concat(current.Metadata ?? new Dictionary<string, string>())
-                    .GroupBy(pair => pair.Key).ToDictionary(group => group.Key, group => group.Last().Value));
         }
+        if (current is null) return null;
+        var duration = Offset(timestamp ?? MonotonicSeconds(), current.StartedAt);
+        foreach (var button in current.HeldButtons.OrderBy(ButtonWireName))
+            current.Events.Add(new RecordedInputPathEvent(duration, button, RecordedInputTransition.Released));
+        var archive = current.VisualArchive is { } writer
+            ? await writer.FinishAsync(cancelled).ConfigureAwait(false) : null;
+        return new RecordedInputPath(schemaVersion: RecordedInputPath.CurrentSchemaVersion,
+            id: current.Id, createdAt: current.CreatedAt, duration: duration,
+            sourcePathId: current.SourcePathId, replayIteration: current.ReplayIteration,
+            startCheckpoint: current.StartCheckpoint, events: current.Events.ToArray(),
+            trackingSamples: current.TrackingSamples.ToArray(),
+            groundTruthSamples: current.GroundTruthSamples.ToArray(),
+            coarseMotionSamples: current.CoarseMotionSamples.ToArray(),
+            lowResolutionFrames: current.LowResolutionFrames.ToArray(),
+            loopClosures: current.LoopClosures.ToArray(), runtimeMetadata: MergedMetadata(current.Metadata),
+            visualFrameArchive: archive);
     }
 
-    public void Cancel() { lock (gate) session = null; }
+    public void Cancel() => _ = StopAsync(cancelled: true).GetAwaiter().GetResult();
+
+    private IReadOnlyDictionary<string, string> MergedMetadata(IReadOnlyDictionary<string, string>? metadata)
+    {
+        var merged = new Dictionary<string, string>(runtimeMetadata);
+        if (metadata is not null)
+            foreach (var pair in metadata) merged[pair.Key] = pair.Value;
+        return merged;
+    }
     private static double MonotonicSeconds() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
     private static double Offset(double timestamp, double start) =>
         double.IsFinite(timestamp) && double.IsFinite(start) ? Math.Max(0, timestamp - start) : 0;

@@ -76,6 +76,117 @@ internal static class VisualReplayArchiveTests
         Reject(() => VisualReplayArchiveReader.Inspect(fixture.PathFile), "checksum");
     }
 
+    public static void TestRecorderLinksLosslessArchiveToTheSavedPath() => VerifyRecording().GetAwaiter().GetResult();
+
+    private static async Task VerifyRecording()
+    {
+        using var fixture = new Fixture();
+        var recorder = new InputPathRecorder();
+        Check(recorder.Start(timestamp: 100, id: fixture.Id, visualArchiveRoot: fixture.Root));
+        var image = new BgraFrame(2, 3, 8, [.. Fixture.Pixels, .. Fixture.Pixels, .. Fixture.Pixels], 12, DateTimeOffset.UnixEpoch);
+        var masks = new GameplaySceneMasks(new(null, new(0, 0, 1, 1), default, default),
+            new(new(1, 0, 1, 1), default, default, default), [new(0, 0, 1, 1)], [new(1, 0, 1, 1)], new(1, 0, 1, 1));
+        recorder.RecordVisualFrame(image, 99.9, 100.1, 7, 390);
+        recorder.RecordVisualStage("visionCompleted", 99.9, 7);
+        recorder.RecordVisualGroundInput(99.9, 7, image.Height, masks, InputButtons.Left);
+        recorder.RecordVisualFrame(image, 100.1, 100.103, 8, 391);
+        recorder.RecordVisualStage("visionStarted", 100.1, 8);
+        recorder.RecordVisualGroundInput(100.1, 8, image.Height, masks, InputButtons.Right | InputButtons.ActionX);
+        recorder.RecordVisualStage("visionCompleted", 100.1, 8);
+        recorder.RecordInput(RecordedGameButton.Right, true, 100.15);
+
+        var stopped = recorder.StopAsync(100.2);
+        Check(!recorder.IsRecording);
+        recorder.RecordVisualFrame(image, 100.3, 100.303, 8, 392);
+        var path = await stopped ?? throw new InvalidOperationException("Missing recorded input path.");
+        Check(path.VisualFrameArchive is { Complete: true, CapturedFrameCount: 1, SavedFrameCount: 1 });
+        Check(path.Events.Count == 2 && path.Events[^1].Transition == RecordedInputTransition.Released);
+        new RecordedInputPathStore(fixture.Root).Save(path, fixture.PathFile);
+        var inspection = VisualReplayArchiveReader.Inspect(fixture.PathFile);
+        Check(inspection.Complete && inspection.GroundInputsWithImages == 1 && inspection.ExactFrameMarkers == 1);
+
+        var archive = new VisualReplayArchiveReader(fixture.Root, path.VisualFrameArchive!, fixture.Id);
+        Check(archive.Manifest.Configuration["platform"] == "windows");
+        var frame = archive.Manifest.Frames.Single();
+        Check(frame is { CaptureGeneration: 8, CaptureTimestamp: 100.1, CapturedAt: 100.103, RenderedGameFrame: 391, SolveWidth: 2 });
+        Check(archive.ReadImage(frame).Row(0).SequenceEqual(Fixture.Pixels));
+        var ground = archive.Manifest.GroundInputs.Single();
+        Check(ground.Tuning == GroundTheoryTuning.Default && ground.SemanticTuning == GroundTheoryTuning.SemanticDefault);
+        var originalBounds = ground.ObservedPlayerBounds!;
+        Check(originalBounds[0].SequenceEqual(new double[] { 1, 2 }) && originalBounds[1].SequenceEqual(new double[] { 1, 1 }));
+        Check(ground.HorizontalDrive == 1 && ground.WindowsMovementButtons == (InputButtons.Right | InputButtons.ActionX));
+        Check(ground.ExcludingRects!.Single()[0][0] == 1 && ground.WindowsAtlasExcludingRects!.Single()[0][0] == 0);
+        Check(archive.Manifest.StageEvents.Select(stage => stage.Stage).SequenceEqual(new[] { "visionStarted", "visionCompleted" }));
+    }
+
+    public static void TestWriterBoundsRetainedFramesAndDrainsInCaptureOrder() => VerifyWriterBounds().GetAwaiter().GetResult();
+
+    private static async Task VerifyWriterBounds()
+    {
+        using var fixture = new Fixture();
+        var writing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var resume = new ManualResetEventSlim();
+        var writer = new VisualReplayArchiveWriter(fixture.Root, fixture.Id, new Dictionary<string, string>(), 2,
+            (image, path) => {
+                writing.TrySetResult();
+                if (!resume.Wait(TimeSpan.FromSeconds(10))) throw new IOException("Test encoder timed out.");
+                PngWriter.Write(image, path);
+            });
+        var frame = new BgraFrame(2, 1, 8, Fixture.Pixels, 1, DateTimeOffset.UnixEpoch);
+        writer.Append(frame, 1, 1.01, 7, 2, 11);
+        Task<RecordedVisualFrameArchive>? completed = null;
+        try
+        {
+            await writing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            writer.Append(frame, 2, 2.01, 7, 2, 12);
+            writer.Append(frame, 3, 3.01, 7, 2, 13);
+            writer.Append(frame, double.PositiveInfinity, 4, 7, 2, null);
+            completed = writer.FinishAsync();
+            Check(!completed.IsCompleted && ReferenceEquals(completed, writer.FinishAsync(cancelled: true)),
+                "An unfinished image was overtaken by archive finalization.");
+            writer.Append(frame, 5, 5.01, 7, 2, 15);
+            writer.RecordStage(new("visionCompleted", 5, 7));
+        }
+        finally
+        {
+            resume.Set();
+            if (completed is null) await writer.FinishAsync(cancelled: true);
+        }
+
+        var summary = await completed.WaitAsync(TimeSpan.FromSeconds(5));
+        Check(summary is { Complete: false, PeakPendingImages: 2, CapturedFrameCount: 4, SavedFrameCount: 2, DroppedFrameCount: 1, FailedFrameCount: 1 });
+        var reader = new VisualReplayArchiveReader(fixture.Root, summary, fixture.Id, requireComplete: false);
+        Check(reader.Manifest.Frames.Select(item => item.Index).SequenceEqual(new[] { 0, 1, 2, 3 }));
+        Check(reader.Manifest.Frames[2] is { CaptureTimestamp: 3, RenderedGameFrame: 13, Issue: "writerBackpressure" });
+        Check(reader.Manifest.Frames[3] is { CaptureTimestamp: 0, CapturedAt: 0, Issue: "invalidCapture" });
+        Check(reader.Manifest.StageEvents.Count == 0);
+        Check(reader.ReadImage(reader.Manifest.Frames[0]).Row(0).SequenceEqual(Fixture.Pixels));
+        Check(reader.ReadImage(reader.Manifest.Frames[1]).Row(0).SequenceEqual(Fixture.Pixels));
+    }
+
+    public static void TestWriterRecordsCancellationAndWriteFailures() => VerifyWriterFailures().GetAwaiter().GetResult();
+
+    private static async Task VerifyWriterFailures()
+    {
+        using var fixture = new Fixture();
+        var invalidRoot = Path.Combine(fixture.Root, "file-instead-of-folder");
+        File.WriteAllText(invalidRoot, "file");
+        var blocked = new VisualReplayArchiveWriter(invalidRoot, fixture.Id, new Dictionary<string, string>());
+        var frame = new BgraFrame(2, 1, 8, Fixture.Pixels, 1, DateTimeOffset.UnixEpoch);
+        blocked.Append(frame, 1, 1.01, 7, 2, 1);
+        var failed = await blocked.FinishAsync();
+        Check(failed is { Complete: false, CapturedFrameCount: 1, FailedFrameCount: 1 }
+            && failed.Issue?.StartsWith("manifestWriteFailed:", StringComparison.Ordinal) == true);
+
+        var writer = new VisualReplayArchiveWriter(fixture.Root, fixture.Id, new Dictionary<string, string>(),
+            writeImage: (_, _) => throw new IOException("Test encoder failure."));
+        writer.Append(frame, 1, 1.01, 7, 2, 1);
+        var cancelled = await writer.FinishAsync(cancelled: true);
+        Check(cancelled is { Complete: false, Issue: "cancelled", SavedFrameCount: 0, FailedFrameCount: 1 });
+        var reader = new VisualReplayArchiveReader(fixture.Root, cancelled, fixture.Id, requireComplete: false);
+        Check(reader.Manifest.Frames.Single().Issue?.StartsWith("imageWriteFailed:", StringComparison.Ordinal) == true);
+    }
+
     private static void Check(bool result, string message = "Visual replay archive assertion failed.")
     {
         if (!result) throw new InvalidOperationException(message);

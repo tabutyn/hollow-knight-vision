@@ -13,7 +13,25 @@ public sealed record VisualReplayFrame(int Index, double CaptureTimestamp, doubl
 
 public sealed record VisualReplayStageEvent(string Stage, double CaptureTimestamp, ulong CaptureGeneration);
 
-public sealed record VisualReplayGroundInput(double CaptureTimestamp, ulong CaptureGeneration);
+public sealed record VisualReplayGroundInput(double CaptureTimestamp, ulong CaptureGeneration,
+    double[][][]? ExcludingRects = null, double[][]? KnightRect = null, GroundTheoryTuning? Tuning = null,
+    GroundTheoryTuning? SemanticTuning = null, double[][]? ObservedPlayerBounds = null,
+    int? HorizontalDrive = null, bool? RecentJump = null, InputButtons? WindowsMovementButtons = null,
+    double[][][]? WindowsAtlasExcludingRects = null)
+{
+    internal static VisualReplayGroundInput FromTracking(double timestamp, ulong generation, int imageHeight,
+        GameplaySceneMasks masks, InputButtons? buttons)
+    {
+        // The shared archive uses CGRect coordinates. Convert once at the wire boundary.
+        double[][] Rect(StencilRect rect) =>
+            [[rect.X, imageHeight - rect.Bottom], [rect.Width, rect.Height]];
+        var knight = masks.GroundRegions.Knight is { } bounds ? Rect(bounds) : null;
+        return new(timestamp, generation, masks.GroundRegions.OmittedRects.Select(Rect).ToArray(), knight,
+            GroundTheoryTuning.Default, GroundTheoryTuning.SemanticDefault, knight,
+            buttons.HasValue ? KnightLevelWalk.Direction(buttons.Value) : null,
+            WindowsMovementButtons: buttons, WindowsAtlasExcludingRects: masks.AtlasRegions.OmittedRects.Select(Rect).ToArray());
+    }
+}
 
 public sealed record VisualReplayManifest(int SchemaVersion, [property: JsonPropertyName("pathID")] Guid PathId,
     IReadOnlyDictionary<string, string> Configuration, IReadOnlyList<VisualReplayFrame> Frames,

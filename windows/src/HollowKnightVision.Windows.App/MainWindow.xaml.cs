@@ -2635,6 +2635,7 @@ public partial class MainWindow : Window
                     captureFallbackReason = capture.FallbackReason;
                     captureReadbackMilliseconds = capture.ReadbackMilliseconds;
                     var captureTimestamp = capture.CaptureTimestamp;
+                    var capturedAt = BotCaptureClock();
                     var movement = gameMode == GameRuntimeMode.Normal
                         ? normalGameInput?.CaptureMovement() : gameControls.CaptureMovement();
                     if (!labelCapture.Accept(frame, labelRevision)) continue;
@@ -2671,6 +2672,7 @@ public partial class MainWindow : Window
                     else
                     {
                         var renderedGameFrame = RenderedFrameMarker.Decode(frame);
+                        gameControls.RecordVisualFrame(frame, captureTimestamp, capturedAt, (ulong)captureGeneration, renderedGameFrame);
                         CaptureReplayAudit(frame, renderedGameFrame, captureTimestamp);
                         BufferReceiverCapture(
                             captureGeneration,
@@ -2772,21 +2774,30 @@ public partial class MainWindow : Window
                 Volatile.Read(ref stepCapture)?.Trace("analysis", pending.Frame.CaptureId, pending.RenderedGameFrame, pending.CaptureTimestamp);
                 var queueMilliseconds = Math.Max(0,
                     (analysisStarted / (double)Stopwatch.Frequency - pending.CaptureTimestamp) * 1000);
-                var result = AnalyzeVisionFrame(
-                    pending.Frame,
-                    detector,
-                    frameAdmission,
-                    captureGeneration,
-                    pending.LabelRevision,
-                    pending.CaptureTimestamp,
-                    pending.RenderedGameFrame,
-                    pending.ReceiverTelemetry,
-                    pending.OwnsHackerWork,
-                    pending.IntegratesHackerAtlas,
-                    pending.HackerWorkGeneration,
-                    pending.MovementButtons,
-                    groundHypothesisState,
-                    normalAtlasRoomIdentity);
+                VisionAnalysisResult? result;
+                gameControls.RecordVisualStage("visionStarted", pending.CaptureTimestamp, (ulong)captureGeneration);
+                try
+                {
+                    result = AnalyzeVisionFrame(
+                        pending.Frame,
+                        detector,
+                        frameAdmission,
+                        captureGeneration,
+                        pending.LabelRevision,
+                        pending.CaptureTimestamp,
+                        pending.RenderedGameFrame,
+                        pending.ReceiverTelemetry,
+                        pending.OwnsHackerWork,
+                        pending.IntegratesHackerAtlas,
+                        pending.HackerWorkGeneration,
+                        pending.MovementButtons,
+                        groundHypothesisState,
+                        normalAtlasRoomIdentity);
+                }
+                finally
+                {
+                    gameControls.RecordVisualStage("visionCompleted", pending.CaptureTimestamp, (ulong)captureGeneration);
+                }
                 if (result is null) continue;
                 result = result with
                 {
@@ -3271,6 +3282,7 @@ public partial class MainWindow : Window
         }
         if (admission.AdmitsTracking)
         {
+            gameControls.RecordVisualGroundInput(captureTimestamp, (ulong)captureGeneration, frame.Height, masks, movementButtons);
             var extracted = GameplayTerrainAnalysis.Analyze(frame, masks);
             groundAnalysis = extracted.Edges;
             groundTheory = extracted.Theory;
@@ -6858,10 +6870,14 @@ public partial class MainWindow : Window
                 inputPathReplayDivergence = null;
                 inputPathDivergenceMonitor.Prepare();
                 var completed = false;
+                RecordedVisualFrameArchive? visualArchive = null;
                 try
                 {
                     await gameControls.ReplayPathAsync(recording, iteration, true,
-                        result => output = store.Save(result), cancellation.Token,
+                        result => {
+                            visualArchive = result.VisualFrameArchive;
+                            output = store.Save(result);
+                        }, cancellation.Token,
                         prepare: (restored, ct) => Dispatcher.InvokeAsync(async () => {
                             if (!restored) await ResetReplayAtlasAsync(System.IO.Path.Combine(benchmark, "settling"), ct, startCapture: false);
                             else
@@ -6875,7 +6891,8 @@ public partial class MainWindow : Window
                             }
                         }).Task.Unwrap(),
                         beginEvaluation: BeginReplayEvaluation,
-                        evaluationMode: replayFailFast ? "fail-fast" : "full-trace");
+                        evaluationMode: replayFailFast ? "fail-fast" : "full-trace",
+                        visualArchiveRoot: store.RootDirectory);
                     completed = true;
                 }
                 finally
@@ -6885,7 +6902,7 @@ public partial class MainWindow : Window
                     File.WriteAllText(System.IO.Path.Combine(benchmark, "evaluation.json"), JsonSerializer.Serialize(new {
                         sourcePath = path, output, iteration, workspace, mode = replayFailFast ? "fail-fast" : "full-trace",
                         decision = inputPathReplayDivergence ?? inputPathDivergenceMonitor.LastDecision,
-                        completed,
+                        completed, visualFrameArchive = visualArchive,
                         matchedSamples = inputPathDivergenceMonitor.MatchedSampleCount,
                         evaluatedSamples = inputPathDivergenceMonitor.EvaluatedSampleCount,
                         maximumErrorPixels = inputPathDivergenceMonitor.MaximumErrorPixels,

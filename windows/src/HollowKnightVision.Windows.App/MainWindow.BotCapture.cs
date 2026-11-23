@@ -27,6 +27,8 @@ public partial class MainWindow
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "HollowKnightVision", "bot-v1");
     private string BotCaptureRoot => Path.Combine(BotRoot, "demonstrations");
+    private static string InputPathRoot => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "HollowKnightVision", "paths");
 
     private static double BotCaptureClock() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
 
@@ -102,22 +104,30 @@ public partial class MainWindow
             if (Interlocked.Exchange(ref botCapture, null) is { } active)
             {
                 var end = BotCaptureClock();
-                var path = gameMode == GameRuntimeMode.Modded ? gameControls.StopRecording() : null;
+                RecordedInputPath? path;
+                try { path = active.CapturesHacker ? await gameControls.StopRecordingAsync() : null; }
+                catch
+                {
+                    await active.FinishAsync(end, null, completed: false);
+                    throw;
+                }
                 var finish = active.FinishAsync(end, path, completed: true);
-                var pathSave = path is not null ? Task.Run<string?>(() => new RecordedInputPathStore(
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "HollowKnightVision", "paths")).Save(path))
+                var pathSave = path is not null ? Task.Run<string?>(() => new RecordedInputPathStore(InputPathRoot).Save(path))
                     : Task.FromResult<string?>(null);
                 try
                 {
                     var result = await finish;
                     RefreshBotLibrary();
                     var count = result.Published.Count;
-                    SetStatus(count switch
+                    var message = count switch
                     {
                         2 => "Saved both Hacker and Game Play clips.",
                         1 => $"Saved the {DisplayBotDomain(result.Published[0].BotDomain)} clip.",
                         _ => "Capture discarded because it contained no eligible training observations."
-                    });
+                    };
+                    if (path?.VisualFrameArchive is { Complete: false } archive)
+                        message += $" Frame archive incomplete ({archive.SavedFrameCount}/{archive.CapturedFrameCount} images saved).";
+                    SetStatus(message);
                 }
                 finally
                 {
@@ -128,7 +138,7 @@ public partial class MainWindow
 
             if (visionCancellation is null || !DashboardPresentationPolicy.ShowsBotCapture(workspace, gameMode, recognizedMenuContext))
                 return;
-            if (gameMode == GameRuntimeMode.Modded && !await gameControls.StartRecordingAsync())
+            if (gameMode == GameRuntimeMode.Modded && !await gameControls.StartRecordingAsync(visualArchiveRoot: InputPathRoot))
             {
                 SetStatus("Updated game receiver is not ready.");
                 return;
@@ -136,7 +146,7 @@ public partial class MainWindow
             var recording = gameControls.Recording;
             if (visionCancellation is null || isClosing || gameMode == GameRuntimeMode.Modded && recording is null)
             {
-                if (recording.HasValue) _ = gameControls.StopRecording();
+                if (recording.HasValue) _ = await gameControls.StopRecordingAsync(cancelled: true);
                 return;
             }
             var paired = recording.HasValue;
@@ -149,7 +159,7 @@ public partial class MainWindow
         }
         catch (Exception error)
         {
-            if (gameControls.IsRecording && botCapture is null) _ = gameControls.StopRecording();
+            if (gameControls.IsRecording && botCapture is null) _ = await gameControls.StopRecordingAsync(cancelled: true);
             ShowError(error);
         }
         finally
@@ -165,7 +175,7 @@ public partial class MainWindow
         if (Interlocked.Exchange(ref botCapture, null) is not { } abandoned) return;
         try
         {
-            if (gameControls.IsRecording) _ = gameControls.StopRecording();
+            if (gameControls.IsRecording) _ = await gameControls.StopRecordingAsync(cancelled: true);
             await abandoned.FinishAsync(BotCaptureClock(), null, completed: false);
             SetStatus("Incomplete bot capture discarded.");
         }

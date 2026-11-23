@@ -86,7 +86,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
 
     internal (Guid Id, double StartedAt)? Recording => inputPathRecorder.Recording;
 
-    internal async Task<bool> StartRecordingAsync(CancellationToken cancellationToken = default)
+    internal async Task<bool> StartRecordingAsync(CancellationToken cancellationToken = default, string? visualArchiveRoot = null)
     {
         ReceiverClient active;
         lock (stateLock)
@@ -104,22 +104,32 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
             {
                 if (!ReferenceEquals(active, receiver) || lifetime.IsCancellationRequested) return false;
                 return inputPathRecorder.Start(MonotonicSeconds(), DateTimeOffset.UtcNow, startCheckpoint: checkpoint,
-                    metadata: new Dictionary<string, string> { ["checkpointCapture"] = "receiver-acknowledged-v1", ["playbackMode"] = "recording" });
+                    metadata: new Dictionary<string, string> { ["checkpointCapture"] = "receiver-acknowledged-v1", ["playbackMode"] = "recording" },
+                    visualArchiveRoot: visualArchiveRoot);
             }
         }
         finally { lock (stateLock) capturingCheckpoint = false; }
     }
 
-    internal RecordedInputPath? StopRecording()
+    internal async Task<RecordedInputPath?> StopRecordingAsync(bool cancelled = false)
     {
+        Task<RecordedInputPath?> pending;
         lock (stateLock)
-        {
-            var result = inputPathRecorder.Stop(MonotonicSeconds());
-            if (result is null) return null;
-            result.Validate();
-            return result;
-        }
+            pending = inputPathRecorder.StopAsync(MonotonicSeconds(), cancelled);
+        var result = await pending.ConfigureAwait(false);
+        result?.Validate();
+        return result;
     }
+
+    internal void RecordVisualFrame(BgraFrame frame, double timestamp, double capturedAt, ulong generation, int? marker) =>
+        inputPathRecorder.RecordVisualFrame(frame, timestamp, capturedAt, generation, marker);
+
+    internal void RecordVisualStage(string stage, double timestamp, ulong generation) =>
+        inputPathRecorder.RecordVisualStage(stage, timestamp, generation);
+
+    internal void RecordVisualGroundInput(double timestamp, ulong generation, int imageHeight,
+        GameplaySceneMasks masks, InputButtons? buttons) =>
+        inputPathRecorder.RecordVisualGroundInput(timestamp, generation, imageHeight, masks, buttons);
 
     internal void RecordCoarseMotion(
         double captureTimestamp,
@@ -417,8 +427,12 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
             try { await loop.ConfigureAwait(false); }
             catch (OperationCanceledException) { }
         }
-        outboundGate.Dispose();
-        lifetime.Dispose();
+        try { await StopRecordingAsync(cancelled: true).ConfigureAwait(false); }
+        finally
+        {
+            outboundGate.Dispose();
+            lifetime.Dispose();
+        }
     }
 
     private async Task RunConnectionLoopAsync(CancellationToken cancellationToken)
