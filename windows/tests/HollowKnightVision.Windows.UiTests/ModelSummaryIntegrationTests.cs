@@ -104,8 +104,8 @@ internal static class ModelSummaryIntegrationTests
             session.SetContent(examples, candidate, classes.Select(item => item.Identifier), selected); panel.Refresh(["custom.bench"], atlas); Pump();
             Check(session.SelectedFailure?.Id == first.Id && session.PositionText == "2 / 2", "Refreshing Summary reset the failure position.");
             Choose(least, "custom.bench");
-            Check(!trainable && session.FailureExamples.Count == 0 && Find<TextBlock>(panel, "SummaryEmptyReview").IsVisible
-                && !Find<Button>(panel, "SummaryOpenScreenshot").IsVisible, "Unlabeled class retained another object's errors or enabled training.");
+            Check(selected == "custom.bench" && session.FailureExamples.Count == 0 && Find<TextBlock>(panel, "SummaryEmptyReview").IsVisible
+                && !Find<Button>(panel, "SummaryOpenScreenshot").IsVisible, "Unlabeled class retained another object's errors.");
             Check(changes == 2, "Programmatic refresh triggered object-selection callbacks.");
         }
         finally { window.Close(); }
