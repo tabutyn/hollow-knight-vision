@@ -2,6 +2,23 @@
 
 Explore and Progress choose reachable targets on the Atlas platform graph. Vision offers those targets to Gemma as Traverse candidates. The player dispatches the highest-scoring eligible candidate automatically in a ready macOS Gameplay or Hacker workspace. **T** opens Thinking and shows the captured offer, reply and dispatch result.
 
+## Design review: one explicit selection per decision
+
+The [policy deck](playing-policies.pptx) opens with the proposed input block, an audit of the current reply, and a worked response schema. Each target selector and policy then has its own slide. The installed app uses **v2**. The [v3 schema](policy-selection-v3.schema.json) is a design proposal.
+
+| Input to the local Gemma request | Source and refresh |
+| --- | --- |
+| **1. Remembered game text** | Apple Vision OCR supplies the raw text. The playthrough notebook preserves it alongside the corrected reading, label and room. Vision retrieves source-numbered excerpts for later decisions. |
+| **2. Current assessment** | Today the saved reasoning holds quests, destinations and unknowns with citations. The proposal adds a short working priority, the observation supporting it and when to reconsider it. Vision seeds the first request with the Atlas objective and asks the local model to refresh the assessment after a relevant reading, outcome or state change. |
+| **3. Game and policy state** | Vision captures the room, status, current OCR and available targets. The proposal also injects the controller’s active policy and bound target (or `null`), last observed outcome and capture identity. Vision takes these from playback and the observer. |
+| **4. Output contract** | Vision builds Ollama’s `format` schema for this decision. In v3 it fixes `decisionId` to the pending request and restricts `selection` to one complete offered action or `null`. The same legal choices appear in the prompt. The pinned screenshot accompanies the text. |
+
+**Why change the reply?** V2’s `{"scores":{"c0":85,"c1":30}}` lets Vision use a runner-up if the winner expires. To interpret it, a reader needs the original offer. V3 makes the policy and its operands explicit. For the two actual waypoints in King’s Pass decision 4, the frozen allowlist would contain `null`, `{"policy":"traverse","waypointId":0}`, and `{"policy":"traverse","waypointId":1}`. Room, direction, distance and frontier status stay in the input and bound target. Drop the decision and request fresh evidence if the selected waypoint expires. An abstention also leaves the controller without a new maneuver.
+
+**Who writes the file?** Today `ThinkingClient.answer` reads Ollama’s HTTP `message.content` and `ThinkingInspector.Output` holds the JSON in memory. Under the proposal, **Vision** validates the returned JSON against the pending request and writes it atomically to `Thinking/<save>/<session>/latest-decision.v3.json` for inspection. Write only the latest validated decision in that save and session. Playback consumes the in-memory selection once and rechecks the bound target. Keep the captured offer and the dispatch or rejection outcome together under the same decision ID so the recorded target remains identifiable later. Opening an old file never moves the Knight. `{"decisionId":4,"selection":null}` records an explicit abstention.
+
+Use the generic schema for type checks and an exact per-request `enum` of whole actions for authorization. This prevents mixing a policy with another candidate’s parameters. A purchase can enter that vocabulary once Vision can bind a live shop offer, check the wallet and spending limits, and verify checkout. The design keeps free-form reasoning and OCR in the input.
+
 ## How Gemma uses the notebook
 
 One loaded model can handle OCR proofreading, a quest update and a policy request. Vision constructs the message list separately for each call. Keeping the model resident saves loading time. To reuse a clue after a restart, Vision stores it and includes it in a later request. Editing an earlier token changes the context on which later attention states depend. An inference engine may reuse an identical prefix and recompute the affected suffix. [Ollama chat API](https://docs.ollama.com/api/chat) · [Causal attention and the KV cache](https://huggingface.co/docs/transformers/cache_explanation)
