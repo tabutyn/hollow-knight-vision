@@ -26,12 +26,16 @@ internal sealed class AtlasPathNavigator
     private AtlasPathPoint? heading;
     private AtlasPathPoint? inheritedHeading;
     internal bool HasStartProjection { get; private set; }
+    internal AtlasPathPoint? LastProjection { get; private set; }
+    internal int? PriorRemaining { get; private set; }
     internal IReadOnlyList<AtlasPathPoint> SelectedRoute { get; private set; } = [];
 
     public void Interrupt()
     {
         flight = [];
         SelectedRoute = [];
+        LastProjection = null;
+        PriorRemaining = null;
     }
 
     internal void ClearObjective()
@@ -65,6 +69,8 @@ internal sealed class AtlasPathNavigator
     {
         automatic = !fixedObjective.HasValue;
         SelectedRoute = [];
+        LastProjection = null;
+        PriorRemaining = null;
         var h = graph.KnightHeight;
         var position = new AtlasPathPoint(feet.X, feet.Y + h);
         var floor = grounded == false ? null : graph.NearestStroke(position, grounded == true ? h : Math.Max(2, h / 3), walkOnly: true);
@@ -78,6 +84,7 @@ internal sealed class AtlasPathNavigator
             return null;
         }
         var start = airborne?.Project(position) ?? startStroke.Closest(position);
+        LastProjection = start;
         SetBucketSize(h);
         if (measured && floor.HasValue)
             foreach (var vertex in graph.Vertices(startStroke))
@@ -89,23 +96,21 @@ internal sealed class AtlasPathNavigator
             ? graph.NearestStroke(previous, h, walkOnly: !fixedObjective.HasValue || fixedObjectiveOnGround) : null;
         var oldGoal = oldGoalLine is { } prior && previousObjective is { } target ? prior.Closest(target) : (AtlasPathPoint?)null;
         var search = new AtlasPathSearch(graph, startStroke, start, admitted, oldGoalLine, oldGoal, stopAtTarget: fixedObjective.HasValue);
+        if (oldGoal is { } reachableGoal && search.Reaches(reachableGoal)) PriorRemaining = search.DistanceTo(reachableGoal);
         if (fixedObjective.HasValue)
         {
             if (oldGoal is { } goal && search.Reaches(goal)) return Guide(goal, search.RouteTo(goal));
             flight = [];
             return null;
         }
-        if (oldGoal is { } previousGoal && search.Reaches(previousGoal) && IsUnvisited(previousGoal)
-            && start.DistanceTo(previousGoal) > Math.Max(3, h / 3) && FollowsHeading(previousGoal))
+        var retained = oldGoal is { } previousGoal && PriorRemaining.HasValue && IsUnvisited(previousGoal)
+            && start.DistanceTo(previousGoal) > Math.Max(3, h / 3) && FollowsHeading(previousGoal) ? oldGoal : null;
+        if (retained is { } goalToKeep && (!startStroke.Contains(goalToKeep) || start.DistanceTo(goalToKeep) > h))
         {
-            var route = search.RouteTo(previousGoal);
-            if (!startStroke.Contains(previousGoal) || start.DistanceTo(previousGoal) > h)
-                return Guide(previousGoal, route);
-            // Keep the objective if the Knight is already crossing to its platform.
-            // Reconsider a nearby lip because a newly observed shelf can depart just before it.
+            return Guide(goalToKeep, search.RouteTo(goalToKeep));
         }
         var candidates = graph.WalkNodes.Where(point => search.Reaches(point) && IsUnvisited(point)).ToArray();
-        if (candidates.Length == 0)
+        if (candidates.Length == 0 && !retained.HasValue)
         {
             objective = null;
             flight = [];
@@ -127,6 +132,7 @@ internal sealed class AtlasPathNavigator
                     return Guide(candidate, route);
             }
         }
+        if (retained is { } frontier) return Guide(frontier, search.RouteTo(frontier));
         var destination = candidates.MaxBy(point => (search.DistanceTo(point), point));
         return Guide(destination, search.RouteTo(destination));
 
@@ -171,7 +177,7 @@ internal sealed class AtlasPathNavigator
             {
                 Projection = start,
                 Remaining = search.DistanceTo(target),
-                PriorRemaining = oldGoal is { } old && search.Reaches(old) ? search.DistanceTo(old) : null,
+                PriorRemaining = PriorRemaining,
                 FallSteering = floor is null && grounded != true ? DriftDirection(position, graph.KnightHeight) : null
             };
         }

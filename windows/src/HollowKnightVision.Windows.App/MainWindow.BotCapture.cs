@@ -74,15 +74,18 @@ public partial class MainWindow
         var time = new BotCaptureTiming(timestamp, BotCaptureClock(), generation, roomId, roomRevision);
         var roomKey = receiverTelemetry?.SceneName is { Length: > 0 } scene
             ? HackerLayoutId("room", scene).ToString("D").ToUpperInvariant() : null;
+        var objectives = Volatile.Read(ref hackerObjectives);
+        var objectiveScene = receiverTelemetry?.SceneName;
+        var published = latestStagedHackerAtlas;
+        var registeredRoom = objectiveScene is not null && published is not null && published.CapturedAt <= timestamp
+            ? published.Output.Rooms.FirstOrDefault(candidate => candidate.SceneName == objectiveScene) : null;
         var exact = botRouteVisit?.Observe(new(frame.Width, frame.Height), renderedFrame, receiverTelemetry, time, input,
-            (int)Math.Min(roomRevision, int.MaxValue), objective: Volatile.Read(ref hackerObjective), roomKey: roomKey);
+            (int)Math.Min(roomRevision, int.MaxValue), objective: objectiveScene is null ? null : objectives.SelectedFor(objectiveScene),
+            roomKey: roomKey, automaticObjective: objectiveScene is not null && objectives.IsAutomatic(objectiveScene), registeredRoom: registeredRoom);
         if (exact is not null && receiverTelemetry is not null)
         {
             var cameraTruth = GroundTruthCameraTransform.FromSample(receiverTelemetry, timestamp, new(frame.Width, frame.Height));
-            var published = latestStagedHackerAtlas;
-            var room = published is not null && published.CapturedAt <= timestamp
-                ? published.Output.Rooms.FirstOrDefault(candidate => candidate.SceneName == receiverTelemetry.SceneName) : null;
-            exact = exact with { AtlasView = cameraTruth is null ? null : room?.BotView(cameraTruth, exact.MeasuredHealth) };
+            exact = exact with { AtlasView = cameraTruth is null ? null : registeredRoom?.BotView(cameraTruth, exact.MeasuredHealth) };
         }
         var visual = capture is not null || playback is not null && run?.Domain == BotCaptureDomain.Gameplay
             ? BotObservationBuilder.Gameplay(frame, time, batch, floors, terrain.Walls, analyzedTerrain,

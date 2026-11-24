@@ -141,6 +141,9 @@ internal static class GameplayPathTests
             [upper[0]], TerrainWallDetection.Empty, new(20, 290), new(15, 270, 10, 20), null);
         var first = tracker.Observe(sample);
         Require(first?.Hint is { Objective.X: 100, Next.X: > 20 }, "The first frontier should lie along the starting floor.");
+        var nearby = tracker.Observe(sample with { Time = .13, KnightFoot = new(84, 290) });
+        Require(nearby?.Hint is { Objective.X: 100, Next.X: > 84 },
+            "Approaching the old lip must keep the reachable goal while there is no onward shelf.");
         var approach = tracker.Observe(sample with { Time = .18, VisibleFloors = upper, KnightFoot = new(86, 290) });
         Require(approach?.Hint is { Objective.X: 175 }, "The new raised platform should replace the nearby old lip.");
         var takeoff = tracker.Observe(sample with { Time = .24, VisibleFloors = upper, KnightFoot = new(94, 290) });

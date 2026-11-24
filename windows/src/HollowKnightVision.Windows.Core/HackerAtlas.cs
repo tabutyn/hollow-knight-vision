@@ -188,6 +188,13 @@ public sealed record HackerAtlasRoom(
     internal BotHackerCoverageSnapshot? BotCoverage { get; init; }
     internal AtlasPoint CameraAnchor { get; init; }
 
+    internal bool HasRegisteredGround(AtlasPoint world)
+    {
+        if (BotCoverage is not { } coverage || TerrainProjection is not { IsValid: true } projection) return false;
+        var point = projection.WorldToAtlas(world, default);
+        return coverage.Cells.Contains((BotAtlasFrontiers.Cell(point.X), BotAtlasFrontiers.Cell(point.Y)));
+    }
+
     public BotAtlasView? BotView(GroundTruthCameraTransform camera, int? health)
     {
         if (camera.SceneName != SceneName || BotCoverage is null) return null;

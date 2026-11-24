@@ -17,7 +17,7 @@ public partial class MainWindow
     private bool EditsHackerPaths => hackerEditingTarget == "Path";
     private readonly Dictionary<string, HackerPathCache> hackerPathGraphs = new(StringComparer.Ordinal);
     private readonly HackerAtlasRoute hackerPathRoute = new();
-    private BotAtlasObjective? hackerObjective;
+    private HackerAtlasObjectives hackerObjectives = HackerAtlasObjectives.Default;
     private ViewportRect? hackerPathFitBounds;
     private HackerPipelinePublication? hackerPathPreview;
     private const double KnightWorldHeight = 1.28;
@@ -120,24 +120,15 @@ public partial class MainWindow
     {
         if (hackerEditingTarget != "Objective" || !ShowsHackerPaths) return false;
         var pointer = GroundPointerAtlas(e);
-        var tolerance = GroundPointerTolerance();
-        if (!double.IsFinite(tolerance) || tolerance > 10_000) return false;
-        var nearest = Math.Max(2, QuantizePath(Math.Ceiling(tolerance))) + 1;
-        BotAtlasObjective? selected = null;
         // The paths include all authored terrain and may extend past the visited image.
-        foreach (var room in HackerTerrainRooms().OrderByDescending(room => room.SceneName == hackerLivePrepared?.SceneName))
+        var placements = HackerTerrainRooms().OrderByDescending(room => room.SceneName == hackerLivePrepared?.SceneName).Select(room =>
         {
-            var offset = PathOffset(room);
-            if (!AtlasPathPoint.TryQuantize(pointer.X - offset.X, pointer.Y - offset.Y, out var point)) continue;
             var paths = HackerPaths(room);
-            var graph = paths.Graph;
-            if (graph.NearestStroke(point, nearest - 1) is not { } stroke) continue;
-            var snapped = stroke.Closest(point);
-            nearest = snapped.DistanceTo(point);
-            selected = new(room.SceneName, new(snapped.X / paths.Scale.X, snapped.Y / paths.Scale.Y));
-        }
+            return new HackerObjectivePlacement(room.SceneName, PathOffset(room), paths.Scale, paths.Graph);
+        }).ToArray();
+        var selected = hackerObjectives.Select(pointer, GroundPointerTolerance(), placements);
         if (selected is null) return false;
-        Volatile.Write(ref hackerObjective, hackerObjective == selected ? null : selected);
+        Volatile.Write(ref hackerObjectives, selected);
         RedrawHackerEdits();
         e.Handled = true;
         return true;
@@ -162,9 +153,8 @@ public partial class MainWindow
             var graph = paths.Graph;
             var offset = PathOffset(room);
             var currentRoom = room.SceneName == hackerLivePrepared?.SceneName;
-            var target = hackerObjective is { } selection
-                ? selection.Project(room.SceneName, paths.Scale, graph)
-                : currentRoom ? graph.UpperRightObjective : null;
+            var target = currentRoom || hackerObjectives.SelectedFor(room.SceneName) is not null
+                ? hackerObjectives.Target(new(room.SceneName, offset, paths.Scale, graph)) : null;
 
             IReadOnlyList<AtlasPathPoint> route = [];
             if (currentRoom)
@@ -207,7 +197,5 @@ public partial class MainWindow
 
     private static AtlasPoint PathOffset(TerrainRoom room) =>
         new(room.Position.X + room.Projection.LocalOrigin.X, room.Position.Y + room.Projection.LocalOrigin.Y);
-
-    private static int QuantizePath(double value) => (int)Math.Round(value, MidpointRounding.AwayFromZero);
 
 }
