@@ -808,7 +808,7 @@ public partial class MainWindow : Window
     }
 
     internal MainWindow(GameRuntimeMode gameMode, string? gamePath, string root, string documents,
-        Func<ReceiverClient>? createReceiver = null)
+        Func<ReceiverClient>? createReceiver = null, LocalThinkingClient? policyClient = null)
     {
         this.gameMode = gameMode;
         this.gamePath = gamePath;
@@ -820,6 +820,7 @@ public partial class MainWindow : Window
         gameTextPreference = IOPath.Combine(root, "read-game-text.txt");
         gameTextReviewPreference = IOPath.Combine(root, "game-text-review.json");
         gameTextReview = new(gameTextReader, new LocalThinkingClient());
+        thinkingClient = policyClient ?? new LocalThinkingClient();
         InitializeComponent();
         InitializeGameText();
         InitializeGameTextReview();
@@ -846,6 +847,7 @@ public partial class MainWindow : Window
         {
             gameControls.Heartbeat();
             CheckBotOwnership();
+            CheckThinkingControl();
             SyncLabelPauseState();
             UpdateModeAvailability();
         };
@@ -1021,6 +1023,7 @@ public partial class MainWindow : Window
                 await captureFinished;
             if (gameTextTask is { } reading) await reading;
             if (gameTextReviewTask is { } proofreading) await proofreading;
+            if (thinkingQuestionTask is { } answer) await answer;
             gameTextRecognition.Dispose();
             await botEvaluationWrites;
             if (replayUiFinished is { } replayUi) await replayUi.Task;
@@ -1547,6 +1550,8 @@ public partial class MainWindow : Window
 
     private void ReleaseForwardedInput()
     {
+        Volatile.Write(ref thinkingControlAvailable, false);
+        StopThinkingControl();
         forwardedKeys.Clear();
         Interlocked.Exchange(ref botPlayback, null);
         gameControls.ReleaseAll();
@@ -1900,7 +1905,11 @@ public partial class MainWindow : Window
             hackerPathLinks.CancelSelection();
             InvalidatePendingHackerWork();
         }
-        if (destination != workspace) StopBotPlayback();
+        if (destination != workspace)
+        {
+            StopBotPlayback();
+            ResetThinking();
+        }
         if (workspace == "Bot" && destination != "Bot") ResetBotClipPreview();
         if (destination is "Label" or "Model" or "Bot") ReleaseForwardedInput();
         if (destination is not ("Gameplay" or "Hacker")) SendPointerExit();
@@ -3423,7 +3432,8 @@ public partial class MainWindow : Window
         GameplayPathView? paths = null;
         if (workspace == "Gameplay" && admission.AdmitsTracking && tracked.RoomAllowsAtlasWrite
             && atlasPathState != AtlasPathFrameState.Hidden && receiverTelemetry?.AtlasGameplayActive != false
-            && recognition.GameplayEnabled && Volatile.Read(ref atlasPathsEnabled))
+            && recognition.GameplayEnabled && (Volatile.Read(ref atlasPathsEnabled)
+                || gameMode == GameRuntimeMode.Normal && Volatile.Read(ref thinkingEnabled)))
         {
             var pathCamera = visualObservation.GroundVerified ? groundHypotheses.CameraPosition : tracked.MeasuredSceneryCamera;
             var registeredPath = worldPlacement is { IsPlaced: true } placement
@@ -3446,7 +3456,11 @@ public partial class MainWindow : Window
         }
         else trackingPipeline.Paths.Suspend();
         var botGameplay = !holdAtlas && admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";
-        var activeBot = Volatile.Read(ref botPlayback) is null ? null
+        var handledByThinking = ObserveThinkingFrame(frame, captureGeneration, captureTimestamp,
+            WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), walkedCoordinateEpoch, recognition.Status?.ContextIdentifier,
+            profileMenu, receiverTelemetry, renderedGameFrame, paths, botGameplay, movementButtons,
+            terrainContact.Wall is { } policyWall ? policyWall.SolidOnRight ? 1 : -1 : 0);
+        var activeBot = handledByThinking || Volatile.Read(ref botPlayback) is null ? null
             : ObserveBotStartup(frame, captureGeneration, captureTimestamp, botGameplay,
                 recognition.RecognizedStatus?.IsGameplay == true, receiverTelemetry, recognition.Menu, hudStencil);
         if (botGameplay)
@@ -3859,6 +3873,7 @@ public partial class MainWindow : Window
         if (workspace == "Label" && !isClosing) _ = SelectWorkspace("Gameplay", capture: false);
         visionCancellation?.Cancel();
         StopGameTextReview();
+        ResetThinking();
         ResetGameTextScan();
         menuStencilRecognizer.StopTracking();
         Volatile.Write(ref hackerObjectFrames, []);

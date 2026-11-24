@@ -50,11 +50,129 @@ internal static class BotDesktopEvaluationTests
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-timeout"), timeout.Token,
                 expireHandoff: true);
             await VerifyCheckpointControlsAsync(Path.Combine(temporary.FullName, "versions"), timeout.Token);
+            await VerifyThinkingLeaseAsync(Path.Combine(temporary.FullName, "thinking"), timeout.Token);
         }
         finally
         {
             Environment.SetEnvironmentVariable(labelsEnvironment, previousLabels);
             temporary.Delete(recursive: true);
+        }
+    }
+
+    private static async Task VerifyThinkingLeaseAsync(string root, CancellationToken token)
+    {
+        using var server = new TcpListener(IPAddress.Loopback, 0);
+        server.Start();
+        var port = ((IPEndPoint)server.LocalEndpoint).Port;
+        var session = Guid.NewGuid();
+        var states = Channel.CreateUnbounded<ReceiverInputSnapshot>();
+        var peer = ServeAsync(server, states.Writer, token);
+        var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
+        try
+        {
+            Field("recentCaptureGeneration").SetValue(window, Generation);
+            Field("workspace").SetValue(window, "Hacker");
+            Field("recognizedMenuContext").SetValue(window, "game");
+            Field("thinkingEnabled").SetValue(window, true);
+            Field("thinkingControlAvailable").SetValue(window, true);
+            var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
+            bridge.Start();
+            while (bridge.PauseState != GamePauseState.Ready) await Task.Delay(15, token);
+            WriteCheckpoint(Path.Combine(root, "bot-v1"), "hacker", "Skill handoff actor", "bot-thinking",
+                new DateTimeOffset(2026, 11, 22, 12, 0, 0, TimeSpan.Zero));
+            await window.StartBotPlaybackAsync().WaitAsync(token);
+            var run = Field("botPlayback").GetValue(window)!;
+            Check(run is not null, "Preparing Thinking needs the actual Windows bot lease.");
+            var owner = (Guid)run!.GetType().GetProperty("Owner", Instance)!.GetValue(run)!;
+            var first = WithRecovery(3, session);
+            object? ready = null;
+            for (var index = 0; index < 4 && ready is null; index++)
+            {
+                if (index > 0) await Task.Delay(140, token);
+                var initial = Frame();
+                ready = Method("ObserveBotStartup").Invoke(window, [initial.Image, Generation, initial.Time, true, true, first, null, null]);
+            }
+            Check(ReferenceEquals(ready, run), "The starter requires live gameplay before passing the PPO lease to Thinking.");
+            Observe(first);
+            var plan = OfferFocus();
+            Check(((string)Method("QueueThinkingPlan").Invoke(window, [plan])!).Contains("next frame", StringComparison.Ordinal),
+                "A matching score must wait for a fresh analysis frame.");
+            Check(Observe(first), "The native maneuver did not consume the chosen offer.");
+            await ExpectWireState(InputButtons.ActionA);
+            Check(Observe(WithRecovery(4, session)), "The frame that verified healing should release Focus.");
+            await ExpectWireState(InputButtons.None);
+            Check(bridge.OwnsBotControl(owner) && ReferenceEquals(Field("botPlayback").GetValue(window), run),
+                "The PPO lease should resume after a Thinking maneuver completes.");
+            Check((string?)Method("QueueThinkingPlan").Invoke(window, [plan]) == "Decision already consumed.",
+                "One model reply may only drive one maneuver.");
+
+            Observe(first);
+            var stale = OfferFocus();
+            _ = Method("QueueThinkingPlan").Invoke(window, [stale]);
+            Check(!Observe(WithRecovery(3, Guid.NewGuid())), "A score from an old receiver must not drive Focus.");
+            Check(Field("thinkingLease").GetValue(window) is null && bridge.OwnsBotControl(owner),
+                "Stale Thinking replies should leave ordinary playback ownership intact.");
+            Check((bool)Method("HandleLocalShortcut").Invoke(window, [Key.B, false, ModifierKeys.None])!,
+                "B still stops ordinary playback after a Thinking policy.");
+            await ExpectWireState(InputButtons.None);
+
+            Field("workspace").SetValue(window, "Gameplay");
+            Observe(first);
+            var gameplay = OfferFocus();
+            Check(gameplay.Scope.Domain == BotCaptureDomain.Gameplay,
+                "Game Play v2 must bind the same exact receiver actors without changing the playback observation domain.");
+            _ = Method("QueueThinkingPlan").Invoke(window, [gameplay]);
+            Check(Observe(first), "A fresh Game Play policy should use the receiver lease without a PPO checkpoint.");
+            await ExpectWireState(InputButtons.ActionA);
+            Check((bool)Method("StopThinkingControl").Invoke(window, ["Paused."])!,
+                "An interrupted standalone Thinking maneuver must release its lease.");
+            await ExpectWireState(InputButtons.None);
+
+            (BgraFrame Image, double Time) Frame()
+            {
+                var image = new BgraFrame(Width, Height, Width * 4, new byte[Width * Height * 4],
+                    Math.Max(1, Stopwatch.GetTimestamp()), DateTimeOffset.UtcNow);
+                return (image, Clock());
+            }
+            ReceiverGroundTruthSample WithRecovery(int health, Guid connection)
+            {
+                var truth = Telemetry(connection, 42);
+                return truth with { AtlasGameplayActive = true, Actors = truth.Actors! with
+                {
+                    Enemies = [], Recovery = new ReceiverRecovery(66, health, 5, true)
+                } };
+            }
+            bool Observe(ReceiverGroundTruthSample truth)
+            {
+                var current = Frame();
+                return (bool)Method("ObserveThinkingFrame").Invoke(window,
+                    [current.Image, Generation, current.Time, 1, 1L, "game", null, truth, 42, null, true, null, 0d])!;
+            }
+            ThinkingPlan OfferFocus()
+            {
+                var publication = Field("latestThinkingFrame").GetValue(window)!;
+                var sight = (ThinkingSight)publication.GetType().GetProperty("Sight")!.GetValue(publication)!;
+                var offer = new ThinkingPolicyOffer(sight);
+                var focus = offer.Candidates.Single(item => item.Action == ThinkingAction.Focus);
+                using var response = JsonDocument.Parse(JsonSerializer.Serialize(new { scores = new Dictionary<string, int> { [focus.Id] = 98 } }));
+                return offer.Resolve(response.RootElement);
+            }
+        }
+        finally
+        {
+            Field("isClosing").SetValue(window, true);
+            await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
+            await peer.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        Console.WriteLine("PASS Thinking score uses Windows receiver lease and releases it on stale or completed control");
+
+        async Task ExpectWireState(InputButtons buttons)
+        {
+            while (true)
+            {
+                var state = await states.Reader.ReadAsync(token);
+                if (state.HeldButtons == buttons && state.Enabled == (buttons != InputButtons.None)) return;
+            }
         }
     }
 

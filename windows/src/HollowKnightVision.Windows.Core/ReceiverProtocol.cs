@@ -247,11 +247,12 @@ public sealed record ReceiverActorState(int Id, string Name, double ScreenX, dou
 
 public sealed record BotEnemyOutcomes(Guid Epoch, int Damage, int Kills);
 public sealed record BotBlueHealthOutcomes(Guid Epoch, int Gained);
+public sealed record ReceiverRecovery(int Soul, int Health, int MaxHealth, bool CanFocus);
 
 public sealed record ReceiverActorTelemetry(
     int Version, ReceiverActorState? Hero, IReadOnlyList<ReceiverActorState>? Enemies,
     IReadOnlyList<ReceiverActorState>? GeoCaches = null, IReadOnlyList<ReceiverActorState>? LifebloodCocoons = null,
-    BotEnemyOutcomes? EnemyOutcomes = null, int? HeroHealth = null);
+    BotEnemyOutcomes? EnemyOutcomes = null, int? HeroHealth = null, ReceiverRecovery? Recovery = null);
 
 public sealed record ReceiverGroundTruthSample(
     int Version,

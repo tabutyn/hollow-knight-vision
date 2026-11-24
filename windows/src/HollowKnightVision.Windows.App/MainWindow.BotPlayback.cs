@@ -75,8 +75,11 @@ public partial class MainWindow
 
     private async Task ToggleBotPlaybackAsync()
     {
-        if (Volatile.Read(ref botPlayback) is not null)
+        var stoppedThinking = StopThinkingControl("Policy stopped with B.");
+        if (stoppedThinking || Volatile.Read(ref botPlayback) is not null)
         {
+            thinkingAutomatic = false;
+            PresentThinking();
             StopBotPlayback("Bot stopped.", reason: "user-stop");
             return;
         }
@@ -86,6 +89,8 @@ public partial class MainWindow
             SetStatus("Bot playback requires an active modded game capture.");
             return;
         }
+        thinkingAutomatic = true;
+        PresentThinking();
         await StartBotPlaybackAsync();
     }
 

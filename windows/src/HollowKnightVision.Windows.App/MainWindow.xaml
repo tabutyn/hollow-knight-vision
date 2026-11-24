@@ -485,6 +485,7 @@
                         </ContextMenu>
                     </Button.ContextMenu>
                 </Button>
+                <Button x:Name="ThinkingButton" Content="Thinking" Click="Thinking_Click" AutomationProperties.Name="Open Thinking inspector"/>
                 <Button x:Name="PathRecordingButton" Content="K" ToolTip="Start or stop a bot capture" Click="PathRecording_Click"/>
                 <Button x:Name="ReplayInputPathButton" Content="Replay" ToolTip="Replay a recorded input path"
                         Visibility="Collapsed" Click="ReplayInputPath_Click">

@@ -66,7 +66,7 @@ public sealed partial class GameTextCleanup(LocalThinkingClient client)
         var evidence = prior.Length == 0 ? JsonSerializer.Serialize(inputs, Json)
             : JsonSerializer.Serialize(new { readings = inputs, currentLog = prior }, Json);
         var response = await client.ChatAsync<Result>(resident, [new("system", instructions), new("user", evidence)],
-            schema, 768, forQuestNotes: false, cancellationToken).ConfigureAwait(false);
+            schema, 768, keepResident: false, cancellationToken).ConfigureAwait(false);
         if (response.Readings is not { } corrections || corrections.Length != rows.Count
             || corrections.Any(row => row is null || row.Text is null)
             || !corrections.Select(row => row.Id).Order().SequenceEqual(Enumerable.Range(0, rows.Count)))

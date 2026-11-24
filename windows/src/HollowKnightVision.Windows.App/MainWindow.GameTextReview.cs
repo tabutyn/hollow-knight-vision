@@ -56,6 +56,7 @@ public partial class MainWindow
     private void StartGameTextReview()
     {
         if (isClosing || !gameTextReviewOptions.Enabled || !gameTextReader.Enabled
+            || thinkingQuestionTask is { IsCompleted: false }
             || visionCancellation is not { IsCancellationRequested: false } vision
             || gameTextReviewTask is { IsCompleted: false }) return;
         var source = CancellationTokenSource.CreateLinkedTokenSource(vision.Token);
