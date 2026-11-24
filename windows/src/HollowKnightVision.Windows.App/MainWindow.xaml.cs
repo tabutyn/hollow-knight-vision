@@ -4225,6 +4225,7 @@ public partial class MainWindow : Window
         var originX = (hackerAtlasMinimumTileX ?? 0) * HackerAtlasTileSize;
         var originY = (hackerAtlasMinimumTileY ?? 0) * HackerAtlasTileSize;
         var terrainRooms = HackerTerrainRooms();
+        UpdateGroundDragPlacement(terrainRooms);
         RenderHackerTerrain(originX, originY, terrainRooms);
         RenderHackerPaths(originX, originY, terrainRooms);
         RenderHackerWallContacts();
