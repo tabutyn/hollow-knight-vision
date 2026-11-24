@@ -25,20 +25,22 @@ internal sealed record MenuCalibrationCapture(bool SavesFrame, string? Context =
     private static bool HasIdentifiers(string context, string row) =>
         !string.IsNullOrWhiteSpace(context) && !string.IsNullOrWhiteSpace(row);
 
-    internal Reply CaptureLive()
+    internal Reply CaptureLive(HollowKnightWindow? window = null, string? supportRoot = null)
     {
         if (!OperatingSystem.IsWindows()) return new(false, "Live menu capture requires Windows");
         try
         {
-            if (HollowKnightWindowLocator.FindBest() is not { IsMinimized: false } window)
+            window ??= HollowKnightWindowLocator.FindBest();
+            if (window is not { IsMinimized: false })
                 return new(false, "No visible Hollow Knight window available");
             var frame = CpuBgraNormalizer.Normalize(new GdiWindowCapture().Capture(window, 1));
-            var supportRoot = AutoNavigationRunner.LiveStartupStencilEvidenceProvider.DefaultSupportRoot;
+            supportRoot ??= AutoNavigationRunner.LiveStartupStencilEvidenceProvider.DefaultSupportRoot;
             var provider = AutoNavigationRunner.LiveStartupStencilEvidenceProvider.CreateDefault(supportRoot,
                 allowFallback: false, allowCalibrationWrites: false);
             var examplesRoot = Path.Combine(supportRoot, "labeling-v1", "examples");
             var store = new MenuStencilLiveCaptureStore(MenuStencilLiveCaptureStore.RootForExamples(examplesRoot));
-            return Evaluate(frame, provider.Catalog, Row is null ? provider.ObserveMenu(frame) : null, store);
+            var evidence = Row is null ? provider.Observe(frame) : default;
+            return Evaluate(frame, provider.Catalog, evidence.Menu, store, evidence.Hud);
         }
         catch (Exception error) when (error is Win32Exception or InvalidOperationException or IOException
             or UnauthorizedAccessException or InvalidDataException or JsonException)
@@ -48,9 +50,10 @@ internal sealed record MenuCalibrationCapture(bool SavesFrame, string? Context =
     }
 
     internal Reply Evaluate(BgraFrame frame, MenuStencilCatalog catalog, MenuStencilResult? observation,
-        MenuStencilLiveCaptureStore store)
+        MenuStencilLiveCaptureStore store, HudStencilResult? hud = null)
     {
-        var recognized = observation is { IsMatch: true } ? observation : null;
+        var recognized = hud?.EstablishesGameplay != true && observation is { IsMatch: true }
+            ? observation : null;
         var context = Context ?? recognized?.ContextIdentifier;
         var scene = catalog.Scenes.FirstOrDefault(item => item.ContextIdentifier == context);
         if (scene is null)

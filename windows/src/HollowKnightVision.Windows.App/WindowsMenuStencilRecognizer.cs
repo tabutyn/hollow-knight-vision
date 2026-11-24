@@ -154,11 +154,12 @@ internal sealed class WindowsMenuStencilRecognizer
         {
             if (!acceptsFrames) return new(null, null, null, null, generation, [], "stopped");
             var timestamp = (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds;
-            var menuObservation = menuWorker.Observe(frame, timestamp, asynchronously)?.Observation;
-            var rawMenu = menuObservation?.Result;
-            // HUD must run before the menu/gameplay decision. A false menu
-            // candidate must not suppress the health evidence that disproves it.
+            // Fresh health evidence owns the image before the menu matcher can
+            // update its tracking state, including just after capture starts.
             var hudResult = hud.Observe(frame, true, timestamp, generation);
+            var menuObservation = hudResult?.EstablishesGameplay == true ? null
+                : menuWorker.Observe(frame, timestamp, asynchronously)?.Observation;
+            var rawMenu = menuObservation?.Result;
             var snapshot = LiveObjectDetectionSnapshot.Empty;
             IReadOnlyList<ObjectDetection> InferAndTrack()
             {

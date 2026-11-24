@@ -46,8 +46,8 @@ public sealed class GameplayMenuEvidenceGate
     public bool Admits(string? menuContext, bool gameplayLatched, int hudHealthMatchCount, double timestamp)
     {
         if (!double.IsFinite(timestamp)) return false;
-        if (!gameplayLatched) { Reset(); return menuContext is not null; }
         if (hudHealthMatchCount >= 2) { lastHudTimestamp = timestamp; ClearCandidate(); return false; }
+        if (!gameplayLatched && !double.IsFinite(lastHudTimestamp)) { Reset(); return menuContext is not null; }
         if (timestamp - lastHudTimestamp <= HudHoldDuration || menuContext is null) { ClearCandidate(); return false; }
         if (admittedContext == menuContext) return true;
         if (candidateContext == menuContext) candidateCount++;

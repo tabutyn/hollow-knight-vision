@@ -970,7 +970,7 @@ internal static class Program
         }
     }
 
-    private static Window Offscreen(UIElement content, double width = 960, double height = 600) => new()
+    internal static Window Offscreen(UIElement content, double width = 960, double height = 600) => new()
     {
         Content = content, Width = width, Height = height, Left = -20000, Top = -20000,
         WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize,
@@ -1408,7 +1408,7 @@ internal static class Program
         (T)DashboardPolicyType.GetMethod(
             method, BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, arguments)!;
 
-    private static void Pump()
+    internal static void Pump()
     {
         var frame = new DispatcherFrame();
         _ = Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,

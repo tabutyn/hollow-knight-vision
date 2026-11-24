@@ -1,12 +1,15 @@
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
+using HollowKnightVision.Windows.Host;
 
 internal static class MenuIntegrationTests
 {
@@ -84,6 +87,7 @@ internal static class MenuIntegrationTests
             Check(((string)firstMenu.GetType().GetProperty("Diagnostic")!.GetValue(firstMenu)!).Contains("raw=main-title/", StringComparison.Ordinal), "First menu fixture was not actually scanned.");
             var secondMenu = analyze.Invoke(instance, [At(pixels, 5.3), false, inference])!;
             Check((string?)secondMenu.GetType().GetProperty("Context")!.GetValue(secondMenu) == "main-title", "Stable real menu did not release Gameplay latch.");
+            VerifyLiveCalibration(root, examples, frame);
             var current = type.GetMethod("IsCurrent", BindingFlags.NonPublic | BindingFlags.Instance)!;
             Check((bool)current.Invoke(instance, [generation])!, "Fresh menu observation has wrong generation.");
             type.GetMethod("ResetTracking", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(instance, null);
@@ -103,6 +107,76 @@ internal static class MenuIntegrationTests
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
+
+    private static void VerifyLiveCalibration(string root, string examples, BgraFrame reference)
+    {
+        var pixels = reference.Pixels.ToArray();
+        // Mark the live frame outside the menu's stencil region so the saved
+        // capture can be distinguished from the reference used to find it.
+        const int markerX = 48, markerY = 310;
+        for (var y = markerY; y < markerY + 20; y++)
+            for (var x = markerX; x < markerX + 20; x++)
+            {
+                var index = y * reference.Stride + x * 4;
+                pixels[index] = 29;
+                pixels[index + 1] = 78;
+                pixels[index + 2] = 209;
+            }
+        var image = new Image
+        {
+            Source = BitmapSource.Create(reference.Width, reference.Height, 96, 96,
+                PixelFormats.Bgra32, null, pixels, reference.Stride),
+            Stretch = Stretch.Fill,
+            SnapsToDevicePixels = true
+        };
+        var window = Program.Offscreen(image, reference.Width, reference.Height);
+        window.Show();
+        try
+        {
+            var dpi = VisualTreeHelper.GetDpi(window);
+            window.Width = reference.Width / dpi.DpiScaleX;
+            window.Height = reference.Height / dpi.DpiScaleY;
+            window.UpdateLayout();
+            Program.Pump();
+            var target = new HollowKnightWindow(new WindowInteropHelper(window).Handle,
+                Environment.ProcessId, "capture-test", "capture-test", reference.Width, reference.Height, false);
+            var statusCommand = MenuCalibrationCapture.Parse("menu-calibration-status")!;
+            var store = new MenuStencilLiveCaptureStore(MenuStencilLiveCaptureStore.RootForExamples(examples));
+            var wait = Stopwatch.StartNew();
+            MenuCalibrationCapture.Reply status;
+            do
+            {
+                status = statusCommand.CaptureLive(target, root);
+                if (status.Ok) break;
+                Thread.Sleep(16);
+                Program.Pump();
+            } while (wait.Elapsed < TimeSpan.FromSeconds(4));
+            Check(status is { Ok: true, ContextIdentifier: "main-title", SelectedIdentifier: "main-title.start-game",
+                CapturePath: null }, $"Native menu calibration failed to recognize Start Game: {status.Serialize()}");
+            Check(store.Load().Count == 0, "Calibration status wrote a capture.");
+
+            var captureCommand = MenuCalibrationCapture.Parse("menu-calibration-capture")!;
+            var capture = captureCommand.CaptureLive(target, root);
+            Check(capture is { Ok: true, SelectedIdentifier: "main-title.start-game", CapturePath: not null },
+                $"Native menu frame could not be saved: {capture.Serialize()}");
+            var saved = store.Load().Single();
+            Check(saved.ImagePath == capture.CapturePath && saved.Capture is { ImageWidth: 640, ImageHeight: 360 },
+                "The saved native frame does not use the normalized client dimensions.");
+            BitmapSource bitmap = BitmapDecoder.Create(new Uri(saved.ImagePath), BitmapCreateOptions.PreservePixelFormat,
+                BitmapCacheOption.OnLoad).Frames[0];
+            if (bitmap.Format != PixelFormats.Bgra32)
+                bitmap = new FormatConvertedBitmap(bitmap, PixelFormats.Bgra32, null, 0);
+            var marker = new byte[4];
+            bitmap.CopyPixels(new Int32Rect(markerX + 10, markerY + 10, 1, 1), marker, 4, 0);
+            Check(marker[0] == 29 && marker[1] == 78 && marker[2] == 209,
+                "The saved pixels did not come from the live client window.");
+            Check(captureCommand.CaptureLive(target with { IsMinimized = true }, root) is { Ok: false, CapturePath: null }
+                && store.Load().Count == 1, "A minimized window republished a prior menu screenshot.");
+            Console.WriteLine("PASS native menu calibration recognized a captured window and saved the live pixels");
+        }
+        finally { window.Close(); }
+    }
+
     private static void TestRenderer()
     {
         var reference = new ImageStencilReference(10, 6, Enumerable.Repeat((byte)255, 10 * 6 * 3).ToArray(),
