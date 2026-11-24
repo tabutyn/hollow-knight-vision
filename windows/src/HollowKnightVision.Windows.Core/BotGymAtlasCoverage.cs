@@ -12,6 +12,8 @@ internal sealed class BotGymAtlasCoverage
     private readonly HashSet<int> placedRooms = [];
     private readonly Dictionary<int, (BgraFrame Image, IReadOnlyList<WorldRect> Exclusions)> referenceImages = [];
     private readonly Queue<int> referenceOrder = [];
+    private LiveDoorwayTransition? incomingDoorway;
+    private LiveWorldPlacementProjection doorPlacement = LiveWorldPlacementProjection.Empty;
     private int? room;
     private ulong epoch;
     private int? localIslandId;
@@ -38,12 +40,15 @@ internal sealed class BotGymAtlasCoverage
         awaitingPlacement = HasPlacedRoom;
     }
 
-    internal void EnterRoom(int roomId)
+    internal void EnterRoom(int roomId, LiveDoorwayTransition? transition = null)
     {
         if (room == roomId) return;
         BeginVisit();
-        room = roomId;
         HasPlacedRoom = placedRooms.Contains(roomId);
+        incomingDoorway = !HasPlacedRoom && transition is { Direction: VisualRoomDirection.Left or VisualRoomDirection.Right } cut
+            && cut.TargetRoomId == roomId
+            && cut.SourceRoomId == room && placedRooms.Contains(cut.SourceRoomId) ? cut : null;
+        room = roomId;
         awaitingPlacement = HasPlacedRoom;
         requiresMatch = HasPlacedRoom;
         lastTrustedPose = null;
@@ -68,9 +73,16 @@ internal sealed class BotGymAtlasCoverage
             return;
 
         var size = new WorldSize(frame.Width, frame.Height);
+        if (incomingDoorway is { } incoming && time - incoming.ArrivalCaptureTimestamp > 3)
+            incomingDoorway = null;
         var masks = omissions.Select(rect => new StencilRect(rect.X, rect.Y, rect.Width, rect.Height))
             .Concat(VisualRoomCompositionMask.OmittedRects(bounds, local, size.Width, size)).ToArray();
-        if (!awaitingPlacement && lastPose == local && masks.SequenceEqual(lastMasks)) return;
+        // A stationary Knight near a doorway still supplies fresh, separate
+        // floor contacts. Preserve them at the ordinary graph cadence.
+        var samplesDoorway = groundEvidence is { GroundGeometry: not null, PlayerBounds: { } player }
+            && (incomingDoorway is not null || Math.Abs((player.X + player.Width / 2) / size.Width - .5)
+                >= .5 - LiveDoorwayFloorEvidence.DepartureEdgeFraction);
+        if (!awaitingPlacement && !samplesDoorway && lastPose == local && masks.SequenceEqual(lastMasks)) return;
 
         var recovering = awaitingPlacement;
         // The same visually confirmed room can return at its last measured
@@ -81,6 +93,17 @@ internal sealed class BotGymAtlasCoverage
         // The camera matcher and committed grid use frame centers. The
         // local ground tracker supplies the image's lower-left origin.
         var center = Center(local, size);
+        if (!HasPlacedRoom && incomingDoorway is { } arrival)
+        {
+            // The cut determines which side to draw the new room on. The
+            // gap is estimated until additional world evidence relates them.
+            var unplaced = world.Snapshot.UnplacedObservationIds();
+            var previous = world.Snapshot.Observations.Where(row => !unplaced.Contains(row.Id));
+            var centerX = arrival.Direction == VisualRoomDirection.Right
+                ? previous.Max(row => row.OptimizedPose.X + row.SolveWidth / 2) + size.Width * .6
+                : previous.Min(row => row.OptimizedPose.X - row.SolveWidth / 2) - size.Width * .6;
+            basis = new(centerX - center.X, 0);
+        }
         var placed = new AtlasPoint(center.X + basis.X, center.Y + basis.Y);
         var evidence = groundEvidence ?? new(time) { HasMeasuredSceneryContinuity = continuesMeasuredScenery };
         var id = world.Snapshot.Observations.Count;
@@ -105,9 +128,15 @@ internal sealed class BotGymAtlasCoverage
         lastScanAt = time;
         open = true;
 
+        var alignedDoorway = incomingDoorway is { } doorway && world.AlignNewRoomThroughDoorway(doorway);
+        if (alignedDoorway)
+        {
+            incomingDoorway = null;
+            doorPlacement = LiveWorldGroundOverlay.ProjectPlacement(world.Snapshot);
+        }
         // The confirmation can shift the complete recovery island. Every
         // observation in it, including this frame, is recovery evidence.
-        var credit = !recovering && correction is null or { X: 0, Y: 0 };
+        var credit = !recovering && !alignedDoorway && correction is null or { X: 0, Y: 0 };
         var snapshot = world.Snapshot;
         coverage.Update(snapshot, creditNewCells: credit);
         if (world.LatestIslandAwaitsPlacement)
@@ -162,6 +191,14 @@ internal sealed class BotGymAtlasCoverage
             return null;
         var (covered, earned) = coverage.Totals;
         return local with { CoveredCells = covered, EarnedCells = earned };
+    }
+
+    internal IReadOnlyList<BotLine>? ProjectDoors(AtlasPoint? pose, WorldSize size)
+    {
+        if (!HasPlacedRoom || awaitingPlacement || room is not { } roomId || pose is not { } local)
+            return null;
+        return BotObservationBuilder.ProjectVisualDoors(doorPlacement, roomId,
+            new(local.X + basis.X, local.Y + basis.Y), size.Width, size);
     }
 
     private void BeginVisit()

@@ -330,6 +330,7 @@ var tests = new List<(string Name, Action Run)>
     ("Game Play Gym retains measured local scenery during room placement recovery", GameplayGymVisualTests.TestGymContinuesItsLocalAtlasWhilePlacementIsPending),
     ("Game Play Gym reports weak Knight corrections from fresh image cues", GameplayGymVisualTests.TestGymReportsCorrectionsOnlyForAnExistingVisualEstimate),
     ("Game Play Gym changes rooms after a confirmed loading cut with the Knight hidden", GameplayGymVisualTests.TestGamePlayGymPublishesOnlyConfirmedRoomChanges),
+    ("Game Play Gym verifies a grounded doorway and projects it into policy inputs", GameplayGymVisualTests.TestGymProjectsGroundedDoorwaysIntoPolicy),
     ("bot startup latches cutscene skipping until fresh gameplay", BotPolicyTests.TestStartupSkipIsLatchedUntilFreshGameplay),
     ("bot policy preserves attack and rejects stale observations and wrong domains", BotPolicyTests.TestLivePolicyPreservesAttackAndRevokesInvalidPerception),
     ("bot playback names the evidence it is waiting for", BotPolicyTests.TestPlaybackWaitingStatusNamesMissingEvidence),

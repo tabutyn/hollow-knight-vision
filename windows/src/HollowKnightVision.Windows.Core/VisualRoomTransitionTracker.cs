@@ -23,6 +23,7 @@ public sealed record VisualRoomSnapshot(
     public bool CoarseMotionMeasured { get; init; }
     public double? CoarseMeasurementTimestamp { get; init; }
     public double? CoarseReferenceTimestamp { get; init; }
+    internal (int SourceRoomId, VisualSceneDiscontinuityTracker.Cut Cut)? ConfirmedSceneCut { get; init; }
 
     public string StatusText => IsTransitioning && TransitionDirection is { } direction
         ? $"{RoomName} → {direction.Label()}"
@@ -1385,9 +1386,10 @@ public sealed class VisualRoomTransitionTracker
             {
                 return SnapshotLocked();
             }
-            if (sceneCuts.Observe(profile.MotionGrid, timestamp, horizontalInput, currentWorldPose) is not null)
+            if (sceneCuts.Observe(profile.MotionGrid, timestamp, horizontalInput, currentWorldPose) is { } cut)
             {
                 // An image-only loading cut provides ownership evidence. The new room starts without a portal.
+                var sourceRoomId = activeRoomID;
                 activeRoomID = nextRoomID;
                 nextRoomID = checked(nextRoomID + 1);
                 activeEntryWorldPose = currentWorldPose;
@@ -1397,7 +1399,7 @@ public sealed class VisualRoomTransitionTracker
                 activationWorldPose = currentWorldPose;
                 latestCoarseMotionGrid = profile.MotionGrid;
                 revision++;
-                return SnapshotLocked();
+                return SnapshotLocked() with { ConfirmedSceneCut = (sourceRoomId, cut) };
             }
             var priorMotionSample = previousMotionSample;
             var priorEdgeBlackBands = previousEdgeBlackBands;

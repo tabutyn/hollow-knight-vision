@@ -35,6 +35,7 @@ public sealed class BotVisualGymObservationSource
     private int chart;
     private long walkedEpoch;
     private int? activeRoom;
+    private LiveDoorwayTransition? recentDoorway;
 
     public BotVisualGymReading Observe(BgraFrame frame, double time, InputButtons controls,
         Func<BgraFrame, IReadOnlyList<ObjectDetection>> detect, HudStencilResult? hud, MenuStencilResult? menu = null)
@@ -101,7 +102,8 @@ public sealed class BotVisualGymObservationSource
         {
             activeRoom = room.RoomID;
             chart++;
-            coverage.EnterRoom(room.RoomID);
+            coverage.EnterRoom(room.RoomID, recentDoorway);
+            recentDoorway = null;
             blockade.Reset();
             knightMemory.Reset();
             ground.Reset(keepingGlobalFeatures: false);
@@ -143,7 +145,8 @@ public sealed class BotVisualGymObservationSource
         blockade.ObserveVisualBasis(Generation, chart, walkedEpoch, frame.Width, time, placement.HasValue,
             observed.GroundTracking, continuesScenery ? localCamera : null);
         var row = BotObservationBuilder.Gameplay(frame, timing, observations.MeasuredBatch, floors, terrain.Walls,
-            terrainAnalyzed: true, placement, hud, contact.MeasuredFoot, controls);
+            terrainAnalyzed: true, placement, hud, contact.MeasuredFoot, controls,
+            visualDoors: coverage.ProjectDoors(measuredGround || continuesScenery ? terrainCamera : null, size));
         row = knightMemory.Resolve(row, BotPolicyAction.FromButtons(controls), observations.MeasuredBatch, walkedEpoch);
         row = blockade.AddVisualEvidence(row);
         row = row with { AtlasView = coverage.PolicyView(terrainCamera, size, row.MeasuredHealth) };
@@ -161,9 +164,18 @@ public sealed class BotVisualGymObservationSource
             return observations.MeasuredBatch!.Detections;
         }
 
-        VisualRoomSnapshot ObserveRoom(AtlasPoint pose, bool groundVerified) =>
-            rooms.Observe(signal, admitted.Transition, direction, masks.GroundRegions.Knight,
+        VisualRoomSnapshot ObserveRoom(AtlasPoint pose, bool groundVerified)
+        {
+            var snapshot = rooms.Observe(signal, admitted.Transition, direction, masks.GroundRegions.Knight,
                 size, pose, frame.Width, time, groundTrackingReliable: groundVerified);
+            if (snapshot.ConfirmedSceneCut is { } crossing)
+            {
+                var (sourceRoom, cut) = crossing;
+                recentDoorway = new(sourceRoom, snapshot.RoomID, Generation, cut.DepartureTimestamp,
+                    cut.ArrivalTimestamp, cut.Direction);
+            }
+            return snapshot;
+        }
     }
 
 }

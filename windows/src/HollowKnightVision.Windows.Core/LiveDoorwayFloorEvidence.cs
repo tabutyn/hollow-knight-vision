@@ -11,6 +11,7 @@ public sealed record LiveDoorwayTransition(
 
 internal static class LiveDoorwayFloorEvidence
 {
+    internal const double DepartureEdgeFraction = .18;
     private sealed record Surface(AtlasPoint Point, double WorldY);
 
     public static LiveDoorwayFloorConstraint? Propose(LiveWorldSnapshot snapshot, LiveDoorwayTransition transition)
@@ -119,7 +120,8 @@ internal static class LiveDoorwayFloorEvidence
             if (frame.ObservedPlayerBounds is not { } player || FindSurface(frame, rightSide) is not { } floor)
                 continue;
             var midpoint = player.X + player.Width * .5;
-            var limit = frame.SolveWidth * (departing ? rightSide ? .82 : .18 : .5);
+            var limit = frame.SolveWidth * (departing
+                ? rightSide ? 1 - DepartureEdgeFraction : DepartureEdgeFraction : .5);
             if ((rightSide ? midpoint >= limit : midpoint <= limit) && FootHeight(frame, floor) is not null)
                 return (frame, floor);
         }
