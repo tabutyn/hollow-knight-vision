@@ -66,6 +66,14 @@ public partial class MainWindow
             ? HackerLayoutId("room", scene).ToString("D").ToUpperInvariant() : null;
         var exact = botRouteVisit?.Observe(new(frame.Width, frame.Height), renderedFrame, receiverTelemetry, time, input,
             (int)Math.Min(roomRevision, int.MaxValue), objective: Volatile.Read(ref hackerObjective), roomKey: roomKey);
+        if (exact is not null && receiverTelemetry is not null)
+        {
+            var cameraTruth = GroundTruthCameraTransform.FromSample(receiverTelemetry, timestamp, new(frame.Width, frame.Height));
+            var published = latestStagedHackerAtlas;
+            var room = published is not null && published.CapturedAt <= timestamp
+                ? published.Output.Rooms.FirstOrDefault(candidate => candidate.SceneName == receiverTelemetry.SceneName) : null;
+            exact = exact with { AtlasView = cameraTruth is null ? null : room?.BotView(cameraTruth, exact.MeasuredHealth) };
+        }
         var visual = capture is not null || playback is not null && run?.Domain == BotCaptureDomain.Gameplay
             ? BotObservationBuilder.Gameplay(frame, time, batch, floors, terrain.Walls, analyzedTerrain,
                 camera, hud, measuredFoot, input, exact?.BlueHealthOutcomes).WithSharedHackerPath(exact) : null;
@@ -96,7 +104,7 @@ public partial class MainWindow
                     visual?.DetectedTerrain?.Floors ?? BotObservationBuilder.ProjectDetectedFloors(frame, floors),
                     exact?.AuthoredTerrain, auditMasks is null ? null : VisualReplayGroundInput.FromTracking(
                         timestamp, (ulong)generation, frame.Height, auditMasks, input), renderedFrame);
-            DriveBotFrame(run, playback, row, input);
+            DriveBotFrame(run, playback, row, input, receiverTelemetry?.SceneName);
         }
     }
 

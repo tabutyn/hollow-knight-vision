@@ -29,6 +29,7 @@ public sealed class BotEvaluationRecorder
         SingleReader = true, FullMode = BoundedChannelFullMode.Wait
     });
     private readonly List<BotCaptureInput> controls = [];
+    private readonly BotAtlasRun atlasRun = new();
     private readonly Task<string?> writer;
     private InputButtons held;
     private (double Time, string Reason)? stop;
@@ -87,6 +88,15 @@ public sealed class BotEvaluationRecorder
             BotCaptureSession.AppendInputEdges(controls, held, buttons, time);
             held = buttons;
             lastControl = time;
+        }
+    }
+
+    public void RecordDecision(BotCaptureObservation row, InputButtons action, InputButtons previous, string? scene)
+    {
+        lock (gate)
+        {
+            if (stop is null && row.Generation == generation && row.CaptureTimestamp >= startedAt)
+                atlasRun.Observe(row, action, previous, scene);
         }
     }
 
@@ -157,6 +167,7 @@ public sealed class BotEvaluationRecorder
             var (stoppedAt, reason) = stop!.Value;
             foreach (var input in controls) clip.Append(input);
             clip.Close();
+            WriteJson(clip.Directory, "atlas-score.json", atlasRun.Score);
             WriteJson(clip.Directory, "manifest.json", new BotCaptureManifest(BotRecordingContract.SchemaVersion, id,
                 createdAt, startedAt, "modded", modelName, "receiver-sent",
                 reason == "user-stop" ? "completed" : "interrupted", stoppedAt - startedAt,
