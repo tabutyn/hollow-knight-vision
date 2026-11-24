@@ -1351,6 +1351,7 @@ var tests = new List<(string Name, Action Run)>
     ("scene session PNG preserves black and alpha", SceneSessionStoreTests.TestPNGSourcePreservesBlackAndAlphaPixels),
     ("scene session rejects stale revision writer", SceneSessionStoreTests.TestAtomicSceneRevisionRejectsStaleWriter),
     ("scene session CAS commits exactly one writer", SceneSessionStoreTests.TestConcurrentSceneCompareAndSwapCommitsExactlyOneWriter),
+    ("scene session readers wait for the snapshot writer", SceneSessionStoreTests.TestSceneReadersWaitForTheWriterLock),
     ("scene session missing source is explicit", SceneSessionStoreTests.TestMissingSourceThrowsExplicitError),
     ("scene session rejects schema and path traversal", SceneSessionStoreTests.TestUnsupportedManifestAndPathTraversalAreRejected),
     ("scene session canonical root accepts evidence", SceneSessionStoreTests.TestTmpSymlinkRootAcceptsCanonicalEvidencePath)
