@@ -16,7 +16,7 @@ public sealed record GameplayTrackedFrame(
     long WalkedCoordinateEpoch, double CameraMilliseconds, long AtlasStartedTimestamp)
 {
     public bool MotionBridgeActive =>
-        Observation.Source is "transition-bridge" or "calibrated-scene" or "coarse-presentation";
+        Observation.Source is "transition-bridge" or "calibrated-scene" or "coarse-presentation" or "coarse-place-match";
     public bool RoomAllowsAtlasWrite { get; init; } = true;
     public bool AllowsAtlasWrite => Observation.AllowsAtlasWrite || HasMeasuredSceneryContinuity;
     public bool HasMeasuredSceneryContinuity { get; init; }
@@ -45,11 +45,13 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
     private readonly WalkedGroundTracker walked = new();
     private readonly GroundPlatformPatches patches = new();
     private readonly NormalAtlasRoomIdentity roomIdentity = new();
+    private readonly LowResolutionPlaceMemory placeMemory = new();
     private readonly MeasuredAtlasPoseLineage measuredAtlasPose = new();
     private readonly CaptureIslandLineage captureIslands = new();
     private readonly AtlasCaptureGap atlasCaptureGap = new();
     private bool needsCameraAnchor = true;
     private string? lastKnownRoom;
+    private (long Generation, string Room)? placeScope;
     private int frameWidth, frameHeight;
     private long walkedCoordinateEpoch;
 
@@ -104,6 +106,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         var drive = KnightLevelWalk.Direction(buttons ?? InputButtons.None);
         VisualRoomDirection? direction = drive < 0 ? VisualRoomDirection.Left : drive > 0 ? VisualRoomDirection.Right : null;
         var hasKnownRoom = !string.IsNullOrWhiteSpace(knownRoom);
+        var observeLoading = visualRoomObservationEnabled && (!hasKnownRoom || observeLoadingInKnownRoom);
+        var visualRoom = (Id: roomIdentity.RoomId, AllowsAtlasWrite: false, Cut: (VisualSceneDiscontinuityTracker.Cut?)null);
         var sceneGrid = !hasKnownRoom && roomIdentity.HasUnresolvedLoading ? null : signal.MotionGrid;
         var motionExclusions = prepared.MotionExclusions;
         if (!hasCommittedAtlas || !admission.AdmitsTracking || admission.Transition.ResumedAfterTransition
@@ -111,12 +115,19 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             atlasCaptureGap.Reset();
         var skippedCaptureRegistration = motionExclusions is null ? null
             : atlasCaptureGap.Match(frame, motionExclusions, knight, generation,
-                hasKnownRoom ? knownRoom! : roomIdentity.RoomId, timestamp);
-        var observation = terrainAnalysis?.Edges.SourceLuma is { } sourceLuma
-            ? camera.ObserveGroundAnchored(frame, prepared.Motion, sourceLuma,
+                hasKnownRoom ? knownRoom! : visualRoom.Id, timestamp);
+        VisualGameplayObservation observation;
+        if (terrainAnalysis?.Edges.SourceLuma is { } sourceLuma)
+        {
+            observation = camera.ObserveGroundAnchored(frame, prepared.Motion, sourceLuma,
                 terrainAnalysis.CameraReferences, prepared.ProtectedOcclusions, hasCommittedAtlas, knight, tracker, timestamp,
-                sceneGrid, direction, skippedCaptureRegistration)
-            : camera.ObserveUnverified(frame, prepared.Motion);
+                sceneGrid, direction, skippedCaptureRegistration, ObserveRoomPlace);
+        }
+        else
+        {
+            observation = camera.ObserveUnverified(frame, prepared.Motion);
+            _ = ObserveRoomPlace(camera.Position, false);
+        }
         if (!admission.AdmitsTracking) camera.PauseGroundVerification();
         var cameraMilliseconds = Stopwatch.GetElapsedTime(groundStarted).TotalMilliseconds;
         var atlasStarted = Stopwatch.GetTimestamp();
@@ -132,9 +143,6 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             estimate = reference.Observe(frame, localCamera, frame.Width, knight,
                 prepared.GroundExclusions, terrainAnalysis.Theory);
 
-        var observeLoading = visualRoomObservationEnabled && (!hasKnownRoom || observeLoadingInKnownRoom);
-        var visualRoom = roomIdentity.Observe(generation, observeLoading, signal.MotionGrid,
-            timestamp, buttons, localCamera);
         var room = hasKnownRoom ? knownRoom! : visualRoom.Id;
         if (visualRoom.Cut is not null)
         {
@@ -167,9 +175,14 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             measuredAtlasPose.Reset();
         var publishesScenery = canContinueAtlasPose && hasCommittedAtlas && camera.AllowsAtlasPlacement;
         var captureGap = AtlasCaptureGapState.None;
+        if (observation.ReanchoredAtRoomPlace)
+        {
+            walked.BreakContinuity();
+            patches.Reset();
+        }
         if (hasCommittedAtlas && sceneGrid is not null && motionExclusions is not null
             && admission.AdmitsTracking && visualRoom.AllowsAtlasWrite
-            && !groundAdjusted && !admission.Transition.ResumedAfterTransition)
+            && !groundAdjusted && !observation.ReanchoredAtRoomPlace && !admission.Transition.ResumedAfterTransition)
         {
             var acceptedMotionReference = measuredGround || publishesScenery
                 || observation.FloorlessEvidence?.SelectedSource == FloorlessPoseCandidateSource.MaskedRegistration
@@ -186,7 +199,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         var referenceTimestamp = measuredGround ? ground.LocalReferenceTimestamp : selectedScene?.ReferenceTimestamp;
         var lineage = captureIslands.Observe(generation, room, timestamp,
             admission.AdmitsTracking && visualRoom.AllowsAtlasWrite && (measuredGround || publishesScenery),
-            referenceTimestamp, groundAdjusted || admission.Transition.ResumedAfterTransition || visualRoom.Cut is not null);
+            referenceTimestamp, groundAdjusted || observation.ReanchoredAtRoomPlace
+                || admission.Transition.ResumedAfterTransition || visualRoom.Cut is not null);
         var terrain = TerrainWallDetection.Empty;
         KnightTerrainContact contact = default;
         IReadOnlyList<PixelRect> platformPatches = [];
@@ -236,6 +250,27 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             RecentDoorwayCut = roomIdentity.RecentDoorwayCut(timestamp),
             WorldEvidence = worldEvidence
         };
+
+        LowResolutionPlaceMatch? ObserveRoomPlace(AtlasPoint pose, bool groundVerified)
+        {
+            visualRoom = roomIdentity.Observe(generation, observeLoading, signal.MotionGrid, timestamp, buttons, pose);
+            var scope = (generation, hasKnownRoom ? knownRoom! : visualRoom.Id);
+            if (scope != placeScope || visualRoom.Cut is not null)
+            {
+                placeMemory.Reset();
+                placeScope = scope;
+            }
+            if (!visualRoomObservationEnabled || !admission.AdmitsTracking
+                || admission.Transition.ResumedAfterTransition || !visualRoom.AllowsAtlasWrite)
+            {
+                placeMemory.ClearPending();
+                return null;
+            }
+            if (!groundVerified) return placeMemory.Observe(sceneGrid, 0, frame.Width, timestamp);
+            placeMemory.Remember(sceneGrid, 0, pose, timestamp);
+            placeMemory.ClearPending();
+            return null;
+        }
     }
 
     public void Reset(bool preserveWalkedGround = false) =>
@@ -255,6 +290,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         captureIslands.Reset();
         atlasCaptureGap.Reset();
         camera.ResetFloorlessMotion();
+        placeMemory.Reset();
+        placeScope = null;
         if (!preserveLoadingObservation) roomIdentity.ResetObservation();
         lastKnownRoom = null;
         frameWidth = 0;
@@ -267,6 +304,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         reference.Reset();
         measuredAtlasPose.Reset();
         atlasCaptureGap.Reset();
+        placeMemory.ClearPending();
         walked.BreakContinuity();
         patches.Reset();
         Paths.Suspend();

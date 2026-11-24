@@ -1097,6 +1097,15 @@ public sealed class VisualRoomTransitionTracker
         get { lock (sync) return SnapshotLocked(); }
     }
 
+    internal void ClearPlaceReferences()
+    {
+        lock (sync)
+        {
+            placeMemory.Reset();
+            latestCoarsePlaceMatch = null;
+        }
+    }
+
     public bool ApplyFloorlessCorrection(
         CameraVector correction,
         int roomID,

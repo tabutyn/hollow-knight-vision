@@ -1,16 +1,19 @@
 using System.Diagnostics;
+using System.Text.Json.Serialization;
 
 namespace HollowKnightVision.Windows.Core;
 
 public sealed record FloorlessCameraEvidence(AtlasPoint? CoarsePosition, AtlasPoint? MaskedPosition,
     VisualRoomDirection? ExpectedDirection, FloorlessPoseCandidateSource? SelectedSource,
-    double? CoarseReferenceTimestamp, bool CoarseMeasured, CalibratedSceneMotionEvidence? Scene = null)
+    double? CoarseReferenceTimestamp, bool CoarseMeasured, CalibratedSceneMotionEvidence? Scene = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] LowResolutionPlaceMatch? Place = null)
 {
     public string SelectionName => SelectedSource switch
     {
         FloorlessPoseCandidateSource.CoarseCaptureRate => "coarseCaptureRate",
         FloorlessPoseCandidateSource.MaskedRegistration => "maskedRegistration",
         FloorlessPoseCandidateSource.CalibratedScene => "calibratedScene",
+        FloorlessPoseCandidateSource.RoomPlaceMatch => "coarsePlaceMatch",
         _ => "held"
     };
 }
@@ -28,6 +31,8 @@ public sealed record VisualGameplayObservation(
     public FloorlessCameraEvidence? FloorlessEvidence { get; init; }
     internal CalibratedSceneMotionEvidence? SelectedScenery =>
         FloorlessEvidence is { SelectedSource: FloorlessPoseCandidateSource.CalibratedScene } evidence ? evidence.Scene : null;
+    internal bool ReanchoredAtRoomPlace =>
+        FloorlessEvidence?.SelectedSource == FloorlessPoseCandidateSource.RoomPlaceMatch;
     public bool RetainsWorldBasisDuringPlacementCheck { get; init; }
     public double? RecoveredAtlasReferenceTimestamp { get; init; }
     public double? MotionBridgeConfidence { get; init; }
@@ -93,7 +98,8 @@ public sealed class VisualGameplayTracker
         double? captureTimestamp = null,
         LowResolutionMotionGrid? sceneGrid = null,
         VisualRoomDirection? expectedDirection = null,
-        TransitionMotionBridgeResult? skippedCaptureRegistration = null)
+        TransitionMotionBridgeResult? skippedCaptureRegistration = null,
+        Func<AtlasPoint, bool, LowResolutionPlaceMatch?>? observeRoomPlace = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(sourceLuma);
@@ -143,9 +149,11 @@ public sealed class VisualGameplayTracker
         FloorlessCameraEvidence? floorlessEvidence = null;
         var selectedCoarse = false;
         var selectedScene = false;
+        var selectedPlace = false;
         if (verified)
         {
             var pose = tracking.CameraPosition!.Value;
+            _ = observeRoomPlace?.Invoke(pose, true);
             update = ApplyPose(pose);
             transition.Anchor(pose, movingForeground);
             floorless.Observe(sceneGrid, timestamp, frame.Width, pose, true, expectedDirection, null);
@@ -174,14 +182,28 @@ public sealed class VisualGameplayTracker
                 // The broader scene can fill lost or skipped registrations.
                 var coarsePosition = floorless.Odometry.LastObservationTimestamp == timestamp
                     ? floorless.PublishedPose : null;
+                var coarseReference = coarsePosition is null ? null : floorless.Odometry.LastReferenceTimestamp;
+                var coarseMeasured = coarsePosition is not null && floorless.Odometry.LastEstimateIsMeasured;
                 var selection = SelectFloorlessPose(current, scene, masked, coarsePosition, expectedDirection);
+                var match = observeRoomPlace?.Invoke(selection?.Position ?? current, false);
+                if (match is { CameraPosition: { } place } && double.IsFinite(place.X) && double.IsFinite(place.Y))
+                {
+                    // A confirmed view supplies an absolute pose within this
+                    // room. Future relative motion starts at that exact image.
+                    selection = new(place, FloorlessPoseCandidateSource.RoomPlaceMatch);
+                    floorless.ReanchorAtPlace(place, sceneGrid, timestamp);
+                    transition.Anchor(place, movingForeground);
+                    calibratedScene.Reset();
+                    measuredGround = null;
+                    groundVelocity = null;
+                    selectedPlace = true;
+                }
                 floorlessEvidence = new(coarsePosition, masked?.CameraPosition, expectedDirection,
-                    selection?.Source, coarsePosition is null ? null : floorless.Odometry.LastReferenceTimestamp,
-                    coarsePosition is not null && floorless.Odometry.LastEstimateIsMeasured, scene);
+                    selection?.Source, coarseReference, coarseMeasured, scene, selectedPlace ? match : null);
                 acceptedFallback = selection?.Position;
                 selectedCoarse = selection?.Source == FloorlessPoseCandidateSource.CoarseCaptureRate;
                 selectedScene = selection?.Source == FloorlessPoseCandidateSource.CalibratedScene;
-                bridged = selectedScene ? null : masked;
+                bridged = selectedScene || selectedPlace ? null : masked;
                 if ((selectedScene || bridged is not null) && acceptedFallback is { } selected
                     && coarsePosition is { } coarse)
                 {
@@ -203,19 +225,20 @@ public sealed class VisualGameplayTracker
                         FloorlessPoseCandidateSource.MaskedRegistration, null, false);
                 update = acceptedFallback is { } pose ? ApplyPose(pose)
                     : resumedAfterTransition ? null : ApplyCoarseMotion(frame, diagnostic);
+                _ = observeRoomPlace?.Invoke(Position, false);
             }
 
             if (acceptedFallback is { } fallback)
             {
                 // Preserve independent provisional motion and pending placement
                 // votes; repeatedly replacing them can prevent reacquisition.
-                var measuredFallback = bridged is not null
+                var measuredFallback = selectedPlace || bridged is not null
                     || selectedCoarse && floorless.Odometry.LastEstimateIsMeasured;
                 if (measuredFallback && !tracking.PoseVerified && !tracking.ProvisionalContinuityActive
                     && !placement.RetainsCandidate(timestamp))
                     tracker.ReanchorLocalCamera(fallback, sourceLuma,
                         frame.Width, frame.Height, lines, timestamp, exclusions,
-                        allowsProvisionalPromotion: selectedCoarse || bridged!.Confidence >= MinimumRecoveryConfidence);
+                        allowsProvisionalPromotion: selectedCoarse || bridged is { Confidence: >= MinimumRecoveryConfidence });
             }
             floorless.RecordPublishedPose(timestamp, Position);
         }
@@ -229,6 +252,7 @@ public sealed class VisualGameplayTracker
             (verified || bridged is not null) && bootstrapReady && placement.AllowsAtlasWrite,
             tracking.LocalTextureSupport, tracking.LocalTextureError,
             verified ? "ground" : bridged is not null ? "transition-bridge"
+                : selectedPlace ? "coarse-place-match"
                 : selectedScene ? "calibrated-scene"
                 : selectedCoarse ? "coarse-presentation"
                 : firstFrame ? "ground-seed"
