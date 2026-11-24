@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 from bot_training_ipc import exclusive_file_lock
 from hkv_bot_dataset import ACTION_SIZES, FEATURE_NAMES, HISTORY_LENGTH, SCHEMAS
@@ -16,8 +17,13 @@ def publication_lock(models):
         yield
 
 
-def playback_checkpoint(models, domain, fallback=None):
+def playback_checkpoint(models, domain, fallback=None, *, native_verifier=None):
     """Select the same ready local version as playback, honoring an explicit rollback."""
+    if native_verifier is not None:
+        result = subprocess.check_output([native_verifier, "--bot-playback-checkpoint", models.parent.parent, domain],
+                                         encoding="utf-8", timeout=45)
+        selected = json.loads(result)
+        return Path(selected) if selected is not None else None
     file = models / "active.json"
     selection = json.loads(file.read_bytes()) if file.is_file() else {}
     current = models / selection["directory"] if selection.get("directory") else fallback

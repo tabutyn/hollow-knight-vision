@@ -778,9 +778,11 @@ $training = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\training'
 ```
 
 Use `--domain gameplay` for visual training or `--help` for shared Gym options.
-The launcher resumes the latest compatible checkpoint for that domain or accepts
-`--base` to select one explicitly. PPO proposals pass the shared comparison and
-native inference checks before the trainer publishes a new policy.
+The launcher uses the installed Host to follow the desktop's verified playback
+selection for that domain. It honors a manual rollback. Use `--base` to select
+a training parent explicitly. PPO proposals pass the shared comparison and
+native inference checks. If the selected playback parent changes during training,
+the winner stays in that Gym run's `winners` directory.
 
 Windows has implementations for atlas persistence, state management,
 ground/room editing, input-path recording, training and player operations.

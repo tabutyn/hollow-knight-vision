@@ -1340,7 +1340,15 @@ def exploration_checkpoint(work, parent, identity, prefer_unharmed):
     return None
 
 
-def publish(model, base, work, models, dataset, evidence, vision):
+def gym_checkpoint_path(models, name, work=None):
+    """Resolve a saved Gym checkpoint name, including the legacy desktop library."""
+    if not isinstance(name, str) or name in ("", ".", "..") or Path(name).name != name:
+        raise ValueError("Invalid Gym checkpoint name")
+    roots = (models, models.parent) if work is None else (models, work / "winners", models.parent)
+    return next((root / name for root in roots if (root / name).is_dir()), models / name)
+
+
+def publish(model, base, work, models, dataset, evidence, vision, *, parent):
     identifier = str(uuid.uuid4())
     name = "bot-" + identifier
     manifest = read(base / "manifest.json")
@@ -1351,16 +1359,13 @@ def publish(model, base, work, models, dataset, evidence, vision):
         model.save(stage / "model.zip")
         manifest.update(name=("Gameplay" if domain == "gameplay" else "Hacker") + " Gym · " + timestamp.strftime("%Y-%m-%d %H:%M UTC"),
                         stage=f"{domain}-gym", modelSHA256=sha(stage / "model.zip"), gymEvidence=evidence)
-        parent_path = models / evidence["parent"]
-        if not parent_path.is_dir():
-            parent_path = work / "winners" / evidence["parent"]
-        parent_manifest = read(parent_path / "manifest.json")
-        manifest["parentPolicy"] = dict(directory=parent_path.name, modelSHA256=parent_manifest["modelSHA256"])
-        states = gym_observations(models.parent.parent, domain, parent_path, parent_manifest)
+        parent_manifest = read(parent / "manifest.json")
+        manifest["parentPolicy"] = dict(directory=parent.name, modelSHA256=parent_manifest["modelSHA256"])
+        states = gym_observations(models.parent.parent, domain, parent, parent_manifest)
         manifest.pop("gymRehearsalSHA256", None)
         save_gym_observations(stage, manifest, states)
         manifest.pop("gymRoutesSHA256", None)
-        routes = gym_observations(models.parent.parent, domain, parent_path, parent_manifest, routes=True)
+        routes = gym_observations(models.parent.parent, domain, parent, parent_manifest, routes=True)
         save_gym_observations(stage, manifest, routes, routes=True)
         manifest["criticTrained"] = bool(manifest.get("criticTrained") or evidence.get("method") == "ppo")
         manifest["lastGymPolicy"] = dict(directory=name, modelSHA256=manifest["modelSHA256"])
@@ -1386,8 +1391,8 @@ def publish(model, base, work, models, dataset, evidence, vision):
         # The user can finish a different demonstration training during the night.
         # Retain its selection while this experimental branch remains resumable.
         with publication_lock(models):
-            active = playback_checkpoint(models, domain)
-            destination = models if active and active.name == evidence["parent"] else work / "winners"
+            active = playback_checkpoint(models, domain, native_verifier=vision if os.name == "nt" else None)
+            destination = models if active and active.resolve() == parent.resolve() else work / "winners"
             destination.mkdir(exist_ok=True)
             stage.rename(destination / name)
     return destination / name
@@ -1434,13 +1439,14 @@ def checkpoint_path_inputs(run, objective):
 
 def train_with_worker(args, shared, limit):
     models = args.support / "bot-v1/models" / args.domain
-    selected = args.base or playback_checkpoint(models, args.domain)
+    selected = args.base or playback_checkpoint(models, args.domain,
+                                                native_verifier=args.vision if os.name == "nt" else None)
     if selected is None:
         raise ValueError(f"Train or select a verified {args.domain} checkpoint before launching Gym.")
     manifest = read(selected / "manifest.json")
     # Re-running the launcher after Vision activates a Gym winner resumes its original experiment.
     origin = manifest.get("gymEvidence", {}).get("base")
-    base = models / origin if origin else selected
+    base = gym_checkpoint_path(models, origin) if origin else selected
     manifest = read(base / "manifest.json")
     version = manifest["schemaVersion"]
     training_run = args.support / "bot-v1/training-runs" / base.name.removeprefix("bot-")
@@ -1495,10 +1501,11 @@ def train_with_worker(args, shared, limit):
     if not state_file.exists():
         save_json(state_file, state)
     previous_practice = [] if general else prior_practice_sources(work, identity)
-    checkpoint = models / state["champion"] if state["champion"] != selected.name else selected
-    if not checkpoint.is_dir():
-        checkpoint = work / "winners" / state["champion"]
-    if sha(checkpoint / "model.zip") != read(checkpoint / "manifest.json")["modelSHA256"]:
+    champion = state["champion"]
+    checkpoint = selected if champion == selected.name else gym_checkpoint_path(models, champion, work)
+    champion_manifest = read(checkpoint / "manifest.json")
+    if (champion_manifest.get("botDomain") != args.domain or champion_manifest.get("schemaVersion") != version
+            or sha(checkpoint / "model.zip") != champion_manifest["modelSHA256"]):
         raise ValueError("The resumed Hacker checkpoint does not match its manifest")
     supplied = measured_candidate(args.candidate, checkpoint, identity) if args.candidate else None
     model = PPO.load(checkpoint / "model.zip", device="cpu")
@@ -1773,7 +1780,8 @@ def train_with_worker(args, shared, limit):
                     break
                 victories += int(general_improvement(tested, control))
                 if victories == 2:
-                    incumbent_path = publish(child, base, work, models, dataset, evidence, args.vision)
+                    incumbent_path = publish(child, base, work, models, dataset, evidence, args.vision,
+                                             parent=incumbent_path)
                     incumbent, state["champion"] = child, incumbent_path.name
                     print(f"Verified {args.domain} winner {incumbent_path}", flush=True)
                     break
@@ -2111,7 +2119,8 @@ def train_with_worker(args, shared, limit):
                     if held_wins == 2 or held_wins + (2 - offset) < 2:
                         break
                 if held_wins == 2:
-                    checkpoint = publish(candidate, base, work, models, dataset, evidence, args.vision)
+                    checkpoint = publish(candidate, base, work, models, dataset, evidence, args.vision,
+                                         parent=checkpoint)
                     model = candidate
                     state["champion"] = checkpoint.name
                     print(f"Verified {args.domain} winner {checkpoint}", flush=True)

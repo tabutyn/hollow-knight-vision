@@ -125,12 +125,8 @@ def run_job(root, selection, run_id, baseline=None, epochs=160, domain=None, wal
         models /= domain
     with publication_lock(models):
         if follow_playback:
-            if native_verifier:
-                native = subprocess.check_output([native_verifier, "--bot-playback-checkpoint", root, domain],
-                                                 encoding="utf-8", timeout=45)
-                baseline = json.loads(native)
-            else:
-                baseline = playback_checkpoint(models, domain, Path(baseline) if baseline else None)
+            baseline = playback_checkpoint(models, domain, Path(baseline) if baseline else None,
+                                           native_verifier=native_verifier)
         return _run_job(root, selection, run_id, baseline, epochs, domain, wall_extractor, recovery_session,
                         upgrade_observations, exit_path, reuse_validation, native_verifier)
 
