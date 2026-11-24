@@ -114,6 +114,31 @@ internal static class BotEvaluationTests
         finally { temporary.Delete(recursive: true); }
     }
 
+    internal static void TestEvaluationBackpressureMarksArchiveIncomplete()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-overloaded-evaluation-");
+        try
+        {
+            var recorder = new BotEvaluationRecorder(temporary.FullName, BotCaptureDomain.Gameplay,
+                "Overloaded", "", new(), Generation, 1);
+            var image = new BgraFrame(1, 1, 4, [4, 0, 0, 255], 1, DateTimeOffset.UnixEpoch);
+            for (var time = 1; time <= 10_000; time++)
+                recorder.RecordFrame(image, new(time, time, Generation, 1, 0), null, null, [], null, null, null);
+            var directory = recorder.FinishAsync(10_001, "interrupted").GetAwaiter().GetResult()
+                ?? throw new InvalidOperationException("No evaluation was published.");
+            var manifest = Load<BotCaptureManifest>(directory, "manifest.json");
+            var metadata = Load<JsonElement>(directory, "evaluation.json");
+            var summary = metadata.GetProperty("visualFrameArchive").Deserialize<RecordedVisualFrameArchive>(Json)!;
+            Check(manifest.Status == "interrupted" && manifest.TerrainAuditCount == summary.CapturedFrameCount
+                && metadata.GetProperty("droppedSamples").GetInt32() > 0
+                && metadata.GetProperty("droppedSamples").GetInt32() + summary.CapturedFrameCount == 10_000
+                && summary is { Complete: false, Issue: "evaluationBackpressure", PeakPendingImages: <= 8 },
+                "Dropped evaluation samples must be counted and must make the source archive incomplete.");
+            _ = new VisualReplayArchiveReader(directory, summary, manifest.Id, requireComplete: false);
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
     private static T Load<T>(string directory, string name) => JsonSerializer.Deserialize<T>(
         File.ReadAllBytes(Path.Combine(directory, name)), BotCaptureSession.Json)!;
 

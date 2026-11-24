@@ -145,7 +145,8 @@ public sealed class BotEvaluationRecorder
                         if (sample.GroundInput is { } input) archive.RecordGroundInput(input);
                     }
                 }
-                source = await archive.FinishAsync().ConfigureAwait(false);
+                source = await archive.FinishAsync(incompleteReason: droppedSamples > 0 ? "evaluationBackpressure" : null)
+                    .ConfigureAwait(false);
             }
             catch
             {

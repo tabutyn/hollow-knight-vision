@@ -65,6 +65,7 @@ var tests = new List<(string Name, Action Run)>
     ("saved clips recover only causal legacy blockade evidence", BotBlockadeTests.TestLegacyReplayUsesOnlyPriorInputAndLeavesRecordedRowsIntact),
     ("bot evaluations preserve source images, applied controls, and paired terrain outside training", BotEvaluationTests.TestBotEvaluationPreservesFramesControlsAndPairedAuditOutsideExpertData),
     ("empty and failed bot evaluations do not publish archives", BotEvaluationTests.TestEmptyAndFailedEvaluationsDoNotPublish),
+    ("overloaded bot evaluations mark the source archive incomplete", BotEvaluationTests.TestEvaluationBackpressureMarksArchiveIncomplete),
     ("recorded Atlas path recovery is causal", BotRecordedAtlasPathTests.TestRecoveryIsCausalAndUsesRecordedTerrain),
     ("recorded routes preserve existing paths and stop scoring across gaps", BotRecordedAtlasPathTests.TestMissingPoseBreaksProgressAndCurrentPathsArePreserved),
     ("recovered routes preserve credited distance across camera gaps", BotRecordedAtlasPathTests.TestReacquisitionDoesNotEarnAlreadyMeasuredDistance),

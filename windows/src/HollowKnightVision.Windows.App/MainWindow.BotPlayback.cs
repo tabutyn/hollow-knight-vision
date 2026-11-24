@@ -151,7 +151,8 @@ public partial class MainWindow
     private async Task SaveBotEvaluationAsync(BotEvaluationRecorder evaluation, string reason)
     {
         try { _ = await evaluation.FinishAsync(BotCaptureClock(), reason); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException
+            or GroundTruthLineStoreException or JsonException)
         {
             Trace.TraceError("Bot evaluation could not be saved: {0}", error.Message);
             if (!isClosing && Volatile.Read(ref botPlayback) is null)
