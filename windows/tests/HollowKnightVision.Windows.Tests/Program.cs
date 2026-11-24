@@ -4860,8 +4860,6 @@ static void TestCheckLabelsCannotChooseParameters()
 
 static void TestGroundLabelEvaluationCommand()
 {
-    var host = GameStartupCliTailParityTests.HostAssembly.GetType("HollowKnightVision.Windows.Host.Program", throwOnError: true)!;
-    var run = host.GetMethod("RunAsync", BindingFlags.Static | BindingFlags.NonPublic)!;
     WithTemporaryDirectory(workspace =>
     {
         const string flag = "--evaluate-ground-labels";
@@ -4876,9 +4874,7 @@ static void TestGroundLabelEvaluationCommand()
         {
             output.GetStringBuilder().Clear();
             errors.GetStringBuilder().Clear();
-            Func<string[], Task<int>> rejectCapture = _ => throw new InvalidOperationException("Evaluation fell through to the live host.");
-            var task = (Task<int>)run.Invoke(null, [arguments, null, rejectCapture, output, errors])!;
-            return task.GetAwaiter().GetResult();
+            return NativeHostTestProcess.Run(GameStartupCliTailParityTests.HostExecutable, arguments, output, errors);
         }
 
         string ReadReportPath()
@@ -10390,12 +10386,13 @@ file static class GroundPixelsParityTests
 
 file static class GameStartupCliTailParityTests
 {
-    internal static Assembly HostAssembly { get; } = LoadHostAssembly();
+    private static readonly Assembly HostAssembly = LoadHostAssembly();
+
+    internal static string HostExecutable => Path.ChangeExtension(HostAssembly.Location, OperatingSystem.IsWindows() ? ".exe" : null);
 
     public static void TestRecordedPathCommandsUseArchiveFixtures()
     {
-        var executable = Path.ChangeExtension(HostAssembly.Location, OperatingSystem.IsWindows() ? ".exe" : null);
-        BotRecordedAtlasPathTests.TestHostExecutable(executable);
+        BotRecordedAtlasPathTests.TestHostExecutable(HostExecutable);
     }
 
     public static void TestAutomaticNavigationRequiresExplicitLaunchFlag()
