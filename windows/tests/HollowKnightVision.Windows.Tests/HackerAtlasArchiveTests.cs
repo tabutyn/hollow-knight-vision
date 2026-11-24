@@ -61,6 +61,133 @@ internal static class HackerAtlasArchiveTests
             && resumed.Connections.SequenceEqual(original.Connections), "Resume must retain existing registrations and doorways.");
     }
 
+    public static void TestGroundedDoorwayHeightsSurviveArchiveAndAirborneReturn()
+    {
+        foreach (var right in new[] { true, false })
+        {
+            using var workspace = new Fixture();
+            var pipeline = new HackerAtlasPipeline();
+            var preparer = new HackerFramePreparer();
+            var session = Guid.NewGuid();
+            var exit = right ? 60 : 4;
+            var entry = right ? 4 : 60;
+            for (var frame = 1; frame <= 3; frame++) Observe(frame, "A", exit, 12, grounded: true);
+            Observe(4, "A", exit, 20, grounded: false);
+            var provisional = Observe(5, "B", entry, 24, grounded: false)!.Connections.Single();
+            Check(provisional is { HasGroundedAlignment: false, FromCoordinate: 20, ToCoordinate: 24 },
+                "The airborne crossing must begin with a provisional doorway.");
+            for (var frame = 6; frame <= 7; frame++) Observe(frame, "B", entry, 8, grounded: true);
+            var revision = pipeline.Revision;
+            var aligned = Observe(8, "B", entry, 8, grounded: true, compose: false)
+                ?? throw new InvalidOperationException("An alignment change must publish even between tile writes.");
+            var connection = aligned.Connections.Single();
+            Check(connection is { HasGroundedAlignment: true, FromCoordinate: 12, ToCoordinate: 8 }
+                && connection.Id == provisional.Id && connection.FromSide == (right ? HackerRoomSide.Right : HackerRoomSide.Left),
+                "Three stable grounded observations must update the same horizontal doorway.");
+            var layout = HackerRoomLayout.Make(aligned.Rooms, aligned.Connections);
+            Check(layout.Positions[connection.FromRoomId].Y + 12 == layout.Positions[connection.ToRoomId].Y + 8,
+                "Hacker room placement must align the two measured floor heights.");
+            var offsets = new Dictionary<string, AtlasPoint> { ["B"] = new(15, 2) };
+            var archive = pipeline.CaptureArchive(offsets);
+            Check(archive.Revision > revision && archive.Archive.RegistrationCount == 7,
+                "A topology-only update must be autosaveable without registering another image.");
+            workspace.Archives.Write(null, archive.Archive);
+            var saved = workspace.Archives.Read(null)!;
+            Check(saved.Connections.Single() == connection && saved.RoomOffsets["B"] == offsets["B"],
+                "Archives must persist the measured alignment and the user's room offset independently.");
+            var named = workspace.Archives.SaveState("At the aligned doorway", null, saved);
+            Check(workspace.Archives.LoadState(named).Connections.Single() == connection,
+                "Named restore points must also keep the alignment.");
+
+            pipeline = HackerAtlasPipeline.FromArchive(saved);
+            preparer.RestoreRoomAnchors(saved.Rooms);
+            Check(pipeline.Snapshot().Connections.Single() == connection, "Reopening must restore the grounded doorway.");
+            Observe(9, "B", entry, 20, grounded: false);
+            Check(Observe(10, "A", exit, 26, grounded: false)!.Connections.Single() == connection,
+                "An airborne return must preserve the committed measurements.");
+
+            var vertical = connection with { FromSide = HackerRoomSide.Top, ToSide = HackerRoomSide.Bottom };
+            Throws<InvalidDataException>(() => workspace.Archives.Write(null, saved with { Connections = [vertical] }));
+            Check(workspace.Archives.Read(null)?.Connections.Single() == connection,
+                "A malformed floor flag must leave the existing archive intact.");
+
+            HackerAtlasOutput? Observe(int frame, string scene, int x, int y, bool grounded, bool compose = true) =>
+                ObserveDoorway(pipeline, preparer, session, frame, scene, x, y, right, grounded, compose: compose);
+        }
+    }
+
+    public static void TestAirborneAndOutOfPositionSamplesDoNotAlignDoorways()
+    {
+        var pipeline = new HackerAtlasPipeline();
+        var preparer = new HackerFramePreparer();
+        var session = Guid.NewGuid();
+        for (var frame = 1; frame <= 4; frame++) Observe(frame, "A", 60, 20, grounded: false);
+        Observe(5, "B", 4, 24, grounded: false);
+        for (var frame = 6; frame <= 8; frame++) Observe(frame, "B", 4, 24, grounded: false);
+        CheckProvisional();
+
+        // On the return trip B has a stable departure height. A still needs
+        // three fresh measurements on the right side of its doorway.
+        for (var frame = 9; frame <= 11; frame++) Observe(frame, "B", 4, 8, grounded: true);
+        Observe(12, "A", 60, 26, grounded: false);
+        for (var frame = 13; frame <= 15; frame++) Observe(frame, "A", 32, 12, grounded: true);
+        for (var frame = 16; frame <= 18; frame++) Observe(frame, "A", 60, 12, grounded: true, verticalSpeed: .2);
+        CheckProvisional();
+        for (var frame = 19; frame <= 21; frame++) Observe(frame, "A", 60, 12, grounded: true);
+        Check(pipeline.Snapshot().Connections.Single() is
+            { HasGroundedAlignment: true, FromSide: HackerRoomSide.Right, FromCoordinate: 12, ToCoordinate: 8 },
+            "A grounded return should update the original connection in its stored orientation.");
+
+        pipeline.Reset();
+        preparer.Reset();
+        for (var frame = 1; frame <= 4; frame++) Observe(frame, "A", 60, 20, grounded: true);
+        Observe(5, "B", 4, 24, grounded: false);
+        for (var frame = 40; frame <= 42; frame++) Observe(frame, "B", 4, 8, grounded: true);
+        CheckProvisional();
+
+        void CheckProvisional() => Check(pipeline.Snapshot().Connections.Single() is
+            { HasGroundedAlignment: false, FromCoordinate: 20, ToCoordinate: 24 },
+            "Only fresh grounded samples near both ends of a passage can change its elevation.");
+        void Observe(int frame, string scene, int x, int y, bool grounded, double verticalSpeed = 0) =>
+            ObserveDoorway(pipeline, preparer, session, frame, scene, x, y, right: true, grounded, verticalSpeed: verticalSpeed);
+    }
+
+    public static void TestMeasuredReturnFloorsTakePriorityOverEstimatedSpacing()
+    {
+        var a = Room("A");
+        var b = Room("B");
+        var c = Room("C");
+        var d = Room("D");
+        var ab = Edge(a, b, HackerRoomSide.Right, grounded: true);
+        var bc = Edge(b, c, HackerRoomSide.Bottom, grounded: false);
+        var cd = Edge(c, d, HackerRoomSide.Left, grounded: true);
+        var da = Edge(d, a, HackerRoomSide.Left, grounded: true);
+        var layout = HackerRoomLayout.Make([a, b, c, d], [ab, bc, cd, da]);
+        foreach (var edge in new[] { ab, cd, da })
+            Check(layout.Positions[edge.FromRoomId].Y + edge.FromCoordinate
+                == layout.Positions[edge.ToRoomId].Y + edge.ToCoordinate,
+                "The measured return loop must preserve each grounded crossing's elevation.");
+        Check(layout.FreeformConnectionIds.Contains(bc.Id), "Estimated vertical spacing must yield to measured floor heights.");
+
+        static HackerAtlasRoom Room(string name) => new(Guid.NewGuid(), name, default, new(0, 0, 100, 100));
+        static HackerRoomConnection Edge(HackerAtlasRoom from, HackerAtlasRoom to, HackerRoomSide side, bool grounded) =>
+            new(Guid.NewGuid(), from.Id, to.Id, side, side.Opposite(), 50, 50) { HasGroundedAlignment = grounded };
+    }
+
+    private static HackerAtlasOutput? ObserveDoorway(HackerAtlasPipeline pipeline, HackerFramePreparer preparer,
+        Guid session, int frame, string scene, int x, int y, bool right, bool grounded, bool compose = true, double verticalSpeed = 0)
+    {
+        var time = frame * .1;
+        var camera = scene == "A" ? 10 : 100;
+        var sample = new ReceiverGroundTruthSample(2, "groundTruth", session, (ulong)frame, frame, time, scene,
+            true, 0, 0, 0, 0, verticalSpeed, right, grounded, true,
+            camera, 4, -38, camera, 4, 0, 18, 1, 1, x, y, 64, 36, 64, 36);
+        var image = TexturedFrame(64, 36, 0);
+        var capture = new HackerCapturedFrame(HackerFrameSynchronizer.Key(frame), image, time, compose);
+        var prepared = preparer.Process(new(capture, sample, time)) ?? throw new InvalidOperationException("Doorway frame was rejected.");
+        return pipeline.Process(prepared);
+    }
+
     public static void TestArchiveWriteAndReadFailurePreserveLastGoodVersion()
     {
         using var workspace = new Fixture();

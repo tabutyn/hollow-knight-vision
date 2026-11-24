@@ -4114,7 +4114,7 @@ public partial class MainWindow : Window
                 measured.FromSide,
                 measured.ToSide,
                 measured.FromCoordinate,
-                measured.ToCoordinate));
+                measured.ToCoordinate) { HasGroundedAlignment = measured.HasGroundedAlignment });
         }
 
         return (byId, edits, connections, HackerRoomLayout.Make(coreRooms, connections));
@@ -6276,7 +6276,7 @@ public partial class MainWindow : Window
                 connection.FromSide,
                 connection.ToSide,
                 connection.FromCoordinate,
-                connection.ToCoordinate)));
+                connection.ToCoordinate) { HasGroundedAlignment = connection.HasGroundedAlignment }));
     }
 
     private void RenderHackerAtlasLayout()
@@ -6868,7 +6868,10 @@ public partial class MainWindow : Window
         HackerRoomSide FromSide,
         HackerRoomSide ToSide,
         double FromCoordinate,
-        double ToCoordinate);
+        double ToCoordinate)
+    {
+        public bool HasGroundedAlignment { get; init; }
+    }
 
     private sealed record HackerEditDocument(
         IReadOnlyList<GroundEditLine> Ground,

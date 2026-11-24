@@ -213,6 +213,7 @@ public sealed class HackerAtlasArchiveStore(string root)
                 || connection.FromRoomId == connection.ToRoomId
                 || !roomIds.Contains(connection.FromRoomId) || !roomIds.Contains(connection.ToRoomId)
                 || !Enum.IsDefined(connection.FromSide) || !Enum.IsDefined(connection.ToSide)
+                || connection.HasGroundedAlignment && (!connection.FromSide.IsHorizontal() || connection.ToSide != connection.FromSide.Opposite())
                 || !double.IsFinite(connection.FromCoordinate) || !double.IsFinite(connection.ToCoordinate))
                 throw new InvalidDataException("Invalid doorway in the Hacker Atlas archive.");
         }

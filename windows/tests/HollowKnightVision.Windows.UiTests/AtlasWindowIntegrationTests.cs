@@ -17,12 +17,65 @@ internal static class AtlasWindowIntegrationTests
         try
         {
             VerifyWorkspaceOperations(temporary.FullName);
+            VerifyRestoredPassageAlignment(Directory.CreateDirectory(Path.Combine(temporary.FullName, "passages")).FullName);
         }
         finally
         {
             temporary.Delete(recursive: true);
         }
         Console.WriteLine("PASS Atlas window saves, restores and deletes scoped snapshots and switches both playthroughs");
+        Console.WriteLine("PASS Hacker Atlas draws restored rooms at the measured passage elevation");
+    }
+
+    private static void VerifyRestoredPassageAlignment(string root)
+    {
+        var archive = SampleHackerArchive();
+        var leftRoom = archive.Rooms.Single();
+        var rightRoom = leftRoom with { Id = Guid.NewGuid(), SceneName = "SecondRoom" };
+        var passage = new HackerRoomConnection(Guid.NewGuid(), leftRoom.Id, rightRoom.Id,
+            HackerRoomSide.Right, HackerRoomSide.Left, 68, 44) { HasGroundedAlignment = true };
+        var hackerStates = new HackerAtlasArchiveStore(Path.Combine(root, "hacker-atlas-v1"));
+        hackerStates.Write(null, archive with
+        {
+            Rooms = [leftRoom, rightRoom],
+            Connections = [passage],
+            RoomOffsets = new Dictionary<string, AtlasPoint>()
+        });
+
+        var window = new MainWindow(GameRuntimeMode.Modded, gamePath: null, root: root, documents: root);
+        try
+        {
+            Wait(InvokeTask(window, "InitializeAtlasesAsync"));
+            var images = Control<Canvas>(window, "AtlasCanvas").Children.OfType<Image>()
+                .Where(image => image.Source is not null && double.IsFinite(Canvas.GetLeft(image)))
+                .OrderBy(Canvas.GetLeft).ToArray();
+            Check(images.Length == 2 && Canvas.GetTop(images[0]) - Canvas.GetTop(images[1]) == 24,
+                "Restoring the Hacker atlas must draw the two tiles at the measured doorway elevation.");
+
+            var outputField = typeof(MainWindow).GetField("hackerAtlasOutput", InstanceMembers)
+                ?? throw new MissingFieldException(nameof(MainWindow), "hackerAtlasOutput");
+            var canonical = (HackerAtlasOutput?)outputField.GetValue(window)
+                ?? throw new InvalidOperationException("No Hacker atlas was restored.");
+            outputField.SetValue(window, null);
+            try
+            {
+                var fallback = (System.Runtime.CompilerServices.ITuple)Invoke(window, "BuildHackerRoomLayout")!;
+                var connection = ((IReadOnlyList<HackerRoomConnection>)fallback[2]!).Single();
+                var layout = (HackerRoomLayout)fallback[3]!;
+                Check(connection.HasGroundedAlignment
+                    && layout.Positions[connection.ToRoomId].Y - layout.Positions[connection.FromRoomId].Y == 24,
+                    "The editable room topology must retain the measured elevation and its provenance.");
+            }
+            finally
+            {
+                outputField.SetValue(window, canonical);
+            }
+        }
+        finally
+        {
+            SetField(window, "isClosing", true);
+            Wait(InvokeTask(window, "PrepareShutdownAsync"));
+        }
     }
 
     private static void VerifyWorkspaceOperations(string root)
