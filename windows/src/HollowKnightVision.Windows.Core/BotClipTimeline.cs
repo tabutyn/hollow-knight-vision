@@ -9,17 +9,19 @@ public sealed class BotClipTimeline
     private readonly VisualReplayFrame[] sources;
     private readonly BotCaptureReviewFrame[] stills;
     private readonly Dictionary<ulong, BotCaptureReviewFrame[]> observations;
+    private readonly IReadOnlyList<InputPathStateChange>? inputStates;
     private readonly double[] offsets;
 
     private BotClipTimeline(VisualReplayArchiveReader? archive, VisualReplayFrame[] sources,
         BotCaptureReviewFrame[] stills, Dictionary<ulong, BotCaptureReviewFrame[]> observations, double[] offsets,
-        double duration)
+        double duration, IReadOnlyList<InputPathStateChange>? inputStates)
     {
         this.archive = archive;
         this.sources = sources;
         this.stills = stills;
         this.observations = observations;
         this.offsets = offsets;
+        this.inputStates = inputStates;
         Duration = duration;
     }
 
@@ -29,7 +31,7 @@ public sealed class BotClipTimeline
 
     public static BotClipTimeline Open(string folder, string inputPaths, CancellationToken cancellationToken = default)
     {
-        var (manifest, evidence) = BotCaptureSession.ReadReviewEvidence(folder, cancellationToken);
+        var (manifest, evidence, inputs) = BotCaptureSession.ReadReviewEvidence(folder, cancellationToken);
         var stills = evidence.Select(item => item.Frame).Where(item => item.ImageFile is not null)
             .OrderBy(item => item.Offset).ToArray();
         var duration = double.IsFinite(manifest.Duration) && manifest.Duration > 0 ? manifest.Duration : 0;
@@ -58,7 +60,8 @@ public sealed class BotClipTimeline
             .GroupBy(item => (ulong)item.Generation)
             .ToDictionary(group => group.Key, group => group.Select(item => item.Frame).OrderBy(frame => frame.Offset).ToArray())
             : new Dictionary<ulong, BotCaptureReviewFrame[]>();
-        return new(archive, sources, stills, byGeneration, offsets, Math.Max(duration, offsets.LastOrDefault()));
+        var buttons = inputs.Count == manifest.InputEventCount ? BuildInputStates(inputs, manifest.StartedAt) : null;
+        return new(archive, sources, stills, byGeneration, offsets, Math.Max(duration, offsets.LastOrDefault()), buttons);
     }
 
     public double Offset(int index) => offsets[index];
@@ -81,6 +84,28 @@ public sealed class BotClipTimeline
 
     public BgraFrame ReadSourceFrame(int index) => archive!.ReadImage(sources[index]);
     public string StillPath(int index) => stills[index].ImageFile!;
+
+    public InputButtons? HeldButtons(int index)
+    {
+        if (inputStates is null) return null;
+        var step = LastAtOrBefore(inputStates.Count, key => inputStates[key].Offset, Offset(index));
+        return step >= 0 ? inputStates[step].HeldButtons : InputButtons.None;
+    }
+
+    private static IReadOnlyList<InputPathStateChange>? BuildInputStates(IReadOnlyList<BotCaptureInput> inputs, double startedAt)
+    {
+        var states = new List<InputPathStateChange>(inputs.Count);
+        var held = InputButtons.None;
+        foreach (var input in inputs.OrderBy(item => item.Timestamp))
+        {
+            var name = input.Button.ToLowerInvariant() switch { "i" => "inventory", "p" => "pause", _ => input.Button };
+            if (!Enum.TryParse<RecordedGameButton>(name, ignoreCase: true, out var button) || !Enum.IsDefined(button)) return null;
+            var bit = button.ToInputButton();
+            held = input.IsPressed ? held | bit : held & ~bit;
+            states.Add(new(input.Timestamp - startedAt, held));
+        }
+        return states;
+    }
 
     private static int LastAtOrBefore(int count, Func<int, double> timeAt, double time)
     {

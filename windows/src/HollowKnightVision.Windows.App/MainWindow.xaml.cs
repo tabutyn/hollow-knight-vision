@@ -973,6 +973,11 @@ public partial class MainWindow : Window
     private async Task PrepareShutdownAsync()
     {
         ResetBotClipPreview();
+        if (deletingBotClip)
+        {
+            await botClipDisk.WaitAsync();
+            botClipDisk.Release();
+        }
         var botTrainingShutdownError = await StopBotTrainingForShutdownAsync();
         if ((!StopTrainingForShutdown(out var trainingShutdownError) || botTrainingShutdownError is not null) && factoryResetRequested)
         {

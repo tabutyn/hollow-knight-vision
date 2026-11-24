@@ -156,6 +156,106 @@ internal static class BotCaptureTests
         });
     }
 
+    internal static void TestDeletionKeepsSharedReplayUntilLastClipInEitherOrder()
+    {
+        foreach (var firstDomain in new[] { "hacker", "gameplay" })
+        {
+            WithLibrary(root =>
+            {
+                var pair = WriteFixture(root).Published;
+                var first = pair.Single(clip => clip.BotDomain == firstDomain);
+                var last = pair.Single(clip => clip.Id != first.Id);
+                var paths = Path.Combine(root, "paths");
+                var replay = first.ReplayId!.Value;
+                var archive = new VisualReplayArchiveWriter(paths, replay, new Dictionary<string, string>());
+                archive.Append(Input(0).Frame, Start + .01, Start + .01, (ulong)Generation, 80, null);
+                _ = archive.FinishAsync().GetAwaiter().GetResult();
+                var linked = Path.Combine(paths, $"path-fixture-{replay:D}.json");
+                File.WriteAllText(linked, "input");
+                var unrelated = Path.Combine(paths, $"path-fixture-{Guid.NewGuid():D}.json");
+                File.WriteAllText(unrelated, "keep");
+                var model = Directory.CreateDirectory(Path.Combine(root, "models")).FullName;
+                File.WriteAllText(Path.Combine(model, "snapshot.json"), "keep");
+
+                BotClipDeletion.Delete(root, paths, first);
+                var survivor = Path.Combine(root, BotCaptureSession.DirectoryName(last.Id));
+                Check(BotCaptureSession.Library(root).Single().Id == last.Id && File.Exists(linked)
+                    && BotClipTimeline.Open(survivor, paths).ReadSourceFrame(0).Width == Input(0).Frame.Width,
+                    "The surviving domain must keep both original input and playable frames.");
+
+                if (OperatingSystem.IsWindows())
+                {
+                    using var locked = File.Open(linked, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    try { BotClipDeletion.Delete(root, paths, last); throw new InvalidOperationException("Locked input path was deleted."); }
+                    catch (IOException) { }
+                    Check(Directory.Exists(survivor) && File.Exists(linked) && Directory.Exists(Path.Combine(paths, $"frames-{replay:D}")),
+                        "A denied move must restore the clip and the replay.");
+                }
+
+                BotClipDeletion.Delete(root, paths, last);
+                Check(BotCaptureSession.Library(root).Count == 0 && !File.Exists(linked)
+                    && !Directory.Exists(Path.Combine(paths, $"frames-{replay:D}"))
+                    && File.ReadAllText(unrelated) == "keep" && File.ReadAllText(Path.Combine(model, "snapshot.json")) == "keep",
+                    "Remove the clip and its last shared replay, preserving other runs and trained models.");
+            });
+        }
+    }
+
+    internal static void TestDeletionRejectsChangedClipsAndRemovesEligibleSingleDomain()
+    {
+        WithLibrary(root =>
+        {
+            var clip = WriteFixture(root, observeHacker: false).Published.Single();
+            Check(clip.ReplayId is { } replayId && replayId != clip.Id && clip.PairedClipId is null,
+                "The fixture must use a discarded Hacker side and a surviving Game Play clip.");
+            var folder = Path.Combine(root, BotCaptureSession.DirectoryName(clip.Id));
+            var paths = Directory.CreateDirectory(Path.Combine(root, "paths")).FullName;
+            var linked = Path.Combine(paths, $"path-fixture-{clip.ReplayId:D}.json");
+            File.WriteAllText(linked, "input");
+            var manifest = Path.Combine(folder, "manifest.json");
+            var original = File.ReadAllText(manifest);
+            Reject(clip with { CreatedAt = clip.CreatedAt.AddSeconds(1) });
+            var recording = JsonNode.Parse(original)!;
+            recording["status"] = "recording";
+            File.WriteAllText(manifest, recording.ToJsonString());
+            Reject(clip);
+            File.WriteAllText(manifest, original);
+            var invalidFrames = Path.Combine(paths, $"frames-{clip.ReplayId:D}");
+            File.WriteAllText(invalidFrames, "wrong file type");
+            Reject(clip);
+            File.Delete(invalidFrames);
+            if (!OperatingSystem.IsWindows())
+            {
+                var other = Directory.CreateDirectory(Path.Combine(root, "outside-replay")).FullName;
+                Directory.CreateSymbolicLink(invalidFrames, other);
+                Reject(clip);
+                Directory.Delete(invalidFrames);
+                Check(Directory.Exists(other), "Rejecting a linked archive must preserve its target.");
+            }
+            BotClipDeletion.Delete(root, paths, clip);
+            Check(!Directory.Exists(folder) && Directory.GetFileSystemEntries(paths).Length == 0,
+                "A modded run with only a Game Play clip still owns its original replay.");
+
+            var ordinary = new BotCaptureSession(root, "normal", "visual", Generation, Start, Labels());
+            var sample = Input(0);
+            Check(ordinary.TryRecord(sample.Frame, Visual(sample), null), "The legacy recording needs a valid frame.");
+            var legacy = ordinary.FinishAsync(Start + 1, null, completed: true).GetAwaiter().GetResult().Published.Single();
+            var legacyPath = Path.Combine(paths, $"path-legacy-{legacy.Id:D}.json");
+            var legacyFrames = Directory.CreateDirectory(Path.Combine(paths, $"frames-{legacy.Id:D}")).FullName;
+            File.WriteAllText(legacyPath, "input");
+            BotClipDeletion.Delete(root, paths, legacy);
+            Check(!File.Exists(legacyPath) && !Directory.Exists(legacyFrames) && BotCaptureSession.Library(root).Count == 0,
+                "Legacy recordings without an explicit replay ID use their clip ID to clean up owned evidence.");
+
+            void Reject(BotCaptureManifest selected)
+            {
+                try { BotClipDeletion.Delete(root, paths, selected); throw new InvalidOperationException("Unowned or active evidence was deleted."); }
+                catch (InvalidDataException) { }
+                Check(Directory.Exists(folder) && File.Exists(linked), "Validation must finish before changing any owned entry.");
+            }
+        });
+    }
+
     internal static void TestClipTimelineUsesExactSourceRowsAndFallsBackToStills()
     {
         WithLibrary(root =>
@@ -189,10 +289,16 @@ internal static class BotCaptureTests
                     "The image must use the latest observation in this domain, including observations without stills.");
                 Check(timeline.Overlay(0) is null && timeline.Overlay(2) is null && timeline.Overlay(3) is null,
                     "Do not display future, foreign-generation, or stale terrain evidence.");
+                Check(timeline.HeldButtons(0) == InputButtons.Right
+                    && timeline.HeldButtons(1) == (InputButtons.Right | InputButtons.ActionX)
+                    && timeline.HeldButtons(3) == InputButtons.ActionX
+                    && timeline.HeldButtons(0) == InputButtons.Right,
+                    "Display the recorded presses and releases at each image, including after seeking backwards.");
                 Check(timeline.ReadSourceFrame(1).Pixels.SequenceEqual(image.Pixels), "Display the original archived pixels.");
                 var missing = BotClipTimeline.Open(folder, Path.Combine(root, "missing-archive"));
                 Check(!missing.UsesSourceFrames && missing.Count == 1 && File.Exists(missing.StillPath(0))
-                    && missing.Overlay(0)?.Offset == missing.Offset(0), "Old clips must retain their matching recorded stills.");
+                    && missing.Overlay(0)?.Offset == missing.Offset(0) && missing.HeldButtons(0) == InputButtons.Right,
+                    "Old clips must retain their matched stills and input states.");
             }
 
             var archive = Path.Combine(paths, $"frames-{replay:D}");
@@ -203,6 +309,13 @@ internal static class BotCaptureTests
             File.WriteAllText(Path.Combine(archive, "manifest.json"), "{");
             var fallback = BotClipTimeline.Open(Path.Combine(root, BotCaptureSession.DirectoryName(paired[0].Id)), paths);
             Check(!fallback.UsesSourceFrames && fallback.Count == 1, "An unreadable archive must leave the captured still available.");
+            var events = Path.Combine(root, BotCaptureSession.DirectoryName(paired[0].Id), "events.jsonl");
+            var rows = File.ReadAllLines(events);
+            File.WriteAllLines(events, rows.Select(row => row.Contains("\"button\":\"x\"", StringComparison.Ordinal)
+                ? row.Replace("\"button\":\"x\"", "\"button\":null", StringComparison.Ordinal) : row));
+            var missingInputs = BotClipTimeline.Open(Path.GetDirectoryName(events)!, paths);
+            Check(missingInputs.Count == 1 && missingInputs.HeldButtons(0) is null,
+                "Unavailable input evidence must not appear as released buttons or prevent image review.");
 
             void Write(double offset, long generation, double solveWidth = 80) =>
                 writer.Append(image, Start + offset, Start + offset, (ulong)generation, solveWidth, null);
@@ -231,7 +344,7 @@ internal static class BotCaptureTests
         });
     }
 
-    internal static BotCaptureResult WriteFixture(string root)
+    internal static BotCaptureResult WriteFixture(string root, bool observeHacker = true)
     {
         var id = Guid.NewGuid();
         var labels = Labels();
@@ -245,7 +358,7 @@ internal static class BotCaptureTests
         for (var i = 0; i < 6; i++)
         {
             var input = Input(i);
-            Check(active.TryRecord(input.Frame, Visual(input), Hacker(input, input.Mod)), "A current paired sample was dropped.");
+            Check(active.TryRecord(input.Frame, Visual(input), observeHacker ? Hacker(input, input.Mod) : null), "A current paired sample was dropped.");
         }
         // Keep attack held through stop and release right independently. The path recorder supplies the final releases.
         record.RecordInput(RecordedGameButton.Right, false, Start + .72);

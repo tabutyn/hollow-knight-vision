@@ -132,13 +132,14 @@ public partial class MainWindow
 
     private async void PathRecording_Click(object sender, RoutedEventArgs e)
     {
-        if (changingBotCapture || gameControls.IsReplaying) return;
+        if (changingBotCapture || deletingBotClip || gameControls.IsReplaying) return;
         if (Volatile.Read(ref botPlayback) is not null)
         {
             SetStatus("Stop the bot with B before recording a demonstration.");
             return;
         }
         changingBotCapture = true;
+        UpdateBotClipDeletionControls();
         try
         {
             if (Interlocked.Exchange(ref botCapture, null) is { } active)
@@ -205,6 +206,7 @@ public partial class MainWindow
         finally
         {
             changingBotCapture = false;
+            UpdateBotClipDeletionControls();
             if (botCapture is null) PathRecordingButton.ClearValue(BackgroundProperty);
             UpdateModeAvailability();
         }
@@ -238,11 +240,12 @@ public partial class MainWindow
         var clips = sessions.Select(session => new BotClipRow(
             DisplayBotDomain(session.BotDomain), session.ObservationCount, session.UsableObservationCount,
             session.Duration.ToString("0.0 s", System.Globalization.CultureInfo.CurrentCulture),
-            Path.Combine(BotCaptureRoot, BotCaptureSession.DirectoryName(session.Id)))).ToArray();
+            Path.Combine(BotCaptureRoot, BotCaptureSession.DirectoryName(session.Id)), session)).ToArray();
         BotCaptureClips.ItemsSource = clips;
         BotCaptureClips.SelectedItem = clips.FirstOrDefault(clip => clip.Folder == previous) ?? clips.FirstOrDefault();
+        UpdateBotClipDeletionControls();
     }
 
     private static string DisplayBotDomain(string domain) => domain == "hacker" ? "Hacker" : "Game Play";
-    private sealed record BotClipRow(string Domain, int Samples, int Usable, string Duration, string Folder);
+    private sealed record BotClipRow(string Domain, int Samples, int Usable, string Duration, string Folder, BotCaptureManifest Manifest);
 }

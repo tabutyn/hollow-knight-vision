@@ -67,18 +67,22 @@ internal static class BotDesktopCaptureIntegrationTests
         var position = (Slider)window.FindName("BotClipScrubber");
         var play = (Button)window.FindName("BotPlayClip");
         var previous = (Button)window.FindName("BotPreviousFrame");
+        var inputs = (TextBlock)window.FindName("BotClipInputs");
 
         _ = Method("RefreshBotLibrary").Invoke(window, null);
         await WaitFor(() => HasPixel(10));
-        Check(canvas.Children.Count == 0 && position.Maximum == 1 && play.IsEnabled,
+        Check(canvas.Children.Count == 0 && position.Maximum == 1 && play.IsEnabled
+            && inputs.Text == "Recorded input · Right",
             "The archive starts before the first observation and must show original pixels without future terrain.");
         position.Value = .55;
         await WaitFor(() => HasPixel(30));
-        Check(canvas.Children.OfType<Line>().Single() is { Y1: 32 } floor && floor.Stroke == Brushes.SpringGreen,
+        Check(canvas.Children.OfType<Line>().Single() is { Y1: 32 } floor && floor.Stroke == Brushes.SpringGreen
+            && inputs.Text == "Recorded input · Released",
             "The paused image must show the correct Hacker observation for that time.");
         previous.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         await WaitFor(() => HasPixel(20));
-        Check(canvas.Children.OfType<Line>().Single().Y1 == 36, "Frame stepping must update the terrain with the image.");
+        Check(canvas.Children.OfType<Line>().Single().Y1 == 36 && inputs.Text == "Recorded input · Right + X",
+            "Frame stepping must update terrain and held buttons with the image.");
 
         play.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         await WaitFor(() => HasPixel(30));
@@ -95,6 +99,45 @@ internal static class BotDesktopCaptureIntegrationTests
             && canvas.Children.OfType<Line>().Single().Stroke == Brushes.DeepSkyBlue,
             "Changing clips should stop playback, clear the old image, and retain a legacy Game Play still.");
         Console.WriteLine("PASS Desktop bot review plays raw clip frames with synchronized overlays and legacy still fallback");
+
+        var delete = (Button)window.FindName("BotDeleteClip");
+        var confirmation = (FrameworkElement)window.FindName("BotDeleteClipConfirmation");
+        var confirm = (Button)window.FindName("BotConfirmDeleteClip");
+        var cancel = (Button)window.FindName("BotCancelDeleteClip");
+        var summary = (TextBlock)window.FindName("BotCaptureSummary");
+        var stillFolder = Path.Combine(captures, BotCaptureSession.DirectoryName(stillId));
+        var rawFolder = Path.Combine(captures, BotCaptureSession.DirectoryName(rawId));
+        var rawPath = Path.Combine(paths, $"path-fixture-{rawId:D}.json");
+        var rawFrames = Path.Combine(paths, $"frames-{rawId:D}");
+        File.WriteAllText(rawPath, "recorded inputs");
+        using (var training = new CancellationTokenSource())
+        {
+            Field("botTrainingCancellation").SetValue(window, training);
+            _ = Method("UpdateBotTrainingControls").Invoke(window, null);
+            Check(!delete.IsEnabled, "Clip deletion must be disabled while either domain is training.");
+            Field("botTrainingCancellation").SetValue(window, null);
+            _ = Method("UpdateBotTrainingControls").Invoke(window, null);
+        }
+        Click(delete);
+        Check(confirmation.Visibility == Visibility.Visible && Directory.Exists(stillFolder), "Delete Clip must ask first.");
+        Click(cancel);
+        Click(confirm);
+        Check(confirmation.Visibility == Visibility.Collapsed && Directory.Exists(stillFolder), "Cancel must preserve the clip.");
+        Click(delete);
+        Click(confirm);
+        await WaitFor(() => HasPixel(10));
+        Check(!Directory.Exists(stillFolder) && File.Exists(rawPath) && Directory.Exists(rawFrames)
+            && summary.Text == "1 recorded runs · 1 Hacker clips · 0 Game Play clips",
+            "Deleting a still must keep the other run selected and refresh the counts.");
+        Click(delete);
+        Click(confirm);
+        await WaitFor(() => clips.Items.Count == 0);
+        Check(!Directory.Exists(rawFolder) && !File.Exists(rawPath) && !Directory.Exists(rawFrames)
+            && image.Source is null && !delete.IsEnabled,
+            "Confirming removal of the last clip must clear the library, preview, and recorded replay.");
+        Console.WriteLine("PASS Desktop clip deletion requires confirmation, respects training, and refreshes the library");
+
+        static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
         bool HasPixel(byte blue)
         {
@@ -113,8 +156,10 @@ internal static class BotDesktopCaptureIntegrationTests
         {
             var folder = Directory.CreateDirectory(Path.Combine(captures, BotCaptureSession.DirectoryName(id))).FullName;
             var date = DateTimeOffset.UnixEpoch.AddSeconds(replay.HasValue ? 2 : 1);
+            BotCaptureInput[] inputRows = replay.HasValue
+                ? [new(start + .01, "right", true), new(start + .18, "x", true), new(start + .3, "x", false), new(start + .45, "right", false)] : [];
             var manifest = new BotCaptureManifest(BotRecordingContract.SchemaVersion, id, date, start, "modded", "fixture",
-                "receiver-sent", "completed", 1, sampleTimes.Length, sampleTimes.Length, 0, replay.HasValue ? 0 : 1, domain, replay, null);
+                "receiver-sent", "completed", 1, sampleTimes.Length, sampleTimes.Length, inputRows.Length, replay.HasValue ? 0 : 1, domain, replay, null);
             File.WriteAllText(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(manifest, json));
             if (!replay.HasValue) PngWriter.Write(FrameWithPixel(90), Path.Combine(folder, "still.png"));
             var rows = sampleTimes.Select((time, index) =>
@@ -129,7 +174,8 @@ internal static class BotDesktopCaptureIntegrationTests
                     ImagePath = replay.HasValue ? null : "still.png"
                 };
             });
-            File.WriteAllLines(Path.Combine(folder, "events.jsonl"), rows.Select(row => JsonSerializer.Serialize(row, json)));
+            File.WriteAllLines(Path.Combine(folder, "events.jsonl"), rows.Select(row => JsonSerializer.Serialize(row, json))
+                .Concat(inputRows.Select(row => JsonSerializer.Serialize(row, json))));
         }
 
         static BgraFrame FrameWithPixel(byte blue)
