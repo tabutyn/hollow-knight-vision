@@ -25,15 +25,16 @@ internal sealed record MenuCalibrationCapture(bool SavesFrame, string? Context =
     private static bool HasIdentifiers(string context, string row) =>
         !string.IsNullOrWhiteSpace(context) && !string.IsNullOrWhiteSpace(row);
 
-    internal Reply CaptureLive()
+    internal Reply CaptureLive(HollowKnightWindow? window = null, string? supportRoot = null)
     {
         if (!OperatingSystem.IsWindows()) return new(false, "Live menu capture requires Windows");
         try
         {
-            if (HollowKnightWindowLocator.FindBest() is not { IsMinimized: false } window)
+            window ??= HollowKnightWindowLocator.FindBest();
+            if (window is not { IsMinimized: false })
                 return new(false, "No visible Hollow Knight window available");
             var frame = CpuBgraNormalizer.Normalize(new GdiWindowCapture().Capture(window, 1));
-            var supportRoot = AutoNavigationRunner.LiveStartupStencilEvidenceProvider.DefaultSupportRoot;
+            supportRoot ??= AutoNavigationRunner.LiveStartupStencilEvidenceProvider.DefaultSupportRoot;
             var provider = AutoNavigationRunner.LiveStartupStencilEvidenceProvider.CreateDefault(supportRoot,
                 allowFallback: false, allowCalibrationWrites: false);
             var examplesRoot = Path.Combine(supportRoot, "labeling-v1", "examples");
