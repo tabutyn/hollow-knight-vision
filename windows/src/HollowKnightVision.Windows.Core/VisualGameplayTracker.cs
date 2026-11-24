@@ -1,11 +1,12 @@
 using System.Diagnostics;
+using System.Text.Json.Serialization;
 
 namespace HollowKnightVision.Windows.Core;
 
 public sealed record FloorlessCameraEvidence(AtlasPoint? CoarsePosition, AtlasPoint? MaskedPosition,
     VisualRoomDirection? ExpectedDirection, FloorlessPoseCandidateSource? SelectedSource,
     double? CoarseReferenceTimestamp, bool CoarseMeasured, CalibratedSceneMotionEvidence? Scene = null,
-    LowResolutionPlaceMatch? Place = null)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] LowResolutionPlaceMatch? Place = null)
 {
     public string SelectionName => SelectedSource switch
     {
