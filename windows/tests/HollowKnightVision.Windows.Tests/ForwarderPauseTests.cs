@@ -81,10 +81,13 @@ internal static class ForwarderPauseTests
             var playback = new BotPolicyPlayback(BotNativePolicy.Load(temporary.FullName), BotCaptureDomain.Hacker);
             await using var fixture = new Fixture(pauseSupported: true);
             var forwarder = fixture.Forwarder;
+            var recordedControls = Channel.CreateUnbounded<(Guid Owner, InputButtons Buttons, double Time)>();
+            forwarder.BotInputSent += (owner, buttons, time) => recordedControls.Writer.TryWrite((owner, buttons, time));
             await Until(() => forwarder.PauseState == GamePauseState.Ready);
             await fixture.Next("state");
             var owner = forwarder.BeginBotControl() ?? throw new Exception("Bot control did not start.");
             await Expect(InputButtons.None);
+            Check(!recordedControls.Reader.TryRead(out _), "An initial neutral heartbeat is not a control transition.");
             Check(new BotPlaybackUpdate(BotPlaybackUpdate.WaitingForFrame).Decision is null);
 
             var first = Authored(Clock() - .01);
@@ -92,6 +95,7 @@ internal static class ForwarderPauseTests
             Check(fresh?.Decision is { } decision && decision.Action.Buttons.HasFlag(InputButtons.ActionX)
                 && decision.Deadline <= first.CapturedAt + .2);
             await Expect(fresh!.Decision!.Value.Action.Buttons);
+            var sent = await ReadControl(fresh.Decision.Value.Action.Buttons);
             Check(Apply(Authored(first.CaptureTimestamp - 1) with { AvailableAt = Clock(), Issues = ["stale-capture"] }) is null);
             Check(Apply(first with { Issues = ["missing-terrain-analysis"] }) is null);
             Check(forwarder.CaptureMovement() == fresh.Decision.Value.Action.Buttons,
@@ -100,11 +104,13 @@ internal static class ForwarderPauseTests
             var missing = Apply(Authored(Clock()) with { Issues = ["missing-knight"] });
             Check(missing is { Decision: null, Status: "Bot waiting for Knight detection" });
             await Expect(InputButtons.None);
+            Check(await ReadControl(InputButtons.None) >= sent, "Evaluation timestamps must follow the receiver send order.");
             Check(forwarder.OwnsBotControl(owner) && Apply(first) is null, "Waiting lost ownership or enabled a replayed observation.");
 
             var recovered = Apply(Authored(Clock()));
             Check(recovered?.Decision is { Action.Buttons: not InputButtons.None }, "Fresh terrain and Knight evidence should resume playback.");
             await Expect(recovered!.Decision!.Value.Action.Buttons);
+            _ = await ReadControl(recovered.Decision.Value.Action.Buttons);
             forwarder.EndBotControl(owner);
             await Expect(InputButtons.None);
             Check(!forwarder.OwnsBotControl(owner) && !forwarder.ApplyBotPlayback(owner, recovered),
@@ -122,6 +128,15 @@ internal static class ForwarderPauseTests
                 var wire = ReceiverWireCodec.DecodeLine<ReceiverInputSnapshot>(await fixture.Next("state"));
                 Check(wire.HeldButtons == buttons && wire.Enabled == (buttons != InputButtons.None),
                     $"Expected wire input {buttons} but received {wire.HeldButtons}.");
+            }
+
+            async Task<double> ReadControl(InputButtons buttons)
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+                var recorded = await recordedControls.Reader.ReadAsync(timeout.Token);
+                Check(recorded.Owner == owner && recorded.Buttons == buttons && double.IsFinite(recorded.Time),
+                    "An evaluation must observe the successfully sent state for the current bot owner.");
+                return recorded.Time;
             }
         }
         finally { temporary.Delete(recursive: true); }

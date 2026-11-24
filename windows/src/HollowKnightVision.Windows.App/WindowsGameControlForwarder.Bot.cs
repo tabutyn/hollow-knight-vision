@@ -14,6 +14,7 @@ internal sealed partial class WindowsGameControlForwarder
     private InputButtons botApplied;
     // A queued human snapshot from before an ownership change cannot re-enable input.
     private long inputEpoch;
+    internal event Action<Guid, InputButtons, double>? BotInputSent;
 
     internal Guid? BeginBotControl()
     {
@@ -119,7 +120,13 @@ internal sealed partial class WindowsGameControlForwarder
                 }
                 await send.ConfigureAwait(false);
                 lock (stateLock)
-                    if (botOwner == owner && ReferenceEquals(active, receiver)) botApplied = buttons;
+                {
+                    if (botOwner == owner && ReferenceEquals(active, receiver) && botApplied != buttons)
+                    {
+                        botApplied = buttons;
+                        BotInputSent?.Invoke(owner, buttons, MonotonicSeconds());
+                    }
+                }
             }
             finally { outboundGate.Release(); }
         }

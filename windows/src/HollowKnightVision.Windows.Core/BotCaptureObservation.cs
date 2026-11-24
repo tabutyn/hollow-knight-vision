@@ -183,9 +183,7 @@ public static class BotObservationBuilder
         BotBlueHealthOutcomes? blueHealth = null)
     {
         var terrain = new BotScreenTerrain(image.Width, image.Height,
-            floors.Where(line => line.Row >= 0 && line.Row < image.Height && line.XSpan.Start >= 0
-                    && line.XSpan.EndInclusive < image.Width)
-                .Select(line => new BotFloor(line.XSpan.Start, line.XSpan.EndInclusive + 1, image.Height - line.Row, 1)).ToArray(),
+            ProjectDetectedFloors(image, floors),
             walls.Where(wall => wall.X >= 0 && wall.X <= image.Width && wall.Top >= 0
                     && wall.Bottom <= image.Height && wall.Top < wall.Bottom)
                 .Select(wall => new BotWall(wall.X, image.Height - wall.Bottom, image.Height - wall.Top, wall.SolidOnRight ? 1 : -1)).ToArray());
@@ -237,6 +235,11 @@ public static class BotObservationBuilder
                 b.Width * image.Width, b.Height * image.Height, detection.Confidence);
         }
     }
+
+    public static IReadOnlyList<BotFloor> ProjectDetectedFloors(BgraFrame image, IReadOnlyList<DetectedFloorLine> floors) =>
+        floors.Where(line => line.Row >= 0 && line.Row < image.Height && line.XSpan.Start >= 0
+                && line.XSpan.EndInclusive < image.Width)
+            .Select(line => new BotFloor(line.XSpan.Start, line.XSpan.EndInclusive + 1, image.Height - line.Row, 1)).ToArray();
 
     public static BotScreenTerrain ProjectAuthored(GroundTruthLineDocument document, GroundTruthCameraTransform camera)
     {

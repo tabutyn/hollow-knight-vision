@@ -90,13 +90,13 @@ public sealed class VisualReplayArchiveWriter
             if (finish is null && double.IsFinite(input.CaptureTimestamp)) groundInputs.Add(input);
     }
 
-    public Task<RecordedVisualFrameArchive> FinishAsync(bool cancelled = false)
+    public Task<RecordedVisualFrameArchive> FinishAsync(bool cancelled = false, string? incompleteReason = null)
     {
         lock (gate)
         {
             if (finish is not null) return finish;
             queue.Writer.TryComplete();
-            return finish = Task.Run(() => FinishCoreAsync(cancelled));
+            return finish = Task.Run(() => FinishCoreAsync(cancelled, incompleteReason));
         }
     }
 
@@ -132,15 +132,15 @@ public sealed class VisualReplayArchiveWriter
         }
     }
 
-    private async Task<RecordedVisualFrameArchive> FinishCoreAsync(bool cancelled)
+    private async Task<RecordedVisualFrameArchive> FinishCoreAsync(bool cancelled, string? incompleteReason)
     {
         await worker.ConfigureAwait(false);
         var saved = frames.Count(frame => frame.FileName is not null);
         var dropped = frames.Count(frame => frame.Issue == "writerBackpressure");
         var failed = frames.Count - saved - dropped;
         var summary = new RecordedVisualFrameArchive(directoryName, frames.Count, saved, dropped, failed,
-            peakPendingImages, !cancelled && saved > 0 && dropped == 0 && failed == 0,
-            cancelled ? "cancelled" : null);
+            peakPendingImages, !cancelled && incompleteReason is null && saved > 0 && dropped == 0 && failed == 0,
+            cancelled ? "cancelled" : incompleteReason);
         try
         {
             var manifest = new VisualReplayManifest(1, pathId, configuration, frames, stages, groundInputs, summary);
