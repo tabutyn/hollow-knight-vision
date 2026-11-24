@@ -199,6 +199,23 @@ internal static class BotCaptureTests
                     "Remove the clip and its last shared replay, preserving other runs and trained models.");
             });
         }
+
+        WithLibrary(root =>
+        {
+            var pair = WriteFixture(root).Published;
+            var paths = Directory.CreateDirectory(Path.Combine(root, "paths")).FullName;
+            var linked = Path.Combine(paths, $"path-fixture-{pair[0].ReplayId:D}.json");
+            File.WriteAllText(linked, "input");
+            using var ready = new Barrier(2);
+            var removals = pair.Select(clip => Task.Run(() =>
+            {
+                if (!ready.SignalAndWait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Concurrent removals did not start.");
+                BotClipDeletion.Delete(root, paths, clip);
+            })).ToArray();
+            Task.WaitAll(removals);
+            Check(BotCaptureSession.Library(root).Count == 0 && !File.Exists(linked),
+                "Concurrent removals must still clean up the final shared replay.");
+        });
     }
 
     internal static void TestDeletionRejectsChangedClipsAndRemovesEligibleSingleDomain()

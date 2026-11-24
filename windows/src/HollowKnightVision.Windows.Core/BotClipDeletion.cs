@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace HollowKnightVision.Windows.Core;
@@ -6,8 +8,27 @@ public static class BotClipDeletion
 {
     public static void Delete(string captureRoot, string replayRoot, BotCaptureManifest selected)
     {
-        var library = Path.GetFullPath(captureRoot);
+        var library = Path.TrimEndingDirectorySeparator(Path.GetFullPath(captureRoot));
         EnsureOwnedEntry(library, directory: true);
+        var key = OperatingSystem.IsWindows() ? library.ToUpperInvariant() : library;
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+        using var gate = new Mutex(false, $"HollowKnightVision.BotClipDeletion.{hash}");
+        var acquired = false;
+        try
+        {
+            try { acquired = gate.WaitOne(TimeSpan.FromSeconds(10)); }
+            catch (AbandonedMutexException) { acquired = true; }
+            if (!acquired) throw new IOException("Another clip deletion is still in progress.");
+            DeleteOwnedClip(library, replayRoot, selected);
+        }
+        finally
+        {
+            if (acquired) gate.ReleaseMutex();
+        }
+    }
+
+    private static void DeleteOwnedClip(string library, string replayRoot, BotCaptureManifest selected)
+    {
         var clip = Path.Combine(library, BotCaptureSession.DirectoryName(selected.Id));
         EnsureOwnedEntry(clip, directory: true);
         var current = ReadManifest(clip);
