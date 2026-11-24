@@ -84,12 +84,18 @@ public sealed class BotVisualGymObservationSource
         var roomKey = chart.ToString(CultureInfo.InvariantCulture);
         var skipped = !admitted.Transition.ResumedAfterTransition && coverage.CanContinueMeasuredScenery
             ? atlasMotion.MatchSkipped(frame, masks, Generation, roomKey, time) : null;
+        VisualRoomSnapshot? room = null;
         var observed = camera.ObserveGroundAnchored(frame, measuredMotion, analysis.Edges.SourceLuma!,
             analysis.CameraReferences, textureExclusions, coverage.HasPlacedRoom, masks.GroundKnight, ground, time,
-            signal.MotionGrid, direction, skipped);
+            signal.MotionGrid, direction, skipped, (pose, verified) =>
+            {
+                room = ObserveRoom(pose, verified);
+                return room.RoomID == activeRoom && !room.IsTransitioning && !admitted.Transition.ResumedAfterTransition
+                    ? room.CoarsePlaceMatch : null;
+            });
         var placement = observed.GroundVerified ? observed.GroundTracking.CameraPosition : null;
-        var room = ObserveRoom(placement ?? camera.Position, observed.GroundVerified);
-        if (room.IsTransitioning || admitted.Transition.ResumedAfterTransition && activeRoom == room.RoomID)
+        var roomState = room!;
+        if (roomState.IsTransitioning || admitted.Transition.ResumedAfterTransition && activeRoom == roomState.RoomID)
         {
             walked.BreakContinuity();
             measuredAtlasPose.Reset();
@@ -101,16 +107,17 @@ public sealed class BotVisualGymObservationSource
             knightMemory.Reset();
             return new(null, ["room-transition"], confidence);
         }
-        if (activeRoom.HasValue && activeRoom.Value != room.RoomID)
+        if (activeRoom.HasValue && activeRoom.Value != roomState.RoomID)
         {
-            activeRoom = room.RoomID;
+            activeRoom = roomState.RoomID;
             chart++;
-            coverage.EnterRoom(room.RoomID, recentDoorway);
+            coverage.EnterRoom(roomState.RoomID, recentDoorway);
             recentDoorway = null;
             blockade.Reset();
             knightMemory.Reset();
             ground.Reset(keepingGlobalFeatures: false);
             camera.Reset();
+            rooms.ClearPlaceReferences();
             motion.Reset();
             walked.Reset();
             measuredAtlasPose.Reset();
@@ -118,25 +125,27 @@ public sealed class BotVisualGymObservationSource
             atlasMotion.Reset();
             return new(null, ["room-transition"], confidence);
         }
-        activeRoom = room.RoomID;
-        coverage.EnterRoom(room.RoomID);
+        activeRoom = roomState.RoomID;
+        coverage.EnterRoom(roomState.RoomID);
         var terrain = TerrainWallDetector.Detect(analysis.Edges, analysis.Floors);
         var corrected = placement.HasValue && observed.GroundTracking.GlobalCorrection is { } correction
             && correction.X * correction.X + correction.Y * correction.Y > 9;
         if (corrected) walkedEpoch++;
+        if (observed.ReanchoredAtRoomPlace) walked.BreakContinuity();
+        var relocalized = corrected || observed.ReanchoredAtRoomPlace;
         var localCamera = camera.Position;
         var measuredGround = observed.GroundVerified && GroundMotionEvidence.IsMeasured(observed.GroundTracking);
         var measuredScenery = measuredAtlasPose.Observe(Generation, roomKey, time, localCamera,
-            measuredGround, observed.SelectedScenery, corrected);
+            measuredGround, observed.SelectedScenery, relocalized);
         var continuity = atlasMotion.Observe(frame, masks, Generation, roomKey, time, localCamera, observed,
-            coverage.CanContinueMeasuredScenery, measuredGround, measuredScenery, corrected);
+            coverage.CanContinueMeasuredScenery, measuredGround, measuredScenery, relocalized);
         if (continuity.RequiresRecovery) coverage.Interrupt(requireMatch: true);
         var continuesScenery = measuredScenery && coverage.CanContinueMeasuredScenery && camera.AllowsAtlasPlacement;
         var terrainCamera = continuesScenery ? localCamera : placement;
         var referenceTimestamp = measuredGround ? observed.GroundTracking.LocalReferenceTimestamp
             : observed.SelectedScenery?.ReferenceTimestamp;
         var lineage = captureIslands.Observe(Generation, roomKey, time, measuredGround || continuesScenery,
-            referenceTimestamp, corrected);
+            referenceTimestamp, relocalized);
         var contactCamera = lineage is null ? null : terrainCamera;
         var contact = walked.Observe(roomKey, analysis.Edges, masks.GroundKnight,
             contactCamera, controls, time, analysis.Floors, terrain.Walls, Generation, walkedEpoch, lineage);
@@ -156,14 +165,14 @@ public sealed class BotVisualGymObservationSource
             };
         }
         var localWalk = walked.InRoom(roomKey);
-        coverage.Observe(frame, terrainCamera, time, masks.AtlasExclusions, room.CompositionBounds,
+        coverage.Observe(frame, terrainCamera, time, masks.AtlasExclusions, roomState.CompositionBounds,
             observed.GroundTracking, admitted.AllowsAtlasWrite, continuesScenery, continuity.RetainBasis, captureEvidence,
             lineage is not null ? localWalk : null);
         var floors = GroundStrokeGeometry.MergeWalkedFloors(analysis.Floors,
             coverage.WalkedForPolicy(localWalk, lineage), contactCamera,
             frame.Width, frame.Height, masks.GroundKnight);
 
-        var timing = new BotCaptureTiming(time, time, Generation, chart, room.Revision);
+        var timing = new BotCaptureTiming(time, time, Generation, chart, roomState.Revision);
         var row = BotObservationBuilder.Gameplay(frame, timing, observations.MeasuredBatch, floors, terrain.Walls,
             terrainAnalyzed: true, placement, hud, contact.MeasuredFoot, controls,
             visualDoors: coverage.ProjectDoors(measuredGround || continuesScenery ? terrainCamera : null, size));

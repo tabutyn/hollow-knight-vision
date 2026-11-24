@@ -166,6 +166,73 @@ internal static class CalibratedSceneMotionTests
         }).RequiresWorldRecovery, "An unsupported registration gap still requires recovery.");
     }
 
+    public static void TestRendererRecognizesKnownRoomBeforeUsingRelativeMotion()
+    {
+        const int width = 640, height = 360;
+        var camera = new VisualGameplayTracker();
+        var pipeline = new GameplayTrackingPipeline(camera, new MaskedFrameMotionTracker(), deterministicGlobalSearch: true);
+        var groundPixels = new byte[width * height];
+        var texture = Grid().Pixels;
+        for (var y = 0; y < height; y++)
+        for (var x = 0; x < width; x++)
+            groundPixels[y * width + x] = (byte)texture[y / 4 * 160 + x / 4];
+        var absentFloor = new byte[width * height];
+        var edges = new byte[width * height];
+        var familiar = PlaceGrid(19);
+        var foreign = PlaceGrid(53);
+        var step = new LowResolutionTranslationDiagnostic(new(-2, 0, 1), null, null);
+
+        GameplayTrackedFrame? seeded = null;
+        for (var index = 0; index < 15; index++)
+            seeded = Observe(index, familiar, floor: true);
+        Check(seeded?.Observation.GroundVerified == true, "A measured floor must seed the room's place memory.");
+        var anchor = seeded!.DisplayCamera;
+        var moving = Observe(15, foreign, floor: false);
+        moving = Observe(16, foreign, floor: false);
+        Check(moving.DisplayCamera.X > anchor.X + 20, $"Relative motion must first leave the anchor ({moving.DisplayCamera}).");
+
+        var firstVote = Observe(17, familiar, floor: false);
+        Check(!firstVote.Observation.ReanchoredAtRoomPlace, "One familiar image cannot correct the view.");
+        var matched = Observe(18, familiar, floor: false);
+        Check(matched.Observation.FloorlessEvidence is
+            { SelectedSource: FloorlessPoseCandidateSource.RoomPlaceMatch, Place.CameraPosition: var pose, MaskedPosition: not null }
+            && pose == anchor && matched.DisplayCamera == anchor && !matched.Observation.GroundVerified
+            && !matched.AllowsAtlasWrite && matched.WorldEvidence is null && matched.RequiresWorldRecovery,
+            $"A confirmed place must replace relative motion without granting map placement ({matched.Observation.FloorlessEvidence}).");
+        var next = Observe(19, foreign, floor: false);
+        Near(anchor.X + 20, next.DisplayCamera.X);
+        Near(anchor.Y, next.DisplayCamera.Y);
+
+        _ = Observe(20, familiar, floor: false);
+        var newRoom = Observe(21, familiar, floor: false, room: "different-scene");
+        var continued = Observe(22, familiar, floor: false, room: "different-scene");
+        Check(!newRoom.Observation.ReanchoredAtRoomPlace && !continued.Observation.ReanchoredAtRoomPlace,
+            "A familiar image from the previous room cannot vote in a new one.");
+
+        GameplayTrackedFrame Observe(int index, LowResolutionMotionGrid image, bool floor, string room = "entrance")
+        {
+            var timestamp = index < 15 ? index * .05 : .75 + (index - 15) * .125;
+            var frame = new BgraFrame(width, height, width * 4, new byte[width * height * 4],
+                index, DateTimeOffset.UnixEpoch.AddSeconds(timestamp));
+            var pixels = floor ? groundPixels : absentFloor;
+            DetectedFloorLine[] floors = floor ? [new(201, new(0, width - 1))] : [];
+            var analysis = new GroundEdgeAnalysis(width, height, edges, pixels);
+            var comparison = new GroundComparisonAnalysis(width, height, edges, pixels);
+            var theory = new GroundTheoryAnalysis(comparison, GroundTheoryTuning.Default, [], floors);
+            var prepared = new GameplayTrackingPreparation(new(analysis, theory, floors, floors), floor ? null : step, [], []);
+            var signal = new FrameSignalProfile(64 * 36, 64 * 36, 64 * 36, 105, image);
+            return pipeline.Track(frame, prepared, null, new(true, true, false, new(true, false)),
+                signal, timestamp, 1, room, true, InputButtons.Right, false, captureWorldEvidence: true);
+        }
+
+        static LowResolutionMotionGrid PlaceGrid(int seed)
+        {
+            var pixels = new byte[64 * 36];
+            new Random(seed).NextBytes(pixels);
+            return new(64, 36, pixels.Select(x => (byte)(44 + x % 116)).ToArray());
+        }
+    }
+
     public static void TestGameplayCalibratesSceneryFromTrackedGround()
     {
         const int width = 640, height = 360;

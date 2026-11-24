@@ -129,6 +129,37 @@ internal static class GameplayGymVisualTests
             throw new InvalidOperationException("The visual blockade did not reach the policy input.");
     }
 
+    internal static void TestGymRecognizesAFloorlessReturnWithoutCreditingCoverage()
+    {
+        var source = new BotVisualGymObservationSource();
+        const int knightX = 552, floor = 239;
+        var grounded = DoorRoom(71, knightX, floor);
+        var bare = DoorRoom(71, knightX, floor, floorVisible: false);
+        BotVisualGymReading? placed = null;
+        for (var index = 0; index < 20; index++) placed = Observe(index, grounded);
+        if (placed?.Camera?.GroundVerified != true || placed.Observation?.AtlasView is not { CoveredCells: > 0 })
+            throw new InvalidOperationException($"The measured Gym view must seed a placed floor ({placed?.Camera}, {string.Join(",", placed?.Issues ?? [])}).");
+
+        var votes = Enumerable.Range(20, 8).Select(index => Observe(index, bare)).ToArray();
+        if (votes[0].Camera?.PoseSource == "coarse-place-match"
+            || votes.Skip(1).FirstOrDefault(row => row.Camera?.PoseSource == "coarse-place-match") is not
+                { Camera: { GroundVerified: false, AllowsAtlasWrite: false, AtlasPlacementPending: true },
+                  Observation: { AtlasView: null, VisualContext: { CameraX: null, CameraY: null } } })
+            throw new InvalidOperationException("Two floorless images must restore the local Gym camera without supplying policy placement or coverage credit. "
+                + string.Join("; ", votes.Select(row => row.Camera)));
+
+        BotVisualGymReading Observe(int index, byte[] pixels)
+        {
+            var time = index * .1;
+            var hud = new HudStencilResult([new(0, "full", new(12, 12, 10, 10), 1),
+                new(1, "full", new(24, 12, 10, 10), 1)], null, [], [], [], default, false, time);
+            return source.Observe(Frame(pixels, index), time, InputButtons.None, frame =>
+                [new ObjectDetection("game.playable-knight",
+                    new((knightX - 9d) / Width, (floor - 28d) / Height, 18d / Width, 13d / Height), .96f)
+                    { SourceFrameIdentifier = frame.CaptureId }], hud);
+        }
+    }
+
     internal static void TestVisualFootprintAndMaskedKnightRecovery()
     {
         var source = new BotVisualGymObservationSource();
@@ -612,29 +643,30 @@ internal static class GameplayGymVisualTests
                 throw new InvalidOperationException("The Gym policy vector must carry the visual door marking.");
         }
 
-        static byte[] DoorRoom(ulong state, int actorX, int row)
+    }
+
+    private static byte[] DoorRoom(ulong state, int actorX, int row, bool floorVisible = true)
+    {
+        var coarse = new byte[64 * 36];
+        for (var index = 0; index < coarse.Length; index++)
         {
-            var coarse = new byte[64 * 36];
-            for (var index = 0; index < coarse.Length; index++)
-            {
-                state = unchecked(state * 6364136223846793005 + 1);
-                coarse[index] = (byte)(24 + (state >> 32) % 44);
-            }
-            var pixels = new byte[Width * Height * 4];
-            for (var y = 0; y < Height; y++)
-            for (var x = 0; x < Width; x++)
-            {
-                var value = (byte)(coarse[y / 10 * 64 + x / 10] + (x * 23 + y * 37) % 9);
-                if (x is >= 35 and < 105 && y is >= 35 and < 55) value = 215;
-                if (y == row || y == row + 1) value = 165;
-                if (Math.Abs(x - actorX) <= 6 && y >= row - 26 && y <= row - 15)
-                    value = y == row - 20 && Math.Abs(x - actorX) <= 1 ? (byte)0 : (byte)233;
-                var offset = (y * Width + x) * 4;
-                pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = value;
-                pixels[offset + 3] = 255;
-            }
-            return pixels;
+            state = unchecked(state * 6364136223846793005 + 1);
+            coarse[index] = (byte)(24 + (state >> 32) % 44);
         }
+        var pixels = new byte[Width * Height * 4];
+        for (var y = 0; y < Height; y++)
+        for (var x = 0; x < Width; x++)
+        {
+            var value = (byte)(coarse[y / 10 * 64 + x / 10] + (x * 23 + y * 37) % 9);
+            if (x is >= 35 and < 105 && y is >= 35 and < 55) value = 215;
+            if (floorVisible && (y == row || y == row + 1)) value = 165;
+            if (Math.Abs(x - actorX) <= 6 && y >= row - 26 && y <= row - 15)
+                value = y == row - 20 && Math.Abs(x - actorX) <= 1 ? (byte)0 : (byte)233;
+            var offset = (y * Width + x) * 4;
+            pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = value;
+            pixels[offset + 3] = 255;
+        }
+        return pixels;
     }
 
     private static BgraFrame Frame(byte[] pixels, int index) =>

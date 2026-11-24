@@ -132,7 +132,8 @@ public enum FloorlessPoseCandidateSource
 {
     CoarseCaptureRate,
     MaskedRegistration,
-    CalibratedScene
+    CalibratedScene,
+    RoomPlaceMatch
 }
 
 public readonly record struct FloorlessPoseCandidate(
