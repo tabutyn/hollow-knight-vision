@@ -813,7 +813,9 @@ public sealed class HackerAtlasPipeline
                     raster.ContentBounds, raster.Tiles.Select(tile => new HackerAtlasArchivedTile(
                         new AtlasTileCoordinate(tile.TileX, tile.TileY), tile.Image)).ToArray());
             }).ToArray();
-            return (new HackerAtlasArchive(archivedRooms, connections.ToArray(), offsets, registrationCount, createdAt), revision);
+            // A scene can have a live anchor before its first cadenced tile is registered.
+            var archive = new HackerAtlasArchive(archivedRooms, connections, offsets, registrationCount, createdAt);
+            return (archive.RetainRoomsWithPixels(), revision);
         }
     }
 

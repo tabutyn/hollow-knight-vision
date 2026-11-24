@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Text.Json.Nodes;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 
@@ -204,6 +205,7 @@ internal static class HackerAtlasArchiveTests
             Rooms = [room with { Tiles = [tile with { Image = TexturedFrame(1, 1, 0) }] }]
         };
         Throws<InvalidDataException>(() => workspace.Archives.Write(null, malformed));
+        Throws<InvalidDataException>(() => workspace.Archives.Write(null, original with { Rooms = [room with { Tiles = [] }] }));
         Check(File.ReadAllBytes(unassigned).SequenceEqual(originalBytes)
             && Directory.GetFiles(workspace.ArchiveRoot).Length == 1, "A failed write cannot replace the prior map or retain staging data.");
         var wrong = new SaveProfileAtlas(2, Guid.NewGuid());
@@ -225,6 +227,117 @@ internal static class HackerAtlasArchiveTests
         Check(workspace.Archives.Read(null) is { RegistrationCount: 0, Rooms.Count: 0 }
             && Read(workspace.Archives, another).Rooms.Count == 1,
             "An explicit empty replacement must clear only its own archive.");
+    }
+
+    public static void TestArchiveSavesOnlyRoomsWithCommittedPixels()
+    {
+        using var workspace = new Fixture();
+        var pipeline = new HackerAtlasPipeline();
+        var preparer = new HackerFramePreparer();
+        var first = Integrate(pipeline, "A", 10, 1, preparer);
+        var transition = Prepare("B", 100, 2, preparer, compose: false);
+        Check(pipeline.Process(transition) is null && pipeline.Snapshot().RoomCount == 2,
+            "A prepared room can have live geometry before its first registration.");
+
+        var offsets = new Dictionary<string, AtlasPoint> { ["A"] = new(7, -3), ["B"] = new(-2, 1) };
+        var pending = pipeline.CaptureArchive(offsets).Archive;
+        Check(pending.Rooms.Count == 1 && pending.Rooms[0].Id == first.Rooms.Single().Id && pending.Connections.Count == 0
+            && pending.RoomOffsets.Count == 1 && pending.RoomOffsets["A"] == offsets["A"]
+            && pending.RegistrationCount == 1, "A restore point must contain only rooms, doorways, and offsets with committed pixels.");
+        workspace.Archives.Write(null, pending);
+        var named = workspace.Archives.SaveState("Before entering the next room", null, pending);
+
+        var entered = Integrate(pipeline, "B", 101, 3, preparer);
+        var committed = pipeline.CaptureArchive(offsets).Archive;
+        Check(committed.Rooms.Count == 2 && committed.Connections.Single() == entered.Connections.Single()
+            && committed.RoomOffsets["B"] == offsets["B"] && committed.RegistrationCount == 2,
+            "The next registered image must make the new room, doorway, and offset saveable.");
+        workspace.Archives.Write(null, committed);
+        Check(workspace.Archives.Read(null)?.Rooms.Count == 2 && workspace.Archives.LoadState(named).Rooms.Count == 1,
+            "Autosaving the new room must leave the older named state unchanged.");
+    }
+
+    public static void TestRestoresNamedRoomAndContinuesWithTheSameAnchor()
+    {
+        using var workspace = new Fixture();
+        var pipeline = new HackerAtlasPipeline();
+        var preparer = new HackerFramePreparer();
+        for (var frame = 1; frame <= 3; frame++) _ = Integrate(pipeline, "A", 10 + frame, frame, preparer);
+        var offsets = new Dictionary<string, AtlasPoint> { ["A"] = new(27, -3) };
+        var original = pipeline.CaptureArchive(offsets).Archive;
+        var saved = workspace.Archives.SaveState("In the first room", null, original);
+        var loaded = workspace.Archives.LoadState(saved);
+        var expected = original.Rooms.Single();
+        var restored = loaded.Rooms.Single();
+        Check(expected.Id == restored.Id && expected.Position == restored.Position
+            && expected.CameraAnchor == restored.CameraAnchor && expected.ContentBounds == restored.ContentBounds
+            && restored.Tiles.Count == expected.Tiles.Count && expected.Tiles.Zip(restored.Tiles).All(pair =>
+                pair.First.Coordinate == pair.Second.Coordinate && pair.First.Image.Pixels.SequenceEqual(pair.Second.Image.Pixels))
+            && loaded.RoomOffsets["A"] == offsets["A"], "Named restores must keep room geometry, camera anchors, offsets, and exact tile pixels.");
+
+        var resumed = HackerAtlasPipeline.FromArchive(loaded);
+        var restoredPreparer = new HackerFramePreparer();
+        restoredPreparer.RestoreRoomAnchors(loaded.Rooms);
+        var next = Prepare("A", 172, 4, restoredPreparer);
+        Check(next.LiveBounds == Prepare("A", 172, 4, preparer).LiveBounds,
+            "The next frame must use the saved camera anchor.");
+        var composed = resumed.Process(next) ?? throw new InvalidOperationException("Expected a resumed image.");
+        Check(composed.Rooms.Single().Id == expected.Id
+            && resumed.CaptureArchive(loaded.RoomOffsets).Archive.RegistrationCount == 4
+            && workspace.Archives.LoadState(saved).RegistrationCount == 3, "Resuming capture must keep the same room and leave its named state unchanged.");
+    }
+
+    public static void TestLegacyArchiveOmitsUnregisteredRoomsAndAllowsMissingOffsets()
+    {
+        using var workspace = new Fixture();
+        var pipeline = new HackerAtlasPipeline();
+        _ = Integrate(pipeline, "A", 10, 1);
+        var original = pipeline.CaptureArchive(new Dictionary<string, AtlasPoint> { ["A"] = new(7, -3) }).Archive;
+        workspace.Archives.Write(null, original);
+        var archivePath = Path.Combine(workspace.ArchiveRoot, "unassigned.zip");
+        var valid = original.Rooms.Single();
+        var pendingId = Guid.NewGuid();
+        ChangeManifest(archivePath, manifest =>
+        {
+            var rooms = manifest["rooms"]!.AsArray();
+            var pending = rooms[0]!.DeepClone();
+            pending["id"] = pendingId;
+            pending["sceneName"] = "B";
+            pending["tiles"] = new JsonArray();
+            rooms.Add(pending);
+            manifest["connections"]!.AsArray().Add(new JsonObject
+            {
+                ["id"] = Guid.NewGuid(),
+                ["fromRoomId"] = valid.Id,
+                ["toRoomId"] = pendingId,
+                ["fromSide"] = (int)HackerRoomSide.Right,
+                ["toSide"] = (int)HackerRoomSide.Left,
+                ["fromCoordinate"] = 20,
+                ["toCoordinate"] = 18
+            });
+            var offsets = manifest["roomOffsets"]!.AsObject();
+            offsets["B"] = offsets["A"]!.DeepClone();
+        });
+        var recovered = workspace.Archives.Read(null)!;
+        Check(recovered.Rooms.Count == 1 && recovered.Rooms[0].Id == valid.Id && recovered.Connections.Count == 0
+            && recovered.RoomOffsets.Count == 1 && recovered.RoomOffsets["A"] == original.RoomOffsets["A"],
+            "An older archive with an unregistered room must still load its committed room and remove the pending geometry.");
+
+        ChangeManifest(archivePath, manifest => manifest.Remove("roomOffsets"));
+        Check(workspace.Archives.Read(null) is { Rooms.Count: 1, RoomOffsets.Count: 0 },
+            "An archive without room offsets must keep its committed room and use automatic placement.");
+    }
+
+    private static void ChangeManifest(string path, Action<JsonObject> change)
+    {
+        using var zip = ZipFile.Open(path, ZipArchiveMode.Update);
+        var entry = zip.GetEntry("atlas.json")!;
+        JsonObject manifest;
+        using (var original = entry.Open()) manifest = JsonNode.Parse(original)!.AsObject();
+        change(manifest);
+        entry.Delete();
+        using var updated = new StreamWriter(zip.CreateEntry("atlas.json").Open());
+        updated.Write(manifest.ToJsonString());
     }
 
     public static void TestProfilePreflightKeepsBothWritersOnFailure()
@@ -312,7 +425,7 @@ internal static class HackerAtlasArchiveTests
         pipeline.Process(Prepare(scene, x, index, preparer ?? new HackerFramePreparer()))
         ?? throw new InvalidOperationException("Expected a registered playable image.");
 
-    private static HackerPreparedFrame Prepare(string scene, double x, int index, HackerFramePreparer preparer)
+    private static HackerPreparedFrame Prepare(string scene, double x, int index, HackerFramePreparer preparer, bool compose = true)
     {
         const int width = 192;
         const int height = 128;
@@ -322,7 +435,7 @@ internal static class HackerAtlasArchiveTests
             (ulong)index, index, index, scene, true, x / scale + 2, 2, 0, 1, 0, true, true, true,
             x / scale, 2, 0, x / scale, 2, 0, height / (2 * scale), scale, scale,
             width - 12, height / 2, width, height, width, height) { AtlasGameplayActive = true };
-        return preparer.Process(new(new HackerCapturedFrame(index, image, index, true), telemetry, index))
+        return preparer.Process(new(new HackerCapturedFrame(index, image, index, compose), telemetry, index))
             ?? throw new InvalidOperationException("Expected a registered playable image.");
     }
 
