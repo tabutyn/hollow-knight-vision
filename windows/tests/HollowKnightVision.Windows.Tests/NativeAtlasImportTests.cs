@@ -127,7 +127,7 @@ internal static class NativeAtlasImportTests
                 {
                     var pipeline = new WindowsLiveWorldPipeline(Path.Combine(folder, "live-world"));
                     Check(pipeline.Reopen(), "the desktop can resume the imported live world");
-                    Check(pipeline.SavedGround.Any(line => line.SegmentId != WalkedGroundMemory.WalkedSegmentId
+                    Check(pipeline.SavedWorld.DisplayLines.Any(line => line.SegmentId != WalkedGroundMemory.WalkedSegmentId
                         && line.AtlasStart == new AtlasPoint(-270, -110)),
                         "confirmed green ground accompanies imported Atlas tiles before the first live frame");
                 },
@@ -497,6 +497,7 @@ internal static class NativeAtlasImportTests
                     Check(last.AllowsAtlasWrite, "save measured arrival samples");
                 }
                 var snapshot = new LiveWorldSessionStore(root).Load().Snapshot;
+                var placement = last!.SavedWorld!.Placement;
                 Check(snapshot.Observations.Take(saved.Observations.Count).Select(frame => frame.OptimizedPose)
                     .SequenceEqual(saved.Observations.Select(frame => frame.OptimizedPose)),
                     "doorway alignment preserves the restored poses");
@@ -504,6 +505,7 @@ internal static class NativeAtlasImportTests
                 if (airborne || competingSurface)
                 {
                     Check(snapshot.DoorwayFloorConstraints.Count == 0 && last!.RebuiltAtlas is null
+                        && placement.Doorways.Count == 0 && placement.EstimatedFootprints.Count > 0
                         && snapshot.Observations[^1].OptimizedPose == new AtlasPoint(expectedX, 20),
                         "ambiguous or airborne evidence leaves height provisional");
                     return;
@@ -516,6 +518,20 @@ internal static class NativeAtlasImportTests
                     && relation.ArrivalSupport.Count == 3, "the saved doorway names three source and target images");
                 Check(departure.OptimizedPose.Y + relation.DepartureFloor.Y
                     == arrival.OptimizedPose.Y + relation.ArrivalFloor.Y, "the doorway floor aligns exactly");
+                var connector = placement.Doorways.Single();
+                var departureOffset = LiveWorldGroundOverlay.ImageOriginOffset(departure);
+                var arrivalOffset = LiveWorldGroundOverlay.ImageOriginOffset(arrival);
+                Check(connector == new LiveWorldDoorwayStroke(
+                    new(departure.OptimizedPose.X + departureOffset.X + relation.DepartureFloor.X,
+                        departure.OptimizedPose.Y + departureOffset.Y + relation.DepartureFloor.Y),
+                    new(arrival.OptimizedPose.X + arrivalOffset.X + relation.ArrivalFloor.X,
+                        arrival.OptimizedPose.Y + arrivalOffset.Y + relation.ArrivalFloor.Y))
+                    && connector.Start.Y == connector.End.Y && placement.EstimatedFootprints.Count > 0,
+                    "The registered display must use the shared, corrected floor row and retain the estimated footprint.");
+                var reopened = new WindowsLiveWorldPipeline(root).SavedWorld.Placement;
+                Check(reopened.Doorways.SequenceEqual(placement.Doorways)
+                    && reopened.EstimatedFootprints.SequenceEqual(placement.EstimatedFootprints),
+                    "The same measured connector and estimated footprints must be available before another live frame.");
                 Check(last!.RebuiltAtlas is { TileCount: > 0 } && last.AcceptedClosure is null
                     && last.CameraPose == new AtlasPoint(expectedX, 35)
                     && last.AppliedCorrection == new AtlasPoint(0, 15),

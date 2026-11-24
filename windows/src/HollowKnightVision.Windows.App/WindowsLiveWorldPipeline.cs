@@ -54,7 +54,7 @@ internal sealed record WindowsLiveWorldPipelineResult(
     internal bool Discarded { get; init; }
     internal bool PlacementPending { get; init; }
     public IReadOnlyList<GroundHypothesisAtlasLine> WalkedGround { get; init; } = [];
-    internal IReadOnlyList<GroundHypothesisAtlasLine>? SavedGround { get; init; }
+    internal LiveWorldGroundProjection? SavedWorld { get; init; }
     internal GameplayPathRegistration? PathRegistration { get; init; }
     internal long WalkedCoordinateEpoch { get; init; }
     internal IReadOnlyList<GroundHypothesisAtlasLine> RecordedLocalWalk { get; init; } = [];
@@ -144,7 +144,7 @@ internal sealed class WindowsLiveWorldPipeline
     private long pathGeometryEpoch;
 
     internal bool HasDurableEvidence => Volatile.Read(ref hasDurableEvidence);
-    internal IReadOnlyList<GroundHypothesisAtlasLine> SavedGround => Volatile.Read(ref savedGround).DisplayLines;
+    internal LiveWorldGroundProjection SavedWorld => Volatile.Read(ref savedGround);
 
     internal WindowsLiveWorldPipeline(string rootDirectory)
         : this(rootDirectory, transactionObserver: null, transactionFault: null) { }
@@ -708,6 +708,8 @@ internal sealed class WindowsLiveWorldPipeline
                 if (!placementPending && (requiresRebuild || committed.GroundGeometry is not null
                     || groundEvidence.Count != 0 || !projected.PathRooms.ContainsKey(resolvedRoomId)))
                     projected = LiveWorldGroundOverlay.ProjectWorld(durableSnapshot);
+                else if (!placementPending && durableSnapshot.TrackingIslands.LastOrDefault() is { Placement: LiveIslandPlacement.Estimated })
+                    projected = projected with { Placement = LiveWorldGroundOverlay.ProjectPlacement(durableSnapshot) };
                 transactionObserver?.Invoke("publish");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 if (requiresRebuild) pathGeometryEpoch++;
@@ -731,7 +733,7 @@ internal sealed class WindowsLiveWorldPipeline
                 {
                     PlacementPending = placementPending,
                     WalkedGround = publishedGround,
-                    SavedGround = projected.DisplayLines,
+                    SavedWorld = projected,
                     PathRegistration = PathRegistrationFor(resolvedRoomId, basis),
                     WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
                     RecordedLocalWalk = committedLocalWalk
@@ -880,7 +882,7 @@ internal sealed class WindowsLiveWorldPipeline
         {
             PlacementPending = placementPending,
             WalkedGround = !placementPending && projectedWalkedGround.TryGetValue(committedRoomId, out var ground) ? ground : [],
-            SavedGround = SavedGround,
+            SavedWorld = SavedWorld,
             PathRegistration = PathRegistrationFor(committedRoomId, worldBasis.Snapshot.WorldFromLocal),
             WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
             RecordedLocalWalk = walkedScope == (request.CaptureGeneration, committedRoomId, request.WalkedCoordinateEpoch)

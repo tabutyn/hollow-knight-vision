@@ -95,6 +95,8 @@
                                 IsHitTestVisible="False" Panel.ZIndex="20"/>
                         <Canvas x:Name="GameplayGroundCanvas" Width="640" Height="360"
                                 IsHitTestVisible="False" Panel.ZIndex="19"/>
+                        <Canvas x:Name="GameplayPlacementCanvas" IsHitTestVisible="False"
+                                Visibility="Collapsed" Panel.ZIndex="18"/>
                         <Canvas x:Name="GameplayPathCanvas" IsHitTestVisible="False" Visibility="Collapsed" Panel.ZIndex="21"/>
                     </Canvas>
                     <local:MenuStencilParticles x:Name="MenuParticles" IsHitTestVisible="False"/>
@@ -554,6 +556,10 @@
                                     <CheckBox x:Name="GroundFeaturesCheck" Content="Ground Features" Margin="0,0,0,10" IsChecked="True"/>
                                     <CheckBox x:Name="AtlasPathsCheck" Content="Atlas paths" IsChecked="True" Margin="0,0,0,10"
                                               Checked="AtlasPaths_Changed" Unchecked="AtlasPaths_Changed"/>
+                                    <CheckBox x:Name="EstimatedRoomOutlinesCheck" Content="Estimated Room Outlines"
+                                              ToolTip="Dashed outlines show estimated room placement."
+                                              IsChecked="False" Margin="0,0,0,10" Checked="EstimatedRoomOutlines_Changed"
+                                              Unchecked="EstimatedRoomOutlines_Changed"/>
                                     <CheckBox x:Name="EstimatedRoomConnectionsCheck" Content="Estimated room connections"
                                               IsChecked="False" Margin="0,0,0,10" Checked="EstimatedRoomConnections_Changed"
                                               Unchecked="EstimatedRoomConnections_Changed"/>

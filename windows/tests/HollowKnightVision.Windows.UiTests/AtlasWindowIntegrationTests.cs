@@ -5,6 +5,8 @@ using System.Windows.Controls;
 using System.Windows.Threading;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
+using Line = System.Windows.Shapes.Line;
+using Rectangle = System.Windows.Shapes.Rectangle;
 
 internal static class AtlasWindowIntegrationTests
 {
@@ -25,6 +27,7 @@ internal static class AtlasWindowIntegrationTests
         }
         Console.WriteLine("PASS Atlas window saves, restores and deletes scoped snapshots and switches both playthroughs");
         Console.WriteLine("PASS Hacker Atlas draws restored rooms at the measured passage elevation");
+        Console.WriteLine("PASS Gameplay Atlas draws measured doorways independently of optional outlines and hides them outside gameplay");
     }
 
     private static void VerifyRestoredPassageAlignment(string root)
@@ -174,11 +177,69 @@ internal static class AtlasWindowIntegrationTests
             Check(hackerStates.Read(profile)?.Rooms.Count == 0 && hackerStates.ListStates().Count == count
                 && VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7,
                 "Deleting the Hacker autosave must clear only that active map.");
+
+            VerifyGameplayPlacementVisibility(window);
         }
         finally
         {
             SetField(window, "isClosing", true);
             Wait(InvokeTask(window, "PrepareShutdownAsync"));
+        }
+    }
+
+    private static void VerifyGameplayPlacementVisibility(MainWindow window)
+    {
+        var layer = Control<Canvas>(window, "GameplayPlacementCanvas");
+        var outlines = Control<CheckBox>(window, "EstimatedRoomOutlinesCheck");
+        var tiles = (Dictionary<AtlasTileCoordinate, Image>)typeof(MainWindow)
+            .GetField("gameplayTileImages", InstanceMembers)!.GetValue(window)!;
+        tiles.Add(new(0, 0), new Image());
+        try
+        {
+            SetField(window, "workspace", "Gameplay");
+            SetField(window, "gameplaySavedWorld", LiveWorldGroundProjection.Empty with
+            {
+                Placement = new(
+                    [new(new(30, -12), new(60, -12)), new(new(50, -12), new(50, -60))],
+                    [new(new(40, -26), new(28, 20))])
+            });
+            SetField(window, "gameplayAtlasMinimumTileX", -1);
+            _ = Invoke(window, "UpdateGameplayPathVisibility");
+            var join = layer.Children.OfType<Line>().Single();
+            Check(outlines.IsChecked == false && layer.Visibility == Visibility.Visible && !layer.IsHitTestVisible
+                && layer.Children.Count == 1 && join.X1 == 286 && join.X2 == 316 && join.Y1 == 12 && join.Y2 == 12,
+                "A saved Atlas should show its measured horizontal join with the tile origin, without vertical lines or outlines.");
+
+            outlines.IsChecked = true;
+            var box = layer.Children.OfType<Rectangle>().Single();
+            Check(Canvas.GetLeft(box) == 296 && Canvas.GetTop(box) == 6 && box.Width == 28 && box.Height == 20
+                && box.StrokeDashArray.Count == 2 && layer.Children.OfType<Line>().Count() == 1,
+                "The Debug View toggle should add only the dashed footprint.");
+            outlines.IsChecked = false;
+            Check(layer.Children.Count == 1, "Turning outlines off must keep the measured join.");
+
+            SetField(window, "hasFreshGameFrame", true);
+            _ = Invoke(window, "UpdateGameplayPathVisibility");
+            Check(layer.Visibility == Visibility.Collapsed, "A fresh capture awaiting gameplay evidence must hide the saved overlay.");
+            SetField(window, "gameplayFrameRegistered", true);
+            SetField(window, "gameplayPlacementFrame", (15L, 3d));
+            _ = Invoke(window, "UpdateGameplayPathVisibility");
+            Check(layer.Visibility == Visibility.Visible, "A registered gameplay result must show the measured overlay.");
+
+            var evidence = (AtlasPathFrameEvidence)typeof(MainWindow)
+                .GetField("atlasPathEvidence", InstanceMembers)!.GetValue(window)!;
+            evidence.ObserveGameplayPreview(16, false);
+            _ = Invoke(window, "UpdateGameplayPathVisibility");
+            Check(layer.Visibility == Visibility.Collapsed, "A loading or menu frame must hide the previous gameplay overlay immediately.");
+            SetField(window, "gameplayPlacementFrame", (17L, 4d));
+            evidence.ObserveReceiver(Guid.NewGuid(), false, 4.1);
+            _ = Invoke(window, "RefreshAtlasPathVisibility");
+            Check(layer.Visibility == Visibility.Collapsed, "Receiver menus must hide the overlay even without a newer gameplay image.");
+        }
+        finally
+        {
+            tiles.Clear();
+            _ = Invoke(window, "ClearGameplayAtlasRuntime", false);
         }
     }
 
