@@ -3351,6 +3351,7 @@ public partial class MainWindow : Window
                     ? new(visualTelemetry.CameraX, visualTelemetry.CameraY) : null;
                 botAtlas = new(graph, committedRoom, center)
                 {
+                    MeasuredOwner = tracked.MeasuredLineage is not null ? worldPlacement : null,
                     DoorPlacement = center.HasValue ? placement.BotDoorPlacement(walkedCoordinateEpoch) : null
                 };
             }

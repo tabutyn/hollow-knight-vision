@@ -22,7 +22,7 @@ public sealed record BotBlockadePose(string Space, double X, double Y, double Wi
     }
 }
 
-/// <summary>Registers stationary pushes using fresh Knight positions in one visit's coordinate space.</summary>
+/// <summary>Registers stationary pushes using fresh Knight positions during one room visit.</summary>
 public sealed class BotBlockadeVisit
 {
     private readonly record struct VisualBasis(long Generation, int Room, long TrackerEpoch, int Width,
@@ -32,6 +32,8 @@ public sealed class BotBlockadeVisit
     private (AtlasPoint Position, double Time)? previous;
     private (AtlasPoint Anchor, double Time, int Side, int Samples)? push;
     private (long Generation, int Room, string Space)? chart;
+    private double chartWidth;
+    private bool? usesAtlasCoordinates;
     private (long? Frame, double Time)? lastDetection;
     private BotBlockadeEvidence? lastEvidence;
     private VisualBasis? visualBasis;
@@ -41,6 +43,7 @@ public sealed class BotBlockadeVisit
     {
         visualBasis = null;
         visualEpoch = 0;
+        usesAtlasCoordinates = null;
         ClearContacts();
     }
 
@@ -61,6 +64,13 @@ public sealed class BotBlockadeVisit
 
     public BotCaptureObservation AddEvidence(BotCaptureObservation row, BotBlockadePose? pose) =>
         row with { BlockadeVersion = 1, BlockadePose = pose, Blockade = Observe(row, pose) };
+
+    public BotCaptureObservation AddAtlasEvidence(BotCaptureObservation row, BotAtlasBlockadeProjection? projection,
+        AtlasPoint? measuredOrigin, int width)
+    {
+        var pose = measuredOrigin is { } origin ? projection?.Pose(origin, width) : null;
+        return row with { BlockadeVersion = 1, BlockadePose = pose, Blockade = Observe(row, pose, projection, atlas: true) };
+    }
 
     public BotCaptureObservation AddVisualEvidence(BotCaptureObservation row)
     {
@@ -119,21 +129,45 @@ public sealed class BotBlockadeVisit
     private void Rebase(AtlasPoint translation, string destination)
     {
         for (var index = 0; index < marks.Count; index++) marks[index] = Moved(marks[index]);
-        if (previous is { } sighting) previous = (MovedPoint(sighting.Position), sighting.Time);
-        if (push is { } drive) push = (MovedPoint(drive.Anchor), drive.Time, drive.Side, drive.Samples);
+        TranslateSighting(translation);
         if (lastEvidence is { } evidence) lastEvidence = evidence with { Mark = Moved(evidence.Mark) };
 
         BotBlockadeMark Moved(BotBlockadeMark mark) =>
             mark with { Space = destination, X = mark.X + translation.X, Y = mark.Y + translation.Y };
+    }
+
+    private void TranslateSighting(AtlasPoint translation)
+    {
+        if (previous is { } sighting) previous = (MovedPoint(sighting.Position), sighting.Time);
+        if (push is { } drive) push = (MovedPoint(drive.Anchor), drive.Time, drive.Side, drive.Samples);
         AtlasPoint MovedPoint(AtlasPoint point) => new(point.X + translation.X, point.Y + translation.Y);
     }
 
     private static bool IsFinite(CameraVector value) => double.IsFinite(value.X) && double.IsFinite(value.Y);
 
-    public BotBlockadeEvidence? Observe(BotCaptureObservation row, BotBlockadePose? pose)
+    public BotBlockadeEvidence? Observe(BotCaptureObservation row, BotBlockadePose? pose) =>
+        Observe(row, pose, null, atlas: false);
+
+    private BotBlockadeEvidence? Observe(BotCaptureObservation row, BotBlockadePose? pose,
+        BotAtlasBlockadeProjection? projection, bool atlas)
     {
-        if (chart is { } current && (current.Generation != row.Generation || current.Room != row.RoomId
-            || pose is not null && current.Space != pose.Space)) Reset();
+        if (usesAtlasCoordinates is { } mode && mode != atlas) Reset();
+        if (chart is { } current)
+        {
+            if ((current.Generation, current.Room) != (row.Generation, row.RoomId)) Reset();
+            else if (pose is { IsValid: true } next && (current.Space != next.Space || atlas && chartWidth != next.Width))
+            {
+                if (projection is null) Reset();
+                else if (chartWidth == next.Width && projection.OffsetFrom(current.Space) is { } shift)
+                {
+                    TranslateSighting(shift);
+                    chart = (row.Generation, row.RoomId, next.Space);
+                    lastEvidence = null;
+                }
+                else Interrupt();
+            }
+        }
+        usesAtlasCoordinates = atlas;
         if (row.KnightPrediction is not null && row.Issues.Count == 0 && pose is { IsValid: true }
             && chart is not null && push is { } driveInProgress && row.DriveDirection == driveInProgress.Side
             && previous is { } previousSighting && row.CapturedAt - previousSighting.Time is >= 0 and <= .25)
@@ -148,6 +182,7 @@ public sealed class BotBlockadeVisit
             return null;
         }
         chart = (row.Generation, row.RoomId, pose.Space);
+        chartWidth = pose.Width;
         var width = pose.Width;
         var position = new AtlasPoint(pose.X + row.Features[0] * width, pose.Y + row.Features[1] * width);
         var time = row.CapturedAt;
@@ -167,10 +202,17 @@ public sealed class BotBlockadeVisit
 
         if (row.Grounded == false || row.DriveDirection is not (-1 or 1)
             || push is { } currentPush && currentPush.Side != row.DriveDirection) push = null;
-        if (repeated) return lastEvidence;
-        lastDetection = (row.DetectionFrameId, detection);
+        if (repeated)
+        {
+            if (projection is null) return lastEvidence;
+            // A correction may move a mark between detector results. Reuse
+            // the last measured Knight without adding a new push or crossing.
+            if (previous is not { } measured) return null;
+            position = measured.Position;
+        }
+        else lastDetection = (row.DetectionFrameId, detection);
 
-        if (row.Grounded != false && row.DriveDirection is -1 or 1)
+        if (!repeated && row.Grounded != false && row.DriveDirection is -1 or 1)
         {
             var side = row.DriveDirection.Value;
             var toleranceX = width * Math.Clamp(row.Features[2] * .15, .0015, .006);
@@ -182,7 +224,8 @@ public sealed class BotBlockadeVisit
             if (drive.Samples >= 2 && time - drive.Time >= .15)
             {
                 var point = new AtlasPoint(position.X + side * width * Math.Max(.008, row.Features[2] / 2), position.Y);
-                var matching = marks.FindIndex(candidate => candidate.Direction == side
+                var matching = marks.FindIndex(candidate => candidate.Space == pose.Space && candidate.Direction == side
+                    && (projection is null || candidate.ViewWidth == width)
                     && Distance(new(candidate.X, candidate.Y), point) <= .045 * width);
                 var mark = new BotBlockadeMark(pose.Space, point.X, point.Y, side, width, false);
                 if (matching < 0) marks.Add(mark);
@@ -195,12 +238,17 @@ public sealed class BotBlockadeVisit
         {
             var mark = marks[i];
             if (mark.Crossed) continue;
-            var dx = (mark.X - position.X) / width;
-            var dy = (mark.Y - position.Y) / width;
+            var translation = mark.Space == pose.Space
+                ? default(AtlasPoint) : projection?.OffsetFrom(mark.Space);
+            if (mark.ViewWidth != width && projection is not null || translation is not { } shift) continue;
+            var x = mark.X + shift.X;
+            var y = mark.Y + shift.Y;
+            var dx = (x - position.X) / width;
+            var dy = (y - position.Y) / width;
             if (Math.Abs(dy) > .065) continue;
             var ahead = dx * mark.Direction;
-            if (previous is { } evidence && ahead < -.018 && Math.Abs(evidence.Position.Y - mark.Y) <= .065 * width
-                && (mark.X - evidence.Position.X) * mark.Direction >= -.018 * width)
+            if (!repeated && previous is { } evidence && ahead < -.018 && Math.Abs(evidence.Position.Y - y) <= .065 * width
+                && (x - evidence.Position.X) * mark.Direction >= -.018 * width)
             {
                 marks[i] = mark with { Crossed = true };
                 continue;
@@ -208,7 +256,7 @@ public sealed class BotBlockadeVisit
             if (ahead is >= -.018 and <= .095 && (nearest is null || Math.Abs(dx) < Math.Abs(nearest.Dx)))
                 nearest = new(mark, dx, dy);
         }
-        previous = (position, time);
+        if (!repeated) previous = (position, time);
         lastEvidence = nearest;
         return lastEvidence;
     }

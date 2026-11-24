@@ -444,6 +444,39 @@ internal static class GameplayGymVisualTests
         }
     }
 
+    internal static void TestGymRegistersAStationaryNewWallIsland()
+    {
+        var atlas = new BotGymAtlasCoverage();
+        atlas.EnterRoom(7);
+        var measured = GroundHypothesisTrackingResult.Empty with
+        {
+            PoseVerified = true, HasConfirmedGround = true, LocalTextureSupport = 4
+        };
+        Observe(1, 1, 1);
+        var first = atlas.BlockadeProjection(1, 1);
+        Observe(2, 1.05, 2);
+        if (first is null || atlas.BlockadeProjection(2, 1.05) is not null)
+            throw new InvalidOperationException("The Gym must wait for its own measured Atlas placement before using the new island.");
+        Observe(3, 1.2, 2);
+        var second = atlas.BlockadeProjection(2, 1.2);
+        if (second is null || second.Space == first.Space || second.OffsetFrom(first.Space) != default(AtlasPoint)
+            || atlas.Snapshot.TrackingIslands.Count != 2)
+            throw new InvalidOperationException("A new measured owner must be committed even at the same stationary pose.");
+        Observe(4, 1.4, 1);
+        if (atlas.BlockadeProjection(1, 1.4)?.Space != first.Space || atlas.Snapshot.TrackingIslands.Count != 2)
+            throw new InvalidOperationException("Returning to a measured owner must restore its own Gym wall space.");
+        atlas.Interrupt(requireMatch: true);
+        if (atlas.BlockadeProjection(1, 1.5) is not null)
+            throw new InvalidOperationException("A suspended Gym chart cannot supply wall placements.");
+
+        void Observe(int id, double timestamp, long lineage)
+        {
+            var image = new BgraFrame(64, 48, 256, new byte[64 * 48 * 4], id, DateTimeOffset.UnixEpoch);
+            atlas.Observe(image, default(AtlasPoint), timestamp, [], default, measured, admitsPlacement: true,
+                captureEvidence: new(timestamp) { MeasuredLineage = lineage });
+        }
+    }
+
     internal static void TestGymReportsCorrectionsOnlyForAnExistingVisualEstimate()
     {
         var source = new BotVisualGymObservationSource();

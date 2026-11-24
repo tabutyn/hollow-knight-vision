@@ -223,13 +223,13 @@ internal static class BotDesktopCaptureIntegrationTests
             VerifyGameplayAdmission(window, capture, hudFrame);
 
             var scene = FrameWithScenery(hudFrame);
+            var shift = new AtlasPoint(40, -16);
             _ = Step(10, .50, InputButtons.Right, 2, default, GroundHypothesisTrackingResult.Empty);
             Thread.Sleep(115);
             _ = Step(11, .50, InputButtons.Right, 2, default, GroundHypothesisTrackingResult.Empty);
             Thread.Sleep(115);
             var before = Step(12, .50, InputButtons.Right, 2, default, GroundHypothesisTrackingResult.Empty);
 
-            var shift = new AtlasPoint(40, -16);
             var correction = GroundHypothesisTrackingResult.Empty with
             {
                 PoseVerified = true, HasConfirmedGround = true, LocalTextureSupport = 4,
@@ -276,13 +276,13 @@ internal static class BotDesktopCaptureIntegrationTests
             var translatedWall = rows[3].Blockade;
             Check(rows.Take(2).All(row => row.Blockade is null)
                 && oldWall is { Mark.Direction: 1 } && translatedWall is { Mark.Direction: 1 }
-                && oldWall.Mark.Space != translatedWall.Mark.Space
-                && Math.Abs(translatedWall.Mark.X - oldWall.Mark.X - shift.X / hudFrame.Width) < 1e-8
-                && Math.Abs(translatedWall.Mark.Y - oldWall.Mark.Y - shift.Y / hudFrame.Width) < 1e-8
+                && translatedWall.Mark == oldWall.Mark
                 && Math.Abs(translatedWall.Dx - oldWall.Dx) < 1e-8
-                && rows[3].BlockadePose?.Space == translatedWall.Mark.Space
+                && Math.Abs(translatedWall.Dy - oldWall.Dy) < 1e-8
+                && rows[3].BlockadePose is { } newPose && newPose.Space != oldWall.Mark.Space
+                && newPose.Width == hudFrame.Width
                 && rows[3].VisualContext is { CameraX: null, CameraY: null },
-                "A clip frame with a matching scenery pose must carry the translated wall and its original relative distance.");
+                "A clip frame in a different measured island must keep the original wall and its projected relative distance.");
             Check(rows.Skip(4).All(row => row.Blockade is null), "Walking through the wall must retire it in the clip.");
             var beforeCoverage = rows[2].AtlasView;
             var afterCoverage = rows[3].AtlasView;
@@ -310,20 +310,26 @@ internal static class BotDesktopCaptureIntegrationTests
                     <= 10 => [0],
                     11 => [0, 128],
                     12 => [0, 128, 256],
-                    _ => [640, 768, 896, 768]
+                    _ => [640, 768, 896, 640]
                 };
+                var firstBasis = new AtlasPoint(offsets[0], 0);
+                var secondBasis = new AtlasPoint(firstBasis.X - shift.X, -shift.Y);
                 var observations = offsets.Select((offset, index) =>
                 {
                     var pose = center with { X = center.X + offset };
+                    var basis = index < 3 ? firstBasis : secondBasis;
                     return LiveWorldObservation.Create(index, index, index + 1, frame.Width, frame.Height,
-                        frame.Width, 160, [], pose, pose, roomId: committedRoom);
+                        frame.Width, 160, [], new(pose.X - basis.X, pose.Y - basis.Y), pose, roomId: committedRoom);
                 }).ToArray();
                 var origin = observations[0].OptimizedPose;
-                var island = new LiveTrackingIsland(0, committedRoom, 1, origin,
+                var firstIsland = new LiveTrackingIsland(0, committedRoom, 1, firstBasis,
                     LiveIslandPlacement.Reference, default, "test",
-                    observations.Select(row => new LiveIslandMember(row.Id, new(row.OptimizedPose.X - origin.X, 0), true)).ToArray());
+                    observations.Take(3).Select(row => new LiveIslandMember(row.Id, row.LocalPose, true)).ToArray());
+                LiveTrackingIsland[] islands = observations.Length <= 3 ? [firstIsland] :
+                    [firstIsland, new(1, committedRoom, 4, secondBasis, LiveIslandPlacement.Connected, default, "test",
+                        [new(3, observations[3].LocalPose, true)])];
                 var graph = new LiveWorldSnapshot(mapRevision: (int)id, anchoredObservationId: 0,
-                    observations: observations, trackingIslands: [island]);
+                    observations: observations, trackingIslands: islands);
                 var floor = new AtlasPoint(16 + offsets[0], 10);
                 var doors = LiveWorldPlacementProjection.Empty with
                 {
@@ -334,7 +340,10 @@ internal static class BotDesktopCaptureIntegrationTests
                     }
                 };
                 var world = new MainWindow.CommittedBotFrame(graph, committedRoom, id == 16 ? null : origin)
-                { DoorPlacement = doors };
+                {
+                    DoorPlacement = doors,
+                    MeasuredOwner = id == 16 ? null : new(islands[^1].Id, islands[^1].WorldFromLocal, true)
+                };
                 var walkedY = camera.Y + frame.Height - 100;
                 GroundHypothesisAtlasLine[] walked = [new(WalkedGroundMemory.WalkedSegmentId,
                     new(camera.X + 20, walkedY), new(camera.X + 80, walkedY))];

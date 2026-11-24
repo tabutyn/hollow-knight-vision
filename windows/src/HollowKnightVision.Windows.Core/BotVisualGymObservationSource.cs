@@ -164,13 +164,11 @@ public sealed class BotVisualGymObservationSource
             frame.Width, frame.Height, masks.GroundKnight);
 
         var timing = new BotCaptureTiming(time, time, Generation, chart, room.Revision);
-        blockade.ObserveVisualBasis(Generation, chart, walkedEpoch, frame.Width, time, placement.HasValue,
-            observed.GroundTracking, continuesScenery ? localCamera : null);
         var row = BotObservationBuilder.Gameplay(frame, timing, observations.MeasuredBatch, floors, terrain.Walls,
             terrainAnalyzed: true, placement, hud, contact.MeasuredFoot, controls,
             visualDoors: coverage.ProjectDoors(measuredGround || continuesScenery ? terrainCamera : null, size));
         row = knightMemory.Resolve(row, BotPolicyAction.FromButtons(controls), observations.MeasuredBatch, walkedEpoch);
-        row = blockade.AddVisualEvidence(row);
+        row = blockade.AddAtlasEvidence(row, coverage.BlockadeProjection(lineage, time), contactCamera, frame.Width);
         row = row with { AtlasView = coverage.PolicyView(terrainCamera, size, row.MeasuredHealth) };
         return new(row, row.Issues, confidence)
         {
