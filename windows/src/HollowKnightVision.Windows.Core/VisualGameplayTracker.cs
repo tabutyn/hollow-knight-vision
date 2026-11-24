@@ -367,6 +367,14 @@ public sealed class VisualGameplayTracker
     public void Reset()
     {
         camera.Reset();
+        ResetRoomTracking();
+        sequence = 0;
+        startedAt = null;
+    }
+
+    internal void ResetRoomTracking()
+    {
+        camera.ResetMotion();
         if (defaultGroundTracker.IsValueCreated) defaultGroundTracker.Value.Reset();
         LastPatchSearchExecution = null;
         bootstrap.Reset();
@@ -374,8 +382,6 @@ public sealed class VisualGameplayTracker
         ResetFloorlessMotion();
         placement.Reset();
         previousTimestamp = null;
-        sequence = 0;
-        startedAt = null;
     }
 
     internal void ResetFloorlessMotion()

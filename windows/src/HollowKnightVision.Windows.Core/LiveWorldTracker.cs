@@ -850,7 +850,7 @@ public sealed class LiveWorldTracker
             keyframes: [.. Snapshot.Keyframes, keyframe],
             landmarks: landmarks,
             relativeEdges: motionEdges);
-        var rebuilt = ReferenceFor(keyframe);
+        var rebuilt = ReferenceFor(keyframe, observation);
         if (rebuilt is not null) references[keyframe.Id] = rebuilt;
         return keyframeId;
     }
@@ -1314,18 +1314,25 @@ public sealed class LiveWorldTracker
     private void RefreshReferences()
     {
         references.Clear();
+        var observations = Snapshot.Observations.ToDictionary(value => value.Id);
         foreach (var keyframe in Snapshot.Keyframes)
         {
-            var reference = ReferenceFor(keyframe);
+            var observation = observations[keyframe.ObservationId];
+            var reference = ReferenceFor(keyframe, observation);
             if (reference is not null) references[keyframe.Id] = reference;
+            // The regenerated descriptor pixels stay valid after a correction,
+            // but their world pose follows the corresponding saved image.
+            if (restoredRecoveryReferences.GetValueOrDefault(keyframe.Id) is { } restored
+                && restored.Reference.CameraPose != observation.OptimizedPose)
+                restoredRecoveryReferences[keyframe.Id] = restored with
+                {
+                    Reference = restored.Reference with { CameraPose = observation.OptimizedPose }
+                };
         }
     }
 
-    private CachedReference? ReferenceFor(LiveWorldKeyframe keyframe)
+    private CachedReference? ReferenceFor(LiveWorldKeyframe keyframe, LiveWorldObservation observation)
     {
-        var observation = Snapshot.Observations.FirstOrDefault(
-            value => value.Id == keyframe.ObservationId);
-        if (observation is null) return null;
         var storedLandmarks = Snapshot.Landmarks
             .Where(value => value.KeyframeId == keyframe.Id && !value.GroundClosureOnly)
             .OrderBy(value => value.Id)

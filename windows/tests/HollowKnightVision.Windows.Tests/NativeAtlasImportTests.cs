@@ -186,6 +186,53 @@ internal static class NativeAtlasImportTests
         });
     }
 
+    internal static void TestImportedRecoveryReferencesFollowCorrectedImagePoses()
+    {
+        var tracker = new LiveWorldTracker();
+        for (var id = 0; id < 6; id++)
+        {
+            var departure = id < 3;
+            var time = (departure ? 1 : 3) + id % 3 * .15;
+            var pose = departure ? default : new AtlasPoint(660, 0);
+            var floor = departure ? 40 : 55;
+            var left = departure ? 220 : 0;
+            var player = new WorldRect(new(departure ? 270 : 20, floor), new(24, 35));
+            var frame = RecoveryTexture(departure ? 71 : 191, id);
+            tracker.Ingest(id, time, frame, pose, frame.Width, searchForClosure: false, localPose: pose,
+                captureGeneration: 1, localEpoch: 1, roomId: departure ? 0 : 1,
+                captureEvidence: new LiveWorldCaptureEvidence(time, new([new(id, new(left, floor), new(left + 100, floor))]),
+                    PlayerBounds: player) { MeasuredLineage = departure ? 1 : 2 });
+        }
+
+        var saved = tracker.Snapshot;
+        var imported = LiveWorldJson.ReadSnapshot(LiveWorldJson.WriteSnapshot(new LiveWorldSnapshot(
+            LiveWorldSnapshot.CurrentSchemaVersion, saved.MapRevision, saved.AnchoredObservationId,
+            saved.Observations, saved.Keyframes, saved.Landmarks, saved.RelativeMotionEdges,
+            saved.LoopClosureEdges, saved.TrackingIslands)));
+        var loadedFrames = 0;
+        var restored = new LiveWorldTracker(imported, id =>
+        {
+            loadedFrames++;
+            return RecoveryTexture(id < 3 ? 71 : 191, id);
+        });
+        Check(Recover(100) == new AtlasPoint(660, 0), "the imported room must first match at its saved position");
+        var originalReads = loadedFrames;
+        Check(restored.AlignRoomThroughDoorway(new(0, 1, 1, 1.3, 3, VisualRoomDirection.Right))
+            && restored.Snapshot.Observations[3].OptimizedPose == new AtlasPoint(660, -15),
+            "the measured doorway must correct the saved image position");
+        var corrected = restored.Snapshot;
+        Check(Recover(102) == new AtlasPoint(660, -15) && ReferenceEquals(restored.Snapshot, corrected)
+            && loadedFrames == originalReads, "matching the corrected room uses its updated pose and the same saved descriptors");
+
+        AtlasPoint? Recover(int first)
+        {
+            var vote = restored.Recover(RecoveryTexture(191, first), default, 320, roomId: 1);
+            Check(vote.ConfirmedPlacement is null && vote.MatchedReferenceKeyframeId is not null,
+                "a saved image requires two votes");
+            return restored.Recover(RecoveryTexture(191, first + 1), default, 320, roomId: 1).ConfirmedPlacement?.CameraPose;
+        }
+    }
+
     internal static void TestImportedAtlasRejectsIdenticalSceneryAcrossRooms()
     {
         WithRecoveryFixture(identicalRooms: true, (root, before) =>
