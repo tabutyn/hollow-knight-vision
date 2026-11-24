@@ -1,3 +1,4 @@
+using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 
 internal static class LiveWorldWalkedGroundTests
@@ -59,6 +60,48 @@ internal static class LiveWorldWalkedGroundTests
         Check(display.SequenceEqual([Span(20, 110, 70)]));
         var merged = LiveWorldWalkedGround.MergeForDisplay([full], [last], durable, new(490, 100));
         Check(merged.SequenceEqual([full]));
+    }
+
+    public static void TestPipelineTracksWalkedCoveragePerImageOwner()
+    {
+        using var directory = new TestDirectory();
+        var pipeline = new WindowsLiveWorldPipeline(directory.Path);
+        var initial = Span(10, 100, 80);
+        var overlapping = Span(30, 90, 80);
+        var extended = Span(10, 120, 80);
+        Check(Commit(1, 1, 1, 1, initial).RecordedLocalWalk.SequenceEqual([initial]));
+        var second = Commit(2, 1.2, 2, 2, overlapping);
+        Check(second.RecordedLocalWalk.SequenceEqual([overlapping]));
+        Check(LiveWorldWalkedGround.MergeForDisplay([overlapping], second.RecordedLocalWalk,
+            second.WalkedGround, second.WorldBasisOffset).SequenceEqual([initial]));
+        var preview = Commit(3, 1.25, 1, 1, extended);
+        Check(preview.State == WindowsLiveWorldPipelineState.Throttled && preview.WalkedGroundLineage == 1
+            && preview.RecordedLocalWalk.SequenceEqual([initial]));
+        Check(Commit(4, 1.4, 1, 1, extended).RecordedLocalWalk.SequenceEqual([extended]));
+        Check(Commit(5, 1.6, 3, 1, Span(10, 350, 80)).RecordedLocalWalk.SequenceEqual([extended]));
+
+        var saved = new LiveWorldSessionStore(directory.Path).Load().Snapshot;
+        Check(saved.Observations.Count == 4
+            && saved.Observations[0].WalkedGround!.SequenceEqual([new LiveWorldWalkedFloor(10, 100, 80)])
+            && saved.Observations[1].WalkedGround!.SequenceEqual([new LiveWorldWalkedFloor(30, 90, 80)])
+            && saved.Observations[2].WalkedGround!.SequenceEqual([new LiveWorldWalkedFloor(100, 120, 80)])
+            && saved.Observations[3].WalkedGround is null);
+        Check(saved.TrackingIslands.Single(island => island.MeasuredLineage == 1)
+            .Members.Select(member => member.ObservationId).SequenceEqual([0, 2]));
+        Check(LiveWorldWalkedGround.ProjectRoom(saved, saved.Observations[0].RoomId).SequenceEqual([extended]));
+
+        WindowsLiveWorldPipelineResult Commit(int id, double timestamp, long captureOwner, long walkOwner,
+            GroundHypothesisAtlasLine span)
+        {
+            var frame = new BgraFrame(320, 180, 320 * 4, new byte[320 * 180 * 4], id, DateTimeOffset.UnixEpoch);
+            return pipeline.Process(new WindowsLiveWorldFrame(frame, frame, timestamp, timestamp, default, 320,
+                [], [], 1, "room", 1, 64)
+            {
+                WalkedGround = [span],
+                WalkedGroundLineage = walkOwner,
+                WorldEvidence = new(timestamp) { MeasuredLineage = captureOwner }
+            });
+        }
     }
 
     public static void TestInvalidPersistedWalkedGeometryFailsSnapshotValidation()

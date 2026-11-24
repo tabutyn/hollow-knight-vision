@@ -289,6 +289,7 @@ internal static class CalibratedSceneMotionTests
                 {
                     WalkedGround = tracked.WalkedGround,
                     WalkedCoordinateEpoch = tracked.WalkedCoordinateEpoch,
+                    WalkedGroundLineage = tracked.WalkedGroundLineage,
                     WorldEvidence = tracked.WorldEvidence
                 });
             }

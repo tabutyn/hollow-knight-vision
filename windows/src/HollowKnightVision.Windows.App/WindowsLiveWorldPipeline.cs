@@ -32,6 +32,7 @@ internal sealed record WindowsLiveWorldFrame(
 {
     internal IReadOnlyList<GroundHypothesisAtlasLine> WalkedGround { get; init; } = [];
     internal long WalkedCoordinateEpoch { get; init; }
+    internal long? WalkedGroundLineage { get; init; }
     internal bool RoomIdentityIsVisual { get; init; }
     internal VisualSceneDiscontinuityTracker.Cut? DoorwayCut { get; init; }
     internal LiveWorldCaptureEvidence? WorldEvidence { get; init; }
@@ -60,6 +61,7 @@ internal sealed record WindowsLiveWorldPipelineResult(
     internal int? CommittedRoomId { get; init; }
     internal long WalkedCoordinateEpoch { get; init; }
     internal IReadOnlyList<GroundHypothesisAtlasLine> RecordedLocalWalk { get; init; } = [];
+    internal long? WalkedGroundLineage { get; init; }
 
     internal GameplayPathRegistration? RegisteredPath(long coordinateEpoch) =>
         coordinateEpoch == WalkedCoordinateEpoch ? PathRegistration : null;
@@ -114,8 +116,8 @@ internal sealed class WindowsLiveWorldPipeline
     private readonly Dictionary<int, int> placedRoomIds = [];
     private readonly Dictionary<int, IReadOnlyList<WorldRect>> compositionExclusions = [];
     private readonly Dictionary<int, IReadOnlyList<GroundHypothesisAtlasLine>> projectedWalkedGround = [];
-    private (ulong Capture, int Room, long CoordinateEpoch)? walkedScope;
-    private IReadOnlyList<GroundHypothesisAtlasLine> committedLocalWalk = [];
+    private readonly record struct WalkScope(ulong Capture, int Room, long CoordinateEpoch, long? Lineage);
+    private readonly Dictionary<WalkScope, IReadOnlyList<GroundHypothesisAtlasLine>> committedLocalWalk = [];
     private LiveWorldSessionStore? store;
     private LiveWorldTracker? tracker;
     private WorldBasisController worldBasis = new();
@@ -353,6 +355,7 @@ internal sealed class WindowsLiveWorldPipeline
                         $"live-world capture generation overflowed: {error.Message}");
                 }
                 captureGeneration = request.CaptureGeneration;
+                committedLocalWalk.Clear();
                 if (request.RoomIdentityIsVisual) placedRoomIds.Clear();
                 activeTracker.BeginVisit();
                 worldBasis = new WorldBasisController();
@@ -568,10 +571,11 @@ internal sealed class WindowsLiveWorldPipeline
             var capturePose = resolvedObservation.Value.Ticket.LocalPose;
             var priorSnapshot = activeTracker.Snapshot;
             var storedTimestamp = StoredCaptureTimestamp(request, priorSnapshot);
-            var scope = (request.CaptureGeneration, resolvedRoomId, request.WalkedCoordinateEpoch);
-            IReadOnlyList<GroundHypothesisAtlasLine> priorWalk = walkedScope == scope ? committedLocalWalk : [];
-            var walked = request.StableTrackingVerified || !placementPending && placedRoomStartedAt is not null
-                && request.WorldEvidence is { HasMeasuredSceneryContinuity: true } && HasMeasuredLocalReference(request)
+            var scope = WalkScopeOf(request, resolvedRoomId);
+            var priorWalk = committedLocalWalk.GetValueOrDefault(scope) ?? [];
+            var walked = request.WalkedGroundLineage == request.WorldEvidence?.MeasuredLineage
+                && (request.StableTrackingVerified || !placementPending && placedRoomStartedAt is not null
+                    && request.WorldEvidence is { HasMeasuredSceneryContinuity: true } && HasMeasuredLocalReference(request))
                 ? request.WalkedGround : [];
             var groundEvidence = LiveWorldWalkedGround.NewEvidence(walked, priorWalk, capturePose);
             StoredFrameObservation? source = null;
@@ -688,9 +692,9 @@ internal sealed class WindowsLiveWorldPipeline
                         publishedGround.Concat(LiveWorldWalkedGround.ProjectObservation(committed)));
                 }
                 if (!placementPending) projectedWalkedGround[resolvedRoomId] = publishedGround;
-                walkedScope = scope;
-                committedLocalWalk = groundEvidence.Count == 0
-                    ? priorWalk : GroundStrokeGeometry.Coalesce(priorWalk.Concat(walked));
+                var recordedWalk = priorWalk;
+                if (groundEvidence.Count > 0)
+                    committedLocalWalk[scope] = recordedWalk = GroundStrokeGeometry.Coalesce(priorWalk.Concat(walked));
 
                 if (requiresBasisUpdate
                     && (!IsWorkCurrent(processEpoch)
@@ -749,7 +753,8 @@ internal sealed class WindowsLiveWorldPipeline
                     CommittedGraph = committedGraph,
                     CommittedRoomId = resolvedRoomId,
                     WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
-                    RecordedLocalWalk = committedLocalWalk
+                    RecordedLocalWalk = recordedWalk,
+                    WalkedGroundLineage = scope.Lineage
                 };
             }
             catch (Exception error)
@@ -900,9 +905,12 @@ internal sealed class WindowsLiveWorldPipeline
             CommittedGraph = committedGraph,
             CommittedRoomId = committedRoomId,
             WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
-            RecordedLocalWalk = walkedScope == (request.CaptureGeneration, committedRoomId, request.WalkedCoordinateEpoch)
-                ? committedLocalWalk : []
+            RecordedLocalWalk = committedLocalWalk.GetValueOrDefault(WalkScopeOf(request, committedRoomId)) ?? [],
+            WalkedGroundLineage = request.WalkedGroundLineage
         };
+
+    private static WalkScope WalkScopeOf(WindowsLiveWorldFrame request, int room) =>
+        new(request.CaptureGeneration, room, request.WalkedCoordinateEpoch, request.WalkedGroundLineage);
 
     private GameplayPathRegistration? PathRegistrationFor(int roomId, AtlasPoint worldFromLocal) =>
         !placementPending && savedGround.PathRooms.TryGetValue(roomId, out var room)
@@ -972,8 +980,7 @@ internal sealed class WindowsLiveWorldPipeline
             placedRoomIds.Clear();
             compositionExclusions.Clear();
             projectedWalkedGround.Clear();
-            walkedScope = null;
-            committedLocalWalk = [];
+            committedLocalWalk.Clear();
             foreach (var (observationId, exclusions) in reopenedCompositionExclusions)
                 compositionExclusions.Add(observationId, exclusions);
             var maximumGeneration = snapshot.Observations.Count == 0

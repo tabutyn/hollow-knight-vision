@@ -378,6 +378,41 @@ internal static class GameplayGymVisualTests
         }
     }
 
+    internal static void TestGymUsesPlacedWalkedGroundAcrossOwnersAndKeepsPendingGroundLocal()
+    {
+        var atlas = new BotGymAtlasCoverage();
+        var measured = GroundHypothesisTrackingResult.Empty with
+        {
+            PoseVerified = true, HasConfirmedGround = true, LocalTextureSupport = 4
+        };
+        var placed = new GroundHypothesisAtlasLine(WalkedGroundMemory.WalkedSegmentId, new(20, 80), new(100, 80));
+        var pending = new GroundHypothesisAtlasLine(WalkedGroundMemory.WalkedSegmentId, new(240, 92), new(320, 92));
+        atlas.EnterRoom(7);
+        Observe(0, default, 1, [placed]);
+        Observe(1, new(24, 0), 2, []);
+        if (!atlas.WalkedForPolicy([], 2).SequenceEqual([placed]))
+            throw new InvalidOperationException("The Gym must project a committed footprint through its saved owner.");
+
+        atlas.Interrupt(requireMatch: true);
+        Observe(2, new(300, 0), 3, [pending]);
+        if (!atlas.PlacementPending || atlas.WalkedForPolicy([], 3).Count != 0
+            || !atlas.WalkedForPolicy([pending], 3).SequenceEqual([pending]))
+            throw new InvalidOperationException("A pending chart must retain its own ground without borrowing placed coordinates.");
+
+        atlas.EnterRoom(8);
+        if (atlas.WalkedForPolicy([], 3).Count != 0)
+            throw new InvalidOperationException("A new room cannot inherit saved ground from the previous room.");
+
+        void Observe(int id, AtlasPoint camera, long owner, IReadOnlyList<GroundHypothesisAtlasLine> walk)
+        {
+            var time = id * .2;
+            var pixels = new byte[320 * 180 * 4];
+            var frame = new BgraFrame(320, 180, 320 * 4, pixels, id, DateTimeOffset.UnixEpoch.AddSeconds(time));
+            atlas.Observe(frame, camera, time, [], default, measured, admitsPlacement: true,
+                captureEvidence: new(time) { MeasuredLineage = owner }, walkedGround: walk);
+        }
+    }
+
     internal static void TestGymReportsCorrectionsOnlyForAnExistingVisualEstimate()
     {
         var source = new BotVisualGymObservationSource();
