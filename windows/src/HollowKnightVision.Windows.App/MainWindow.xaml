@@ -329,6 +329,16 @@
                         </DataGrid>
                         <DockPanel Grid.Column="1" Margin="16,0,0,0" LastChildFill="True">
                             <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                                <StackPanel x:Name="BotDeleteClipConfirmation" Visibility="Collapsed" Margin="0,0,0,8">
+                                    <TextBlock Text="Permanently delete this clip? Deleting the last clip from a run also removes its replay and source frames."
+                                               TextWrapping="Wrap"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                        <Button x:Name="BotCancelDeleteClip" Content="Cancel" Click="BotCancelDeleteClip_Click"/>
+                                        <Button x:Name="BotConfirmDeleteClip" Content="Delete Clip" Click="BotConfirmDeleteClip_Click" Margin="6,0,0,0"/>
+                                    </StackPanel>
+                                </StackPanel>
+                                <TextBlock x:Name="BotClipInputs" Margin="0,0,0,4" TextWrapping="Wrap"
+                                           Foreground="#B5C2CC" AutomationProperties.LiveSetting="Off"/>
                                 <Slider x:Name="BotClipScrubber" AutomationProperties.Name="Clip playback position"
                                         Minimum="0" Maximum="0" IsEnabled="False" ValueChanged="BotClipScrubber_Changed"/>
                                 <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
@@ -336,6 +346,7 @@
                                     <Button x:Name="BotPreviousFrame" Content="Previous" Click="BotPreviousFrame_Click" IsEnabled="False" Margin="6,0,0,0"/>
                                     <Button x:Name="BotNextFrame" Content="Next" Click="BotNextFrame_Click" IsEnabled="False" Margin="6,0,0,0"/>
                                     <TextBlock x:Name="BotPreviewPosition" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                                    <Button x:Name="BotDeleteClip" Content="Delete Clip…" Click="BotDeleteClip_Click" IsEnabled="False" Margin="10,0,0,0"/>
                                 </StackPanel>
                             </StackPanel>
                             <Border Background="#0C1014" ClipToBounds="True">

@@ -139,14 +139,15 @@ public partial class MainWindow
             && version.Id != SelectedBotCheckpoints?.ActiveId;
         BotRestorePrevious.IsEnabled = canSelect && SelectedBotCheckpoints?.PreviousId is not null;
         BotTrainButton.Content = active is null ? "Train" : "Stop";
-        BotTrainButton.IsEnabled = !isClosing && !changingBotCheckpoint
+        BotTrainButton.IsEnabled = !isClosing && !changingBotCheckpoint && !deletingBotClip
             && (active is null ? plan?.CanTrain == true : !active.IsCancellationRequested);
         BotTrainingStatus.Text = botTrainingMessage ?? plan?.Unavailable ?? "";
+        UpdateBotClipDeletionControls();
     }
 
     private async void BotTrain_Click(object sender, RoutedEventArgs e)
     {
-        if (isClosing || changingBotCheckpoint) return;
+        if (isClosing || changingBotCheckpoint || deletingBotClip) return;
         if (botTrainingCancellation is { } running)
         {
             running.Cancel();

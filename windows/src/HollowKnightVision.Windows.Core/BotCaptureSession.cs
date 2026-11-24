@@ -230,31 +230,42 @@ public sealed class BotCaptureSession
     public static IReadOnlyList<BotCaptureReviewFrame> Review(string folder, CancellationToken cancellationToken = default) =>
         ReadReviewEvidence(folder, cancellationToken, requireImage: true).Observations.Select(item => item.Frame).ToArray();
 
-    internal static (BotCaptureManifest Manifest, IReadOnlyList<ReviewObservation> Observations) ReadReviewEvidence(
+    internal static (BotCaptureManifest Manifest, IReadOnlyList<ReviewObservation> Observations, IReadOnlyList<BotCaptureInput> Inputs) ReadReviewEvidence(
         string folder, CancellationToken cancellationToken, bool requireImage = false)
     {
         var manifest = JsonSerializer.Deserialize<BotCaptureManifest>(File.ReadAllBytes(Path.Combine(folder, "manifest.json")), Json)
             ?? throw new InvalidDataException("The capture has no manifest.");
-        if (manifest is not { Status: "completed", SchemaVersion: BotRecordingContract.SchemaVersion }) return (manifest, []);
+        if (manifest is not { Status: "completed", SchemaVersion: BotRecordingContract.SchemaVersion }) return (manifest, [], []);
         var authored = manifest.BotDomain == "hacker";
         var frames = new List<ReviewObservation>();
+        var inputs = new List<BotCaptureInput>();
         var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)) + Path.DirectorySeparatorChar;
         foreach (var line in File.ReadLines(Path.Combine(folder, "events.jsonl")))
         {
             cancellationToken.ThrowIfCancellationRequested();
             using var document = JsonDocument.Parse(line);
             var row = document.RootElement;
-            if (row.ValueKind != JsonValueKind.Object) continue;
+            if (row.ValueKind != JsonValueKind.Object || !row.TryGetProperty("type", out var type)
+                || type.ValueKind != JsonValueKind.String) continue;
+            if (!requireImage && type.GetString() == "input")
+            {
+                if (row.TryGetProperty("timestamp", out var time) && time.ValueKind == JsonValueKind.Number
+                    && time.TryGetDouble(out var seconds) && double.IsFinite(seconds)
+                    && row.TryGetProperty("button", out var button) && button.ValueKind == JsonValueKind.String
+                    && button.GetString() is { Length: > 0 } name && row.TryGetProperty("isPressed", out var state)
+                    && state.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    inputs.Add(new(seconds, name, state.GetBoolean()));
+                continue;
+            }
+            if (type.GetString() != "observation") continue;
             var image = PreviewPath(row);
-            if (requireImage && image is null || !row.TryGetProperty("type", out var type)
-                || type.ValueKind != JsonValueKind.String || type.GetString() != "observation"
-                || row.Deserialize<BotCaptureObservation>(Json) is not { } observation) continue;
+            if (requireImage && image is null || row.Deserialize<BotCaptureObservation>(Json) is not { } observation) continue;
             var offset = observation.CaptureTimestamp - manifest.StartedAt;
             if (!double.IsFinite(offset)) continue;
             var terrain = authored ? observation.AuthoredTerrain : observation.DetectedTerrain;
             frames.Add(new(observation.Generation, new(image, Math.Max(0, offset), terrain, authored, observation.Features)));
         }
-        return (manifest, frames);
+        return (manifest, frames, inputs);
 
         string? PreviewPath(JsonElement row)
         {
