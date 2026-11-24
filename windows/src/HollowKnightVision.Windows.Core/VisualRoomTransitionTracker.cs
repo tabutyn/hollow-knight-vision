@@ -838,8 +838,8 @@ public sealed class LowResolutionTransitionOdometry
             lastExpectedDirection = expectedDirection;
         }
         var pixelScale = solveWidth / Math.Max(1, grid.Width);
-        var diagnostic = LowResolutionRoomMotionTracker.DiagnoseTranslation(
-            prior.Grid, grid);
+        var diagnostic = LowResolutionRoomMotionTracker.DiagnoseCaptureRateTranslation(
+            prior.Grid, grid, age);
         if (diagnostic.Motion is not { } motion)
         {
             if (diagnostic.FinalRejection is not

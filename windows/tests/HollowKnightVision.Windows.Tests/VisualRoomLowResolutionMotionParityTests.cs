@@ -63,6 +63,26 @@ internal static class VisualRoomLowResolutionMotionParityTests
         Check(LowResolutionRoomMotionTracker.Translation(reference, movedCircle) is null);
     }
 
+    public static void TestLowResolutionMotionTracksTextureAcrossMovingLightHalo()
+    {
+        var reference = SoftLightHalo(FractionalMotionGrid(0), 28, 18);
+        foreach (var (x, y) in new[] { (-1.4, .7), (.6, 1.6) })
+        {
+            var current = SoftLightHalo(FractionalMotionGrid(x, y), 35, 15);
+            var motion = LowResolutionRoomMotionTracker.Translation(reference, current);
+            Near(x, motion?.ScreenShiftX ?? double.NaN, .25);
+            Near(y, motion?.ScreenShiftY ?? double.NaN, .25);
+        }
+    }
+
+    public static void TestMovingLightHaloCannotInventCameraMotion()
+    {
+        var texture = FractionalMotionGrid(0);
+        var reference = SoftLightHalo(texture, 28, 18);
+        var current = SoftLightHalo(texture, 35, 15);
+        Check(LowResolutionRoomMotionTracker.Translation(reference, current) is null);
+    }
+
     public static void TestTinyVisibilityCircleCannotCreateMotion()
     {
         var reference = VisibilityCircle(
@@ -149,6 +169,19 @@ internal static class VisualRoomLowResolutionMotionParityTests
         var texture = MotionGrid(shift, gain: gain, width: 64, height: 36);
         return new LowResolutionMotionGrid(texture.Width, texture.Height,
             texture.Luma.Select((value, index) => index / texture.Width >= 31 ? value : (byte)0).ToArray());
+    }
+
+    private static LowResolutionMotionGrid SoftLightHalo(LowResolutionMotionGrid grid, double centerX, double centerY)
+    {
+        var pixels = grid.Luma.Select((value, index) =>
+        {
+            var x = (index % grid.Width - centerX) / 13;
+            var y = (index / grid.Width - centerY) / 10;
+            var illumination = Math.Exp(-.5 * (x * x + y * y));
+            var texture = 45 + .15 * (value - 127);
+            return (byte)Math.Clamp(Math.Round(texture * illumination, MidpointRounding.AwayFromZero), 0, 255);
+        }).ToArray();
+        return new(grid.Width, grid.Height, pixels);
     }
 
     private static LowResolutionMotionGrid MotionGrid(
