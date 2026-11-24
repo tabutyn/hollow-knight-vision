@@ -108,13 +108,8 @@ internal sealed class BotGymAtlasCoverage
 
         if (!HasPlacedRoom && incomingDoorway is { } arrival)
         {
-            // The cut determines which side to draw the new room on. The
-            // gap is estimated until additional world evidence relates them.
-            var unplaced = world.Snapshot.UnplacedObservationIds();
-            var previous = world.Snapshot.Observations.Where(row => !unplaced.Contains(row.Id));
-            var centerX = arrival.Direction == VisualRoomDirection.Right
-                ? previous.Max(row => row.OptimizedPose.X + row.SolveWidth / 2) + size.Width * .6
-                : previous.Min(row => row.OptimizedPose.X - row.SolveWidth / 2) - size.Width * .6;
+            if (LiveEstimatedRoomLayout.ArrivalCenterX(world.Snapshot, arrival, time, size.Width) is not { } centerX)
+                return;
             basis = new(centerX - center.X, 0);
         }
         var previousSnapshot = world.Snapshot;
