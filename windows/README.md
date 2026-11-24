@@ -86,6 +86,14 @@ shows numbered passages, derived notes with citations, and the current
 playthrough goal. Raw OCR remains in the log and corrections and goals stay
 with their save.
 
+Open **Thinking** from the dashboard and enable it to inspect an Ollama
+decision. The inspector shows the sampled frame, the exact model messages
+and schema, the offered targets, and the reply. It keeps the model's image
+available when a newer frame appears. A scored offer can drive a short
+maneuver when automatic policies are enabled and Modded Gameplay or Hacker
+has focus. Vision checks each target against the current frame before using
+the same input lease as PPO. Press **B** to stop. Normal mode is for inspection.
+
 Parity verification is tracked in `mac-parity-audit.json`. Run
 `./Test-MacParity.ps1` for the complete Mac source/test inventory and remaining
 verification counts (`-Json` gives individual obligations; `-RequireComplete`

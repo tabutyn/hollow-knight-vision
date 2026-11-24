@@ -12,6 +12,7 @@ public partial class MainWindow
     private readonly WindowsGameTextRecognition gameTextRecognition = new();
     private GameTextDebugWindow? gameTextWindow;
     private Task? gameTextTask;
+    private string? gameTextScene;
 
     private void InitializeGameText()
     {
@@ -38,7 +39,11 @@ public partial class MainWindow
         if (gameTextReader.Enabled != enabled)
         {
             gameTextReader.SetEnabled(enabled);
-            if (!enabled) StopGameTextReview();
+            if (!enabled)
+            {
+                StopGameTextReview();
+                Volatile.Write(ref latestThinkingReading, null);
+            }
             if (!enabled && gameTextTask?.IsCompleted != false) gameTextRecognition.Dispose();
             try
             {
@@ -62,7 +67,12 @@ public partial class MainWindow
 
     private void SelectGameTextProfile(SaveProfileAtlas? profile)
     {
-        if (gameTextReader.Profile != profile) StopGameTextReview();
+        if (gameTextReader.Profile != profile)
+        {
+            StopGameTextReview();
+            ResetThinking();
+            Volatile.Write(ref latestThinkingReading, null);
+        }
         gameTextReader.SelectProfile(profile);
         PresentGameText();
     }
@@ -70,6 +80,8 @@ public partial class MainWindow
     private void ResetGameTextScan()
     {
         gameTextReader.ResetFrame();
+        gameTextScene = null;
+        Volatile.Write(ref latestThinkingReading, null);
         PresentGameText();
     }
 
@@ -80,15 +92,20 @@ public partial class MainWindow
         if (gameTextReader.Profile is not null && result.MenuStencil is { IsMatch: true,
             ContextIdentifier: "main-title" or "select-profile" or "clear-save" })
             SelectGameTextProfile(null);
+        gameTextScene = result.MenuContext == "game" ? result.ReceiverTelemetry?.SceneName ?? gameTextScene : null;
         var context = result.ReadingOpeningCutscene ? GameTextNotebook.OpeningContext : result.MenuContext switch
         {
             null => "Game capture",
-            "game" => result.ReceiverTelemetry?.SceneName ?? "Gameplay",
+            "game" => gameTextScene ?? "Gameplay",
             var menu => ContextDisplayName(menu)
         };
         var previous = gameTextReader.Scan;
         var work = gameTextReader.TryStart(result.Frame, initialization.LanguageIdentifier, context, result.CaptureTimestamp);
-        if (!ReferenceEquals(previous, gameTextReader.Scan)) PresentGameText();
+        if (!ReferenceEquals(previous, gameTextReader.Scan))
+        {
+            Volatile.Write(ref latestThinkingReading, gameTextReader.LatestReading);
+            PresentGameText();
+        }
         if (work is not null) gameTextTask = ReadGameTextAsync(work);
         StartGameTextReview();
     }
@@ -107,6 +124,9 @@ public partial class MainWindow
         }
         if (!gameTextReader.Enabled) gameTextRecognition.Dispose();
         if (gameTextReader.Complete(work, lines, Stopwatch.GetElapsedTime(start).TotalMilliseconds, BotCaptureClock(), issue))
+        {
+            Volatile.Write(ref latestThinkingReading, gameTextReader.LatestReading);
             PresentGameText();
+        }
     }
 }

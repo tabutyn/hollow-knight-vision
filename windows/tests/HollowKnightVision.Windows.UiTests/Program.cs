@@ -52,6 +52,7 @@ internal static class Program
         }
         GameTextWindowTests.TestNativeGameTextRecognitionAndOverlay();
         GameTextWindowTests.TestProofreadingControlAndQuestView();
+        GameTextWindowTests.TestThinkingInspectorShowsItsCapturedOffer();
         InputPathReplayIntegrationTests.Run();
         BotDesktopEvaluationTests.Run();
         MenuParticleTests.Run();

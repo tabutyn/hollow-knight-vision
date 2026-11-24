@@ -95,6 +95,43 @@ internal static class GameTextWindowTests
         Console.WriteLine("PASS game text proofreading controls and quest evidence");
     }
 
+    internal static void TestThinkingInspectorShowsItsCapturedOffer()
+    {
+        var choices = new List<ThinkingOptions>();
+        var logs = 0;
+        var window = new ThinkingWindow(choices.Add, () => logs++)
+        {
+            ShowActivated = false, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = -10000, Top = -10000
+        };
+        var image = MainWindow.FrameBitmap(RenderText("INSPECT"));
+        var captured = new[] { new ThinkingCandidateRow("c0", "interact", "Inspect", 96) };
+        window.Present(new(false, true, LocalThinkingModel.Gemma, false), "Model ready", image, image,
+            "System message and captured evidence", captured, "{\"scores\":{\"c0\":96}}", "Dispatched");
+        window.Show();
+        try
+        {
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            var grid = (DataGrid)window.FindName("Candidates");
+            Require(ReferenceEquals(grid.ItemsSource, captured)
+                && ReferenceEquals(((Image)window.FindName("Screenshot")).Source, image)
+                && ((TextBox)window.FindName("InputText")).Text.Contains("captured evidence")
+                && ((TextBox)window.FindName("ReplyText")).Text.Contains("96")
+                && ((TextBlock)window.FindName("HandoffText")).Text == "Dispatched", "Thinking shows the offered action and its screenshot");
+            Require(choices.Count == 0, "opening Thinking must not start model work");
+            ((CheckBox)window.FindName("EnabledCheck")).IsChecked = true;
+            ((ComboBox)window.FindName("ModelCombo")).SelectedItem = LocalThinkingModel.Llama;
+            ((CheckBox)window.FindName("CompatibilityCheck")).IsChecked = true;
+            ((CheckBox)window.FindName("AutomaticCheck")).IsChecked = false;
+            Require(choices.Last() is { Enabled: true, Automatic: false, SeparateLlama: true, Model.Identifier: "llama3.2-vision:11b" },
+                "Thinking opt-in, model choice, service and policy pause");
+            ((Button)window.FindName("OpenLog")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(logs == 1, "Thinking can open its notebook");
+        }
+        finally { window.Close(); }
+        Console.WriteLine("PASS Thinking inspector presents the bound screenshot, request and scores");
+    }
+
     private static BgraFrame RenderText(string text)
     {
         const int width = 640, height = 360, stride = width * 4;

@@ -208,7 +208,7 @@ internal static class AtlasQuestReview
         var content = "New notebook excerpts\n" + string.Join('\n', page.Select(entry => entry.Line))
             + "\nPrevious quest notes\n" + prior.Json + "\n" + Instructions;
         return client.ChatAsync<AtlasQuestNotes>(resident, [new("system", AtlasGuidance), new("user", content)],
-            schema, 420, forQuestNotes: true, token);
+            schema, 420, keepResident: true, token);
     }
 
     private static object Group(int[] allowed) => new

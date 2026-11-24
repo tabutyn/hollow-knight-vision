@@ -1392,6 +1392,11 @@ var tests = new List<(string Name, Action Run)>
     ("quest checkpoints replay changed evidence", AtlasQuestMemoryTests.TestIncrementalMemoryAndCorrections),
     ("quest pages bound their evidence and reject missing sources", AtlasQuestMemoryTests.TestPagedEvidenceAndRejectedCitations),
     ("quest prompts, destinations and cancelled responses", AtlasQuestMemoryTests.TestPromptsDestinationsAndCancellation),
+    ("Thinking offers only scored local targets", ThinkingHandoffTests.TestOfferScoresAndBindings),
+    ("Thinking uses matched actor and Focus telemetry", ThinkingHandoffTests.TestMatchedActorsAndRecovery),
+    ("Thinking maneuvers expire and release controls", ThinkingHandoffTests.TestBoundManeuversAndRelease),
+    ("Thinking inspection records settled text", ThinkingHandoffTests.TestInspectionUsesSettledText),
+    ("Thinking local model load and attached image", ThinkingHandoffTests.TestThinkingModelLoadAndImageRequest),
     ("scene session rejects schema and path traversal", SceneSessionStoreTests.TestUnsupportedManifestAndPathTraversalAreRejected),
     ("scene session canonical root accepts evidence", SceneSessionStoreTests.TestTmpSymlinkRootAcceptsCanonicalEvidencePath)
 };

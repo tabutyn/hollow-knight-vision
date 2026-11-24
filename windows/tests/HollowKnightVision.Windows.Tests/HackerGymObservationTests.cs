@@ -179,13 +179,25 @@ internal static class HackerGymObservationTests
             || repeated.PathProgress != 0 || repeated.PathAlignment is not > 0)
             throw new InvalidOperationException("Changing objectives must clear the movement sample without re-crediting the same directed travel.");
 
-        BotCaptureObservation Observe(BotHackerVisit observer, int index, double x, bool automatic, HackerAtlasRoom? registered)
+        var thinking = new BotHackerVisit(labels, includeThinkingRoutes: true);
+        _ = Observe(thinking, 0, 4, automatic: false, registered: saved,
+            objective: new BotAtlasObjective("Tutorial_01", new(1, 1.28)));
+        if (thinking.ThinkingRoutes is not [{ Road.Frontier: true } frontier, { Road.Frontier: false } fixedRoute]
+            || frontier.Objective == fixedRoute.Objective)
+            throw new InvalidOperationException("Thinking must offer the registered frontier and the independent fixed route. "
+                + string.Join(", ", thinking.ThinkingRoutes));
+        _ = Observe(thinking, 1, 1, automatic: true, registered: saved);
+        if (thinking.ThinkingRoutes is not [{ Road.Frontier: true }])
+            throw new InvalidOperationException("A cleared fixed goal must leave a single traversal offer.");
+
+        BotCaptureObservation Observe(BotHackerVisit observer, int index, double x, bool automatic,
+            HackerAtlasRoom? registered, BotAtlasObjective? objective = null)
         {
             var sample = Frame(index, x) with { Grounded = true };
             var time = index * .1 + .02;
             return observer.Observe(new(192, 128), HackerFrameSynchronizer.Key(sample.UnityFrame), sample,
-                new(time, time + .001, 1, 1, 0), InputButtons.Right, index, automaticObjective: automatic,
-                registeredRoom: registered) ?? throw new InvalidOperationException("Missing test observation.");
+                new(time, time + .001, 1, 1, 0), InputButtons.Right, index, objective: objective,
+                automaticObjective: automatic, registeredRoom: registered) ?? throw new InvalidOperationException("Missing test observation.");
         }
     }
 
