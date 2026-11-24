@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 
@@ -31,8 +32,8 @@ internal static class GameTextWindowTests
         var reader = new GameTextReader("unused");
         var work = reader.TryStart(frame, "en", "Select Profile", 1)!;
         Require(reader.Complete(work, lines, 25, 1.05), "publish native scan");
-        var window = new GameTextDebugWindow(_ => { });
-        window.Present(reader);
+        var window = new GameTextDebugWindow(_ => { }, _ => { }, _ => { });
+        window.Present(reader, new(), null);
         var boxes = (Canvas)window.FindName("LineBoxes");
         var preview = (Image)window.FindName("FrameImage");
         var readings = (ListBox)window.FindName("VisibleLines");
@@ -43,10 +44,55 @@ internal static class GameTextWindowTests
         Require(selected is not null && Math.Abs(Canvas.GetTop(selected) - clear.Bounds.Y * frame.Height) < .01,
             "selected row highlights the same source rectangle");
         reader.SetEnabled(false);
-        window.Present(reader);
+        window.Present(reader, new(), null);
         Require(preview.Source is null && boxes.Children.Count == 0, "disabling releases the inspector image and boxes");
         window.Close();
         Console.WriteLine("PASS native game text recognition and inspector");
+    }
+
+    internal static void TestProofreadingControlAndQuestView()
+    {
+        var reader = new GameTextReader("unused");
+        var work = reader.TryStart(RenderText("GO WEST"), "en", GameTextNotebook.OpeningContext, 1)!;
+        Require(reader.Complete(work, [new(1, "Go west to the gate.", new(.2, .3, .4, .1), .96)], 30, 1.03),
+            "quest view source");
+        var changes = new List<GameTextReviewOptions>();
+        var window = new GameTextDebugWindow(_ => { }, changes.Add, reader.SetGoal)
+        {
+            ShowActivated = false, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = -10000, Top = -10000
+        };
+        window.Present(reader, new(), null);
+        window.Show();
+        try
+        {
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            var toggle = (CheckBox)window.FindName("ReviewCheck");
+            var model = (ComboBox)window.FindName("ProofreadingModel");
+            var compat = (CheckBox)window.FindName("CompatibilityServiceCheck");
+            Require(changes.Count == 0 && toggle.IsChecked == false && model.SelectedItem is LocalThinkingModel selected && selected == LocalThinkingModel.Gemma,
+                "showing the notebook never opts into proofreading");
+            toggle.IsChecked = true;
+            model.SelectedItem = LocalThinkingModel.Llama;
+            compat.IsChecked = true;
+            Require(changes.Last() is { Enabled: true, Model: "llama3.2-vision:11b", UseCompatibilityService: true },
+                "review checkbox and service selection route to the parent");
+
+            var tabs = (TabControl)window.FindName("SourceTabs");
+            tabs.SelectedItem = window.FindName("QuestTab");
+            var evidence = (TextBox)window.FindName("QuestEvidenceText");
+            Require(evidence.Text.Contains("[R1 · Opening cutscene] Go west to the gate.", StringComparison.Ordinal),
+                "quest view shows the numbered notebook source");
+            var goal = (TextBox)window.FindName("GoalText");
+            goal.Text = "  Reach the gate  ";
+            window.Present(reader, changes.Last(), "Waiting for resident model");
+            Require(goal.Text == "  Reach the gate  " && ((TextBlock)window.FindName("ReviewStatus")).Text == "Waiting for resident model",
+                "periodic updates preserve the edited goal and report model availability");
+            ((Button)window.FindName("SaveGoalButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(reader.Goal == "Reach the gate" && goal.Text == reader.Goal, "goal commits through the notebook");
+        }
+        finally { window.Close(); }
+        Console.WriteLine("PASS game text proofreading controls and quest evidence");
     }
 
     private static BgraFrame RenderText(string text)

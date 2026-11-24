@@ -38,6 +38,7 @@ public partial class MainWindow
         if (gameTextReader.Enabled != enabled)
         {
             gameTextReader.SetEnabled(enabled);
+            if (!enabled) StopGameTextReview();
             if (!enabled && gameTextTask?.IsCompleted != false) gameTextRecognition.Dispose();
             try
             {
@@ -47,28 +48,29 @@ public partial class MainWindow
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { ShowError(error); }
         }
         ReadGameTextCheck.IsChecked = enabled;
-        gameTextWindow?.Present(gameTextReader);
+        PresentGameText();
     }
 
     private void GameTextLog_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new GameTextDebugWindow(SetGameTextEnabled) { Owner = this };
+        var dialog = new GameTextDebugWindow(SetGameTextEnabled, SetGameTextReviewOptions, SetGameTextGoal) { Owner = this };
         gameTextWindow = dialog;
-        dialog.Present(gameTextReader);
+        PresentGameText();
         try { dialog.ShowDialog(); }
         finally { gameTextWindow = null; }
     }
 
     private void SelectGameTextProfile(SaveProfileAtlas? profile)
     {
+        if (gameTextReader.Profile != profile) StopGameTextReview();
         gameTextReader.SelectProfile(profile);
-        gameTextWindow?.Present(gameTextReader);
+        PresentGameText();
     }
 
     private void ResetGameTextScan()
     {
         gameTextReader.ResetFrame();
-        gameTextWindow?.Present(gameTextReader);
+        PresentGameText();
     }
 
     private void ObserveGameText(VisionAnalysisResult result)
@@ -86,8 +88,9 @@ public partial class MainWindow
         };
         var previous = gameTextReader.Scan;
         var work = gameTextReader.TryStart(result.Frame, initialization.LanguageIdentifier, context, result.CaptureTimestamp);
-        if (!ReferenceEquals(previous, gameTextReader.Scan)) gameTextWindow?.Present(gameTextReader);
+        if (!ReferenceEquals(previous, gameTextReader.Scan)) PresentGameText();
         if (work is not null) gameTextTask = ReadGameTextAsync(work);
+        StartGameTextReview();
     }
 
     private async Task ReadGameTextAsync(GameTextReader.Work work)
@@ -104,6 +107,6 @@ public partial class MainWindow
         }
         if (!gameTextReader.Enabled) gameTextRecognition.Dispose();
         if (gameTextReader.Complete(work, lines, Stopwatch.GetElapsedTime(start).TotalMilliseconds, BotCaptureClock(), issue))
-            gameTextWindow?.Present(gameTextReader);
+            PresentGameText();
     }
 }

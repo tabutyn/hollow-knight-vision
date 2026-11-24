@@ -9,20 +9,40 @@ namespace HollowKnightVision.Windows.App;
 public partial class GameTextDebugWindow : Window
 {
     private readonly Action<bool> setEnabled;
+    private readonly Action<GameTextReviewOptions> setReview;
+    private readonly Action<string> setGoal;
+    private GameTextReader? displayedReader;
+    private SaveProfileAtlas? displayedProfile;
+    private string? displayedGoal;
     private GameTextScan? scan;
     private GameTextLogEntry[]? entries;
     private bool updating;
 
-    internal GameTextDebugWindow(Action<bool> setEnabled)
+    internal GameTextDebugWindow(Action<bool> setEnabled, Action<GameTextReviewOptions> setReview, Action<string> setGoal)
     {
         this.setEnabled = setEnabled;
+        this.setReview = setReview;
+        this.setGoal = setGoal;
         InitializeComponent();
+        ProofreadingModel.ItemsSource = LocalThinkingModel.All;
     }
 
-    internal void Present(GameTextReader reader)
+    internal void Present(GameTextReader reader, GameTextReviewOptions options, string? reviewStatus)
     {
         updating = true;
+        displayedReader = reader;
         ReadCheck.IsChecked = reader.Enabled;
+        ReviewCheck.IsChecked = options.Enabled;
+        ProofreadingModel.SelectedItem = options.PreferredModel;
+        CompatibilityServiceCheck.IsChecked = options.UseCompatibilityService;
+        ReviewStatus.Text = reviewStatus ?? "";
+        ReviewStatus.Visibility = reviewStatus is null ? Visibility.Collapsed : Visibility.Visible;
+        if (displayedProfile != reader.Profile || displayedGoal != reader.Goal)
+        {
+            displayedProfile = reader.Profile;
+            GoalText.Text = displayedGoal = reader.Goal;
+        }
+        DefaultGoalText.Text = reader.Goal.Length == 0 ? reader.DefaultGoal : "";
         IssueText.Text = reader.Issue ?? "";
         IssueText.Visibility = reader.Issue is null ? Visibility.Collapsed : Visibility.Visible;
         LogTab.Header = $"Log ({reader.Entries.Length})";
@@ -60,7 +80,31 @@ public partial class GameTextDebugWindow : Window
             }
             DrawLineBoxes();
         }
+        PresentQuestEvidence();
         updating = false;
+    }
+
+    private void PresentQuestEvidence()
+    {
+        if (SourceTabs?.SelectedItem == QuestTab && displayedReader is { } reader)
+            QuestEvidenceText.Text = reader.QuestEvidence;
+    }
+
+    private void SourceChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ReferenceEquals(e.Source, SourceTabs)) PresentQuestEvidence();
+    }
+
+    private void ReviewChanged(object sender, RoutedEventArgs e)
+    {
+        if (updating || !IsLoaded || ProofreadingModel.SelectedItem is not LocalThinkingModel model) return;
+        setReview(new(ReviewCheck.IsChecked == true, model.Identifier, CompatibilityServiceCheck.IsChecked == true));
+    }
+
+    private void SaveGoalClicked(object sender, RoutedEventArgs e)
+    {
+        setGoal(GoalText.Text);
+        if (displayedReader is { } reader) GoalText.Text = reader.Goal;
     }
 
     private void DrawLineBoxes()

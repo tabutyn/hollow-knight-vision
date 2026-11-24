@@ -51,6 +51,7 @@ internal static class Program
             return;
         }
         GameTextWindowTests.TestNativeGameTextRecognitionAndOverlay();
+        GameTextWindowTests.TestProofreadingControlAndQuestView();
         InputPathReplayIntegrationTests.Run();
         BotDesktopEvaluationTests.Run();
         MenuParticleTests.Run();

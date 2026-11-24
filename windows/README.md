@@ -79,6 +79,13 @@ notebook. Select a line to highlight its bounds on the captured frame. Turn off
 language data for Vision's 11 languages, then includes it in the installation.
 Recognition runs locally using the selected game language.
 
+Turn on **Proofread game text** in the Log to use a supported model already
+loaded in Ollama. The preferred model is Gemma 3, Qwen2.5-VL, or Llama 3.2
+Vision. Separate Llama service also checks port 11435. The **Quest notes** tab
+shows numbered passages, derived notes with citations, and the current
+playthrough goal. Raw OCR remains in the log and corrections and goals stay
+with their save.
+
 Parity verification is tracked in `mac-parity-audit.json`. Run
 `./Test-MacParity.ps1` for the complete Mac source/test inventory and remaining
 verification counts (`-Json` gives individual obligations; `-RequireComplete`
