@@ -1,3 +1,5 @@
+extern alias VisionApp;
+
 using System.IO;
 using System.Reflection;
 using System.Windows;
@@ -7,6 +9,9 @@ using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 using Line = System.Windows.Shapes.Line;
 using Rectangle = System.Windows.Shapes.Rectangle;
+using WindowsLiveWorldFrame = VisionApp::HollowKnightVision.Windows.App.WindowsLiveWorldFrame;
+using WindowsLiveWorldPipelineResult = VisionApp::HollowKnightVision.Windows.App.WindowsLiveWorldPipelineResult;
+using WindowsLiveWorldPipelineState = VisionApp::HollowKnightVision.Windows.App.WindowsLiveWorldPipelineState;
 
 internal static class AtlasWindowIntegrationTests
 {
@@ -20,6 +25,7 @@ internal static class AtlasWindowIntegrationTests
         {
             VerifyWorkspaceOperations(temporary.FullName);
             VerifyRestoredPassageAlignment(Directory.CreateDirectory(Path.Combine(temporary.FullName, "passages")).FullName);
+            VerifyGameplayWorldHandoff(Directory.CreateDirectory(Path.Combine(temporary.FullName, "handoff")).FullName);
         }
         finally
         {
@@ -28,7 +34,154 @@ internal static class AtlasWindowIntegrationTests
         Console.WriteLine("PASS Atlas window saves, restores and deletes scoped snapshots and switches both playthroughs");
         Console.WriteLine("PASS Hacker Atlas draws restored rooms at the measured passage elevation");
         Console.WriteLine("PASS Gameplay Atlas draws measured doorways independently of optional outlines and hides them outside gameplay");
+        Console.WriteLine("PASS Gameplay window applies only ordered Atlas placements and keeps menu images in capture coordinates");
     }
+
+    private static void VerifyGameplayWorldHandoff(string root)
+    {
+        const long generation = 5;
+        const long coordinateEpoch = 4;
+        const ulong savedGeneration = 15;
+        const string room = "Tutorial_01";
+        var first = SolidFrame(1);
+        var newest = SolidFrame(2);
+        var raw = new AtlasPoint(20, 10);
+        var world = new LiveWorldTracker();
+        world.Ingest(0, 1, first, raw, first.Width, searchForClosure: false, localPose: raw,
+            captureGeneration: savedGeneration, roomId: 7, placedCameraPose: new(120, 40),
+            captureEvidence: MeasuredCapture(1, 1));
+        world.Ingest(1, 2, newest, new(50, 7), newest.Width, searchForClosure: false, localPose: new(50, 7),
+            captureGeneration: savedGeneration, roomId: 7, placedCameraPose: new(350, 37),
+            captureEvidence: MeasuredCapture(2, 2));
+        var before = world.Snapshot;
+        var corrected = before.ReplaceOptimizedPoses(new Dictionary<int, AtlasPoint> { [0] = new(140, 35), [1] = new(350, 37) },
+            before.MapRevision);
+        var publication = new WindowsLiveWorldFrame(newest, newest, 2, 2, new(50, 7), newest.Width, [], [], generation,
+            room, 1, LiveTiledAtlas.TileSize);
+        var result = new WindowsLiveWorldPipelineResult(WindowsLiveWorldPipelineState.Committed, generation,
+            new(350, 37), default, new(300, 30), corrected.MapRevision, null, null, null, "test placement")
+        {
+            CommittedGraph = corrected,
+            CommittedRoomId = 7,
+            PersistentCaptureGeneration = savedGeneration,
+            WalkedCoordinateEpoch = coordinateEpoch,
+            SavedWorld = LiveWorldGroundProjection.Empty with
+            {
+                Placement = new([new(new(35, 12), new(65, 12))], [])
+            }
+        };
+        var window = new MainWindow(GameRuntimeMode.Normal, gamePath: null, root: root, documents: root);
+        try
+        {
+            SetField(window, "workspace", "Gameplay");
+            SetField(window, "recentCaptureGeneration", generation);
+            SetField(window, "hasFreshGameFrame", true);
+            var completedWorld = typeof(MainWindow).GetNestedType("CompletedWorld", BindingFlags.NonPublic)!;
+            SetField(window, "completedWorld", Activator.CreateInstance(completedWorld, publication, result)!);
+
+            var presentation = GetField<GameplayPresentationState>(window, "gameplayPresentation");
+            var evidence = GetField<AtlasPathFrameEvidence>(window, "atlasPathEvidence");
+            var menuRecognizer = GetField<WindowsMenuStencilRecognizer>(window, "menuStencilRecognizer");
+            var bitmap = Control<Image>(window, "GameplayImage");
+            var placement = Control<Canvas>(window, "GameplayPlacementCanvas");
+
+            void PresentCapture(BgraFrame frame, bool gameplay = true)
+            {
+                presentation.Capture(frame);
+                SetField(window, "latestPresentedCaptureId", frame.CaptureId);
+                bitmap.Source = (System.Windows.Media.Imaging.BitmapSource)typeof(MainWindow)
+                    .GetMethod("FrameBitmap", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [frame])!;
+                evidence.ObserveGameplayPreview(frame.CaptureId, gameplay);
+            }
+
+            PresentCapture(newest);
+            var newestPixels = bitmap.Source;
+            var tiles = new AtlasMosaicDelta(1, [new(new(0, 0), SolidFrame(1, LiveTiledAtlas.TileSize, LiveTiledAtlas.TileSize), 1, 1)]);
+            var initial = new MainWindow.VisionAnalysisResult(first, [], [], tiles, Camera(120, 40), null,
+                new("Playing", "game"), null, null, GetField<long>(menuRecognizer, "generation"), null, true, "")
+            {
+                CaptureGeneration = generation,
+                CaptureTimestamp = 1.5,
+                LabelRevision = GetField<LabelCaptureSession>(window, "labelCapture").Revision,
+                WorldFrame = new(generation, room, 1.5, coordinateEpoch, 1, 1, false),
+                WorldBasisOffset = new(100, 30),
+                WorldBasisTimestamp = 1.5,
+                WorldPlacementConfirmed = true,
+                AtlasPathState = AtlasPathFrameState.Gameplay
+            };
+            window.ApplyVisionAnalysis(initial);
+            Check(ReferenceEquals(newestPixels, bitmap.Source) && Canvas.GetLeft(bitmap) == 124 && Canvas.GetTop(bitmap) == -47,
+                "The newest pixels must use the measured owner's revised placement when an older analysis arrives.");
+            Check(placement.Visibility == Visibility.Visible && placement.Children.OfType<Line>().Count() == 1,
+                "The measured doorway should be presented with confirmed gameplay placement.");
+
+            window.ApplyVisionAnalysis(initial with
+            {
+                Frame = newest,
+                GameplayTiles = null,
+                GameplayTelemetry = Camera(600, 300),
+                CaptureTimestamp = 2.5,
+                WorldFrame = new(generation, room, 2.5, coordinateEpoch, 99, 99, false)
+            });
+            Check(ReferenceEquals(newestPixels, bitmap.Source) && Canvas.GetLeft(bitmap) == 124 && Canvas.GetTop(bitmap) == -47
+                && placement.Visibility == Visibility.Collapsed,
+                "An unresolved capture must hold the displayed placement while hiding registered doorway overlays.");
+
+            var viewport = GetField<GameplayViewportController>(window, "gameplayViewport");
+            viewport.SetFreeFlyTransform(new(1, 0, 0));
+            var settledPan = viewport.AtlasPan(4);
+            window.ApplyVisionAnalysis(initial with
+            {
+                WorldFrame = null,
+                WorldBasisOffset = new(999, 999),
+                WorldBasisTimestamp = 4,
+                GameplayTiles = null
+            });
+            Check(ReferenceEquals(newestPixels, bitmap.Source) && Canvas.GetLeft(bitmap) == 124 && Canvas.GetTop(bitmap) == -47
+                && viewport.AtlasPan(4) == settledPan, "Out-of-order analysis must not move the window or update its camera basis.");
+
+            var menu = SolidFrame(3);
+            PresentCapture(menu, gameplay: false);
+            var menuPixels = bitmap.Source;
+            window.ApplyVisionAnalysis(initial with
+            {
+                Frame = menu,
+                Status = new("Options", "options"),
+                WorldFrame = null,
+                WorldBasisOffset = null,
+                WorldBasisTimestamp = null,
+                WorldPlacementConfirmed = false,
+                AtlasPathState = AtlasPathFrameState.Hidden,
+                GameplayTiles = tiles with { Revision = 2 },
+                AdmitsTracking = false
+            });
+            Check(ReferenceEquals(menuPixels, bitmap.Source) && Canvas.GetLeft(bitmap) == 0 && Canvas.GetTop(bitmap) == 0
+                && bitmap.Width == menu.Width && bitmap.Height == menu.Height && placement.Visibility == Visibility.Collapsed,
+                "Rendering committed tiles must leave a menu image in capture coordinates.");
+        }
+        finally
+        {
+            SetField(window, "isClosing", true);
+            Wait(InvokeTask(window, "PrepareShutdownAsync"));
+        }
+    }
+
+    private static BgraFrame SolidFrame(long id, int width = 32, int height = 24)
+    {
+        var pixels = Enumerable.Repeat((byte)255, width * height * BgraFrame.BytesPerPixel).ToArray();
+        return new(width, height, width * BgraFrame.BytesPerPixel, pixels, id, DateTimeOffset.UnixEpoch);
+    }
+
+    private static LiveWorldCaptureEvidence MeasuredCapture(double timestamp, long lineage)
+    {
+        var evidence = new LiveWorldCaptureEvidence(timestamp);
+        typeof(LiveWorldCaptureEvidence).GetProperty(nameof(evidence.MeasuredLineage))!.SetValue(evidence, lineage);
+        return evidence;
+    }
+
+    private static ReceiverGroundTruthSample Camera(double x, double y) => new(
+        2, "groundTruth", Guid.Empty, 0, 0, 0, "Tutorial_01", false, 0, 0, 0, 0, 0, false, false, true,
+        x, y, -38, x, y, -38, 12, 1, 1, null, null, 32, 24, 32, 24);
 
     private static void VerifyRestoredPassageAlignment(string root)
     {
@@ -306,6 +459,10 @@ internal static class AtlasWindowIntegrationTests
     private static void SetField(MainWindow window, string name, object value) =>
         (typeof(MainWindow).GetField(name, InstanceMembers)
             ?? throw new MissingFieldException(nameof(MainWindow), name)).SetValue(window, value);
+
+    private static T GetField<T>(object target, string name) =>
+        (T)(target.GetType().GetField(name, InstanceMembers)?.GetValue(target)
+            ?? throw new MissingFieldException(target.GetType().Name, name));
 
     private static object? Invoke(MainWindow window, string method, params object?[] args) =>
         (typeof(MainWindow).GetMethod(method, InstanceMembers)
