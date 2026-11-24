@@ -79,22 +79,32 @@ public sealed partial class MenuStencilCatalogBuilder
                     <= Math.Abs(annotations[0].MidX - previousRight.BoundsFor(target.Language).MidX)) left = annotations[0];
                 else right = annotations[0];
             }
-            PositionedSelector? Correct(PositionedSelector? selector, StencilRect? bounds)
+            options[optionIndex] = option with
             {
-                if (selector is null || bounds is null) return selector;
-                var localized = selector.LocalizedBounds?.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal) ?? new(StringComparer.Ordinal);
-                localized[target.Language] = bounds.Value;
-                var variants = selector.Variants.ToList();
-                if (pixels.Reference(bounds.Value) is { } reference) variants.Add(MakeVariant($"human-selector-correction.{target.Language}", reference, language: target.Language));
-                var references = (selector.LocalizedReferenceBounds ?? selector.LocalizedBounds)?
-                    .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal) ?? new(StringComparer.Ordinal);
-                references[target.Language] = bounds.Value;
-                return selector with { LocalizedBounds = localized, LocalizedReferenceBounds = references, Variants = variants };
-            }
-            options[optionIndex] = option with { LeftSelector = Correct(option.LeftSelector, left), RightSelector = Correct(option.RightSelector, right) };
+                LeftSelector = CorrectReviewedSelector(option.LeftSelector, left, target.Language, pixels),
+                RightSelector = CorrectReviewedSelector(option.RightSelector, right, target.Language, pixels)
+            };
             scenes[sceneIndex] = scene with { Options = options };
         }
         return scenes;
+    }
+
+    private static PositionedSelector? CorrectReviewedSelector(
+        PositionedSelector? selector, StencilRect? bounds, string language, ImageStencilPixels pixels)
+    {
+        if (selector is null || bounds is null) return selector;
+        var localized = selector.LocalizedBounds?.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
+            ?? new(StringComparer.Ordinal);
+        localized[language] = bounds.Value;
+
+        var variants = selector.Variants.ToList();
+        if (pixels.Reference(bounds.Value) is { } reference)
+            variants.Add(MakeVariant($"human-selector-correction.{language}", reference, language: language));
+
+        var references = (selector.LocalizedReferenceBounds ?? selector.LocalizedBounds)?
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal) ?? new(StringComparer.Ordinal);
+        references[language] = bounds.Value;
+        return selector with { LocalizedBounds = localized, LocalizedReferenceBounds = references, Variants = variants };
     }
 
     private static IReadOnlyList<MenuSelectorCorrection> CorrectionPlacements(IEnumerable<SavedLabelingExample> examples, IReadOnlyList<Scene> scenes)
