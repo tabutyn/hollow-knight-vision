@@ -404,8 +404,13 @@ public sealed class LiveWorldTracker
             ObservedFloorCandidates = captureEvidence?.FloorCandidates,
             ObservedPlayerBounds = captureEvidence?.PlayerBounds
         };
-        ReplaceSnapshot(observations: [.. Snapshot.Observations, observation],
-            trackingIslands: CurrentTrackingIslands(observation, placementPending));
+        var priorIsland = Snapshot.TrackingIslands.LastOrDefault();
+        var islands = CurrentTrackingIslands(observation, placementPending, captureEvidence?.MeasuredLineage);
+        var activeIsland = islands.LastOrDefault();
+        if (priorIsland?.Id != activeIsland?.Id
+            && (priorIsland?.MeasuredLineage is not null || activeIsland?.MeasuredLineage is not null))
+            pendingClosure = null;
+        ReplaceSnapshot(observations: [.. Snapshot.Observations, observation], trackingIslands: islands);
         currentVisitObservationIds.Add(observationId);
         cumulativeTravel[observationId] = travel;
         lastObservationId = observationId;
@@ -571,7 +576,8 @@ public sealed class LiveWorldTracker
         return true;
     }
 
-    private IReadOnlyList<LiveTrackingIsland> CurrentTrackingIslands(LiveWorldObservation observation, bool placementPending)
+    private IReadOnlyList<LiveTrackingIsland> CurrentTrackingIslands(LiveWorldObservation observation,
+        bool placementPending, long? lineage)
     {
         var islands = Snapshot.TrackingIslands;
         if (islands.Count == 0 && !Snapshot.UsesSwiftWireFormat)
@@ -591,9 +597,23 @@ public sealed class LiveWorldTracker
         var basis = new AtlasPoint(
             observation.OptimizedPose.X - observation.LocalPose.X,
             observation.OptimizedPose.Y - observation.LocalPose.Y);
+        if (lineage is not null)
+        {
+            // Capture ownership can refer to an older island. The latest
+            // observation's owner stays last for recovery and composition.
+            var owner = islands.LastOrDefault(island => island.MeasuredLineage == lineage
+                && island.RoomId == observation.RoomId && island.RequiresPlacement == placementPending
+                && Distance(island.WorldFromLocal, basis) <= .000001
+                && Snapshot.Observations.LastOrDefault(row => row.Id == island.Members[^1].ObservationId) is { } tail
+                && currentVisitObservationIds.Contains(tail.Id)
+                && tail.CaptureGeneration == observation.CaptureGeneration && tail.LocalEpoch == observation.LocalEpoch
+                && tail.CaptureTimestamp < captureTimestamp);
+            if (owner is not null)
+                return [.. islands.Where(island => island.Id != owner.Id), owner with { Members = [.. owner.Members, member] }];
+        }
         var last = islands.LastOrDefault();
         var previous = Snapshot.Observations.LastOrDefault();
-        if (last is { Placement: LiveIslandPlacement.Estimated or LiveIslandPlacement.Connected }
+        if (lineage is null && last is { MeasuredLineage: null, Placement: LiveIslandPlacement.Estimated or LiveIslandPlacement.Connected }
             && last.RequiresPlacement == placementPending && previous is { CaptureTimestamp: { } priorTime }
             && currentVisitObservationIds.Contains(previous.Id)
             && last.Members[^1].ObservationId == previous.Id
@@ -609,7 +629,8 @@ public sealed class LiveWorldTracker
         var id = NextId(islands.Select(value => value.Id));
         return [.. islands, new LiveTrackingIsland(id, observation.RoomId, observation.Timestamp,
             basis, LiveIslandPlacement.Estimated, default,
-            placementPending ? LiveTrackingIsland.RecoveryBreakReason : LiveTrackingIsland.PlacedTrackingBreakReason, [member])];
+            placementPending ? LiveTrackingIsland.RecoveryBreakReason : LiveTrackingIsland.PlacedTrackingBreakReason, [member])
+            { MeasuredLineage = lineage }];
     }
 
     private IReadOnlyList<CachedReference> EligibleReferences(
@@ -663,14 +684,7 @@ public sealed class LiveWorldTracker
         LiveWorldObservation observation,
         double travel)
     {
-        var roomObservationIds = Snapshot.Observations
-            .Where(value => value.RoomId == observation.RoomId)
-            .Select(value => value.Id)
-            .ToHashSet();
-        var last = Snapshot.Keyframes.LastOrDefault(value =>
-            currentVisitObservationIds.Contains(value.ObservationId)
-            && value.ObservationId != observation.Id
-            && roomObservationIds.Contains(value.ObservationId));
+        var last = PreviousLocalKeyframe(observation, MeasuredOwner(observation.Id));
         if (last is null
             || !cumulativeTravel.TryGetValue(last.ObservationId, out var lastTravel))
         {
@@ -679,21 +693,29 @@ public sealed class LiveWorldTracker
         return travel - lastTravel >= observation.SolveWidth * KeyframeTravelFraction;
     }
 
+    private LiveTrackingIsland? MeasuredOwner(int observationId) =>
+        Snapshot.TrackingIslands.LastOrDefault(island => island.MeasuredLineage is not null
+            && island.Members.Any(member => member.ObservationId == observationId));
+
+    private LiveWorldKeyframe? PreviousLocalKeyframe(LiveWorldObservation observation, LiveTrackingIsland? measuredOwner)
+    {
+        var allowedObservations = measuredOwner is null
+            ? Snapshot.Observations.Where(row => row.RoomId == observation.RoomId).Select(row => row.Id).ToHashSet()
+            : measuredOwner.Members.Select(member => member.ObservationId).ToHashSet();
+        return Snapshot.Keyframes.LastOrDefault(keyframe => keyframe.ObservationId != observation.Id
+            && currentVisitObservationIds.Contains(keyframe.ObservationId)
+            && allowedObservations.Contains(keyframe.ObservationId));
+    }
+
     private int AddKeyframe(LiveWorldObservation observation, BgraFrame frame)
     {
         var existing = Snapshot.Keyframes.FirstOrDefault(
             value => value.ObservationId == observation.Id);
         if (existing is not null) return existing.Id;
 
-        var roomObservationIds = Snapshot.Observations
-            .Where(value => value.RoomId == observation.RoomId)
-            .Select(value => value.Id)
-            .ToHashSet();
         var keyframeId = observation.Id;
-        var prior = Snapshot.Keyframes.LastOrDefault(value =>
-            currentVisitObservationIds.Contains(value.ObservationId)
-            && value.ObservationId != observation.Id
-            && roomObservationIds.Contains(value.ObservationId));
+        var measuredOwner = MeasuredOwner(observation.Id);
+        var prior = PreviousLocalKeyframe(observation, measuredOwner);
         var keyframe = new LiveWorldKeyframe(
             keyframeId,
             observation.Id,
@@ -706,7 +728,8 @@ public sealed class LiveWorldTracker
             if (priorObservation is not null
                 && priorObservation.RoomId == observation.RoomId
                 && priorObservation.CaptureGeneration == observation.CaptureGeneration
-                && priorObservation.LocalEpoch == observation.LocalEpoch)
+                && priorObservation.LocalEpoch == observation.LocalEpoch
+                && (measuredOwner is not null || MeasuredOwner(priorObservation.Id) is null))
             {
                 motionEdges.Add(new LiveWorldRelativeMotionEdge(
                     NextId(motionEdges.Select(value => value.Id)),

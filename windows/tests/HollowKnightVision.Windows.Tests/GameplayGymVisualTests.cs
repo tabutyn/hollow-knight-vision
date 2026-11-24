@@ -293,7 +293,7 @@ internal static class GameplayGymVisualTests
             var time = frame / 5d;
             atlas.Observe(Frame(frame, image ?? pixels),
                 pose, time, [], default, evidence, admitsPlacement: true,
-                groundEvidence: new(time, new(floor), new(floor)));
+                captureEvidence: new(time, new(floor), new(floor)));
         }
 
         static BgraFrame Frame(int id, byte[] image) =>
@@ -312,8 +312,8 @@ internal static class GameplayGymVisualTests
         var original = Texture(71);
         var otherView = Texture(81);
         atlas.EnterRoom(7);
-        Observe(0, new(0, 0), original, measured);
-        Observe(1, new(128, 0), original, measured);
+        Observe(0, new(0, 0), original, measured, lineage: 1);
+        Observe(1, new(128, 0), original, measured, lineage: 1);
         var baseline = atlas.View(new(128, 0), size, 5)!;
         if (baseline.EarnedCells <= 0) throw new InvalidOperationException("The placed map must already have earned cells.");
 
@@ -322,14 +322,14 @@ internal static class GameplayGymVisualTests
             throw new InvalidOperationException("An unsupported gap must withhold policy placement.");
 
         var recoveredLocal = new AtlasPoint(640, 0);
-        Observe(3, recoveredLocal, otherView, measured);
+        Observe(3, recoveredLocal, otherView, measured, lineage: 2);
         if (!atlas.CanContinueMeasuredScenery || !atlas.PlacementPending
             || atlas.PolicyView(recoveredLocal, size, 5) is not { } first
             || first.CoveredCells != baseline.CoveredCells || first.EarnedCells != baseline.EarnedCells)
             throw new InvalidOperationException("A fresh measured ground view must begin an unplaced local chart.");
         var keys = atlas.Snapshot.Keyframes.Count;
         var next = new AtlasPoint(768, 0);
-        Observe(4, next, otherView, GroundHypothesisTrackingResult.Empty, scenery: true);
+        Observe(4, next, otherView, GroundHypothesisTrackingResult.Empty, scenery: true, lineage: 2);
         var local = atlas.PolicyView(next, size, 5);
         if (local is not { Missing: { Count: 15 } } || local.Camera[0] != next.X
             || local.Missing.SequenceEqual(first.Missing!) || atlas.View(next, size, 5) is not null
@@ -337,16 +337,36 @@ internal static class GameplayGymVisualTests
             || atlas.Snapshot.Keyframes.Count != keys || atlas.Snapshot.UnplacedObservationIds().Count != 2)
             throw new InvalidOperationException("Verified scenery must extend only the recovering chart without adding a landmark or credit.");
 
+        var unrelated = new AtlasPoint(800, 0);
+        Observe(5, unrelated, otherView, measured, lineage: 3);
+        var standalone = new BotVisualAtlasCoverage();
+        standalone.Register(unrelated, size, [], creditExploration: false);
+        var separated = atlas.PolicyView(unrelated, size, 5);
+        if (separated?.Missing is not { } missing
+            || !missing.SequenceEqual(standalone.View(unrelated, size, 0, 5)!.Missing!)
+            || separated.CoveredCells != baseline.CoveredCells || separated.EarnedCells != baseline.EarnedCells
+            || atlas.Snapshot.TrackingIslands[^1].Members.Count != 1)
+            throw new InvalidOperationException("A new unplaced image owner must have an independent frontier and no global credit.");
+
+        Observe(6, next, otherView, measured, lineage: 2);
+        var resumed = atlas.PolicyView(next, size, 5);
+        if (resumed?.Missing is not { } resumedMissing || !resumedMissing.SequenceEqual(local.Missing)
+            || resumed.CoveredCells != baseline.CoveredCells || resumed.EarnedCells != baseline.EarnedCells
+            || atlas.Snapshot.TrackingIslands[^1].Members.Count != 3)
+            throw new InvalidOperationException("A measured return must restore the prior local frontier without adding global credit.");
+
         atlas.EnterRoom(8);
-        Observe(5, next, otherView, GroundHypothesisTrackingResult.Empty, scenery: true);
+        Observe(7, next, otherView, GroundHypothesisTrackingResult.Empty, scenery: true);
         if (atlas.CanContinueMeasuredScenery || atlas.PolicyView(next, size, 5) is not null)
             throw new InvalidOperationException("A new room cannot inherit the recovering chart or seed it from scenery.");
 
-        void Observe(int index, AtlasPoint? pose, byte[] pixels, GroundHypothesisTrackingResult tracking, bool scenery = false)
+        void Observe(int index, AtlasPoint? pose, byte[] pixels, GroundHypothesisTrackingResult tracking,
+            bool scenery = false, long? lineage = null)
         {
             var time = index * .2;
             atlas.Observe(new(width, height, width * 4, pixels, index, DateTimeOffset.UnixEpoch.AddSeconds(time)),
-                pose, time, [], default, tracking, admitsPlacement: true, continuesMeasuredScenery: scenery);
+                pose, time, [], default, tracking, admitsPlacement: true, continuesMeasuredScenery: scenery,
+                captureEvidence: new(time) { MeasuredLineage = lineage, HasMeasuredSceneryContinuity = scenery });
         }
 
         static byte[] Texture(int seed)
