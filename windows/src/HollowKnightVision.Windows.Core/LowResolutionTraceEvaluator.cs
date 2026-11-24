@@ -1,14 +1,20 @@
+using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace HollowKnightVision.Windows.Core;
 
 public enum LowResolutionTraceEvaluatorError
 {
-    MissingPersistedWorldEvidence
+    MissingPersistedWorldEvidence,
+    InvalidArgument,
+    MissingTracePath
 }
 
 public sealed class LowResolutionTraceEvaluatorException : Exception
 {
-    public LowResolutionTraceEvaluatorException(LowResolutionTraceEvaluatorError error)
-        : base(error.ToString()) => Error = error;
+    public LowResolutionTraceEvaluatorException(LowResolutionTraceEvaluatorError error, string? message = null)
+        : base(message ?? error.ToString()) => Error = error;
 
     public LowResolutionTraceEvaluatorError Error { get; }
 }
@@ -19,10 +25,10 @@ public sealed record LowResolutionTraceErrorStatistics(
 public sealed record LowResolutionTraceWorstMotion(
     double Offset,
     string SceneName,
-    double ExpectedDx,
-    double ExpectedDy,
-    double? PredictedDx,
-    double? PredictedDy,
+    [property: JsonPropertyName("expectedDX")] double ExpectedDx,
+    [property: JsonPropertyName("expectedDY")] double ExpectedDy,
+    [property: JsonPropertyName("predictedDX")] double? PredictedDx,
+    [property: JsonPropertyName("predictedDY")] double? PredictedDy,
     double ErrorPixels);
 
 public sealed record LowResolutionTraceRejectedTravelSummary(
@@ -38,22 +44,22 @@ public sealed record LowResolutionTraceBridgeEvent(
     string SceneName,
     string? ExpectedDirection,
     string Rejection,
-    double ExpectedDx,
-    double ExpectedDy,
-    double? BridgedDx,
-    double? BridgedDy);
+    [property: JsonPropertyName("expectedDX")] double ExpectedDx,
+    [property: JsonPropertyName("expectedDY")] double ExpectedDy,
+    [property: JsonPropertyName("bridgedDX")] double? BridgedDx,
+    [property: JsonPropertyName("bridgedDY")] double? BridgedDy);
 
 public sealed record LowResolutionTraceGroundLossEvent(
     double Offset,
     string SceneName,
     string? ExpectedDirection,
     string? Rejection,
-    double ExpectedDx,
-    double ExpectedDy,
-    double? MeasuredDx,
-    double? MeasuredDy,
-    double? BridgedDx,
-    double? BridgedDy);
+    [property: JsonPropertyName("expectedDX")] double ExpectedDx,
+    [property: JsonPropertyName("expectedDY")] double ExpectedDy,
+    [property: JsonPropertyName("measuredDX")] double? MeasuredDx,
+    [property: JsonPropertyName("measuredDY")] double? MeasuredDy,
+    [property: JsonPropertyName("bridgedDX")] double? BridgedDx,
+    [property: JsonPropertyName("bridgedDY")] double? BridgedDy);
 
 public sealed record LowResolutionTraceMotionSummary(
     int Comparisons,
@@ -98,7 +104,7 @@ public sealed record LowResolutionTraceConnectedCameraSummary(
 
 public sealed record LowResolutionTraceEvaluationReport(
     int SchemaVersion,
-    Guid PathId,
+    [property: JsonPropertyName("pathID")] Guid PathId,
     int? ReplayIteration,
     int TraceFrames,
     int ValidTraceFrames,
@@ -129,6 +135,54 @@ public sealed record LowResolutionTraceEvaluationReport(
 /// </summary>
 public static class LowResolutionTraceEvaluator
 {
+    public const string CommandFlag = "--evaluate-low-resolution-trace";
+    private static readonly DateTimeOffset AppleReferenceDate = new(2001, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+    public static LowResolutionTraceEvaluationReport Run(IReadOnlyList<string> arguments)
+    {
+        ArgumentNullException.ThrowIfNull(arguments);
+        string? trace = null, report = null, world = null;
+        var improvement = LowResolutionRoomMotionTracker.MinimumImprovement;
+        for (var index = 0; index < arguments.Count; index += 2)
+        {
+            var flag = arguments[index];
+            if (index + 1 >= arguments.Count || string.IsNullOrWhiteSpace(arguments[index + 1])
+                || arguments[index + 1].StartsWith("--", StringComparison.Ordinal))
+                throw InvalidArgument($"Missing value for {flag}.");
+            var value = arguments[index + 1];
+            switch (flag)
+            {
+                case CommandFlag: trace = value; break;
+                case "--low-resolution-report": report = value; break;
+                case "--low-resolution-world-evidence": world = value; break;
+                case "--low-resolution-minimum-improvement":
+                    if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out improvement)
+                        || !double.IsFinite(improvement) || improvement is < 0 or > 1)
+                        throw InvalidArgument("--low-resolution-minimum-improvement must be between 0 and 1.");
+                    break;
+                default: throw InvalidArgument($"Unrecognized trace evaluation option: {flag}.");
+            }
+        }
+        if (trace is null)
+            throw new LowResolutionTraceEvaluatorException(LowResolutionTraceEvaluatorError.MissingTracePath,
+                $"Usage: {CommandFlag} PATH [--low-resolution-report FILE] [--low-resolution-world-evidence DIRECTORY].");
+
+        var tracePath = Path.GetFullPath(trace);
+        var reportPath = report is null ? null : Path.GetFullPath(report);
+        var comparer = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (reportPath is not null && string.Equals(tracePath, reportPath, comparer))
+            throw InvalidArgument("Choose a report path different from the input recording.");
+
+        var path = new RecordedInputPathStore(Path.GetDirectoryName(tracePath)).Load(tracePath);
+        var result = world is null ? Evaluate(path, improvement) : EvaluatePersistedWorld(path, world, improvement);
+        if (reportPath is not null)
+            AtomicFile.Write(reportPath, JsonSerializer.SerializeToUtf8Bytes(result, LabelingExampleStore.CreateJsonOptions()));
+        return result;
+    }
+
+    private static LowResolutionTraceEvaluatorException InvalidArgument(string message) =>
+        new(LowResolutionTraceEvaluatorError.InvalidArgument, message);
+
     private sealed record ComparableFrame(
         RecordedLowResolutionFrame Recorded,
         LowResolutionMotionGrid Grid,
@@ -355,37 +409,54 @@ public static class LowResolutionTraceEvaluator
     {
         ArgumentNullException.ThrowIfNull(path);
         ArgumentException.ThrowIfNullOrWhiteSpace(worldRootDirectory);
-        var store = new SceneSessionStore(worldRootDirectory);
-        var createdAt = path.CreatedAt.ToUnixTimeMilliseconds() / 1000d;
-        var candidates = store.Manifest.Observations.Where(observation =>
+        using var store = SceneSessionStore.OpenReadOnly(worldRootDirectory);
+        var swiftClock = store.Manifest.UsesSwiftWireFormat;
+        var createdAt = (path.CreatedAt - (swiftClock ? AppleReferenceDate : DateTimeOffset.UnixEpoch)).TotalSeconds;
+        var firstWallClockFrame = store.Manifest.Observations.FirstOrDefault(observation =>
             observation.Timestamp >= createdAt - .25
-            && observation.Timestamp <= createdAt + path.Duration + 1.5).ToArray();
-        if (candidates.Length == 0) throw MissingWorldEvidence();
-        var first = candidates[0];
+            && observation.Timestamp <= createdAt + path.Duration + 1.5);
         var trackingByFrame = new Dictionary<int, RecordedTrackingSample>();
+        var trackingByCapture = new Dictionary<double, RecordedTrackingSample?>();
         foreach (var sample in path.TrackingSamples)
         {
-            if (sample.RenderedGameFrame is { } frame
-                && sample.CaptureOffset is { } offset && double.IsFinite(offset))
-                trackingByFrame[frame] = sample;
+            if (sample.RenderedGameFrame is not { } frame
+                || sample.CaptureOffset is not { } offset || !double.IsFinite(offset)) continue;
+            trackingByFrame[frame] = sample;
+            if (!trackingByCapture.TryAdd(sample.CaptureTimestamp, sample))
+                trackingByCapture[sample.CaptureTimestamp] = trackingByCapture[sample.CaptureTimestamp]?.RenderedGameFrame == frame
+                    ? sample : null;
         }
         if (trackingByFrame.Count == 0) throw MissingWorldEvidence();
 
         var result = new List<RecordedLowResolutionFrame>();
-        foreach (var observation in candidates)
+        var matchedCaptures = new HashSet<(double Timestamp, int Frame)>();
+        foreach (var observation in store.Manifest.Observations)
         {
-            var offset = observation.Timestamp - first.Timestamp;
-            if (offset < -.05 || offset > path.Duration + .25) continue;
+            // Native Windows evidence shares the recorder's capture uptime.
+            // Swift and earlier wall-clock exports use a bounded recording window.
+            RecordedTrackingSample? exactCapture = null;
+            var exactTime = !swiftClock && trackingByCapture.TryGetValue(observation.Timestamp, out exactCapture);
+            var wallClock = firstWallClockFrame is { } first
+                && observation.Timestamp >= createdAt - .25
+                && observation.Timestamp >= first.Timestamp - .05
+                && observation.Timestamp <= first.Timestamp + path.Duration + .25
+                && observation.Timestamp <= createdAt + path.Duration + 1.5;
+            if (!exactTime && !wallClock) continue;
             BgraFrame image;
             try { image = store.Source(observation); }
             catch (Exception exception) when (exception is IOException
                 or InvalidDataException or SceneSessionStoreException) { continue; }
-            var renderedFrame = RenderedFrameMarker.Decode(image);
-            if (renderedFrame is not { } frame
-                || !trackingByFrame.TryGetValue(frame, out var tracking)
-                || tracking.CaptureOffset is not { } trackingOffset
-                || !double.IsFinite(trackingOffset)
-                || FrameRegionRenderer.SignalProfile(image).MotionGrid is not { } grid) continue;
+            var marker = RenderedFrameMarker.Decode(image);
+            if (exactTime && marker is not null && exactCapture?.RenderedGameFrame != marker) continue;
+            // Atlas composition may mask the barcode. The identical capture
+            // timestamp still identifies the recorded Unity frame on Windows.
+            var tracking = exactTime
+                ? exactCapture
+                : marker is { } wallFrame ? trackingByFrame.GetValueOrDefault(wallFrame) : null;
+            if (tracking?.CaptureOffset is not { } trackingOffset
+                || tracking.RenderedGameFrame is not { } frame
+                || FrameRegionRenderer.SignalProfile(image).MotionGrid is not { } grid
+                || !matchedCaptures.Add((tracking.CaptureTimestamp, frame))) continue;
             result.Add(new RecordedLowResolutionFrame
             {
                 Offset = trackingOffset,

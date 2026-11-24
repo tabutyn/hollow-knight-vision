@@ -406,6 +406,8 @@ var tests = new List<(string Name, Action Run)>
     ("low-resolution trace falls back to historical published tracking", TestConnectedCameraUsesHistoricalPublishedTrackingWhenCoarseTraceIsAbsent),
     ("low-resolution trace excludes invalid payload without losing count", TestInvalidPayloadIsExcludedWithoutLosingTraceCount),
     ("low-resolution trace reconstructs persisted world evidence window", TestReconstructsTraceFromPersistedWorldEvidenceWindow),
+    ("low-resolution trace CLI joins saved evidence clocks and preserves the source", TestLowResolutionTraceCommand),
+    ("offline replay preserves input and same-frame receiver truth for trace diagnostics", TestOfflineReplayPreservesDiagnosticTrace),
     ("input physical reconciliation preserves unobserved local press", InputBridgeStateTests.TestPhysicalReconciliationDoesNotCancelAVisibleLocalPressWhenGlobalPollingIsUnavailable),
     ("input physical reconciliation releases only observed key", InputBridgeStateTests.TestPhysicalReconciliationReleasesOnlyAfterObservingTheHeldKey),
     ("input sender emits ordered complete transitions", InputBridgeStateTests.TestSenderEmitsOrderedCompleteTransitionsAndNeutralRelease),
@@ -4320,6 +4322,140 @@ static void TestReconstructsTraceFromPersistedWorldEvidenceWindow()
         Close(.2, frames[1].Offset);
         True(frames.All(frame => frame.Width == 64 && frame.Height == 36));
         True(frames.All(frame => frame.GroundTrackingReliable));
+    });
+}
+
+static void TestLowResolutionTraceCommand()
+{
+    WithTemporaryDirectory(root =>
+    {
+        var created = DateTimeOffset.FromUnixTimeSeconds(1_700_000_000);
+        var session = Guid.NewGuid();
+        var first = FractionalMotionGrid(0);
+        var second = FractionalMotionGrid(1);
+        var input = TracePath(
+            tracking: [TraceTracking(10, 0, 0), TraceTracking(11, .0625, 10) with { PoseVerified = false },
+                TraceTracking(13, .125, 20), TraceTracking(14, .125, 20)],
+            truth: [TraceTruth(10, 0, session, 0), TraceTruth(11, 1, session, .0625)],
+            frames: [TraceFrame(first, 10, 100, reliable: true), TraceFrame(second, 11, 100.0625, reliable: false)],
+            metadata: new Dictionary<string, string> { ["captureWidth"] = "1280" }, createdAt: created);
+        var inputPath = new RecordedInputPathStore(root).Save(input);
+        var original = File.ReadAllBytes(inputPath);
+        var reportPath = Path.Combine(root, "reports", "trace evaluation.json");
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+        int Run(params string[] arguments)
+        {
+            output.GetStringBuilder().Clear();
+            errors.GetStringBuilder().Clear();
+            return NativeHostTestProcess.Run(GameStartupCliTailParityTests.HostExecutable,
+                [LowResolutionTraceEvaluator.CommandFlag, .. arguments], output, errors);
+        }
+
+        Equal(64, Run());
+        Equal(64, Run(inputPath, "--low-resolution-minimum-improvement", "NaN"));
+        Equal(64, Run(inputPath, "--low-resolution-report", inputPath));
+        True(original.SequenceEqual(File.ReadAllBytes(inputPath)));
+        var missing = Path.Combine(root, "missing evidence");
+        Equal(1, Run(inputPath, "--low-resolution-world-evidence", missing, "--low-resolution-report", reportPath));
+        True(!Directory.Exists(missing) && !File.Exists(reportPath));
+
+        Equal(0, Run(inputPath, "--low-resolution-report", reportPath, "--low-resolution-minimum-improvement", ".025"));
+        var persisted = File.ReadAllText(reportPath);
+        Equal(persisted, output.ToString().TrimEnd());
+        using var report = JsonDocument.Parse(persisted);
+        Equal(10, report.RootElement.GetProperty("schemaVersion").GetInt32());
+        Equal(input.Id, report.RootElement.GetProperty("pathID").GetGuid());
+        Equal(2, report.RootElement.GetProperty("exactTruthFrames").GetInt32());
+        Close(1280, report.RootElement.GetProperty("solveWidth").GetDouble());
+        Close(.025, report.RootElement.GetProperty("motionMinimumImprovement").GetDouble());
+        Equal(1, report.RootElement.GetProperty("groundLossEvents").GetArrayLength());
+        True(report.RootElement.GetProperty("groundLossEvents")[0].TryGetProperty("expectedDX", out _));
+
+        var windowsRoot = Path.Combine(root, "Windows Atlas");
+        var windows = new SceneSessionStore(windowsRoot);
+        var room = Guid.NewGuid();
+        var visit = Guid.NewGuid();
+        _ = windows.Append(TraceImage(first, 10), room, visit, 99.9, default, 640, []);
+        _ = windows.Append(TraceImage(first, 11), room, visit, 100, default, 640, []);
+        _ = windows.Append(TraceImage(first, 10), room, visit, 100, default, 640, []);
+        var masked = TraceImage(second, 11);
+        Array.Clear(masked.Pixels, 0, 6 * masked.Stride);
+        _ = windows.Append(masked, room, visit, 100.0625, default, 640, []);
+        _ = windows.Append(masked, room, visit, 100.0625, default, 640, []);
+        _ = windows.Append(masked, room, visit, 100.125, default, 640, []);
+        var manifestPath = Path.Combine(windowsRoot, "manifest.json");
+        var manifest = File.ReadAllBytes(manifestPath);
+        Equal(0, Run(inputPath, "--low-resolution-world-evidence", windowsRoot));
+        using var reconstructed = JsonDocument.Parse(output.ToString());
+        Equal(2, reconstructed.RootElement.GetProperty("traceFrames").GetInt32());
+        Equal(2, reconstructed.RootElement.GetProperty("exactTruthFrames").GetInt32());
+        True(output.ToString().Contains("reconstructed from persisted", StringComparison.Ordinal));
+        True(manifest.SequenceEqual(File.ReadAllBytes(manifestPath)) && original.SequenceEqual(File.ReadAllBytes(inputPath)));
+
+        var swiftRoot = Directory.CreateDirectory(Path.Combine(root, "Mac Atlas")).FullName;
+        File.WriteAllText(Path.Combine(swiftRoot, "manifest.json"),
+            $$"""{"schemaVersion":1,"sessionID":"{{Guid.NewGuid()}}","observations":[],"nextObservationID":0}""");
+        var swift = new SceneSessionStore(swiftRoot);
+        var swiftClock = (created - new DateTimeOffset(2001, 1, 1, 0, 0, 0, TimeSpan.Zero)).TotalSeconds;
+        _ = swift.Append(TraceImage(first, 10), room, visit, swiftClock + .1, default, 640, []);
+        _ = swift.Append(TraceImage(second, 11), room, visit, swiftClock + .35, default, 640, []);
+        var swiftFrames = LowResolutionTraceEvaluator.PersistedWorldFrames(input, swiftRoot);
+        True(swiftFrames.Select(frame => frame.RenderedGameFrame).SequenceEqual(new int?[] { 10, 11 }));
+    });
+}
+
+static void TestOfflineReplayPreservesDiagnosticTrace()
+{
+    WithTemporaryDirectory(root =>
+    {
+        var id = Guid.NewGuid();
+        var session = Guid.NewGuid();
+        var recorder = new InputPathRecorder();
+        True(recorder.Start(100, id: id, visualArchiveRoot: root));
+        recorder.RecordInput(RecordedGameButton.Right, true, 100.03125);
+        recorder.RecordInput(RecordedGameButton.Right, false, 100.21875);
+        var stableGround = GroundReferencePatternFrame(640, 360, 145);
+        for (var index = 0; index < 12; index++)
+        {
+            var timestamp = 100 + index * .0625;
+            var frame = TraceImage(FractionalMotionGrid(0), index + 10);
+            for (var pixel = 6 * frame.Stride; pixel < frame.Pixels.Length; pixel += BgraFrame.BytesPerPixel)
+            {
+                var value = (byte)Math.Clamp(stableGround.Pixels[pixel] + (frame.Pixels[pixel] - 128) / 4, 0, 255);
+                frame.Pixels[pixel] = frame.Pixels[pixel + 1] = frame.Pixels[pixel + 2] = value;
+            }
+            recorder.RecordVisualFrame(frame, timestamp, timestamp, 1, index + 10);
+            recorder.RecordVisualGroundInput(timestamp, 1, frame.Height, GameplaySceneMasks.Create(frame, [], null), InputButtons.Right);
+        }
+        recorder.RecordGroundTruth(TraceTruth(10, 0, session, .01).Sample, 100.01);
+        recorder.RecordGroundTruth(TraceTruth(11, 1, session, .13).Sample, 100.13);
+        recorder.RecordGroundTruth(TraceTruth(12, 2, session, .21).Sample, 100.21);
+        recorder.RecordGroundTruth(TraceTruth(12, 8, Guid.NewGuid(), .22).Sample, 100.22);
+        recorder.RecordGroundTruth(TraceTruth(50, 8, session, .23).Sample, 100.23);
+        var source = recorder.Stop(100.75)!;
+        Equal("640", source.RuntimeMetadata!["captureWidth"]);
+        var pathStore = new RecordedInputPathStore(root);
+        var inputPath = pathStore.Save(source);
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+        var result = NativeHostTestProcess.Run(GameStartupCliTailParityTests.HostExecutable,
+            ["--replay-visual-archive", inputPath, "--visual-replay-output", Path.Combine(root, "output")], output, errors);
+        if (result != 0) throw new InvalidOperationException(errors.ToString());
+        using var replayReport = JsonDocument.Parse(output.ToString());
+        var replayed = pathStore.Load(replayReport.RootElement.GetProperty("outputPath").GetString()!);
+        Equal(source.Id, replayed.SourcePathId!.Value);
+        Equal("640", replayed.RuntimeMetadata!["captureWidth"]);
+        True(source.Events.SequenceEqual(replayed.Events));
+        True(replayed.GroundTruthTrace.Select(truth => truth.Sample.UnityFrame).SequenceEqual([10L, 11L]));
+        Close(source.GroundTruthTrace[1].Offset, replayed.GroundTruthTrace[1].Offset);
+        Equal(2, LowResolutionTraceEvaluator.Evaluate(replayed).ExactTruthFrames);
+        var reliableGround = replayed.TrackingSamples.Where(sample => GroundMotionEvidence.IsMeasured(
+            sample.PoseVerified, sample.HasConfirmedGround, sample.LocalTextureSupport ?? 0,
+            sample.InlierCount, sample.GlobalMatchCount)).Select(sample => sample.CaptureTimestamp).ToHashSet();
+        True(replayed.LowResolutionFrameTrace.All(frame =>
+            frame.GroundTrackingReliable == reliableGround.Contains(frame.CaptureTimestamp)));
+        True(replayed.LowResolutionFrameTrace.Any(frame => frame.GroundTrackingReliable));
     });
 }
 

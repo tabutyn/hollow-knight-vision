@@ -117,7 +117,11 @@ internal static class VisualProductionReplay
         var timeBase = StartTimestamp(source, manifest);
         var replayTrace = new InputPathRecorder();
         replayTrace.Start(timeBase.Start, source.CreatedAt, sourcePathId: source.Id,
-            metadata: new Dictionary<string, string> { ["playbackMode"] = "visual-archive" });
+            metadata: new Dictionary<string, string>
+            {
+                ["playbackMode"] = "visual-archive",
+                ["captureWidth"] = frames[0].Width.ToString(CultureInfo.InvariantCulture)
+            });
         var eventIndex = 0;
         var held = InputButtons.None;
         var began = Stopwatch.GetTimestamp();
@@ -145,7 +149,9 @@ internal static class VisualProductionReplay
                 {
                     var item = source.Events[eventIndex++];
                     var bit = item.Button.ToInputButton();
-                    held = item.Transition == RecordedInputTransition.Pressed ? held | bit : held & ~bit;
+                    var pressed = item.Transition == RecordedInputTransition.Pressed;
+                    held = pressed ? held | bit : held & ~bit;
+                    replayTrace.RecordInput(item.Button, pressed, timeBase.Start + item.Offset);
                 }
                 var buttons = ResolveMovement(input, held);
                 var frame = new BgraFrame(image.Width, image.Height, image.Stride, image.Pixels, image.CaptureId,
@@ -206,6 +212,12 @@ internal static class VisualProductionReplay
                 var roomId = WindowsLiveWorldPipeline.RoomIdentifier(tracked.RoomId);
                 var revision = (ulong)Math.Max(0, placement?.Revision ?? 0);
                 var floorless = observation.FloorlessEvidence;
+                // Match live capture's publication order so the tracking result
+                // can mark the corresponding low-resolution frame as reliable.
+                replayTrace.RecordCoarseMotion(evidence.CaptureTimestamp, evidence.RenderedGameFrame, publishedCamera,
+                    tracked.MotionBridgeActive ? publishedCamera : null, coarse, tracked.MotionBridgeActive,
+                    !admission.AdmitsTracking, roomId, revision, signal.MeanPeak, signal.VisibleFraction,
+                    motionGrid: signal.MotionGrid, observedAt: evidence.CapturedAt);
                 replayTrace.RecordTracking(InputPathTrackingObservation.FromGround(tracked.Ground), evidence.CaptureTimestamp,
                     publishedCameraPosition: publishedCamera, poseSource: observation.Source,
                     motionBridgeConfidence: observation.MotionBridgeConfidence,
@@ -219,10 +231,6 @@ internal static class VisualProductionReplay
                     recoveredAtlasReferenceTimestamp: observation.RecoveredAtlasReferenceTimestamp,
                     observedAt: evidence.CapturedAt);
                 replayTrace.RecordAtlasAdmission(evidence.CaptureTimestamp, placement?.AllowsAtlasComposition == true);
-                replayTrace.RecordCoarseMotion(evidence.CaptureTimestamp, evidence.RenderedGameFrame, publishedCamera,
-                    tracked.MotionBridgeActive ? publishedCamera : null, coarse, tracked.MotionBridgeActive,
-                    !admission.AdmitsTracking, roomId, revision, signal.MeanPeak, signal.VisibleFraction,
-                    motionGrid: signal.MotionGrid, observedAt: evidence.CapturedAt);
 
                 var visual = new {
                     evidence.Index, evidence.CaptureTimestamp, evidence.CaptureGeneration, evidence.RenderedGameFrame,
@@ -259,6 +267,7 @@ internal static class VisualProductionReplay
         var snapshot = new LiveWorldSessionStore(worldDirectory).Load().Snapshot;
         var snapshotBytes = JsonSerializer.SerializeToUtf8Bytes(snapshot, Json);
         AtomicWrite(snapshotPath, snapshotBytes);
+        RecordSourceTruth(source, frames, timeBase.Start, replayTrace);
         var trace = replayTrace.Stop(frames[^1].CapturedAt)
             ?? throw new InvalidDataException("Visual replay lost its output input path.");
         var tracePath = new RecordedInputPathStore(output).Save(trace);
@@ -276,6 +285,24 @@ internal static class VisualProductionReplay
             ]);
         AtomicWrite(Path.Combine(output, "report.json"), JsonSerializer.SerializeToUtf8Bytes(report, Json));
         return report;
+    }
+
+    private static void RecordSourceTruth(RecordedInputPath source, VisualReplayFrame[] frames,
+        double startedAt, InputPathRecorder recorder)
+    {
+        var rendered = frames.Where(frame => frame.RenderedGameFrame.HasValue)
+            .Select(frame => (long)frame.RenderedGameFrame!.Value).ToHashSet();
+        var duration = frames[^1].CapturedAt - startedAt;
+        var matching = source.GroundTruthTrace.Where(truth => truth.Sample is { CameraAvailable: true } sample
+            && double.IsFinite(truth.Offset) && truth.Offset >= 0 && truth.Offset <= duration
+            && rendered.Contains(sample.UnityFrame) && sample.HasFiniteCoordinates());
+        // A 24-bit marker can repeat after a receiver session restarts. If the
+        // source cannot disambiguate a frame, exclude it from diagnostic truth.
+        var unique = matching.GroupBy(truth => truth.Sample.UnityFrame)
+            .Where(group => group.Select(truth => truth.Sample.SessionId).Distinct().Take(2).Count() == 1)
+            .Select(group => group.MaxBy(truth => truth.Offset)!);
+        foreach (var truth in unique.OrderBy(truth => truth.Offset))
+            recorder.RecordGroundTruth(truth.Sample, startedAt + truth.Offset);
     }
 
     private static (double Start, double WorldSeconds, string Note) StartTimestamp(RecordedInputPath source, VisualReplayManifest manifest)
