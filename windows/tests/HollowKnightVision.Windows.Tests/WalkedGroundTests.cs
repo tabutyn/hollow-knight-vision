@@ -139,6 +139,9 @@ internal static class WalkedGroundTests
         var unsupported = Observe(24, 2, new(48, 0));
         Check(unsupported.Floor is null && tracker.InRoom("room").Count == 0,
             "A nearby pose on a different island must start with its own ground.");
+        Check(tracker.OtherOwners("room", 2).Single() is { Lineage: 1 } other
+            && other.Spans.SequenceEqual([beforeIslandChange]) && tracker.OtherOwners("next", 2).Count == 0,
+            "A carrier gets the earlier owner's measured span only in its own room.");
         for (var index = 25; index < 38; index++)
             Observe(index, 2, new(index * 2, 0));
         Check(tracker.InRoom("room").Single().AtlasStart.X > beforeIslandChange.AtlasStart.X,

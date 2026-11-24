@@ -104,6 +104,88 @@ internal static class LiveWorldWalkedGroundTests
         }
     }
 
+    public static void TestPipelineCarriesAThrottledWalkUntilItsImageOwnerIsPlaced()
+    {
+        using var directory = new TestDirectory();
+        var failCommit = false;
+        var pipeline = new WindowsLiveWorldPipeline(directory.Path, transactionObserver: null,
+            transactionFault: stage => failCommit && stage == "commit");
+        var floor = Span(10, 90, 80);
+        var oldFoot = new LiveWalkedGroundBatch(1, [floor]);
+        Check(Submit(1, 1, owner: 2).AllowsAtlasWrite);
+        Check(Submit(2, 1.05, owner: 1, current: [floor]).State == WindowsLiveWorldPipelineState.Throttled);
+        failCommit = true;
+        Check(Submit(3, 1.2, owner: 2, carried: [oldFoot]).State == WindowsLiveWorldPipelineState.Failed);
+        Check(new LiveWorldSessionStore(directory.Path).Load().Snapshot.Observations.Count == 1);
+        failCommit = false;
+        var carrier = Submit(4, 1.4, owner: 2, carried: [oldFoot]);
+        Check(carrier.AllowsAtlasWrite && carrier.WalkedGround.Count == 0);
+        var beforePlacement = new LiveWorldSessionStore(directory.Path).Load().Snapshot;
+        var stored = beforePlacement.Observations[^1].GroundGeometry!;
+        var savedFoot = stored.WalkedIslands!.Single();
+        Check(stored.Lines.Count == 0 && beforePlacement.Observations[^1].WalkedGround is null
+            && savedFoot.Owner.UnplacedSource?.Lineage == 1
+            && savedFoot.Owner.Id != beforePlacement.TrackingIslands[^1].Id
+            && LiveWorldWalkedGround.ProjectRoom(beforePlacement, savedFoot.Owner.RoomId).Count == 0);
+        Check(Submit(5, 1.6, owner: 2, carried: [oldFoot]).AllowsAtlasWrite);
+        var placed = Submit(6, 1.8, owner: 1, current: [floor]);
+        Check(placed.AllowsAtlasWrite && placed.RecordedLocalWalk.SequenceEqual([floor])
+            && placed.WalkedGround.SequenceEqual([floor]));
+        var snapshot = new LiveWorldSessionStore(directory.Path).Load().Snapshot;
+        Check(snapshot.Observations[^1].WalkedGround is null
+            && snapshot.Observations.Count(row => row.GroundGeometry?.WalkedIslands?.Count > 0) == 1
+            && snapshot.TrackingIslands[^1].Id == savedFoot.Owner.Id);
+        var revised = snapshot.ReplaceOptimizedPoses(snapshot.Observations.ToDictionary(row => row.Id,
+            row => row.Id == snapshot.Observations[^1].Id ? new AtlasPoint(9, -4) : row.OptimizedPose), snapshot.MapRevision);
+        Check(LiveWorldWalkedGround.ProjectRoom(revised, savedFoot.Owner.RoomId).SequenceEqual([Span(19, 99, 76)]));
+
+        WindowsLiveWorldPipelineResult Submit(int id, double time, long owner,
+            IReadOnlyList<GroundHypothesisAtlasLine>? current = null, IReadOnlyList<LiveWalkedGroundBatch>? carried = null)
+        {
+            var frame = new BgraFrame(320, 180, 320 * 4, new byte[320 * 180 * 4], id, DateTimeOffset.UnixEpoch);
+            return pipeline.Process(new WindowsLiveWorldFrame(frame, frame, time, time, default, 320,
+                [], [], 1, "room", 1, 64)
+            {
+                WalkedGround = current ?? [],
+                WalkedGroundLineage = owner,
+                WorldEvidence = new(time) { MeasuredLineage = owner, OtherWalks = carried ?? [] }
+            });
+        }
+    }
+
+    public static void TestCarrierPlacementCannotHideAPlacedFootprintOrBindAReusedLineage()
+    {
+        var tracker = new LiveWorldTracker();
+        var placed = Span(10, 70, 80);
+        var unknown = Span(200, 260, 90);
+        Capture(0, 7, 1);
+        Capture(1, 7, 2, pending: true, [new(1, [placed]), new(3, [unknown])]);
+        var stored = tracker.Snapshot.Observations[^1].GroundGeometry!.WalkedIslands!;
+        var reserved = stored.Last().Owner.Id;
+        Check(tracker.Snapshot.UnplacedObservationIds().Contains(1)
+            && stored.First().Owner.UnplacedSource is null
+            && LiveWorldWalkedGround.ProjectRoom(tracker.Snapshot, 0).SequenceEqual([placed])
+            && LiveWorldGroundOverlay.Project(tracker.Snapshot).Count == 1);
+        tracker.BeginVisit();
+        Capture(2, 8, 3);
+        Check(tracker.Snapshot.TrackingIslands[^1].Id != reserved
+            && LiveWorldWalkedGround.ProjectRoom(tracker.Snapshot, 0).SequenceEqual([placed]));
+        tracker.BeginVisit();
+        Capture(3, 7, 3);
+        Check(tracker.Snapshot.TrackingIslands[^1].Id == reserved
+            && LiveWorldWalkedGround.ProjectRoom(tracker.Snapshot, 0).SequenceEqual([placed, unknown]));
+
+        void Capture(int id, ulong generation, long owner, bool pending = false,
+            IReadOnlyList<LiveWalkedGroundBatch>? carried = null)
+        {
+            var timestamp = id + 1;
+            var frame = new BgraFrame(320, 180, 320 * 4, new byte[320 * 180 * 4], id, DateTimeOffset.UnixEpoch);
+            tracker.Ingest(id, timestamp, frame, default, frame.Width, searchForClosure: false,
+                captureGeneration: generation, captureEvidence: new(timestamp) { MeasuredLineage = owner },
+                placementPending: pending, carriedWalks: carried);
+        }
+    }
+
     public static void TestInvalidPersistedWalkedGeometryFailsSnapshotValidation()
     {
         foreach (var invalid in new[] { new LiveWorldWalkedFloor(100, 20, 0),

@@ -348,7 +348,8 @@ public sealed class LiveWorldTracker
         AtlasPoint? placedCameraPose = null,
         IReadOnlyList<LiveWorldWalkedFloor>? walkedGround = null,
         LiveWorldCaptureEvidence? captureEvidence = null,
-        bool placementPending = false)
+        bool placementPending = false,
+        IReadOnlyList<LiveWalkedGroundBatch>? carriedWalks = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         var excluded = exclusions?.ToArray() ?? [];
@@ -406,6 +407,16 @@ public sealed class LiveWorldTracker
         };
         var priorIsland = Snapshot.TrackingIslands.LastOrDefault();
         var islands = CurrentTrackingIslands(observation, placementPending, captureEvidence?.MeasuredLineage);
+        if (captureEvidence?.MeasuredLineage is { } lineage && carriedWalks is { Count: > 0 })
+        {
+            var carried = CarryWalks(observation, lineage, islands, carriedWalks);
+            if (carried.Count > 0)
+            {
+                var geometry = observation.GroundGeometry ?? new LiveWorldGroundGeometry([]);
+                observation = observation with { GroundGeometry = geometry with
+                    { WalkedIslands = [.. geometry.WalkedIslands ?? [], .. carried] } };
+            }
+        }
         var activeIsland = islands.LastOrDefault();
         if (priorIsland?.Id != activeIsland?.Id
             && (priorIsland?.MeasuredLineage is not null || activeIsland?.MeasuredLineage is not null))
@@ -591,7 +602,7 @@ public sealed class LiveWorldTracker
         }
 
         if (observation.CaptureTimestamp is not { } captureTimestamp)
-            return [.. islands, LiveTrackingIsland.Legacy(NextId(islands.Select(value => value.Id)), observation)];
+            return [.. islands, LiveTrackingIsland.Legacy(NextIslandId(islands), observation)];
 
         var member = new LiveIslandMember(observation.Id, observation.LocalPose, Measured: true);
         var basis = new AtlasPoint(
@@ -626,11 +637,59 @@ public sealed class LiveWorldTracker
             return [.. islands.Take(islands.Count - 1), last with { Members = [.. last.Members, member] }];
         }
 
-        var id = NextId(islands.Select(value => value.Id));
-        return [.. islands, new LiveTrackingIsland(id, observation.RoomId, observation.Timestamp,
+        var reserved = lineage is { } measured
+            ? LiveWorldWalkedGround.UnboundOwner(Snapshot, observation.RoomId, observation.CaptureGeneration, measured) : null;
+        var id = reserved?.Id ?? NextIslandId(islands);
+        return [.. islands, new LiveTrackingIsland(id, observation.RoomId, reserved?.StartedAt ?? observation.Timestamp,
             basis, LiveIslandPlacement.Estimated, default,
             placementPending ? LiveTrackingIsland.RecoveryBreakReason : LiveTrackingIsland.PlacedTrackingBreakReason, [member])
             { MeasuredLineage = lineage }];
+    }
+
+    private int NextIslandId(IReadOnlyList<LiveTrackingIsland> islands) =>
+        NextId(islands.Select(island => island.Id).Concat(LiveWorldWalkedGround.ReservedOwners(Snapshot).Select(owner => owner.Id)));
+
+    private static LiveIslandCapture? FindWalkedOwner(IEnumerable<LiveIslandCapture> owners,
+        LiveWorldObservation carrier, long lineage) =>
+        owners.FirstOrDefault(owner => owner.RoomId == carrier.RoomId
+            && owner.UnplacedSource is { } source
+            && source.CaptureGeneration == carrier.CaptureGeneration && source.Lineage == lineage);
+
+    private IReadOnlyList<LiveIslandWalkedGround> CarryWalks(LiveWorldObservation carrier, long lineage,
+        IReadOnlyList<LiveTrackingIsland> islands, IReadOnlyList<LiveWalkedGroundBatch> walks)
+    {
+        var observations = Snapshot.Observations.ToDictionary(row => row.Id);
+        var reserved = LiveWorldWalkedGround.ReservedOwners(Snapshot).ToList();
+        var result = new List<LiveIslandWalkedGround>();
+        var nextId = NextIslandId(islands);
+        foreach (var walk in walks)
+        {
+            if (walk.Lineage <= 0 || walk.Lineage == lineage || walk.Spans.Count == 0) continue;
+            var owner = FindWalkedOwner(reserved, carrier, walk.Lineage);
+            if (owner is null)
+            {
+                var existing = islands.Where(island => island.RoomId == carrier.RoomId
+                    && island.MeasuredLineage == walk.Lineage
+                    && observations.TryGetValue(island.Members[0].ObservationId, out var image)
+                    && image.CaptureGeneration == carrier.CaptureGeneration)
+                    .MinBy(island => island.StartedAt);
+                if (existing is not null)
+                    owner = new(existing.Id, existing.RoomId, existing.StartedAt, existing.WorldFromLocal,
+                        default, existing.Placement, existing.Uncertainty, existing.BreakReason, Measured: true);
+                else
+                {
+                    // A carrier supplies storage only. Reserve the old owner's
+                    // identity without assigning the carrier's world transform.
+                    owner = new(nextId++, carrier.RoomId, carrier.Timestamp, default, default,
+                        LiveIslandPlacement.Estimated, default, LiveTrackingIsland.RecoveryBreakReason, Measured: true)
+                    { UnplacedSource = new(carrier.CaptureGeneration, walk.Lineage) };
+                    reserved.Add(owner);
+                }
+            }
+            result.Add(new(owner, walk.Spans.Select(span =>
+                new LiveGroundLineEvidence(span.SegmentId, span.AtlasStart, span.AtlasEnd)).ToArray()));
+        }
+        return result;
     }
 
     private IReadOnlyList<CachedReference> EligibleReferences(

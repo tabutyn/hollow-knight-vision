@@ -14,9 +14,36 @@ public readonly record struct LiveWorldWalkedFloor(
         && double.IsFinite(pose.Y + Y);
 }
 
+/// <summary>Walked columns in one measured capture space, prior to world placement.</summary>
+public sealed record LiveWalkedGroundBatch(long Lineage, IReadOnlyList<GroundHypothesisAtlasLine> Spans);
+
 /// <summary>Projects measured footprints through the same pose as their saved images.</summary>
 public static class LiveWorldWalkedGround
 {
+    public static IReadOnlyList<LiveWalkedGroundBatch> NewCarriedEvidence(
+        LiveWorldCaptureEvidence? capture, Func<long, IReadOnlyList<GroundHypothesisAtlasLine>> recorded)
+    {
+        if (capture is not { MeasuredLineage: { } owner, OtherWalks.Count: > 0 }) return [];
+        return capture.OtherWalks.Where(walk => walk.Lineage > 0 && walk.Lineage != owner)
+            .Select(walk => new LiveWalkedGroundBatch(walk.Lineage, UnrecordedLines(walk.Spans, recorded(walk.Lineage)).ToArray()))
+            .Where(walk => walk.Spans.Count > 0).ToArray();
+    }
+
+    internal static IEnumerable<LiveIslandCapture> ReservedOwners(LiveWorldSnapshot snapshot) =>
+        snapshot.Observations.SelectMany(row => row.GroundGeometry?.WalkedIslands ?? [])
+            .Select(walk => walk.Owner).Where(owner => owner.UnplacedSource is not null);
+
+    internal static LiveIslandCapture? UnboundOwner(LiveWorldSnapshot snapshot, int room, ulong generation, long lineage) =>
+        ReservedOwners(snapshot).FirstOrDefault(owner => owner.RoomId == room
+            && owner.UnplacedSource is { } source && source.CaptureGeneration == generation && source.Lineage == lineage
+            && !snapshot.TrackingIslands.Any(island => island.Id == owner.Id));
+
+    public static bool WasWalkedOwnerPlaced(LiveWorldSnapshot previous, LiveWorldSnapshot next) =>
+        next.TrackingIslands.LastOrDefault() is { RequiresPlacement: false } owner
+        && (previous.TrackingIslands.LastOrDefault()?.Id != owner.Id)
+        && !previous.TrackingIslands.Any(island => island.Id == owner.Id)
+        && ReservedOwners(previous).Any(reserved => reserved.Id == owner.Id);
+
     public static IReadOnlyList<LiveWorldWalkedFloor> NewEvidence(
         IReadOnlyList<GroundHypothesisAtlasLine> walked,
         IReadOnlyList<GroundHypothesisAtlasLine> savedInLocalCoordinates,
@@ -35,21 +62,25 @@ public static class LiveWorldWalkedGround
         return walked.SelectMany(line => GroundStrokeGeometry.ExcludeColumns(line, covered, clearance: Math.BitIncrement(2d)));
     }
 
-    public static IReadOnlyList<GroundHypothesisAtlasLine> ProjectRoom(LiveWorldSnapshot snapshot, int room)
+    public static IReadOnlyList<GroundHypothesisAtlasLine> ProjectRoom(LiveWorldSnapshot snapshot, int room,
+        bool includeImageContacts = true)
     {
         var unplaced = snapshot.UnplacedObservationIds();
-        var observations = snapshot.Observations.Where(observation => observation.RoomId == room && !unplaced.Contains(observation.Id));
+        var observations = snapshot.Observations.Where(observation => observation.RoomId == room);
         var nativeIslands = snapshot.TrackingIslands.ToDictionary(island => island.Id);
-        return ProjectPlaced(observations, nativeIslands);
+        return ProjectPlaced(observations, nativeIslands, unplaced, includeImageContacts: includeImageContacts);
     }
 
     internal static IReadOnlyList<GroundHypothesisAtlasLine> ProjectPlaced(
         IEnumerable<LiveWorldObservation> observations,
-        IReadOnlyDictionary<int, LiveTrackingIsland> islands, bool centered = false) =>
+        IReadOnlyDictionary<int, LiveTrackingIsland> islands, IReadOnlySet<int> unplaced,
+        bool centered = false, bool includeImageContacts = true) =>
         GroundStrokeGeometry.Coalesce(observations.SelectMany(observation =>
         {
             var offset = centered ? LiveWorldGroundOverlay.ImageOriginOffset(observation) : default;
-            return ProjectObservation(observation).Concat(ProjectIslandWalks(observation, islands))
+            var carrierPlaced = !unplaced.Contains(observation.Id);
+            return (carrierPlaced ? ProjectObservation(observation) : [])
+                .Concat(ProjectIslandWalks(observation, islands, carrierPlaced, includeImageContacts))
                 .Select(line => line with
                 {
                     AtlasStart = new(line.AtlasStart.X + offset.X, line.AtlasStart.Y + offset.Y),
@@ -59,19 +90,26 @@ public static class LiveWorldWalkedGround
 
     private static IEnumerable<GroundHypothesisAtlasLine> ProjectIslandWalks(
         LiveWorldObservation observation,
-        IReadOnlyDictionary<int, LiveTrackingIsland> islands)
+        IReadOnlyDictionary<int, LiveTrackingIsland> islands, bool carrierPlaced, bool includeImageContacts)
     {
         if (observation.GroundGeometry is not { } geometry) yield break;
 
-        foreach (var line in geometry.Lines.Where(line => line.SegmentId == long.MaxValue))
-            yield return ProjectSpan(line, observation.OptimizedPose);
+        if (carrierPlaced && includeImageContacts)
+        {
+            foreach (var line in geometry.Lines.Where(line => line.SegmentId == long.MaxValue))
+                yield return ProjectSpan(line, observation.OptimizedPose);
+        }
 
         foreach (var walk in geometry.WalkedIslands ?? [])
         {
             if (walk.Owner.RoomId != observation.RoomId) continue;
-            var origin = islands.TryGetValue(walk.Owner.Id, out var island)
-                && island.RoomId == walk.Owner.RoomId && island.StartedAt == walk.Owner.StartedAt
-                ? island.WorldFromLocal : walk.Owner.WorldFromLocal;
+            islands.TryGetValue(walk.Owner.Id, out var island);
+            var matches = island is not null && island.RoomId == walk.Owner.RoomId && island.StartedAt == walk.Owner.StartedAt
+                && (walk.Owner.UnplacedSource is null || island.MeasuredLineage == walk.Owner.UnplacedSource.Lineage);
+            // A carrier can still be unplaced while its footprint owner is
+            // placed. Missing reservations have no published coordinates.
+            if (matches ? island!.RequiresPlacement : walk.Owner.UnplacedSource is not null || !carrierPlaced) continue;
+            var origin = matches ? island!.WorldFromLocal : walk.Owner.WorldFromLocal;
             foreach (var span in walk.Spans) yield return ProjectSpan(span, origin);
         }
     }

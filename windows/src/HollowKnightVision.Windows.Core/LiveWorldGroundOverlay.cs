@@ -34,14 +34,15 @@ public static class LiveWorldGroundOverlay
             .SelectMany(island => island.Members.Select(member => (island, member)))
             .ToDictionary(owner => owner.member.ObservationId);
         var usesLegacyWindowsPoses = owners.Count == 0 && !snapshot.UsesSwiftWireFormat;
-        var placed = snapshot.Observations.Where(observation =>
-            !owners.TryGetValue(observation.Id, out var owner) || !owner.island.RequiresPlacement);
+        var unplaced = snapshot.UnplacedObservationIds();
+        var placed = snapshot.Observations.Where(observation => !unplaced.Contains(observation.Id));
+        var roomObservations = snapshot.Observations.ToLookup(observation => observation.RoomId);
         var islands = snapshot.TrackingIslands.ToDictionary(island => island.Id);
         var result = new List<GroundHypothesisAtlasLine>();
         var pathRooms = new Dictionary<int, GameplaySavedRoomPath>();
         foreach (var room in placed.GroupBy(observation => observation.RoomId))
         {
-            var walked = LiveWorldWalkedGround.ProjectPlaced(room, islands, centered: true)
+            var walked = LiveWorldWalkedGround.ProjectPlaced(roomObservations[room.Key], islands, unplaced, centered: true)
                 .OrderBy(line => line.AtlasStart.X).ToArray();
             var pathFloors = new List<GroundHypothesisAtlasLine>(walked);
             var edges = room.Where(observation =>

@@ -221,6 +221,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
                     MeasuredLineage = lineage
                 };
             }
+            if (worldEvidence is { MeasuredLineage: { } owner })
+                worldEvidence = worldEvidence with { OtherWalks = walked.OtherOwners(room, owner) };
         }
         return new(observation, ground, estimate, localCamera, room, terrain, contact,
             platformPatches, walked.InRoom(room), walkedCoordinateEpoch, cameraMilliseconds, atlasStarted)

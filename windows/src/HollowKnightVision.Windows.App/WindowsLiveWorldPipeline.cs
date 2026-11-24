@@ -578,6 +578,10 @@ internal sealed class WindowsLiveWorldPipeline
                     && request.WorldEvidence is { HasMeasuredSceneryContinuity: true } && HasMeasuredLocalReference(request))
                 ? request.WalkedGround : [];
             var groundEvidence = LiveWorldWalkedGround.NewEvidence(walked, priorWalk, capturePose);
+            var carriedWalks = request.WorldEvidence is { } exact && exact.CaptureTimestamp == request.MonotonicTimestamp
+                ? LiveWorldWalkedGround.NewCarriedEvidence(exact,
+                    owner => committedLocalWalk.GetValueOrDefault(scope with { Lineage = owner }) ?? [])
+                : [];
             StoredFrameObservation? source = null;
             try
             {
@@ -627,7 +631,8 @@ internal sealed class WindowsLiveWorldPipeline
                     placedCameraPose: worldPose,
                     walkedGround: groundEvidence,
                     captureEvidence: request.WorldEvidence,
-                    placementPending: placementPending);
+                    placementPending: placementPending,
+                    carriedWalks: carriedWalks);
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 transactionObserver?.Invoke("ingest");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
@@ -680,9 +685,11 @@ internal sealed class WindowsLiveWorldPipeline
                 if (localRecoveryPlaced) placementPending = false;
                 placedRoomStartedAt ??= request.MonotonicTimestamp;
                 var committed = durableSnapshot.Observations[^1];
+                var changedWalkPlacement = carriedWalks.Count > 0
+                    || LiveWorldWalkedGround.WasWalkedOwnerPlaced(priorSnapshot, durableSnapshot);
                 IReadOnlyList<GroundHypothesisAtlasLine> publishedGround = [];
-                if (!placementPending && (!projectedWalkedGround.TryGetValue(resolvedRoomId, out publishedGround!)
-                    || requiresRebuild))
+                if (changedWalkPlacement || !placementPending
+                    && (!projectedWalkedGround.TryGetValue(resolvedRoomId, out publishedGround!) || requiresRebuild))
                 {
                     publishedGround = LiveWorldWalkedGround.ProjectRoom(durableSnapshot, resolvedRoomId);
                 }
@@ -691,10 +698,17 @@ internal sealed class WindowsLiveWorldPipeline
                     publishedGround = GroundStrokeGeometry.Coalesce(
                         publishedGround.Concat(LiveWorldWalkedGround.ProjectObservation(committed)));
                 }
-                if (!placementPending) projectedWalkedGround[resolvedRoomId] = publishedGround;
+                if (!placementPending || changedWalkPlacement) projectedWalkedGround[resolvedRoomId] = publishedGround;
+                if (placementPending) publishedGround = [];
                 var recordedWalk = priorWalk;
                 if (groundEvidence.Count > 0)
                     committedLocalWalk[scope] = recordedWalk = GroundStrokeGeometry.Coalesce(priorWalk.Concat(walked));
+                foreach (var batch in carriedWalks)
+                {
+                    var carriedScope = scope with { Lineage = batch.Lineage };
+                    committedLocalWalk[carriedScope] = GroundStrokeGeometry.Coalesce(
+                        (committedLocalWalk.GetValueOrDefault(carriedScope) ?? []).Concat(batch.Spans));
+                }
 
                 if (requiresBasisUpdate
                     && (!IsWorkCurrent(processEpoch)
@@ -718,7 +732,7 @@ internal sealed class WindowsLiveWorldPipeline
                 if (!placementPending) lastPlacedVerticalBasis = basis.Y;
                 LastError = null;
                 var projected = savedGround;
-                if (!placementPending && (requiresRebuild || committed.GroundGeometry is not null
+                if (changedWalkPlacement || !placementPending && (requiresRebuild || committed.GroundGeometry is not null
                     || groundEvidence.Count != 0 || !projected.PathRooms.ContainsKey(resolvedRoomId)))
                     projected = LiveWorldGroundOverlay.ProjectWorld(durableSnapshot);
                 else if (!placementPending && durableSnapshot.TrackingIslands.LastOrDefault() is

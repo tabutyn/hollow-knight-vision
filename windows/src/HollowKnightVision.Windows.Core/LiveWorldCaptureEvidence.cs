@@ -10,6 +10,7 @@ public sealed record LiveWorldCaptureEvidence(
     public double? LocalReferenceTimestamp { get; init; }
     public bool HasMeasuredSceneryContinuity { get; internal init; }
     public long? MeasuredLineage { get; internal init; }
+    public IReadOnlyList<LiveWalkedGroundBatch> OtherWalks { get; internal init; } = [];
 
     internal static LiveWorldCaptureEvidence FromGround(
         double timestamp,
