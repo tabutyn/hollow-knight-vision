@@ -2,9 +2,14 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text.Json;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
+using Line = System.Windows.Shapes.Line;
 
 internal static class BotDesktopCaptureIntegrationTests
 {
@@ -23,6 +28,7 @@ internal static class BotDesktopCaptureIntegrationTests
             try
             {
                 VerifyDesktopRecording(window, hudFrame, Path.Combine(root, "demonstrations"));
+                Wait(VerifyTimedClipAsync(window, root));
             }
             finally
             {
@@ -35,6 +41,107 @@ internal static class BotDesktopCaptureIntegrationTests
             temporary.Delete(recursive: true);
         }
         Console.WriteLine("PASS Desktop analysis captures room-owned doors and preserves wall evidence across a correction");
+    }
+
+    private static async Task VerifyTimedClipAsync(MainWindow window, string root)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        const double start = 30;
+        var rawId = Guid.NewGuid();
+        var stillId = Guid.NewGuid();
+        var paths = Path.Combine(root, "HollowKnightVision", "paths");
+        var captures = Path.Combine(root, "bot-v1", "demonstrations");
+        var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var archive = new VisualReplayArchiveWriter(paths, rawId, new Dictionary<string, string>());
+        archive.Append(FrameWithPixel(10), start + .02, start + .02, Generation, 80, null);
+        archive.Append(FrameWithPixel(20), start + .24, start + .24, Generation, 80, null);
+        archive.Append(FrameWithPixel(30), start + .52, start + .52, Generation, 80, null);
+        archive.Append(FrameWithPixel(40), start + .9, start + .9, Generation, 80, null);
+        await archive.FinishAsync();
+
+        SaveClip(rawId, rawId, "hacker", [.16, .42, .78]);
+        SaveClip(stillId, null, "gameplay", [.2]);
+        var clips = (DataGrid)window.FindName("BotCaptureClips");
+        var image = (Image)window.FindName("BotPreviewImage");
+        var canvas = (Canvas)window.FindName("BotPreviewOverlay");
+        var position = (Slider)window.FindName("BotClipScrubber");
+        var play = (Button)window.FindName("BotPlayClip");
+        var previous = (Button)window.FindName("BotPreviousFrame");
+
+        _ = Method("RefreshBotLibrary").Invoke(window, null);
+        await WaitFor(() => HasPixel(10));
+        Check(canvas.Children.Count == 0 && position.Maximum == 1 && play.IsEnabled,
+            "The archive starts before the first observation and must show original pixels without future terrain.");
+        position.Value = .55;
+        await WaitFor(() => HasPixel(30));
+        Check(canvas.Children.OfType<Line>().Single() is { Y1: 32 } floor && floor.Stroke == Brushes.SpringGreen,
+            "The paused image must show the correct Hacker observation for that time.");
+        previous.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitFor(() => HasPixel(20));
+        Check(canvas.Children.OfType<Line>().Single().Y1 == 36, "Frame stepping must update the terrain with the image.");
+
+        play.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitFor(() => HasPixel(30));
+        Check((string)play.Content == "Pause", "The playhead must advance on the original timestamps.");
+        play.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var stoppedAt = position.Value;
+        await Task.Delay(90, timeout.Token);
+        Check(position.Value == stoppedAt && (string)play.Content == "Play", "Pause should stop the clock.");
+
+        play.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        clips.SelectedIndex = 1;
+        await WaitFor(() => HasPixel(90));
+        Check(!play.IsEnabled && (string)play.Content == "Play"
+            && canvas.Children.OfType<Line>().Single().Stroke == Brushes.DeepSkyBlue,
+            "Changing clips should stop playback, clear the old image, and retain a legacy Game Play still.");
+        Console.WriteLine("PASS Desktop bot review plays raw clip frames with synchronized overlays and legacy still fallback");
+
+        bool HasPixel(byte blue)
+        {
+            if (image.Source is not BitmapSource bitmap) return false;
+            var pixel = new byte[4];
+            bitmap.CopyPixels(new Int32Rect(0, 0, 1, 1), pixel, 4, 0);
+            return pixel[0] == blue;
+        }
+
+        async Task WaitFor(Func<bool> condition)
+        {
+            while (!condition()) await Task.Delay(15, timeout.Token);
+        }
+
+        void SaveClip(Guid id, Guid? replay, string domain, double[] sampleTimes)
+        {
+            var folder = Directory.CreateDirectory(Path.Combine(captures, BotCaptureSession.DirectoryName(id))).FullName;
+            var date = DateTimeOffset.UnixEpoch.AddSeconds(replay.HasValue ? 2 : 1);
+            var manifest = new BotCaptureManifest(BotRecordingContract.SchemaVersion, id, date, start, "modded", "fixture",
+                "receiver-sent", "completed", 1, sampleTimes.Length, sampleTimes.Length, 0, replay.HasValue ? 0 : 1, domain, replay, null);
+            File.WriteAllText(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(manifest, json));
+            if (!replay.HasValue) PngWriter.Write(FrameWithPixel(90), Path.Combine(folder, "still.png"));
+            var rows = sampleTimes.Select((time, index) =>
+            {
+                var terrain = new BotScreenTerrain(80, 48, [new(5, 70, 12 + index * 4, 1)], []);
+                var authored = domain == "hacker";
+                return new BotCaptureObservation(start + time, start + time, start + time, Generation, 1, 0,
+                    new double[BotRecordingContract.FeatureNames.Count], [], authored ? "human-authored" : "detected")
+                {
+                    AuthoredTerrain = authored ? terrain : null,
+                    DetectedTerrain = authored ? null : terrain,
+                    ImagePath = replay.HasValue ? null : "still.png"
+                };
+            });
+            File.WriteAllLines(Path.Combine(folder, "events.jsonl"), rows.Select(row => JsonSerializer.Serialize(row, json)));
+        }
+
+        static BgraFrame FrameWithPixel(byte blue)
+        {
+            var pixels = new byte[80 * 48 * 4];
+            for (var index = 0; index < pixels.Length; index += 4)
+            {
+                pixels[index] = blue;
+                pixels[index + 3] = 255;
+            }
+            return new(80, 48, 320, pixels, blue, DateTimeOffset.UnixEpoch);
+        }
     }
 
     private static void VerifyDesktopRecording(MainWindow window, BgraFrame hudFrame, string library)

@@ -156,6 +156,59 @@ internal static class BotCaptureTests
         });
     }
 
+    internal static void TestClipTimelineUsesExactSourceRowsAndFallsBackToStills()
+    {
+        WithLibrary(root =>
+        {
+            var paired = WriteFixture(root).Published;
+            var replay = paired[0].ReplayId!.Value;
+            var paths = Path.Combine(root, "paths");
+            var writer = new VisualReplayArchiveWriter(paths, replay, new Dictionary<string, string>());
+            var image = Input(0).Frame;
+            Write(-.01, Generation);
+            Write(.01, Generation);
+            Write(.15, Generation);
+            Write(.16, Generation + 1);
+            Write(.21, Generation, solveWidth: 0);
+            Write(.88, Generation);
+            Write(1, Generation);
+            _ = writer.FinishAsync(incompleteReason: "fixture has a failed frame").GetAwaiter().GetResult();
+
+            foreach (var clip in paired)
+            {
+                var folder = Path.Combine(root, BotCaptureSession.DirectoryName(clip.Id));
+                var timeline = BotClipTimeline.Open(folder, paths);
+                Check(timeline.UsesSourceFrames && timeline.Count == 4 && Math.Abs(timeline.Duration - .9) < 1e-8,
+                    "Use the playable frames within the clip from its incomplete original archive.");
+                Check(timeline.FrameAt(0) == 0 && timeline.FrameAt(.152) == 1 && timeline.FrameAt(.7) == 2
+                    && timeline.FrameAt(.89) == 3 && timeline.FrameAt(double.NaN) == -1,
+                    "Seeking must select a causal source frame without jumping past the playhead.");
+                var overlay = timeline.Overlay(1);
+                Check(overlay is { ImageFile: null } && Math.Abs(overlay.Offset - .12) < 1e-8
+                    && overlay.Authored == (clip.BotDomain == "hacker") && overlay.Terrain?.Walls.Count == 1,
+                    "The image must use the latest observation in this domain, including observations without stills.");
+                Check(timeline.Overlay(0) is null && timeline.Overlay(2) is null && timeline.Overlay(3) is null,
+                    "Do not display future, foreign-generation, or stale terrain evidence.");
+                Check(timeline.ReadSourceFrame(1).Pixels.SequenceEqual(image.Pixels), "Display the original archived pixels.");
+                var missing = BotClipTimeline.Open(folder, Path.Combine(root, "missing-archive"));
+                Check(!missing.UsesSourceFrames && missing.Count == 1 && File.Exists(missing.StillPath(0))
+                    && missing.Overlay(0)?.Offset == missing.Offset(0), "Old clips must retain their matching recorded stills.");
+            }
+
+            var archive = Path.Combine(paths, $"frames-{replay:D}");
+            var original = BotClipTimeline.Open(Path.Combine(root, BotCaptureSession.DirectoryName(paired[0].Id)), paths);
+            File.AppendAllText(Path.Combine(archive, "00000002.png"), "corrupt");
+            try { _ = original.ReadSourceFrame(1); throw new InvalidOperationException("Modified archive image was accepted."); }
+            catch (InvalidDataException) { }
+            File.WriteAllText(Path.Combine(archive, "manifest.json"), "{");
+            var fallback = BotClipTimeline.Open(Path.Combine(root, BotCaptureSession.DirectoryName(paired[0].Id)), paths);
+            Check(!fallback.UsesSourceFrames && fallback.Count == 1, "An unreadable archive must leave the captured still available.");
+
+            void Write(double offset, long generation, double solveWidth = 80) =>
+                writer.Append(image, Start + offset, Start + offset, (ulong)generation, solveWidth, null);
+        });
+    }
+
     internal static void TestReadsMacAndPreviousWindowsCaptureDates()
     {
         WithLibrary(root =>

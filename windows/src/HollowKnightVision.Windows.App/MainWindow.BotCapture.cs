@@ -2,8 +2,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Controls;
 using HollowKnightVision.Windows.Core;
 
 namespace HollowKnightVision.Windows.App;
@@ -11,9 +9,6 @@ namespace HollowKnightVision.Windows.App;
 public partial class MainWindow
 {
     private BotCaptureSession? botCapture;
-    private CancellationTokenSource? botPreviewCancellation;
-    private IReadOnlyList<BotCaptureReviewFrame> botReview = [];
-    private int botReviewIndex;
     private bool changingBotCapture;
     // The frame-analysis worker owns the planner. A capture or playback gets its own visit.
     private object? botRouteOwner;
@@ -39,8 +34,7 @@ public partial class MainWindow
     private (int Room, long Coordinates)? botVisualChart;
     private string BotRoot { get; }
     private string BotCaptureRoot => Path.Combine(BotRoot, "demonstrations");
-    private static string InputPathRoot => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "HollowKnightVision", "paths");
+    private string InputPathRoot { get; }
 
     private static double BotCaptureClock() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
 
@@ -247,75 +241,6 @@ public partial class MainWindow
             Path.Combine(BotCaptureRoot, BotCaptureSession.DirectoryName(session.Id)))).ToArray();
         BotCaptureClips.ItemsSource = clips;
         BotCaptureClips.SelectedItem = clips.FirstOrDefault(clip => clip.Folder == previous) ?? clips.FirstOrDefault();
-    }
-
-    private async void BotCaptureClips_Changed(object sender, SelectionChangedEventArgs e)
-    {
-        if (BotPreviewImage is null) return;
-        botPreviewCancellation?.Cancel();
-        using var cancellation = new CancellationTokenSource();
-        botPreviewCancellation = cancellation;
-        botReview = [];
-        botReviewIndex = 0;
-        PresentBotPreview();
-        try
-        {
-            if (BotCaptureClips.SelectedItem is not BotClipRow selected) return;
-            var frames = await Task.Run(() => BotCaptureSession.Review(selected.Folder, cancellation.Token), cancellation.Token);
-            if (cancellation.IsCancellationRequested) return;
-            botReview = frames;
-            PresentBotPreview();
-        }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-        {
-            if (!cancellation.IsCancellationRequested) SetStatus($"Capture preview could not be read. {error.Message}");
-        }
-        finally
-        {
-            if (ReferenceEquals(botPreviewCancellation, cancellation)) botPreviewCancellation = null;
-        }
-    }
-
-    private void BotPreviousFrame_Click(object sender, RoutedEventArgs e)
-    {
-        if (botReviewIndex == 0) return;
-        botReviewIndex--;
-        PresentBotPreview();
-    }
-
-    private void BotNextFrame_Click(object sender, RoutedEventArgs e)
-    {
-        if (botReviewIndex + 1 >= botReview.Count) return;
-        botReviewIndex++;
-        PresentBotPreview();
-    }
-
-    private void PresentBotPreview()
-    {
-        BotPreviewImage.Source = null;
-        BotPreviewOverlay.Children.Clear();
-        BotPreviewPosition.Text = string.Empty;
-        BotPreviousFrame.IsEnabled = botReviewIndex > 0;
-        BotNextFrame.IsEnabled = botReviewIndex + 1 < botReview.Count;
-        if (botReviewIndex >= botReview.Count) return;
-        var frame = botReview[botReviewIndex];
-        try
-        {
-            using var stream = File.OpenRead(frame.ImageFile);
-            var source = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames[0];
-            BotPreviewImage.Width = source.PixelWidth;
-            BotPreviewImage.Height = source.PixelHeight;
-            BotPreviewOverlay.Width = source.PixelWidth;
-            BotPreviewOverlay.Height = source.PixelHeight;
-            BotPreviewImage.Source = source;
-            BotCapturePreview.Draw(BotPreviewOverlay, frame, new(source.PixelWidth, source.PixelHeight));
-            BotPreviewPosition.Text = $"{frame.Offset:0.0} s · {botReviewIndex + 1} / {botReview.Count}";
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or NotSupportedException)
-        {
-            SetStatus($"Capture image could not be read. {error.Message}");
-        }
     }
 
     private static string DisplayBotDomain(string domain) => domain == "hacker" ? "Hacker" : "Game Play";

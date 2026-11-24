@@ -57,6 +57,7 @@ var tests = new List<(string Name, Action Run)>
     ("bot training admits separate published clips in the selected domain", BotTrainingTests.TestTrainingPlanSeparatesDomains),
     ("new bot captures follow completed training independently of playback", BotTrainingTests.TestNewCaptureCountsTrackCompletionAndIgnoreRollback),
     ("bot capture dates round-trip with macOS and earlier Windows clips", BotCaptureTests.TestReadsMacAndPreviousWindowsCaptureDates),
+    ("bot clip timeline uses the original timestamped frames and matching terrain", BotCaptureTests.TestClipTimelineUsesExactSourceRowsAndFallsBackToStills),
     ("desktop bot clips share only the exact authored route", HackerGymObservationTests.TestDesktopRouteIsSharedOnlyWithExactlyMatchedVisualRows),
     ("visual bot coverage respects masks and placement discontinuities", HackerGymObservationTests.TestVisualCoverageDoesNotCreditMasksOrPlacementGaps),
     ("blockade tracking compensation and crossing work in both directions", BotBlockadeTests.TestCameraCompensationAndCrossingInBothDirections),

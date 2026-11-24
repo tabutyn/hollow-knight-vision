@@ -28,7 +28,7 @@ public sealed record BotCaptureInput(double Timestamp, string Button, bool IsPre
     public string Type => "input";
 }
 
-public sealed record BotCaptureReviewFrame(string ImageFile, double Offset, BotScreenTerrain? Terrain, bool Authored,
+public sealed record BotCaptureReviewFrame(string? ImageFile, double Offset, BotScreenTerrain? Terrain, bool Authored,
     IReadOnlyList<double> Features);
 
 public sealed record BotCaptureResult(IReadOnlyList<BotCaptureManifest> Published, int Discarded);
@@ -225,30 +225,45 @@ public sealed class BotCaptureSession
         return captures.OrderByDescending(item => item.CreatedAt).ToArray();
     }
 
-    public static IReadOnlyList<BotCaptureReviewFrame> Review(string folder, CancellationToken cancellationToken = default)
+    internal sealed record ReviewObservation(long Generation, BotCaptureReviewFrame Frame);
+
+    public static IReadOnlyList<BotCaptureReviewFrame> Review(string folder, CancellationToken cancellationToken = default) =>
+        ReadReviewEvidence(folder, cancellationToken, requireImage: true).Observations.Select(item => item.Frame).ToArray();
+
+    internal static (BotCaptureManifest Manifest, IReadOnlyList<ReviewObservation> Observations) ReadReviewEvidence(
+        string folder, CancellationToken cancellationToken, bool requireImage = false)
     {
         var manifest = JsonSerializer.Deserialize<BotCaptureManifest>(File.ReadAllBytes(Path.Combine(folder, "manifest.json")), Json)
             ?? throw new InvalidDataException("The capture has no manifest.");
-        if (manifest is not { Status: "completed", SchemaVersion: BotRecordingContract.SchemaVersion }) return [];
+        if (manifest is not { Status: "completed", SchemaVersion: BotRecordingContract.SchemaVersion }) return (manifest, []);
         var authored = manifest.BotDomain == "hacker";
-        var frames = new List<BotCaptureReviewFrame>();
+        var frames = new List<ReviewObservation>();
         var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)) + Path.DirectorySeparatorChar;
         foreach (var line in File.ReadLines(Path.Combine(folder, "events.jsonl")))
         {
             cancellationToken.ThrowIfCancellationRequested();
             using var document = JsonDocument.Parse(line);
             var row = document.RootElement;
-            if (!row.TryGetProperty("imagePath", out var pathNode) || pathNode.ValueKind != JsonValueKind.String
-                || pathNode.GetString() is not { Length: > 0 } relative || Path.IsPathRooted(relative)
-                || relative.Split('/', '\\').Contains("..")) continue;
-            if (row.Deserialize<BotCaptureObservation>(Json) is not { } observation) continue;
-            var image = Path.GetFullPath(Path.Combine(fullRoot, relative));
-            if (!image.StartsWith(fullRoot, StringComparison.Ordinal) || !File.Exists(image)) continue;
+            if (row.ValueKind != JsonValueKind.Object) continue;
+            var image = PreviewPath(row);
+            if (requireImage && image is null || !row.TryGetProperty("type", out var type)
+                || type.ValueKind != JsonValueKind.String || type.GetString() != "observation"
+                || row.Deserialize<BotCaptureObservation>(Json) is not { } observation) continue;
+            var offset = observation.CaptureTimestamp - manifest.StartedAt;
+            if (!double.IsFinite(offset)) continue;
             var terrain = authored ? observation.AuthoredTerrain : observation.DetectedTerrain;
-            frames.Add(new(image, Math.Max(0, observation.CaptureTimestamp - manifest.StartedAt), terrain, authored,
-                observation.Features));
+            frames.Add(new(observation.Generation, new(image, Math.Max(0, offset), terrain, authored, observation.Features)));
         }
-        return frames;
+        return (manifest, frames);
+
+        string? PreviewPath(JsonElement row)
+        {
+            if (!row.TryGetProperty("imagePath", out var node) || node.ValueKind != JsonValueKind.String
+                || node.GetString() is not { Length: > 0 } relative || Path.IsPathRooted(relative)
+                || relative.Split('/', '\\').Contains("..")) return null;
+            var image = Path.GetFullPath(Path.Combine(fullRoot, relative));
+            return image.StartsWith(fullRoot, StringComparison.Ordinal) && File.Exists(image) ? image : null;
+        }
     }
 
     private bool CanTake(long captureGeneration, double timestamp) => !finished && !writer.IsCompleted

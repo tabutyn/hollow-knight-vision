@@ -806,6 +806,7 @@ public partial class MainWindow : Window
         this.gameMode = gameMode;
         this.gamePath = gamePath;
         BotRoot = IOPath.Combine(root, "bot-v1");
+        InputPathRoot = IOPath.Combine(documents, "HollowKnightVision", "paths");
         gameControls = new(createReceiver);
         InitializeComponent();
         gameControls.GroundTruthReceived += OnReceiverGroundTruth;
@@ -971,6 +972,7 @@ public partial class MainWindow : Window
 
     private async Task PrepareShutdownAsync()
     {
+        ResetBotClipPreview();
         var botTrainingShutdownError = await StopBotTrainingForShutdownAsync();
         if ((!StopTrainingForShutdown(out var trainingShutdownError) || botTrainingShutdownError is not null) && factoryResetRequested)
         {
@@ -1864,6 +1866,7 @@ public partial class MainWindow : Window
             InvalidatePendingHackerWork();
         }
         if (destination != workspace) StopBotPlayback();
+        if (workspace == "Bot" && destination != "Bot") ResetBotClipPreview();
         if (destination is "Label" or "Model" or "Bot") ReleaseForwardedInput();
         if (destination is not ("Gameplay" or "Hacker")) SendPointerExit();
         workspace = destination;
