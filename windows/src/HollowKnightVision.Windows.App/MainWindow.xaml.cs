@@ -2397,16 +2397,27 @@ public partial class MainWindow : Window
     {
         if (ObjectDetectionOptions is null) return;
         ObjectDetectionOptions.IsEnabled = ObjectDetectionCheck.IsEnabled && ObjectDetectionCheck.IsChecked == true;
+        UpdateObjectDetectionPixels();
         if (ObjectDetectionCheck.IsChecked == true)
         {
             try { initialization?.RecordObjectDetectionEnabled(); }
             catch (Exception error) { ShowError(error); }
         }
         RefreshGuidance();
+        DrawHackerObjectOverlay(latestHackerPublication);
     }
 
-    private void DetectionPixelsCheck_Changed(object sender, RoutedEventArgs e) =>
-        createsObjectPixelDiagnostic = DetectionPixelsCheck.IsChecked == true;
+    private void RawDetectionCheck_Changed(object sender, RoutedEventArgs e) =>
+        DrawHackerObjectOverlay(latestHackerPublication);
+
+    private void DetectionPixelsCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        UpdateObjectDetectionPixels();
+        DrawHackerObjectOverlay(latestHackerPublication);
+    }
+
+    private void UpdateObjectDetectionPixels() =>
+        createsObjectPixelDiagnostic = ObjectDetectionCheck?.IsChecked == true && DetectionPixelsCheck?.IsChecked == true;
 
     private void AtlasManagerDone_Click(object sender, RoutedEventArgs e) =>
         SettingsOverlay.Visibility = Visibility.Collapsed;
@@ -2920,6 +2931,7 @@ public partial class MainWindow : Window
         lock (hackerAtlasGate)
         {
             Interlocked.Increment(ref hackerWorkGeneration);
+            Volatile.Write(ref hackerObjectFrames, []);
             if (resetCore)
             {
                 hackerFramePreparer.Reset();
@@ -3149,7 +3161,13 @@ public partial class MainWindow : Window
         var recognition = menuStencilRecognizer.AnalyzeLiveWithPublication(frame,
             asynchronously: workspace == "Hacker" || Volatile.Read(ref stepCapture) is not null,
             detector is { HasModels: true } ? () => detector.Detect(frame) : null,
-            publication => recentCapturedFrames.ReplaceDetections(publication.Detections, captureGeneration, publication.Frame.CaptureId));
+            publication =>
+            {
+                recentCapturedFrames.ReplaceDetections(publication.Detections, captureGeneration, publication.Frame.CaptureId);
+                if (ownsHackerWork && exactReceiverTelemetry is { AtlasGameplayActive: not false } sample)
+                    PublishHackerObjectDetections(publication, sample, captureTimestamp, captureGeneration,
+                        pendingHackerWorkGeneration, labelRevision);
+            });
         if (!labelCapture.CanProcess(labelRevision)) return null;
         var signal = FrameRegionRenderer.SignalProfile(frame);
         var coarseMotion = inputPathMotionTracker.Observe(
@@ -3752,6 +3770,8 @@ public partial class MainWindow : Window
         if (workspace == "Label" && !isClosing) _ = SelectWorkspace("Gameplay", capture: false);
         visionCancellation?.Cancel();
         menuStencilRecognizer.StopTracking();
+        Volatile.Write(ref hackerObjectFrames, []);
+        ClearHackerObjectOverlay();
         PresentObjectInferenceDiagnostics(ObjectInferenceIssueOverlay, ObjectInferenceIssueOverlayText,
             ObjectInferenceIssueText, ObjectDetectionOptions, new());
         StopVisionButton.IsEnabled = false;
@@ -6007,6 +6027,7 @@ public partial class MainWindow : Window
         hackerPreviewActive = false;
         HackerLiveImage.Source = null;
         HackerLiveImage.Visibility = Visibility.Collapsed;
+        ClearHackerObjectOverlay();
         AtlasCanvas.Width = CanvasWidth;
         AtlasCanvas.Height = CanvasHeight;
         HackerOverlayCanvas.Width = CanvasWidth;
@@ -6129,6 +6150,7 @@ public partial class MainWindow : Window
         hackerPreviewActive = true;
         HackerLiveImage.Visibility = Visibility.Collapsed;
         HackerOverlayCanvas.Visibility = Visibility.Collapsed;
+        ClearHackerObjectOverlay();
         hackerOccupiedTileBounds.Clear();
         hackerAtlasMinimumTileX = minimumX;
         hackerAtlasMinimumTileY = minimumY;
@@ -6189,6 +6211,7 @@ public partial class MainWindow : Window
             RenderHackerAtlasPublication(stagedAtlas);
         }
         RenderHackerAtlasLayout();
+        DrawHackerObjectOverlay(publication);
         HackerCameraControlsPanel.Visibility = HasHackerPathPreview ? Visibility.Visible : Visibility.Collapsed;
         if (latestGroundTruthContext is { } context
             && context.CaptureGeneration == publication.CaptureGeneration

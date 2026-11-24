@@ -187,7 +187,7 @@ internal static class ObjectInferenceWorkerTests
         try
         {
             worker.Observe(first, 30, () => { started.Set(); Release(release); return [Body()]; },
-                extension: 0, onPublished: Publish); Wait(started);
+                extension: 0, createsPixels: true, onPublished: Publish); Wait(started);
             for (var id = 2; id <= 3; id++)
             {
                 var frame = Frame(1 + id * .1, id); buffer.Append(new(17, id, frame, []));
@@ -196,6 +196,10 @@ internal static class ObjectInferenceWorkerTests
             release.Set(); Drain(worker);
             Check(publications.Select(item => item.Frame.CaptureId).SequenceEqual(new long[] { 1, 3 }));
             Check(publications.All(item => item.Generation == 30) && ReferenceEquals(publications[0].Frame, first));
+            Check(ReferenceEquals(publications[0].Detections, publications[0].Snapshot.Tracked)
+                && publications[0].Snapshot.Raw.Single().SourceFrameIdentifier == first.CaptureId
+                && publications[0].Snapshot.PixelDiagnostic?.CaptureId == first.CaptureId,
+                "The publication must carry raw, tracked and pixel diagnostics from the same source capture.");
             Check(buffer.Frames.Select(item => item.SourceFrameIdentifier).SequenceEqual(new long[] { 3, 2, 1 }));
             Check(buffer.Frames[0].Detections.Single().SourceFrameIdentifier == 3 && buffer.Frames[1].Detections.Count == 0
                 && buffer.Frames[2].Detections.Single().SourceFrameIdentifier == 1, "Late inference attached to the currently displayed frame.");

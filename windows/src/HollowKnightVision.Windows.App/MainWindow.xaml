@@ -435,6 +435,16 @@
                                 HorizontalAlignment="Left" VerticalAlignment="Top" RenderTransformOrigin="0,0">
                             <Image x:Name="HackerLiveImage" Visibility="Collapsed" Stretch="Fill"
                                    SnapsToDevicePixels="True" IsHitTestVisible="False" Panel.ZIndex="10"/>
+                            <Canvas Width="{Binding Width, ElementName=HackerLiveImage}"
+                                    Height="{Binding Height, ElementName=HackerLiveImage}"
+                                    Canvas.Left="{Binding Path=(Canvas.Left), ElementName=HackerLiveImage}"
+                                    Canvas.Top="{Binding Path=(Canvas.Top), ElementName=HackerLiveImage}"
+                                    Visibility="{Binding Visibility, ElementName=HackerLiveImage}"
+                                    ClipToBounds="True" IsHitTestVisible="False" Panel.ZIndex="19">
+                                <Canvas x:Name="HackerObjectDetectionsCanvas">
+                                    <Canvas.RenderTransform><ScaleTransform x:Name="HackerObjectDetectionScale"/></Canvas.RenderTransform>
+                                </Canvas>
+                            </Canvas>
                             <Canvas x:Name="HackerOverlayCanvas" Width="640" Height="360" Background="Transparent" Panel.ZIndex="20"/>
                             <Canvas x:Name="HackerPathCanvas" IsHitTestVisible="False" Visibility="Collapsed" Panel.ZIndex="21"/>
                             <Canvas x:Name="HackerWallContactsCanvas" Width="{Binding Width, ElementName=AtlasCanvas}"
@@ -611,7 +621,8 @@
                                     <TextBlock x:Name="ModelLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
                                     <StackPanel x:Name="ObjectDetectionOptions" IsEnabled="False">
                                         <TextBlock x:Name="ObjectInferenceIssueText" Foreground="#FF9F68" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,0,0,8"/>
-                                        <CheckBox x:Name="RawDetectionCheck" Content="Raw Detection" Margin="0,0,0,10"/>
+                                        <CheckBox x:Name="RawDetectionCheck" Content="Raw Detection" Margin="0,0,0,10"
+                                                  Checked="RawDetectionCheck_Changed" Unchecked="RawDetectionCheck_Changed"/>
                                         <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="38"/></Grid.ColumnDefinitions><TextBlock Text="Detection Extend"/><Slider x:Name="DetectionExtendSlider" Grid.Column="1" Minimum="0" Maximum="50" Value="12" Margin="8,0" ValueChanged="DetectionExtendSlider_ValueChanged"/><TextBlock x:Name="DetectionExtendText" Grid.Column="2" Text="12%" FontFamily="Consolas" HorizontalAlignment="Right"/></Grid>
                                         <CheckBox x:Name="DetectionPixelsCheck" Content="Detection Pixels" Margin="0,0,0,10" Checked="DetectionPixelsCheck_Changed" Unchecked="DetectionPixelsCheck_Changed"/>
                                     </StackPanel>

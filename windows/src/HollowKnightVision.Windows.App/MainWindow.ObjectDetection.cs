@@ -9,6 +9,92 @@ namespace HollowKnightVision.Windows.App;
 
 public partial class MainWindow
 {
+    private sealed record HackerObjectFrame(long CaptureGeneration, long WorkGeneration, long LabelRevision,
+        long MenuGeneration, long CaptureId, Guid SessionId, GroundTruthCameraTransform Camera,
+        LiveObjectDetectionSnapshot Objects);
+
+    // Keep just enough completed samples for the independently scheduled
+    // Hacker presenter to find one at or before its current frame.
+    private const int HackerObjectHistoryLimit = 8;
+    private HackerObjectFrame[] hackerObjectFrames = [];
+    private (HackerObjectFrame Frame, bool Raw, bool Pixels)? drawnHackerObjects;
+
+    private void PublishHackerObjectDetections(LiveObjectInferencePublication publication,
+        ReceiverGroundTruthSample sample, double capturedAt, long captureGeneration, long workGeneration, long labelRevision)
+    {
+        if (captureGeneration != Interlocked.Read(ref recentCaptureGeneration)
+            || workGeneration != Interlocked.Read(ref hackerWorkGeneration)
+            || !menuStencilRecognizer.IsCurrent(publication.Generation)) return;
+        var frame = publication.Frame;
+        var camera = GroundTruthCameraTransform.FromSample(sample, capturedAt, new(frame.Width, frame.Height));
+        if (camera is null || !double.IsFinite(capturedAt)) return;
+        var completed = new HackerObjectFrame(captureGeneration, workGeneration, labelRevision,
+            publication.Generation, frame.CaptureId, sample.SessionId, camera, publication.Snapshot);
+        var history = Volatile.Read(ref hackerObjectFrames);
+        Volatile.Write(ref hackerObjectFrames, history.TakeLast(HackerObjectHistoryLimit - 1).Append(completed).ToArray());
+    }
+
+    private void DrawHackerObjectOverlay(HackerPipelinePublication? presentation)
+    {
+        if (HackerObjectDetectionsCanvas is null) return;
+        if (workspace != "Hacker" || hackerPreviewActive || ObjectDetectionCheck?.IsChecked != true
+            || presentation is not { PathSceneSignal: true, Prepared.RoomPlacementReady: true } displayed
+            || displayed.CaptureGeneration != Interlocked.Read(ref recentCaptureGeneration)
+            || displayed.WorkGeneration != Interlocked.Read(ref hackerWorkGeneration))
+        {
+            ClearHackerObjectOverlay();
+            return;
+        }
+
+        var prepared = displayed.Prepared;
+        var detected = Volatile.Read(ref hackerObjectFrames).LastOrDefault(frame =>
+            frame.CaptureGeneration == displayed.CaptureGeneration && frame.WorkGeneration == displayed.WorkGeneration
+            && frame.CaptureId <= prepared.LiveImage.CaptureId && frame.SessionId == prepared.Sample.SessionId
+            && string.Equals(frame.Camera.SceneName, prepared.SceneName, StringComparison.Ordinal)
+            && prepared.CapturedAt - frame.Camera.ObservedAt is >= 0 and <= LiveObjectDetectionFreshness.MaximumAge
+            && labelCapture.CanProcess(frame.LabelRevision) && menuStencilRecognizer.IsCurrent(frame.MenuGeneration));
+        if (detected is null)
+        {
+            ClearHackerObjectOverlay();
+            return;
+        }
+
+        var source = detected.Camera;
+        var current = prepared.CameraTransform;
+        // Keep asynchronous detections on the source capture's measured world
+        // region as the newer live camera pans or changes projection scale.
+        var deltaX = current.PixelsPerWorldUnitX * (source.CameraWorld.X - current.CameraWorld.X);
+        var deltaY = current.PixelsPerWorldUnitY * (current.CameraWorld.Y - source.CameraWorld.Y);
+        var scaleX = current.PixelsPerWorldUnitX / source.PixelsPerWorldUnitX;
+        var scaleY = current.PixelsPerWorldUnitY / source.PixelsPerWorldUnitY;
+        var left = (current.FrameSize.Width - source.FrameSize.Width * scaleX) * .5 + deltaX;
+        var top = (current.FrameSize.Height - source.FrameSize.Height * scaleY) * .5 + deltaY;
+        if (!double.IsFinite(left) || !double.IsFinite(top) || !IsFinitePositive(scaleX) || !IsFinitePositive(scaleY))
+        {
+            ClearHackerObjectOverlay();
+            return;
+        }
+
+        var selection = (Frame: detected, Raw: RawDetectionCheck.IsChecked == true, Pixels: DetectionPixelsCheck.IsChecked == true);
+        if (drawnHackerObjects != selection)
+        {
+            ClearHackerObjectOverlay();
+            DrawObjectDetectionOverlayCore(HackerObjectDetectionsCanvas, detected.Objects,
+                source.FrameSize.Width, source.FrameSize.Height, selection.Raw, selection.Pixels, objectReferencePanel?.Atlas);
+            drawnHackerObjects = selection;
+        }
+        Canvas.SetLeft(HackerObjectDetectionsCanvas, left);
+        Canvas.SetTop(HackerObjectDetectionsCanvas, top);
+        HackerObjectDetectionScale.ScaleX = scaleX;
+        HackerObjectDetectionScale.ScaleY = scaleY;
+    }
+
+    private void ClearHackerObjectOverlay()
+    {
+        HackerObjectDetectionsCanvas.Children.Clear();
+        drawnHackerObjects = null;
+    }
+
     private static void PresentObjectInferenceDiagnostics(Border notice, TextBlock noticeText,
         TextBlock settingsText, FrameworkElement options, LiveObjectInferenceDiagnostics diagnostics)
     {

@@ -4,7 +4,10 @@ namespace HollowKnightVision.Windows.Core;
 
 public sealed record LiveObjectInferenceDiagnostics(long? SourceFrameIdentifier = null,
     double? ModelSeconds = null, double? RefinementSeconds = null, string? Issue = null);
-public sealed record LiveObjectInferencePublication(BgraFrame Frame, long Generation, IReadOnlyList<ObjectDetection> Detections);
+public sealed record LiveObjectInferencePublication(BgraFrame Frame, long Generation, IReadOnlyList<ObjectDetection> Detections)
+{
+    public LiveObjectDetectionSnapshot Snapshot { get; init; } = LiveObjectDetectionSnapshot.Empty;
+}
 
 /// <summary>
 /// Serial model ownership with one active/newest pending capture. Snapshot reads,
@@ -133,9 +136,9 @@ public sealed class LiveObjectInferenceWorker
                         {
                             pipeline.AcceptRefinement(raw, refinement, ticket.Item.Frame, ticket.Item.Generation, modelSeconds);
                             diagnostics = new(ticket.Item.Frame.CaptureId, modelSeconds, refinementSeconds);
-                            publication = new(ticket.Item.Frame, ticket.Item.Generation,
-                                pipeline.Snapshot(ticket.Item.Generation,
-                                    (ticket.Item.Frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds).Tracked);
+                            var snapshot = pipeline.Snapshot(ticket.Item.Generation,
+                                (ticket.Item.Frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds);
+                            publication = new(ticket.Item.Frame, ticket.Item.Generation, snapshot.Tracked) { Snapshot = snapshot };
                         }
                         catch (Exception error) { failure = error; }
                     }
