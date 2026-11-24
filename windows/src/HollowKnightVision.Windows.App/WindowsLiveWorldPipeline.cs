@@ -38,6 +38,9 @@ internal sealed record WindowsLiveWorldFrame(
     internal LiveWorldCaptureEvidence? WorldEvidence { get; init; }
 }
 
+internal readonly record struct WindowsLiveWorldFrameScope(ulong CaptureGeneration, string Room,
+    double CaptureTimestamp, long CoordinateEpoch, long? MeasuredLineage, long? RetainedLineage, bool RequiresRecovery);
+
 internal sealed record WindowsLiveWorldPipelineResult(
     WindowsLiveWorldPipelineState State,
     ulong CaptureGeneration,
@@ -59,9 +62,26 @@ internal sealed record WindowsLiveWorldPipelineResult(
     internal GameplayPathRegistration? PathRegistration { get; init; }
     internal LiveWorldSnapshot? CommittedGraph { get; init; }
     internal int? CommittedRoomId { get; init; }
+    internal ulong PersistentCaptureGeneration { get; init; }
+    internal ulong LocalEpoch { get; init; }
     internal long WalkedCoordinateEpoch { get; init; }
     internal IReadOnlyList<GroundHypothesisAtlasLine> RecordedLocalWalk { get; init; } = [];
     internal long? WalkedGroundLineage { get; init; }
+
+    internal LiveIslandPlacementProjection? ProjectFrame(WindowsLiveWorldFrame publication, WindowsLiveWorldFrameScope frame)
+    {
+        if (Discarded || State is not (WindowsLiveWorldPipelineState.Committed or WindowsLiveWorldPipelineState.Throttled)
+            || frame.RequiresRecovery || frame.CaptureGeneration != CaptureGeneration
+            || publication.CaptureGeneration != frame.CaptureGeneration || publication.RoomName != frame.Room
+            || frame.CoordinateEpoch != WalkedCoordinateEpoch || CommittedRoomId is not { } room
+            || CommittedGraph is not { } graph || (frame.MeasuredLineage ?? frame.RetainedLineage) is not { } lineage)
+            return null;
+
+        var placement = LiveIslandWorldProjection.Resolve(graph, PersistentCaptureGeneration, room,
+            LocalEpoch, lineage, frame.CaptureTimestamp);
+        return placement is { } value && (PlacementPending || frame.MeasuredLineage is null)
+            ? value with { IsPlaced = false } : placement;
+    }
 
     internal GameplayPathRegistration? RegisteredPath(long coordinateEpoch) =>
         coordinateEpoch == WalkedCoordinateEpoch ? PathRegistration : null;
@@ -560,12 +580,19 @@ internal sealed class WindowsLiveWorldPipeline
                     activeTracker,
                     "live-world basis expired"));
             }
+            var ticket = resolvedObservation.Value.Ticket;
+            var owner = request.WorldEvidence is { MeasuredLineage: { } lineage } measured
+                && measured.CaptureTimestamp == request.MonotonicTimestamp
+                ? LiveIslandWorldProjection.Resolve(activeTracker.Snapshot, persistentCaptureGeneration,
+                    resolvedRoomId, ticket.LocalEpoch, lineage, request.MonotonicTimestamp) : null;
+            var worldPose = owner is { } placedOwner && placedOwner.IsPlaced == !placementPending
+                ? Corrected(ticket.LocalPose, placedOwner.WorldFromLocal) : resolvedObservation.Value.WorldPose;
+            var carriedBasis = new AtlasPoint(worldPose.X - ticket.LocalPose.X, worldPose.Y - ticket.LocalPose.Y);
             if (request.MonotonicTimestamp - lastPersistenceAt
                 < PersistenceIntervalSeconds)
             {
-                return Publish(Throttled(request, activeTracker, resolvedRoomId));
+                return Publish(Throttled(request, activeTracker, resolvedRoomId, carriedBasis, ticket.LocalEpoch));
             }
-            var worldPose = resolvedObservation.Value.WorldPose;
             // Keep raw motion in the capture basis. The placed pose belongs to
             // the image and to any ground geometry recorded with that image.
             var capturePose = resolvedObservation.Value.Ticket.LocalPose;
@@ -710,7 +737,8 @@ internal sealed class WindowsLiveWorldPipeline
                         (committedLocalWalk.GetValueOrDefault(carriedScope) ?? []).Concat(batch.Spans));
                 }
 
-                if (requiresBasisUpdate
+                var followsSavedIsland = worldPose != resolvedObservation.Value.WorldPose;
+                if ((requiresBasisUpdate || followsSavedIsland)
                     && (!IsWorkCurrent(processEpoch)
                         || !worldBasis.ConfirmPlacement(
                             resolvedObservation.Value.Ticket,
@@ -728,7 +756,8 @@ internal sealed class WindowsLiveWorldPipeline
                 }
 
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
-                var basis = worldBasis.Snapshot.WorldFromLocal;
+                var basis = new AtlasPoint(committed.OptimizedPose.X - committed.LocalPose.X,
+                    committed.OptimizedPose.Y - committed.LocalPose.Y);
                 if (!placementPending) lastPlacedVerticalBasis = basis.Y;
                 LastError = null;
                 var projected = savedGround;
@@ -766,6 +795,8 @@ internal sealed class WindowsLiveWorldPipeline
                     PathRegistration = PathRegistrationFor(resolvedRoomId, basis),
                     CommittedGraph = committedGraph,
                     CommittedRoomId = resolvedRoomId,
+                    PersistentCaptureGeneration = persistentCaptureGeneration,
+                    LocalEpoch = ticket.LocalEpoch,
                     WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
                     RecordedLocalWalk = recordedWalk,
                     WalkedGroundLineage = scope.Lineage
@@ -900,12 +931,14 @@ internal sealed class WindowsLiveWorldPipeline
     private WindowsLiveWorldPipelineResult Throttled(
         WindowsLiveWorldFrame request,
         LiveWorldTracker activeTracker,
-        int committedRoomId) => new WindowsLiveWorldPipelineResult(
+        int committedRoomId,
+        AtlasPoint basis,
+        ulong localEpoch) => new WindowsLiveWorldPipelineResult(
             WindowsLiveWorldPipelineState.Throttled,
             request.CaptureGeneration,
-            Corrected(request.LocalPose, worldBasis.Snapshot.WorldFromLocal),
+            Corrected(request.LocalPose, basis),
             new AtlasPoint(0, 0),
-            worldBasis.Snapshot.WorldFromLocal,
+            basis,
             activeTracker.Snapshot.MapRevision,
             null,
             null,
@@ -915,9 +948,11 @@ internal sealed class WindowsLiveWorldPipeline
             PlacementPending = placementPending,
             WalkedGround = !placementPending && projectedWalkedGround.TryGetValue(committedRoomId, out var ground) ? ground : [],
             SavedWorld = SavedWorld,
-            PathRegistration = PathRegistrationFor(committedRoomId, worldBasis.Snapshot.WorldFromLocal),
+            PathRegistration = PathRegistrationFor(committedRoomId, basis),
             CommittedGraph = committedGraph,
             CommittedRoomId = committedRoomId,
+            PersistentCaptureGeneration = persistentCaptureGeneration,
+            LocalEpoch = localEpoch,
             WalkedCoordinateEpoch = request.WalkedCoordinateEpoch,
             RecordedLocalWalk = committedLocalWalk.GetValueOrDefault(WalkScopeOf(request, committedRoomId)) ?? [],
             WalkedGroundLineage = request.WalkedGroundLineage
