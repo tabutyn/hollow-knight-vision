@@ -787,6 +787,7 @@ public partial class MainWindow : Window
         public PixelRect? GroundDisplayKnight { get; init; }
         public AtlasPoint GroundDisplayCamera { get; init; }
         public IReadOnlyList<PixelRect> MeasuredPlatformPatches { get; init; } = [];
+        public GroundDiagnosticImages? GroundDiagnostics { get; init; }
         public TerrainWallDetection Terrain { get; init; } = TerrainWallDetection.Empty;
         public GameplayPathPresentation? PathPresentation { get; init; }
         public AtlasPathFrameState AtlasPathState { get; init; }
@@ -3181,7 +3182,9 @@ public partial class MainWindow : Window
         var holdAtlas = Volatile.Read(ref profileAtlasHeld);
         if (admission.AdmitsTracking)
             gameControls.RecordVisualGroundInput(captureTimestamp, (ulong)captureGeneration, frame.Height, masks, movementButtons);
-        var prepared = trackingPipeline.Prepare(frame, masks, admission.AdmitsTracking, exactReceiverTelemetry?.SceneName);
+        var groundDiagnostics = workspace == "Gameplay" ? RequestedGroundDiagnostics : GroundDiagnosticLayers.None;
+        var prepared = trackingPipeline.Prepare(frame, masks, admission.AdmitsTracking, exactReceiverTelemetry?.SceneName,
+            includeSemanticRunEvidence: groundDiagnostics.HasFlag(GroundDiagnosticLayers.CandidateRuns));
         var motion = prepared.Motion;
         latestMotion = motion;
         if (!labelCapture.CanProcess(labelRevision)) return null;
@@ -3479,6 +3482,7 @@ public partial class MainWindow : Window
                 GroundDisplayKnight = masks.GroundKnight,
                 GroundDisplayCamera = groundDisplayCamera,
                 MeasuredPlatformPatches = platformPatches,
+                GroundDiagnostics = PrepareGroundDiagnostics(prepared.Terrain, groundDiagnostics),
                 Terrain = terrain,
                 AtlasPathState = atlasPathState,
                 PathPresentation = paths is null ? null : new(frame.CaptureId, frame.Width, frame.Height, paths)
@@ -3608,6 +3612,7 @@ public partial class MainWindow : Window
         }
         if (presentsLatestFrame)
         {
+            DrawGroundDiagnostics(result.GroundDiagnostics);
             DrawDetections(
                 result.Objects,
                 result.Ground,
@@ -5949,6 +5954,7 @@ public partial class MainWindow : Window
         gameplayViewport.Reset();
         gameplayFraming = "Current";
         GameplayPlaceholder.Visibility = Visibility.Visible;
+        DrawGroundDiagnostics(null);
         LiveDetectionsCanvas.Children.Clear();
         LiveGroundPatchesCanvas.Children.Clear();
         LiveGroundCornersCanvas.Children.Clear();

@@ -112,6 +112,7 @@ public sealed class GroundTheoryAnalysis
     public GroundComparisonAnalysis Comparison { get; }
     public GroundTheoryTuning Tuning { get; }
     public IReadOnlyList<IReadOnlyList<DetectedFloorLine>> AcceptedRunsByRow { get; }
+    internal IReadOnlyList<IReadOnlyList<DetectedFloorLine>>? EligibleRunsByRow { get; init; }
     public IReadOnlyList<DetectedFloorLine> CleanFloorLines { get; }
     public IReadOnlyList<int> SelectedRows { get; }
 }
@@ -289,22 +290,20 @@ public static class GroundLineDetector
     {
         ArgumentNullException.ThrowIfNull(frame);
         var analysis = Analyze(frame, excludedRects);
-        var pixels = new byte[checked(analysis.Width * analysis.Height * BgraFrame.BytesPerPixel)];
-        for (var index = 0; index < analysis.GroundEdgePixels.Length; index++)
-        {
-            var value = analysis.GroundEdgePixels[index];
-            var offset = index * BgraFrame.BytesPerPixel;
-            pixels[offset] = value;
-            pixels[offset + 1] = value;
-            pixels[offset + 2] = value;
-            pixels[offset + 3] = byte.MaxValue;
-        }
-        return DiagnosticFrame(
-            analysis.Width,
-            analysis.Height,
-            pixels,
-            frame.CaptureId,
-            frame.ObservedAt);
+        return GrayscaleDiagnostic(analysis.GroundEdgePixels, analysis.Width, analysis.Height,
+            frame.CaptureId, frame.ObservedAt);
+    }
+
+    public static BgraFrame EdgeImage(GroundEdgeAnalysis analysis)
+    {
+        ValidateEdgeAnalysis(analysis);
+        return GrayscaleDiagnostic(analysis.GroundEdgePixels, analysis.Width, analysis.Height);
+    }
+
+    public static BgraFrame GroundDetectImage(GroundComparisonAnalysis analysis)
+    {
+        ValidateComparisonAnalysis(analysis);
+        return GrayscaleDiagnostic(analysis.GroundPixels, analysis.Width, analysis.Height);
     }
 
     /// <summary>
@@ -330,12 +329,13 @@ public static class GroundLineDetector
             if (analysis.GroundPixels[index] >= threshold)
                 PaintBgra(pixels, index, red: 0, green: 230, blue: 255);
         }
-        var accepted = theory.AcceptedRunsByRow;
-        for (var row = 0; row < accepted.Count; row++)
+        var eligible = theory.EligibleRunsByRow ?? theory.AcceptedRunsByRow;
+        for (var row = 0; row < eligible.Count; row++)
         {
             var rowOffset = row * analysis.Width;
-            foreach (var run in accepted[row])
-            for (var x = run.XSpan.Start; x <= run.XSpan.EndInclusive; x++)
+            foreach (var run in eligible[row])
+            foreach (var evidence in run.EvidenceSpans)
+            for (var x = evidence.Start; x <= evidence.EndInclusive; x++)
             {
                 var index = rowOffset + x;
                 if (analysis.GroundPixels[index] >= threshold)
@@ -350,24 +350,28 @@ public static class GroundLineDetector
         GroundTheoryTuning tuning)
     {
         ValidateComparisonAnalysis(analysis);
-        var pixels = new byte[checked(
-            analysis.Width * analysis.Height * BgraFrame.BytesPerPixel)];
-        foreach (var floor in CleanFloorLines(analysis, tuning))
+        return CleanedImage(CleanFloorLines(analysis, tuning), analysis.Width, analysis.Height);
+    }
+
+    public static BgraFrame CleanedImage(IReadOnlyList<DetectedFloorLine> floors, int width, int height)
+    {
+        var pixels = new byte[checked(width * height * BgraFrame.BytesPerPixel)];
+        foreach (var floor in floors)
         {
-            if (floor.Row < 0 || floor.Row >= analysis.Height) continue;
+            if (floor.Row < 0 || floor.Row >= height) continue;
             for (var x = Math.Max(0, floor.XSpan.Start);
-                 x <= Math.Min(analysis.Width - 1, floor.XSpan.EndInclusive);
+                 x <= Math.Min(width - 1, floor.XSpan.EndInclusive);
                  x++)
             {
                 PaintBgra(
                     pixels,
-                    floor.Row * analysis.Width + x,
+                    floor.Row * width + x,
                     red: 70,
                     green: 255,
                     blue: 120);
             }
         }
-        return DiagnosticFrame(analysis.Width, analysis.Height, pixels);
+        return DiagnosticFrame(width, height, pixels);
     }
 
     public static byte[] GroundDetectPixels(GroundEdgeAnalysis analysis)
@@ -442,11 +446,11 @@ public static class GroundLineDetector
 
     public static IReadOnlyList<DetectedFloorLine> SemanticFloorLines(
         GroundComparisonAnalysis analysis,
-        GroundTheoryTuning tuning) => SemanticFloorLines(analysis, tuning, new GroundCaptionEvidence(analysis));
+        GroundTheoryTuning tuning) => SemanticTheory(analysis, tuning, new GroundCaptionEvidence(analysis)).CleanFloorLines;
 
-    internal static IReadOnlyList<DetectedFloorLine> SemanticFloorLines(GroundComparisonAnalysis analysis,
-        GroundTheoryTuning tuning, GroundCaptionEvidence captions) =>
-        CreateTheory(analysis, tuning, validateSurface: true, captions).CleanFloorLines;
+    internal static GroundTheoryAnalysis SemanticTheory(GroundComparisonAnalysis analysis,
+        GroundTheoryTuning tuning, GroundCaptionEvidence captions, bool includeRunEvidence = false) =>
+        CreateTheory(analysis, tuning, validateSurface: true, captions, includeRunEvidence);
 
     /// <summary>
     /// Suppresses stale rejected projections that cover a presently confirmed
@@ -631,7 +635,7 @@ public static class GroundLineDetector
     private static GroundTheoryAnalysis CreateTheory(
         GroundComparisonAnalysis analysis,
         GroundTheoryTuning tuning,
-        bool validateSurface, GroundCaptionEvidence? captions = null)
+        bool validateSurface, GroundCaptionEvidence? captions = null, bool includeRunEvidence = false)
     {
         ValidateComparisonAnalysis(analysis);
         var surface = validateSurface ? new GroundSurfaceEvidence(analysis) : null;
@@ -642,7 +646,10 @@ public static class GroundLineDetector
                 .Where(line => line.Row == row)
                 .ToArray())
             .ToArray();
-        return new GroundTheoryAnalysis(analysis, tuning, sharedRuns, lines);
+        var eligible = includeRunEvidence ? accepted.Select((runs, row) =>
+            (IReadOnlyList<DetectedFloorLine>)runs.Select(run => new DetectedFloorLine(row, run.Span, run.EvidenceSpans))
+                .ToArray()).ToArray() : null;
+        return new GroundTheoryAnalysis(analysis, tuning, sharedRuns, lines) { EligibleRunsByRow = eligible };
     }
 
     private static IReadOnlyList<DetectedFloorLine> BuildTheoryLines(
@@ -849,6 +856,18 @@ public static class GroundLineDetector
         rect.Y - vertical,
         checked(rect.Width + horizontal * 2),
         checked(rect.Height + vertical * 2));
+
+    private static BgraFrame GrayscaleDiagnostic(byte[] grayscale, int width, int height,
+        long captureId = 0, DateTimeOffset? observedAt = null)
+    {
+        var pixels = new byte[checked(width * height * BgraFrame.BytesPerPixel)];
+        for (var index = 0; index < grayscale.Length; index++)
+        {
+            var value = grayscale[index];
+            PaintBgra(pixels, index, red: value, green: value, blue: value);
+        }
+        return DiagnosticFrame(width, height, pixels, captureId, observedAt);
+    }
 
     private static BgraFrame DiagnosticFrame(
         int width,

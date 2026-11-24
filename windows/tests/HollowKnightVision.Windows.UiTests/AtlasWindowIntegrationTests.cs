@@ -36,6 +36,7 @@ internal static class AtlasWindowIntegrationTests
         Console.WriteLine("PASS Gameplay Atlas draws measured doorways independently of optional outlines and hides them outside gameplay");
         Console.WriteLine("PASS Gameplay window applies only ordered Atlas placements and keeps menu images in capture coordinates");
         Console.WriteLine("PASS Game Play toggles ground lines and tracking patches in the live view and Atlas");
+        Console.WriteLine("PASS Game Play ground diagnostics are opt-in and use the analyzed frame's exact pixels");
         Console.WriteLine("PASS Game Play and Hacker draw only scoped bot wall contacts while Atlas Paths is enabled");
     }
 
@@ -158,7 +159,9 @@ internal static class AtlasWindowIntegrationTests
                 && placement.Visibility == Visibility.Collapsed && walls.Visibility == Visibility.Collapsed,
                 "An unresolved capture must hold the displayed placement while hiding registered doorway overlays.");
 
-            VerifyGroundOverlayControls(window, initial with { Frame = newest, GameplayTiles = null, WorldFrame = null });
+            var latestAnalysis = initial with { Frame = newest, GameplayTiles = null, WorldFrame = null };
+            VerifyGroundOverlayControls(window, latestAnalysis);
+            VerifyGroundDiagnostics(window, latestAnalysis);
 
             var viewport = GetField<GameplayViewportController>(window, "gameplayViewport");
             viewport.SetFreeFlyTransform(new(1, 0, 0));
@@ -283,6 +286,64 @@ internal static class AtlasWindowIntegrationTests
         Check(patches.IsEnabled && livePatches.Children.Count == 1 && atlasPatches.Children.Count == 1
             && atlasLines.Children.OfType<Line>().Count() == 1,
             "The next gameplay analysis should restore the ground stroke and both patch layers.");
+    }
+
+    private static void VerifyGroundDiagnostics(MainWindow window, MainWindow.VisionAnalysisResult gameplay)
+    {
+        const int row = 7, column = 8;
+        var width = gameplay.Frame.Width;
+        var height = gameplay.Frame.Height;
+        var edgePixels = new byte[width * height];
+        edgePixels[row * width + column] = 83;
+        var responsePixels = new byte[width * height];
+        responsePixels[row * width + column] = 200;
+        var response = new GroundComparisonAnalysis(width, height, responsePixels);
+        var reference = GroundLineDetector.Theory(response with { GroundPixels = new byte[width * height] }, GroundTheoryTuning.Default);
+        var terrain = new GameplayTerrainAnalysis(new(width, height, edgePixels), reference, [new(row, new(7, 9))], [])
+        {
+            SemanticTheory = GroundLineDetector.Theory(response, GroundTheoryTuning.SemanticDefault)
+        };
+        var switches = new[] { "GroundEdgeCheck", "GroundResponseCheck", "GroundCandidatesCheck", "CleanFloorCheck" }
+            .Select(name => Control<CheckBox>(window, name)).ToArray();
+        var images = new[] { "GroundEdgeImage", "GroundResponseImage", "GroundCandidatesImage", "CleanFloorImage" }
+            .Select(name => Control<Image>(window, name)).ToArray();
+        Check(switches.All(toggle => toggle.IsEnabled && toggle.IsChecked == false)
+            && images.All(image => image.Visibility == Visibility.Collapsed && image.Source is null)
+            && MainWindow.PrepareGroundDiagnostics(terrain, window.RequestedGroundDiagnostics) is null,
+            "The four ground diagnostics must start hidden and allocate no images while off.");
+
+        switches[1].IsChecked = true;
+        var responseOnly = MainWindow.PrepareGroundDiagnostics(terrain, window.RequestedGroundDiagnostics);
+        Check(responseOnly is { Edges: null, FilterResponse: not null, CandidateRuns: null, CleanFloor: null },
+            "Enabling filter response must allocate only its own pixels.");
+        foreach (var toggle in switches) toggle.IsChecked = true;
+        var result = gameplay with
+        {
+            GroundDiagnostics = MainWindow.PrepareGroundDiagnostics(terrain, window.RequestedGroundDiagnostics)
+        };
+        window.ApplyVisionAnalysis(result);
+        Program.Pump();
+        AssertPixel(images[0], [83, 83, 83, 255]);
+        AssertPixel(images[1], [200, 200, 200, 255]);
+        AssertPixel(images[2], [255, 230, 0, 255]);
+        AssertPixel(images[3], [120, 255, 70, 255]);
+
+        foreach (var toggle in switches) toggle.IsChecked = false;
+        Program.Pump();
+        Check(images.All(image => image.Visibility == Visibility.Collapsed),
+            "Turning off diagnostics must hide all images before receiving another frame.");
+        window.ApplyVisionAnalysis(result);
+        Check(images.All(image => image.Source is null),
+            "In-flight diagnostic images must not reappear after turning a layer off.");
+
+        static void AssertPixel(Image image, byte[] expected)
+        {
+            Check(image.Visibility == Visibility.Visible && image.Source is System.Windows.Media.Imaging.BitmapSource,
+                "The selected diagnostic image was not shown.");
+            var pixel = new byte[4];
+            ((System.Windows.Media.Imaging.BitmapSource)image.Source).CopyPixels(new Int32Rect(column, row, 1, 1), pixel, 4, 0);
+            Check(pixel.SequenceEqual(expected), $"The layer {image.Name} must show its own frame-matched diagnostic pixels.");
+        }
     }
 
     private static void AssertWall(Canvas canvas, double x, double y, double halfHeight)

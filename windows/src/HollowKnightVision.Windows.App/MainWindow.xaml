@@ -100,6 +100,14 @@
                                SnapsToDevicePixels="True" IsHitTestVisible="False" Panel.ZIndex="10"/>
                         <Canvas x:Name="DetectionCanvas" Width="640" Height="360"
                                 IsHitTestVisible="False" Panel.ZIndex="20">
+                            <Image x:Name="GroundEdgeImage" Width="640" Height="360" Stretch="Fill" Opacity="0.5"
+                                   Visibility="{Binding IsChecked, ElementName=GroundEdgeCheck, Converter={StaticResource OverlayVisibility}}"/>
+                            <Image x:Name="GroundResponseImage" Width="640" Height="360" Stretch="Fill" Opacity="0.5"
+                                   Visibility="{Binding IsChecked, ElementName=GroundResponseCheck, Converter={StaticResource OverlayVisibility}}"/>
+                            <Image x:Name="GroundCandidatesImage" Width="640" Height="360" Stretch="Fill" Opacity="0.85"
+                                   Visibility="{Binding IsChecked, ElementName=GroundCandidatesCheck, Converter={StaticResource OverlayVisibility}}"/>
+                            <Image x:Name="CleanFloorImage" Width="640" Height="360" Stretch="Fill" Opacity="0.95"
+                                   Visibility="{Binding IsChecked, ElementName=CleanFloorCheck, Converter={StaticResource OverlayVisibility}}"/>
                             <Canvas x:Name="LiveDetectionsCanvas"/>
                             <Canvas Style="{StaticResource GroundLinesOverlay}">
                                 <Canvas x:Name="LiveGroundPatchesCanvas" Style="{StaticResource GroundPatchesOverlay}"/>
@@ -611,6 +619,14 @@
                                     <TextBlock x:Name="StencilLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
                                     <Separator Margin="0,0,0,10"/>
                                     <StackPanel x:Name="GroundOverlayControls">
+                                        <CheckBox x:Name="GroundEdgeCheck" Content="Vertical Edges" Margin="0,0,0,10"
+                                                  Checked="GroundDiagnostics_Changed" Unchecked="GroundDiagnostics_Changed"/>
+                                        <CheckBox x:Name="GroundResponseCheck" Content="Ground Filter Response" Margin="0,0,0,10"
+                                                  Checked="GroundDiagnostics_Changed" Unchecked="GroundDiagnostics_Changed"/>
+                                        <CheckBox x:Name="GroundCandidatesCheck" Content="Ground Candidate Runs" Margin="0,0,0,10"
+                                                  Checked="GroundDiagnostics_Changed" Unchecked="GroundDiagnostics_Changed"/>
+                                        <CheckBox x:Name="CleanFloorCheck" Content="Clean Floor Lines" Margin="0,0,0,10"
+                                                  Checked="GroundDiagnostics_Changed" Unchecked="GroundDiagnostics_Changed"/>
                                         <CheckBox x:Name="GroundLinesCheck" Content="Ground Lines" Margin="0,0,0,10" IsChecked="True"/>
                                         <CheckBox x:Name="GroundTrackingPatchesCheck" Content="Ground Tracking Patches"
                                                   Margin="0,0,0,10" IsChecked="True" IsEnabled="{Binding IsChecked, ElementName=GroundLinesCheck}"/>
