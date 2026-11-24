@@ -10,7 +10,7 @@ namespace HollowKnightVision.Windows.App;
 
 public partial class MainWindow
 {
-    private readonly LocalThinkingClient thinkingClient = new();
+    private readonly LocalThinkingClient thinkingClient;
     private bool thinkingEnabled;
     private bool thinkingAutomatic = true;
     private LocalThinkingModel thinkingModel = LocalThinkingModel.Gemma;
@@ -178,7 +178,6 @@ public partial class MainWindow
             or JsonException or OperationCanceledException)
         {
             if (!token.IsCancellationRequested)
-
                 thinkingStatus = error is OperationCanceledException ? "The local model timed out." : error.Message;
             if (!token.IsCancellationRequested && thinkingReply.Length > 0)
                 thinkingHandoff = "Reply rejected.";

@@ -808,7 +808,7 @@ public partial class MainWindow : Window
     }
 
     internal MainWindow(GameRuntimeMode gameMode, string? gamePath, string root, string documents,
-        Func<ReceiverClient>? createReceiver = null)
+        Func<ReceiverClient>? createReceiver = null, LocalThinkingClient? policyClient = null)
     {
         this.gameMode = gameMode;
         this.gamePath = gamePath;
@@ -820,6 +820,7 @@ public partial class MainWindow : Window
         gameTextPreference = IOPath.Combine(root, "read-game-text.txt");
         gameTextReviewPreference = IOPath.Combine(root, "game-text-review.json");
         gameTextReview = new(gameTextReader, new LocalThinkingClient());
+        thinkingClient = policyClient ?? new LocalThinkingClient();
         InitializeComponent();
         InitializeGameText();
         InitializeGameTextReview();
