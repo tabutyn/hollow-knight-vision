@@ -327,6 +327,7 @@ var tests = new List<(string Name, Action Run)>
     ("Game Play Gym builds a pixel-only Atlas and recovers masked Knight observations", GameplayGymVisualTests.TestVisualFootprintAndMaskedKnightRecovery),
     ("Game Play Gym coverage excludes camera corrections and unmeasured movement", GameplayGymVisualTests.TestAtlasCreditSurvivesGroundCameraRecovery),
     ("Game Play Gym reprojects a confirmed recovery island into committed coverage", GameplayGymVisualTests.TestGymReprojectsTheRecoveryIslandIntoCommittedCoverage),
+    ("Game Play Gym retains measured local scenery during room placement recovery", GameplayGymVisualTests.TestGymContinuesItsLocalAtlasWhilePlacementIsPending),
     ("Game Play Gym reports weak Knight corrections from fresh image cues", GameplayGymVisualTests.TestGymReportsCorrectionsOnlyForAnExistingVisualEstimate),
     ("Game Play Gym changes rooms after a confirmed loading cut with the Knight hidden", GameplayGymVisualTests.TestGamePlayGymPublishesOnlyConfirmedRoomChanges),
     ("bot startup latches cutscene skipping until fresh gameplay", BotPolicyTests.TestStartupSkipIsLatchedUntilFreshGameplay),

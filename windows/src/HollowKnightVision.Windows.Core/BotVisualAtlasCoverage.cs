@@ -19,7 +19,8 @@ public sealed class BotVisualAtlasCoverage
     }
 
     public void Register(AtlasPoint pose, WorldSize size, IReadOnlyList<PixelRect> omissions,
-        VisualRoomCompositionBounds bounds = default) => Place(pose, size, omissions, bounds, measured: true);
+        VisualRoomCompositionBounds bounds = default, bool creditExploration = true) =>
+        Place(pose, size, omissions, bounds, measured: creditExploration);
 
     public void ObserveVerified(AtlasPoint? pose, WorldSize size, IReadOnlyList<PixelRect> omissions,
         VisualRoomCompositionBounds bounds, GroundHypothesisTrackingResult tracking, bool admitsPlacement)

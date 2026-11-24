@@ -6,8 +6,10 @@ internal sealed class BotGymAtlasCoverage
     private const double ObservationInterval = 1 / 7.5;
     private readonly LiveWorldTracker world = new();
     private readonly BotCommittedAtlasCoverage coverage = new();
+    private readonly BotVisualAtlasCoverage localCoverage = new();
     private int? room;
     private ulong epoch;
+    private int? localIslandId;
     private AtlasPoint basis;
     private AtlasPoint? lastPose;
     private AtlasPoint? lastTrustedPose;
@@ -18,7 +20,8 @@ internal sealed class BotGymAtlasCoverage
     private bool open;
 
     internal bool HasPlacedRoom { get; private set; }
-    internal bool CanContinueMeasuredScenery => HasPlacedRoom && !awaitingPlacement;
+    internal bool CanContinueMeasuredScenery => HasPlacedRoom && open;
+    internal bool PlacementPending => awaitingPlacement;
     internal LiveWorldSnapshot Snapshot => world.Snapshot;
 
     internal void Interrupt()
@@ -86,7 +89,17 @@ internal sealed class BotGymAtlasCoverage
         // observation in it, including this frame, is recovery evidence.
         var credit = !recovering && correction is null or { X: 0, Y: 0 };
         coverage.Update(update.Snapshot, creditNewCells: credit);
-        if (world.LatestIslandAwaitsPlacement) return;
+        if (world.LatestIslandAwaitsPlacement)
+        {
+            var island = update.Snapshot.TrackingIslands[^1].Id;
+            if (localIslandId != island)
+            {
+                localCoverage.Reset();
+                localIslandId = island;
+            }
+            localCoverage.Register(local, size, omissions, bounds, creditExploration: false);
+            return;
+        }
 
         var resolved = update.Snapshot.Observations[^1].OptimizedPose;
         basis = new(resolved.X - center.X, resolved.Y - center.Y);
@@ -94,6 +107,11 @@ internal sealed class BotGymAtlasCoverage
         awaitingPlacement = false;
         requiresMatch = false;
         lastTrustedPose = local;
+        if (localIslandId.HasValue)
+        {
+            localCoverage.Reset();
+            localIslandId = null;
+        }
     }
 
     internal BotAtlasView? View(AtlasPoint? pose, WorldSize size, int? health)
@@ -101,6 +119,17 @@ internal sealed class BotGymAtlasCoverage
         if (!HasPlacedRoom || awaitingPlacement || room is not { } roomId || pose is not { } local) return null;
         var center = Center(local, size);
         return coverage.View(new(center.X + basis.X, center.Y + basis.Y), size, roomId, health);
+    }
+
+    internal BotAtlasView? PolicyView(AtlasPoint? pose, WorldSize size, int? health)
+    {
+        if (!awaitingPlacement) return View(pose, size, health);
+        // The local chart can supply directional context during recovery. Its
+        // cells have no global position or exploration credit before placement.
+        if (!open || localCoverage.View(pose, size, world.Snapshot.MapRevision, health) is not { } local)
+            return null;
+        var (covered, earned) = coverage.Totals;
+        return local with { CoveredCells = covered, EarnedCells = earned };
     }
 
     private void BeginVisit()
@@ -111,6 +140,8 @@ internal sealed class BotGymAtlasCoverage
         lastMasks = [];
         lastScanAt = double.NegativeInfinity;
         open = false;
+        localCoverage.Reset();
+        localIslandId = null;
     }
 
     private static AtlasPoint Center(AtlasPoint origin, WorldSize size) =>

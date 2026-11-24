@@ -242,6 +242,9 @@ internal static class GameplayGymVisualTests
         Observe(2, drifted, measured with { GlobalCorrection = new(96, 0) });
         if (atlas.View(drifted, size, 5) is not null || atlas.Snapshot.UnplacedObservationIds().Count != 1)
             throw new InvalidOperationException("The first recovery vote must not extend committed coverage.");
+        if (atlas.PolicyView(drifted, size, 5) is not { CoveredCells: 5, EarnedCells: 0, Health: 5 } local
+            || local.Camera[0] != drifted.X || local.Missing is not { Count: 15 })
+            throw new InvalidOperationException("The recovering island must supply local policy context with the committed totals.");
 
         Observe(3, drifted, measured);
         var recovered = atlas.View(drifted, size, 5);
@@ -268,6 +271,64 @@ internal static class GameplayGymVisualTests
             var time = frame / 5d;
             atlas.Observe(new(width, height, width * 4, pixels, frame, DateTimeOffset.UnixEpoch.AddSeconds(time)),
                 pose, time, [], default, evidence, admitsPlacement: true);
+        }
+    }
+
+    internal static void TestGymContinuesItsLocalAtlasWhilePlacementIsPending()
+    {
+        const int width = 320, height = 180;
+        var size = new WorldSize(width, height);
+        var atlas = new BotGymAtlasCoverage();
+        var measured = GroundHypothesisTrackingResult.Empty with
+        {
+            PoseVerified = true, HasConfirmedGround = true, LocalTextureSupport = 8
+        };
+        var original = Texture(71);
+        var otherView = Texture(81);
+        atlas.EnterRoom(7);
+        Observe(0, new(0, 0), original, measured);
+        Observe(1, new(128, 0), original, measured);
+        var baseline = atlas.View(new(128, 0), size, 5)!;
+        if (baseline.EarnedCells <= 0) throw new InvalidOperationException("The placed map must already have earned cells.");
+
+        Observe(2, null, otherView, GroundHypothesisTrackingResult.Empty);
+        if (atlas.CanContinueMeasuredScenery || atlas.PolicyView(new(640, 0), size, 5) is not null)
+            throw new InvalidOperationException("An unsupported gap must withhold policy placement.");
+
+        var recoveredLocal = new AtlasPoint(640, 0);
+        Observe(3, recoveredLocal, otherView, measured);
+        if (!atlas.CanContinueMeasuredScenery || !atlas.PlacementPending
+            || atlas.PolicyView(recoveredLocal, size, 5) is not { } first
+            || first.CoveredCells != baseline.CoveredCells || first.EarnedCells != baseline.EarnedCells)
+            throw new InvalidOperationException("A fresh measured ground view must begin an unplaced local chart.");
+        var keys = atlas.Snapshot.Keyframes.Count;
+        var next = new AtlasPoint(768, 0);
+        Observe(4, next, otherView, GroundHypothesisTrackingResult.Empty, scenery: true);
+        var local = atlas.PolicyView(next, size, 5);
+        if (local is not { Missing: { Count: 15 } } || local.Camera[0] != next.X
+            || local.Missing.SequenceEqual(first.Missing!) || atlas.View(next, size, 5) is not null
+            || local.CoveredCells != baseline.CoveredCells || local.EarnedCells != baseline.EarnedCells
+            || atlas.Snapshot.Keyframes.Count != keys || atlas.Snapshot.UnplacedObservationIds().Count != 2)
+            throw new InvalidOperationException("Verified scenery must extend only the recovering chart without adding a landmark or credit.");
+
+        atlas.EnterRoom(8);
+        Observe(5, next, otherView, GroundHypothesisTrackingResult.Empty, scenery: true);
+        if (atlas.CanContinueMeasuredScenery || atlas.PolicyView(next, size, 5) is not null)
+            throw new InvalidOperationException("A new room cannot inherit the recovering chart or seed it from scenery.");
+
+        void Observe(int index, AtlasPoint? pose, byte[] pixels, GroundHypothesisTrackingResult tracking, bool scenery = false)
+        {
+            var time = index * .2;
+            atlas.Observe(new(width, height, width * 4, pixels, index, DateTimeOffset.UnixEpoch.AddSeconds(time)),
+                pose, time, [], default, tracking, admitsPlacement: true, continuesMeasuredScenery: scenery);
+        }
+
+        static byte[] Texture(int seed)
+        {
+            var pixels = new byte[width * height * 4];
+            new Random(seed).NextBytes(pixels);
+            for (var index = 3; index < pixels.Length; index += 4) pixels[index] = 255;
+            return pixels;
         }
     }
 

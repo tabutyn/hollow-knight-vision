@@ -9,7 +9,10 @@ public sealed record BotVisualGymReading(BotCaptureObservation? Observation, IRe
 }
 
 public sealed record BotVisualCameraDiagnostic(string PoseSource, bool GroundVerified, bool AllowsAtlasWrite,
-    int ReferenceFloors, int GroundSupport, int GlobalFeatures, int GlobalMatches);
+    int ReferenceFloors, int GroundSupport, int GlobalFeatures, int GlobalMatches)
+{
+    public bool AtlasPlacementPending { get; init; }
+}
 
 /// <summary>Produces Game Play policy observations using only pixels, the episode clock, and applied controls.</summary>
 public sealed class BotVisualGymObservationSource
@@ -127,13 +130,14 @@ public sealed class BotVisualGymObservationSource
             observed.GroundTracking, continuesScenery ? localCamera : null);
         var row = BotObservationBuilder.Gameplay(frame, timing, observations.MeasuredBatch, floors, terrain.Walls,
             terrainAnalyzed: true, placement, hud, contact.MeasuredFoot, controls);
-        row = knightMemory.Resolve(row, BotPolicyAction.FromButtons(controls), observations.MeasuredBatch);
+        row = knightMemory.Resolve(row, BotPolicyAction.FromButtons(controls), observations.MeasuredBatch, walkedEpoch);
         row = blockade.AddVisualEvidence(row);
-        row = row with { AtlasView = coverage.View(terrainCamera, size, row.MeasuredHealth) };
+        row = row with { AtlasView = coverage.PolicyView(terrainCamera, size, row.MeasuredHealth) };
         return new(row, row.Issues, confidence)
         {
             Camera = new(observed.Source, observed.GroundVerified, observed.AllowsAtlasWrite || continuesScenery, analysis.CameraReferences.Count,
                 observed.GroundSupport, observed.GroundTracking.GlobalFeatureCount, observed.GroundTracking.GlobalMatchCount)
+            { AtlasPlacementPending = coverage.PlacementPending }
         };
 
         IReadOnlyList<ObjectDetection> Infer()
