@@ -7600,6 +7600,19 @@ static void TestGroundStageImageRequiresContiguousMinimumSegment()
         new byte[] { 0, 0, 0, 0 }));
     True(GroundReferenceRgbaPixel(image, 8, 1).SequenceEqual(
         new byte[] { 0, 230, 255, 255 }));
+
+    var adjacent = new GroundComparisonAnalysis(width, height, Enumerable.Repeat((byte)200, width * height).ToArray());
+    var tuning = new GroundTheoryTuning(128, 6);
+    var withoutDiagnostic = GroundLineDetector.SemanticTheory(adjacent, tuning, new GroundCaptionEvidence(adjacent));
+    var withDiagnostic = GroundLineDetector.SemanticTheory(adjacent, tuning, new GroundCaptionEvidence(adjacent),
+        includeRunEvidence: true);
+    Equal(0, withoutDiagnostic.CleanFloorLines.Single().Row);
+    Equal(0, withDiagnostic.CleanFloorLines.Single().Row);
+    True(withoutDiagnostic.EligibleRunsByRow is null);
+    True(GroundReferenceRgbaPixel(GroundLineDetector.GroundStageImage(withDiagnostic), 1, 1)
+        .SequenceEqual(new byte[] { 70, 255, 120, 255 }));
+    True(GroundReferenceRgbaPixel(GroundLineDetector.GroundStageImage(withoutDiagnostic), 1, 1)
+        .SequenceEqual(new byte[] { 0, 230, 255, 255 }));
 }
 
 static void TestSharedLineAnalysisPreservesLinesDebugPixelsAndReferenceDetection()

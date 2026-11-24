@@ -64,7 +64,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
     }
 
     public GameplayTrackingPreparation Prepare(BgraFrame frame, GameplaySceneMasks masks, bool admitted,
-        string? knownRoom = null, GroundTheoryTuning? tuning = null, GroundTheoryTuning? semanticTuning = null)
+        string? knownRoom = null, GroundTheoryTuning? tuning = null, GroundTheoryTuning? semanticTuning = null,
+        bool includeSemanticRunEvidence = false)
     {
         if (frameWidth != 0 && (frameWidth != frame.Width || frameHeight != frame.Height))
             Reset();
@@ -83,7 +84,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         if (masks.GroundKnight is { } knight) protectedOcclusions.Add(knight);
         if (admitted)
         {
-            var terrain = GameplayTerrainAnalysis.Analyze(frame, masks, tuning, semanticTuning);
+            var terrain = GameplayTerrainAnalysis.Analyze(frame, masks, tuning, semanticTuning, includeSemanticRunEvidence);
             var motionExclusions = masks.GroundRegions.OmittedRects;
             return new(terrain, motion.Observe(frame, motionExclusions), protectedOcclusions, masks.GroundExclusions)
             {
