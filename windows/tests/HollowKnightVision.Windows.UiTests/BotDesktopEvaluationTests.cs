@@ -44,12 +44,116 @@ internal static class BotDesktopEvaluationTests
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             foreach (var domain in new[] { "gameplay", "hacker" })
                 await VerifyDomainAsync(temporary.FullName, domain, label, timeout.Token);
+            await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening"), timeout.Token);
         }
         finally
         {
             Environment.SetEnvironmentVariable(labelsEnvironment, previousLabels);
             temporary.Delete(recursive: true);
         }
+    }
+
+    private static async Task VerifyOpeningWithoutCheckpointAsync(string root, CancellationToken token)
+    {
+        using var server = new TcpListener(IPAddress.Loopback, 0);
+        server.Start();
+        var port = ((IPEndPoint)server.LocalEndpoint).Port;
+        var session = Guid.NewGuid();
+        var states = Channel.CreateUnbounded<ReceiverInputSnapshot>();
+        var peer = ServeAsync(server, states.Writer, token);
+        var saves = Directory.CreateDirectory(Path.Combine(root, "saves")).FullName;
+        var archives = Path.Combine(root, "bot-v1", "save-archives");
+        var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
+        try
+        {
+            Field("recentCaptureGeneration").SetValue(window, Generation);
+            Field("workspace").SetValue(window, "Hacker");
+            Field("recognizedMenuContext").SetValue(window, "select-profile");
+            var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
+            bridge.Start();
+            while (bridge.PauseState != GamePauseState.Ready) await Task.Delay(10, token);
+            await window.StartBotPlaybackAsync(new BotDemoSaveArchive(saves, archives)).WaitAsync(token);
+            var run = Field("botPlayback").GetValue(window);
+            Check(run is not null, "An untrained bot must still start its menu routine.");
+            var owner = (Guid)run!.GetType().GetProperty("Owner", Instance)!.GetValue(run)!;
+
+            var pixels = new byte[Width * Height * 4];
+            var index = 0;
+            var selector = new MenuStencilMatch("selector", "Selector", new(10, 10, 6, 6), 1, null);
+            await ExpectAction(InputButtons.ActionZ, "select-profile", receiverGameplay: false);
+            Check(File.Exists(Path.Combine(Directory.GetDirectories(archives).Single(), "manifest.json"))
+                && Directory.GetFileSystemEntries(saves).Length == 0,
+                "The opening must start only after the fixture's empty slot has a verified archive.");
+            await ExpectAction(InputButtons.ActionX, "quit-game", receiverGameplay: true);
+            await ExpectAction(InputButtons.ActionZ, "brightness", receiverGameplay: true, showHud: true);
+            Check(bridge.OwnsBotControl(owner), "Conflicting menu and HUD cues must preserve the opening until Gameplay is admitted.");
+
+            var preparingUntil = Clock() + .8;
+            var released = false;
+            do
+            {
+                Step(null, receiverGameplay: true, visualGameplay: true, admitGameplay: false, showHud: true);
+                while (states.Reader.TryRead(out var state))
+                {
+                    Check(!released || !state.Enabled, "A visual Gameplay HUD must suppress skip pulses while the profile Atlas is loading.");
+                    released |= !state.Enabled && state.HeldButtons == InputButtons.None;
+                }
+                await Task.Delay(40, token);
+            } while (Clock() < preparingUntil);
+            Check(released && bridge.OwnsBotControl(owner), "Controls must stay neutral while the profile Atlas finishes loading.");
+            while (Field("botPlayback").GetValue(window) is not null)
+            {
+                Step(null, receiverGameplay: true, visualGameplay: true, admitGameplay: true, showHud: true);
+                await Task.Delay(40, token);
+            }
+            Check(!bridge.OwnsBotControl(owner), "The session must release ownership after a fresh Gameplay HUD without a checkpoint.");
+            var status = (System.Windows.Controls.TextBlock)window.FindName("StatusText");
+            Check(status.Text.Contains("Gameplay reached.", StringComparison.Ordinal)
+                && status.Text.Contains("Train or select a Hacker", StringComparison.Ordinal)
+                && status.Text.Contains("Controls returned to you.", StringComparison.Ordinal),
+                "The no-checkpoint handoff must explain how to resume manual play.");
+            Check(!Directory.Exists(Path.Combine(root, "bot-v1", "evaluations")), "Opening alone must not write a policy evaluation.");
+
+            async Task ExpectAction(InputButtons button, string context, bool receiverGameplay, bool showHud = false)
+            {
+                while (true)
+                {
+                    Step(context, receiverGameplay, visualGameplay: false, admitGameplay: false, showHud);
+                    while (states.Reader.TryRead(out var state))
+                        if (state.Enabled && state.HeldButtons == button) return;
+                    Check(bridge.OwnsBotControl(owner), $"Bot lost control before sending {button}.");
+                    await Task.Delay(30, token);
+                }
+            }
+
+            void Step(string? context, bool receiverGameplay, bool visualGameplay, bool admitGameplay, bool showHud)
+            {
+                ++index;
+                var observed = DateTimeOffset.UtcNow;
+                var image = new BgraFrame(Width, Height, Width * 4, pixels, index, observed);
+                var timestamp = (observed - DateTimeOffset.UnixEpoch).TotalSeconds;
+                var menu = context is null ? null : new MenuStencilResult(context, true, 1, "Slot 4",
+                    [], [selector, selector], [], 0, 0, 1, MenuStencilPhase.Tracking, 1, timestamp, "en")
+                {
+                    CheckedProfileSlots = context == "select-profile" ? [1, 2, 3, 4] : [],
+                    SelectedOptionIdentifier = context == "select-profile" ? "select-profile.slot-4" : "shared.yes"
+                };
+                var hud = showHud
+                    ? new HudStencilResult([new(0, "full", default, 1), new(1, "full", default, 1)],
+                        null, [], [], [], default, false, timestamp)
+                    : null;
+                _ = Method("ObserveBotStartup").Invoke(window,
+                    [image, Generation, Clock(), admitGameplay, visualGameplay,
+                        Telemetry(session, index) with { AtlasGameplayActive = receiverGameplay }, menu, hud]);
+            }
+        }
+        finally
+        {
+            Field("isClosing").SetValue(window, true);
+            await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
+            await peer.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        Console.WriteLine("PASS Untrained desktop bot skips opening despite receiver and menu ambiguity and returns controls at the Gameplay HUD");
     }
 
     private static async Task VerifyDomainAsync(string root, string domain, GroundTruthWorldLine label,
@@ -92,7 +196,7 @@ internal static class BotDesktopEvaluationTests
             {
                 var image = new BgraFrame(Width, Height, Width * 4, pixels, index, DateTimeOffset.UtcNow);
                 run = Method("ObserveBotStartup").Invoke(window,
-                    [image, Generation, Clock(), true, Telemetry(session, index), null, null]);
+                    [image, Generation, Clock(), true, true, Telemetry(session, index), null, null]);
                 if (run is null) await Task.Delay(80, token);
             }
             Check(run is not null, "The loaded checkpoint never reached gameplay playback.");
