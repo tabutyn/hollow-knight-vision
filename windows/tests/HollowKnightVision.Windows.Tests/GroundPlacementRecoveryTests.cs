@@ -90,6 +90,52 @@ internal static class GroundPlacementRecoveryTests
         gate.MissingObservation(); gate.Reset(); gate.MissingObservation();
         Check(gate.Accepts(Proposal(0, 0, 0), new(0, 0), 640, 1, null));
     }
+    public static void TestSparseHorizontalGroundRecoversUnderestimatedFallback()
+    {
+        foreach (var (direction, scale) in new[] { (1, 1d), (-1, .5) })
+        {
+            var gate = new GroundPlacementRecovery();
+            Check(gate.Accepts(Proposal(0, 0), new(0, 0), 640 * scale, 1, .02));
+            (double Time, int Found, int Fallback)[] samples = [(1.02, 24, 4), (1.05, 31, 8), (1.08, 38, 12)];
+            for (var index = 0; index < samples.Length; index++)
+            {
+                var (time, found, fallback) = samples[index];
+                var accepted = gate.Accepts(Proposal(found * direction * scale, 0, support: 4, error: 11),
+                    new(fallback * direction * scale, 0), 640 * scale, time, .02);
+                var confirmed = index == samples.Length - 1;
+                Check(accepted == confirmed && gate.AllowsAtlasWrite == confirmed,
+                    $"Observation {index + 1} should publish only after three agreeing ground solves.");
+            }
+        }
+    }
+
+    public static void TestSparseHorizontalGroundRejectsUnverifiedRecovery()
+    {
+        foreach (var kind in new[] { "stationary", "opposite", "weak", "stale", "vertical",
+            "duplicate", "missing", "high-error", "inconsistent correction" })
+        {
+            var gate = new GroundPlacementRecovery();
+            for (var index = 0; index < 3; index++)
+            {
+                if (kind == "missing" && index == 1) gate.MissingObservation();
+                var x = kind switch
+                {
+                    "stationary" => 24,
+                    "opposite" => 38 - 7 * index,
+                    _ => 24 + 7 * index
+                };
+                var time = 1.02 + index * (kind == "stale" ? .2 : .03);
+                var fallbackX = kind == "inconsistent correction" && index == 1 ? -10 : 0;
+                Check(!gate.Accepts(Proposal(x, kind == "vertical" ? 8 : 0,
+                        support: kind == "weak" && index == 1 ? 2 : 4,
+                        error: kind == "high-error" && index == 1 ? 13 : 11,
+                        distinct: kind != "duplicate" || index == 0),
+                    new(fallbackX, 0), 640, time, .02), kind);
+                Check(!gate.AllowsAtlasWrite, kind);
+            }
+        }
+    }
+
     public static void TestSparseDescent()
     {
         var gate = new SparseGroundRecoveryGate();

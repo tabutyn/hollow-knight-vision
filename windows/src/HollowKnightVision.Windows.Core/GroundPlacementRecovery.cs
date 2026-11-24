@@ -2,10 +2,19 @@ namespace HollowKnightVision.Windows.Core;
 
 public sealed class SparseGroundRecoveryGate
 {
+    private readonly record struct HorizontalObservation(
+        double FirstX, double FirstTimestamp, AtlasPoint Position, double CorrectionX, double Timestamp, int Count);
+
     private (AtlasPoint Position, double Timestamp)? pending;
     private (AtlasPoint Position, AtlasPoint Current, double Timestamp)? broadPending;
+    private HorizontalObservation? horizontalPending;
 
-    public void Reset() { pending = null; broadPending = null; }
+    public void Reset()
+    {
+        pending = null;
+        broadPending = null;
+        horizontalPending = null;
+    }
 
     public bool Accepts(AtlasPoint candidate, AtlasPoint current, double solveWidth,
         double timestamp, int textureSupport, double? textureError)
@@ -43,7 +52,17 @@ public sealed class SparseGroundRecoveryGate
                 Reset(); return true;
             }
         }
-        if (error > 12) { pending = null; return false; }
+        if (error > 12)
+        {
+            pending = null;
+            horizontalPending = null;
+            return false;
+        }
+        if (AcceptsHorizontal(candidate, current, scale, timestamp))
+        {
+            Reset();
+            return true;
+        }
         var prior = pending;
         pending = (candidate, timestamp);
         if (prior is not { } value) return false;
@@ -56,6 +75,34 @@ public sealed class SparseGroundRecoveryGate
             || Math.Abs(motionY) > Math.Min(64, 32 * Math.Max(1, elapsed * 60)) * scale
             || motionY * (candidate.Y - current.Y) <= 0) return false;
         Reset(); return true;
+    }
+
+    private bool AcceptsHorizontal(AtlasPoint candidate, AtlasPoint current, double scale, double timestamp)
+    {
+        var correctionX = candidate.X - current.X;
+        if (Math.Abs(correctionX) < 4 * scale || Math.Abs(candidate.Y - current.Y) > 4 * scale)
+        {
+            horizontalPending = null;
+            return false;
+        }
+
+        var next = new HorizontalObservation(candidate.X, timestamp, candidate, correctionX, timestamp, Count: 1);
+        if (horizontalPending is { } prior)
+        {
+            var elapsed = timestamp - prior.Timestamp;
+            var dx = candidate.X - prior.Position.X;
+            var dy = candidate.Y - prior.Position.Y;
+            // Each distinct observation must move with the proposed correction.
+            if (elapsed is >= .008 and <= .12
+                && Math.Abs(dx) >= scale && Math.Abs(dx) <= Math.Min(48, Math.Max(16, elapsed * 960)) * scale
+                && Math.Abs(dy) <= 2 * scale && dx * correctionX > 0
+                && correctionX * prior.CorrectionX > 0
+                && Math.Abs(correctionX - prior.CorrectionX) <= 12 * scale)
+                next = next with { FirstX = prior.FirstX, FirstTimestamp = prior.FirstTimestamp, Count = prior.Count + 1 };
+        }
+        horizontalPending = next;
+        return next.Count >= 3 && timestamp - next.FirstTimestamp >= .025
+            && Math.Abs(candidate.X - next.FirstX) >= 8 * scale;
     }
 }
 
