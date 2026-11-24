@@ -615,7 +615,7 @@ public partial class MainWindow : Window
     private long hackerWorkGeneration;
     private HackerPipelinePublication? pendingHackerPublication;
     private HackerPipelinePublication? latestHackerPublication;
-    private HackerAtlasPublication? latestStagedHackerAtlas;
+    private volatile HackerAtlasPublication? latestStagedHackerAtlas;
     private int hackerPublicationScheduled;
     private ulong hackerPublishedRevision;
     private bool gameplayAtlasRequiresFullRewrite;
@@ -714,7 +714,8 @@ public partial class MainWindow : Window
     private sealed record HackerAtlasPublication(
         HackerAtlasOutput Output,
         IReadOnlyList<HackerTilePublication> Tiles,
-        ulong Revision);
+        ulong Revision,
+        double CapturedAt);
 
     private sealed record HackerPipelinePublication(
         HackerPreparedFrame Prepared,
@@ -2755,7 +2756,7 @@ public partial class MainWindow : Window
             }
             if (prepared is null) continue;
 
-            var staged = output is null ? null : StageHackerAtlas(output);
+            var staged = output is null ? null : StageHackerAtlas(output, prepared.CapturedAt);
             HackerAtlasPublication? stagedAtlas;
             lock (hackerAtlasGate)
             {
@@ -2775,7 +2776,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static HackerAtlasPublication StageHackerAtlas(HackerAtlasOutput output)
+    private static HackerAtlasPublication StageHackerAtlas(HackerAtlasOutput output, double capturedAt = double.NegativeInfinity)
     {
         var tiles = output.Rooms.SelectMany(room => room.AtlasTiles.Select(layer =>
         {
@@ -2801,7 +2802,8 @@ public partial class MainWindow : Window
         return new HackerAtlasPublication(
             output,
             tiles,
-            tiles.Select(tile => tile.Revision).DefaultIfEmpty(0UL).Max());
+            tiles.Select(tile => tile.Revision).DefaultIfEmpty(0UL).Max(),
+            capturedAt);
     }
 
     private void QueueHackerPublication(HackerPipelinePublication publication)
@@ -3330,7 +3332,7 @@ public partial class MainWindow : Window
                 renderedGameFrame, receiverTelemetry, recognition.Objects.MeasuredBatch, ground, terrain,
                 groundAnalysis is not null, visualObservation.GroundVerified ? groundDisplayCamera : null, hudStencil,
                 terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch, groundHypotheses,
-                admission.AllowsAtlasWrite, masks.AtlasExclusions, masks);
+                gameplayAdmitted && liveWorldResult?.PlacementPending != true, atlasCompositionExclusions, masks);
         }
         else
         {

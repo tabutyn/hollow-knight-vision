@@ -261,7 +261,8 @@ public partial class MainWindow
         });
     }
 
-    private void DriveBotFrame(BotRun run, BotPolicyPlayback playback, BotCaptureObservation? row, InputButtons? previous)
+    private void DriveBotFrame(BotRun run, BotPolicyPlayback playback, BotCaptureObservation? row, InputButtons? previous,
+        string? scene)
     {
         try
         {
@@ -272,6 +273,8 @@ public partial class MainWindow
                 gameControls.NeutralizeBotControl(run.Owner);
                 update = new(BotPlaybackUpdate.WaitingForFrame);
             }
+            else if (update?.Decision is { } decision && row is not null && previous is { } applied)
+                Volatile.Read(ref run.Loaded)?.Evaluation?.RecordDecision(row, decision.Action.Buttons, applied, scene);
             if (update is not null) Volatile.Write(ref run.PlaybackUpdate, update);
         }
         catch (Exception error) when (error is InvalidDataException or InvalidOperationException)

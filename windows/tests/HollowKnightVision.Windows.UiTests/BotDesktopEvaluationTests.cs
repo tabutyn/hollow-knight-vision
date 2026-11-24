@@ -98,20 +98,12 @@ internal static class BotDesktopEvaluationTests
             Check(run is not null, "The loaded checkpoint never reached gameplay playback.");
 
             const int renderedFrame = 415;
-            var frame = new BgraFrame(Width, Height, Width * 4, pixels, 41, DateTimeOffset.UnixEpoch.AddSeconds(5));
-            var knight = new ObjectDetection("game.playable-knight", new(.48, .61, .04, .16), .97f)
-                { SourceFrameIdentifier = frame.CaptureId };
-            var batch = new LiveObjectDetectionBatch([knight], frame.CaptureId, 5, Generation, 0);
-            var masks = GameplaySceneMasks.Create(Width, Height, [knight], null);
-            var timestamp = Clock();
-            _ = Method("CaptureBotObservations").Invoke(window, [
-                frame, Generation, Generation, timestamp, 1, 1UL, renderedFrame, Telemetry(session, renderedFrame),
-                batch, new[] { new DetectedFloorLine(100, new(20, 170)) }, TerrainWallDetection.Empty,
-                true, new AtlasPoint(0, 0), null, new AtlasPoint(96, 100), InputButtons.None,
-                run, 1L, GroundHypothesisTrackingResult.Empty, true, masks.AtlasExclusions, masks
-            ]);
+            var timestamp = Capture(41, renderedFrame, InputButtons.None, 0);
             await ExpectWireState(Action);
             await publishedControl.Task.WaitAsync(token);
+            await Task.Delay(110, token);
+            var secondTimestamp = Capture(42, renderedFrame + 1, Action, 2);
+            await ExpectWireState(Action);
             Check((bool)Method("HandleLocalShortcut").Invoke(window, [Key.B, false, ModifierKeys.None])!,
                 "B did not handle stopping the active desktop bot.");
             await ExpectWireState(InputButtons.None);
@@ -120,7 +112,7 @@ internal static class BotDesktopEvaluationTests
             var directory = Directory.GetDirectories(Path.Combine(botRoot, "evaluations", domain)).Single();
             var manifest = Read<BotCaptureManifest>(directory, "manifest.json");
             Check(manifest is { Status: "completed", StopReason: "user-stop", ExpertDemonstration: false,
-                ObservationCount: 1, UsableObservationCount: 1, TerrainPairedFrameCount: 1, InputEventCount: 4 }
+                ObservationCount: 2, UsableObservationCount: 2, TerrainPairedFrameCount: 2, InputEventCount: >= 4 }
                 && manifest.BotDomain == domain, "The finalized evaluation did not describe the desktop playback.");
             var events = File.ReadLines(Path.Combine(directory, "events.jsonl")).ToArray();
             var row = JsonSerializer.Deserialize<BotCaptureObservation>(events[0], Json)!;
@@ -128,24 +120,48 @@ internal static class BotDesktopEvaluationTests
                 ? row is { TerrainSource: "human-authored", DetectionFrameId: renderedFrame, AuthoredTerrain.Floors.Count: 1 }
                 : row is { TerrainSource: "detected", DetectionFrameId: 41, DetectedTerrain.Floors.Count: 1 },
                 "The evaluation saved the wrong input source for its policy.");
-            var controls = events.Skip(1).Select(line => JsonSerializer.Deserialize<BotCaptureInput>(line, Json)!).ToArray();
-            Check(controls.Take(2).All(edge => edge.IsPressed && edge.Timestamp >= timestamp)
-                && controls.Skip(2).All(edge => !edge.IsPressed)
-                && controls.GroupBy(edge => edge.Button).Select(group => group.Key).Order().SequenceEqual(["right", "x"]),
+            var controls = events.Skip(2).Select(line => JsonSerializer.Deserialize<BotCaptureInput>(line, Json)!).ToArray();
+            var perButton = controls.GroupBy(edge => edge.Button).OrderBy(group => group.Key).ToArray();
+            Check(perButton.Select(group => group.Key).SequenceEqual(["right", "x"])
+                && perButton.All(group => group.First() is { IsPressed: true } first && first.Timestamp >= timestamp
+                    && !group.Last().IsPressed),
                 "The archive did not preserve the controls sent to the receiver and their release.");
+            var score = Read<BotAtlasScore>(directory, "atlas-score.json");
+            Check(score is { BlueHealthGained: 2, HeldAttackDecisions: 1 }
+                && Math.Abs(score.Reward - 1.95) < 1e-8,
+                "The saved Atlas score must come from both admitted desktop policy decisions.");
             var metadata = Read<JsonElement>(directory, "evaluation.json");
             var archive = metadata.GetProperty("visualFrameArchive").Deserialize<RecordedVisualFrameArchive>(Json)!;
             var reader = new VisualReplayArchiveReader(directory, archive, manifest.Id);
-            var saved = reader.Manifest.Frames.Single();
+            var frames = reader.Manifest.Frames;
             Check(metadata.GetProperty("modelName").GetString() == modelName
                 && metadata.GetProperty("modelSHA256").GetString() == modelHash
-                && saved.RenderedGameFrame == renderedFrame && saved.CaptureTimestamp == timestamp
-                && reader.Manifest.GroundInputs.Single().WindowsMovementButtons == InputButtons.None
-                && reader.ReadImage(saved).Pixels.SequenceEqual(pixels)
+                && frames.Select(saved => saved.RenderedGameFrame).SequenceEqual([renderedFrame, renderedFrame + 1])
+                && frames.Select(saved => saved.CaptureTimestamp).SequenceEqual([timestamp, secondTimestamp])
+                && reader.Manifest.GroundInputs.Select(input => input.WindowsMovementButtons).SequenceEqual([InputButtons.None, Action])
+                && frames.All(saved => reader.ReadImage(saved).Pixels.SequenceEqual(pixels))
                 && new GroundTruthLineStore(Path.Combine(directory, "authored-ground.json")).Load().Lines.SequenceEqual([label]),
                 "The evaluation lost the verified checkpoint, frame, masks, or frozen authored reference.");
             Check(BotCaptureSession.Library(Path.Combine(botRoot, "demonstrations")).Count == 0,
                 "Bot playback contaminated the training clips.");
+
+            double Capture(long frameId, int unityFrame, InputButtons previous, int blueHealth)
+            {
+                var frame = new BgraFrame(Width, Height, Width * 4, pixels, frameId, DateTimeOffset.UnixEpoch.AddSeconds(5));
+                var knight = new ObjectDetection("game.playable-knight", new(.48, .61, .04, .16), .97f)
+                    { SourceFrameIdentifier = frameId };
+                var batch = new LiveObjectDetectionBatch([knight], frameId, 5, Generation, 0);
+                var masks = GameplaySceneMasks.Create(Width, Height, [knight], null);
+                var sample = Telemetry(session, unityFrame) with { BlueHealthOutcomes = new(session, blueHealth) };
+                var now = Clock();
+                _ = Method("CaptureBotObservations").Invoke(window, [
+                    frame, Generation, Generation, now, 1, 1UL, unityFrame, sample,
+                    batch, new[] { new DetectedFloorLine(100, new(20, 170)) }, TerrainWallDetection.Empty,
+                    true, new AtlasPoint(0, 0), null, new AtlasPoint(96, 100), previous,
+                    run, 1L, GroundHypothesisTrackingResult.Empty, true, masks.AtlasExclusions, masks
+                ]);
+                return now;
+            }
         }
         finally
         {

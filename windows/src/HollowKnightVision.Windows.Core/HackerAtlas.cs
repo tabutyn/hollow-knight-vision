@@ -185,6 +185,16 @@ public sealed record HackerAtlasRoom(
     public IReadOnlyList<HackerAtlasLayer> AtlasTiles { get; init; } = [];
     public HackerTerrainProjection? TerrainProjection { get; init; }
     public HackerAtlasRect WorldBounds => Bounds.Offset(Position.X, Position.Y);
+    internal BotHackerCoverageSnapshot? BotCoverage { get; init; }
+    internal AtlasPoint CameraAnchor { get; init; }
+
+    public BotAtlasView? BotView(GroundTruthCameraTransform camera, int? health)
+    {
+        if (camera.SceneName != SceneName || BotCoverage is null) return null;
+        var pose = HackerAtlasCameraPlacement.CameraPosition(camera);
+        return BotCoverage.View(new(Math.Floor(pose.X - CameraAnchor.X) - Position.X,
+            Math.Floor(pose.Y - CameraAnchor.Y) - Position.Y), camera.FrameSize, health);
+    }
 }
 
 public sealed record HackerTerrainProjection(AtlasPoint PixelsPerWorldUnit, AtlasPoint LocalOrigin)
@@ -778,6 +788,7 @@ public sealed class HackerAtlasPipeline
             anchorPosition: new AtlasPoint(0, 0),
             sourceCacheLimit: 48,
             pixelPolicy: LiveTiledAtlasPixelPolicy.NewestQuilted);
+        internal BotHackerAtlasCoverage BotCoverage { get; } = new();
         internal HudStencilTracker HudStencilTracker { get; set; }
         internal FadeReference? FadeReference { get; set; }
         internal int? LastIntegratedUnityFrame { get; set; }
@@ -831,6 +842,7 @@ public sealed class HackerAtlasPipeline
         {
             var room = new RoomState(saved.Id, saved.SceneName, saved.Position, saved.CameraAnchor, saved.TerrainProjection, null);
             room.Composer.RestoreHackerTiles(saved.Tiles, saved.ContentBounds);
+            room.BotCoverage.Update(room.Composer.Snapshot);
             pipeline.rooms.Add(saved.SceneName, room);
         }
         pipeline.connections.AddRange(archive.Connections);
@@ -913,6 +925,8 @@ public sealed class HackerAtlasPipeline
             {
                 previousState.Composer.EndTemporalWindow();
                 state.Composer.EndTemporalWindow();
+                previousState.BotCoverage.Interrupt();
+                state.BotCoverage.Interrupt();
                 RecordConnection(previous, previousState, prepared, state);
             }
             var refinedAlignment = RefineHorizontalFloorAlignments(prepared.CapturedAt);
@@ -957,6 +971,7 @@ public sealed class HackerAtlasPipeline
             return null;
         }
         state.LastIntegratedUnityFrame = prepared.UnityFrame;
+        state.BotCoverage.Update(state.Composer.Snapshot, localPosition, image.Width);
         registrationCount++;
         revision = unchecked(revision + 1);
         return BuildOutput(prepared.SceneName, prepared.UnityFrame);
@@ -977,6 +992,8 @@ public sealed class HackerAtlasPipeline
                     contentBounds)
                 {
                     TerrainProjection = room.TerrainProjection,
+                    BotCoverage = room.BotCoverage.Snapshot,
+                    CameraAnchor = room.CameraAnchor,
                     AtlasTiles = snapshot.Tiles.Select(tile => new HackerAtlasLayer(
                         tile.Id,
                         tile.Image,
