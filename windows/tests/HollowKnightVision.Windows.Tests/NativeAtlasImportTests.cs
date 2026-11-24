@@ -1138,6 +1138,80 @@ internal static class NativeAtlasImportTests
         });
     }
 
+    internal static void TestConfirmedLoopPreservesMeasuredDoorwayElevation()
+    {
+        foreach (var fixedNeighbor in new[] { false, true })
+        {
+            var world = new LiveWorldTracker();
+            Observe(0, 1, 0, 1, default, 71, right: false);
+            for (var id = 1; id <= 3; id++)
+                Observe(id, 1.85 + id * .15, 0, 2, new(260, 12), 901, right: true);
+            for (var id = 4; id <= 6; id++)
+                Observe(id, 3 + (id - 4) * .15, 1, 3, new(660, 0), 191, right: false);
+            Check(world.AlignRoomThroughDoorway(new(0, 1, 1, 2.3, 3, VisualRoomDirection.Right)),
+                "the tracked room and its neighbor must have a measured common elevation");
+            Observe(7, 3.45, 2, 4, new(1050, 20), 811, right: false);
+            Observe(8, 3.55, 0, 5, new(365, 12), 419, right: true);
+            var initial = world.Snapshot;
+            var landmarks = initial.Landmarks.Where(mark => mark.KeyframeId == 1).Take(3).Select(mark => mark.Id).ToArray();
+            var measuredLink = new LiveWorldLoopClosureEdge(0, 1, 8, landmarks, 105, 0, 3, 0) { ResidualPixels = 2 };
+            var islands = initial.TrackingIslands.Select(island => fixedNeighbor && island.RoomId == 1
+                ? island with { Placement = LiveIslandPlacement.Connected, Uncertainty = new(2, 3) } : island).ToArray();
+            world = new(new LiveWorldSnapshot(initial.SchemaVersion, initial.MapRevision, initial.AnchoredObservationId,
+                initial.Observations, initial.Keyframes, initial.Landmarks, initial.RelativeMotionEdges,
+                [measuredLink], islands, initial.DoorwayFloorConstraints));
+            world.ResumeCommittedVisit(1);
+            Observe(9, 3.7, 0, 2, new(270, 12), 901, right: true);
+            var first = Observe(10, 3.85, 0, 2, new(8, 12), 71, right: true, search: true);
+            Check(first.AcceptedClosure is null && first.Review.Rejections.Contains(LiveWorldTrackerRejection.ConfirmationRequired),
+                "a doorway does not block an eligible image reference or grant a one-frame correction");
+            var result = Observe(11, 4, 0, 2, new(8, 12), 71, right: true, search: true);
+            Check(result.Snapshot.Observations.Take(9).Select(row => row.RawPose)
+                .SequenceEqual(initial.Observations.Select(row => row.RawPose)),
+                "an Atlas correction retains raw capture motion");
+            if (fixedNeighbor)
+            {
+                Check(result.AcceptedClosure is null
+                    && result.Review.Rejections.Contains(LiveWorldTrackerRejection.InconsistentConfirmation)
+                    && result.Snapshot.LoopClosureEdges.Count == 1
+                    && result.Snapshot.Observations.Take(9).Select(row => row.OptimizedPose)
+                        .SequenceEqual(initial.Observations.Select(row => row.OptimizedPose)),
+                    "a conflicting image vote cannot tear the floor or move either fixed component");
+                continue;
+            }
+
+            var reopened = LiveWorldJson.ReadSnapshot(LiveWorldJson.WriteSnapshot(result.Snapshot));
+            Check(result.AcceptedClosure is { ResidualPixels: 0 } && result.Correction == new AtlasPoint(-8, -12)
+                && reopened.Observations[0].OptimizedPose == default
+                && reopened.Observations.Skip(1).Take(3).All(row => row.OptimizedPose == new AtlasPoint(252, 0))
+                && reopened.Observations.Skip(4).Take(3).All(row => row.OptimizedPose == new AtlasPoint(660, -15))
+                && reopened.Observations[7].OptimizedPose == initial.Observations[7].OptimizedPose
+                && reopened.Observations[8].OptimizedPose == new AtlasPoint(357, 0),
+                "the image loop corrects both axes of its owner and only the elevation of its floor partner");
+            Check(reopened.TrackingIslands.Single(island => island.MeasuredLineage == 2)
+                is { Placement: LiveIslandPlacement.Connected, Uncertainty: { X: 1, Y: 1 } }
+                && reopened.TrackingIslands.Single(island => island.MeasuredLineage == 5)
+                is { Placement: LiveIslandPlacement.Connected, Uncertainty: { X: 3, Y: 3 } }
+                && reopened.TrackingIslands.Single(island => island.RoomId == 1)
+                is { Placement: LiveIslandPlacement.Estimated, Uncertainty: { X: null, Y: null } }
+                && LiveWorldGroundOverlay.ProjectPlacement(reopened).Doorways.Single() is { Start.Y: -50, End.Y: -50 },
+                "only two-axis image evidence locates the island and the saved doorway keeps equal floor heights");
+
+            LiveWorldTrackerUpdate Observe(int id, double time, int room, long lineage, AtlasPoint pose,
+                int seed, bool right, bool search = false)
+            {
+                var frame = RecoveryTexture(seed, id);
+                var floor = room == 0 ? 40 : 55;
+                var left = right ? 220 : 0;
+                var player = new WorldRect(new(right ? 270 : 20, floor), new(24, 35));
+                return world.Ingest(id, time, frame, pose, frame.Width, searchForClosure: search,
+                    localPose: pose, captureGeneration: 1, localEpoch: 1, roomId: room,
+                    captureEvidence: new LiveWorldCaptureEvidence(time, new([new(id, new(left, floor), new(left + 100, floor))]),
+                        PlayerBounds: player) { MeasuredLineage = lineage });
+            }
+        }
+    }
+
     private static WindowsLiveWorldFrame FloorFrame(long id, int seed, bool rightSide, int row, bool airborne, bool competing)
     {
         var request = ResumeFrame(id, seed);

@@ -512,11 +512,19 @@ public sealed class LiveWorldTracker
         }
 
         pendingClosure = null;
-        LiveIslandComponents? components = null;
+        // Use the axis-specific graph whenever either view shares a measured
+        // doorway height. Moving a single island could split that floor seam.
+        var doorwayComponents = Snapshot.DoorwayFloorConstraints.Count > 0
+            ? new LiveIslandComponents(Snapshot, FixedRoomObservations()) : null;
+        var refinesDoorwayPlacement = doorwayComponents is not null
+            && (doorwayComponents.HasDoorwayElevation(observationId)
+                || doorwayComponents.HasDoorwayElevation(reference.ObservationId));
+        var components = refinesDoorwayPlacement ? doorwayComponents
+            : placementPending || Snapshot.TrackingIslands.LastOrDefault()?.Placement == LiveIslandPlacement.Connected
+                ? new LiveIslandComponents(Snapshot) : null;
         LiveIslandComponents.LinkPlan? plan = null;
-        if (placementPending || Snapshot.TrackingIslands.LastOrDefault()?.Placement == LiveIslandPlacement.Connected)
+        if (components is not null)
         {
-            components = new(Snapshot);
             plan = PlanLink(components, reference.ObservationId, observation, match.ProposedCameraPose);
             if (plan is null)
                 return Update(default, null, [LiveWorldTrackerRejection.InconsistentConfirmation], reference, match);
@@ -538,13 +546,15 @@ public sealed class LiveWorldTracker
             match.ProposedCameraPose.Y - reference.Reference.CameraPose.Y,
             match.InlierReferenceFeatureIds.Count,
             match.AmbiguityRatio);
+        if (refinesDoorwayPlacement)
+            closure = closure with { ResidualPixels = match.Residual * reference.Reference.SolveWidth / reference.Reference.SampleWidth };
         closedReferenceKeyframeIds.Add(reference.KeyframeId);
         lastAcceptedClosureTravel = travel;
         ReplaceSnapshot(loopEdges: [.. Snapshot.LoopClosureEdges, closure]);
         AtlasPoint correction;
         if (components is not null && plan is not null)
         {
-            ApplyIslandLink(components, plan);
+            ApplyIslandLink(components, plan, refinesDoorwayPlacement);
             correction = Difference(Snapshot.Observations[^1].OptimizedPose, observation.RawPose);
         }
         else
@@ -561,17 +571,7 @@ public sealed class LiveWorldTracker
         var observations = Snapshot.Observations.ToDictionary(value => value.Id);
         var source = observations[floor.DepartureObservationId];
         var target = observations[floor.ArrivalObservationId];
-        // A visit resumed against saved imagery already inherits its placement.
-        // Keep that position even if its new observations have their own lineage.
-        var unplaced = Snapshot.UnplacedObservationIds();
-        var recoveredAnchors = Snapshot.Observations.Where(row => !unplaced.Contains(row.Id))
-            .GroupBy(row => row.RoomId)
-            .SelectMany(room =>
-            {
-                var first = room.First();
-                return room.Where(row => row.CaptureGeneration != first.CaptureGeneration || row.LocalEpoch != first.LocalEpoch);
-            }).Select(row => row.Id).ToHashSet();
-        var components = new LiveIslandComponents(Snapshot, recoveredAnchors);
+        var components = new LiveIslandComponents(Snapshot, FixedRoomObservations());
         var translationY = source.OptimizedPose.Y + floor.DepartureFloor.Y - target.OptimizedPose.Y - floor.ArrivalFloor.Y;
         var shifts = components.PlanDoorwayElevation(components.Owner(source.Id)!.Id, components.Owner(target.Id)!.Id,
             translationY, source.SolveWidth * (4.0 / 640));
@@ -590,6 +590,22 @@ public sealed class LiveWorldTracker
         groundRecoveryVote = null;
         RefreshReferences();
         return true;
+    }
+
+    private HashSet<int> FixedRoomObservations()
+    {
+        // A visit resumed against saved imagery inherits that placement even
+        // when the new observations have a different capture lineage.
+        var unplaced = Snapshot.UnplacedObservationIds();
+        var fixedObservations = Snapshot.Observations.Where(row => !unplaced.Contains(row.Id))
+            .GroupBy(row => row.RoomId)
+            .SelectMany(room =>
+            {
+                var first = room.First();
+                return room.Where(row => row.CaptureGeneration != first.CaptureGeneration || row.LocalEpoch != first.LocalEpoch);
+            }).Select(row => row.Id).ToHashSet();
+        if (Snapshot.AnchoredObservationId is { } anchor) fixedObservations.Add(anchor);
+        return fixedObservations;
     }
 
     private IReadOnlyList<LiveTrackingIsland> CurrentTrackingIslands(LiveWorldObservation observation,
@@ -718,12 +734,6 @@ public sealed class LiveWorldTracker
         var keyframes = Snapshot.Keyframes.ToDictionary(value => value.Id);
         var currentIslandMembers = Snapshot.TrackingIslands.Count != 0
             ? Snapshot.TrackingIslands[^1].Members.Select(member => member.ObservationId).ToHashSet() : null;
-        if (currentIslandMembers is not null && Snapshot.DoorwayFloorConstraints.Any(edge =>
-            currentIslandMembers.Contains(edge.DepartureObservationId)
-            || currentIslandMembers.Contains(edge.ArrivalObservationId)))
-        {
-            return [];
-        }
         var unplaced = Snapshot.UnplacedObservationIds();
         return references.Values.Where(candidate =>
         {
@@ -950,7 +960,8 @@ public sealed class LiveWorldTracker
                 Math.Max(target.SolveWidth * (4.0 / 640), 0.5))
             : null;
 
-    private void ApplyIslandLink(LiveIslandComponents components, LiveIslandComponents.LinkPlan plan)
+    private void ApplyIslandLink(LiveIslandComponents components, LiveIslandComponents.LinkPlan plan,
+        bool refinesDoorwayPlacement = false)
     {
         if (plan.Shifts.Values.Any(shift => shift != default))
         {
@@ -961,12 +972,23 @@ public sealed class LiveWorldTracker
             });
             Snapshot = Snapshot.ReplaceOptimizedPoses(poses, Snapshot.MapRevision);
         }
-        if (Snapshot.TrackingIslands.Any(island => island.RequiresPlacement && plan.PlacedIslands.Contains(island.Id)))
+        var uncertainty = refinesDoorwayPlacement && plan.PlacedIslands.Count > 0
+            ? components.EstimateVisualUncertainty(Snapshot, plan.PlacedIslands) : null;
+        var islands = Snapshot.TrackingIslands.Select(island =>
         {
-            ReplaceSnapshot(trackingIslands: Snapshot.TrackingIslands.Select(island =>
-                island.RequiresPlacement && plan.PlacedIslands.Contains(island.Id)
-                    ? island with { Placement = LiveIslandPlacement.Connected } : island).ToArray());
-        }
+            if (!plan.PlacedIslands.Contains(island.Id) || island.Placement == LiveIslandPlacement.LegacyUnknown)
+                return island;
+            var placement = island.RequiresPlacement
+                || refinesDoorwayPlacement && island.Placement == LiveIslandPlacement.Estimated
+                ? LiveIslandPlacement.Connected : island.Placement;
+            return island with
+            {
+                Placement = placement,
+                Uncertainty = uncertainty?.GetValueOrDefault(island.Id) ?? island.Uncertainty
+            };
+        }).ToArray();
+        if (!islands.SequenceEqual(Snapshot.TrackingIslands))
+            ReplaceSnapshot(trackingIslands: islands);
         RefreshReferences();
     }
 
