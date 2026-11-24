@@ -435,6 +435,8 @@ internal static class GameplayGymVisualTests
 
     internal static void TestGymProjectsGroundedDoorwaysIntoPolicy()
     {
+        if (!LiveDoorwayFloorEvidence.AtDepartureEdge(820, 1000, rightSide: true))
+            throw new InvalidOperationException("An exact right-edge departure must retain the desktop cutoff.");
         foreach (var (direction, late) in new[] { (InputButtons.Left, false), (InputButtons.Right, false), (InputButtons.Right, true) })
         {
             var source = new BotVisualGymObservationSource();

@@ -80,8 +80,8 @@ internal sealed class BotGymAtlasCoverage
         // A stationary Knight near a doorway still supplies fresh, separate
         // floor contacts. Preserve them at the ordinary graph cadence.
         var samplesDoorway = groundEvidence is { GroundGeometry: not null, PlayerBounds: { } player }
-            && (incomingDoorway is not null || Math.Abs((player.X + player.Width / 2) / size.Width - .5)
-                >= .5 - LiveDoorwayFloorEvidence.DepartureEdgeFraction);
+            && (incomingDoorway is not null || LiveDoorwayFloorEvidence.AtDepartureEdge(player.X + player.Width / 2,
+                size.Width, rightSide: player.X + player.Width / 2 >= size.Width / 2));
         if (!awaitingPlacement && !samplesDoorway && lastPose == local && masks.SequenceEqual(lastMasks)) return;
 
         var recovering = awaitingPlacement;
