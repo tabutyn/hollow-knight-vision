@@ -64,7 +64,7 @@ public partial class MainWindow
         }
         if (capture is not null || run?.Domain == BotCaptureDomain.Gameplay)
             botVisualBlockade.ObserveVisualBasis(generation, roomId, walkedCoordinateEpoch, frame.Width,
-                timestamp, camera.HasValue, ground);
+                timestamp, camera.HasValue, ground, measuredSceneryCamera);
         if (capture?.WantsFrame(generation, timestamp) != true) capture = null;
         var playback = run is null ? null : Volatile.Read(ref run.Loaded)?.Policy;
         if (playback?.WantsObservation(timestamp) != true) playback = null;

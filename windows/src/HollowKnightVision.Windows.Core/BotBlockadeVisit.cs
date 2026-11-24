@@ -26,7 +26,7 @@ public sealed record BotBlockadePose(string Space, double X, double Y, double Wi
 public sealed class BotBlockadeVisit
 {
     private readonly record struct VisualBasis(long Generation, int Room, long TrackerEpoch, int Width,
-        double StartedAt, double Latest);
+        double StartedAt, double Latest, AtlasPoint? SceneryCamera);
 
     private readonly List<BotBlockadeMark> marks = [];
     private (AtlasPoint Position, double Time)? previous;
@@ -62,18 +62,30 @@ public sealed class BotBlockadeVisit
     public BotCaptureObservation AddEvidence(BotCaptureObservation row, BotBlockadePose? pose) =>
         row with { BlockadeVersion = 1, BlockadePose = pose, Blockade = Observe(row, pose) };
 
-    public BotCaptureObservation AddVisualEvidence(BotCaptureObservation row) =>
-        AddEvidence(row, BotBlockadePose.Visual(row, visualEpoch));
+    public BotCaptureObservation AddVisualEvidence(BotCaptureObservation row)
+    {
+        var pose = BotBlockadePose.Visual(row, visualEpoch);
+        if (pose is null && visualBasis is { SceneryCamera: { } camera } basis
+            && (basis.Generation, basis.Room) == (row.Generation, row.RoomId)
+            && basis.Latest == row.CaptureTimestamp && basis.Width == row.VisualContext?.FrameWidth)
+        {
+            pose = new(BotBlockadePose.VisualSpace(row.Generation, row.RoomId, visualEpoch),
+                camera.X / basis.Width, camera.Y / basis.Width, 1);
+        }
+        return AddEvidence(row, pose);
+    }
 
     /// <summary>Accepts camera basis updates at capture cadence, including frames between policy samples.</summary>
     public void ObserveVisualBasis(long generation, int room, long trackerEpoch, int width, double timestamp,
-        bool verifiedCamera, GroundHypothesisTrackingResult ground)
+        bool verifiedCamera, GroundHypothesisTrackingResult ground, AtlasPoint? measuredSceneryCamera = null)
     {
         if (width <= 0 || !double.IsFinite(timestamp)) return;
+        var scenery = !verifiedCamera && measuredSceneryCamera is { } camera
+            && double.IsFinite(camera.X) && double.IsFinite(camera.Y) ? measuredSceneryCamera : null;
         if (visualBasis is not { } prior || (prior.Generation, prior.Room) != (generation, room))
         {
             Reset();
-            visualBasis = new(generation, room, trackerEpoch, width, timestamp, timestamp);
+            visualBasis = new(generation, room, trackerEpoch, width, timestamp, timestamp, scenery);
             return;
         }
         if (timestamp <= prior.Latest) return;
@@ -83,7 +95,7 @@ public sealed class BotBlockadeVisit
             || correction is { } offset && (offset.X != 0 || offset.Y != 0);
         if (!changed)
         {
-            visualBasis = prior with { Latest = timestamp };
+            visualBasis = prior with { Latest = timestamp, SceneryCamera = scenery };
             return;
         }
 
@@ -101,7 +113,7 @@ public sealed class BotBlockadeVisit
             chart = (generation, room, destination);
         }
         else ClearContacts();
-        visualBasis = new(generation, room, trackerEpoch, width, timestamp, timestamp);
+        visualBasis = new(generation, room, trackerEpoch, width, timestamp, timestamp, scenery);
     }
 
     private void Rebase(AtlasPoint translation, string destination)

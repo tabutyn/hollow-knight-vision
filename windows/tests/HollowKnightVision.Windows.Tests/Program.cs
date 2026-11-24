@@ -68,6 +68,8 @@ var tests = new List<(string Name, Action Run)>
     ("blockade tracking needs fresh measured contacts in the current chart", BotBlockadeTests.TestRequiresFreshGroundContactsAndResetsCoordinates),
     ("measured camera handoff preserves blockade evidence until passage", BotBlockadeTests.TestMeasuredCameraHandoffPreservesBlockadeAndCrossing),
     ("unverified camera handoff cannot inherit a blockade", BotBlockadeTests.TestUnverifiedHandoffCannotCarryBlockade),
+    ("calibrated scenery distinguishes a pinned camera from a blocked push", BotBlockadeTests.TestPinnedSceneryCameraAllowsWalkAndMeasuresDoorPush),
+    ("a blockade's scenery pose belongs to its exact capture", BotBlockadeTests.TestSceneryBlockadePoseMatchesTheCapture),
     ("saved clips recover only causal legacy blockade evidence", BotBlockadeTests.TestLegacyReplayUsesOnlyPriorInputAndLeavesRecordedRowsIntact),
     ("bot evaluations preserve source images, applied controls, and paired terrain outside training", BotEvaluationTests.TestBotEvaluationPreservesFramesControlsAndPairedAuditOutsideExpertData),
     ("empty and failed bot evaluations do not publish archives", BotEvaluationTests.TestEmptyAndFailedEvaluationsDoNotPublish),

@@ -279,8 +279,10 @@ internal static class BotDesktopCaptureIntegrationTests
                 && oldWall.Mark.Space != translatedWall.Mark.Space
                 && Math.Abs(translatedWall.Mark.X - oldWall.Mark.X - shift.X / hudFrame.Width) < 1e-8
                 && Math.Abs(translatedWall.Mark.Y - oldWall.Mark.Y - shift.Y / hudFrame.Width) < 1e-8
-                && Math.Abs(translatedWall.Dx - oldWall.Dx) < 1e-8,
-                "The published observation must carry the translated wall and its original relative distance.");
+                && Math.Abs(translatedWall.Dx - oldWall.Dx) < 1e-8
+                && rows[3].BlockadePose?.Space == translatedWall.Mark.Space
+                && rows[3].VisualContext is { CameraX: null, CameraY: null },
+                "A clip frame with a matching scenery pose must carry the translated wall and its original relative distance.");
             Check(rows.Skip(4).All(row => row.Blockade is null), "Walking through the wall must retire it in the clip.");
             var beforeCoverage = rows[2].AtlasView;
             var afterCoverage = rows[3].AtlasView;
@@ -337,12 +339,14 @@ internal static class BotDesktopCaptureIntegrationTests
                 GroundHypothesisAtlasLine[] walked = [new(WalkedGroundMemory.WalkedSegmentId,
                     new(camera.X + 20, walkedY), new(camera.X + 80, walkedY))];
                 var usesDurableWorld = id < 18;
+                var groundCamera = id == 14 || id >= 16 ? (AtlasPoint?)null : camera;
+                var sceneryCamera = id == 14 || id >= 17 ? camera : (AtlasPoint?)null;
                 _ = Method("CaptureBotObservations").Invoke(window, [
                     frame, Generation, Generation, captureAt, 17, 1UL, null, null, batch,
                     new[] { new DetectedFloorLine(101, new(70, 100)), new DetectedFloorLine(112, new(30, 60)) },
-                    TerrainWallDetection.Empty, true, id >= 16 ? (AtlasPoint?)null : camera, null, new AtlasPoint(42, 100), input,
+                    TerrainWallDetection.Empty, true, groundCamera, null, new AtlasPoint(42, 100), input,
                     null, epoch, ground, !usesDurableWorld, Array.Empty<PixelRect>(), null, usesDurableWorld,
-                    usesDurableWorld ? world : null, walked, id >= 17 ? camera : (AtlasPoint?)null
+                    usesDurableWorld ? world : null, walked, sceneryCamera
                 ]);
                 return captureAt;
             }

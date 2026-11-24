@@ -123,7 +123,8 @@ public sealed class BotVisualGymObservationSource
             observed.GroundTracking, admitted.AllowsAtlasWrite, continuesScenery);
 
         var timing = new BotCaptureTiming(time, time, Generation, chart, room.Revision);
-        blockade.ObserveVisualBasis(Generation, chart, chart, frame.Width, time, placement.HasValue, observed.GroundTracking);
+        blockade.ObserveVisualBasis(Generation, chart, walkedEpoch, frame.Width, time, placement.HasValue,
+            observed.GroundTracking, continuesScenery ? localCamera : null);
         var row = BotObservationBuilder.Gameplay(frame, timing, observations.MeasuredBatch, floors, terrain.Walls,
             terrainAnalyzed: true, placement, hud, contact.MeasuredFoot, controls);
         row = knightMemory.Resolve(row, BotPolicyAction.FromButtons(controls), observations.MeasuredBatch);

@@ -48,6 +48,39 @@ internal static class GameplayGymVisualTests
         double? lastGroundCameraX = null;
         for (var index = 0; index <= 32; index++)
         {
+            reading = Observe(index, center);
+            if (index == 24) lastGroundCameraX = reading.Observation?.AtlasView?.Camera[0];
+            if (reading.Observation?.Blockade is not null)
+                throw new InvalidOperationException("Camera following the advancing Knight must not produce a blockade.");
+        }
+
+        if (reading?.Camera is not { PoseSource: "calibrated-scene", GroundVerified: false, AllowsAtlasWrite: true, ReferenceFloors: 0 }
+            || reading.Observation is not { Grounded: true, DetectedTerrain.Floors: { } floors, AtlasView: { CoveredCells: > 0 } atlas }
+            || floors.Count != 1 || floors[0] is not { MinimumX: <= center, MaximumX: >= center + 20, Y: 181 }
+            || lastGroundCameraX is not { } prior || Math.Abs(prior - atlas.Camera[0] - 32) > 2)
+            throw new InvalidOperationException($"The Game Play policy must see the confirmed dark walk in the measured scenery pose. Got {reading?.Camera}, floors {string.Join(',', reading?.Observation?.DetectedTerrain?.Floors ?? [])} and grounded {reading?.Observation?.Grounded}.");
+
+        for (var index = 33; index <= 36; index++)
+            reading = Observe(index, center + 4 * (index - 32));
+        if (reading.Camera is not { PoseSource: "calibrated-scene", GroundVerified: false }
+            || reading.Observation is not { Blockade.Mark.Direction: -1, BlockadePose: not null,
+                VisualContext: { CameraX: null, CameraY: null } } blocked)
+            throw new InvalidOperationException("A scenery-measured stationary push must reach the Game Play Gym observation.");
+
+        var history = new BotObservationHistory(BotPolicyContract.LandingVersion);
+        var vector = history.Append(blocked, new(1, 0, 0, 0), blocked.AvailableAt + .01);
+        var names = BotPolicyContract.Names(BotPolicyContract.LandingVersion)!.ToList();
+        if (vector is null || vector[3 * names.Count + names.IndexOf("blockade_direction")] != -1)
+            throw new InvalidOperationException("The scenery-backed blockade did not reach the current policy input.");
+
+        var passed = Observe(37, center - 12);
+        var returned = Observe(38, center + 24);
+        if (passed.Observation is not { BlockadePose: not null, Blockade: null }
+            || returned.Observation is not { BlockadePose: not null, Blockade: null })
+            throw new InvalidOperationException("Crossing the wall must retire its policy input while scenery continues tracking.");
+
+        BotVisualGymReading Observe(int index, int actorX)
+        {
             var time = index * .1;
             var calibrationStep = Math.Clamp(index - 19, 0, 5);
             var dx = 8 * calibrationStep + 4 * Math.Max(0, index - 24);
@@ -62,8 +95,8 @@ internal static class GameplayGymVisualTests
                 hash = unchecked((hash ^ (hash >> 33)) * 0xff51afd7ed558ccduL);
                 var shade = (byte)(37 + (hash >> 24) % 22);
                 if (index <= 24 && y >= row && y < row + 2) shade = 190;
-                if (y >= row - 26 && y <= row - 15 && Math.Abs(x - center) <= 6)
-                    shade = y == row - 19 && (x == center || x == center + 1) ? (byte)0 : (byte)230;
+                if (y >= row - 26 && y <= row - 15 && Math.Abs(x - actorX) <= 6)
+                    shade = y == row - 19 && (x == actorX || x == actorX + 1) ? (byte)0 : (byte)230;
                 var offset = (y * Width + x) * 4;
                 pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = shade;
                 pixels[offset + 3] = 255;
@@ -71,18 +104,12 @@ internal static class GameplayGymVisualTests
             var frame = new BgraFrame(Width, Height, Width * 4, pixels, index, DateTimeOffset.UnixEpoch.AddSeconds(time));
             var hud = new HudStencilResult([new(0, "full", new(12, 12, 10, 10), 1),
                 new(1, "full", new(24, 12, 10, 10), 1)], null, [], [], [], default, false, time);
-            reading = source.Observe(frame, time, index <= 24 ? InputButtons.None : InputButtons.Left, frame =>
+            var buttons = index is > 24 and < 38 ? InputButtons.Left : InputButtons.None;
+            return source.Observe(frame, time, buttons, frame =>
                 [new ObjectDetection("game.playable-knight",
-                    new((center - 9d) / Width, (row - 28d) / Height, 18d / Width, 29d / Height), .96f)
+                    new((actorX - 9d) / Width, (row - 28d) / Height, 18d / Width, 29d / Height), .96f)
                     { SourceFrameIdentifier = frame.CaptureId }], hud);
-            if (index == 24) lastGroundCameraX = reading.Observation?.AtlasView?.Camera[0];
         }
-
-        if (reading?.Camera is not { PoseSource: "calibrated-scene", GroundVerified: false, AllowsAtlasWrite: true, ReferenceFloors: 0 }
-            || reading.Observation is not { Grounded: true, DetectedTerrain.Floors: { } floors, AtlasView: { CoveredCells: > 0 } atlas }
-            || floors.Count != 1 || floors[0] is not { MinimumX: <= center, MaximumX: >= center + 20, Y: 181 }
-            || lastGroundCameraX is not { } prior || Math.Abs(prior - atlas.Camera[0] - 32) > 2)
-            throw new InvalidOperationException($"The Game Play policy must see the confirmed dark walk in the measured scenery pose. Got {reading?.Camera}, floors {string.Join(',', reading?.Observation?.DetectedTerrain?.Floors ?? [])} and grounded {reading?.Observation?.Grounded}.");
     }
 
     internal static void TestGamePlayGymUsesVisualBlockadeEvidence()
