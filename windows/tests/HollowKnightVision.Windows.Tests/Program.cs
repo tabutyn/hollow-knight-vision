@@ -4900,9 +4900,22 @@ static void TestGroundLabelEvaluationCommand()
         True(!Directory.Exists(evaluationDirectory));
 
         var document = store.Add(GroundLabelImage(), "saved evaluation fixture", "train-A");
+        // ImageIO writes a non-interlaced RGB8 PNG for an opaque Mac capture.
+        var rgbCapture = Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAGQAAAA8CAIAAAAfXYiZAAAAAXNSR0IArs4c6QAAADhlWElmTU0AKgAAAAgAAYdpAAQAAAAB" +
+            "AAAAGgAAAAAAAqACAAQAAAABAAAAZKADAAQAAAABAAAAPAAAAAAEEHhxAAAA1ElEQVR4Ae3SsQ2AMBAEQUwZCNG/iB1TG6ID" +
+            "b8x8vNH8jeO8NrcmsK9lqk8AVtgBLFhBIKSWBSsIhNSyYAWBkFoWrCAQUsuCFQRCalmwgkBILQtWEAipZcEKAiG1LFhBIK" +
+            "SWBSsIhNSyYAWBkFoWrCAQUsuCFQRCalkBa9zzCfm/U8sK/4cFKwiE1LJgBYGQWhasIBBSy4IVBEJqWbCCQEgtC1YQCKllw" +
+            "QoCIbUsWEEgpJYFKwiE1LJgBYGQWhasIBBSy4IVBEJqWbCCQEgtC1YQCOkLO2QC5x9NbxAAAAAASUVORK5CYII=");
+        var imagePath = Path.Combine(root, document.ImageFile);
+        File.WriteAllBytes(imagePath, rgbCapture);
+        document.ImageSHA256 = GroundLabelStore.Digest(rgbCapture);
         document.Edges = [new GroundLabelEdge(10, 90, 30)];
         document.FullyReviewed = true;
         store.Save(document);
+        var decoded = store.Image(document);
+        True(decoded.Pixels.AsSpan(0, 4).SequenceEqual(new byte[] { 30, 28, 26, 255 }));
+        True(decoded.Pixels.AsSpan(45 * decoded.Stride, 4).SequenceEqual(new byte[] { 190, 180, 170, 255 }));
         var labelPath = Path.Combine(root, document.Id.ToString("D").ToUpperInvariant() + ".json");
         var originalLabel = File.ReadAllBytes(labelPath);
         var choices = new GroundLabelParameters(GroundTheoryTuning.SemanticDefault);
@@ -4942,6 +4955,7 @@ static void TestGroundLabelEvaluationCommand()
         Equal(12, sweep.RootElement.GetProperty("baseline").GetProperty("parameters").GetProperty("threshold").GetInt32());
         Equal(report.GetProperty("datasetDigest").GetString()!, sweep.RootElement.GetProperty("datasetDigest").GetString()!);
         True(originalLabel.SequenceEqual(File.ReadAllBytes(labelPath)));
+        True(rgbCapture.SequenceEqual(File.ReadAllBytes(imagePath)));
         Equal(2, Directory.GetFiles(evaluationDirectory).Length);
     });
 }

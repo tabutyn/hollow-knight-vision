@@ -550,6 +550,7 @@ internal static class GroundLabelPngDecoder
         var offset = Signature.Length;
         var width = 0;
         var height = 0;
+        var sourceChannels = 0;
         var sawHeader = false;
         var sawEnd = false;
         using var compressed = new MemoryStream();
@@ -584,13 +585,14 @@ internal static class GroundLabelPngDecoder
                 if (width is < 2 or > 4096
                     || height is < 2 or > 4096
                     || data[8] != 8
-                    || data[9] != 6
+                    || data[9] is not (2 or 6)
                     || data[10] != 0
                     || data[11] != 0
                     || data[12] != 0)
                 {
-                    throw new InvalidDataException("Only bounded non-interlaced RGBA8 PNG is supported.");
+                    throw new InvalidDataException("Only bounded non-interlaced RGB8 and RGBA8 PNG are supported.");
                 }
+                sourceChannels = data[9] == 2 ? 3 : 4;
                 sawHeader = true;
             }
             else if (chunkType == "IDAT")
@@ -610,8 +612,8 @@ internal static class GroundLabelPngDecoder
         if (!sawHeader || !sawEnd || compressed.Length == 0)
             throw new InvalidDataException("PNG is incomplete.");
 
-        var stride = checked(width * BgraFrame.BytesPerPixel);
-        var expectedLength = checked((stride + 1) * height);
+        var sourceStride = checked(width * sourceChannels);
+        var expectedLength = checked((sourceStride + 1) * height);
         var filtered = new byte[expectedLength];
         compressed.Position = 0;
         using (var inflater = new ZLibStream(compressed, CompressionMode.Decompress, leaveOpen: true))
@@ -621,19 +623,20 @@ internal static class GroundLabelPngDecoder
                 throw new InvalidDataException("PNG pixel data length is invalid.");
         }
 
-        var rgba = new byte[checked(stride * height)];
+        var pixels = new byte[checked(sourceStride * height)];
         for (var y = 0; y < height; y++)
         {
-            var sourceRow = y * (stride + 1);
+            var sourceRow = y * (sourceStride + 1);
             var filter = filtered[sourceRow];
             if (filter > 4) throw new InvalidDataException("PNG filter is invalid.");
-            var targetRow = y * stride;
-            for (var x = 0; x < stride; x++)
+            var targetRow = y * sourceStride;
+            for (var x = 0; x < sourceStride; x++)
             {
                 var encodedByte = filtered[sourceRow + 1 + x];
-                var left = x >= 4 ? rgba[targetRow + x - 4] : (byte)0;
-                var above = y > 0 ? rgba[targetRow - stride + x] : (byte)0;
-                var upperLeft = y > 0 && x >= 4 ? rgba[targetRow - stride + x - 4] : (byte)0;
+                var left = x >= sourceChannels ? pixels[targetRow + x - sourceChannels] : (byte)0;
+                var above = y > 0 ? pixels[targetRow - sourceStride + x] : (byte)0;
+                var upperLeft = y > 0 && x >= sourceChannels
+                    ? pixels[targetRow - sourceStride + x - sourceChannels] : (byte)0;
                 var predictor = filter switch
                 {
                     0 => 0,
@@ -643,17 +646,18 @@ internal static class GroundLabelPngDecoder
                     4 => Paeth(left, above, upperLeft),
                     _ => throw new InvalidDataException("PNG filter is invalid.")
                 };
-                rgba[targetRow + x] = unchecked((byte)(encodedByte + predictor));
+                pixels[targetRow + x] = unchecked((byte)(encodedByte + predictor));
             }
         }
 
-        var bgra = new byte[rgba.Length];
-        for (var index = 0; index < rgba.Length; index += 4)
+        var stride = checked(width * BgraFrame.BytesPerPixel);
+        var bgra = new byte[checked(stride * height)];
+        for (int source = 0, target = 0; source < pixels.Length; source += sourceChannels, target += BgraFrame.BytesPerPixel)
         {
-            bgra[index] = rgba[index + 2];
-            bgra[index + 1] = rgba[index + 1];
-            bgra[index + 2] = rgba[index];
-            bgra[index + 3] = rgba[index + 3];
+            bgra[target] = pixels[source + 2];
+            bgra[target + 1] = pixels[source + 1];
+            bgra[target + 2] = pixels[source];
+            bgra[target + 3] = sourceChannels == 4 ? pixels[source + 3] : (byte)255;
         }
         return new BgraFrame(width, height, stride, bgra, 0, observedAt);
     }
