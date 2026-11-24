@@ -434,7 +434,9 @@ internal static class NativeAtlasImportTests
                     && entered.RoomId == WindowsLiveWorldPipeline.RoomIdentifier(target)
                     && after.Observations.Take(2).Select(row => row.OptimizedPose)
                         .SequenceEqual(before.Observations.Select(row => row.OptimizedPose)),
-                    "new imagery begins beyond the restored footprint while retaining the vertical basis");
+                    "new imagery starts beside the departure room and keeps its vertical basis");
+                Check(after.DoorwayFloorConstraints.Count == 0 && after.LoopClosureEdges.Count == 0,
+                    "display spacing alone adds no measured connection");
 
                 Check(entered.CaptureTimestamp == 3
                     && entered.GroundGeometry!.Lines.SequenceEqual([
@@ -469,7 +471,7 @@ internal static class NativeAtlasImportTests
                 }
                 Check(new LiveWorldSessionStore(root).Load().Snapshot.Observations.Count == 5,
                     "no evidence is appended for the unconfirmed third scene");
-            });
+            }, neighboringRoomPose: new AtlasPoint(direction == VisualRoomDirection.Right ? 1400 : -1400, 400));
         }
     }
 
@@ -716,6 +718,22 @@ internal static class NativeAtlasImportTests
             && replayed is not null && replayed.EarnedCells == placed!.EarnedCells
             && atlas.ProjectDoors(origin, size) is { Count: > 0 },
             "known-room recovery supplies return doorway geometry without earning exploration credit");
+
+        var beforeBranch = atlas.Snapshot;
+        atlas.EnterRoom(2, new(0, 2, 1, 5.1, 5.7, VisualRoomDirection.Right));
+        Observe(FloorFrame(18, 417, false, 153, false, false));
+        Check(ReferenceEquals(atlas.Snapshot, beforeBranch), "an image before the cut cannot seed a new room");
+        Observe(FloorFrame(20, 417, false, 153, false, false));
+        var branch = atlas.Snapshot;
+        var sourceEdge = beforeBranch.Observations.Where(row => row.RoomId == 0)
+            .Max(row => row.OptimizedPose.X + row.SolveWidth * .5);
+        var next = branch.Observations[^1];
+        Check(next.RoomId == 2 && next.OptimizedPose.X - next.SolveWidth * .5 == sourceEdge + 32
+            && branch.DoorwayFloorConstraints.SequenceEqual(beforeBranch.DoorwayFloorConstraints)
+            && branch.LoopClosureEdges.SequenceEqual(beforeBranch.LoopClosureEdges)
+            && branch.Observations.Take(beforeBranch.Observations.Count).Select(row => row.OptimizedPose)
+                .SequenceEqual(beforeBranch.Observations.Select(row => row.OptimizedPose)),
+            "the new branch starts one room margin beyond its departure room without changing other placements");
 
         void Observe(WindowsLiveWorldFrame request) =>
             atlas.Observe(request.Frame, origin, request.MonotonicTimestamp, [], default, tracking,
@@ -1283,7 +1301,8 @@ internal static class NativeAtlasImportTests
         };
     }
 
-    private static void WithRecoveryFixture(bool identicalRooms, Action<string, LiveWorldSnapshot> body)
+    private static void WithRecoveryFixture(bool identicalRooms, Action<string, LiveWorldSnapshot> body,
+        AtlasPoint? neighboringRoomPose = null)
     {
         var directory = Directory.CreateTempSubdirectory("hkv-import-recovery-");
         try
@@ -1291,11 +1310,11 @@ internal static class NativeAtlasImportTests
             var root = directory.FullName;
             WriteEmptySwiftManifest(root);
             var store = new LiveWorldSessionStore(root);
-            var pose = new AtlasPoint(100, 20);
             var observations = new List<LiveWorldObservation>();
             var keyframes = new List<LiveWorldKeyframe>();
             foreach (var (room, seed) in new[] { (SourceRoom, 71), (TargetRoom, identicalRooms ? 71 : 191) })
             {
+                var pose = room == TargetRoom && neighboringRoomPose is { } neighbor ? neighbor : new AtlasPoint(100, 20);
                 var frame = RecoveryTexture(seed, room);
                 var timestamp = SwiftDateSeconds + room;
                 var saved = store.Append(frame, timestamp, pose, 320);

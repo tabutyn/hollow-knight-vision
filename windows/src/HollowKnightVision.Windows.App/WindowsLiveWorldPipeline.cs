@@ -1110,22 +1110,15 @@ internal sealed class WindowsLiveWorldPipeline
             while (usedRoomIds.Contains(targetId)) targetId = checked(targetId + 1);
         }
 
-        var unplaced = snapshot.UnplacedObservationIds();
-        var placed = snapshot.Observations.Where(observation => !unplaced.Contains(observation.Id)).ToArray();
-        if (!placed.Any(observation => observation.RoomId == arrival.SourceRoomId)) return false;
-
-        // The measured cut supplies direction, and the visible Atlas supplies
-        // spacing until there is direct evidence for a relative placement.
-        var margin = request.SolveWidth * .1;
-        var worldX = arrival.Direction == VisualRoomDirection.Right
-            ? placed.Max(value => value.OptimizedPose.X + value.SolveWidth * .5) + margin + request.SolveWidth * .5
-            : placed.Min(value => value.OptimizedPose.X - value.SolveWidth * .5) - margin - request.SolveWidth * .5;
+        arrival = arrival with { TargetRoomId = targetId };
+        if (LiveEstimatedRoomLayout.ArrivalCenterX(snapshot, arrival, request.MonotonicTimestamp, request.SolveWidth)
+            is not { } worldX) return false;
         // An unplaced component may rebase its own poses between doorway visits.
         var basis = new AtlasPoint(worldX - request.LocalPose.X, lastPlacedVerticalBasis);
         if (!double.IsFinite(basis.X)) return false;
 
         worldBasis.BeginLocalEpoch(basis);
-        roomDoorway = arrival with { TargetRoomId = targetId };
+        roomDoorway = arrival;
         placedRoomIds[requestedRoomId] = targetId;
         roomId = targetId;
         recoveryDisposition = RecoveryDisposition.None;
