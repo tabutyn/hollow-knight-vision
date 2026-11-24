@@ -105,8 +105,7 @@ public partial class MainWindow
                     botVisualCoverage.Reset();
                     botVisualChart = currentChart;
                 }
-                if (camera is { } pose && admitsPlacement) botVisualCoverage.Register(pose, size, atlasExclusions);
-                else if (camera is null) botVisualCoverage.Interrupt();
+                botVisualCoverage.ObserveVerified(camera, size, atlasExclusions, default, ground, admitsPlacement);
                 atlasView = botVisualCoverage.View(camera, size, (int)Math.Min(roomRevision, int.MaxValue), visual.MeasuredHealth);
             }
             visual = visual with { AtlasView = atlasView };

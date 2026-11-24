@@ -108,6 +108,60 @@ internal static class GameplayGymVisualTests
         }
     }
 
+    internal static void TestGymReprojectsTheRecoveryIslandIntoCommittedCoverage()
+    {
+        const int width = 320, height = 180;
+        var size = new WorldSize(width, height);
+        var pixels = new byte[width * height * 4];
+        new Random(71).NextBytes(pixels);
+        for (var offset = 3; offset < pixels.Length; offset += 4) pixels[offset] = 255;
+        var measured = GroundHypothesisTrackingResult.Empty with
+        {
+            PoseVerified = true, HasConfirmedGround = true, LocalTextureSupport = 8
+        };
+        var atlas = new BotGymAtlasCoverage();
+        atlas.EnterRoom(7);
+        var start = new AtlasPoint(0, 0);
+        var drifted = new AtlasPoint(96, 0);
+        Observe(0, start, measured);
+        var baseline = atlas.View(start, size, 5)!;
+        if (baseline is not { CoveredCells: 5, EarnedCells: 0 })
+            throw new InvalidOperationException("The first verified view must establish the episode baseline.");
+        Observe(1, start, measured);
+        if (atlas.Snapshot.Observations.Count != 1)
+            throw new InvalidOperationException("An unchanged verified view must not add a duplicate graph observation.");
+        Observe(2, drifted, measured with { GlobalCorrection = new(96, 0) });
+        if (atlas.View(drifted, size, 5) is not null || atlas.Snapshot.UnplacedObservationIds().Count != 1)
+            throw new InvalidOperationException("The first recovery vote must not extend committed coverage.");
+
+        Observe(3, drifted, measured);
+        var recovered = atlas.View(drifted, size, 5);
+        var graph = atlas.Snapshot;
+        if (recovered is not { CoveredCells: 5, EarnedCells: 0 }
+            || Math.Abs(recovered.Camera[0]) > 1 || graph.LoopClosureEdges.Count != 1
+            || graph.UnplacedObservationIds().Count != 0 || graph.Observations.Count != 3
+            || graph.Observations.Skip(1).Any(row => row.RawPose.X != 256 || Math.Abs(row.OptimizedPose.X - 160) > 1))
+            throw new InvalidOperationException("Two measured matches must reproject the whole recovery island without earning cells.");
+
+        Observe(4, new(160, 0), measured);
+        if (atlas.View(new(160, 0), size, 5) is not { CoveredCells: 6, EarnedCells: 1 })
+            throw new InvalidOperationException("Movement beyond the corrected footprint must earn one new cell.");
+        atlas.EnterRoom(8);
+        if (atlas.View(start, size, 5) is not null)
+            throw new InvalidOperationException("Coverage from the prior room must not become the current room's frontier.");
+        Observe(5, start, measured);
+        if (atlas.View(start, size, 5) is not { CoveredCells: 11, EarnedCells: 1 }
+            || atlas.Snapshot.Observations.Count != 5)
+            throw new InvalidOperationException("A new room must receive an independent baseline while preserving the episode map.");
+
+        void Observe(int frame, AtlasPoint pose, GroundHypothesisTrackingResult evidence)
+        {
+            var time = frame / 5d;
+            atlas.Observe(new(width, height, width * 4, pixels, frame, DateTimeOffset.UnixEpoch.AddSeconds(time)),
+                pose, time, [], default, evidence, admitsPlacement: true);
+        }
+    }
+
     internal static void TestGymReportsCorrectionsOnlyForAnExistingVisualEstimate()
     {
         var source = new BotVisualGymObservationSource();
