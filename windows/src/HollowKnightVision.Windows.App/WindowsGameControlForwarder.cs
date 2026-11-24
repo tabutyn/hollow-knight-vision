@@ -356,7 +356,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
 
     internal async Task<ReceiverPlayerOpsAcknowledgement?> PerformPlayerOpsAsync(
         Func<Guid, ReceiverPlayerOpsCommand> createCommand,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Guid? requiredSession = null)
     {
         ArgumentNullException.ThrowIfNull(createCommand);
         ReceiverClient active;
@@ -367,7 +368,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         lock (stateLock)
         {
             if (receiver is null || connectionFault is null || !playerOpsAvailable
-                || replayCancellation is not null || capturingCheckpoint || roomResetPending) return null;
+                || replayCancellation is not null || capturingCheckpoint || roomResetPending
+                || requiredSession is { } expected && receiver.SessionId != expected) return null;
             active = receiver;
             fault = connectionFault;
             command = createCommand(active.SessionId);

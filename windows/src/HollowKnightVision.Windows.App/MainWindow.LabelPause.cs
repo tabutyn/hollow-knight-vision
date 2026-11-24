@@ -70,7 +70,7 @@ public partial class MainWindow
                 : "Hollow Knight did not confirm the label pause. Try Label again.");
         }
         if (completed && !isClosing && OpsRandomizeAfterLabelCheck.IsChecked == true)
-            OpsRandomize_Click(this, new RoutedEventArgs());
+            _ = RandomizeAfterLabelAsync();
     }
 
     private void LabelSelector_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)

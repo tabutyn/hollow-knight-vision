@@ -660,23 +660,36 @@
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
                                 <StackPanel Margin="20,0,20,20">
                                     <TextBlock x:Name="OpsSettingsTitle" Text="Ops" FontWeight="SemiBold" Visibility="Collapsed"/>
-                                    <!-- Ops: exact Mac PlayerOpsView copy. -->
-                                    <Grid x:Name="OpsPanel" Visibility="Collapsed">
-                                        <Grid HorizontalAlignment="Stretch" Margin="0,12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                                            <Grid Grid.Row="0" Margin="0,0,0,18"><Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="190"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                    <StackPanel x:Name="OpsPanel" Visibility="Collapsed" Margin="0,12">
+                                        <StackPanel x:Name="PlayerOpsControls">
+                                            <CheckBox x:Name="OpsInvincibleCheck" Content="Invincibility — ignore damage and phase through enemies"
+                                                      Click="OpsInvincible_Click" Margin="0,0,0,18"/>
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
+                                                <Button x:Name="OpsResetRoomButton" Content="Reset Room" ToolTip="Reset Room (R)" Click="OpsResetRoom_Click" IsEnabled="False"/>
+                                                <Button x:Name="OpsRestoreEnemiesButton" Content="Restore Enemies" Click="OpsRestoreEnemies_Click"/>
+                                            </StackPanel>
+                                            <Grid Margin="0,0,0,18" PreviewKeyDown="OpsValue_PreviewKeyDown">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="190"/></Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
                                                 <TextBlock Text="Max Health" Margin="0,7"/><TextBox x:Name="OpsMaxHealthText" Grid.Column="1" Text="5" Width="72" HorizontalAlignment="Right"/>
                                                 <TextBlock Grid.Row="1" Text="Health" Margin="0,7"/><TextBox x:Name="OpsHealthText" Grid.Row="1" Grid.Column="1" Text="5" Width="72" HorizontalAlignment="Right"/>
                                                 <TextBlock Grid.Row="2" Text="Lifeblood Seed" Margin="0,7"/><TextBox x:Name="OpsLifebloodText" Grid.Row="2" Grid.Column="1" Text="0" Width="72" HorizontalAlignment="Right"/>
                                                 <TextBlock Grid.Row="3" Text="Extra Mana Slots" Margin="0,7"/><TextBox x:Name="OpsManaSlotsText" Grid.Row="3" Grid.Column="1" Text="0" Width="72" HorizontalAlignment="Right"/>
                                                 <TextBlock Grid.Row="4" Text="Mana" Margin="0,7"/><TextBox x:Name="OpsManaText" Grid.Row="4" Grid.Column="1" Text="99" Width="72" HorizontalAlignment="Right"/>
-                                                <TextBlock Grid.Row="5" Text="Geo" Margin="0,7"/><TextBox x:Name="OpsGeoText" Grid.Row="5" Grid.Column="1" Text="18" Width="72" HorizontalAlignment="Right"/>
+                                                <TextBlock Grid.Row="5" Text="Geo" Margin="0,7"/><TextBox x:Name="OpsGeoText" Grid.Row="5" Grid.Column="1" Text="0" Width="72" HorizontalAlignment="Right"/>
                                             </Grid>
-                                            <CheckBox x:Name="OpsInvincibleCheck" Grid.Row="1" Content="Invincibility — ignore damage and phase through enemies" Margin="0,0,0,18"/>
-                                            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,18"><Button Content="Randomize Now" Click="OpsRandomize_Click"/><Button Content="Restore Enemies" Click="OpsRestoreEnemies_Click"/><Button x:Name="OpsResetRoomButton" Content="Reset Room" ToolTip="Reset Room (R)" Click="OpsResetRoom_Click" IsEnabled="False"/></StackPanel>
-                                            <StackPanel Grid.Row="3"><Separator Margin="0,0,0,18"/><CheckBox x:Name="OpsRandomizeAfterLabelCheck" Content="Randomize health, lifeblood, mana, and geo after each Label session"/></StackPanel>
-                                            <StackPanel Grid.Row="5" Orientation="Horizontal"><Button Content="Apply" Click="OpsApply_Click"/><Button Content="Reload" Click="OpsReload_Click"/><TextBlock x:Name="OpsStatusText" Foreground="#999999" VerticalAlignment="Center" Margin="8,0"/></StackPanel>
-                                        </Grid>
-                                    </Grid>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Button Content="Randomize Now" Click="OpsRandomize_Click"/>
+                                                <Button x:Name="OpsApplyButton" Content="Apply" Click="OpsApply_Click"/>
+                                                <Button Content="Reload" Click="OpsReload_Click"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                        <Separator Margin="0,12"/>
+                                        <CheckBox x:Name="OpsRandomizeAfterLabelCheck" Content="Randomize health, lifeblood, mana, and geo after each Label session"
+                                                  Click="OpsRandomizeAfterLabel_Click"/>
+                                        <ProgressBar x:Name="OpsProgress" Height="4" Margin="0,8,0,0" IsIndeterminate="True" Visibility="Collapsed"/>
+                                        <TextBlock x:Name="OpsStatusText" Foreground="#999999" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                    </StackPanel>
                                     <TextBlock x:Name="SettingsLanguageTitle" Text="Game language" Margin="0,0,0,5"/>
                                     <ComboBox x:Name="SettingsLanguageCombo" SelectionChanged="SettingsLanguage_Changed" Margin="0,0,0,12"/>
                                     <Separator Margin="0,12"/>
