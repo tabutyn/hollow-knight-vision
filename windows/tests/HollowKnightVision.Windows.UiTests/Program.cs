@@ -119,6 +119,7 @@ internal static class Program
         RuntimeModeTests.Run();
         HudStencilTests.Run();
         MenuIntegrationTests.Run();
+        MenuCalibrationCaptureTests.Run();
         MenuStencilCorpusTests.Run();
         ObjectDetectionIntegrationTests.Run();
         RecentFramesTests.Run();
@@ -133,7 +134,7 @@ internal static class Program
         GpuCaptureTests.TestMappedBounds();
         GpuCaptureTests.RunIfRequested();
         if (args.Contains("--input")) TestBackgroundKeyDelivery();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 78 : 77)}");
+        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 79 : 78)}");
         Application.Current.Shutdown();
     }
 

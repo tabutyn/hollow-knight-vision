@@ -128,6 +128,19 @@ internal static class Program
         TextWriter? standardError = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
+        if (arguments.FirstOrDefault() == MenuCalibrationCapture.Flag)
+        {
+            if (arguments is not [_, var command, HollowKnightVisionLaunchOptions.AutomationControlFlag]
+                || MenuCalibrationCapture.Parse(command) is not { } request)
+            {
+                (standardError ?? Console.Error).WriteLine(
+                    "Expected --menu-calibration COMMAND --enable-automation-control.");
+                return Task.FromResult(64);
+            }
+            var reply = request.CaptureLive();
+            (standardOutput ?? Console.Out).WriteLine(reply.Serialize());
+            return Task.FromResult(reply.Ok ? 0 : 1);
+        }
         if (arguments.Contains("--replay-visual-archive", StringComparer.Ordinal))
         {
             VisualProductionReplayOptions options;
@@ -798,6 +811,8 @@ internal static class Program
             --atlas-seconds N       Atlas recording duration (default 30).
             --atlas-ppu N           Atlas pixels per world unit (default 64).
             --capture-once PATH     Capture and write the newest frame as a BMP.
+            --menu-calibration COMMAND --enable-automation-control
+                                    Read or save a menu stencil frame from a running game.
             --frames N              Capture N frames; only the latest is retained (default 1).
             --interval-ms N         Delay between captures (default 133).
             --native                Keep native client size instead of CPU-normalizing to 640x360.
