@@ -17,7 +17,7 @@ internal sealed class LiveIslandComponents
     private readonly Dictionary<int, Group> horizontal;
     private readonly Dictionary<int, Group> vertical;
 
-    internal LiveIslandComponents(LiveWorldSnapshot snapshot)
+    internal LiveIslandComponents(LiveWorldSnapshot snapshot, IReadOnlySet<int>? recoveredDoorwayAnchors = null)
     {
         owners = snapshot.TrackingIslands.SelectMany(island =>
             island.Members.Select(member => (member.ObservationId, Island: island)))
@@ -27,12 +27,21 @@ internal sealed class LiveIslandComponents
         foreach (var link in snapshot.LoopClosureEdges)
         {
             if (Owner(keyframes[link.FromKeyframeId].ObservationId) is { } from
-                && Owner(keyframes[link.ToKeyframeId].ObservationId) is { } to && from.Id != to.Id)
+                && Owner(keyframes[link.ToKeyframeId].ObservationId) is { } to && from.Id != to.Id
+                && (recoveredDoorwayAnchors is null
+                    || from.Placement != LiveIslandPlacement.LegacyUnknown && to.Placement != LiveIslandPlacement.LegacyUnknown))
                 visual.Add((from.Id, to.Id));
         }
-        horizontal = Groups(snapshot.TrackingIslands, visual);
+        // Visual recovery treats already composed images as fixed. Doorway
+        // evidence may refine the height of an estimated component.
+        var fixedIds = snapshot.TrackingIslands.Where(island => recoveredDoorwayAnchors is null
+            ? !island.RequiresPlacement
+            : island.Placement is LiveIslandPlacement.Reference or LiveIslandPlacement.Connected
+                || island.Members.Any(member => recoveredDoorwayAnchors.Contains(member.ObservationId)))
+            .Select(island => island.Id).ToHashSet();
+        horizontal = Groups(snapshot.TrackingIslands, visual, fixedIds);
         vertical = Groups(snapshot.TrackingIslands, visual.Concat(snapshot.DoorwayFloorConstraints.Select(link =>
-            (owners[link.DepartureObservationId].Id, owners[link.ArrivalObservationId].Id))));
+            (owners[link.DepartureObservationId].Id, owners[link.ArrivalObservationId].Id))), fixedIds);
     }
 
     internal LiveTrackingIsland? Owner(int observation) => owners.GetValueOrDefault(observation);
@@ -53,6 +62,14 @@ internal sealed class LiveIslandComponents
         return new(shifts, x.Placed().Intersect(y.Placed()).ToHashSet());
     }
 
+    internal IReadOnlyDictionary<int, double>? PlanDoorwayElevation(int from, int to, double correction, double tolerance)
+    {
+        if (!double.IsFinite(correction)) return null;
+        var height = JoinAxis(vertical[from], vertical[to], correction);
+        if (Math.Abs(height.Unresolved) > tolerance) return null;
+        return (height.Moving?.Islands ?? []).ToDictionary(id => id, height.ShiftFor);
+    }
+
     private static Join JoinAxis(Group from, Group to, double delta)
     {
         if (ReferenceEquals(from, to) || from.Fixed && to.Fixed)
@@ -62,7 +79,7 @@ internal sealed class LiveIslandComponents
     }
 
     private static Dictionary<int, Group> Groups(IReadOnlyList<LiveTrackingIsland> islands,
-        IEnumerable<(int From, int To)> links)
+        IEnumerable<(int From, int To)> links, HashSet<int> fixedIds)
     {
         var neighbors = islands.ToDictionary(island => island.Id, _ => new List<int>());
         foreach (var (from, to) in links)
@@ -70,9 +87,6 @@ internal sealed class LiveIslandComponents
             neighbors[from].Add(to);
             neighbors[to].Add(from);
         }
-        // Anything already composed in the Atlas is fixed, including older
-        // snapshots whose poses predate measured island tracking.
-        var fixedIds = islands.Where(island => !island.RequiresPlacement).Select(island => island.Id).ToHashSet();
         var byIsland = new Dictionary<int, Group>();
         var visited = new HashSet<int>();
         foreach (var island in islands)

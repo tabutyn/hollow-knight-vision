@@ -485,6 +485,8 @@ var tests = new List<(string Name, Action Run)>
     ("measured walks retain ground beneath a hidden edge in the saved Atlas", NativeAtlasImportTests.TestMeasuredWalkSavesFloorUnderAHiddenEdge),
     ("restored Atlas aligns doorway floors only with measured foot contact on both sides", NativeAtlasImportTests.TestDoorwayFloorAlignsOnlyWithMeasuredContactOnBothSides),
     ("Windows Atlas stitches a measured doorway and preserves saved legacy coordinates", NativeAtlasImportTests.TestWindowsAtlasExtendsAndAlignsWithoutMovingLegacyFrames),
+    ("a grounded return aligns the estimated room against the saved Atlas", NativeAtlasImportTests.TestReturningDoorwayAlignsAnEstimatedRoomAgainstSavedImagery),
+    ("Game Play Gym keeps grounded return doorways after image recovery", NativeAtlasImportTests.TestGymRetainsGroundedReturnDoorwaysAfterImageRecovery),
     ("Windows retries the doorway floor alignment after a failed commit", NativeAtlasImportTests.TestDoorwayCommitFailureKeepsPlacedRoomAndRetriesAlignment),
     ("same-room recovery retains measured evidence until placed imagery confirms it", NativeAtlasImportTests.TestLocalRecoveryRetainsEvidenceUntilAPlacedMatch),
     ("same-room recovery reconnects a Mac Atlas through rebuilt visual references", NativeAtlasImportTests.TestImportedWorldPlacesMeasuredRecoveryThroughRegeneratedFeatures),

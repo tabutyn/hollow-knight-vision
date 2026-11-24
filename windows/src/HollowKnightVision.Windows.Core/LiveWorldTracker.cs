@@ -553,36 +553,41 @@ public sealed class LiveWorldTracker
         return Update(correction, closure, [], reference, match);
     }
 
-    public bool AlignNewRoomThroughDoorway(LiveDoorwayTransition transition)
+    public bool AlignRoomThroughDoorway(LiveDoorwayTransition transition)
     {
         if (Snapshot.TrackingIslands.Count == 0 || LiveDoorwayFloorEvidence.Propose(Snapshot, transition) is not { } floor)
             return false;
 
         var observations = Snapshot.Observations.ToDictionary(value => value.Id);
-        var arrivalIsland = Snapshot.TrackingIslands.First(island =>
-            island.Members.Any(member => member.ObservationId == floor.ArrivalObservationId));
-        // Only the current, previously unmapped island can move here. Its
-        // predecessors and any already connected islands keep their poses.
-        var members = arrivalIsland.Members.Select(member => member.ObservationId).ToHashSet();
-        var endpointIsCurrent = members.Contains(Snapshot.Observations[^1].Id);
-        if (!endpointIsCurrent || arrivalIsland.Placement != LiveIslandPlacement.Estimated
-            || Snapshot.DoorwayFloorConstraints.Any(edge =>
-                members.Contains(edge.DepartureObservationId) || members.Contains(edge.ArrivalObservationId)))
-        {
-            return false;
-        }
-
         var source = observations[floor.DepartureObservationId];
         var target = observations[floor.ArrivalObservationId];
+        // A visit resumed against saved imagery already inherits its placement.
+        // Keep that position even if its new observations have their own lineage.
+        var unplaced = Snapshot.UnplacedObservationIds();
+        var recoveredAnchors = Snapshot.Observations.Where(row => !unplaced.Contains(row.Id))
+            .GroupBy(row => row.RoomId)
+            .SelectMany(room =>
+            {
+                var first = room.First();
+                return room.Where(row => row.CaptureGeneration != first.CaptureGeneration || row.LocalEpoch != first.LocalEpoch);
+            }).Select(row => row.Id).ToHashSet();
+        var components = new LiveIslandComponents(Snapshot, recoveredAnchors);
         var translationY = source.OptimizedPose.Y + floor.DepartureFloor.Y - target.OptimizedPose.Y - floor.ArrivalFloor.Y;
-        var poses = observations.ToDictionary(pair => pair.Key, pair => members.Contains(pair.Key)
-            ? pair.Value.OptimizedPose with { Y = pair.Value.OptimizedPose.Y + translationY }
-            : pair.Value.OptimizedPose);
+        var shifts = components.PlanDoorwayElevation(components.Owner(source.Id)!.Id, components.Owner(target.Id)!.Id,
+            translationY, source.SolveWidth * (4.0 / 640));
+        if (shifts is null) return false;
+
+        var poses = Snapshot.Observations.ToDictionary(row => row.Id,
+            row => row.OptimizedPose with { Y = row.OptimizedPose.Y + shifts.GetValueOrDefault(components.Owner(row.Id)!.Id) });
         var aligned = Snapshot.ReplaceOptimizedPoses(poses, Snapshot.MapRevision);
         Snapshot = new LiveWorldSnapshot(aligned.UsesSwiftWireFormat ? LiveWorldSnapshot.CurrentSchemaVersion : aligned.SchemaVersion,
             aligned.MapRevision, aligned.AnchoredObservationId,
             aligned.Observations, aligned.Keyframes, aligned.Landmarks, aligned.RelativeMotionEdges, aligned.LoopClosureEdges,
             aligned.TrackingIslands, [.. aligned.DoorwayFloorConstraints, floor]);
+        pendingClosure = null;
+        pendingRecovery = null;
+        pendingGroundPlacement = null;
+        groundRecoveryVote = null;
         RefreshReferences();
         return true;
     }
