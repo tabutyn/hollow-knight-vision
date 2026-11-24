@@ -104,6 +104,7 @@ internal static class HudStencilTests
         Console.WriteLine("PASS Two captured health labels extrapolate nine icons without stock reference pixels");
         TestCapturedHUDUnlocksFirstCampaignWithoutModelOrLaterMenus(fixtures, capturedFrame, template);
         TestRecognizer(capturedFrame, Frame(nineFull), annotations);
+        BotDesktopCaptureIntegrationTests.Run(capturedFrame, annotations);
         TestAtlasMasks(first, one);
         var twoHealth = new HudStencilResult([new(0, "full", default, .9), new(1, "full", default, .9)], null, [], [], [], default, false, 1);
         Check(twoHealth.EstablishesGameplay && !(twoHealth with { Health = [twoHealth.Health[0]] }).EstablishesGameplay,
