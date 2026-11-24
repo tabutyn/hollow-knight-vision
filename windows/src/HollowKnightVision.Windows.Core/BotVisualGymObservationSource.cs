@@ -118,10 +118,11 @@ public sealed class BotVisualGymObservationSource
         else coverage.Interrupt();
 
         var timing = new BotCaptureTiming(time, time, Generation, chart, room.Revision);
+        blockade.ObserveVisualBasis(Generation, chart, chart, frame.Width, time, placement.HasValue, observed.GroundTracking);
         var row = BotObservationBuilder.Gameplay(frame, timing, observations.MeasuredBatch, floors, terrain.Walls,
             terrainAnalyzed: true, placement, hud, contact.MeasuredFoot, controls);
         row = knightMemory.Resolve(row, BotPolicyAction.FromButtons(controls), observations.MeasuredBatch);
-        row = blockade.AddEvidence(row, BotBlockadePose.Visual(row));
+        row = blockade.AddVisualEvidence(row);
         row = row with { AtlasView = coverage.View(placement, size, (int)frame.CaptureId, row.MeasuredHealth) };
         return new(row, row.Issues, confidence)
         {

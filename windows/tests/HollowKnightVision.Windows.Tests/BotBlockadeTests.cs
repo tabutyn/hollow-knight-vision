@@ -46,6 +46,8 @@ internal static class BotBlockadeTests
         Require(visit.Observe(Row(15), null) is null, "A missing pose cannot prove a stationary push.");
         Require(visit.Observe(Row(16) with { KnightSource = "visual-predicted" }, pose) is null,
             "A predicted position cannot prove contact.");
+        Require(visit.Observe(Row(16) with { Features = [.5, .2, .03, .05, 0, 0, 1] }, pose) is null,
+            "A frame without a measured Knight cannot prove contact.");
         Require(visit.Observe(Row(17), pose) is null && visit.Observe(Row(18), pose) is null
             && visit.Observe(Row(19), pose) is not null, "Fresh frames can establish the contact after a gap.");
         Require(visit.Observe(Row(20) with { RoomId = 2 }, pose) is null
@@ -54,7 +56,93 @@ internal static class BotBlockadeTests
             && visit.Observe(Row(24), pose) is not null, "A fresh visit may remeasure the obstruction.");
         Require(visit.Observe(Row(25, drive: 0), pose with { Space = "new-camera-chart" }) is null,
             "Changing visual coordinates must retire the old chart.");
+        for (var i = 26; i <= 28; i++)
+            _ = visit.Observe(Row(i), pose);
+        visit.Reset();
+        Require(visit.Observe(Row(29), pose) is null, "A new bot run needs new evidence.");
     }
+
+    internal static void TestMeasuredCameraHandoffPreservesBlockadeAndCrossing()
+    {
+        foreach (var side in new[] { -1, 1 })
+        {
+            var visit = new BotBlockadeVisit();
+            BotCaptureObservation? contact = null;
+            for (var tick = 10; tick <= 12; tick++)
+            {
+                visit.ObserveVisualBasis(1, 1, 4, 640, tick / 10d, true, GroundHypothesisTrackingResult.Empty);
+                contact = visit.AddVisualEvidence(Row(tick, drive: side));
+            }
+            Require(contact?.Blockade?.Mark.Direction == side, "The source chart must have a measured wall.");
+            var original = contact!.Blockade!.Mark;
+            var shift = new AtlasPoint(side * 40 / 640d, 16 / 640d);
+            visit.ObserveVisualBasis(1, 1, 5, 640, 1.3, true, CameraCorrection(side * 40, 16));
+            // The correction arrived between sampled rows. An older analysis update cannot undo it.
+            visit.ObserveVisualBasis(1, 1, 4, 640, 1.25, true, GroundHypothesisTrackingResult.Empty);
+            visit.ObserveVisualBasis(1, 1, 5, 640, 1.4, true, GroundHypothesisTrackingResult.Empty);
+            var updated = visit.AddVisualEvidence(Translated(14, .5));
+            Require(updated.Blockade is { } evidence && evidence.Mark.Space == updated.BlockadePose!.Space
+                && evidence.Mark.Space != original.Space && evidence.Mark.Direction == side
+                && Math.Abs(evidence.Mark.X - original.X - shift.X) < 1e-9
+                && Math.Abs(evidence.Mark.Y - original.Y - shift.Y) < 1e-9
+                && Math.Abs(evidence.Dx - contact.Blockade.Dx) < 1e-9 && Math.Abs(evidence.Dy) < 1e-9,
+                "A measured translation must preserve the physical contact and its policy distance.");
+            Require(visit.AddVisualEvidence(Translated(15, .5 + side * .05)).Blockade is null
+                && visit.AddVisualEvidence(Translated(16, .5)).Blockade is null,
+                "Crossing the translated wall must retire it for the remainder of the visit.");
+
+            BotCaptureObservation Translated(int tick, double knight) =>
+                Row(tick, knight, drive: 0) with { VisualContext = new(640, 360d / 640, shift.X, shift.Y) };
+        }
+
+        // Gym can measure a correction without changing its room counter.
+        var gym = new BotBlockadeVisit();
+        for (var tick = 10; tick <= 11; tick++)
+        {
+            gym.ObserveVisualBasis(1, 1, 4, 640, tick / 10d, true, GroundHypothesisTrackingResult.Empty);
+            Require(gym.AddVisualEvidence(Row(tick)).Blockade is null, "The push must wait for 0.15 seconds.");
+        }
+        gym.ObserveVisualBasis(1, 1, 4, 640, 1.2, true, CameraCorrection(40, 0) with { LocalReferenceTimestamp = 1.1 });
+        Require(gym.AddVisualEvidence(Row(12, camera: 40 / 640d)).Blockade is { Mark.Direction: 1 },
+            "A verified basis correction must carry the in-progress push while Gym remains in the same room.");
+    }
+
+    internal static void TestUnverifiedHandoffCannotCarryBlockade()
+    {
+        var proof = CameraCorrection(40, 16);
+        foreach (var (candidate, room, width, verified) in new[]
+        {
+            (GroundHypothesisTrackingResult.Empty, 1, 640, true),
+            (proof with { LocalReferenceTimestamp = .91 }, 1, 640, true),
+            (proof with { LocalReferenceTimestamp = 1.3 }, 1, 640, true),
+            (proof with { LocalMatchedImageDisplacement = new(double.NaN, 1) }, 1, 640, true),
+            (proof with { LocalTextureSupport = 0, InlierCount = 4 }, 1, 640, true),
+            (proof, 1, 320, true),
+            (proof, 1, 640, false),
+            (proof, 2, 640, true)
+        })
+        {
+            var visit = new BotBlockadeVisit();
+            BotCaptureObservation? contact = null;
+            for (var tick = 10; tick <= 12; tick++)
+            {
+                visit.ObserveVisualBasis(1, 1, 4, 640, tick / 10d, true, GroundHypothesisTrackingResult.Empty);
+                contact = visit.AddVisualEvidence(Row(tick));
+            }
+            Require(contact?.Blockade is not null, "The source observation must have contact before the rejected handoff.");
+            visit.ObserveVisualBasis(1, room, 5, width, 1.3, verified, candidate);
+            Require(visit.AddVisualEvidence(Row(13, drive: 0, camera: 40 / 640d) with { RoomId = room }).Blockade is null,
+                "A changed room, scale, or unverified correction must never inherit a wall.");
+        }
+    }
+
+    private static GroundHypothesisTrackingResult CameraCorrection(double x, double y) =>
+        GroundHypothesisTrackingResult.Empty with
+        {
+            PoseVerified = true, HasConfirmedGround = true, LocalTextureSupport = 4,
+            LocalReferenceTimestamp = 1.2, LocalReferencePosition = default(CameraVector),
+            LocalMatchedImageDisplacement = default(CameraVector), GlobalCorrection = new(x, y)
+        };
 
     internal static void TestLegacyReplayUsesOnlyPriorInputAndLeavesRecordedRowsIntact()
     {

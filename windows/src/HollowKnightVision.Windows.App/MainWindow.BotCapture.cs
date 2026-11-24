@@ -36,7 +36,8 @@ public partial class MainWindow
         int roomId, ulong roomRevision, int? renderedFrame, ReceiverGroundTruthSample? receiverTelemetry,
         LiveObjectDetectionBatch? batch, IReadOnlyList<DetectedFloorLine> floors, TerrainWallDetection terrain,
         bool analyzedTerrain, AtlasPoint? camera, HudStencilResult? hud, AtlasPoint? measuredFoot, InputButtons? input,
-        BotRun? run, long walkedCoordinateEpoch, bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions)
+        BotRun? run, long walkedCoordinateEpoch, GroundHypothesisTrackingResult ground,
+        bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions)
     {
         var capture = Volatile.Read(ref botCapture);
         var owner = (object?)capture ?? run;
@@ -52,6 +53,9 @@ public partial class MainWindow
             botVisualBlockade.Reset();
             botVisualChart = null;
         }
+        if (capture is not null || run?.Domain == BotCaptureDomain.Gameplay)
+            botVisualBlockade.ObserveVisualBasis(generation, roomId, walkedCoordinateEpoch, frame.Width,
+                timestamp, camera.HasValue, ground);
         if (capture?.WantsFrame(generation, timestamp) != true) capture = null;
         var playback = run is null ? null : Volatile.Read(ref run.Loaded)?.Policy;
         if (playback?.WantsObservation(timestamp) != true) playback = null;
@@ -81,7 +85,7 @@ public partial class MainWindow
             BotPolicyAction? appliedAction = playback is not null && input is { } applied
                 ? BotPolicyAction.FromButtons(applied) : null;
             visual = botVisualKnightMemory.Resolve(visual, appliedAction, batch, walkedCoordinateEpoch);
-            visual = botVisualBlockade.AddEvidence(visual, BotBlockadePose.Visual(visual, walkedCoordinateEpoch));
+            visual = botVisualBlockade.AddVisualEvidence(visual);
             visual = visual with { AtlasView = botVisualCoverage.View(camera, size,
                 (int)Math.Min(roomRevision, int.MaxValue), visual.MeasuredHealth) };
         }

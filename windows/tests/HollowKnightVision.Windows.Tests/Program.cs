@@ -60,6 +60,8 @@ var tests = new List<(string Name, Action Run)>
     ("visual bot coverage respects masks and placement discontinuities", HackerGymObservationTests.TestVisualCoverageDoesNotCreditMasksOrPlacementGaps),
     ("blockade tracking compensation and crossing work in both directions", BotBlockadeTests.TestCameraCompensationAndCrossingInBothDirections),
     ("blockade tracking needs fresh measured contacts in the current chart", BotBlockadeTests.TestRequiresFreshGroundContactsAndResetsCoordinates),
+    ("measured camera handoff preserves blockade evidence until passage", BotBlockadeTests.TestMeasuredCameraHandoffPreservesBlockadeAndCrossing),
+    ("unverified camera handoff cannot inherit a blockade", BotBlockadeTests.TestUnverifiedHandoffCannotCarryBlockade),
     ("saved clips recover only causal legacy blockade evidence", BotBlockadeTests.TestLegacyReplayUsesOnlyPriorInputAndLeavesRecordedRowsIntact),
     ("recorded Atlas path recovery is causal", BotRecordedAtlasPathTests.TestRecoveryIsCausalAndUsesRecordedTerrain),
     ("recorded routes preserve existing paths and stop scoring across gaps", BotRecordedAtlasPathTests.TestMissingPoseBreaksProgressAndCurrentPathsArePreserved),
