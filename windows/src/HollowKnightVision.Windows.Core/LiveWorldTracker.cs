@@ -410,6 +410,11 @@ public sealed class LiveWorldTracker
         cumulativeTravel[observationId] = travel;
         lastObservationId = observationId;
 
+        // Calibrated scenery can extend placed imagery and carry walked ground.
+        // Ground registration must keep using independently observed terrain.
+        if (captureEvidence is { HasMeasuredSceneryContinuity: true })
+            return Update(default, null, []);
+
         if (Snapshot.Keyframes.Count == 0)
         {
             AddKeyframe(observation, frame);

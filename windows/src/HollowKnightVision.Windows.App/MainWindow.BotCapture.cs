@@ -44,7 +44,8 @@ public partial class MainWindow
         bool analyzedTerrain, AtlasPoint? camera, HudStencilResult? hud, AtlasPoint? measuredFoot, InputButtons? input,
         BotRun? run, long walkedCoordinateEpoch, GroundHypothesisTrackingResult ground,
         bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions, GameplaySceneMasks? auditMasks,
-        bool usesDurableWorld, CommittedBotFrame? committedAtlas, IReadOnlyList<GroundHypothesisAtlasLine> walked)
+        bool usesDurableWorld, CommittedBotFrame? committedAtlas, IReadOnlyList<GroundHypothesisAtlasLine> walked,
+        AtlasPoint? measuredSceneryCamera)
     {
         var capture = Volatile.Read(ref botCapture);
         var owner = (object?)capture ?? run;
@@ -87,7 +88,8 @@ public partial class MainWindow
             var cameraTruth = GroundTruthCameraTransform.FromSample(receiverTelemetry, timestamp, new(frame.Width, frame.Height));
             exact = exact with { AtlasView = cameraTruth is null ? null : registeredRoom?.BotView(cameraTruth, exact.MeasuredHealth) };
         }
-        var visualFloors = GroundStrokeGeometry.MergeWalkedFloors(floors, walked, camera, frame.Width, frame.Height, auditMasks?.GroundKnight);
+        var visualFloors = GroundStrokeGeometry.MergeWalkedFloors(floors, walked, camera ?? measuredSceneryCamera,
+            frame.Width, frame.Height, auditMasks?.GroundKnight);
         var visual = capture is not null || playback is not null && run?.Domain == BotCaptureDomain.Gameplay
             ? BotObservationBuilder.Gameplay(frame, time, batch, visualFloors, terrain.Walls, analyzedTerrain,
                 camera, hud, measuredFoot, input, exact?.BlueHealthOutcomes,
@@ -116,8 +118,12 @@ public partial class MainWindow
                     botVisualCoverage.Reset();
                     botVisualChart = currentChart;
                 }
-                botVisualCoverage.ObserveVerified(camera, size, atlasExclusions, default, ground, admitsPlacement);
-                atlasView = botVisualCoverage.View(camera, size, (int)Math.Min(roomRevision, int.MaxValue), visual.MeasuredHealth);
+                if (measuredSceneryCamera is { } scenery && admitsPlacement)
+                    botVisualCoverage.Register(scenery, size, atlasExclusions);
+                else
+                    botVisualCoverage.ObserveVerified(camera, size, atlasExclusions, default, ground, admitsPlacement);
+                atlasView = botVisualCoverage.View(camera ?? measuredSceneryCamera, size,
+                    (int)Math.Min(roomRevision, int.MaxValue), visual.MeasuredHealth);
             }
             visual = visual with { AtlasView = atlasView };
         }

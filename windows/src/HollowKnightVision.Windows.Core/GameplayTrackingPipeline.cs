@@ -20,6 +20,7 @@ public sealed record GameplayTrackedFrame(
     public bool RoomAllowsAtlasWrite { get; init; } = true;
     public bool AllowsAtlasWrite => Observation.AllowsAtlasWrite || HasMeasuredSceneryContinuity;
     public bool HasMeasuredSceneryContinuity { get; init; }
+    public AtlasPoint? MeasuredSceneryCamera => HasMeasuredSceneryContinuity ? DisplayCamera : null;
     public bool RequiresWorldRecovery => !RoomAllowsAtlasWrite || SceneCut is not null
         || CaptureGap == AtlasCaptureGapState.RequiresRecovery
         || (!AllowsAtlasWrite && !Observation.RetainsWorldBasisDuringPlacementCheck
@@ -154,8 +155,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             else
                 Paths.Reset();
         }
-        var selectedScene = observation.FloorlessEvidence is { SelectedSource: FloorlessPoseCandidateSource.CalibratedScene } evidence
-            ? evidence.Scene : null;
+        var selectedScene = observation.SelectedScenery;
         var canContinueAtlasPose = admission.AdmitsTracking && visualRoom.AllowsAtlasWrite
             && measuredAtlasPose.Observe(generation, room, timestamp, localCamera,
                 measuredGround, selectedScene,
@@ -189,7 +189,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             var verifiedCamera = observation.GroundVerified && visualRoom.AllowsAtlasWrite
                 ? ground.CameraPosition : null;
             terrain = TerrainWallDetector.Detect(edges, floors);
-            contact = walked.Observe(room, edges, knight, verifiedCamera, buttons, timestamp, floors, terrain.Walls,
+            contact = walked.Observe(room, edges, knight, publishesScenery ? localCamera : verifiedCamera,
+                buttons, timestamp, floors, terrain.Walls,
                 generation, walkedCoordinateEpoch);
             terrain = TerrainWallDetector.ApplyContact(terrain, contact, floors, edges);
             platformPatches = patches.Observe(edges, floors, prepared.ProtectedOcclusions, verifiedCamera, timestamp);
@@ -205,7 +206,11 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             }
             else if (publishesScenery)
             {
-                worldEvidence = new LiveWorldCaptureEvidence(timestamp) { LocalReferenceTimestamp = selectedScene?.ReferenceTimestamp };
+                worldEvidence = new LiveWorldCaptureEvidence(timestamp)
+                {
+                    LocalReferenceTimestamp = selectedScene?.ReferenceTimestamp,
+                    HasMeasuredSceneryContinuity = true
+                };
             }
         }
         return new(observation, ground, estimate, localCamera, room, terrain, contact,

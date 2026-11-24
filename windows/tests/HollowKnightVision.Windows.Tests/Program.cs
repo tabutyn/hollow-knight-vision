@@ -1171,6 +1171,7 @@ var tests = new List<(string Name, Action Run)>
     ("camera patches require a supporting floor", GroundPlatformPatchTests.TestCameraReferenceNeedsFloorSupportWithoutACompetingLongerRow),
     ("walked dark ground remains continuous across occlusion and reversal", WalkedGroundTests.TestWalkedDarkGroundSurvivesOcclusionAndReversal),
     ("Game Play Gym keeps walked ground under an occluder", GameplayGymVisualTests.TestGymUsesWalkedGroundUnderAnOccluder),
+    ("Game Play Gym measures walking with calibrated scenery and no floor edge", GameplayGymVisualTests.TestGymMeasuresWalkWhileOnlySceneryIsVisible),
     ("Game Play combat effects cannot split a traversable floor", GameplayPathTests.TestCombatEdgesKeepPreviouslyExposedWalkContinuous),
     ("walked crossings erase false Atlas jumps while retaining the next real gap", GameplayPathTests.TestWalkedCrossingRemovesFalseWallButPreservesNextGap),
     ("registered landings may route through the schematic jump headroom", GameplayPathTests.TestRegisteredLandingsCanUseSchematicJumpHeadroom),

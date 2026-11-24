@@ -18,6 +18,7 @@ internal sealed class BotGymAtlasCoverage
     private bool open;
 
     internal bool HasPlacedRoom { get; private set; }
+    internal bool CanContinueMeasuredScenery => HasPlacedRoom && !awaitingPlacement;
     internal LiveWorldSnapshot Snapshot => world.Snapshot;
 
     internal void Interrupt()
@@ -40,7 +41,8 @@ internal sealed class BotGymAtlasCoverage
     }
 
     internal void Observe(BgraFrame frame, AtlasPoint? pose, double time, IReadOnlyList<PixelRect> omissions,
-        VisualRoomCompositionBounds bounds, GroundHypothesisTrackingResult tracking, bool admitsPlacement)
+        VisualRoomCompositionBounds bounds, GroundHypothesisTrackingResult tracking, bool admitsPlacement,
+        bool continuesMeasuredScenery = false)
     {
         var correction = tracking.GlobalCorrection;
         if (correction is { } shift && shift.X * shift.X + shift.Y * shift.Y > 9)
@@ -50,7 +52,8 @@ internal sealed class BotGymAtlasCoverage
         }
         else if (pose is null)
             Interrupt();
-        if (room is not { } roomId || pose is not { } local || !admitsPlacement || !GroundMotionEvidence.IsMeasured(tracking)
+        if (room is not { } roomId || pose is not { } local || !admitsPlacement
+            || !(GroundMotionEvidence.IsMeasured(tracking) || continuesMeasuredScenery && CanContinueMeasuredScenery)
             || time - lastScanAt < ObservationInterval)
             return;
 
@@ -71,7 +74,8 @@ internal sealed class BotGymAtlasCoverage
         var placed = new AtlasPoint(center.X + basis.X, center.Y + basis.Y);
         var update = world.Ingest(world.Snapshot.Observations.Count, time, frame, center, size.Width,
             exclusions: masks, searchForClosure: awaitingPlacement, localPose: center, captureGeneration: 1,
-            localEpoch: epoch, roomId: roomId, placedCameraPose: placed, captureEvidence: new(time),
+            localEpoch: epoch, roomId: roomId, placedCameraPose: placed,
+            captureEvidence: new(time) { HasMeasuredSceneryContinuity = continuesMeasuredScenery },
             placementPending: awaitingPlacement);
         lastPose = local;
         lastMasks = masks;

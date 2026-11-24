@@ -3312,10 +3312,10 @@ public partial class MainWindow : Window
             && atlasPathState != AtlasPathFrameState.Hidden && receiverTelemetry?.AtlasGameplayActive != false
             && recognition.GameplayEnabled && Volatile.Read(ref atlasPathsEnabled))
         {
-            var pathCamera = visualObservation.GroundVerified ? groundHypotheses.CameraPosition : null;
+            var pathCamera = visualObservation.GroundVerified ? groundHypotheses.CameraPosition : tracked.MeasuredSceneryCamera;
             var registeredPath = tracked.RequiresWorldRecovery ? null : liveWorldResult?.RegisteredPath(walkedCoordinateEpoch);
             if (usesDurableWorld)
-                pathCamera = registeredPath is not null && visualObservation.GroundVerified ? groundDisplayCamera : null;
+                pathCamera = registeredPath is not null && pathCamera.HasValue ? groundDisplayCamera : null;
             var measuredLocal = usesDurableWorld && visualObservation.GroundVerified
                 && GroundMotionEvidence.IsMeasured(groundHypotheses.PoseVerified, groundHypotheses.HasConfirmedGround,
                     groundHypotheses.LocalTextureSupport, groundHypotheses.InlierCount, groundHypotheses.GlobalMatchCount);
@@ -3340,7 +3340,8 @@ public partial class MainWindow : Window
             if (liveWorldResult is { CommittedGraph: { } graph, CommittedRoomId: { } committedRoom } placement)
             {
                 AtlasPoint? center = !placement.PlacementPending && placement.WalkedCoordinateEpoch == walkedCoordinateEpoch
-                    && visualObservation.GroundVerified ? new(visualTelemetry.CameraX, visualTelemetry.CameraY) : null;
+                    && (visualObservation.GroundVerified || tracked.HasMeasuredSceneryContinuity)
+                    ? new(visualTelemetry.CameraX, visualTelemetry.CameraY) : null;
                 botAtlas = new(graph, committedRoom, center)
                 {
                     DoorPlacement = tracked.RequiresWorldRecovery ? null : placement.BotDoorPlacement(walkedCoordinateEpoch)
@@ -3352,7 +3353,7 @@ public partial class MainWindow : Window
                 groundAnalysis is not null, visualObservation.GroundVerified ? groundDisplayCamera : null, hudStencil,
                 terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch, groundHypotheses,
                 gameplayAdmitted, atlasCompositionExclusions, masks, usesDurableWorld, botAtlas,
-                tracked.RoomAllowsAtlasWrite ? localWalkedGround : []);
+                tracked.RoomAllowsAtlasWrite ? localWalkedGround : [], tracked.MeasuredSceneryCamera);
         }
         else
         {

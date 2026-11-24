@@ -8,6 +8,7 @@ public sealed record LiveWorldCaptureEvidence(
     WorldRect? PlayerBounds = null)
 {
     public double? LocalReferenceTimestamp { get; init; }
+    public bool HasMeasuredSceneryContinuity { get; internal init; }
 
     internal static LiveWorldCaptureEvidence FromGround(
         double timestamp,
