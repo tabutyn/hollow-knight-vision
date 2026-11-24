@@ -512,6 +512,7 @@ internal static class NativeAtlasImportTests
                         && placement.Doorways.Count == 0 && placement.EstimatedFootprints.Count > 0
                         && snapshot.Observations[^1].OptimizedPose == new AtlasPoint(expectedX, 20),
                         "ambiguous or airborne evidence leaves height provisional");
+                    Check(placement.RoomDoorways.Count == 0, "Unconfirmed crossings must not become policy doors.");
                     return;
                 }
 
@@ -534,8 +535,19 @@ internal static class NativeAtlasImportTests
                     "The registered display must use the shared, corrected floor row and retain the estimated footprint.");
                 var reopened = new WindowsLiveWorldPipeline(root).SavedWorld.Placement;
                 Check(reopened.Doorways.SequenceEqual(placement.Doorways)
-                    && reopened.EstimatedFootprints.SequenceEqual(placement.EstimatedFootprints),
+                    && reopened.EstimatedFootprints.SequenceEqual(placement.EstimatedFootprints)
+                    && reopened.RoomDoorways[arrival.RoomId].SequenceEqual(placement.RoomDoorways[arrival.RoomId]),
                     "The same measured connector and estimated footprints must be available before another live frame.");
+                Check(placement.RoomDoorways.Count == 2
+                    && placement.RoomDoorways[departure.RoomId].Single().Start == connector.Start
+                    && placement.RoomDoorways[arrival.RoomId].Single() == new LiveWorldDoorwayStroke(
+                        connector.End, new(connector.End.X, connector.End.Y + 35)),
+                    "Each room should own the doorway's corrected floor and proven clearance.");
+                Check(ReferenceEquals(last.BotDoorPlacement(last.WalkedCoordinateEpoch), placement)
+                    && last.BotDoorPlacement(last.WalkedCoordinateEpoch + 1) is null
+                    && (last with { PlacementPending = true }).BotDoorPlacement(last.WalkedCoordinateEpoch) is null
+                    && (last with { State = WindowsLiveWorldPipelineState.Failed }).BotDoorPlacement(last.WalkedCoordinateEpoch) is null,
+                    "Policy door evidence needs committed placement in the current coordinate epoch.");
                 Check(last!.RebuiltAtlas is { TileCount: > 0 } && last.AcceptedClosure is null
                     && last.CameraPose == new AtlasPoint(expectedX, 35)
                     && last.AppliedCorrection == new AtlasPoint(0, 15),

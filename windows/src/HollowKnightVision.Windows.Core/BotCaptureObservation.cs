@@ -180,13 +180,14 @@ public static class BotObservationBuilder
     public static BotCaptureObservation Gameplay(BgraFrame image, BotCaptureTiming timing, LiveObjectDetectionBatch? batch,
         IReadOnlyList<DetectedFloorLine> floors, IReadOnlyList<DetectedWall> walls, bool terrainAnalyzed,
         AtlasPoint? camera, HudStencilResult? hud, AtlasPoint? measuredFoot, InputButtons? input,
-        BotBlueHealthOutcomes? blueHealth = null)
+        BotBlueHealthOutcomes? blueHealth = null, IReadOnlyList<BotLine>? visualDoors = null)
     {
         var terrain = new BotScreenTerrain(image.Width, image.Height,
             ProjectDetectedFloors(image, floors),
             walls.Where(wall => wall.X >= 0 && wall.X <= image.Width && wall.Top >= 0
                     && wall.Bottom <= image.Height && wall.Top < wall.Bottom)
-                .Select(wall => new BotWall(wall.X, image.Height - wall.Bottom, image.Height - wall.Top, wall.SolidOnRight ? 1 : -1)).ToArray());
+                .Select(wall => new BotWall(wall.X, image.Height - wall.Bottom, image.Height - wall.Top, wall.SolidOnRight ? 1 : -1)).ToArray(),
+            Doors: visualDoors is { Count: > 0 } ? visualDoors : null);
         var issues = BaseIssues(timing);
         var age = batch is null ? double.PositiveInfinity : (image.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds - batch.SourceTimestamp;
         var fresh = batch is not null && batch.CaptureGeneration == timing.Generation
@@ -240,6 +241,29 @@ public static class BotObservationBuilder
         floors.Where(line => line.Row >= 0 && line.Row < image.Height && line.XSpan.Start >= 0
                 && line.XSpan.EndInclusive < image.Width)
             .Select(line => new BotFloor(line.XSpan.Start, line.XSpan.EndInclusive + 1, image.Height - line.Row, 1)).ToArray();
+
+    /// <summary>Projects observed openings in the current room into bottom-up image pixels.</summary>
+    public static IReadOnlyList<BotLine> ProjectVisualDoors(LiveWorldPlacementProjection placement, int room,
+        AtlasPoint cameraOrigin, double solveWidth, WorldSize frame)
+    {
+        if (!placement.RoomDoorways.TryGetValue(room, out var doorways)
+            || !double.IsFinite(cameraOrigin.X) || !double.IsFinite(cameraOrigin.Y)
+            || solveWidth is not (> 0 and < double.PositiveInfinity)
+            || frame.Width is not (> 0 and < double.PositiveInfinity)
+            || frame.Height is not (> 0 and < double.PositiveInfinity))
+            return [];
+
+        var scale = frame.Width / solveWidth;
+        var result = new List<BotLine>();
+        foreach (var doorway in doorways)
+        {
+            var x = (doorway.Start.X - cameraOrigin.X) * scale;
+            var low = Math.Max(0, (doorway.Start.Y - cameraOrigin.Y) * scale);
+            var high = Math.Min(frame.Height, (doorway.End.Y - cameraOrigin.Y) * scale);
+            if (x >= 0 && x <= frame.Width && low < high) result.Add(new(x, low, x, high));
+        }
+        return result;
+    }
 
     public static BotScreenTerrain ProjectAuthored(GroundTruthLineDocument document, GroundTruthCameraTransform camera)
     {

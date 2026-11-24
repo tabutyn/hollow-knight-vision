@@ -34,7 +34,7 @@ internal static class BotDesktopCaptureIntegrationTests
         {
             temporary.Delete(recursive: true);
         }
-        Console.WriteLine("PASS Desktop analysis reaches bot capture and saved wall evidence survives a correction between clip samples");
+        Console.WriteLine("PASS Desktop analysis captures room-owned doors and preserves wall evidence across a correction");
     }
 
     private static void VerifyDesktopRecording(MainWindow window, BgraFrame hudFrame, string library)
@@ -80,6 +80,10 @@ internal static class BotDesktopCaptureIntegrationTests
             var rows = File.ReadLines(path).Select(line => JsonSerializer.Deserialize<BotCaptureObservation>(line, json)!).ToArray();
             Check(rows.Select(row => row.DetectionFrameId).SequenceEqual([10L, 11L, 12L, 14L, 15L, 16L]),
                 "The unsampled correction frame must stay out of the clip.");
+            var expectedDoor = new BotLine(16, 10, 16, 40);
+            Check(rows.Take(5).All(row => row.DetectedTerrain?.Doors?.SequenceEqual([expectedDoor]) == true)
+                && rows[^1].DetectedTerrain?.Doors is null && rows.All(row => row.AuthoredTerrain is null),
+                "The clip must retain its room's visual door across correction and omit it without a measured camera.");
             var oldWall = rows[2].Blockade;
             var translatedWall = rows[3].Blockade;
             Check(rows.Take(2).All(row => row.Blockade is null)
@@ -130,7 +134,17 @@ internal static class BotDesktopCaptureIntegrationTests
                     observations.Select(row => new LiveIslandMember(row.Id, new(row.OptimizedPose.X - origin.X, 0), true)).ToArray());
                 var graph = new LiveWorldSnapshot(mapRevision: (int)id, anchoredObservationId: 0,
                     observations: observations, trackingIslands: [island]);
-                var world = new MainWindow.CommittedBotFrame(graph, committedRoom, origin);
+                var floor = new AtlasPoint(16 + offsets[0], 10);
+                var doors = LiveWorldPlacementProjection.Empty with
+                {
+                    RoomDoorways = new Dictionary<int, IReadOnlyList<LiveWorldDoorwayStroke>>
+                    {
+                        [committedRoom] = [new(floor, new(floor.X, 40))],
+                        [committedRoom + 1] = [new(new(floor.X + 5, 12), new(floor.X + 5, 30))]
+                    }
+                };
+                var world = new MainWindow.CommittedBotFrame(graph, committedRoom, id == 16 ? null : origin)
+                { DoorPlacement = doors };
                 _ = Method("CaptureBotObservations").Invoke(window, [
                     frame, Generation, Generation, captureAt, 17, 1UL, null, null, batch,
                     Array.Empty<DetectedFloorLine>(), TerrainWallDetection.Empty, true, camera, null, null, input,
