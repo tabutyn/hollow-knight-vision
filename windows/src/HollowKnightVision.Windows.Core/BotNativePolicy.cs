@@ -53,6 +53,7 @@ public sealed class BotNativePolicy
         bool? SupportsMaskedKnight = null, SecondaryPolicy? PitPolicy = null, SecondaryPolicy? AtlasPolicy = null,
         JsonElement? RecoveryManeuver = null, int[]? InputColumns = null);
     private sealed record Fixture(float[][] Inputs, float[][] Logits, int[][] Actions);
+    private sealed record AtlasDirectionFixture(float[][] Inputs, int[] WorldActions);
 
     private BotNativePolicy(Document document) => this.document = document;
 
@@ -108,8 +109,27 @@ public sealed class BotNativePolicy
         else current = input.ToArray();
         if (document.InputColumns is { } columns)
             current = columns.Select(index => current[index]).ToArray();
+        return Forward(current, document.Layers);
+    }
 
-        foreach (var layer in document.Layers)
+    public int AtlasDirection(IReadOnlyList<float> input)
+    {
+        if (document.AtlasPolicy is not { } atlas)
+            throw new InvalidDataException("The checkpoint does not contain an Atlas direction policy.");
+        if (input is not { Count: 8 } || input.Any(value => !float.IsFinite(value)))
+            throw new InvalidDataException("Invalid Atlas direction inputs.");
+
+        var mirrored = input[0] > input[1] || input[0] == input[1] && input[7] < 0;
+        var features = mirrored
+            ? new[] { input[1], input[0], input[3], input[2], input[5], input[4], input[6], -input[7] }
+            : input.ToArray();
+        var direction = ArgMax(Forward(features, atlas.Layers), 0, 3);
+        return mirrored && direction != 0 ? 3 - direction : direction;
+    }
+
+    private static float[] Forward(float[] current, IReadOnlyList<Layer> layers)
+    {
+        foreach (var layer in layers)
         {
             var next = new float[layer.OutputSize];
             for (var row = 0; row < layer.OutputSize; row++)
@@ -129,15 +149,15 @@ public sealed class BotNativePolicy
     {
         if (logits.Count != 10 || logits.Any(value => !float.IsFinite(value)))
             throw new InvalidDataException("Invalid bot action scores.");
-        return new(ArgMax(0, 3), ArgMax(3, 3), ArgMax(6, 2), ArgMax(8, 2));
+        return new(ArgMax(logits, 0, 3), ArgMax(logits, 3, 3), ArgMax(logits, 6, 2), ArgMax(logits, 8, 2));
+    }
 
-        int ArgMax(int offset, int size)
-        {
-            var highest = 0;
-            for (var index = 1; index < size; index++)
-                if (logits[offset + index] > logits[offset + highest]) highest = index;
-            return highest;
-        }
+    private static int ArgMax(IReadOnlyList<float> logits, int offset, int size)
+    {
+        var highest = 0;
+        for (var index = 1; index < size; index++)
+            if (logits[offset + index] > logits[offset + highest]) highest = index;
+        return highest;
     }
 
     public int Verify(string fixturePath)
@@ -154,6 +174,19 @@ public sealed class BotNativePolicy
                 || !actual.Zip(fixture.Logits[i]).All(pair => Math.Abs(pair.First - pair.Second) < LogitTolerance)
                 || !Action(actual).Values.SequenceEqual(fixture.Actions[i]))
                 throw new InvalidDataException($"Native bot inference disagreed with the trainer on fixture row {i + 1}.");
+        }
+        return fixture.Inputs.Length;
+    }
+
+    public int VerifyAtlasDirections(string fixturePath)
+    {
+        var fixture = Decode<AtlasDirectionFixture>(ReadBounded(fixturePath, FixtureSizeLimit));
+        if (fixture.Inputs is not { Length: > 0 } || fixture.WorldActions?.Length != fixture.Inputs.Length)
+            throw new InvalidDataException("Empty or inconsistent Atlas direction parity fixture.");
+        for (var index = 0; index < fixture.Inputs.Length; index++)
+        {
+            if (AtlasDirection(fixture.Inputs[index]) != fixture.WorldActions[index])
+                throw new InvalidDataException($"Native Atlas direction disagreed with the trainer on fixture row {index + 1}.");
         }
         return fixture.Inputs.Length;
     }

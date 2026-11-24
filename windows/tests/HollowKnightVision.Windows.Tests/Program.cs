@@ -314,6 +314,7 @@ var tests = new List<(string Name, Action Run)>
     ("input checkpoint control messages round trip", InputBridgeParityTests.TestCheckpointControlMessagesRoundTrip),
     ("native bot policy projects the same observation columns as PPO", BotPolicyTests.TestProjectedPolicyUsesOnlySelectedHistoryColumns),
     ("native bot verification checks action heads and bound checkpoint hashes", BotPolicyTests.TestNativePolicyChecksActionsAndCheckpointHashes),
+    ("native Atlas direction verification agrees in world coordinates", BotPolicyTests.TestAtlasDirectionParity),
     ("Hacker Gym uses authored geometry and preserves fixed objectives and camera gaps", HackerGymObservationTests.TestFixedRouteAndCameraDropout),
     ("Game Play Gym builds a pixel-only Atlas and recovers masked Knight observations", GameplayGymVisualTests.TestVisualFootprintAndMaskedKnightRecovery),
     ("Game Play Gym coverage excludes camera corrections and unmeasured movement", GameplayGymVisualTests.TestAtlasCreditSurvivesGroundCameraRecovery),

@@ -247,12 +247,15 @@ internal static class Program
                 return Task.FromResult(1);
             }
         }
-        if (arguments is ["--hacker-gym-observations", "verify", var checkpoint, var fixture])
+        if (arguments is ["--hacker-gym-observations", "verify" or "verify-atlas-direction", var checkpoint, var fixture])
         {
             try
             {
-                var count = BotNativePolicy.Load(checkpoint).Verify(fixture);
-                (standardOutput ?? Console.Out).WriteLine($"Verified {count} bot policy observations.");
+                var policy = BotNativePolicy.Load(checkpoint);
+                var atlas = arguments[1] == "verify-atlas-direction";
+                var count = atlas ? policy.VerifyAtlasDirections(fixture) : policy.Verify(fixture);
+                (standardOutput ?? Console.Out).WriteLine(atlas
+                    ? $"Verified {count} Atlas direction observations." : $"Verified {count} bot policy observations.");
                 return Task.FromResult(0);
             }
             catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or ArgumentException)

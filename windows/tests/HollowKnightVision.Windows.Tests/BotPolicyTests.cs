@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using HollowKnightVision.Windows.Core;
 
 internal static class BotPolicyTests
@@ -42,6 +43,73 @@ internal static class BotPolicyTests
         finally { temporary.Delete(recursive: true); }
     }
 
+
+    internal static void TestAtlasDirectionParity()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-atlas-direction-");
+        try
+        {
+            var root = temporary.FullName;
+            WriteRuntime(root);
+            float[][] inputs =
+            [
+                [.2f, .7f, 0, 0, 0, 0, 0, -1], [.7f, .2f, 0, 0, 0, 0, 0, 1],
+                [.3f, .3f, 0, 0, 0, 0, 0, -1], [.3f, .3f, 0, 0, 0, 0, 0, 1],
+                [.3f, .3f, 0, 0, 0, 0, 0, 0]
+            ];
+            var fixture = Path.Combine(root, "fixture.json");
+            var actions = new[] { 1, 2, 2, 1, 1 };
+            WriteFixture(actions);
+            Reject(() => BotNativePolicy.Load(root).VerifyAtlasDirections(fixture));
+
+            var checkpoint = Path.Combine(root, "atlas-model.zip");
+            File.WriteAllText(checkpoint, "fixture Atlas direction checkpoint");
+            var runtimePath = Path.Combine(root, "runtime-policy.json");
+            var runtime = JsonNode.Parse(File.ReadAllText(runtimePath))!.AsObject();
+            var manifestPath = Path.Combine(root, "runtime-manifest.json");
+            var manifest = JsonNode.Parse(File.ReadAllText(manifestPath))!.AsObject();
+            var policy = WriteAtlas(0, 1, 0);
+            if (policy.VerifyAtlasDirections(fixture) != inputs.Length)
+                throw new InvalidOperationException("Atlas direction must agree in world coordinates.");
+
+            Reject(() => policy.AtlasDirection(new float[7]));
+            var invalid = new float[8];
+            invalid[2] = float.NaN;
+            Reject(() => policy.AtlasDirection(invalid));
+            WriteFixture([1]);
+            Reject(() => policy.VerifyAtlasDirections(fixture));
+            WriteFixture([2, 2, 2, 1, 1]);
+            Reject(() => policy.VerifyAtlasDirections(fixture));
+
+            var neutral = WriteAtlas(0, 0, 0);
+            WriteFixture(new int[inputs.Length]);
+            if (neutral.VerifyAtlasDirections(fixture) != inputs.Length)
+                throw new InvalidOperationException("Tied scores should choose neutral regardless of mirroring.");
+            File.AppendAllText(checkpoint, "changed");
+            Reject(() => BotNativePolicy.Load(root));
+
+            void WriteFixture(int[] worldActions) => File.WriteAllText(fixture,
+                JsonSerializer.Serialize(new { inputs, worldActions }));
+
+            BotNativePolicy WriteAtlas(params float[] biases)
+            {
+                runtime["atlasPolicy"] = JsonSerializer.SerializeToNode(new
+                {
+                    schemaVersion = 1, checkpointSHA256 = Hash(File.ReadAllBytes(checkpoint)),
+                    layers = new[]
+                    {
+                        new { inputSize = 8, outputSize = 3, activation = "linear", weights = new float[24], biases }
+                    }
+                });
+                var bytes = JsonSerializer.SerializeToUtf8Bytes(runtime);
+                File.WriteAllBytes(runtimePath, bytes);
+                manifest["policySHA256"] = Hash(bytes);
+                File.WriteAllText(manifestPath, manifest.ToJsonString());
+                return BotNativePolicy.Load(root);
+            }
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
 
     internal static void TestProjectedPolicyUsesOnlySelectedHistoryColumns()
     {
@@ -359,7 +427,6 @@ internal static class BotPolicyTests
         var width = fields.Count * BotRecordingContract.HistoryLength;
         var checkpoint = Path.Combine(root, "model.zip");
         File.WriteAllText(checkpoint, "fixture checkpoint");
-        string Hash(byte[] e) => Convert.ToHexString(SHA256.HashData(e)).ToLowerInvariant();
         var digest = Hash(File.ReadAllBytes(checkpoint));
         var inputs = inputColumns is null ? width : Math.Max(2, inputColumns.Length);
         var weights = new float[inputs * 2];
@@ -392,6 +459,8 @@ internal static class BotPolicyTests
         }));
         return width;
     }
+
+    private static string Hash(byte[] data) => Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant();
 
     private static void Reject(Action attempt)
     {
