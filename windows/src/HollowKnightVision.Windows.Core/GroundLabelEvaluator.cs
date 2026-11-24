@@ -13,6 +13,8 @@ public readonly record struct GroundLabelParameters(
 {
     public const string CurrentSurfaceAlgorithm = "hysteresis";
 
+    public GroundLabelParameters() : this(GroundTheoryTuning.SemanticDefault) { }
+
     public GroundLabelParameters(GroundTheoryTuning tuning)
         : this(
             tuning.GroundThreshold,
@@ -23,6 +25,7 @@ public readonly record struct GroundLabelParameters(
     {
     }
 
+    [JsonIgnore]
     public GroundTheoryTuning Tuning => new(
         Threshold,
         MinimumSegment,
@@ -90,6 +93,15 @@ public sealed record GroundLabelEvaluationReport(
 public static class GroundLabelEvaluator
 {
     public const int MatchingTolerance = 4;
+
+    public static string Save(GroundLabelEvaluationReport report, GroundLabelStore store)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        ArgumentNullException.ThrowIfNull(store);
+        var path = Path.Combine(store.RootDirectory, "evaluations", $"evaluation-{GroundLabelStore.UpperId(Guid.NewGuid())}.json");
+        GroundLabelStore.WriteJson(path, report);
+        return path;
+    }
 
     public sealed record PreparedFrame(
         GroundLabelDocument Document,

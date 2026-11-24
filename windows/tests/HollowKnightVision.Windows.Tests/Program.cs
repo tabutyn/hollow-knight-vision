@@ -278,6 +278,7 @@ var tests = new List<(string Name, Action Run)>
     ("ground labels human ignores never change detector input", TestHumanIgnoreRegionsNeverChangeDetectorInput),
     ("ground labels unreviewed data cannot tune or generalize", TestUnreviewedLabelsExcludedFromTuningAndDraftDatasetNotGeneralization),
     ("ground labels Check data cannot choose parameters", TestCheckLabelsCannotChooseParameters),
+    ("ground label CLI saves baseline and sweep reports using the Mac schema", TestGroundLabelEvaluationCommand),
     ("phase-two labeling follows navigation and selects the next missing object", StencilGuidanceParityTests.TestPhaseTwoNavigationOpensTheGuidedScreenAndNextObject),
     ("global correction rejects four wrong votes", GroundGlobalCorrectionPolicyTests.TestFourWrongVotesCannotOverrideWideStrip),
     ("global correction rejects repeated-texture phase jumps", GroundGlobalCorrectionPolicyTests.TestSimilarRepeatedTextureDoesNotAuthorizePhaseJump),
@@ -4854,6 +4855,94 @@ static void TestCheckLabelsCannotChooseParameters()
         Equal(first.Selected.Train, second.Selected.Train);
         Equal(385, first.CandidatesTested);
         True(!string.Equals(first.DatasetDigest, second.DatasetDigest, StringComparison.Ordinal));
+    });
+}
+
+static void TestGroundLabelEvaluationCommand()
+{
+    var host = GameStartupCliTailParityTests.HostAssembly.GetType("HollowKnightVision.Windows.Host.Program", throwOnError: true)!;
+    var run = host.GetMethod("RunAsync", BindingFlags.Static | BindingFlags.NonPublic)!;
+    WithTemporaryDirectory(workspace =>
+    {
+        const string flag = "--evaluate-ground-labels";
+        const string written = "Ground-label evaluation written to ";
+        var root = Path.Combine(workspace, "ground labels");
+        var evaluationDirectory = Path.Combine(root, "evaluations");
+        var store = new GroundLabelStore(root);
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+
+        int Evaluate(params string[] arguments)
+        {
+            output.GetStringBuilder().Clear();
+            errors.GetStringBuilder().Clear();
+            Func<string[], Task<int>> rejectCapture = _ => throw new InvalidOperationException("Evaluation fell through to the live host.");
+            var task = (Task<int>)run.Invoke(null, [arguments, null, rejectCapture, output, errors])!;
+            return task.GetAwaiter().GetResult();
+        }
+
+        string ReadReportPath()
+        {
+            var message = output.ToString().TrimEnd();
+            True(message.StartsWith(written, StringComparison.Ordinal));
+            var path = message[written.Length..];
+            Equal(evaluationDirectory, Path.GetDirectoryName(path)!);
+            True(File.Exists(path));
+            return path;
+        }
+
+        Equal(64, Evaluate(flag, "--sweep-ground-labels"));
+        True(errors.ToString().Contains("DATASET_DIRECTORY", StringComparison.Ordinal));
+        Equal(64, Evaluate(flag, root, "--ground-surface-architecture=obsolete"));
+        True(errors.ToString().Contains("uses hysteresis", StringComparison.Ordinal));
+        Equal(1, Evaluate(flag, root));
+        True(errors.ToString().Contains("Capture or import a frame first", StringComparison.Ordinal));
+        True(!Directory.Exists(evaluationDirectory));
+
+        var document = store.Add(GroundLabelImage(), "saved evaluation fixture", "train-A");
+        document.Edges = [new GroundLabelEdge(10, 90, 30)];
+        document.FullyReviewed = true;
+        store.Save(document);
+        var labelPath = Path.Combine(root, document.Id.ToString("D").ToUpperInvariant() + ".json");
+        var originalLabel = File.ReadAllBytes(labelPath);
+        var choices = new GroundLabelParameters(GroundTheoryTuning.SemanticDefault);
+        Equal(choices, new GroundLabelParameters());
+        Equal(choices, GroundLabelEvaluator.Grid()[0]);
+
+        Equal(0, Evaluate(flag, root));
+        True(errors.ToString().Contains("1/1", StringComparison.Ordinal));
+        var baselinePath = ReadReportPath();
+        using var baseline = JsonDocument.Parse(File.ReadAllBytes(baselinePath));
+        var report = baseline.RootElement;
+        Equal(3, report.GetProperty("schemaVersion").GetInt32());
+        Equal(JsonValueKind.Number, report.GetProperty("createdAt").ValueKind);
+        Equal(1, report.GetProperty("candidatesTested").GetInt32());
+        Equal(1, report.GetProperty("reviewedTrainFrames").GetInt32());
+        True(report.GetProperty("provisional").GetBoolean());
+        var selected = report.GetProperty("selected");
+        var parameters = selected.GetProperty("parameters");
+        Equal(8, parameters.GetProperty("threshold").GetInt32());
+        Equal(40, parameters.GetProperty("minimumSegment").GetInt32());
+        Equal(40, parameters.GetProperty("lineSeparation").GetInt32());
+        Equal(180, parameters.GetProperty("occlusionGap").GetInt32());
+        Equal("hysteresis", parameters.GetProperty("surfaceArchitecture").GetString()!);
+        True(!parameters.TryGetProperty("tuning", out _));
+        var savedFrame = selected.GetProperty("frames")[0];
+        Equal(document.Id.ToString("D").ToUpperInvariant(), savedFrame.GetProperty("id").GetString()!);
+        Equal("train", savedFrame.GetProperty("split").GetString()!);
+        Equal(JsonValueKind.Number, selected.GetProperty("train").GetProperty("f1").ValueKind);
+
+        Equal(0, Evaluate(flag, root, "--sweep-ground-labels", "--ground-threshold=12"));
+        True(errors.ToString().Contains("16/385", StringComparison.Ordinal)
+            && errors.ToString().Contains("385/385", StringComparison.Ordinal));
+        var sweepPath = ReadReportPath();
+        True(sweepPath != baselinePath && File.Exists(baselinePath));
+        using var sweep = JsonDocument.Parse(File.ReadAllBytes(sweepPath));
+        Equal(385, sweep.RootElement.GetProperty("candidatesTested").GetInt32());
+        Equal(12, sweep.RootElement.GetProperty("baseline").GetProperty("parameters").GetProperty("threshold").GetInt32());
+        Equal(report.GetProperty("datasetDigest").GetString()!, sweep.RootElement.GetProperty("datasetDigest").GetString()!);
+        True(originalLabel.SequenceEqual(File.ReadAllBytes(labelPath)));
+        Equal(2, Directory.GetFiles(evaluationDirectory).Length);
     });
 }
 
@@ -10287,7 +10376,7 @@ file static class GroundPixelsParityTests
 
 file static class GameStartupCliTailParityTests
 {
-    private static readonly Assembly HostAssembly = LoadHostAssembly();
+    internal static Assembly HostAssembly { get; } = LoadHostAssembly();
 
     public static void TestRecordedPathCommandsUseArchiveFixtures()
     {

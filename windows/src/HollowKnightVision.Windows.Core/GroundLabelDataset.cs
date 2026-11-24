@@ -257,9 +257,9 @@ public sealed class GroundLabelStore
         document.Validate();
         var others = Documents().Where(candidate => candidate.Id != document.Id).ToArray();
         ValidateSplits([.. others, document]);
-        AtomicFile.Write(
+        WriteJson(
             Path.Combine(RootDirectory, UpperId(document.Id) + ".json"),
-            JsonSerializer.SerializeToUtf8Bytes(document, JsonOptions));
+            document);
     }
 
     public static void ValidateSplits(IEnumerable<GroundLabelDocument> documents)
@@ -338,6 +338,9 @@ public sealed class GroundLabelStore
     }
 
     internal static string UpperId(Guid id) => id.ToString("D").ToUpperInvariant();
+
+    internal static void WriteJson<T>(string path, T value) =>
+        AtomicFile.Write(path, JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions));
 
     private static JsonSerializerOptions CreateJsonOptions()
     {
