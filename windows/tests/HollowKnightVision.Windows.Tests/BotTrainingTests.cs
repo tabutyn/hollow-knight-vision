@@ -65,13 +65,80 @@ internal static class BotTrainingTests
                     Require(receipt.RootElement.GetProperty("blockadeTraining").GetProperty("validationClips").GetInt32() > 0,
                         "The legacy Game Play capture's verified pose did not recover blockade inputs during training.");
                 var repeated = BotTrainingJob.Plan(temporary, domain, library);
-                Require(!repeated.CanTrain && repeated.PolicyName == selected.Policy.Name,
-                    "A completed run should select its policy and request fresh clips before another comparison.");
+                Require(!repeated.CanTrain && repeated.PolicyName == selected.Policy.Name
+                    && repeated.LatestIncludedClips?.SetEquals(plan.Clips) == true,
+                    "A completed run should select its policy and account for every training and validation clip.");
                 Console.WriteLine($"PASS installed Windows {plan.Domain} trained from {plan.Clips.Count} captured clips; "
                     + $"{training.Length} training and {held.Length} validation sessions stayed separate; native playback selected the export.");
             }
         }
         finally { Directory.Delete(temporary, recursive: true); }
+    }
+
+    internal static void TestNewCaptureCountsTrackCompletionAndIgnoreRollback()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-bot-new-captures-");
+        try
+        {
+            var root = temporary.FullName;
+            var library = Path.Combine(root, "demonstrations");
+            var paired = BotCaptureTests.WriteFixture(library).Published;
+            var hacker = paired.Single(clip => clip.BotDomain == "hacker");
+            var gameplay = paired.Single(clip => clip.BotDomain == "gameplay");
+            Require(Pending(paired) == new BotNewCaptureCounts(1, 1, 1), "The two sides of a paired capture are one new run.");
+
+            Publish("hacker", "bot-earlier", 1, null, heldOut: false);
+            _ = new BotModelStore(root, BotCaptureDomain.Hacker).LoadPlayback();
+            Publish("hacker", "bot-latest", 2, hacker.Id, heldOut: true);
+            Publish("gameplay", "bot-gameplay", 3, gameplay.Id, heldOut: false, completed: false);
+            Require(Pending(paired) == new BotNewCaptureCounts(1, 0, 1),
+                "A validation clip is included, and incomplete training leaves the other side pending.");
+            Publish("gameplay", "bot-gameplay", 3, gameplay.Id, heldOut: false);
+            Require(Pending(paired) == default, "Completed exports should account for the included clips in both domains.");
+
+            var store = new BotModelStore(root, BotCaptureDomain.Hacker);
+            _ = store.RestorePrevious();
+            Require(store.Catalog().ActiveId == "bot-earlier" && Pending(paired) == default,
+                "Changing playback to an older export must not make trained captures new.");
+
+            var next = BotCaptureTests.WriteFixture(library).Published;
+            var unpaired = gameplay with { Id = Guid.NewGuid(), ReplayId = null, PairedClipId = null };
+            var rejected = new[]
+            {
+                gameplay with { Id = Guid.NewGuid(), Status = "interrupted" },
+                gameplay with { Id = Guid.NewGuid(), ExpertDemonstration = false },
+                gameplay with { Id = Guid.NewGuid(), ObservationCount = 0 },
+                gameplay with { Id = Guid.NewGuid(), BotDomain = "unknown" }
+            };
+            Require(Pending([.. paired, .. next, .. next, unpaired, .. rejected]) == new BotNewCaptureCounts(2, 1, 2),
+                "Pending must deduplicate paired runs and clips, including unpaired eligible recordings independently.");
+
+            BotNewCaptureCounts Pending(IReadOnlyList<BotCaptureManifest> clips)
+            {
+                var hackerPlan = BotTrainingJob.Plan(root, BotCaptureDomain.Hacker, clips);
+                var gameplayPlan = BotTrainingJob.Plan(root, BotCaptureDomain.Gameplay, clips);
+                return BotTrainingJob.CountNewCaptures(clips, hackerPlan.LatestIncludedClips!, gameplayPlan.LatestIncludedClips!);
+            }
+
+            void Publish(string domain, string id, int order, Guid? clip, bool heldOut, bool completed = true)
+            {
+                var directory = Directory.CreateDirectory(Path.Combine(root, "models", domain, id)).FullName;
+                BotPolicyTests.WriteRuntime(directory);
+                File.WriteAllText(Path.Combine(directory, "manifest.json"), JsonSerializer.Serialize(new
+                {
+                    botDomain = domain,
+                    trainingSessions = !heldOut && clip.HasValue ? new[] { clip.Value } : Array.Empty<Guid>(),
+                    validationSessions = heldOut && clip.HasValue ? new[] { clip.Value } : Array.Empty<Guid>()
+                }));
+                if (completed)
+                    File.WriteAllText(Path.Combine(directory, "training-result.json"), JsonSerializer.Serialize(new
+                    {
+                        modelDirectory = id, botDomain = domain, nativeParity = true, eligibleForActivation = false,
+                        createdAt = new DateTimeOffset(2026, 11, 22, 12, 0, 0, TimeSpan.Zero).AddMinutes(order)
+                    }));
+            }
+        }
+        finally { temporary.Delete(recursive: true); }
     }
 
     private static Guid[] SessionIds(JsonElement root, string name) =>

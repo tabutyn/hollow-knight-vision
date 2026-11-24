@@ -55,6 +55,7 @@ if (args is ["--train-bot-probe", var installedVision])
 var tests = new List<(string Name, Action Run)>
 {
     ("bot training admits separate published clips in the selected domain", BotTrainingTests.TestTrainingPlanSeparatesDomains),
+    ("new bot captures follow completed training independently of playback", BotTrainingTests.TestNewCaptureCountsTrackCompletionAndIgnoreRollback),
     ("bot capture dates round-trip with macOS and earlier Windows clips", BotCaptureTests.TestReadsMacAndPreviousWindowsCaptureDates),
     ("desktop bot clips share only the exact authored route", HackerGymObservationTests.TestDesktopRouteIsSharedOnlyWithExactlyMatchedVisualRows),
     ("visual bot coverage respects masks and placement discontinuities", HackerGymObservationTests.TestVisualCoverageDoesNotCreditMasksOrPlacementGaps),

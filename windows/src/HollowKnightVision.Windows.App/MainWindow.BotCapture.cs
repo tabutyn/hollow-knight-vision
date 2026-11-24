@@ -239,7 +239,7 @@ public partial class MainWindow
         var sessions = BotCaptureSession.Library(BotCaptureRoot);
         RefreshBotTrainingPlans(sessions);
         var runs = sessions.Select(session => session.ReplayId ?? session.Id).Distinct().Count();
-        BotCaptureSummary.Text = $"{runs} training runs · {sessions.Count(session => session.BotDomain == "hacker")} Hacker clips · {sessions.Count(session => session.BotDomain == "gameplay")} Game Play clips";
+        BotCaptureSummary.Text = $"{runs} recorded runs · {sessions.Count(session => session.BotDomain == "hacker")} Hacker clips · {sessions.Count(session => session.BotDomain == "gameplay")} Game Play clips";
         var previous = (BotCaptureClips.SelectedItem as BotClipRow)?.Folder;
         var clips = sessions.Select(session => new BotClipRow(
             DisplayBotDomain(session.BotDomain), session.ObservationCount, session.UsableObservationCount,
