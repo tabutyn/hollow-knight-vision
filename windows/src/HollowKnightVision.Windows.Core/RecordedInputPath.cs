@@ -350,6 +350,7 @@ public sealed class InputPathRecorder
         metadata["lowResolutionMotionBridge"] = "tentative-transition-handoff-v14";
         metadata["lowResolutionFrameTrace"] = "64x36-20hz-measured-ground-reliability-v3";
         metadata["pathPlaybackPreparation"] = "none";
+        metadata.TryAdd("captureWidth", FrameGeometry.ReferenceWidth.ToString(CultureInfo.InvariantCulture));
         this.runtimeMetadata = metadata;
     }
 

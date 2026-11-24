@@ -128,6 +128,27 @@ internal static class Program
         TextWriter? standardError = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
+        if (arguments.Contains(LowResolutionTraceEvaluator.CommandFlag, StringComparer.Ordinal))
+        {
+            var errors = standardError ?? Console.Error;
+            try
+            {
+                var report = LowResolutionTraceEvaluator.Run(arguments);
+                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(report, WorldReplayJsonOptions));
+                return Task.FromResult(0);
+            }
+            catch (LowResolutionTraceEvaluatorException error)
+            {
+                errors.WriteLine($"Low-resolution trace evaluation failed: {error.Message}");
+                return Task.FromResult(error.Error == LowResolutionTraceEvaluatorError.MissingPersistedWorldEvidence ? 1 : 64);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException
+                or SceneSessionStoreException or ArgumentException or NotSupportedException or OverflowException)
+            {
+                errors.WriteLine($"Low-resolution trace evaluation failed: {error.Message}");
+                return Task.FromResult(1);
+            }
+        }
         var evaluationIndex = Array.IndexOf(arguments, "--evaluate-ground-labels");
         if (evaluationIndex >= 0)
             return Task.FromResult(EvaluateGroundLabels(
@@ -811,6 +832,14 @@ internal static class Program
             --evaluate-ground-labels DATASET_DIRECTORY [--sweep-ground-labels]
                                     Evaluate saved labels and write a JSON report to evaluations.
                                     Use --ground-threshold=N and the other tuning options with '='.
+            --evaluate-low-resolution-trace PATH
+                                    Measure saved camera tracking against recorded Unity frames.
+            --low-resolution-report FILE
+                                    Also save the trace report as JSON.
+            --low-resolution-world-evidence DIRECTORY
+                                    Reconstruct the trace from matching saved Atlas images.
+            --low-resolution-minimum-improvement N
+                                    Override the motion acceptance threshold (0 to 1).
             --ground-threshold N    Ground response threshold (default 8).
             --ground-minimum-segment N
                                     Minimum semantic evidence pixels (default 40).
