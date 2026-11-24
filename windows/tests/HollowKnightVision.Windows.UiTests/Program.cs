@@ -1186,6 +1186,19 @@ internal static class Program
         Check(flight.Any(line => line.X1 == 113 && line.Y1 == 80 && line.X2 == 124 && line.Y2 == 80)
             && flight.Any(line => line.X1 == 124 && line.Y1 == 85 && line.X2 == 212 && line.Y2 == 85),
             "The white route should follow the active jump and continue to the target beyond the image.");
+        var room = new HackerObjectivePlacement("room", new(7, 0), new(1, 1), graph);
+        var clicked = new AtlasPoint(goal.X + 7, goal.Y);
+        var selected = HackerAtlasObjectives.Default.Select(clicked, 4, [room]);
+        Check(selected?.Target(room) == goal, "An objective outside the captured tile should be selectable.");
+        var cleared = selected!.Select(clicked, 4, [room]);
+        Check(cleared is not null && cleared.IsAutomatic("room") && cleared.Target(room) is null,
+            "Clicking the white target again must turn off the explicit route.");
+        canvas.Children.Clear();
+        AtlasPathPresentation.Draw(canvas, graph.Strokes, 10, new(7, 130), cleared!.Target(room), []);
+        Check(!canvas.Children.OfType<Line>().Any(line => line.Stroke == Brushes.White)
+            && canvas.Children.OfType<Line>().Any(line => line.Stroke == Brushes.Gold),
+            "Clearing the target must remove the white route while leaving the authored Atlas paths visible.");
+        Console.WriteLine("PASS Hacker clears the white objective without removing authored paths");
         Console.WriteLine("PASS Hacker draws the objective through a jump and one arrow on a shared fall");
     }
 

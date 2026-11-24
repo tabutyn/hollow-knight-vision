@@ -151,6 +151,44 @@ internal static class HackerGymObservationTests
         }
     }
 
+    internal static void TestClearedHackerObjectiveUsesRegisteredFrontierAndCreditsTravelOnce()
+    {
+        var labels = new GroundTruthLineDocument { Lines = [new("Tutorial_01", 0, 25, 0, GroundTruthLineKind.Positive, false)] };
+        var uncovered = new BotHackerVisit(labels);
+        var visit = new BotHackerVisit(labels);
+        var registeredCells = System.Collections.Immutable.ImmutableHashSet.CreateRange(Enumerable.Range(0, 9).Select(x => (x, 0)));
+        var saved = new HackerAtlasRoom(Guid.NewGuid(), "Tutorial_01", new(700, 20), default)
+        {
+            BotCoverage = new(registeredCells, 0, 1),
+            TerrainProjection = new(new(20, 20), new(10, 10))
+        };
+        var local = Observe(uncovered, 0, 1, automatic: true, registered: null);
+        var restored = Observe(visit, 0, 1, automatic: true, registered: saved);
+        if (local.RoadHint is not { Frontier: true, Dx: 1 } first || restored.RoadHint is not { Frontier: true, Dx: 1 } withArchive
+            || withArchive.Distance - first.Distance < .3 || restored.PathAlignment is not null)
+            throw new InvalidOperationException("After clearing the objective the new frontier must stay on seen ground, including saved Atlas cells.");
+
+        var forward = Observe(visit, 1, 2, automatic: true, registered: saved);
+        var backward = Observe(visit, 2, 1, automatic: true, registered: saved);
+        if (forward.PathProgress is not > 0 || forward.PathAlignment is not > 0 || backward.PathProgress != 0 || backward.PathAlignment is not < 0)
+            throw new InvalidOperationException("Only movement toward the previous frontier earns progress. Opposite movement earns negative alignment.");
+        var fixedAgain = Observe(visit, 3, 1, automatic: false, registered: saved);
+        var automaticAgain = Observe(visit, 4, 1, automatic: true, registered: saved);
+        var repeated = Observe(visit, 5, 2, automatic: true, registered: saved);
+        if (fixedAgain.RoadHint?.Frontier != false || automaticAgain.PathAlignment is not null || automaticAgain.RoadHint?.Frontier != true
+            || repeated.PathProgress != 0 || repeated.PathAlignment is not > 0)
+            throw new InvalidOperationException("Changing objectives must clear the movement sample without re-crediting the same directed travel.");
+
+        BotCaptureObservation Observe(BotHackerVisit observer, int index, double x, bool automatic, HackerAtlasRoom? registered)
+        {
+            var sample = Frame(index, x) with { Grounded = true };
+            var time = index * .1 + .02;
+            return observer.Observe(new(192, 128), HackerFrameSynchronizer.Key(sample.UnityFrame), sample,
+                new(time, time + .001, 1, 1, 0), InputButtons.Right, index, automaticObjective: automatic,
+                registeredRoom: registered) ?? throw new InvalidOperationException("Missing test observation.");
+        }
+    }
+
     internal static void TestVisualCoverageDoesNotCreditMasksOrPlacementGaps()
     {
         var visit = new BotVisualAtlasCoverage();

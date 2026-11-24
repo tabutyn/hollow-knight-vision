@@ -2,6 +2,23 @@ namespace HollowKnightVision.Windows.Core;
 
 public static class AtlasPathRouting
 {
+    internal static bool AllowsRegisteredSegment(AtlasPlatformGraph graph, AtlasPathPoint a, AtlasPathPoint b,
+        int cell, Func<AtlasPathPoint, bool> known)
+    {
+        var intervals = Math.Max(1, (a.DistanceTo(b) + cell - 1) / cell);
+        for (var i = 1; i <= intervals; i++)
+        {
+            var point = new AtlasPathPoint(a.X + (int)((long)(b.X - a.X) * i / intervals),
+                a.Y + (int)((long)(b.Y - a.Y) * i / intervals));
+            if (known(point)) continue;
+            var belowShelf = point with { Y = point.Y - Math.Max(2, graph.KnightHeight / 4) };
+            if (graph.WalkNodes.Contains(point) || !known(belowShelf) || !graph.Strokes.Any(stroke =>
+                    stroke.Kind is AtlasPathKind.Jump or AtlasPathKind.DoubleJump && stroke.Horizontal && stroke.Contains(point)))
+                return false;
+        }
+        return true;
+    }
+
     public static IReadOnlyList<AtlasPathPoint> FindRoute(AtlasPlatformGraph graph, AtlasPathStroke startStroke,
         AtlasPathPoint start, AtlasPathStroke targetStroke, AtlasPathPoint target)
     {

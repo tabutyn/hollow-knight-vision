@@ -31,13 +31,28 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
         public AtlasPoint? CoverageOrigin { get; set; }
         public AtlasPathPoint? Goal { get; set; }
         public int? BestRemaining { get; set; }
+        public bool Automatic { get; set; }
+        private readonly HashSet<(int Lane, int Position, int Direction)> credited = [];
+
+        public int Credit(AtlasPathHint route, int count)
+        {
+            var horizontal = route.Current.X != route.Next.X;
+            var direction = horizontal ? Math.Sign(route.Next.X - route.Current.X) : Math.Sign(route.Next.Y - route.Current.Y);
+            var lane = AtlasPathPoint.Round((horizontal ? route.Current.Y : route.Current.X) / (double)Math.Max(6, Graph.KnightHeight / 2));
+            var start = horizontal ? route.Current.X : route.Current.Y;
+            var added = 0;
+            for (var offset = 0; offset < count; offset++)
+                if (credited.Add((lane, start + direction * offset, horizontal ? direction : 2 * direction))) added++;
+            return added;
+        }
     }
 
     private sealed record RouteSample(AtlasPathHint Path, AtlasPathPoint Knight, double Time, BotRoadHint Road);
 
     public BotCaptureObservation? Observe(WorldSize size, int? renderedFrame, ReceiverGroundTruthSample? sample,
         BotCaptureTiming timing, InputButtons? input, int revision, int? health = null,
-        BotAtlasObjective? objective = null, string? roomKey = null)
+        BotAtlasObjective? objective = null, string? roomKey = null, bool automaticObjective = false,
+        HackerAtlasRoom? registeredRoom = null)
     {
         var row = BotObservationBuilder.Hacker(size, renderedFrame, sample, labels, timing, input);
         if (row is null || sample is null)
@@ -54,11 +69,12 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
             session = sample.SessionId;
             generation = timing.Generation;
         }
-        return Extend(row, sample, size, revision, health ?? row.MeasuredHealth, objective, roomKey);
+        return Extend(row, sample, size, revision, health ?? row.MeasuredHealth, objective, roomKey, automaticObjective, registeredRoom);
     }
 
     private BotCaptureObservation Extend(BotCaptureObservation row, ReceiverGroundTruthSample sample, WorldSize size,
-        int revision, int? health, BotAtlasObjective? objective, string? roomKey)
+        int revision, int? health, BotAtlasObjective? objective, string? roomKey, bool automaticObjective,
+        HackerAtlasRoom? registeredRoom)
     {
         ObjectiveReachable = false;
         if (size.Width > 8192 || size.Height > 8192
@@ -74,8 +90,8 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
         var scale = new AtlasPoint(camera.PixelsPerWorldUnitX, camera.PixelsPerWorldUnitY);
         var center = new AtlasPoint(camera.CameraWorld.X * scale.X, camera.CameraWorld.Y * scale.Y);
         var room = Room(camera.SceneName, scale, roomKey);
-        room.CoverageOrigin ??= center;
-        var pose = new AtlasPoint(center.X - room.CoverageOrigin.Value.X, center.Y - room.CoverageOrigin.Value.Y);
+        var coverageOrigin = room.CoverageOrigin ??= center;
+        var pose = new AtlasPoint(center.X - coverageOrigin.X, center.Y - coverageOrigin.Y);
         AddCoverage(room.Covered, pose, size);
         var view = BotAtlasFrontiers.View(pose, size, revision, health, room.Covered.Count, 0, (x, y) => room.Covered.Contains((x, y)));
         var worldOrigin = new AtlasPoint(center.X - size.Width / 2, center.Y - size.Height / 2);
@@ -103,7 +119,8 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
             return result;
         }
 
-        var goal = objective is null ? graph.UpperRightObjective : objective.Project(camera.SceneName, scale, graph);
+        var automatic = automaticObjective && objective is null && !fixedWorldGoal.HasValue;
+        var goal = automatic ? null : objective is null ? graph.UpperRightObjective : objective.Project(camera.SceneName, scale, graph);
         if (fixedWorldGoal is { } fixedGoal)
         {
             if (camera.SceneName != "Tutorial_01"
@@ -115,30 +132,47 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
             }
             goal = target.Closest(gate);
         }
-        if (room.Goal != goal)
+        if (room.Goal != goal || room.Automatic != automatic)
         {
             room.Goal = goal;
+            room.Automatic = automatic;
             room.BestRemaining = null;
             previous = null;
-            room.Navigation.Interrupt();
+            room.Navigation.ClearObjective();
         }
-        var path = goal is null ? null : room.Navigation.Follow(graph, feet, sample.Grounded, measured: true,
-            admitted: null, walked: [], fixedObjective: goal, fixedObjectiveOnGround: objective is null);
+        var path = goal is null && !automatic ? null : room.Navigation.Follow(graph, feet, sample.Grounded, measured: true,
+            admitted: automatic ? (a, b) => AtlasPathRouting.AllowsRegisteredSegment(graph, a, b, (int)BotAtlasFrontiers.CellSize, Known) : null,
+            walked: [], fixedObjective: goal, fixedObjectiveOnGround: objective is null);
         ObjectiveReachable |= path.HasValue;
+        var knight = new AtlasPathPoint(feet.X, feet.Y + graph.KnightHeight);
         if (path is not { } next)
         {
+            if (automatic && room.Navigation.LastProjection is { } projection)
+            {
+                var completed = Score(room, projection, room.Navigation.PriorRemaining, knight, row.CaptureTimestamp);
+                result = result with { PathProgress = completed.Progress, PathAlignment = completed.Alignment };
+            }
             previous = null;
             if (room.Navigation.HasStartProjection) room.BestRemaining = null;
             room.Navigation.Interrupt();
             return result;
         }
 
-        var road = BotPathMotion.Road(next, graph.KnightHeight, size.Width, frontier: false);
-        var knight = new AtlasPathPoint(feet.X, feet.Y + graph.KnightHeight);
-        var (progress, alignment) = Score(graph.KnightHeight, next, knight, row.CaptureTimestamp, room.BestRemaining);
+        var road = BotPathMotion.Road(next, graph.KnightHeight, size.Width, frontier: automatic);
+        var (progress, alignment) = Score(room, next.Projection, next.PriorRemaining, knight, row.CaptureTimestamp);
+        if (automatic && previous?.Path.Objective != next.Objective) room.BestRemaining = null;
         room.BestRemaining = Math.Min(room.BestRemaining ?? next.Remaining, next.Remaining);
         previous = new(next, knight, row.CaptureTimestamp, road);
         return result with { RoadHint = road, PathProgress = progress, PathAlignment = alignment };
+
+        bool Known(AtlasPathPoint point)
+        {
+            var floor = point.Y - graph.KnightHeight;
+            return room.Covered.Contains((BotAtlasFrontiers.Cell(point.X - coverageOrigin.X + size.Width / 2),
+                       BotAtlasFrontiers.Cell(floor - coverageOrigin.Y + size.Height / 2)))
+                || registeredRoom is { } saved && saved.SceneName == camera.SceneName
+                && saved.HasRegisteredGround(new(point.X / scale.X, floor / scale.Y));
+        }
     }
 
     public void Interrupt()
@@ -175,8 +209,10 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
         return room;
     }
 
-    private (double Progress, double? Alignment) Score(int height, AtlasPathHint next, AtlasPathPoint knight, double time, int? best)
+    private (double Progress, double? Alignment) Score(RouteRoom room, AtlasPathPoint projection, int? remaining,
+        AtlasPathPoint knight, double time)
     {
+        var height = room.Graph.KnightHeight;
         if (previous is not { } old || time - old.Time is <= 0 or >= .45
             || old.Knight.DistanceTo(knight) > 3 * height)
             return (0, null);
@@ -184,11 +220,11 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
         var motionY = knight.Y - old.Knight.Y;
         var alignment = old.Road.Dx == 0 && old.Road.Dy == 0
             ? (double?)null : (motionX * old.Road.Dx + motionY * old.Road.Dy) / height;
-        if (best is not { } baseline || next.PriorRemaining is not { } remaining || remaining >= baseline)
+        if (room.BestRemaining is not { } baseline || remaining is not { } distance || distance >= baseline)
             return (0, alignment);
 
-        var count = BotPathMotion.ForwardPixels(old.Path, old.Knight, baseline, knight, next.Projection,
-            remaining);
+        var count = BotPathMotion.ForwardPixels(old.Path, old.Knight, baseline, knight, projection, distance);
+        if (room.Automatic && count > 0) count = room.Credit(old.Path, count);
         return (count / (double)height, alignment);
     }
 

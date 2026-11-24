@@ -3,6 +3,31 @@ using static HollowKnightVision.Windows.Core.AtlasPathKind;
 
 internal static class AtlasPlatformGraphTests
 {
+    internal static void TestHackerObjectiveDefaultClearReplacementAndRoomHitOrder()
+    {
+        AtlasPathPlatform[] floors = [new(10, 100, 101), new(140, 260, 100), new(280, 350, 50)];
+        var graph = new AtlasPlatformGraph(floors, [], height: 20, width: 10);
+        var room = new HackerObjectivePlacement("active", new(-250, 50), new(10, 10), graph);
+        var choices = HackerAtlasObjectives.Default;
+        Require(choices.Target(room) == new AtlasPathPoint(260, 120), "The default must use the farthest endpoint of the top tier.");
+        var extended = room with { Graph = new([..floors, new(280, 330, 100)], [], 20, 10) };
+        Require(choices.Target(extended) == new AtlasPathPoint(330, 120), "The default must follow the edited floor while it is active.");
+        choices = choices.Select(new(80, 170), 2, [extended])!;
+        Require(choices.IsAutomatic("active") && choices.Target(room) is null,
+            "Clicking the default marker must clear it even after the Atlas graph changes.");
+
+        var overlap = room with { Scene = "other" };
+        choices = choices.Select(new(-200, 171), 4, [room, overlap])!;
+        var longer = room with { Graph = new([..floors, new(380, 440, 105)], [], 20, 10) };
+        Require(choices.Target(longer) == new AtlasPathPoint(50, 121) && choices.SelectedFor("other") is null
+            && choices.IsAutomatic("other"), "The active room must win equal hits and the manual point must survive a rebuilt graph.");
+        choices = choices.Select(new(-199, 171), 4, [longer, overlap])!;
+        Require(choices.Target(longer) is null && HackerAtlasObjectives.Default.Target(longer) == new AtlasPathPoint(440, 125),
+            "Click near the same target to clear it. A fresh Atlas should restore its authored default.");
+        Require(choices.Select(new(4000, 4000), 4, [longer]) is null && choices.Select(new(80, 170), double.NaN, [longer]) is null,
+            "A click with no route hit must leave the selection alone.");
+    }
+
     internal static void TestWalkedExtentsPreserveEvidenceAndRejectSpuriousJump()
     {
         var graph = new AtlasPlatformGraph([new(0, 275, 95), new(485, 800, 94)], [],

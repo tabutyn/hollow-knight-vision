@@ -566,21 +566,8 @@ public sealed class GameplayPathTracker
             previous = current;
         }
 
-        internal bool Allows(AtlasPathPoint a, AtlasPathPoint b, AtlasPlatformGraph graph)
-        {
-            var intervals = Math.Max(1, (a.DistanceTo(b) + Cell - 1) / Cell);
-            for (var i = 1; i <= intervals; i++)
-            {
-                var point = new AtlasPathPoint(a.X + (int)((long)(b.X - a.X) * i / intervals),
-                    a.Y + (int)((long)(b.Y - a.Y) * i / intervals));
-                if (Known(point)) continue;
-                var belowShelf = point with { Y = point.Y - Math.Max(2, graph.KnightHeight / 4) };
-                if (graph.WalkNodes.Contains(point) || !Known(belowShelf) || !graph.Strokes.Any(stroke =>
-                        stroke.Kind is AtlasPathKind.Jump or AtlasPathKind.DoubleJump && stroke.Horizontal && stroke.Contains(point)))
-                    return false;
-            }
-            return true;
-        }
+        internal bool Allows(AtlasPathPoint a, AtlasPathPoint b, AtlasPlatformGraph graph) =>
+            AtlasPathRouting.AllowsRegisteredSegment(graph, a, b, Cell, Known);
 
         private bool Known(AtlasPathPoint point)
         {

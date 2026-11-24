@@ -5997,7 +5997,7 @@ public partial class MainWindow : Window
 
     private void ClearHackerPresentation()
     {
-        Volatile.Write(ref hackerObjective, null);
+        Volatile.Write(ref hackerObjectives, HackerAtlasObjectives.Default);
         Interlocked.Increment(ref botRouteEpoch);
         hackerPathLinks.CancelSelection();
         hackerPathGraphs.Clear();
