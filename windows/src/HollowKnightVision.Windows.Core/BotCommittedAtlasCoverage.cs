@@ -35,7 +35,7 @@ public sealed class BotCommittedAtlasCoverage
         earned = 0;
     }
 
-    public void Update(LiveWorldSnapshot snapshot)
+    public void Update(LiveWorldSnapshot snapshot, bool creditNewCells = true)
     {
         if (revision == snapshot.MapRevision && ReferenceEquals(previousRows, snapshot.Observations)) return;
         var owners = snapshot.TrackingIslands.SelectMany(island => island.Members.Select(member =>
@@ -54,7 +54,7 @@ public sealed class BotCommittedAtlasCoverage
             foreach (var row in snapshot.Observations)
                 if (placements.ContainsKey(row.Id)) Add(current[row.Id], snapshot, credit: false);
         }
-        var continuing = previousRows is not null && snapshot.MapRevision >= revision;
+        var continuing = creditNewCells && previousRows is not null && snapshot.MapRevision >= revision;
         foreach (var row in snapshot.Observations)
             if (!placements.ContainsKey(row.Id)) Add(current[row.Id], snapshot, credit: continuing);
         placements = current;
