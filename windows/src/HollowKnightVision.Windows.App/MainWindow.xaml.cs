@@ -781,6 +781,7 @@ public partial class MainWindow : Window
         public bool IntegratesHackerAtlas { get; init; }
         public long HackerWorkGeneration { get; init; }
         public ProfileLaunch? ProfileLaunch { get; init; }
+        public bool ReadingOpeningCutscene { get; init; }
         public GroundHypothesisTrackingResult GroundHypotheses { get; init; } =
             GroundHypothesisTrackingResult.Empty;
         public IReadOnlyList<GroundHypothesisAtlasLine> GroundDisplayLines { get; init; } = [];
@@ -815,7 +816,10 @@ public partial class MainWindow : Window
         InputPathRoot = IOPath.Combine(documents, "HollowKnightVision", "paths");
         gameControls = new(createReceiver);
         playerOpsPreferences = new(root);
+        gameTextReader = new(IOPath.Combine(root, "Notebooks"));
+        gameTextPreference = IOPath.Combine(root, "read-game-text.txt");
         InitializeComponent();
+        InitializeGameText();
         OpsRandomizeAfterLabelCheck.IsChecked = playerOpsPreferences.LoadRandomizeAfterLabel();
         gameControls.GroundTruthReceived += OnReceiverGroundTruth;
         gameplayFraming = gameplayFramingValue;
@@ -1012,6 +1016,8 @@ public partial class MainWindow : Window
         {
             if (visionRunCompletion is { } captureFinished)
                 await captureFinished;
+            if (gameTextTask is { } reading) await reading;
+            gameTextRecognition.Dispose();
             await botEvaluationWrites;
             if (replayUiFinished is { } replayUi) await replayUi.Task;
             await worldWorker.DrainAsync();
@@ -2068,6 +2074,7 @@ public partial class MainWindow : Window
         if (initialization is null || SettingsLanguageCombo.SelectedItem is not ComboBoxItem item
             || item.Tag is not string language || language == initialization.LanguageIdentifier) return;
         initialization.SetLanguage(language);
+        ResetGameTextScan();
         initializationTargetContext = null;
         if (workspace is "Label" or "Model") SelectWorkspace("Gameplay");
         menuStencilRecognizer.Refresh(initialization.LanguageIdentifier);
@@ -2673,6 +2680,7 @@ public partial class MainWindow : Window
             if (ReferenceEquals(visionCancellation, cancellation))
             {
                 visionCancellation = null;
+                ResetGameTextScan();
                 await AbandonBotCaptureAsync();
                 StartVisionButton.IsEnabled = true;
                 StopVisionButton.IsEnabled = false;
@@ -3271,6 +3279,7 @@ public partial class MainWindow : Window
             && hudStencil is { EstablishesGameplay: true, HoldsHealthMask: false }
             && profileTimestamp - hudStencil.SourceTimestamp is >= 0 and <= .25;
         var profileLaunch = ObserveProfileAtlas(profileMenu, freshProfileHud, captureTimestamp, captureGeneration);
+        var readingOpening = profileLaunchDetector.AwaitingGameplay && profileMenu is not { IsMatch: true } && !freshProfileHud;
         var holdAtlas = Volatile.Read(ref profileAtlasHeld);
         if (admission.AdmitsTracking)
             gameControls.RecordVisualGroundInput(captureTimestamp, (ulong)captureGeneration, frame.Height, masks, movementButtons);
@@ -3567,6 +3576,7 @@ public partial class MainWindow : Window
                 IntegratesHackerAtlas = integratesHackerAtlas,
                 HackerWorkGeneration = pendingHackerWorkGeneration,
                 ProfileLaunch = profileLaunch,
+                ReadingOpeningCutscene = readingOpening,
                 GroundHypotheses = groundHypotheses,
                 GroundDisplayLines = groundDisplayLines,
                 LocalWalkedGround = rawWalkedGround,
@@ -3687,6 +3697,7 @@ public partial class MainWindow : Window
                 ? (result.Frame.CaptureId, result.CaptureTimestamp) : null;
             gameplayWallContactScope = result.WorldFrame;
             Volatile.Write(ref recognizedMenuContext, result.MenuContext);
+            ObserveGameText(result);
             gameplayPathPresentation = result.PathPresentation is { } paths && gameplayPathPresentation is { } visible
                 ? paths with { View = paths.View.PreserveNewerSelection(visible.View) }
                 : result.PathPresentation;
@@ -3843,6 +3854,7 @@ public partial class MainWindow : Window
         labelCapture.Reset(GamePauseState.Unavailable);
         if (workspace == "Label" && !isClosing) _ = SelectWorkspace("Gameplay", capture: false);
         visionCancellation?.Cancel();
+        ResetGameTextScan();
         menuStencilRecognizer.StopTracking();
         Volatile.Write(ref hackerObjectFrames, []);
         ClearHackerObjectOverlay();
@@ -6683,7 +6695,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog(this) == true) InputPathText.Text = dialog.FileName;
     }
 
-    private static BitmapSource FrameBitmap(BgraFrame frame)
+    internal static BitmapSource FrameBitmap(BgraFrame frame)
     {
         var bitmap = BitmapSource.Create(
             frame.Width,

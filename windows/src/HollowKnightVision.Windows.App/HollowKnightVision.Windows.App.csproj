@@ -10,6 +10,17 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Tesseract" Version="5.2.0" />
+    <Content Include="../../artifacts/game-text/tessdata/*.traineddata;../../artifacts/game-text/tessdata/LICENSE">
+      <Link>game-text/tessdata/%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="../../../THIRD_PARTY_LICENSES/GAME-TEXT-NOTICE;../../../THIRD_PARTY_LICENSES/LEPTONICA-LICENSE">
+      <Link>game-text/%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <Resource Include="Resources\HollowKnightVision.ico" />
     <Content Include="../../../macos/Sources/HollowKnightVision/Resources/stencil-guidance.json">
       <Link>stencil-guidance.json</Link>

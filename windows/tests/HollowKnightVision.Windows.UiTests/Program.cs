@@ -50,6 +50,7 @@ internal static class Program
             Application.Current.Shutdown();
             return;
         }
+        GameTextWindowTests.TestNativeGameTextRecognitionAndOverlay();
         InputPathReplayIntegrationTests.Run();
         BotDesktopEvaluationTests.Run();
         MenuParticleTests.Run();
@@ -995,6 +996,11 @@ internal static class Program
             && named[1].Contains("GroundTrackingPatchesCheck")
             && named[2].Contains("OpsResetRoomButton") && named[2].Contains("SettingsLanguageCombo"),
             "Controls appeared in the wrong settings section.");
+        var textReader = tabs[1].Descendants(ns + "CheckBox")
+            .Single(item => (string?)item.Attribute(x + "Name") == "ReadGameTextCheck");
+        Check((string?)textReader.Attribute("IsChecked") == "True"
+            && tabs[1].Descendants(ns + "Button").Any(item => (string?)item.Attribute("Click") == "GameTextLog_Click"),
+            "Game Text must be on by default and available in Debug View.");
         var estimated = tabs[1].Descendants(ns + "CheckBox")
             .Single(item => (string?)item.Attribute(x + "Name") == "EstimatedRoomConnectionsCheck");
         Check((string?)estimated.Attribute("IsChecked") == "False"
