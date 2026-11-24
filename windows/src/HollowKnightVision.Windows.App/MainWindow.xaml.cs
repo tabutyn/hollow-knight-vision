@@ -4965,7 +4965,8 @@ public partial class MainWindow : Window
 
     private bool CanResetRoom() =>
         CanUseOps() && recognizedMenuContext == "game" && gameControls.RoomResetAvailable
-        && !atlasOperationInProgress && !gameControls.IsRecording && !gameControls.IsReplaying
+        && !atlasOperationInProgress && botCapture is null && !changingBotCapture
+        && Volatile.Read(ref botPlayback) is null
         && inputPathReplayCancellation is null && !isClosing && !gameLostCountdownStarted;
 
     private async void OpsResetRoom_Click(object sender, RoutedEventArgs e) => await ResetRoomAsync();

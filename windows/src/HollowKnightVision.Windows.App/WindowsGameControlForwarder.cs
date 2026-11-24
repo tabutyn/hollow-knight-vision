@@ -60,8 +60,14 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
 
     internal bool RoomResetAvailable
     {
-        get { lock (stateLock) return playerOpsAvailable && roomResetAvailable; }
+        get { lock (stateLock) return CanResetRoomLocked(); }
     }
+
+    private bool CanResetRoomLocked() => receiver is not null && connectionFault is not null
+        && playerOpsAvailable && roomResetAvailable && !lifetime.IsCancellationRequested
+        && !roomResetPending && pendingPlayerOps.Count == 0
+        && replayCancellation is null && !capturingCheckpoint
+        && !pause.BlocksInput && !inputPathRecorder.IsRecording && !botOwner.HasValue;
 
     internal double? InputAcknowledgementP95Seconds
     {
@@ -366,13 +372,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
             fault = connectionFault;
             command = createCommand(active.SessionId);
             resetsRoom = command.Operation == ReceiverPlayerOpsCommand.ResetRoomOperation;
-            if (resetsRoom && (!roomResetAvailable || pause.BlocksInput || inputPathRecorder.IsRecording))
-                return null;
-            if (resetsRoom && botOwner.HasValue)
-            {
-                DropBotControlLocked();
-                QueueState(active, fault, false, InputButtons.None, inputEpoch);
-            }
+            if (resetsRoom && !CanResetRoomLocked()) return null;
             roomResetPending = resetsRoom;
             pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
             pendingPlayerOps[command.CommandId] = pending;

@@ -1,7 +1,10 @@
 extern alias VisionApp;
 
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
+using System.Threading.Channels;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -24,6 +27,7 @@ internal static class AtlasWindowIntegrationTests
         try
         {
             VerifyWorkspaceOperations(temporary.FullName);
+            VerifyRoomReset(Directory.CreateDirectory(Path.Combine(temporary.FullName, "room-reset")).FullName);
             VerifyRestoredPassageAlignment(Directory.CreateDirectory(Path.Combine(temporary.FullName, "passages")).FullName);
             VerifyGameplayWorldHandoff(Directory.CreateDirectory(Path.Combine(temporary.FullName, "handoff")).FullName);
         }
@@ -32,6 +36,7 @@ internal static class AtlasWindowIntegrationTests
             temporary.Delete(recursive: true);
         }
         Console.WriteLine("PASS Atlas window saves, restores and deletes scoped snapshots and switches both playthroughs");
+        Console.WriteLine("PASS Windows Reset Room protects active capture and clears both atlases only after confirmation");
         Console.WriteLine("PASS Hacker Atlas draws restored rooms at the measured passage elevation");
         Console.WriteLine("PASS Gameplay Atlas draws measured doorways independently of optional outlines and hides them outside gameplay");
         Console.WriteLine("PASS Gameplay window applies only ordered Atlas placements and keeps menu images in capture coordinates");
@@ -567,6 +572,143 @@ internal static class AtlasWindowIntegrationTests
         {
             SetField(window, "isClosing", true);
             Wait(InvokeTask(window, "PrepareShutdownAsync"));
+        }
+    }
+
+    private static void VerifyRoomReset(string root)
+    {
+        const long generation = 5;
+        var activeWorld = Directory.CreateDirectory(Path.Combine(root, "atlas-v1", "active")).FullName;
+        var hacker = new HackerAtlasArchiveStore(Path.Combine(root, "hacker-atlas-v1"));
+        var profile = new SaveProfileAtlas(1, Guid.NewGuid());
+        var room = SampleHackerArchive();
+        VisionResetController.WritePersistedAtlasMetadata(activeWorld, new(7, DateTimeOffset.UtcNow, 256, 1));
+        profile.Write(activeWorld);
+        hacker.Write(profile, room);
+        var saved = hacker.SaveState("Before room reset", profile, room);
+
+        using var server = new TcpListener(IPAddress.Loopback, 0);
+        using var timeout = new CancellationTokenSource(OperationTimeout);
+        var commands = Channel.CreateUnbounded<ReceiverPlayerOpsCommand>();
+        var replies = Channel.CreateUnbounded<ReceiverPlayerOpsAcknowledgement>();
+        server.Start();
+        var port = ((IPEndPoint)server.LocalEndpoint).Port;
+        var receiver = ServeResetReceiverAsync();
+        var window = new MainWindow(GameRuntimeMode.Modded, gamePath: null, root: root, documents: root,
+            createReceiver: () => new ReceiverClient(port: port));
+        try
+        {
+            Wait(InvokeTask(window, "InitializeAtlasesAsync"));
+            SetField(window, "workspace", "Hacker");
+            SetField(window, "recognizedMenuContext", "game");
+            SetField(window, "recentCaptureGeneration", generation);
+            var controls = GetField<WindowsGameControlForwarder>(window, "gameControls");
+            controls.Start();
+            Wait(WaitForReceiver());
+
+            var capture = new BotCaptureSession(Path.Combine(root, "capture"), "modded", "fixture", generation, 1, new());
+            SetField(window, "botCapture", capture);
+            Check(!PressReset() && (bool)Invoke(window, "CanResetRoom")! == false && !commands.Reader.TryRead(out _),
+                "The R shortcut must leave an active desktop bot capture alone.");
+            SetField(window, "botCapture", null!);
+            Wait(capture.FinishAsync(2, null, completed: false));
+
+            Check(PressReset(), "The Hacker R shortcut did not start room reset.");
+            var unconfirmedReset = GetField<Task>(window, "atlasOperationCompletion");
+            var first = ReadResetCommand();
+            Check(!PressReset() && MapsIntact(), "A pending room reset must keep both active maps and block a second reset.");
+            Reply(first, scene: null);
+            Wait(unconfirmedReset);
+            Check(MapsIntact() && Control<TextBlock>(window, "OpsStatusText").Text == "Room reset was not confirmed.",
+                "An acknowledgement without a reset scene must preserve both active maps.");
+
+            var frame = SolidFrame(9);
+            var camera = Camera(120, 40) with { SessionId = first.SessionId, AtlasGameplayActive = true };
+            var transform = GroundTruthCameraTransform.FromSample(camera, 2, new(frame.Width, frame.Height))!;
+            var prepared = new HackerPreparedFrame(frame, new(0, 0, frame.Width, frame.Height), default,
+                transform, camera, default, camera.SceneName, 9, 2, true, true);
+            var bitmap = typeof(MainWindow).GetMethod("FrameBitmap", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [frame]);
+            var publicationType = typeof(MainWindow).GetNestedType("HackerPipelinePublication", BindingFlags.NonPublic)!;
+            var pendingPreview = Activator.CreateInstance(publicationType, [prepared, bitmap,
+                GetField<object>(window, "latestStagedHackerAtlas"), generation, GetField<long>(window, "hackerWorkGeneration"), true, 0])!;
+            var pendingAnalysis = new MainWindow.VisionAnalysisResult(frame, [], [], null, camera, camera, new("Playing", "game"),
+                null, null, GetField<long>(GetField<WindowsMenuStencilRecognizer>(window, "menuStencilRecognizer"), "generation"),
+                null, true, "")
+            {
+                CaptureGeneration = generation,
+                LabelRevision = GetField<LabelCaptureSession>(window, "labelCapture").Revision
+            };
+
+            Check(PressReset(), "The room-reset shortcut did not re-enable after an unconfirmed reply.");
+            var confirmedReset = GetField<Task>(window, "atlasOperationCompletion");
+            var second = ReadResetCommand();
+            Reply(second with { SessionId = Guid.NewGuid() }, scene: null);
+            Program.Pump();
+            Check(!confirmedReset.IsCompleted && MapsIntact(), "A foreign receiver acknowledgement must not clear either map.");
+            Reply(second, camera.SceneName);
+            Wait(confirmedReset);
+            Check(VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 0
+                && hacker.Read(profile) is { Rooms.Count: 0, RegistrationCount: 0 }
+                && SaveProfileAtlas.Read(activeWorld) == profile
+                && hacker.LoadState(saved).Rooms.Single().Id == room.Rooms.Single().Id,
+                "A confirmed reset must clear the active atlases and keep the playthrough and saved snapshot.");
+
+            window.ApplyVisionAnalysis(pendingAnalysis);
+            _ = Invoke(window, "ApplyHackerPipelinePublication", pendingPreview);
+            Check(Control<Image>(window, "GameplayImage").Source is null && Control<Image>(window, "HackerLiveImage").Source is null
+                && GetField<HackerAtlasOutput>(window, "hackerAtlasOutput").RoomCount == 0,
+                "Stale Gameplay and Hacker results must not repopulate the reset atlases.");
+        }
+        finally
+        {
+            SetField(window, "isClosing", true);
+            timeout.Cancel();
+            Wait(InvokeTask(window, "PrepareShutdownAsync"));
+            Wait(receiver);
+        }
+
+        bool PressReset() => (bool)Invoke(window, "HandleLocalShortcut", System.Windows.Input.Key.R,
+            false, System.Windows.Input.ModifierKeys.None)!;
+        bool MapsIntact() => VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7
+            && hacker.Read(profile)?.RegistrationCount == room.RegistrationCount;
+        ReceiverPlayerOpsCommand ReadResetCommand()
+        {
+            var command = (ReceiverPlayerOpsCommand)Wait(commands.Reader.ReadAsync(timeout.Token).AsTask())!;
+            Check(command.Operation == ReceiverPlayerOpsCommand.ResetRoomOperation, "Expected a room reload command.");
+            return command;
+        }
+        void Reply(ReceiverPlayerOpsCommand command, string? scene) =>
+            replies.Writer.TryWrite(new(2, "playerOpsAck", command.SessionId, command.CommandId, true, null, null, null, scene));
+        async Task WaitForReceiver()
+        {
+            while (!((bool)Invoke(window, "CanResetRoom")!)) await Task.Delay(15, timeout.Token);
+        }
+        async Task ServeResetReceiverAsync()
+        {
+            try
+            {
+                using var peer = await server.AcceptTcpClientAsync(timeout.Token);
+                using var reader = new StreamReader(peer.GetStream());
+                using var writer = new StreamWriter(peer.GetStream()) { AutoFlush = true };
+                var hello = ReceiverWireCodec.DecodeLine<ReceiverCapabilityRequest>((await reader.ReadLineAsync(timeout.Token))!);
+                await writer.WriteAsync(ReceiverWireCodec.EncodeLine(new ReceiverCapabilitiesAcknowledgement(
+                    2, "capabilitiesAck", hello.SessionId,
+                    ["input-state-v1", ReceiverProtocol.PlayerOpsCapability, ReceiverProtocol.RoomResetCapability], 0)));
+                while (await reader.ReadLineAsync(timeout.Token) is { } line)
+                {
+                    if (ReceiverWireCodec.MessageType(line) != "playerOps") continue;
+                    var request = ReceiverWireCodec.DecodeLine<ReceiverPlayerOpsCommand>(line);
+                    commands.Writer.TryWrite(request);
+                    ReceiverPlayerOpsAcknowledgement reply;
+                    do
+                    {
+                        reply = await replies.Reader.ReadAsync(timeout.Token);
+                        await writer.WriteAsync(ReceiverWireCodec.EncodeLine(reply));
+                    }
+                    while (reply.SessionId != request.SessionId || reply.CommandId != request.CommandId);
+                }
+            }
+            catch (Exception error) when (error is OperationCanceledException or IOException or SocketException) { }
         }
     }
 
