@@ -11,6 +11,11 @@ public sealed class WalkedGroundMemory
     public IReadOnlyList<GroundHypothesisAtlasLine> InRoom(string room, long? lineage = null) =>
         rooms.TryGetValue((room, lineage), out var lines) ? lines : [];
 
+    internal IReadOnlyList<LiveWalkedGroundBatch> OtherOwners(string room, long owner) =>
+        rooms.Where(pair => pair.Key.Room == room && pair.Key.Lineage is not null && pair.Key.Lineage != owner)
+            .OrderBy(pair => pair.Key.Lineage)
+            .Select(pair => new LiveWalkedGroundBatch(pair.Key.Lineage!.Value, pair.Value)).ToArray();
+
     public void Record(string room, CleanFloorLine floor, AtlasPoint measuredCamera, int imageHeight, long? lineage = null)
     {
         if (string.IsNullOrEmpty(room) || !double.IsFinite(measuredCamera.X) || !double.IsFinite(measuredCamera.Y)
@@ -194,6 +199,9 @@ public sealed class WalkedGroundTracker
 
     public IReadOnlyList<GroundHypothesisAtlasLine> InRoom(string room) =>
         memory.InRoom(room, room == activeRoom ? ActiveLineage : null);
+
+    internal IReadOnlyList<LiveWalkedGroundBatch> OtherOwners(string room, long owner) =>
+        memory.OtherOwners(room, owner);
 
     public KnightTerrainContact Observe(string room, GroundEdgeAnalysis frame, PixelRect? knight, AtlasPoint? measuredCamera,
         InputButtons? buttons, double time, IReadOnlyList<DetectedFloorLine> detected, IReadOnlyList<DetectedWall>? walls = null,

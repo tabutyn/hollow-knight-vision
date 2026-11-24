@@ -56,10 +56,19 @@ public sealed record LiveIslandCapture(
     [property: JsonRequired] string BreakReason,
     [property: JsonRequired] bool Measured)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public LiveWalkedGroundSource? UnplacedSource { get; init; }
+
     internal bool IsValid => Measured && Id >= 0 && RoomId >= 0 && double.IsFinite(StartedAt)
         && LiveWorldSnapshot.Finite(WorldFromLocal) && LiveWorldSnapshot.Finite(LocalPose)
-        && Enum.IsDefined(Placement) && Uncertainty.IsValid && BreakReason is not null;
+        && Enum.IsDefined(Placement) && Uncertainty.IsValid && BreakReason is not null
+        && (UnplacedSource is null || UnplacedSource.Lineage > 0);
 }
+
+/// <summary>The capture stream and image lineage of a foot measurement awaiting its first saved image.</summary>
+public sealed record LiveWalkedGroundSource(
+    [property: JsonRequired] ulong CaptureGeneration,
+    [property: JsonRequired] long Lineage);
 
 public sealed record LiveGroundLineEvidence(
     [property: JsonRequired] long SegmentId,

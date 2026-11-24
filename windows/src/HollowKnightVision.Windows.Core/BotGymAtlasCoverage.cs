@@ -93,7 +93,13 @@ internal sealed class BotGymAtlasCoverage
         var previousWalk = lineage is { } owner ? recordedLocalWalk.GetValueOrDefault(owner) ?? [] : [];
         var freshWalk = lineage is not null && currentWalk.Count > 0
             ? LiveWorldWalkedGround.NewEvidence(currentWalk, previousWalk, center) : [];
-        if (!awaitingPlacement && !samplesDoorway && freshWalk.Count == 0 && lastPose == local && masks.SequenceEqual(lastMasks)) return;
+        var carriedWalks = captureEvidence?.CaptureTimestamp == time
+            ? LiveWorldWalkedGround.NewCarriedEvidence(captureEvidence, ownerId => recordedLocalWalk.GetValueOrDefault(ownerId) ?? [])
+            : [];
+        if (!awaitingPlacement && !samplesDoorway && freshWalk.Count == 0 && carriedWalks.Count == 0
+            && lastPose == local && masks.SequenceEqual(lastMasks)
+            && (lineage is not { } source || lineage == world.Snapshot.TrackingIslands.LastOrDefault()?.MeasuredLineage
+                || LiveWorldWalkedGround.UnboundOwner(world.Snapshot, roomId, 1, source) is null)) return;
 
         var recovering = awaitingPlacement;
         // The same visually confirmed room can return at its last measured
@@ -114,13 +120,18 @@ internal sealed class BotGymAtlasCoverage
         }
         var placed = new AtlasPoint(center.X + basis.X, center.Y + basis.Y);
         var evidence = captureEvidence ?? new(time) { HasMeasuredSceneryContinuity = continuesMeasuredScenery };
-        var id = world.Snapshot.Observations.Count;
+        var previousSnapshot = world.Snapshot;
+        var id = previousSnapshot.Observations.Count;
         world.Ingest(id, time, frame, center, size.Width,
             exclusions: masks, searchForClosure: false, localPose: center, captureGeneration: 1,
             localEpoch: epoch, roomId: roomId, placedCameraPose: placed,
-            walkedGround: freshWalk, captureEvidence: evidence, placementPending: awaitingPlacement);
+            walkedGround: freshWalk, captureEvidence: evidence, placementPending: awaitingPlacement,
+            carriedWalks: carriedWalks);
         if (lineage is { } recordedOwner && freshWalk.Count > 0)
             recordedLocalWalk[recordedOwner] = GroundStrokeGeometry.Coalesce(previousWalk.Concat(currentWalk));
+        foreach (var batch in carriedWalks)
+            recordedLocalWalk[batch.Lineage] = GroundStrokeGeometry.Coalesce(
+                (recordedLocalWalk.GetValueOrDefault(batch.Lineage) ?? []).Concat(batch.Spans));
         BgraFrame? masked = null;
         var searchDue = time - lastRecoverySearch >= RecoverySearchInterval;
         if (awaitingPlacement && referenceImages.Count != 0
@@ -149,7 +160,11 @@ internal sealed class BotGymAtlasCoverage
         var credit = !recovering && !alignedDoorway && correction is null or { X: 0, Y: 0 };
         var snapshot = world.Snapshot;
         coverage.Update(snapshot, creditNewCells: credit);
-        if (world.LatestIslandAwaitsPlacement)
+        var pendingPlacement = world.LatestIslandAwaitsPlacement;
+        if (carriedWalks.Count > 0 || LiveWorldWalkedGround.WasWalkedOwnerPlaced(previousSnapshot, snapshot)
+            || !pendingPlacement && (recovering || alignedDoorway))
+            placedWalk[roomId] = LiveWorldWalkedGround.ProjectRoom(snapshot, roomId, includeImageContacts: false);
+        if (pendingPlacement)
         {
             var island = snapshot.TrackingIslands[^1].Id;
             if (!localCharts.TryGetValue(island, out var chart))
@@ -160,17 +175,10 @@ internal sealed class BotGymAtlasCoverage
         }
 
         var observation = snapshot.Observations[^1];
-        if (recovering || alignedDoorway)
-        {
-            var pending = snapshot.UnplacedObservationIds();
-            placedWalk[roomId] = GroundStrokeGeometry.Coalesce(snapshot.Observations
-                .Where(row => row.RoomId == roomId && !pending.Contains(row.Id))
-                .SelectMany(LiveWorldWalkedGround.ProjectObservation));
-        }
-        else if (freshWalk.Count > 0)
+        if (freshWalk.Count > 0)
             placedWalk[roomId] = GroundStrokeGeometry.Coalesce((placedWalk.GetValueOrDefault(roomId) ?? [])
                 .Concat(LiveWorldWalkedGround.ProjectObservation(observation)));
-        if (observation.GroundGeometry is not null && snapshot.Keyframes.LastOrDefault()?.ObservationId == id)
+        if (observation.GroundGeometry is { Lines.Count: > 0 } && snapshot.Keyframes.LastOrDefault()?.ObservationId == id)
         {
             // Only placed ground keyframes can verify a later recovery. Keep
             // a fixed number of images regardless of episode length.

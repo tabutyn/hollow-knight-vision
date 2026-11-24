@@ -413,6 +413,37 @@ internal static class GameplayGymVisualTests
         }
     }
 
+    internal static void TestGymCarriesPendingFootprintsThroughStationaryImages()
+    {
+        var atlas = new BotGymAtlasCoverage();
+        var measured = GroundHypothesisTrackingResult.Empty with
+        {
+            PoseVerified = true, HasConfirmedGround = true, LocalTextureSupport = 4
+        };
+        var floor = new GroundHypothesisAtlasLine(WalkedGroundMemory.WalkedSegmentId, new(20, 80), new(100, 80));
+        atlas.EnterRoom(7);
+        Observe(1, 1, 2);
+        Observe(2, 1.05, 1, [floor]);
+        Observe(3, 1.2, 2, carried: [new(1, [floor])]);
+        var saved = atlas.Snapshot.Observations[^1].GroundGeometry?.WalkedIslands?.Single();
+        if (atlas.Snapshot.Observations.Count != 2 || saved?.Owner.UnplacedSource?.Lineage != 1
+            || atlas.WalkedForPolicy([], 2).Count != 0)
+            throw new InvalidOperationException("A stationary carrier must save the throttled walk without placing it.");
+        Observe(4, 1.4, 1, [floor]);
+        if (atlas.Snapshot.Observations.Count != 3 || atlas.Snapshot.Observations[^1].WalkedGround is not null
+            || atlas.Snapshot.TrackingIslands[^1].Id != saved.Owner.Id
+            || !atlas.WalkedForPolicy([], 1).SequenceEqual([floor]))
+            throw new InvalidOperationException("The correct stationary image must place the already saved walk once.");
+
+        void Observe(int id, double time, long owner,
+            IReadOnlyList<GroundHypothesisAtlasLine>? current = null, IReadOnlyList<LiveWalkedGroundBatch>? carried = null)
+        {
+            var frame = new BgraFrame(320, 180, 320 * 4, new byte[320 * 180 * 4], id, DateTimeOffset.UnixEpoch);
+            atlas.Observe(frame, default(AtlasPoint), time, [], default, measured, admitsPlacement: true,
+                captureEvidence: new(time) { MeasuredLineage = owner, OtherWalks = carried ?? [] }, walkedGround: current);
+        }
+    }
+
     internal static void TestGymReportsCorrectionsOnlyForAnExistingVisualEstimate()
     {
         var source = new BotVisualGymObservationSource();

@@ -148,7 +148,12 @@ public sealed class BotVisualGymObservationSource
                 ? LiveWorldCaptureEvidence.FromGround(time, frame.Width, frame.Height, analysis.Floors,
                     observed.GroundTracking.LineReviews, masks.GroundKnight, contact.MeasuredFoot, contact.Floor)
                 : new LiveWorldCaptureEvidence(time) { HasMeasuredSceneryContinuity = true };
-            captureEvidence = captureEvidence with { LocalReferenceTimestamp = referenceTimestamp, MeasuredLineage = lineage };
+            captureEvidence = captureEvidence with
+            {
+                LocalReferenceTimestamp = referenceTimestamp,
+                MeasuredLineage = lineage,
+                OtherWalks = lineage is { } owner ? walked.OtherOwners(roomKey, owner) : []
+            };
         }
         var localWalk = walked.InRoom(roomKey);
         coverage.Observe(frame, terrainCamera, time, masks.AtlasExclusions, room.CompositionBounds,
