@@ -68,6 +68,7 @@ public partial class MainWindow
         botRequestedFrame = botDecodedFrame = -1;
         BotPreviewImage.Source = null;
         BotPreviewOverlay.Children.Clear();
+        ShowBotClipAnnotations(null, default);
         BotPreviewPosition.Text = string.Empty;
         BotClipInputs.Text = string.Empty;
         BotPlayClip.IsEnabled = BotPreviousFrame.IsEnabled = BotNextFrame.IsEnabled = BotClipScrubber.IsEnabled = false;
@@ -216,10 +217,11 @@ public partial class MainWindow
             BotPreviewImage.Width = BotPreviewOverlay.Width = image.PixelWidth;
             BotPreviewImage.Height = BotPreviewOverlay.Height = image.PixelHeight;
             BotPreviewImage.Source = image;
-            if (timeline.Overlay(index) is { } overlay)
-                BotCapturePreview.Draw(BotPreviewOverlay, overlay, new(image.PixelWidth, image.PixelHeight));
-            else
-                BotPreviewOverlay.Children.Clear();
+            var overlay = timeline.Overlay(index);
+            var annotations = overlay is not null
+                ? BotCapturePreview.Draw(BotPreviewOverlay, overlay, new(image.PixelWidth, image.PixelHeight)) : default;
+            if (overlay is null) BotPreviewOverlay.Children.Clear();
+            ShowBotClipAnnotations(overlay, annotations);
             BotPreviewPosition.Text = $"{timeline.Offset(index):0.00} s · {index + 1} / {timeline.Count}";
             BotClipInputs.Text = DescribeBotClipInputs(timeline.HeldButtons(index));
         }
@@ -233,6 +235,29 @@ public partial class MainWindow
         {
             botImageLoading = false;
             RequestBotClipImage();
+        }
+    }
+
+    private void ShowBotClipAnnotations(BotCaptureReviewFrame? frame, (bool Route, int? Blockade) annotations)
+    {
+        SetLegend(BotClipRouteLegend, annotations.Route ? "Purple arrow · Recorded route direction" : "");
+        SetLegend(BotClipBlockadeLegend, annotations.Blockade switch
+        {
+            1 => "Orange marker · Blocked moving right",
+            -1 => "Orange marker · Blocked moving left",
+            _ => ""
+        });
+        SetLegend(BotClipFrameIssue, frame switch
+        {
+            { HasMaskedKnightEvidence: true } => "Knight occluded · Recovery candidate",
+            { Issues.Count: > 0 } => "Excluded frame · " + string.Join(", ", frame.Issues),
+            _ => ""
+        });
+
+        static void SetLegend(TextBlock label, string text)
+        {
+            label.Text = text;
+            label.Visibility = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         }
     }
 

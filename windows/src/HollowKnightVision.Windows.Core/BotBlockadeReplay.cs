@@ -24,18 +24,22 @@ public static class BotBlockadeReplay
             var input = record.RootElement.Deserialize<BotCaptureInput>(Json);
             if (input is not null && double.IsFinite(input.Timestamp)) inputs.Add(input);
         }
+        return new(manifest.Id, Recover(ReadObservations(eventsPath), inputs));
+    }
+
+    internal static IReadOnlyList<BotRecoveredBlockade> Recover(IEnumerable<BotCaptureObservation> rows,
+        IEnumerable<BotCaptureInput> inputs, CancellationToken cancellationToken = default)
+    {
         var orderedInputs = inputs.OrderBy(input => input.Timestamp).ToArray();
-        var held = new HashSet<string>(StringComparer.Ordinal);
+        var held = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var observations = new List<BotRecoveredBlockade>();
         var cursor = 0;
         var last = double.NegativeInfinity;
         var visit = new BotBlockadeVisit();
-        foreach (var line in File.ReadLines(eventsPath))
+        foreach (var row in rows)
         {
-            using var record = JsonDocument.Parse(line);
-            if (record.RootElement.GetProperty("type").GetString() != "observation") continue;
-            var row = record.RootElement.Deserialize<BotCaptureObservation>(Json);
-            if (row is null || !double.IsFinite(row.CapturedAt) || row.CapturedAt <= last)
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!double.IsFinite(row.CapturedAt) || row.CapturedAt <= last)
                 throw new InvalidDataException("Bot capture observations must be in capture order.");
             last = row.CapturedAt;
             while (cursor < orderedInputs.Length && orderedInputs[cursor].Timestamp <= row.CapturedAt)
@@ -53,6 +57,17 @@ public static class BotBlockadeReplay
                 && (row.BlockadePose is null || row.DriveDirection is null))
                 observations.Add(new(row.Generation, row.CaptureTimestamp, inferred));
         }
-        return new(manifest.Id, observations);
+        return observations;
+    }
+
+    private static IEnumerable<BotCaptureObservation> ReadObservations(string eventsPath)
+    {
+        foreach (var line in File.ReadLines(eventsPath))
+        {
+            using var record = JsonDocument.Parse(line);
+            if (record.RootElement.GetProperty("type").GetString() == "observation")
+                yield return record.RootElement.Deserialize<BotCaptureObservation>(Json)
+                    ?? throw new InvalidDataException("The capture has an empty observation.");
+        }
     }
 }

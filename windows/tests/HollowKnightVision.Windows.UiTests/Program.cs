@@ -1278,13 +1278,23 @@ internal static class Program
         var authored = new BotCaptureReviewFrame("local.png", 0, terrain, true, features);
         BotCapturePreview.Draw(canvas, authored, new(160, 96));
         var strokes = canvas.Children.OfType<Line>().ToArray();
-        Check(strokes.Length == 4 && strokes.All(line => line.Stroke == Brushes.SpringGreen)
+        Check(strokes.Length == 4 && strokes.Count(line => line.Stroke == Brushes.SpringGreen) == 2
+            && strokes.Count(line => line.Stroke == Brushes.Red) == 1 && strokes.Count(line => line.Stroke == Brushes.DeepSkyBlue) == 1
             && strokes.Any(line => line.X1 == 80 && line.X2 == 80 && line.Y1 == 76 && line.Y2 == 36)
             && canvas.Children.OfType<Rectangle>().Single().Stroke == Brushes.Gold,
             "Hacker preview should show authored floor, wall, door, and spike geometry over the recorded Knight.");
         BotCapturePreview.Draw(canvas, authored with { Authored = false }, new(160, 96));
-        Check(canvas.Children.OfType<Line>().All(line => line.Stroke == Brushes.DeepSkyBlue),
-            "Game Play preview should draw the detected geometry in blue.");
+        Check(canvas.Children.OfType<Line>().Count(line => line.Stroke == Brushes.DeepSkyBlue) == 3,
+            "Game Play preview should draw the detected floors and walls in blue.");
+        features[4] = 0;
+        features[16] = -.25; features[17] = .25; features[18] = -.1; features[20] = 1;
+        features[145] = -.25; features[146] = -.1; features[147] = .1; features[149] = 1;
+        var fallback = authored with { Authored = false, Terrain = null, PathHint = new(0, 1, .2, .3, false),
+            Blockade = new(new("room", 0, 0, -1, 80, false), -.2, 0) };
+        var annotations = BotCapturePreview.Draw(canvas, fallback, new(160, 96));
+        Check(annotations == (true, -1) && canvas.Children.OfType<Line>().Count(line => line.Stroke == Brushes.DeepSkyBlue) == 2
+            && canvas.Children.OfType<Line>().Any(line => line.Stroke == Brushes.MediumOrchid && line.Y1 == 48 && line.Y2 < 48),
+            "Older clips should show recorded floor and wall slots and center the route arrow while the Knight is absent.");
         Console.WriteLine("PASS bot capture previews place authored green and detected blue terrain in capture coordinates");
     }
 

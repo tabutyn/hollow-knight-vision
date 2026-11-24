@@ -337,6 +337,9 @@
                                         <Button x:Name="BotConfirmDeleteClip" Content="Delete Clip" Click="BotConfirmDeleteClip_Click" Margin="6,0,0,0"/>
                                     </StackPanel>
                                 </StackPanel>
+                                <TextBlock x:Name="BotClipRouteLegend" Visibility="Collapsed" TextWrapping="Wrap" Foreground="MediumOrchid"/>
+                                <TextBlock x:Name="BotClipBlockadeLegend" Visibility="Collapsed" TextWrapping="Wrap" Foreground="Orange"/>
+                                <TextBlock x:Name="BotClipFrameIssue" Visibility="Collapsed" TextWrapping="Wrap" Foreground="#B5C2CC"/>
                                 <TextBlock x:Name="BotClipInputs" Margin="0,0,0,4" TextWrapping="Wrap"
                                            Foreground="#B5C2CC" AutomationProperties.LiveSetting="Off"/>
                                 <Slider x:Name="BotClipScrubber" AutomationProperties.Name="Clip playback position"
@@ -353,7 +356,7 @@
                                 <Viewbox Stretch="Uniform">
                                     <Grid>
                                         <Image x:Name="BotPreviewImage" Stretch="Fill"/>
-                                        <Canvas x:Name="BotPreviewOverlay" IsHitTestVisible="False"/>
+                                        <Canvas x:Name="BotPreviewOverlay" ClipToBounds="True" IsHitTestVisible="False"/>
                                     </Grid>
                                 </Viewbox>
                             </Border>

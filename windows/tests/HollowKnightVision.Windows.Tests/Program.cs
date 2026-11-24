@@ -58,6 +58,7 @@ var tests = new List<(string Name, Action Run)>
     ("new bot captures follow completed training independently of playback", BotTrainingTests.TestNewCaptureCountsTrackCompletionAndIgnoreRollback),
     ("bot capture dates round-trip with macOS and earlier Windows clips", BotCaptureTests.TestReadsMacAndPreviousWindowsCaptureDates),
     ("bot clip timeline uses the original timestamped frames and matching terrain", BotCaptureTests.TestClipTimelineUsesExactSourceRowsAndFallsBackToStills),
+    ("bot clip route evidence verifies clip, replay, checksum and frame identity", BotClipAnnotationTests.TestSidecarRequiresMatchingClipChecksumAndFrameIdentity),
     ("bot clip deletion keeps shared replay until the last domain is deleted", BotCaptureTests.TestDeletionKeepsSharedReplayUntilLastClipInEitherOrder),
     ("bot clip deletion validates evidence and removes a single surviving domain", BotCaptureTests.TestDeletionRejectsChangedClipsAndRemovesEligibleSingleDomain),
     ("desktop bot clips share only the exact authored route", HackerGymObservationTests.TestDesktopRouteIsSharedOnlyWithExactlyMatchedVisualRows),
