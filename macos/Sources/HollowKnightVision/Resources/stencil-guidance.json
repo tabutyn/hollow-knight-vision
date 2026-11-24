@@ -1,5 +1,6 @@
 {
   "en": {
+    "enableThinking": "Enable Thinking (load local model)",
     "nativeName": "English",
     "language": "Game language",
     "done": "Done",
@@ -318,6 +319,7 @@
     "Estimated Room Outlines": "Estimated Room Outlines"
   },
   "es": {
+    "enableThinking": "Activar Thinking (cargar el modelo local)",
     "nativeName": "Español",
     "language": "Idioma del juego",
     "done": "Listo",
@@ -636,6 +638,7 @@
     "Estimated Room Outlines": "Contornos estimados de salas"
   },
   "fr": {
+    "enableThinking": "Activer Thinking (charger le modèle local)",
     "nativeName": "Français",
     "language": "Langue du jeu",
     "done": "Terminé",
@@ -954,6 +957,7 @@
     "Estimated Room Outlines": "Contours estimés des salles"
   },
   "it": {
+    "enableThinking": "Attiva Thinking (carica il modello locale)",
     "nativeName": "Italiano",
     "language": "Lingua del gioco",
     "done": "Fine",
@@ -1272,6 +1276,7 @@
     "Estimated Room Outlines": "Contorni stimati delle stanze"
   },
   "de": {
+    "enableThinking": "Thinking aktivieren (lokales Modell laden)",
     "nativeName": "Deutsch",
     "language": "Spielsprache",
     "done": "Fertig",
@@ -1590,6 +1595,7 @@
     "Estimated Room Outlines": "Geschätzte Raumumrisse"
   },
   "pt-BR": {
+    "enableThinking": "Ativar Thinking (carregar o modelo local)",
     "nativeName": "Português (Brasil)",
     "language": "Idioma do jogo",
     "done": "Concluído",
@@ -1908,6 +1914,7 @@
     "Estimated Room Outlines": "Contornos estimados das salas"
   },
   "ru": {
+    "enableThinking": "Включить Thinking (загрузить локальную модель)",
     "nativeName": "Русский",
     "language": "Язык игры",
     "done": "Готово",
@@ -2226,6 +2233,7 @@
     "Estimated Room Outlines": "Предполагаемые контуры комнат"
   },
   "ja": {
+    "enableThinking": "Thinking を有効にする（ローカルモデルを読み込む）",
     "nativeName": "日本語",
     "language": "ゲームの言語",
     "done": "完了",
@@ -2544,6 +2552,7 @@
     "Estimated Room Outlines": "推定した部屋の輪郭"
   },
   "ko": {
+    "enableThinking": "Thinking 사용 (로컬 모델 불러오기)",
     "nativeName": "한국어",
     "language": "게임 언어",
     "done": "완료",
@@ -2862,6 +2871,7 @@
     "Estimated Room Outlines": "추정 방 윤곽선"
   },
   "zh-Hans": {
+    "enableThinking": "启用 Thinking（加载本地模型）",
     "nativeName": "简体中文",
     "language": "游戏语言",
     "done": "完成",
@@ -3180,6 +3190,7 @@
     "Estimated Room Outlines": "估计房间轮廓"
   },
   "zh-Hant": {
+    "enableThinking": "啟用 Thinking（載入本機模型）",
     "nativeName": "繁體中文",
     "language": "遊戲語言",
     "done": "完成",

@@ -44,6 +44,8 @@ The Hollow Knight Bot effort uses Stable-Baselines3. On macOS, **🤖 B** contro
 
 On every ordinary launch, choose **Normal Hollow Knight** or **Modded Hollow Knight**. Normal mode keeps menu recognition and the visual Gameplay atlas available without a game mod. Modded mode also connects to the local receiver; Hacker and Ops remain disabled until their advertised receiver capabilities arrive. Automated launches can use `--game-mode normal` or `--game-mode modded` to bypass the chooser. Pass `--game-path PATH` to select a separate stock or modded installation explicitly; explicit paths are checked against the selected mode.
 
+On macOS, select **Enable Thinking (load local model)** in the chooser or pass `--enable-thinking` to load Gemma for that session. Thinking defaults to off.
+
 Vision scans for complete compatible installations before showing the chooser;
 an unavailable mode is disabled. Selecting an available mode gracefully closes
 a different running Hollow Knight and launches the matching installation.

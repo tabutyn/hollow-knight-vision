@@ -15,14 +15,19 @@ and ordered port gates.
 
 ## Thinking
 
-Click **Thinking** between Bot and Hacker, or press **T** in the Vision dashboard.
+Select **Enable Thinking (load local model)** before choosing Normal or Modded.
+The checkbox starts unchecked on each ordinary launch. For a command-line
+dashboard, add `--enable-thinking` to opt in. Gymnasium observation workers
+run independently of Thinking.
+
+With Thinking enabled, click **Thinking** between Bot and Hacker, or press **T** in the dashboard.
 Vision samples the first available game frame and then a frame every minute.
 Thinking displays that screenshot, the exact system and user messages generated
 by Vision, and the latest JSON reply from the selected model. Each panel shows
 the capture time so a reply from an earlier frame is identifiable during the
 next review. The timer runs across dashboard workspaces.
 
-Launching Vision starts loading Gemma in the background. Choosing another model
+Starting the dashboard with Thinking enabled loads Gemma in the background. Choosing another model
 immediately shows its load status and elapsed time. When the local Ollama log
 reports weight mapping, GPU placement or warm-up, the status shows that stage.
 It keeps the reported GPU layer count and CPU/Metal mapped buffer sizes visible
@@ -41,7 +46,7 @@ and pull the model tags `gemma3:4b`, `qwen2.5vl:7b` and `llama3.2-vision:11b`.
 Open **Thinking → Log** for the latest corrected reading and its heading.
 The **On screen** tab shows the exact game frame that Apple Vision read, with
 numbered boxes and recognition confidence. **Read game text** enables background
-OCR and proofreading.
+OCR. The selected Thinking model proofreads readings when available.
 
 Select a save in Hollow Knight with capture running. **Notebook** shows the
 recognized slot. Capture logs text as soon as frames arrive, including credits
@@ -135,6 +140,7 @@ Hacker, and Ops after the required capabilities connect. Agents can bypass the c
 ```bash
 macos/run-live.sh --game-mode normal
 macos/run-live.sh --game-mode modded --game-path '/path/to/hollow_knight.app'
+macos/run-live.sh --game-mode modded --enable-thinking
 ```
 
 The chooser disables a mode when Vision cannot find a complete compatible app.

@@ -4,8 +4,39 @@ import XCTest
 
 final class ThinkingClientTests: XCTestCase {
     @MainActor
+    func testDisabledThinkingLeavesModelIdleAndSkipsCaptureAndInference() async throws {
+        let session = ThinkingModelSession(isEnabled: false)
+        session.select(.gemma, force: true) { _ in XCTFail("Model load requested") }
+        XCTAssertEqual(session.state, .idle)
+        do {
+            try await session.waitUntilReady(for: .gemma)
+            XCTFail("Disabled session reported ready")
+        } catch is CancellationError {}
+        let frame = try testFrame()
+        do {
+            _ = try await session.answer(model: .gemma, image: frame,
+                context: ThinkingContext(evidence: "", hasImage: true))
+            XCTFail("Disabled session requested inference")
+        } catch is CancellationError {}
+        let inspector = ThinkingInspector()
+        let finished = expectation(description: "Disabled monitor returns immediately")
+        let monitoring = Task {
+            await inspector.monitor(reader: GameTextReader(), session: session) {
+                XCTFail("Thinking sampled a frame"); return nil
+            }
+            finished.fulfill()
+        }
+        await fulfillment(of: [finished], timeout: 1)
+        monitoring.cancel()
+        await monitoring.value
+        XCTAssertNil(inspector.frame)
+        XCTAssertFalse(session.answering)
+        XCTAssertEqual(session.state, .idle)
+    }
+
+    @MainActor
     func testModelSwitchStartsLoadingImmediatelyAndDiscardsSupersededReply() async throws {
-        let session = ThinkingModelSession()
+        let session = ThinkingModelSession(isEnabled: true)
         let first = ThinkingModel.gemma
         let second = ThinkingModel.qwen
         let started = expectation(description: "first load started")
@@ -31,7 +62,7 @@ final class ThinkingClientTests: XCTestCase {
 
     @MainActor
     func testPolicyRequestWaitsForStartupLoad() async throws {
-        let session = ThinkingModelSession()
+        let session = ThinkingModelSession(isEnabled: true)
         XCTAssertEqual(session.model, .gemma)
         let started = expectation(description: "startup request")
         var finish: CheckedContinuation<Void, Never>?
@@ -53,7 +84,7 @@ final class ThinkingClientTests: XCTestCase {
 
     @MainActor
     func testPendingPolicyFollowsReplacementLoadForSameModel() async throws {
-        let session = ThinkingModelSession()
+        let session = ThinkingModelSession(isEnabled: true)
         let firstStarted = expectation(description: "first load")
         let secondStarted = expectation(description: "replacement load")
         var first: CheckedContinuation<Void, Never>?
@@ -239,7 +270,7 @@ final class ThinkingClientTests: XCTestCase {
     @MainActor
     func testMinuteSamplerKeepsCapturingWithOneModelRequestPending() async throws {
         let inspector = ThinkingInspector()
-        let session = ThinkingModelSession()
+        let session = ThinkingModelSession(isEnabled: true)
         let reader = GameTextReader()
         let frame = try testFrame()
         let loading = expectation(description: "model loading")
