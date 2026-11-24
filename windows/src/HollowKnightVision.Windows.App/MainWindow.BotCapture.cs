@@ -21,7 +21,19 @@ public partial class MainWindow
     private int botRouteEpoch, activeBotRouteEpoch;
     private readonly BotVisualAtlasCoverage botVisualCoverage = new();
     private readonly BotCommittedAtlasCoverage botCommittedCoverage = new();
-    internal readonly record struct CommittedBotFrame(LiveWorldSnapshot Graph, int Room, AtlasPoint? CameraCenter);
+    internal readonly record struct CommittedBotFrame(LiveWorldSnapshot Graph, int Room, AtlasPoint? CameraCenter)
+    {
+        internal LiveWorldPlacementProjection? DoorPlacement { get; init; }
+
+        internal IReadOnlyList<BotLine>? ProjectDoors(WorldSize size)
+        {
+            if (DoorPlacement is not { } placement || CameraCenter is not { } center) return null;
+            // Live Windows capture solves at the frame width. Recorded markings
+            // use the bottom-left origin rather than the saved camera center.
+            var origin = new AtlasPoint(center.X - size.Width / 2, center.Y - size.Height / 2);
+            return BotObservationBuilder.ProjectVisualDoors(placement, Room, origin, size.Width, size);
+        }
+    }
     private readonly BotVisualKnightMemory botVisualKnightMemory = new();
     private readonly BotBlockadeVisit botVisualBlockade = new();
     private (int Room, long Coordinates)? botVisualChart;
@@ -80,7 +92,8 @@ public partial class MainWindow
         }
         var visual = capture is not null || playback is not null && run?.Domain == BotCaptureDomain.Gameplay
             ? BotObservationBuilder.Gameplay(frame, time, batch, floors, terrain.Walls, analyzedTerrain,
-                camera, hud, measuredFoot, input, exact?.BlueHealthOutcomes).WithSharedHackerPath(exact) : null;
+                camera, hud, measuredFoot, input, exact?.BlueHealthOutcomes,
+                committedAtlas?.ProjectDoors(new(frame.Width, frame.Height))).WithSharedHackerPath(exact) : null;
         if (visual is not null)
         {
             BotPolicyAction? appliedAction = playback is not null && input is { } applied

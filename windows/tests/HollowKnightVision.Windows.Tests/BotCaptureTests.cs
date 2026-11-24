@@ -33,6 +33,51 @@ internal static class BotCaptureTests
         Check(Hacker(input, bad) is { CanTrain: false }, "Duplicate mod identities must not produce valid observations.");
     }
 
+    internal static void TestVisualPortalProjectionReachesGameplayPolicyOnlyInItsRoom()
+    {
+        var placement = LiveWorldPlacementProjection.Empty with
+        {
+            RoomDoorways = new Dictionary<int, IReadOnlyList<LiveWorldDoorwayStroke>>
+            {
+                [1] = [new(new(110, 60), new(110, 100))],
+                [2] = [new(new(115, 70), new(115, 110))]
+            }
+        };
+        var doors = BotObservationBuilder.ProjectVisualDoors(placement, 1, new(100, 50), 120, new(240, 140));
+        Check(doors.SequenceEqual([new(20, 20, 20, 100)]), "Project only the current room and apply the solve-to-image scale.");
+        Check(BotObservationBuilder.ProjectVisualDoors(placement, 2, new(100, 85), 120, new(240, 40))
+            .SequenceEqual([new(30, 0, 30, 40)]), "The other side owns its own opening and clips to the current frame.");
+        Check(BotObservationBuilder.ProjectVisualDoors(placement, 3, new(100, 50), 120, new(240, 140)).Count == 0
+            && BotObservationBuilder.ProjectVisualDoors(placement, 1, new(120, 50), 120, new(240, 140)).Count == 0
+            && BotObservationBuilder.ProjectVisualDoors(placement, 1, new(double.NaN, 50), 120, new(240, 140)).Count == 0,
+            "A different room, an offscreen door or an invalid camera must supply no markings.");
+
+        var input = Input(0);
+        var scaled = BotObservationBuilder.ProjectVisualDoors(placement, 1, new(100, 50), 80,
+            new(input.Frame.Width, input.Frame.Height));
+        var gameplay = Visual(input, scaled);
+        Check(gameplay.DetectedTerrain?.Doors?.SequenceEqual([new(10, 10, 10, 48)]) == true
+            && gameplay.AuthoredTerrain is null, "The real observation builder must emit clipped visual terrain.");
+        var expected = BotPolicyGeometry.Raster(gameplay.DetectedTerrain, doors: true).Select(value => (float)value);
+        var legacy = new BotObservationHistory(11).Append(gameplay, default, input.Time.AvailableAt);
+        Check(legacy is not null && legacy.TakeLast(BotPolicyGeometry.Cells).SequenceEqual(expected)
+            && legacy.TakeLast(BotPolicyGeometry.Cells).Any(value => value > 0),
+            "The detected portal must reach the legacy actor's door channel.");
+        var compact = BotPolicyContract.LandingVersion;
+        var vector = new BotObservationHistory(compact).Append(gameplay, default, input.Time.AvailableAt);
+        var markings = BotPolicyGeometry.Markings(gameplay.DetectedTerrain, gameplay.Features[0], gameplay.Features[1], compact);
+        var fields = BotPolicyContract.Names(compact)!.ToList();
+        var markingOffset = fields.IndexOf("marking_ground_known");
+        Check(vector is not null && vector.Skip(vector.Length - fields.Count + markingOffset)
+            .Take(markings.Length).SequenceEqual(markings.Select(value => (float)value)) && markings[7] > 0,
+            "The current bot observation must include the door as a compact marking.");
+        var otherDomain = new BotObservationHistory(11).Append(gameplay with { TerrainSource = "human-authored" },
+            default, input.Time.AvailableAt);
+        Check(otherDomain is not null && otherDomain.TakeLast(BotPolicyGeometry.Cells).All(value => value == 0),
+            "The Hacker policy reads authored terrain independently of the visual door.");
+        Check(Visual(input, []).DetectedTerrain?.Doors is null, "Unknown doors retain the legacy missing-source representation.");
+    }
+
     internal static void TestFreshTerrainMakesOccludedKnightUsable()
     {
         var input = Input(0);
@@ -199,9 +244,10 @@ internal static class BotCaptureTests
     private static BotCaptureObservation? Hacker(Fixture input, ReceiverGroundTruthSample source) =>
         BotObservationBuilder.Hacker(input.Frame, (int)input.Frame.CaptureId, source, Labels(), input.Time, InputButtons.Right);
 
-    private static BotCaptureObservation Visual(Fixture input) =>
+    private static BotCaptureObservation Visual(Fixture input, IReadOnlyList<BotLine>? doors = null) =>
         BotObservationBuilder.Gameplay(input.Frame, input.Time, input.Detections, [new(36, new(5, 62))],
-            [new(70, 10, 42, true)], terrainAnalyzed: true, new(0, 0), null, new(30, 36), InputButtons.Right, input.Mod.BlueHealthOutcomes);
+            [new(70, 10, 42, true)], terrainAnalyzed: true, new(0, 0), null, new(30, 36), InputButtons.Right,
+            input.Mod.BlueHealthOutcomes, doors);
 
     private static void WithLibrary(Action<string> run)
     {

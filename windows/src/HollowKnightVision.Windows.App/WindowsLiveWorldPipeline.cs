@@ -64,6 +64,10 @@ internal sealed record WindowsLiveWorldPipelineResult(
     internal GameplayPathRegistration? RegisteredPath(long coordinateEpoch) =>
         coordinateEpoch == WalkedCoordinateEpoch ? PathRegistration : null;
 
+    internal LiveWorldPlacementProjection? BotDoorPlacement(long coordinateEpoch) =>
+        State is WindowsLiveWorldPipelineState.Committed or WindowsLiveWorldPipelineState.Throttled
+            && !PlacementPending && coordinateEpoch == WalkedCoordinateEpoch ? SavedWorld?.Placement : null;
+
     internal static WindowsLiveWorldPipelineResult NotApplicable(
         WindowsLiveWorldFrame frame,
         string diagnostic) => new(

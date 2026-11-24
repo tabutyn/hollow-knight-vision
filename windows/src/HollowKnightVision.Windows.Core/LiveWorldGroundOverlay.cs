@@ -15,6 +15,8 @@ public sealed record LiveWorldPlacementProjection(
     IReadOnlyList<WorldRect> EstimatedFootprints)
 {
     public static LiveWorldPlacementProjection Empty { get; } = new([], []);
+    public IReadOnlyDictionary<int, IReadOnlyList<LiveWorldDoorwayStroke>> RoomDoorways { get; init; }
+        = new Dictionary<int, IReadOnlyList<LiveWorldDoorwayStroke>>();
 }
 
 /// <summary>Projects durable green strokes from the same poses used to place Atlas images.</summary>
@@ -83,9 +85,18 @@ public static class LiveWorldGroundOverlay
             return LiveWorldPlacementProjection.Empty;
 
         var observations = snapshot.Observations.ToDictionary(observation => observation.Id);
-        var doorways = snapshot.DoorwayFloorConstraints.TakeLast(256).Select(edge => new LiveWorldDoorwayStroke(
-            Endpoint(observations[edge.DepartureObservationId], edge.DepartureFloor),
-            Endpoint(observations[edge.ArrivalObservationId], edge.ArrivalFloor))).ToArray();
+        var doorways = new List<LiveWorldDoorwayStroke>();
+        var openings = new Dictionary<int, List<LiveWorldDoorwayStroke>>();
+        foreach (var edge in snapshot.DoorwayFloorConstraints.TakeLast(256))
+        {
+            var departure = observations[edge.DepartureObservationId];
+            var arrival = observations[edge.ArrivalObservationId];
+            var source = Endpoint(departure, edge.DepartureFloor);
+            var target = Endpoint(arrival, edge.ArrivalFloor);
+            doorways.Add(new(source, target));
+            AddOpening(departure, source);
+            AddOpening(arrival, target);
+        }
         var footprints = new List<WorldRect>(estimated.Length);
         foreach (var island in estimated)
         {
@@ -103,7 +114,21 @@ public static class LiveWorldGroundOverlay
             }
             footprints.Add(new(new(left, bottom), new(right - left, top - bottom)));
         }
-        return new(doorways, footprints.Distinct().ToArray());
+        return new(doorways.ToArray(), footprints.Distinct().ToArray())
+        {
+            RoomDoorways = openings.ToDictionary(room => room.Key,
+                room => (IReadOnlyList<LiveWorldDoorwayStroke>)room.Value.Distinct().ToArray())
+        };
+
+        void AddOpening(LiveWorldObservation observation, AtlasPoint floor)
+        {
+            // Grounded traversal verifies clearance for the measured Knight.
+            // The doorway floor constraint does not measure the ceiling.
+            if (observation.ObservedPlayerBounds is not { Height: > 0 and < double.PositiveInfinity } player) return;
+            if (!openings.TryGetValue(observation.RoomId, out var lines))
+                openings.Add(observation.RoomId, lines = []);
+            lines.Add(new(floor, new(floor.X, floor.Y + player.Height)));
+        }
 
         static AtlasPoint Endpoint(LiveWorldObservation observation, AtlasPoint floor)
         {

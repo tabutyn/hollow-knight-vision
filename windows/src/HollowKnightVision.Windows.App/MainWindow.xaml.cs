@@ -3332,7 +3332,10 @@ public partial class MainWindow : Window
             {
                 AtlasPoint? center = !placement.PlacementPending && placement.WalkedCoordinateEpoch == walkedCoordinateEpoch
                     && visualObservation.GroundVerified ? new(visualTelemetry.CameraX, visualTelemetry.CameraY) : null;
-                botAtlas = new(graph, committedRoom, center);
+                botAtlas = new(graph, committedRoom, center)
+                {
+                    DoorPlacement = tracked.RequiresWorldRecovery ? null : placement.BotDoorPlacement(walkedCoordinateEpoch)
+                };
             }
             CaptureBotObservations(frame, captureGeneration, recognition.Generation, captureTimestamp,
                 WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0),

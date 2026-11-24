@@ -327,6 +327,7 @@ var tests = new List<(string Name, Action Run)>
     ("bot runtime keeps four fresh history frames and expires stale input", BotPolicyTests.TestObservationHistoryRejectsStaleFramesAndResetsAtDiscontinuities),
     ("bot checkpoint selection finds the latest native export independently for each domain", BotPolicyTests.TestNewestNativeModelIsSelectedWithinEachDomain),
     ("bot actor payload and exact camera separate paired domains", BotCaptureTests.TestExactHackerSourcesStaySeparateFromVisualSources),
+    ("Game Play bot receives visible doors only from its measured room", BotCaptureTests.TestVisualPortalProjectionReachesGameplayPolicyOnlyInItsRoom),
     ("fresh visual terrain retains training evidence through Knight occlusion", BotCaptureTests.TestFreshTerrainMakesOccludedKnightUsable),
     ("paired captures publish immediate evidence while invalid clips are discarded", BotCaptureTests.TestPairedEvidencePublishesOnceAndHazardClipsAreDiscarded),
     ("native controls produce edges and interrupted bot captures are discarded", BotCaptureTests.TestNativeControlsAndInterruptedCapture),
