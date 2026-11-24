@@ -18,7 +18,6 @@ namespace HollowKnightVision.Windows.App;
 /// </summary>
 internal sealed class WindowsNormalGameInput : IDisposable
 {
-    private const int WhKeyboardLl = 13;
     private const int GwlExStyle = -20;
     private const long WsExNoActivate = 0x08000000L;
     private const int SwRestore = 9;
@@ -37,10 +36,9 @@ internal sealed class WindowsNormalGameInput : IDisposable
     private readonly Action<string> status;
     private readonly DispatcherTimer monitor;
     private readonly NormalGameShortcutState shortcutState = new();
-    private readonly LowLevelKeyboardProc keyboardProc;
+    private readonly WindowsKeyboardHook keyboardHook;
     private HollowKnightWindow? target;
     private nint ownerHandle;
-    private nint keyboardHook;
     private bool overlayActive;
     private NativePoint? freePointer;
     private bool disposed;
@@ -55,7 +53,7 @@ internal sealed class WindowsNormalGameInput : IDisposable
         this.allowsGameInput = allowsGameInput;
         this.shortcut = shortcut;
         this.status = status;
-        keyboardProc = KeyboardHook;
+        keyboardHook = new WindowsKeyboardHook(HandleKeyboardEvent);
         // Cursor confinement must be released even while gameplay continuously
         // queues Render work. Input priority is lower than Render in WPF.
         monitor = new DispatcherTimer(DispatcherPriority.Normal, owner.Dispatcher)
@@ -70,7 +68,8 @@ internal sealed class WindowsNormalGameInput : IDisposable
         if (disposed) return;
         target = game;
         ownerHandle = new WindowInteropHelper(owner).Handle;
-        EnsureKeyboardHook();
+        if (!keyboardHook.Install())
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not reserve Vision keyboard shortcuts.");
         monitor.Start();
         UpdateContext();
     }
@@ -269,58 +268,28 @@ internal sealed class WindowsNormalGameInput : IDisposable
     private bool IsGameForeground() => target is { } game
         && GetForegroundWindow() == game.Handle;
 
-    private void EnsureKeyboardHook()
+    private bool HandleKeyboardEvent(int virtualKey, bool down)
     {
-        if (keyboardHook != 0) return;
-        keyboardHook = SetWindowsHookEx(
-            WhKeyboardLl,
-            keyboardProc,
-            GetModuleHandle(null),
-            0);
-        if (keyboardHook == 0)
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not reserve Vision keyboard shortcuts.");
-    }
-
-    private nint KeyboardHook(int code, nint message, nint dataPointer)
-    {
-        if (code >= 0 && !disposed && overlayActive && CanUseTarget() && IsGameForeground())
+        if (disposed || !overlayActive || !CanUseTarget() || !IsGameForeground()) return false;
+        if (!shortcutState.Handle(virtualKey, down, allowsGameInput(), IsModifierDown(), out var invoke))
+            return false;
+        if (invoke)
         {
-            var messageValue = unchecked((int)message);
-            var down = messageValue is 0x0100 or 0x0104;
-            var up = messageValue is 0x0101 or 0x0105;
-            if (down || up)
-            {
-                var data = Marshal.PtrToStructure<LowLevelKeyboardData>(dataPointer);
-                var virtualKey = unchecked((int)data.VirtualKey);
-                var modified = IsModifierDown();
-                if (shortcutState.Handle(
-                        virtualKey,
-                        down,
-                        canIntercept: allowsGameInput(),
-                        modified,
-                        out var invoke))
+            var key = KeyInterop.KeyFromVirtualKey(virtualKey);
+            owner.Dispatcher.BeginInvoke(
+                DispatcherPriority.Input,
+                new Action(() =>
                 {
-                    if (invoke)
-                    {
-                        var key = KeyInterop.KeyFromVirtualKey(virtualKey);
-                        owner.Dispatcher.BeginInvoke(
-                            DispatcherPriority.Input,
-                            new Action(() =>
-                            {
-                                if (!disposed) shortcut(key);
-                            }));
-                    }
-                    return 1;
-                }
-            }
+                    if (!disposed) shortcut(key);
+                }));
         }
-        return CallNextHookEx(keyboardHook, code, message, dataPointer);
+        return true;
     }
 
     private static bool IsModifierDown() =>
         IsKeyDown(0x11) || IsKeyDown(0x12) || IsKeyDown(0x5B) || IsKeyDown(0x5C);
 
-    private static bool IsKeyDown(int virtualKey) => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+    private static bool IsKeyDown(int virtualKey) => WindowsKeyboardHook.IsKeyDown(virtualKey);
 
     private static bool ActivateWindowBehindOverlay(nint game, nint overlay)
     {
@@ -382,26 +351,10 @@ internal sealed class WindowsNormalGameInput : IDisposable
         monitor.Stop();
         shortcutState.Clear();
         if (overlayActive) ExitOverlay(activateOwner: false);
-        if (keyboardHook != 0)
-        {
-            _ = UnhookWindowsHookEx(keyboardHook);
-            keyboardHook = 0;
-        }
+        keyboardHook.Dispose();
         target = null;
         disposed = true;
     }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private readonly struct LowLevelKeyboardData
-    {
-        internal readonly uint VirtualKey;
-        internal readonly uint ScanCode;
-        internal readonly uint Flags;
-        internal readonly uint Time;
-        internal readonly nuint ExtraInfo;
-    }
-
-    private delegate nint LowLevelKeyboardProc(int code, nint message, nint data);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint { internal int X, Y; }
@@ -424,15 +377,6 @@ internal sealed class WindowsNormalGameInput : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetCursorPos(int x, int y);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern nint SetWindowsHookEx(int hook, LowLevelKeyboardProc callback, nint module, uint threadId);
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool UnhookWindowsHookEx(nint hook);
-    [DllImport("user32.dll")]
-    private static extern nint CallNextHookEx(nint hook, int code, nint message, nint data);
-    [DllImport("user32.dll")]
-    private static extern short GetAsyncKeyState(int virtualKey);
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
     [DllImport("user32.dll")]
@@ -468,8 +412,6 @@ internal sealed class WindowsNormalGameInput : IDisposable
     private static extern uint GetWindowThreadProcessId(nint window, out int processId);
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
-    private static extern nint GetModuleHandle(string? moduleName);
     [DllImport("kernel32.dll")]
     private static extern void SetLastError(uint error);
 }

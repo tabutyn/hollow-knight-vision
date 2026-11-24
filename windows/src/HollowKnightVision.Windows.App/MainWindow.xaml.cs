@@ -545,6 +545,7 @@ public partial class MainWindow : Window
     private Process? monitoredGameProcess;
     private readonly WindowsGameControlForwarder gameControls;
     private readonly WindowsNormalGameInput? normalGameInput;
+    private WindowsFocusedRoomReset? focusedRoomReset;
     private readonly DispatcherTimer inputHeartbeat;
     private readonly DispatcherTimer viewportAnimationTimer;
     private readonly HashSet<Key> forwardedKeys = [];
@@ -1003,6 +1004,7 @@ public partial class MainWindow : Window
         inputHeartbeat.Stop();
         viewportAnimationTimer.Stop();
         normalGameInput?.Dispose();
+        focusedRoomReset?.Dispose();
         ReleaseForwardedInput();
         try
         {
@@ -1114,6 +1116,17 @@ public partial class MainWindow : Window
             ValidateGameWindowMode(window);
             MonitorGameProcess(window.ProcessId);
             normalGameInput?.Start(window);
+            if (gameMode == GameRuntimeMode.Modded)
+            {
+                focusedRoomReset?.Dispose();
+                var processId = window.ProcessId;
+                focusedRoomReset = new WindowsFocusedRoomReset(Dispatcher,
+                    () => WindowsFocusedRoomReset.IsManagedGameFocused(this, processId)
+                        && CanResetRoomFromShortcut(),
+                    () => _ = ResetRoomAsync());
+                if (!focusedRoomReset.Start())
+                    Debug.WriteLine("Could not enable the game-focused room reset shortcut.");
+            }
             if (visionCancellation is null)
             {
                 StartVision_Click(this, new RoutedEventArgs());
@@ -1272,6 +1285,7 @@ public partial class MainWindow : Window
         if (isClosing || gameLostCountdownStarted) return;
         gameLostCountdownStarted = true;
         normalGameInput?.Dispose();
+        focusedRoomReset?.Dispose();
         startupCancellation?.Cancel();
         inputHeartbeat.Stop();
         ReleaseForwardedInput();
@@ -1430,8 +1444,7 @@ public partial class MainWindow : Window
             return true;
         }
         if (isRepeat) return false;
-        if (key == Key.R && modifiers == ModifierKeys.None && CanResetRoom()
-            && (showingSettings ? SettingsSystemTab.IsSelected : workspace is "Gameplay" or "Hacker" or "Ops"))
+        if (key == Key.R && modifiers == ModifierKeys.None && CanResetRoomFromShortcut())
         {
             _ = ResetRoomAsync();
             return true;
@@ -4968,6 +4981,11 @@ public partial class MainWindow : Window
         && !atlasOperationInProgress && botCapture is null && !changingBotCapture
         && Volatile.Read(ref botPlayback) is null
         && inputPathReplayCancellation is null && !isClosing && !gameLostCountdownStarted;
+
+    private bool CanResetRoomFromShortcut() => CanResetRoom()
+        && (SettingsOverlay.Visibility == Visibility.Visible
+            ? SettingsSystemTab.IsSelected
+            : workspace is "Gameplay" or "Hacker" or "Ops");
 
     private async void OpsResetRoom_Click(object sender, RoutedEventArgs e) => await ResetRoomAsync();
 
