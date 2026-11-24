@@ -140,6 +140,14 @@ internal static class WalkedGroundTests
             "Without measured placement in the current image, ordinary detector edges must stay intact.");
         var clipped = GroundStrokeGeometry.MergeWalkedFloors([], [walked], new(140, 10), Width, Height, size).Single();
         Check(clipped.XSpan == new PixelSpan(0, 99), "Walking into the next view must clip the old footprint without stretching it.");
+
+        foreach (var second in new[] { 153, 154 })
+        {
+            var duplicate = GroundStrokeGeometry.MergeWalkedFloors([new(360 - second, new(265, 355))],
+                [Line(walked.SegmentId, 267, 309, 150), Line(walked.SegmentId, 295, 324, second)], default(AtlasPoint), Width, Height, size);
+            Check(duplicate.Count == 1 && duplicate[0].Row == 210 && duplicate[0].XSpan == new PixelSpan(265, 355),
+                "Overlapping walks on nearby rows must share one elevation after the camera's projection rounds to pixels.");
+        }
     }
 
     public static void TestWalkSnapsToAnObservedFloorAndReplacesOverlappingStrokes()

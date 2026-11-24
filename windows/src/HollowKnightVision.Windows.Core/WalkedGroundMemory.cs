@@ -42,9 +42,9 @@ public static class GroundStrokeGeometry
         internal GroundHypothesisAtlasLine Line =>
             new(Representative.SegmentId, new(Left, Representative.AtlasStart.Y), new(Right, Representative.AtlasStart.Y));
 
-        internal bool Overlaps(Stroke other)
+        internal bool Overlaps(Stroke other, int rowTolerance)
         {
-            if (Math.Max(High, other.High) - Math.Min(Low, other.Low) > 3) return false;
+            if (Math.Max(High, other.High) - Math.Min(Low, other.Low) > rowTolerance) return false;
             var overlap = Math.Min(Right, other.Right) - Math.Max(Left, other.Left);
             return Representative.AtlasStart.Y == other.Representative.AtlasStart.Y
                 ? overlap >= 0 : overlap >= Math.Min(3, Math.Min(Right - Left, other.Right - other.Left));
@@ -63,7 +63,9 @@ public static class GroundStrokeGeometry
         }
     }
 
-    public static GroundHypothesisAtlasLine[] Coalesce(IEnumerable<GroundHypothesisAtlasLine> lines)
+    public static GroundHypothesisAtlasLine[] Coalesce(IEnumerable<GroundHypothesisAtlasLine> lines) => Coalesce(lines, 3);
+
+    private static GroundHypothesisAtlasLine[] Coalesce(IEnumerable<GroundHypothesisAtlasLine> lines, int rowTolerance)
     {
         var ordered = lines.Where(line => double.IsFinite(line.AtlasStart.X)
                 && double.IsFinite(line.AtlasStart.Y) && double.IsFinite(line.AtlasEnd.X)
@@ -82,7 +84,7 @@ public static class GroundStrokeGeometry
                     result.Add(prior.Line);
                     return true;
                 }
-                if (!next.Overlaps(prior)) return false;
+                if (!next.Overlaps(prior, rowTolerance)) return false;
                 next.Absorb(prior);
                 return true;
             });
@@ -120,7 +122,7 @@ public static class GroundStrokeGeometry
         if (walked.Count == 0 || camera is not { } pose || !double.IsFinite(pose.X) || !double.IsFinite(pose.Y)
             || width <= 0 || height <= 0) return detected;
 
-        var footprints = walked.Where(line => line.SegmentId == WalkedGroundMemory.WalkedSegmentId
+        var projected = walked.Where(line => line.SegmentId == WalkedGroundMemory.WalkedSegmentId
                 && line.AtlasStart.Y == line.AtlasEnd.Y).Select(line =>
             {
                 var row = Math.Round(height + pose.Y - line.AtlasStart.Y, MidpointRounding.AwayFromZero);
@@ -128,7 +130,12 @@ public static class GroundStrokeGeometry
                     new(Math.Clamp(Math.Ceiling(line.AtlasStart.X - pose.X), 0, width), row),
                     new(Math.Clamp(Math.Floor(line.AtlasEnd.X - pose.X), 0, width), row));
             }).Where(line => line.AtlasStart.Y >= 0 && line.AtlasStart.Y < height
-                && line.AtlasStart.X < line.AtlasEnd.X).OrderBy(line => line.AtlasStart.X).ToArray();
+                && line.AtlasStart.X < line.AtlasEnd.X);
+        // Allow the extra pixel introduced when two measured ground rows are
+        // independently rounded into this frame. Resolve their overlap before
+        // choosing which walk row an observed edge should extend.
+        const int projectedRowTolerance = 4;
+        var footprints = Coalesce(projected, projectedRowTolerance).OrderBy(line => line.AtlasStart.X).ToArray();
         if (footprints.Length == 0) return detected;
 
         var clearance = GroundClearance.KnightHeight(height, knight);
@@ -143,7 +150,7 @@ public static class GroundStrokeGeometry
         IEnumerable<GroundHypothesisAtlasLine> KeepUnwalked(GroundHypothesisAtlasLine edge)
         {
             if (edge.AtlasStart.X >= edge.AtlasEnd.X) return [];
-            var match = footprints.Where(floor => Math.Abs(floor.AtlasStart.Y - edge.AtlasStart.Y) <= 2
+            var match = footprints.Where(floor => Math.Abs(floor.AtlasStart.Y - edge.AtlasStart.Y) <= projectedRowTolerance
                 && floor.AtlasStart.X < edge.AtlasEnd.X && edge.AtlasStart.X < floor.AtlasEnd.X)
                 .OrderBy(floor => Math.Abs(floor.AtlasStart.Y - edge.AtlasStart.Y)).FirstOrDefault();
             if (match.SegmentId == WalkedGroundMemory.WalkedSegmentId)
