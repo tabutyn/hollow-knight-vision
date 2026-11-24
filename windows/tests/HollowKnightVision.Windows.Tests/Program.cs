@@ -278,6 +278,7 @@ var tests = new List<(string Name, Action Run)>
     ("ground labels human ignores never change detector input", TestHumanIgnoreRegionsNeverChangeDetectorInput),
     ("ground labels unreviewed data cannot tune or generalize", TestUnreviewedLabelsExcludedFromTuningAndDraftDatasetNotGeneralization),
     ("ground labels Check data cannot choose parameters", TestCheckLabelsCannotChooseParameters),
+    ("ground label CLI saves baseline and sweep reports using the Mac schema", TestGroundLabelEvaluationCommand),
     ("phase-two labeling follows navigation and selects the next missing object", StencilGuidanceParityTests.TestPhaseTwoNavigationOpensTheGuidedScreenAndNextObject),
     ("global correction rejects four wrong votes", GroundGlobalCorrectionPolicyTests.TestFourWrongVotesCannotOverrideWideStrip),
     ("global correction rejects repeated-texture phase jumps", GroundGlobalCorrectionPolicyTests.TestSimilarRepeatedTextureDoesNotAuthorizePhaseJump),
@@ -4854,6 +4855,104 @@ static void TestCheckLabelsCannotChooseParameters()
         Equal(first.Selected.Train, second.Selected.Train);
         Equal(385, first.CandidatesTested);
         True(!string.Equals(first.DatasetDigest, second.DatasetDigest, StringComparison.Ordinal));
+    });
+}
+
+static void TestGroundLabelEvaluationCommand()
+{
+    WithTemporaryDirectory(workspace =>
+    {
+        const string flag = "--evaluate-ground-labels";
+        const string written = "Ground-label evaluation written to ";
+        var root = Path.Combine(workspace, "ground labels");
+        var evaluationDirectory = Path.Combine(root, "evaluations");
+        var store = new GroundLabelStore(root);
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+
+        int Evaluate(params string[] arguments)
+        {
+            output.GetStringBuilder().Clear();
+            errors.GetStringBuilder().Clear();
+            return NativeHostTestProcess.Run(GameStartupCliTailParityTests.HostExecutable, arguments, output, errors);
+        }
+
+        string ReadReportPath()
+        {
+            var message = output.ToString().TrimEnd();
+            True(message.StartsWith(written, StringComparison.Ordinal));
+            var path = message[written.Length..];
+            Equal(evaluationDirectory, Path.GetDirectoryName(path)!);
+            True(File.Exists(path));
+            return path;
+        }
+
+        Equal(64, Evaluate(flag, "--sweep-ground-labels"));
+        True(errors.ToString().Contains("DATASET_DIRECTORY", StringComparison.Ordinal));
+        Equal(64, Evaluate(flag, root, "--ground-surface-architecture=obsolete"));
+        True(errors.ToString().Contains("uses hysteresis", StringComparison.Ordinal));
+        Equal(1, Evaluate(flag, root));
+        True(errors.ToString().Contains("Capture or import a frame first", StringComparison.Ordinal));
+        True(!Directory.Exists(evaluationDirectory));
+
+        var document = store.Add(GroundLabelImage(), "saved evaluation fixture", "train-A");
+        // ImageIO writes a non-interlaced RGB8 PNG for an opaque Mac capture.
+        var rgbCapture = Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAGQAAAA8CAIAAAAfXYiZAAAAAXNSR0IArs4c6QAAADhlWElmTU0AKgAAAAgAAYdpAAQAAAAB" +
+            "AAAAGgAAAAAAAqACAAQAAAABAAAAZKADAAQAAAABAAAAPAAAAAAEEHhxAAAA1ElEQVR4Ae3SsQ2AMBAEQUwZCNG/iB1TG6ID" +
+            "b8x8vNH8jeO8NrcmsK9lqk8AVtgBLFhBIKSWBSsIhNSyYAWBkFoWrCAQUsuCFQRCalmwgkBILQtWEAipZcEKAiG1LFhBIK" +
+            "SWBSsIhNSyYAWBkFoWrCAQUsuCFQRCalkBa9zzCfm/U8sK/4cFKwiE1LJgBYGQWhasIBBSy4IVBEJqWbCCQEgtC1YQCKllw" +
+            "QoCIbUsWEEgpJYFKwiE1LJgBYGQWhasIBBSy4IVBEJqWbCCQEgtC1YQCOkLO2QC5x9NbxAAAAAASUVORK5CYII=");
+        var imagePath = Path.Combine(root, document.ImageFile);
+        File.WriteAllBytes(imagePath, rgbCapture);
+        document.ImageSHA256 = GroundLabelStore.Digest(rgbCapture);
+        document.Edges = [new GroundLabelEdge(10, 90, 30)];
+        document.FullyReviewed = true;
+        store.Save(document);
+        var decoded = store.Image(document);
+        True(decoded.Pixels.AsSpan(0, 4).SequenceEqual(new byte[] { 30, 28, 26, 255 }));
+        True(decoded.Pixels.AsSpan(45 * decoded.Stride, 4).SequenceEqual(new byte[] { 190, 180, 170, 255 }));
+        var labelPath = Path.Combine(root, document.Id.ToString("D").ToUpperInvariant() + ".json");
+        var originalLabel = File.ReadAllBytes(labelPath);
+        var choices = new GroundLabelParameters(GroundTheoryTuning.SemanticDefault);
+        Equal(choices, new GroundLabelParameters());
+        Equal(choices, GroundLabelEvaluator.Grid()[0]);
+
+        Equal(0, Evaluate(flag, root));
+        True(errors.ToString().Contains("1/1", StringComparison.Ordinal));
+        var baselinePath = ReadReportPath();
+        using var baseline = JsonDocument.Parse(File.ReadAllBytes(baselinePath));
+        var report = baseline.RootElement;
+        Equal(3, report.GetProperty("schemaVersion").GetInt32());
+        Equal(JsonValueKind.Number, report.GetProperty("createdAt").ValueKind);
+        Equal(1, report.GetProperty("candidatesTested").GetInt32());
+        Equal(1, report.GetProperty("reviewedTrainFrames").GetInt32());
+        True(report.GetProperty("provisional").GetBoolean());
+        var selected = report.GetProperty("selected");
+        var parameters = selected.GetProperty("parameters");
+        Equal(8, parameters.GetProperty("threshold").GetInt32());
+        Equal(40, parameters.GetProperty("minimumSegment").GetInt32());
+        Equal(40, parameters.GetProperty("lineSeparation").GetInt32());
+        Equal(180, parameters.GetProperty("occlusionGap").GetInt32());
+        Equal("hysteresis", parameters.GetProperty("surfaceArchitecture").GetString()!);
+        True(!parameters.TryGetProperty("tuning", out _));
+        var savedFrame = selected.GetProperty("frames")[0];
+        Equal(document.Id.ToString("D").ToUpperInvariant(), savedFrame.GetProperty("id").GetString()!);
+        Equal("train", savedFrame.GetProperty("split").GetString()!);
+        Equal(JsonValueKind.Number, selected.GetProperty("train").GetProperty("f1").ValueKind);
+
+        Equal(0, Evaluate(flag, root, "--sweep-ground-labels", "--ground-threshold=12"));
+        True(errors.ToString().Contains("16/385", StringComparison.Ordinal)
+            && errors.ToString().Contains("385/385", StringComparison.Ordinal));
+        var sweepPath = ReadReportPath();
+        True(sweepPath != baselinePath && File.Exists(baselinePath));
+        using var sweep = JsonDocument.Parse(File.ReadAllBytes(sweepPath));
+        Equal(385, sweep.RootElement.GetProperty("candidatesTested").GetInt32());
+        Equal(12, sweep.RootElement.GetProperty("baseline").GetProperty("parameters").GetProperty("threshold").GetInt32());
+        Equal(report.GetProperty("datasetDigest").GetString()!, sweep.RootElement.GetProperty("datasetDigest").GetString()!);
+        True(originalLabel.SequenceEqual(File.ReadAllBytes(labelPath)));
+        True(rgbCapture.SequenceEqual(File.ReadAllBytes(imagePath)));
+        Equal(2, Directory.GetFiles(evaluationDirectory).Length);
     });
 }
 
@@ -10289,10 +10388,11 @@ file static class GameStartupCliTailParityTests
 {
     private static readonly Assembly HostAssembly = LoadHostAssembly();
 
+    internal static string HostExecutable => Path.ChangeExtension(HostAssembly.Location, OperatingSystem.IsWindows() ? ".exe" : null);
+
     public static void TestRecordedPathCommandsUseArchiveFixtures()
     {
-        var executable = Path.ChangeExtension(HostAssembly.Location, OperatingSystem.IsWindows() ? ".exe" : null);
-        BotRecordedAtlasPathTests.TestHostExecutable(executable);
+        BotRecordedAtlasPathTests.TestHostExecutable(HostExecutable);
     }
 
     public static void TestAutomaticNavigationRequiresExplicitLaunchFlag()

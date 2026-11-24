@@ -128,6 +128,10 @@ internal static class Program
         TextWriter? standardError = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
+        var evaluationIndex = Array.IndexOf(arguments, "--evaluate-ground-labels");
+        if (evaluationIndex >= 0)
+            return Task.FromResult(EvaluateGroundLabels(
+                arguments, evaluationIndex, standardOutput ?? Console.Out, standardError ?? Console.Error));
         if (arguments.FirstOrDefault() == MenuCalibrationCapture.Flag)
         {
             if (arguments is not [_, var command, HollowKnightVisionLaunchOptions.AutomationControlFlag]
@@ -383,6 +387,42 @@ internal static class Program
         {
             standardError.WriteLine(error);
             return Task.FromResult(1);
+        }
+    }
+
+    private static int EvaluateGroundLabels(string[] arguments, int index, TextWriter output, TextWriter errors)
+    {
+        if (index + 1 >= arguments.Length || string.IsNullOrWhiteSpace(arguments[index + 1])
+            || arguments[index + 1].StartsWith("--", StringComparison.Ordinal))
+        {
+            errors.WriteLine("Usage: --evaluate-ground-labels DATASET_DIRECTORY [--sweep-ground-labels]");
+            return 64;
+        }
+        if (HollowKnightVisionLaunchOptions.RetiredArgument(arguments) is { } retired)
+        {
+            errors.WriteLine(retired.StartsWith("--ground-surface-architecture", StringComparison.Ordinal)
+                ? "Surface architecture experiments are retired; evaluation uses hysteresis"
+                : $"Unsupported argument: {retired}");
+            return 64;
+        }
+        try
+        {
+            var store = new GroundLabelStore(arguments[index + 1]);
+            var parameters = new GroundLabelParameters(GroundTheoryTuning.LaunchTuning(arguments, GroundTheoryTuning.SemanticDefault));
+            var report = GroundLabelEvaluator.Run(store, arguments.Contains("--sweep-ground-labels", StringComparer.Ordinal), parameters,
+                (completed, total) =>
+                {
+                    if (completed == total || completed % 16 == 0)
+                        errors.WriteLine($"Ground-label evaluation: {completed}/{total}");
+                });
+            output.WriteLine($"Ground-label evaluation written to {GroundLabelEvaluator.Save(report, store)}");
+            return 0;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException
+            or GroundLabelException or ArgumentException or NotSupportedException or OverflowException)
+        {
+            errors.WriteLine($"Ground-label evaluation failed: {error.Message}");
+            return 1;
         }
     }
 
@@ -768,6 +808,9 @@ internal static class Program
                                     attaches to an already-running visible game.
             --ground-detect-once    Capture one already-running frame and print semantic
                                     ground lines using the CPU detector.
+            --evaluate-ground-labels DATASET_DIRECTORY [--sweep-ground-labels]
+                                    Evaluate saved labels and write a JSON report to evaluations.
+                                    Use --ground-threshold=N and the other tuning options with '='.
             --ground-threshold N    Ground response threshold (default 8).
             --ground-minimum-segment N
                                     Minimum semantic evidence pixels (default 40).
