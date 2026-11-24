@@ -54,12 +54,17 @@ internal static class HackerTerrainWindowTests
         var held = false;
         try
         {
-            // Load the real window and its stored Atlas without starting the
-            // receiver, finding a game window, or launching Hollow Knight.
+            // Load the archived room before showing the window with live game
+            // startup disabled. The shutdown guard also skips archive loading.
+            var loadArchive = (Task)Invoke(window, "InitializeHackerArchiveAsync")!;
+            WaitFor(() => loadArchive.IsCompleted, "The terrain fixture did not finish loading the archive.");
+            loadArchive.GetAwaiter().GetResult();
+            Check(Field(window, "hackerAtlasOutput").GetValue(window) is HackerAtlasOutput { RoomCount: 1 },
+                "The terrain fixture did not load its archived room.");
             Field(window, "isClosing").SetValue(window, true);
             window.Show();
-            WaitFor(() => window.IsLoaded && Field(window, "hackerAtlasOutput").GetValue(window) is not null
-                && Field(window, "atlasOperationInProgress").GetValue(window) is false, "The terrain fixture did not load its room.");
+            WaitFor(() => window.IsLoaded && Field(window, "atlasOperationInProgress").GetValue(window) is false,
+                "The terrain fixture window did not finish loading.");
             Field(window, "workspace").SetValue(window, "Hacker");
             Control<FrameworkElement>(window, "GameplayPanel").Visibility = Visibility.Collapsed;
             Control<FrameworkElement>(window, "HackerPanel").Visibility = Visibility.Visible;
