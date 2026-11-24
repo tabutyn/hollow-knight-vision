@@ -25,6 +25,8 @@ public sealed class BotCommittedAtlasCoverage
     private IReadOnlyList<LiveWorldObservation>? previousRows;
     private int revision, schema, earned;
 
+    internal (int Covered, int Earned) Totals => (occupied.Count, earned);
+
     public void Reset()
     {
         previousRows = null;
