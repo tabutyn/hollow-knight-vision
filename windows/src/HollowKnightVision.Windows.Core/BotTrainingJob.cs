@@ -19,7 +19,7 @@ public static class BotTrainingJob
     private sealed record ValidationStrategy(Guid? SourceSession);
     private sealed record ParentEvidence(Guid[]? TrainingSessions, Guid[]? ValidationSessions,
         Guid[]? AncestorSessions, SourceReport? SourceReport, ValidationStrategy? ValidationStrategy, double? HeldAttackCost);
-    private sealed record Receipt(Guid Id, string BotDomain, string ModelDirectory, bool NativeParity);
+    private sealed record Receipt(Guid Id, string BotDomain, string ModelDirectory, bool NativeParity, DateTimeOffset CreatedAt);
 
     public static BotTrainingPlan Plan(string root, BotCaptureDomain domain, IReadOnlyList<BotCaptureManifest> library)
     {
@@ -68,10 +68,11 @@ public static class BotTrainingJob
         var version = $"bot-{id:D}";
         var path = CompletionPath(root, domain, id);
         var receipt = Read<Receipt>(path);
-        if (receipt.Id != id || receipt.BotDomain != name || receipt.ModelDirectory != version || !receipt.NativeParity)
+        if (receipt.Id != id || receipt.BotDomain != name || receipt.ModelDirectory != version || !receipt.NativeParity
+            || receipt.CreatedAt == default)
             throw new InvalidDataException("The completed run's verified bot export is missing.");
         _ = BotNativePolicy.Load(Path.GetDirectoryName(path)!);
-        return new BotModelStore(root, domain).LoadPlayback()
+        return new BotModelStore(root, domain).UseLatestVerified()
             ?? throw new InvalidDataException("No verified playback checkpoint was selected.");
     }
 

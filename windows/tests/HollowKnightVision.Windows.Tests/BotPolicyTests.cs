@@ -361,13 +361,13 @@ internal static class BotPolicyTests
             if (hacker.LoadPlayback() is not null || gameplay.LoadPlayback() is not null)
                 throw new InvalidOperationException("An empty store should have no model.");
 
-            var legacy = Publish(root, "v1", null, 0, publishResult: false);
+            var legacy = PublishModel(root, "v1", null, 0, publishResult: false);
             Expect(gameplay, legacy);
-            var first = Publish(Path.Combine(root, "hacker"), "bot-first", "hacker", 1);
+            var first = PublishModel(Path.Combine(root, "hacker"), "bot-first", "hacker", 1);
             Expect(hacker, first);
-            var second = Publish(Path.Combine(root, "hacker"), "bot-second", "hacker", 2);
+            var second = PublishModel(Path.Combine(root, "hacker"), "bot-second", "hacker", 2);
             Expect(hacker, second);
-            var independent = Publish(Path.Combine(root, "gameplay"), "bot-own", "gameplay", 3);
+            var independent = PublishModel(Path.Combine(root, "gameplay"), "bot-own", "gameplay", 3);
             Expect(gameplay, independent);
 
             var current = Path.Combine(root, "hacker", "active.json");
@@ -376,19 +376,25 @@ internal static class BotPolicyTests
                 if (selection.RootElement.GetProperty("previousDirectory").GetString() != "bot-first")
                     throw new InvalidOperationException("Automatic activation should remember the previous valid version.");
             }
-            File.WriteAllText(current,
-                """{"directory":"bot-first","previousDirectory":"bot-second","manualChoiceThrough":"bot-second"}""");
-            Expect(hacker, first);
+            if (hacker.RestorePrevious()?.Directory != first)
+                throw new InvalidOperationException("Restore should select the prior verified checkpoint.");
+            var reopened = new BotModelStore(temporary.FullName, BotCaptureDomain.Hacker);
+            Expect(reopened, first);
+            if (reopened.Catalog() is not { ActiveId: "bot-first", PreviousId: "bot-second" })
+                throw new InvalidOperationException("Rollback must remain visible across reopening.");
 
-            var newest = Publish(Path.Combine(root, "hacker"), "bot-newest", "hacker", 4);
-            Publish(Path.Combine(root, "hacker"), "bot-unverified", "hacker", 7, nativeParity: false);
-            Publish(Path.Combine(root, "hacker"), "bot-partial", "hacker", 8, publishResult: false);
-            Publish(Path.Combine(root, "hacker"), "bot-wrong-domain", "gameplay", 9);
-            var corrupt = Publish(Path.Combine(root, "hacker"), "bot-corrupt", "hacker", 10);
+            var newest = PublishModel(Path.Combine(root, "hacker"), "bot-newest", "hacker", 4);
+            PublishModel(Path.Combine(root, "hacker"), "bot-unverified", "hacker", 7, nativeParity: false);
+            PublishModel(Path.Combine(root, "hacker"), "bot-partial", "hacker", 8, publishResult: false);
+            PublishModel(Path.Combine(root, "hacker"), "bot-wrong-domain", "gameplay", 9);
+            var corrupt = PublishModel(Path.Combine(root, "hacker"), "bot-corrupt", "hacker", 10);
             File.AppendAllText(Path.Combine(corrupt, "model.zip"), "corrupt");
-            Expect(hacker, newest);
+            Expect(reopened, newest);
             Expect(gameplay, independent);
 
+            Reject(() => reopened.Activate("bot-corrupt"));
+            if (reopened.Catalog().ActiveId != "bot-newest")
+                throw new InvalidOperationException("A rejected manual choice must preserve the active policy.");
             File.AppendAllText(Path.Combine(newest, "runtime-policy.json"), "corrupt");
             Expect(hacker, second);
             File.WriteAllText(current, """{"directory":"..\\gameplay"}""");
@@ -402,23 +408,70 @@ internal static class BotPolicyTests
                 throw new InvalidOperationException($"Expected {directory} as the verified checkpoint.");
         }
 
-        static string Publish(string models, string name, string? domain, int offset,
-            bool nativeParity = true, bool publishResult = true)
+    }
+
+    internal static void TestCatalogHidesPartialAndForeignVersionsAndRejectsInvalidPaths()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-model-catalog-");
+        try
         {
-            var folder = Path.Combine(models, name);
-            Directory.CreateDirectory(folder);
-            WriteRuntime(folder);
-            File.WriteAllText(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(new { botDomain = domain }));
-            if (publishResult)
-            {
-                File.WriteAllText(Path.Combine(folder, "training-result.json"), JsonSerializer.Serialize(new
-                {
-                    createdAt = new DateTimeOffset(2026, 11, 22, 0, 0, 0, TimeSpan.Zero).AddHours(offset),
-                    modelDirectory = name, botDomain = domain, nativeParity, eligibleForActivation = false
-                }));
-            }
-            return folder;
+            var folder = Path.Combine(temporary.FullName, "models", "hacker");
+            var store = new BotModelStore(temporary.FullName, BotCaptureDomain.Hacker);
+            var legacy = PublishModel(folder, "v1", "hacker", 0, publishResult: false);
+            PublishModel(folder, "bot-partial", "hacker", 1, publishResult: false);
+            PublishModel(folder, "bot-foreign", "gameplay", 2);
+            PublishModel(folder, "bot-unverified", "hacker", 3, nativeParity: false);
+            var missing = PublishModel(folder, "bot-missing", "hacker", 4);
+            File.Delete(Path.Combine(missing, "runtime-manifest.json"));
+            if (store.LoadPlayback()?.Directory != legacy || store.RestorePrevious() is not null
+                || !store.Catalog().Versions.Select(version => version.Id).SequenceEqual(["v1"]))
+                throw new InvalidOperationException("Only complete, compatible catalog entries should be offered.");
+            foreach (var invalid in new[] { "", "..", "../outside", "/tmp/model", "bot-partial", "bot-foreign", "bot-missing" })
+                Reject(() => store.Activate(invalid));
+            if (File.Exists(Path.Combine(folder, "active.json")) || store.Catalog().ActiveId != "v1")
+                throw new InvalidOperationException("Rejected selections must leave the default selection intact.");
         }
+        finally { temporary.Delete(recursive: true); }
+    }
+
+    internal static void TestTrainingCompletionActivatesNewestDespiteRollback()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-model-trained-");
+        try
+        {
+            var root = temporary.FullName;
+            var models = Path.Combine(root, "models", "hacker");
+            var store = new BotModelStore(root, BotCaptureDomain.Hacker);
+            var first = PublishModel(models, "bot-first", "hacker", 1);
+            _ = store.LoadPlayback();
+            var id = Guid.NewGuid();
+            var next = PublishModel(models, $"bot-{id:D}", "hacker", 2, runId: id);
+            _ = store.LoadPlayback();
+            if (store.Activate("bot-first").Directory != first || store.LoadPlayback()?.Directory != first)
+                throw new InvalidOperationException("An explicit rollback should live through the known export.");
+            if (BotTrainingJob.VerifyCompleted(root, BotCaptureDomain.Hacker, id).Directory != next
+                || store.LoadPlayback()?.Directory != next || store.Catalog().PreviousId != "bot-first")
+                throw new InvalidOperationException("Confirmed training should use the newest native export and remember the rollback.");
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
+    private static string PublishModel(string models, string name, string? domain, int offset,
+        bool nativeParity = true, bool publishResult = true, Guid? runId = null)
+    {
+        var folder = Path.Combine(models, name);
+        Directory.CreateDirectory(folder);
+        WriteRuntime(folder);
+        File.WriteAllText(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(new { botDomain = domain, name }));
+        if (publishResult)
+        {
+            File.WriteAllText(Path.Combine(folder, "training-result.json"), JsonSerializer.Serialize(new
+            {
+                id = runId, createdAt = new DateTimeOffset(2026, 11, 22, 0, 0, 0, TimeSpan.Zero).AddHours(offset),
+                modelDirectory = name, botDomain = domain, nativeParity, eligibleForActivation = false
+            }));
+        }
+        return folder;
     }
 
     internal static int WriteRuntime(string root, bool alwaysAttack = false, int[]? inputColumns = null, int schemaVersion = 1)

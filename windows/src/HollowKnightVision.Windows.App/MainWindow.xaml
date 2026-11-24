@@ -301,6 +301,15 @@
                             <Button x:Name="BotTrainButton" Content="Train" IsEnabled="False" MinWidth="70"
                                     Margin="7,0,0,0" Click="BotTrain_Click"/>
                         </StackPanel>
+                        <DockPanel Margin="0,8,0,0">
+                            <Button x:Name="BotRestorePrevious" DockPanel.Dock="Right" Content="Restore Previous"
+                                    Margin="7,0,0,0" Click="BotRestorePrevious_Click" IsEnabled="False"/>
+                            <Button x:Name="BotUseVersion" DockPanel.Dock="Right" Content="Use Version"
+                                    Margin="7,0,0,0" Click="BotUseVersion_Click" IsEnabled="False"/>
+                            <ComboBox x:Name="BotPlaybackVersion" AutomationProperties.Name="Bot playback version"
+                                      DisplayMemberPath="DisplayName" SelectedValuePath="Id" MaxDropDownHeight="320"
+                                      SelectionChanged="BotPlaybackVersion_Changed" IsEnabled="False"/>
+                        </DockPanel>
                         <TextBlock x:Name="BotTrainingStatus" Margin="0,5,0,0" Foreground="#B5C2CC" TextWrapping="Wrap"/>
                     </StackPanel>
                     <Grid Grid.Row="2">

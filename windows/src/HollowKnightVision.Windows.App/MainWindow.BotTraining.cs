@@ -9,6 +9,9 @@ namespace HollowKnightVision.Windows.App;
 public partial class MainWindow
 {
     private BotTrainingPlan? gameplayTrainingPlan, hackerTrainingPlan;
+    private BotCheckpointCatalog? gameplayCheckpoints, hackerCheckpoints;
+    private IReadOnlyList<BotCaptureManifest> botTrainingLibrary = [];
+    private bool changingBotCheckpoint;
     private int botTrainingPlanGeneration;
     private CancellationTokenSource? botTrainingCancellation;
     private Task<TrainingProcessResult>? botTrainingProcessTask;
@@ -16,24 +19,33 @@ public partial class MainWindow
 
     private BotCaptureDomain SelectedBotTrainingDomain => BotTrainingDomain.SelectedIndex == 1
         ? BotCaptureDomain.Hacker : BotCaptureDomain.Gameplay;
+    private BotCheckpointCatalog? SelectedBotCheckpoints => SelectedBotTrainingDomain == BotCaptureDomain.Hacker
+        ? hackerCheckpoints : gameplayCheckpoints;
 
     private async void RefreshBotTrainingPlans(IReadOnlyList<BotCaptureManifest> library)
     {
+        botTrainingLibrary = library;
         var generation = ++botTrainingPlanGeneration;
         var root = BotRoot;
         var plans = await Task.Run(() => (gameplay: Plan(BotCaptureDomain.Gameplay), hacker: Plan(BotCaptureDomain.Hacker)));
         if (generation != botTrainingPlanGeneration || isClosing) return;
-        (gameplayTrainingPlan, hackerTrainingPlan) = plans;
-        BotModelSummary.Text = $"Hacker · {plans.hacker.PolicyName ?? "No verified checkpoint"}    "
-            + $"Game Play · {plans.gameplay.PolicyName ?? "No verified checkpoint"}";
+        (gameplayTrainingPlan, gameplayCheckpoints) = plans.gameplay;
+        (hackerTrainingPlan, hackerCheckpoints) = plans.hacker;
+        BotModelSummary.Text = $"Hacker · {hackerTrainingPlan.PolicyName ?? "No verified checkpoint"}    "
+            + $"Game Play · {gameplayTrainingPlan.PolicyName ?? "No verified checkpoint"}";
+        PresentBotCheckpoints();
         UpdateBotTrainingControls();
 
-        BotTrainingPlan Plan(BotCaptureDomain domain)
+        (BotTrainingPlan Plan, BotCheckpointCatalog? Catalog) Plan(BotCaptureDomain domain)
         {
-            try { return BotTrainingJob.Plan(root, domain, library); }
+            try
+            {
+                var plan = BotTrainingJob.Plan(root, domain, library);
+                return (plan, new BotModelStore(root, domain).Catalog());
+            }
             catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
             {
-                return new(domain == BotCaptureDomain.Hacker ? "hacker" : "gameplay", "Checkpoint unavailable", [], false, error.Message);
+                return (new(domain == BotCaptureDomain.Hacker ? "hacker" : "gameplay", "Checkpoint unavailable", [], false, error.Message), null);
             }
         }
     }
@@ -41,7 +53,62 @@ public partial class MainWindow
     private void BotTrainingDomain_Changed(object sender, SelectionChangedEventArgs e)
     {
         botTrainingMessage = null;
+        PresentBotCheckpoints();
         UpdateBotTrainingControls();
+    }
+
+    private void PresentBotCheckpoints()
+    {
+        if (BotPlaybackVersion is null) return;
+        var catalog = SelectedBotCheckpoints;
+        BotPlaybackVersion.ItemsSource = catalog?.Versions;
+        BotPlaybackVersion.SelectedValue = catalog?.ActiveId;
+        if (BotPlaybackVersion.SelectedIndex == -1 && catalog?.Versions.Count > 0) BotPlaybackVersion.SelectedIndex = 0;
+    }
+
+    private void BotPlaybackVersion_Changed(object sender, SelectionChangedEventArgs e) => UpdateBotTrainingControls();
+
+    private async void BotUseVersion_Click(object sender, RoutedEventArgs e)
+    {
+        if (BotPlaybackVersion.SelectedValue is string id) await SelectBotCheckpointAsync(id);
+    }
+
+    private async void BotRestorePrevious_Click(object sender, RoutedEventArgs e) => await SelectBotCheckpointAsync(null);
+
+    private async Task SelectBotCheckpointAsync(string? version)
+    {
+        if (isClosing || changingBotCheckpoint || botTrainingCancellation is not null) return;
+        var domain = SelectedBotTrainingDomain;
+        var store = new BotModelStore(BotRoot, domain);
+        changingBotCheckpoint = true;
+        ++botTrainingPlanGeneration;
+        UpdateBotTrainingControls();
+        try
+        {
+            var chosen = await Task.Run(() => version is null ? store.RestorePrevious() : store.Activate(version));
+            if (isClosing || chosen is null) return;
+            StopBotForCheckpointChange(domain);
+            botTrainingMessage = $"Using {chosen.Policy.Name}.";
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+        {
+            if (!isClosing) botTrainingMessage = $"Could not select checkpoint. {error.Message}";
+        }
+        finally
+        {
+            changingBotCheckpoint = false;
+            if (!isClosing)
+            {
+                UpdateBotTrainingControls();
+                RefreshBotTrainingPlans(botTrainingLibrary);
+            }
+        }
+    }
+
+    private void StopBotForCheckpointChange(BotCaptureDomain domain)
+    {
+        if (Volatile.Read(ref botPlayback)?.Domain == domain)
+            StopBotPlayback("Bot model changed. Press B to play the selected checkpoint.", reason: "model-changed");
     }
 
     private void UpdateBotTrainingControls()
@@ -49,15 +116,21 @@ public partial class MainWindow
         if (BotTrainingStatus is null) return;
         var active = botTrainingCancellation;
         var plan = SelectedBotTrainingDomain == BotCaptureDomain.Hacker ? hackerTrainingPlan : gameplayTrainingPlan;
-        BotTrainingDomain.IsEnabled = active is null;
+        var canSelect = !isClosing && active is null && !changingBotCheckpoint;
+        BotTrainingDomain.IsEnabled = active is null && !changingBotCheckpoint;
+        BotPlaybackVersion.IsEnabled = canSelect && SelectedBotCheckpoints is { Versions.Count: > 0 };
+        BotUseVersion.IsEnabled = canSelect && BotPlaybackVersion.SelectedItem is BotCheckpointVersion version
+            && version.Id != SelectedBotCheckpoints?.ActiveId;
+        BotRestorePrevious.IsEnabled = canSelect && SelectedBotCheckpoints?.PreviousId is not null;
         BotTrainButton.Content = active is null ? "Train" : "Stop";
-        BotTrainButton.IsEnabled = !isClosing && (active is null ? plan?.CanTrain == true : !active.IsCancellationRequested);
+        BotTrainButton.IsEnabled = !isClosing && !changingBotCheckpoint
+            && (active is null ? plan?.CanTrain == true : !active.IsCancellationRequested);
         BotTrainingStatus.Text = botTrainingMessage ?? plan?.Unavailable ?? "";
     }
 
     private async void BotTrain_Click(object sender, RoutedEventArgs e)
     {
-        if (isClosing) return;
+        if (isClosing || changingBotCheckpoint) return;
         if (botTrainingCancellation is { } running)
         {
             running.Cancel();
@@ -110,6 +183,8 @@ public partial class MainWindow
             if (result.ExitCode != 0 && !result.Cancelled)
                 throw new InvalidOperationException(result.Output.LastMessage ?? $"Trainer exited with code {result.ExitCode}.");
             var selected = await Task.Run(() => BotTrainingJob.VerifyCompleted(root, domain, id));
+            if (isClosing) return;
+            StopBotForCheckpointChange(domain);
             botTrainingMessage = $"{title} is using {selected.Policy.Name}.";
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)

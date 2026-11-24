@@ -3,6 +3,12 @@ using System.Text.Json;
 namespace HollowKnightVision.Windows.Core;
 
 public sealed record BotPlaybackModel(string Directory, BotNativePolicy Policy);
+public sealed record BotCheckpointVersion(string Id, string Name, DateTimeOffset? CreatedAt)
+{
+    public string DisplayName => CreatedAt is { } created ? $"{Name} · {created.LocalDateTime:g}" : Name;
+}
+
+public sealed record BotCheckpointCatalog(IReadOnlyList<BotCheckpointVersion> Versions, string? ActiveId, string? PreviousId);
 
 /// <summary>Selects a verified checkpoint independently for each observation domain.</summary>
 public sealed class BotModelStore(string root, BotCaptureDomain domain)
@@ -16,35 +22,92 @@ public sealed class BotModelStore(string root, BotCaptureDomain domain)
 
     private sealed record Selection(string Directory, string? PreviousDirectory, string? ManualChoiceThrough = null);
     private sealed record Result(bool NativeParity, string? ModelDirectory, string? BotDomain, DateTimeOffset CreatedAt);
-    private sealed record Manifest(string? BotDomain);
-    private sealed record Candidate(string Directory, DateTimeOffset CreatedAt);
+    private sealed record Manifest(string? BotDomain, string? Name);
+    private sealed record Candidate(string Directory, DateTimeOffset CreatedAt, string? Name);
 
-    public BotPlaybackModel? LoadPlayback()
+    public BotPlaybackModel? LoadPlayback() => LoadPlayback(honorManualChoice: true);
+
+    internal BotPlaybackModel? UseLatestVerified() => LoadPlayback(honorManualChoice: false);
+
+    private BotPlaybackModel? LoadPlayback(bool honorManualChoice)
     {
         lock (SelectionLock)
         {
             var selected = ReadSelection();
             var currentDirectory = FindDirectory(selected.Directory);
-            foreach (var candidate in Candidates())
+            if (LatestVerified() is { } latest)
             {
-                var policy = TryLoad(candidate.Directory);
-                if (policy is null) continue;
-                var name = Path.GetFileName(candidate.Directory);
-                if (SameName(name, selected.ManualChoiceThrough) && !SameName(name, selected.Directory)
+                var name = Path.GetFileName(latest.Directory);
+                if (honorManualChoice && SameName(name, selected.ManualChoiceThrough) && !SameName(name, selected.Directory)
                     && TryLoadSelected(currentDirectory) is { } manual)
                     return manual;
 
-                if (!SameName(name, selected.Directory) || selected.ManualChoiceThrough is not null)
-                {
-                    var previous = SameName(name, selected.Directory) || TryLoadSelected(currentDirectory) is null
-                        ? selected.PreviousDirectory : selected.Directory;
-                    if (SameName(name, previous)) previous = null;
-                    AtomicFile.Write(SelectionPath, JsonSerializer.SerializeToUtf8Bytes(new Selection(name, previous), Json));
-                }
-                return new(candidate.Directory, policy);
+                SaveSelection(name, selected, manualChoiceThrough: null);
+                return latest;
             }
             return TryLoadSelected(currentDirectory) ?? TryLoadSelected(FindDirectory(selected.PreviousDirectory));
         }
+    }
+
+    public BotCheckpointCatalog Catalog()
+    {
+        lock (SelectionLock)
+        {
+            var selection = ReadSelection();
+            var versions = Candidates().Where(item => HasNativeExport(item.Directory)).Select(item =>
+            {
+                var id = Path.GetFileName(item.Directory);
+                return new BotCheckpointVersion(id, item.Name ?? id, item.CreatedAt);
+            }).ToList();
+            if (FindDirectory("v1") is { } baseVersion && HasNativeExport(baseVersion)
+                && ReadManifestForDomain(baseVersion) is { } manifest && !versions.Any(item => SameName(item.Id, "v1")))
+                versions.Add(new("v1", manifest.Name ?? "v1", null));
+            return new(versions.AsReadOnly(), FindListed(selection.Directory), FindListed(selection.PreviousDirectory));
+
+            string? FindListed(string? id) => versions.FirstOrDefault(item => SameName(item.Id, id))?.Id;
+        }
+    }
+
+    public BotPlaybackModel Activate(string id)
+    {
+        lock (SelectionLock) return SelectVerified(id, ReadSelection());
+    }
+
+    public BotPlaybackModel? RestorePrevious()
+    {
+        lock (SelectionLock)
+        {
+            var selection = ReadSelection();
+            return selection.PreviousDirectory is { } previous ? SelectVerified(previous, selection) : null;
+        }
+    }
+
+    private BotPlaybackModel SelectVerified(string id, Selection selection)
+    {
+        if (!IsVersionName(id) || TryLoadSelected(FindDirectory(id)) is not { } target)
+            throw new InvalidDataException("Choose a completed checkpoint with a verified export for this bot.");
+        var latest = LatestVerified();
+        var name = Path.GetFileName(target.Directory);
+        var latestName = latest is null ? null : Path.GetFileName(latest.Directory);
+        SaveSelection(name, selection, SameName(name, latestName) ? null : latestName);
+        return target;
+    }
+
+    private void SaveSelection(string id, Selection selection, string? manualChoiceThrough)
+    {
+        var unchanged = SameName(id, selection.Directory);
+        if (unchanged && SameName(manualChoiceThrough, selection.ManualChoiceThrough)) return;
+        var previous = unchanged || TryLoadSelected(FindDirectory(selection.Directory)) is null
+            ? selection.PreviousDirectory : selection.Directory;
+        if (SameName(id, previous)) previous = null;
+        AtomicFile.Write(SelectionPath, JsonSerializer.SerializeToUtf8Bytes(new Selection(id, previous, manualChoiceThrough), Json));
+    }
+
+    private BotPlaybackModel? LatestVerified()
+    {
+        foreach (var candidate in Candidates())
+            if (TryLoad(candidate.Directory) is { } policy) return new(candidate.Directory, policy);
+        return null;
     }
 
     private IEnumerable<Candidate> Candidates() => ListDirectories(Models)
@@ -56,12 +119,12 @@ public sealed class BotModelStore(string root, BotCaptureDomain domain)
     private Candidate? ReadCandidate(string directory)
     {
         var name = Path.GetFileName(directory);
-        if (!IsVersionName(name) || ReadManifestForDomain(directory) is null) return null;
+        if (!IsVersionName(name) || ReadManifestForDomain(directory) is not { } manifest) return null;
         var result = TryRead<Result>(Path.Combine(directory, "training-result.json"));
         if (result is null || !result.NativeParity || result.CreatedAt == default || !SameName(result.ModelDirectory, name)
             || result.BotDomain is not null && result.BotDomain != domainName)
             return null;
-        return new(directory, result.CreatedAt);
+        return new(directory, result.CreatedAt, manifest.Name);
     }
 
     private BotPlaybackModel? TryLoadSelected(string? directory)
@@ -124,6 +187,11 @@ public sealed class BotModelStore(string root, BotCaptureDomain domain)
 
     private static string[] ListDirectories(string directory) =>
         Directory.Exists(directory) ? Directory.GetDirectories(directory) : [];
+
+    private static bool HasNativeExport(string directory) =>
+        File.Exists(Path.Combine(directory, "runtime-manifest.json"))
+        && File.Exists(Path.Combine(directory, "runtime-policy.json"))
+        && File.Exists(Path.Combine(directory, "model.zip"));
 
     private static BotNativePolicy? TryLoad(string directory)
     {
