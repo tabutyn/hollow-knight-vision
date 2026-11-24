@@ -16,6 +16,11 @@ $files = @{
     'spa.traineddata' = '6f2e04d02774a18f01bed44b1111f2cd7f3ba7ac9dc4373cd3f898a40ea6b464'
     'LICENSE' = 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30'
 }
+$requestOptions = @{ UseBasicParsing = $true; TimeoutSec = 45 }
+if ((Get-Command Invoke-WebRequest).Parameters.ContainsKey('MaximumRetryCount')) {
+    $requestOptions.MaximumRetryCount = 2
+    $requestOptions.RetryIntervalSec = 2
+}
 $directory = (New-Item -ItemType Directory -Path (Join-Path $PSScriptRoot 'artifacts/game-text/tessdata') -Force).FullName
 foreach ($file in $files.GetEnumerator()) {
     $path = Join-Path $directory $file.Key
@@ -24,7 +29,7 @@ foreach ($file in $files.GetEnumerator()) {
     }
     $download = "$path.$([Guid]::NewGuid().ToString('N')).tmp"
     try {
-        Invoke-WebRequest -Uri "$upstream/$($file.Key)" -OutFile $download -TimeoutSec 45 -MaximumRetryCount 2 -RetryIntervalSec 2
+        Invoke-WebRequest -Uri "$upstream/$($file.Key)" -OutFile $download @requestOptions
         if ((Get-FileHash -LiteralPath $download).Hash -ne $file.Value) {
             throw "Incorrect checksum for game text asset $($file.Key)."
         }

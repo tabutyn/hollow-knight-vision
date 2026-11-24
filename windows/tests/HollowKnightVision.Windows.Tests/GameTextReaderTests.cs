@@ -108,6 +108,11 @@ internal static class GameTextReaderTests
             damaged.SelectProfile(profile);
             Require(damaged.Entries.Length == 0 && damaged.Issue is not null
                 && File.ReadAllText(path) == "[{\"date\":\"broken\"}]", "malformed evidence should remain untouched");
+            var work = damaged.TryStart(Frame(1), "en", GameTextNotebook.OpeningContext, 1)!;
+            Require(damaged.Complete(work, [Line("Opening Credits", .95)], 25, 1.025)
+                && damaged.Scan is not null && damaged.Issue is not null
+                && File.ReadAllText(path) == "[{\"date\":\"broken\"}]",
+                "an unreadable notebook should preserve both its contents and the on-screen result");
         }
         finally { Directory.Delete(root, recursive: true); }
     }

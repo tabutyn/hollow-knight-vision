@@ -7,6 +7,8 @@ namespace HollowKnightVision.Windows.App;
 
 internal sealed class WindowsGameTextRecognition : IDisposable
 {
+    // Sparse recognition often reads textured scenery as low-confidence text.
+    private const double MinimumLineConfidence = .35;
     private readonly string dataRoot = Path.Combine(AppContext.BaseDirectory, "game-text", "tessdata");
     private TesseractEngine? engine;
     private string? loadedLanguage;
@@ -55,6 +57,7 @@ internal sealed class WindowsGameTextRecognition : IDisposable
             var text = iterator.GetText(level)?.Trim();
             if (string.IsNullOrEmpty(text) || !iterator.TryGetBoundingBox(level, out var bounds)) continue;
             var confidence = iterator.GetConfidence(level) / 100d;
+            if (!double.IsFinite(confidence) || confidence < MinimumLineConfidence) continue;
             var normalized = new StencilRect(bounds.X1 / (double)image.Width, bounds.Y1 / (double)image.Height,
                 bounds.Width / (double)image.Width, bounds.Height / (double)image.Height);
             lines.Add(new(lines.Count + 1, text, normalized, confidence));
