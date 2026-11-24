@@ -37,6 +37,7 @@ internal static class AtlasWindowIntegrationTests
         }
         Console.WriteLine("PASS Atlas window saves, restores and deletes scoped snapshots and switches both playthroughs");
         Console.WriteLine("PASS Windows Reset Room handles local and game-focused R, protects capture, and clears both atlases only after confirmation");
+        Console.WriteLine("PASS Windows Player Ops serializes requests, applies invincibility, and persists Label randomization");
         Console.WriteLine("PASS Hacker Atlas draws restored rooms at the measured passage elevation");
         Console.WriteLine("PASS Gameplay Atlas draws measured doorways independently of optional outlines and hides them outside gameplay");
         Console.WriteLine("PASS Gameplay window applies only ordered Atlas placements and keeps menu images in capture coordinates");
@@ -610,6 +611,7 @@ internal static class AtlasWindowIntegrationTests
             var controls = GetField<WindowsGameControlForwarder>(window, "gameControls");
             controls.Start();
             Wait(WaitForReceiver());
+            VerifyPlayerOperations(controls);
 
             var capture = new BotCaptureSession(Path.Combine(root, "capture"), "modded", "fixture", generation, 1, new());
             SetField(window, "botCapture", capture);
@@ -697,14 +699,103 @@ internal static class AtlasWindowIntegrationTests
             false, System.Windows.Input.ModifierKeys.None)!;
         bool MapsIntact() => VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7
             && hacker.Read(profile)?.RegistrationCount == room.RegistrationCount;
-        ReceiverPlayerOpsCommand ReadResetCommand()
+        ReceiverPlayerOpsCommand ReadResetCommand() => ReadOperation(ReceiverPlayerOpsCommand.ResetRoomOperation);
+        ReceiverPlayerOpsCommand ReadOperation(string expected)
         {
             var command = (ReceiverPlayerOpsCommand)Wait(commands.Reader.ReadAsync(timeout.Token).AsTask())!;
-            Check(command.Operation == ReceiverPlayerOpsCommand.ResetRoomOperation, "Expected a room reload command.");
+            Check(command.Operation == expected, $"Expected player operation {expected}, received {command.Operation}.");
             return command;
         }
         void Reply(ReceiverPlayerOpsCommand command, string? scene) =>
             replies.Writer.TryWrite(new(2, "playerOpsAck", command.SessionId, command.CommandId, true, null, null, null, scene));
+        void ReplyState(ReceiverPlayerOpsCommand command, PlayerTestState? state, string? failure = null) =>
+            replies.Writer.TryWrite(new(2, "playerOpsAck", command.SessionId, command.CommandId, failure is null, state, null, failure));
+
+        void VerifyPlayerOperations(WindowsGameControlForwarder controls)
+        {
+            var fields = Control<StackPanel>(window, "PlayerOpsControls");
+            var progress = Control<ProgressBar>(window, "OpsProgress");
+            var invincibility = Control<CheckBox>(window, "OpsInvincibleCheck");
+            var randomizeAfterLabel = Control<CheckBox>(window, "OpsRandomizeAfterLabelCheck");
+            var geo = Control<TextBox>(window, "OpsGeoText");
+            var status = Control<TextBlock>(window, "OpsStatusText");
+            var label = GetField<LabelCaptureSession>(window, "labelCapture");
+            var initial = PlayerTestState.Default with { Geo = 23 };
+            Check(invincibility.IsChecked == false && randomizeAfterLabel.IsChecked == true,
+                "New Windows settings must agree with the Mac Ops defaults.");
+
+            var pending = InvokeTask(window, "QueryPlayerOpsAsync");
+            var query = ReadOperation("query");
+            Wait(InvokeTask(window, "QueryPlayerOpsAsync"));
+            Control<Button>(window, "OpsRestoreEnemiesButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(!fields.IsEnabled && progress.Visibility == Visibility.Visible && !PressReset()
+                && !commands.Reader.TryRead(out _), "Pending player state must disable actions and reject overlapping requests.");
+            ReplyState(query, initial);
+            Wait(pending);
+            Check(fields.IsEnabled && progress.Visibility == Visibility.Collapsed && geo.Text == "23",
+                "The current receiver reply must re-enable Player Ops and load its state.");
+            var wrongSession = controls.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.Query, requiredSession: Guid.NewGuid());
+            Check(Wait(wrongSession) is null && !commands.Reader.TryRead(out _),
+                "An edit based on a different receiver session must be rejected before sending.");
+
+            geo.Text = "9999";
+            invincibility.IsChecked = true;
+            invincibility.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var current = initial with { Geo = 41, Health = 4 };
+            ReplyState(ReadOperation("query"), current);
+            var toggle = ReadOperation("apply");
+            Check(toggle.State == (current with { Invincible = true }) && geo.Text == "9999" && !fields.IsEnabled,
+                "A single invincibility click must send fresh counters and leave unsubmitted numeric edits alone.");
+            ReplyState(toggle, toggle.State);
+            Wait(WaitForReceiver());
+            Check(invincibility.IsChecked == true && geo.Text == "9999", "Confirmation must keep the user's unsent Geo edit.");
+
+            invincibility.IsChecked = false;
+            invincibility.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            ReplyState(ReadOperation("query"), toggle.State);
+            var rejected = ReadOperation("apply");
+            Check(rejected.State is { Invincible: false }, "A second invincibility click must request normal damage.");
+            ReplyState(rejected, null, "Receiver rejected the edit.");
+            Wait(WaitForReceiver());
+            Check(invincibility.IsChecked == true && status.Text == "Receiver rejected the edit."
+                && status.Foreground is System.Windows.Media.SolidColorBrush { Color.R: 255 },
+                "A failed edit must show an error and restore the confirmed invincibility value.");
+
+            geo.Text = "invalid";
+            Control<Button>(window, "OpsApplyButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(status.Text == "Enter whole numbers for player state." && !commands.Reader.TryRead(out _),
+                "Invalid counters must stay in the editor without sending an operation.");
+            geo.Text = "42";
+            Control<TextBox>(window, "OpsMaxHealthText").Text = "15";
+            Control<Button>(window, "OpsApplyButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var apply = ReadOperation("apply");
+            Check(apply.State is { MaxHealth: 9, Geo: 42, Invincible: true },
+                "Applying an edited draft must send normalized counters.");
+            ReplyState(apply, apply.State);
+            Wait(WaitForReceiver());
+
+            pending = InvokeTask(window, "QueryPlayerOpsAsync");
+            query = ReadOperation("query");
+            _ = label.Apply(GamePauseState.Paused);
+            _ = Invoke(window, "ApplyLabelPauseState", GamePauseState.Ready);
+            Check(!commands.Reader.TryRead(out _), "Label randomization must wait for the pending player operation.");
+            ReplyState(query, current);
+            ReplyState(ReadOperation("query"), current);
+            var randomize = ReadOperation("apply");
+            Check(randomize.State is { Invincible: false } rolled && rolled == rolled.Normalized() && rolled.Geo < 10_000,
+                "Label randomization must use valid counters and preserve the current game's invincibility state.");
+            ReplyState(randomize, randomize.State);
+            Wait(pending);
+
+            randomizeAfterLabel.IsChecked = false;
+            randomizeAfterLabel.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(!new PlayerOpsPreferences(root).LoadRandomizeAfterLabel(), "The Label preference must survive a fresh settings reader.");
+            _ = label.Apply(GamePauseState.Paused);
+            _ = Invoke(window, "ApplyLabelPauseState", GamePauseState.Ready);
+            Program.Pump();
+            Check(!commands.Reader.TryRead(out _), "An opted-out Label session must leave player state alone.");
+        }
+
         async Task WaitForReceiver()
         {
             while (!((bool)Invoke(window, "CanResetRoom")!)) await Task.Delay(15, timeout.Token);
