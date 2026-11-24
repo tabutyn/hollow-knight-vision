@@ -202,6 +202,9 @@ internal static class MenuCatalogTests
         var option = catalog.Scenes.Single().Options.Single(item => item.ClassIdentifier == "keyboard.right");
         Equal(original.LeftSelector!.Bounds, option.LeftSelector!.Bounds);
         Equal(left, option.LeftSelector.BoundsFor("ko")); Equal(right, option.RightSelector!.BoundsFor("ko"));
+        Equal(left, option.LeftSelector.ReferenceFor("ko"));
+        Equal(right, option.RightSelector.ReferenceFor("ko"));
+        Equal(original.LeftSelector.ReferenceFor("en"), option.LeftSelector.ReferenceFor("en"));
         Check(option.LeftSelector.Variants.Any(variant => variant.Kernel.Kind == "human-selector-correction.ko"), "Reviewed correction pixels missing.");
         var placement = catalog.SelectorCorrections.Single(); Equal(id, placement.SourceExampleIdentifier); Equal("keyboard", placement.ContextIdentifier);
         var directory = Directory.CreateTempSubdirectory("hkv-catalog-correction-");
