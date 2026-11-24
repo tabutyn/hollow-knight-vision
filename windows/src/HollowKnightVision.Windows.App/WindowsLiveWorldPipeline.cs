@@ -708,11 +708,8 @@ internal sealed class WindowsLiveWorldPipeline
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 Volatile.Write(ref hasDurableEvidence, true);
                 lastPersistenceAt = request.MonotonicTimestamp;
-                if (doorwayAligned)
-                {
-                    roomDoorway = null;
-                    projectedWalkedGround.Clear();
-                }
+                if (doorwayAligned) roomDoorway = null;
+                if (requiresRebuild) projectedWalkedGround.Clear();
                 if (localRecoveryPlaced) placementPending = false;
                 placedRoomStartedAt ??= request.MonotonicTimestamp;
                 var committed = durableSnapshot.Observations[^1];
