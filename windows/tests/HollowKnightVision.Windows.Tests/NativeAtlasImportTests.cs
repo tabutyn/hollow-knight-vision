@@ -572,6 +572,109 @@ internal static class NativeAtlasImportTests
     internal static void TestWindowsAtlasExtendsAndAlignsWithoutMovingLegacyFrames() =>
         VerifyWindowsDoorwayCommit(failAlignmentCommit: false);
 
+    internal static void TestReturningDoorwayAlignsAnEstimatedRoomAgainstSavedImagery()
+    {
+        VerifyReturningDoorway(visualRoom: false);
+        VerifyReturningDoorway(visualRoom: true);
+    }
+
+    private static void VerifyReturningDoorway(bool visualRoom)
+    {
+        var directory = Directory.CreateTempSubdirectory("hkv-return-doorway-");
+        try
+        {
+            var root = directory.FullName;
+            var pipeline = new WindowsLiveWorldPipeline(root);
+            var store = new LiveWorldSessionStore(root);
+            const string sourceRoom = "Doorway_start";
+            const string targetRoom = "Doorway_other_side";
+            WindowsLiveWorldFrame Departure(long id) => FloorFrame(id, 71, true, 135, false, false) with
+            {
+                RoomName = sourceRoom,
+                RoomIdentityIsVisual = visualRoom
+            };
+            for (var id = 1; id <= 4; id++)
+                Check(pipeline.Process(Departure(id)).AllowsAtlasWrite, "save the first room and its exit floor");
+
+            pipeline.NotifyTrackingLoss(1);
+            var outward = new VisualSceneDiscontinuityTracker.Cut(1.2, 1.8, new(80, 0), VisualRoomDirection.Right);
+            WindowsLiveWorldFrame OtherSide(long id, bool airborne) => FloorFrame(id, 901, false, 150, airborne, false) with
+            {
+                RoomName = targetRoom,
+                RoomIdentityIsVisual = visualRoom,
+                DoorwayCut = outward
+            };
+            for (var id = 6; id <= 20; id++)
+            {
+                var arrival = pipeline.Process(OtherSide(id, airborne: id <= 16));
+                if (id >= 17)
+                    Check(arrival.AllowsAtlasWrite, $"save the second room's floor after the first doorway expires ({arrival.Diagnostic})");
+            }
+            var estimated = store.Load().Snapshot;
+            Check(estimated.DoorwayFloorConstraints.Count == 0, "the airborne entry did not measure a doorway");
+
+            pipeline.NotifyTrackingLoss(1);
+            var returning = new VisualSceneDiscontinuityTracker.Cut(6, 6.6, new(432, 0), VisualRoomDirection.Left);
+            WindowsLiveWorldFrame Return(long id) => Departure(id) with { DoorwayCut = returning };
+            _ = pipeline.Process(Return(22));
+            Check(pipeline.Process(Return(23)).ConfirmedRecoveryPose is not null,
+                "recognize the saved first room before accepting return images");
+            _ = pipeline.Process(Return(24));
+            _ = pipeline.Process(Return(25));
+            var aligned = pipeline.Process(Return(26));
+            var reloaded = store.Load().Snapshot;
+            Check(reloaded.DoorwayFloorConstraints.Count == 1,
+                $"the grounded return connects the two rooms ({aligned.Diagnostic})");
+            var edge = reloaded.DoorwayFloorConstraints.Single();
+            var previousImages = reloaded.Observations.Take(estimated.Observations.Count).ToArray();
+            var targetId = estimated.Observations[^1].RoomId;
+            Check(aligned is { RebuiltAtlas.TileCount: > 0, CameraPose.Y: 0 } && edge.Direction == -1
+                && edge.DepartureSupport.Count == 3 && edge.ArrivalSupport.Count == 3,
+                "the return verifies and publishes a measured floor connection");
+            Check(previousImages.Zip(estimated.Observations).All(pair =>
+                pair.First.RoomId == pair.Second.RoomId && pair.First.RawPose == pair.Second.RawPose
+                && pair.First.OptimizedPose.X == pair.Second.OptimizedPose.X
+                && pair.First.OptimizedPose.Y == pair.Second.OptimizedPose.Y + (pair.First.RoomId == targetId ? 15 : 0)),
+                "only the estimated floor component moves and all of its old images move together");
+            Check(LiveDoorwayFloorEvidence.Propose(reloaded, new(
+                targetId, estimated.Observations[0].RoomId, 1, 6, 6.6, VisualRoomDirection.Left)) is null,
+                "replaying the same crossing cannot append duplicate evidence");
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    internal static void TestGymRetainsGroundedReturnDoorwaysAfterImageRecovery()
+    {
+        var atlas = new BotGymAtlasCoverage();
+        var tracking = GroundHypothesisTrackingResult.Empty with
+        {
+            PoseVerified = true, HasConfirmedGround = true, LocalTextureSupport = 8
+        };
+        var origin = new AtlasPoint(0, 0);
+        var size = new WorldSize(320, 180);
+        atlas.EnterRoom(0);
+        for (var id = 1; id <= 4; id++) Observe(FloorFrame(id, 71, true, 135, false, false));
+        atlas.EnterRoom(1, new(0, 1, 1, 1.2, 1.8, VisualRoomDirection.Right));
+        for (var id = 6; id <= 10; id++) Observe(FloorFrame(id, 901, false, 150, false, false));
+        var placed = atlas.View(origin, size, 5);
+        Check(atlas.Snapshot.DoorwayFloorConstraints.Count == 1 && placed is not null,
+            "visual Gym starts with one measured connection into the new room");
+        atlas.EnterRoom(0, new(1, 0, 1, 3, 3.6, VisualRoomDirection.Left));
+        for (var id = 12; id <= 17; id++) Observe(FloorFrame(id, 71, true, 135, false, false));
+        var replayed = atlas.View(origin, size, 5);
+        Check(atlas.Snapshot.DoorwayFloorConstraints.Select(edge => edge.Direction).SequenceEqual([1, -1])
+            && replayed is not null && replayed.EarnedCells == placed!.EarnedCells
+            && atlas.ProjectDoors(origin, size) is { Count: > 0 },
+            "known-room recovery supplies return doorway geometry without earning exploration credit");
+
+        void Observe(WindowsLiveWorldFrame request) =>
+            atlas.Observe(request.Frame, origin, request.MonotonicTimestamp, [], default, tracking,
+                admitsPlacement: true, captureEvidence: request.WorldEvidence);
+    }
+
     internal static void TestDoorwayCommitFailureKeepsPlacedRoomAndRetriesAlignment() =>
         VerifyWindowsDoorwayCommit(failAlignmentCommit: true);
 
@@ -1013,6 +1116,25 @@ internal static class NativeAtlasImportTests
             Check(anchored.Plan(SourceIsland, TargetIsland, new(3, 3), tolerance: 4) is null
                 && anchored.Plan(SourceIsland, TargetIsland, new(2, 2), tolerance: 4)?.Shifts.Count == 0,
                 "fixed placements require consistent two-axis evidence");
+
+            var thirdRoom = original.Observations[^1] with { Id = 6, SourceObservationId = 6, RoomId = 10,
+                Timestamp = original.Observations[^1].Timestamp + 1, LocalPose = default };
+            var estimated = original.TrackingIslands.Select(island => island with { Placement = LiveIslandPlacement.Estimated });
+            var third = new LiveTrackingIsland(13, thirdRoom.RoomId, thirdRoom.Timestamp, thirdRoom.OptimizedPose,
+                LiveIslandPlacement.Reference, default, "reference", [new(thirdRoom.Id, default, true)]);
+            var extended = new LiveWorldSnapshot(original.SchemaVersion, original.MapRevision, original.AnchoredObservationId,
+                [.. original.Observations, thirdRoom], original.Keyframes, original.Landmarks, original.RelativeMotionEdges,
+                original.LoopClosureEdges, [.. estimated, third], original.DoorwayFloorConstraints);
+            var doorway = new LiveIslandComponents(extended, new HashSet<int>());
+            var heights = doorway.PlanDoorwayElevation(third.Id, TargetIsland, 18, tolerance: 4);
+            Check(heights?.Count == 2 && heights[SourceIsland] == 18 && heights[TargetIsland] == 18
+                && doorway.PlanDoorwayElevation(SourceIsland, TargetIsland, 5, tolerance: 4) is null
+                && doorway.PlanDoorwayElevation(third.Id, TargetIsland, double.NaN, tolerance: 4) is null,
+                "a doorway moves a connected estimated floor pair together and rejects conflicting elevation");
+            var recovered = new LiveIslandComponents(extended, new HashSet<int> { original.Observations[0].Id });
+            Check(recovered.PlanDoorwayElevation(third.Id, TargetIsland, 18, tolerance: 4) is null
+                && recovered.PlanDoorwayElevation(third.Id, TargetIsland, 2, tolerance: 4)?.Count == 0,
+                "image-recovered placement is preserved across adjoining doorway constraints");
         });
     }
 

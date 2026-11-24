@@ -47,7 +47,7 @@ internal sealed class BotGymAtlasCoverage
         if (room == roomId) return;
         BeginVisit();
         HasPlacedRoom = placedRooms.Contains(roomId);
-        incomingDoorway = !HasPlacedRoom && transition is { Direction: VisualRoomDirection.Left or VisualRoomDirection.Right } cut
+        incomingDoorway = transition is { Direction: VisualRoomDirection.Left or VisualRoomDirection.Right } cut
             && cut.TargetRoomId == roomId
             && cut.SourceRoomId == room && placedRooms.Contains(cut.SourceRoomId) ? cut : null;
         room = roomId;
@@ -152,11 +152,12 @@ internal sealed class BotGymAtlasCoverage
         lastScanAt = time;
         open = true;
 
-        var alignedDoorway = incomingDoorway is { } doorway && world.AlignNewRoomThroughDoorway(doorway);
+        var alignedDoorway = incomingDoorway is { } doorway && world.AlignRoomThroughDoorway(doorway);
         if (alignedDoorway)
         {
             incomingDoorway = null;
             doorPlacement = LiveWorldGroundOverlay.ProjectPlacement(world.Snapshot);
+            placedWalk.Clear();
         }
         // The confirmation can shift the complete recovery island. Every
         // observation in it, including this frame, is recovery evidence.

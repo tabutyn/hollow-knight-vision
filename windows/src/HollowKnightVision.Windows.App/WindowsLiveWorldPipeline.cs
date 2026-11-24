@@ -151,7 +151,7 @@ internal sealed class WindowsLiveWorldPipeline
     private VisualSceneDiscontinuityTracker.Cut? examinedDoorway;
     private int unmatchedArrivalSearches;
     private bool arrivalHasCompetingPlacement;
-    private LiveDoorwayTransition? newRoomDoorway;
+    private LiveDoorwayTransition? roomDoorway;
     private RecoveryDisposition recoveryDisposition;
     private bool placementPending;
     private bool canResumeLocalTracking;
@@ -386,7 +386,7 @@ internal sealed class WindowsLiveWorldPipeline
                 receiverRoomId = null;
                 placedRoomStartedAt = null;
                 doorwaySource = null;
-                newRoomDoorway = null;
+                roomDoorway = null;
                 ResetLocalRecovery();
                 recoveryDisposition = RecoveryDisposition.AwaitSafeNewWorld;
                 lastGlobalSearchAt = double.NegativeInfinity;
@@ -405,7 +405,7 @@ internal sealed class WindowsLiveWorldPipeline
                 examinedDoorway = null;
                 unmatchedArrivalSearches = 0;
                 arrivalHasCompetingPlacement = false;
-                newRoomDoorway = null;
+                roomDoorway = null;
                 receiverRoomId = requestedRoomId;
                 roomId = resolvedRoomId;
                 activeTracker.BeginRecoveryEpoch();
@@ -556,6 +556,7 @@ internal sealed class WindowsLiveWorldPipeline
                         placedRoomIds[requestedRoomId] = placement.RoomId;
                         roomId = placement.RoomId;
                     }
+                    roomDoorway = RecentRoomDoorway(request, placement.RoomId);
                     ResetLocalRecovery();
                     recoveryDisposition = RecoveryDisposition.None;
                     placedRoomStartedAt ??= request.MonotonicTimestamp;
@@ -663,8 +664,8 @@ internal sealed class WindowsLiveWorldPipeline
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 transactionObserver?.Invoke("ingest");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
-                if (newRoomDoorway is { } pendingDoor && request.MonotonicTimestamp - pendingDoor.ArrivalCaptureTimestamp > 3)
-                    newRoomDoorway = null;
+                if (roomDoorway is { } pendingDoor && request.MonotonicTimestamp - pendingDoor.ArrivalCaptureTimestamp > 3)
+                    roomDoorway = null;
 
                 var groundConfirmationProbe = !globalSearchDue
                     && activeTracker.CanConfirmGroundRecovery(request.MonotonicTimestamp);
@@ -679,8 +680,7 @@ internal sealed class WindowsLiveWorldPipeline
                 var restored = restoredPlacement is not null && activeTracker.PlaceRecoveredIsland(restoredPlacement);
                 var localRecoveryPlaced = (acceptedClosure is not null || restored)
                     && !activeTracker.LatestIslandAwaitsPlacement;
-                var doorwayAligned = !localRecoveryPlaced && newRoomDoorway is { } doorway
-                    && activeTracker.AlignNewRoomThroughDoorway(doorway);
+                var doorwayAligned = roomDoorway is { } doorway && activeTracker.AlignRoomThroughDoorway(doorway);
                 var requiresRebuild = doorwayAligned || localRecoveryPlaced;
                 var requiresBasisUpdate = requiresRebuild || groundClosure is not null;
                 var durableSnapshot = WithCompositionExclusions(activeTracker.Snapshot);
@@ -708,7 +708,11 @@ internal sealed class WindowsLiveWorldPipeline
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 Volatile.Write(ref hasDurableEvidence, true);
                 lastPersistenceAt = request.MonotonicTimestamp;
-                if (doorwayAligned) newRoomDoorway = null;
+                if (doorwayAligned)
+                {
+                    roomDoorway = null;
+                    projectedWalkedGround.Clear();
+                }
                 if (localRecoveryPlaced) placementPending = false;
                 placedRoomStartedAt ??= request.MonotonicTimestamp;
                 var committed = durableSnapshot.Observations[^1];
@@ -1044,7 +1048,7 @@ internal sealed class WindowsLiveWorldPipeline
             receiverRoomId = null;
             placedRoomStartedAt = null;
             doorwaySource = null;
-            newRoomDoorway = null;
+            roomDoorway = null;
             ResetLocalRecovery();
             recoveryDisposition = RecoveryDisposition.None;
             lastGlobalSearchAt = double.NegativeInfinity;
@@ -1090,18 +1094,12 @@ internal sealed class WindowsLiveWorldPipeline
             arrivalHasCompetingPlacement = true;
 
         if (arrivalHasCompetingPlacement || !request.StableTrackingVerified
-            || request.DoorwayCut is not { } cut || doorwaySource is not { } source
-            || !double.IsFinite(cut.DepartureTimestamp) || !double.IsFinite(cut.ArrivalTimestamp)
-            || cut.DepartureTimestamp < source.StartedAt || cut.ArrivalTimestamp <= cut.DepartureTimestamp
-            || request.MonotonicTimestamp - cut.ArrivalTimestamp is < 0 or > 3
-            || cut.Direction is not (VisualRoomDirection.Left or VisualRoomDirection.Right))
-        {
+            || RecentRoomDoorway(request, requestedRoomId) is not { } arrival)
             return false;
-        }
 
-        if (examinedDoorway != cut)
+        if (examinedDoorway != request.DoorwayCut)
         {
-            examinedDoorway = cut;
+            examinedDoorway = request.DoorwayCut;
             unmatchedArrivalSearches = 0;
         }
         if (recovery is not null && ++unmatchedArrivalSearches < 3) return false;
@@ -1117,12 +1115,12 @@ internal sealed class WindowsLiveWorldPipeline
 
         var unplaced = snapshot.UnplacedObservationIds();
         var placed = snapshot.Observations.Where(observation => !unplaced.Contains(observation.Id)).ToArray();
-        if (!placed.Any(observation => observation.RoomId == source.RoomId)) return false;
+        if (!placed.Any(observation => observation.RoomId == arrival.SourceRoomId)) return false;
 
         // The measured cut supplies direction, and the visible Atlas supplies
         // spacing until there is direct evidence for a relative placement.
         var margin = request.SolveWidth * .1;
-        var worldX = cut.Direction == VisualRoomDirection.Right
+        var worldX = arrival.Direction == VisualRoomDirection.Right
             ? placed.Max(value => value.OptimizedPose.X + value.SolveWidth * .5) + margin + request.SolveWidth * .5
             : placed.Min(value => value.OptimizedPose.X - value.SolveWidth * .5) - margin - request.SolveWidth * .5;
         // An unplaced component may rebase its own poses between doorway visits.
@@ -1130,12 +1128,24 @@ internal sealed class WindowsLiveWorldPipeline
         if (!double.IsFinite(basis.X)) return false;
 
         worldBasis.BeginLocalEpoch(basis);
-        newRoomDoorway = new LiveDoorwayTransition(source.RoomId, targetId, persistentCaptureGeneration,
-            cut.DepartureTimestamp, cut.ArrivalTimestamp, cut.Direction);
+        roomDoorway = arrival with { TargetRoomId = targetId };
         placedRoomIds[requestedRoomId] = targetId;
         roomId = targetId;
         recoveryDisposition = RecoveryDisposition.None;
         return true;
+    }
+
+    private LiveDoorwayTransition? RecentRoomDoorway(WindowsLiveWorldFrame request, int targetId)
+    {
+        if (request.DoorwayCut is not { } cut || doorwaySource is not { } source
+            || !double.IsFinite(cut.DepartureTimestamp) || !double.IsFinite(cut.ArrivalTimestamp)
+            || cut.DepartureTimestamp < source.StartedAt || cut.ArrivalTimestamp <= cut.DepartureTimestamp
+            || request.MonotonicTimestamp - cut.ArrivalTimestamp is < 0 or > 3
+            || cut.Direction is not (VisualRoomDirection.Left or VisualRoomDirection.Right))
+            return null;
+
+        return new(source.RoomId, targetId, persistentCaptureGeneration, cut.DepartureTimestamp,
+            cut.ArrivalTimestamp, cut.Direction);
     }
 
     private static AtlasPoint Corrected(AtlasPoint pose, AtlasPoint correction) => new(

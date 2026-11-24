@@ -30,27 +30,11 @@ internal static class LiveDoorwayFloorEvidence
             return null;
         }
 
-        if (snapshot.Observations.Any(frame => frame.RoomId == transition.TargetRoomId
-            && (frame.CaptureGeneration != transition.CaptureGeneration || frame.CaptureTimestamp is not { } time
-                || time < transition.ArrivalCaptureTimestamp)))
-        {
-            return null;
-        }
-
-        var observations = snapshot.Observations.ToDictionary(observation => observation.Id);
-        var owners = snapshot.TrackingIslands.SelectMany(island =>
-            island.Members.Select(member => (Island: island, Member: member)))
-            .ToDictionary(value => value.Member.ObservationId);
-        if (snapshot.DoorwayFloorConstraints.Any(edge =>
-            observations[edge.ArrivalObservationId].RoomId == transition.TargetRoomId))
-        {
-            return null;
-        }
-
         var sourceFrames = Frames(transition.SourceRoomId, transition.DepartureCaptureTimestamp - 2,
             transition.DepartureCaptureTimestamp + .01);
         var targetFrames = Frames(transition.TargetRoomId, transition.ArrivalCaptureTimestamp,
             transition.ArrivalCaptureTimestamp + 3);
+        if (sourceFrames.Length < 3 || targetFrames.Length < 3) return null;
         var exitsRight = transition.Direction == VisualRoomDirection.Right;
 
         var departure = Endpoint(sourceFrames, exitsRight, departing: true);
@@ -61,6 +45,23 @@ internal static class LiveDoorwayFloorEvidence
             return null;
         }
 
+        var observations = snapshot.Observations.ToDictionary(observation => observation.Id);
+        if (snapshot.DoorwayFloorConstraints.Any(edge =>
+        {
+            var from = observations[edge.DepartureObservationId];
+            var to = observations[edge.ArrivalObservationId];
+            return from.RoomId == transition.SourceRoomId && to.RoomId == transition.TargetRoomId
+                && from.CaptureGeneration == transition.CaptureGeneration && to.CaptureGeneration == transition.CaptureGeneration
+                && from.CaptureTimestamp is { } time && Math.Abs(time - transition.DepartureCaptureTimestamp) <= .75
+                && to.CaptureTimestamp >= transition.ArrivalCaptureTimestamp;
+        }))
+        {
+            return null;
+        }
+
+        var owners = snapshot.TrackingIslands.SelectMany(island =>
+            island.Members.Select(member => (Island: island, Member: member)))
+            .ToDictionary(value => value.Member.ObservationId);
         var departureSupport = Support(sourceFrames, source.Frame, source.Floor, exitsRight);
         var arrivalSupport = Support(targetFrames, target.Frame, target.Floor, !exitsRight);
         if (!ProvesFootContact(departureSupport, source.Frame, source.Floor)
