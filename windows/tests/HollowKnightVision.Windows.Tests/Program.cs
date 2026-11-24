@@ -297,6 +297,10 @@ var tests = new List<(string Name, Action Run)>
     ("live-world pipeline orders append ingest CAS publication and uses monotonic time", TestPipelineOrdersTransactionAndUsesMonotonicTimestamp),
     ("live-world pipeline gates unverified new worlds and reference-free loss", TestPipelineSuppressesUnverifiedNewWorldAndLossWithoutReference),
     ("live-world pipeline preserves ground-anchored capture pose across basis revisions", TestGroundAnchoredObservationKeepsCapturePoseAcrossLaterBasisRevision),
+    ("live island correction reprojects queued and returning owners through the same graph", LiveIslandWorldProjectionTests.TestCorrectionReprojectsAnOlderOwnerWithoutChangingRawMotion),
+    ("provisional live islands cannot borrow the latest registered correction", LiveIslandWorldProjectionTests.TestUnknownAndProvisionalOwnersCannotInheritTheLastPlacement),
+    ("live island placement fences capture scopes and recovery", LiveIslandWorldProjectionTests.TestWorldProjectionFencesCaptureRoomEpochAndRecovery),
+    ("live world worker restores the returning owner's saved translation", TestLiveWorldWorkerRestoresReturningIslandBasis),
     ("live-world pipeline propagates ground-alignment exclusions", TestAtlasWorldTrackerReceivesGroundAlignmentExclusions),
     ("live-world pipeline append failure never falls back to transient state", TestPersistentAppendFailureDoesNotFallBackToTransientAtlasOrTracker),
     ("live-world pipeline corrupt persistent world blocks atlas", TestCorruptPersistentWorldBlocksAtlasInsteadOfFallingBackToMemory),
@@ -9235,6 +9239,47 @@ static void TestPipelineSuppressesUnverifiedNewWorldAndLossWithoutReference()
             PipelineSolidFrame(5), 104, 2.1, 1, "Crossroads_01");
         Equal("Committed", roomVerified.State);
         Equal(2, new LiveWorldSessionStore(root).Load().Snapshot.Observations.Count);
+    });
+}
+
+static void TestLiveWorldWorkerRestoresReturningIslandBasis()
+{
+    WithTemporaryDirectory(root =>
+    {
+        const string room = "Tutorial_01";
+        var pipeline = new WindowsLiveWorldPipeline(root);
+        var pixels = PipelineTexturePixels(71);
+        WindowsLiveWorldFrame Track(long id, double time, AtlasPoint pose, long lineage)
+        {
+            var image = PipelineTextureFrameFromPixels(id, pixels);
+            return new(image, image, time, time, pose, image.Width, [], [], 1, room, 1, 64)
+            {
+                WorldEvidence = new(time) { MeasuredLineage = lineage },
+                WalkedGroundLineage = lineage
+            };
+        }
+
+        var first = pipeline.Process(Track(1, 1, new(20, 10), 1));
+        var second = pipeline.Process(Track(2, 1.6, new(290, 10), 2));
+        var corrected = pipeline.Process(Track(3, 2.2, new(290, 10), 2));
+        Equal(WindowsLiveWorldPipelineState.Committed, first.State);
+        Equal(WindowsLiveWorldPipelineState.Committed, second.State);
+        Equal(WindowsLiveWorldPipelineState.Committed, corrected.State);
+        True(corrected.AcceptedClosure is not null);
+        True(Math.Abs(corrected.WorldBasisOffset.X) > 100);
+        var graph = corrected.CommittedGraph!;
+        var owner = graph.TrackingIslands.Single(island => island.MeasuredLineage == 1);
+        var oldPose = new AtlasPoint(22, 10);
+        var expectedWorld = new AtlasPoint(oldPose.X + owner.WorldFromLocal.X, oldPose.Y + owner.WorldFromLocal.Y);
+        var throttled = pipeline.Process(Track(4, 2.25, oldPose, 1));
+        Equal(WindowsLiveWorldPipelineState.Throttled, throttled.State);
+        ClosePoint(expectedWorld, throttled.CameraPose, .000001);
+        var returning = pipeline.Process(Track(5, 2.5, oldPose, 1));
+        Equal(WindowsLiveWorldPipelineState.Committed, returning.State);
+        ClosePoint(expectedWorld, returning.CameraPose, .000001);
+        Equal(2, returning.CommittedGraph!.TrackingIslands.Count);
+        Equal(owner.Id, returning.CommittedGraph.TrackingIslands[^1].Id);
+        Equal(oldPose, returning.CommittedGraph.Observations[^1].RawPose);
     });
 }
 

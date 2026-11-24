@@ -765,6 +765,8 @@ public partial class MainWindow : Window
         public long LabelRevision { get; init; }
         public long CaptureGeneration { get; init; }
         public AtlasPoint? WorldBasisOffset { get; init; }
+        internal WindowsLiveWorldFrameScope? WorldFrame { get; init; }
+        internal bool WorldPlacementConfirmed { get; init; }
         public double? WorldBasisTimestamp { get; init; }
         public GroundTruthAtlasMosaic? AtlasSource { get; init; }
         public bool ReplacesGameplayAtlas { get; init; }
@@ -780,6 +782,7 @@ public partial class MainWindow : Window
         public GroundHypothesisTrackingResult GroundHypotheses { get; init; } =
             GroundHypothesisTrackingResult.Empty;
         public IReadOnlyList<GroundHypothesisAtlasLine> GroundDisplayLines { get; init; } = [];
+        public IReadOnlyList<GroundHypothesisAtlasLine> LocalWalkedGround { get; init; } = [];
         public LiveWorldGroundProjection? SavedWorld { get; init; }
         public PixelRect? GroundDisplayKnight { get; init; }
         public AtlasPoint GroundDisplayCamera { get; init; }
@@ -3225,6 +3228,9 @@ public partial class MainWindow : Window
         var gameplayAdmitted = !holdAtlas && admission.AllowsAtlasWrite
             && tracked.AllowsAtlasWrite && tracked.RoomAllowsAtlasWrite;
         WindowsLiveWorldPipelineResult? liveWorldResult = null;
+        WindowsLiveWorldFrameScope? worldFrame = null;
+        LiveIslandPlacementProjection? worldPlacement = null;
+        var rawWalkedGround = localWalkedGround;
         var liveWorldGeneration = captureGeneration > 0
             ? (ulong)captureGeneration
             : 0;
@@ -3279,28 +3285,25 @@ public partial class MainWindow : Window
                     WorldEvidence = tracked.WorldEvidence
                 }, visualTelemetry, atlasCompositionExclusions, atlasRoomId, atlasCaptureIdentity);
             }
-            if (worldRoom is { Length: > 0 })
+            if (!string.IsNullOrWhiteSpace(worldRoom))
             {
-                liveWorldResult = CurrentWorldResult(liveWorldGeneration, worldRoom);
-                var placed = liveWorldResult?.State is WindowsLiveWorldPipelineState.Committed
-                    or WindowsLiveWorldPipelineState.Throttled;
-                gameplayAdmitted &= placed;
-                if (placed)
+                worldFrame = new(liveWorldGeneration, worldRoom, captureTimestamp, walkedCoordinateEpoch,
+                    tracked.MeasuredLineage, tracked.WalkedGroundLineage, tracked.RequiresWorldRecovery);
+                if (CurrentWorldFrame(worldFrame.Value) is { } completed)
                 {
-                    var basis = liveWorldResult!.WorldBasisOffset;
-                    visualTelemetry = visualTelemetry with
+                    liveWorldResult = completed.Result;
+                    worldPlacement = liveWorldResult.ProjectFrame(completed.Frame, worldFrame.Value);
+                    if (worldPlacement is { } projected)
                     {
-                        CameraX = visualTelemetry.CameraX + basis.X,
-                        CameraY = visualTelemetry.CameraY + basis.Y,
-                        CameraTargetX = visualTelemetry.CameraTargetX + basis.X,
-                        CameraTargetY = visualTelemetry.CameraTargetY + basis.Y
-                    };
-                    var recorded = liveWorldResult.WalkedCoordinateEpoch == walkedCoordinateEpoch
-                        && liveWorldResult.WalkedGroundLineage == tracked.WalkedGroundLineage
-                        ? liveWorldResult.RecordedLocalWalk : [];
-                    localWalkedGround = LiveWorldWalkedGround.MergeForDisplay(
-                        localWalkedGround, recorded, liveWorldResult.WalkedGround, basis);
+                        visualTelemetry = OffsetGameplayCamera(visualTelemetry, projected.WorldFromLocal);
+                        if (projected.IsPlaced)
+                        {
+                            localWalkedGround = ProjectWalkedGround(
+                                liveWorldResult, worldFrame.Value, localWalkedGround, projected.WorldFromLocal);
+                        }
+                    }
                 }
+                gameplayAdmitted &= worldPlacement?.IsPlaced == true;
             }
         }
         IReadOnlyList<GroundHypothesisAtlasLine> groundDisplayLines = admission.AdmitsTracking
@@ -3315,7 +3318,9 @@ public partial class MainWindow : Window
             && recognition.GameplayEnabled && Volatile.Read(ref atlasPathsEnabled))
         {
             var pathCamera = visualObservation.GroundVerified ? groundHypotheses.CameraPosition : tracked.MeasuredSceneryCamera;
-            var registeredPath = tracked.RequiresWorldRecovery ? null : liveWorldResult?.RegisteredPath(walkedCoordinateEpoch);
+            var registeredPath = worldPlacement is { IsPlaced: true } placement
+                && liveWorldResult?.RegisteredPath(walkedCoordinateEpoch) is { } pathRegistration
+                ? pathRegistration with { WorldFromLocal = placement.WorldFromLocal } : null;
             if (usesDurableWorld)
                 pathCamera = registeredPath is not null && pathCamera.HasValue ? groundDisplayCamera : null;
             var measuredLocal = usesDurableWorld && visualObservation.GroundVerified
@@ -3341,12 +3346,11 @@ public partial class MainWindow : Window
             CommittedBotFrame? botAtlas = null;
             if (liveWorldResult is { CommittedGraph: { } graph, CommittedRoomId: { } committedRoom } placement)
             {
-                AtlasPoint? center = !placement.PlacementPending && placement.WalkedCoordinateEpoch == walkedCoordinateEpoch
-                    && (visualObservation.GroundVerified || tracked.HasMeasuredSceneryContinuity)
+                AtlasPoint? center = worldPlacement is { IsPlaced: true }
                     ? new(visualTelemetry.CameraX, visualTelemetry.CameraY) : null;
                 botAtlas = new(graph, committedRoom, center)
                 {
-                    DoorPlacement = tracked.RequiresWorldRecovery ? null : placement.BotDoorPlacement(walkedCoordinateEpoch)
+                    DoorPlacement = center.HasValue ? placement.BotDoorPlacement(walkedCoordinateEpoch) : null
                 };
             }
             CaptureBotObservations(frame, captureGeneration, recognition.Generation, captureTimestamp,
@@ -3446,12 +3450,10 @@ public partial class MainWindow : Window
                 ObjectDiagnostics = recognition.ObjectDiagnostics,
                 LabelRevision = labelRevision,
                 CaptureGeneration = captureGeneration,
-                WorldBasisOffset = gameplayAdmitted
-                    ? liveWorldResult?.WorldBasisOffset
-                    : null,
-                WorldBasisTimestamp = gameplayAdmitted
-                    ? captureTimestamp
-                    : null,
+                WorldFrame = worldFrame,
+                WorldBasisOffset = worldPlacement?.WorldFromLocal,
+                WorldBasisTimestamp = worldPlacement.HasValue ? captureTimestamp : null,
+                WorldPlacementConfirmed = worldPlacement?.IsPlaced == true,
                 AtlasSource = resultGameplayAtlas,
                 ReplacesGameplayAtlas = replacesGameplayAtlas,
                 GameplayAtlasReplacement = replacesGameplayAtlas
@@ -3470,6 +3472,7 @@ public partial class MainWindow : Window
                 ProfileLaunch = profileLaunch,
                 GroundHypotheses = groundHypotheses,
                 GroundDisplayLines = groundDisplayLines,
+                LocalWalkedGround = rawWalkedGround,
                 SavedWorld = liveWorldResult?.SavedWorld,
                 GroundDisplayKnight = masks.GroundKnight,
                 GroundDisplayCamera = groundDisplayCamera,
@@ -3498,6 +3501,7 @@ public partial class MainWindow : Window
     {
         if (result.CaptureGeneration != Interlocked.Read(ref recentCaptureGeneration)
             || !labelCapture.CanProcess(result.LabelRevision)) return;
+        result = ReprojectWorldFrame(result);
         if (result.AtlasSource is not null && !ReferenceEquals(result.AtlasSource, gameplayAtlas))
             result = result with { GameplayTiles = null };
         PublishGpuDiagnostics(result);
@@ -3526,15 +3530,6 @@ public partial class MainWindow : Window
         var replacementToPresent = Interlocked.Exchange(
             ref gameplayAtlasPresentationPending,
             null);
-        if (result.WorldBasisOffset is { } basis
-            && result.WorldBasisTimestamp is { } basisTimestamp)
-        {
-            gameplayViewport.UpdateWorldBasisOffset(
-                new ViewportPoint(
-                    basis.X * gameplayAtlas.PixelsPerWorldUnit,
-                    -basis.Y * gameplayAtlas.PixelsPerWorldUnit),
-                basisTimestamp);
-        }
         if (replacementToPresent is not null
             && ReferenceEquals(gameplayAtlas, replacementToPresent))
         {
@@ -3579,6 +3574,15 @@ public partial class MainWindow : Window
         var acceptsGameplayPlacement = gameplayPresentation.TryAcceptAnalysis(result.Frame);
         if (acceptsGameplayPlacement)
         {
+            if (result.WorldBasisOffset is { } basis
+                && result.WorldBasisTimestamp is { } basisTimestamp)
+            {
+                gameplayViewport.UpdateWorldBasisOffset(
+                    new ViewportPoint(
+                        basis.X * gameplayAtlas.PixelsPerWorldUnit,
+                        -basis.Y * gameplayAtlas.PixelsPerWorldUnit),
+                    basisTimestamp);
+            }
             if (result.SavedWorld is { } savedWorld) gameplaySavedWorld = savedWorld;
             gameplayPlacementFrame = result.AtlasPathState == AtlasPathFrameState.Gameplay
                 ? (result.Frame.CaptureId, result.CaptureTimestamp) : null;
@@ -3593,7 +3597,8 @@ public partial class MainWindow : Window
                 ObjectInferenceIssueText, ObjectDetectionOptions, result.ObjectDiagnostics);
             PresentGameplayFrame(
                 gameplayPresentation.LatestFrame!,
-                result.GameplayTelemetry,
+                result.WorldFrame is not null && result.WorldBasisOffset is null
+                    ? gameplayLiveTelemetry ?? result.GameplayTelemetry : result.GameplayTelemetry,
                 (BitmapSource)GameplayImage.Source,
                 result.MenuContext);
         }
