@@ -13,6 +13,9 @@ internal static class LiveDoorwayFloorEvidence
 {
     private sealed record Surface(AtlasPoint Point, double WorldY);
 
+    internal static bool AtDepartureEdge(double midpoint, double width, bool rightSide) =>
+        rightSide ? midpoint >= width * .82 : midpoint <= width * .18;
+
     public static LiveDoorwayFloorConstraint? Propose(LiveWorldSnapshot snapshot, LiveDoorwayTransition transition)
     {
         if (transition.SourceRoomId == transition.TargetRoomId
@@ -119,8 +122,9 @@ internal static class LiveDoorwayFloorEvidence
             if (frame.ObservedPlayerBounds is not { } player || FindSurface(frame, rightSide) is not { } floor)
                 continue;
             var midpoint = player.X + player.Width * .5;
-            var limit = frame.SolveWidth * (departing ? rightSide ? .82 : .18 : .5);
-            if ((rightSide ? midpoint >= limit : midpoint <= limit) && FootHeight(frame, floor) is not null)
+            var atDoor = departing ? AtDepartureEdge(midpoint, frame.SolveWidth, rightSide)
+                : rightSide ? midpoint >= frame.SolveWidth * .5 : midpoint <= frame.SolveWidth * .5;
+            if (atDoor && FootHeight(frame, floor) is not null)
                 return (frame, floor);
         }
         return null;

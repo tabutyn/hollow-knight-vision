@@ -401,6 +401,8 @@ internal static class GameplayGymVisualTests
             if (reading.Observation is { } row)
             {
                 rooms.Add(row.RoomId);
+                if (row.DetectedTerrain?.Doors is not null)
+                    throw new InvalidOperationException("A loading cut without measured doorway floors must supply no door.");
                 if (index < 18 && row.RoomId != 0)
                     throw new InvalidOperationException("A room change appeared before the scene cut was confirmed.");
                 if (index >= 27 && (row.RoomId != 1 || row.RoomRevision != 1))
@@ -425,6 +427,91 @@ internal static class GameplayGymVisualTests
                 var offset = (y * Width + x) * 4;
                 var shade = luma[y / 10 * 64 + x / 10];
                 pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = shade;
+                pixels[offset + 3] = 255;
+            }
+            return pixels;
+        }
+    }
+
+    internal static void TestGymProjectsGroundedDoorwaysIntoPolicy()
+    {
+        if (!LiveDoorwayFloorEvidence.AtDepartureEdge(820, 1000, rightSide: true))
+            throw new InvalidOperationException("An exact right-edge departure must retain the desktop cutoff.");
+        foreach (var (direction, late) in new[] { (InputButtons.Left, false), (InputButtons.Right, false), (InputButtons.Right, true) })
+        {
+            var source = new BotVisualGymObservationSource();
+            var right = direction == InputButtons.Right;
+            var departureX = right ? 552 : 88;
+            var arrivalX = right ? 88 : 552;
+            const int departureRow = 239, arrivalRow = 261;
+            var departure = DoorRoom(71, departureX, departureRow);
+            var arrival = DoorRoom(191, arrivalX, arrivalRow);
+            var blackout = new byte[departure.Length];
+            var history = new BotObservationHistory(BotPolicyContract.LandingVersion);
+            var fields = BotPolicyContract.Names(BotPolicyContract.LandingVersion)!.ToList();
+            BotCaptureObservation? lastDeparture = null;
+            BotCaptureObservation? passage = null;
+            BotCaptureObservation? latest = null;
+            float[]? vector = null;
+            for (var index = 0; index < (late ? 65 : 49); index++)
+            {
+                var leaving = index < 13;
+                var loading = index is >= 13 and < 19;
+                var pixels = leaving ? departure : loading ? blackout : arrival;
+                var actorX = leaving ? departureX : arrivalX;
+                var row = leaving ? departureRow : arrivalRow;
+                var time = index / 10d;
+                var canSeeActor = leaving || !late || index >= 58;
+                var hud = new HudStencilResult([new(0, "full", new(12, 12, 10, 10), 1),
+                    new(1, "full", new(24, 12, 10, 10), 1)], null, [], [], [], default, false, time);
+                var reading = source.Observe(Frame(pixels, index), time, direction,
+                    frame => canSeeActor ? [new ObjectDetection("game.playable-knight",
+                        new((actorX - 9d) / Width, (row - 28d) / Height, 18d / Width, 13d / Height), .96f)
+                        { SourceFrameIdentifier = frame.CaptureId }] : [], hud);
+                if (reading.Observation is not { } observation) continue;
+                latest = observation;
+                if (leaving) lastDeparture = observation;
+                vector = history.Append(observation, default, time);
+                if (observation.DetectedTerrain?.Doors is { Count: > 0 }) passage = observation;
+            }
+
+            if (late)
+            {
+                if (passage is not null || latest is not { RoomId: 1, Grounded: true, AtlasView: not null })
+                    throw new InvalidOperationException("Foot contact after the crossing expires must not become a doorway.");
+                continue;
+            }
+            if (lastDeparture is not { RoomId: 0, AtlasView: { } before } || lastDeparture.DetectedTerrain?.Doors is not null
+                || passage is not { RoomId: 1, AtlasView: { } after, DetectedTerrain.Doors: [var door], AuthoredTerrain: null })
+                throw new InvalidOperationException($"A grounded visual crossing must produce the current room's door ({direction}).");
+            if ((right ? after.Camera[0] - before.Camera[0] : before.Camera[0] - after.Camera[0]) < Width
+                || Math.Abs(after.Camera[1] + Height - arrivalRow - (before.Camera[1] + Height - departureRow)) > 2
+                || door.X1 != door.X2 || Math.Abs(door.Y1 - (Height - arrivalRow)) > 2 || door.Y2 <= door.Y1)
+                throw new InvalidOperationException($"The confirmed opening must respect aligned floors and the placed camera: {door}.");
+            var doorKnownIndex = fields.IndexOf("marking_door_known");
+            if (vector is null || doorKnownIndex < 0 || vector[vector.Length - fields.Count + doorKnownIndex] != 1)
+                throw new InvalidOperationException("The Gym policy vector must carry the visual door marking.");
+        }
+
+        static byte[] DoorRoom(ulong state, int actorX, int row)
+        {
+            var coarse = new byte[64 * 36];
+            for (var index = 0; index < coarse.Length; index++)
+            {
+                state = unchecked(state * 6364136223846793005 + 1);
+                coarse[index] = (byte)(24 + (state >> 32) % 44);
+            }
+            var pixels = new byte[Width * Height * 4];
+            for (var y = 0; y < Height; y++)
+            for (var x = 0; x < Width; x++)
+            {
+                var value = (byte)(coarse[y / 10 * 64 + x / 10] + (x * 23 + y * 37) % 9);
+                if (x is >= 35 and < 105 && y is >= 35 and < 55) value = 215;
+                if (y == row || y == row + 1) value = 165;
+                if (Math.Abs(x - actorX) <= 6 && y >= row - 26 && y <= row - 15)
+                    value = y == row - 20 && Math.Abs(x - actorX) <= 1 ? (byte)0 : (byte)233;
+                var offset = (y * Width + x) * 4;
+                pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = value;
                 pixels[offset + 3] = 255;
             }
             return pixels;
