@@ -4,9 +4,14 @@ namespace HollowKnightVision.Windows.Core;
 internal sealed class BotGymAtlasCoverage
 {
     private const double ObservationInterval = 1 / 7.5;
+    private const double RecoverySearchInterval = .25;
+    private const int MaximumReferenceImages = 32;
     private readonly LiveWorldTracker world = new();
     private readonly BotCommittedAtlasCoverage coverage = new();
     private readonly BotVisualAtlasCoverage localCoverage = new();
+    private readonly HashSet<int> placedRooms = [];
+    private readonly Dictionary<int, (BgraFrame Image, IReadOnlyList<WorldRect> Exclusions)> referenceImages = [];
+    private readonly Queue<int> referenceOrder = [];
     private int? room;
     private ulong epoch;
     private int? localIslandId;
@@ -15,6 +20,7 @@ internal sealed class BotGymAtlasCoverage
     private AtlasPoint? lastTrustedPose;
     private IReadOnlyList<StencilRect> lastMasks = [];
     private double lastScanAt = double.NegativeInfinity;
+    private double lastRecoverySearch = double.NegativeInfinity;
     private bool awaitingPlacement;
     private bool requiresMatch;
     private bool open;
@@ -37,7 +43,7 @@ internal sealed class BotGymAtlasCoverage
         if (room == roomId) return;
         BeginVisit();
         room = roomId;
-        HasPlacedRoom = world.HasRecoveryReference(roomId);
+        HasPlacedRoom = placedRooms.Contains(roomId);
         awaitingPlacement = HasPlacedRoom;
         requiresMatch = HasPlacedRoom;
         lastTrustedPose = null;
@@ -46,7 +52,7 @@ internal sealed class BotGymAtlasCoverage
 
     internal void Observe(BgraFrame frame, AtlasPoint? pose, double time, IReadOnlyList<PixelRect> omissions,
         VisualRoomCompositionBounds bounds, GroundHypothesisTrackingResult tracking, bool admitsPlacement,
-        bool continuesMeasuredScenery = false, bool retainBasis = false)
+        bool continuesMeasuredScenery = false, bool retainBasis = false, LiveWorldCaptureEvidence? groundEvidence = null)
     {
         var correction = tracking.GlobalCorrection;
         if (correction is { } shift && shift.X * shift.X + shift.Y * shift.Y > 9)
@@ -76,11 +82,24 @@ internal sealed class BotGymAtlasCoverage
         // local ground tracker supplies the image's lower-left origin.
         var center = Center(local, size);
         var placed = new AtlasPoint(center.X + basis.X, center.Y + basis.Y);
-        var update = world.Ingest(world.Snapshot.Observations.Count, time, frame, center, size.Width,
-            exclusions: masks, searchForClosure: awaitingPlacement, localPose: center, captureGeneration: 1,
+        var evidence = groundEvidence ?? new(time) { HasMeasuredSceneryContinuity = continuesMeasuredScenery };
+        var id = world.Snapshot.Observations.Count;
+        world.Ingest(id, time, frame, center, size.Width,
+            exclusions: masks, searchForClosure: false, localPose: center, captureGeneration: 1,
             localEpoch: epoch, roomId: roomId, placedCameraPose: placed,
-            captureEvidence: new(time) { HasMeasuredSceneryContinuity = continuesMeasuredScenery },
-            placementPending: awaitingPlacement);
+            captureEvidence: evidence, placementPending: awaitingPlacement);
+        BgraFrame? masked = null;
+        var searchDue = time - lastRecoverySearch >= RecoverySearchInterval;
+        if (awaitingPlacement && referenceImages.Count != 0
+            && (evidence.FloorCandidates is not null || evidence.GroundGeometry is not null)
+            && (searchDue || world.CanConfirmGroundRecovery(time)))
+        {
+            if (searchDue) lastRecoverySearch = time;
+            masked = FrameRegionRenderer.MapFrame(frame, SceneRegions.Startup(), masks);
+            world.LinkGroundRecovery(masked, masks, source => referenceImages[source].Image,
+                source => referenceImages[source].Exclusions, isConfirmationProbe: !searchDue,
+                hasSource: referenceImages.ContainsKey);
+        }
         lastPose = local;
         lastMasks = masks;
         lastScanAt = time;
@@ -89,10 +108,11 @@ internal sealed class BotGymAtlasCoverage
         // The confirmation can shift the complete recovery island. Every
         // observation in it, including this frame, is recovery evidence.
         var credit = !recovering && correction is null or { X: 0, Y: 0 };
-        coverage.Update(update.Snapshot, creditNewCells: credit);
+        var snapshot = world.Snapshot;
+        coverage.Update(snapshot, creditNewCells: credit);
         if (world.LatestIslandAwaitsPlacement)
         {
-            var island = update.Snapshot.TrackingIslands[^1].Id;
+            var island = snapshot.TrackingIslands[^1].Id;
             if (localIslandId != island)
             {
                 localCoverage.Reset();
@@ -102,9 +122,20 @@ internal sealed class BotGymAtlasCoverage
             return;
         }
 
-        var resolved = update.Snapshot.Observations[^1].OptimizedPose;
+        var observation = snapshot.Observations[^1];
+        if (observation.GroundGeometry is not null && snapshot.Keyframes.LastOrDefault()?.ObservationId == id)
+        {
+            // Only placed ground keyframes can verify a later recovery. Keep
+            // a fixed number of images regardless of episode length.
+            referenceImages[id] = (masked ?? FrameRegionRenderer.MapFrame(frame, SceneRegions.Startup(), masks),
+                observation.ExcludedRects);
+            referenceOrder.Enqueue(id);
+            if (referenceOrder.Count > MaximumReferenceImages) referenceImages.Remove(referenceOrder.Dequeue());
+        }
+        var resolved = observation.OptimizedPose;
         basis = new(resolved.X - center.X, resolved.Y - center.Y);
         HasPlacedRoom = true;
+        placedRooms.Add(roomId);
         awaitingPlacement = false;
         requiresMatch = false;
         lastTrustedPose = local;
@@ -140,6 +171,7 @@ internal sealed class BotGymAtlasCoverage
         lastPose = null;
         lastMasks = [];
         lastScanAt = double.NegativeInfinity;
+        lastRecoverySearch = double.NegativeInfinity;
         open = false;
         localCoverage.Reset();
         localIslandId = null;

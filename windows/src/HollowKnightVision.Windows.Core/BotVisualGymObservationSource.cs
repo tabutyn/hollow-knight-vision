@@ -132,8 +132,12 @@ public sealed class BotVisualGymObservationSource
         terrain = TerrainWallDetector.ApplyContact(terrain, contact, analysis.Floors, analysis.Edges);
         var floors = GroundStrokeGeometry.MergeWalkedFloors(analysis.Floors, walked.InRoom(roomKey), terrainCamera,
             frame.Width, frame.Height, masks.GroundKnight);
+        var groundEvidence = measuredGround && admitted.AllowsAtlasWrite
+            ? LiveWorldCaptureEvidence.FromGround(time, frame.Width, frame.Height, analysis.Floors,
+                observed.GroundTracking.LineReviews, masks.GroundKnight, contact.MeasuredFoot, contact.Floor)
+            : null;
         coverage.Observe(frame, terrainCamera, time, masks.AtlasExclusions, room.CompositionBounds,
-            observed.GroundTracking, admitted.AllowsAtlasWrite, continuesScenery, continuity.RetainBasis);
+            observed.GroundTracking, admitted.AllowsAtlasWrite, continuesScenery, continuity.RetainBasis, groundEvidence);
 
         var timing = new BotCaptureTiming(time, time, Generation, chart, room.Revision);
         blockade.ObserveVisualBasis(Generation, chart, walkedEpoch, frame.Width, time, placement.HasValue,
