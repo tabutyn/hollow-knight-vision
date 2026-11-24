@@ -52,6 +52,60 @@ internal static class GameplayGymVisualTests
             latest = source.Observe(Frame(pixels, i), i / 10d, InputButtons.None, frame => Detect(frame, true), hud: null);
         if (latest?.Observation?.AtlasView is not { CoveredCells: > 0 } || latest.Observation.RoomId != visible.RoomId)
             throw new InvalidOperationException("A brief blackout followed by the same room must retain the episode Atlas.");
+        if (latest.Observation.AtlasView.EarnedCells != visible.AtlasView.EarnedCells)
+            throw new InvalidOperationException("A same-room fade must not count as measured exploration.");
+    }
+
+    internal static void TestAtlasCreditSurvivesGroundCameraRecovery()
+    {
+        const int width = 320, height = 100;
+        var size = new WorldSize(width, height);
+        var floors = new[] { new DetectedFloorLine(40, new(0, width - 1)) };
+        var tracker = new GroundHypothesisTracker(minimumObservationSeconds: 0);
+        var pixels = new byte[width * height];
+        for (var y = 0; y < height; y++)
+        for (var x = 0; x < width; x++)
+        {
+            var hash = (ulong)x * 73_856_093 ^ (ulong)y * 19_349_663;
+            hash ^= hash >> 13;
+            pixels[y * width + x] = unchecked((byte)((hash * 1_274_126_177) >> 11));
+        }
+
+        for (var index = 0; index < 4; index++)
+            _ = tracker.Update(pixels, width, height, floors, timestamp: index / 10d);
+        var drifted = new AtlasPoint(96, 0);
+        tracker.ReanchorLocalCamera(drifted);
+        var recovered = tracker.Update(pixels, width, height, floors, timestamp: 1);
+        if (recovered is not { CameraPosition: { } anchor, GlobalCorrection.X: < -50, GlobalMatchCount: >= 6 }
+            || Math.Abs(anchor.X) > 1)
+            throw new InvalidOperationException("The tracker must supply a real, sub-half-screen global correction.");
+        var measured = recovered with { GlobalCorrection = null };
+
+        foreach (var admitsCorrection in new[] { true, false })
+        {
+            var coverage = new BotVisualAtlasCoverage();
+            coverage.ObserveVerified(drifted, size, [], default, measured, admitsPlacement: true);
+            var entry = coverage.View(drifted, size, 0, null)!;
+            coverage.ObserveVerified(anchor, size, [], default, recovered, admitsPlacement: admitsCorrection);
+            if (!admitsCorrection)
+            {
+                if (coverage.View(drifted, size, 1, null)?.CoveredCells != entry.CoveredCells)
+                    throw new InvalidOperationException("A held frame must not add its footprint to the map.");
+                coverage.ObserveVerified(anchor, size, [], default, measured, admitsPlacement: true);
+            }
+
+            var baseline = coverage.View(anchor, size, 2, null)!;
+            if (baseline.CoveredCells <= entry.CoveredCells || baseline.EarnedCells != 0)
+                throw new InvalidOperationException("Camera recovery can re-establish coverage but must not earn cells.");
+            coverage.ObserveVerified(new AtlasPoint(-64, 0), size, [], default, measured, admitsPlacement: true);
+            if (coverage.View(new(-64, 0), size, 3, null) is not { EarnedCells: 1, CoveredCells: 7 })
+                throw new InvalidOperationException("The next measured movement must earn only its new cells.");
+
+            var noMotionProof = measured with { LocalTextureSupport = 0, InlierCount = 0, GlobalMatchCount = 0 };
+            coverage.ObserveVerified(new AtlasPoint(-128, 0), size, [], default, noMotionProof, admitsPlacement: true);
+            if (coverage.View(new(-128, 0), size, 4, null) is not { EarnedCells: 1, CoveredCells: 8 })
+                throw new InvalidOperationException("The first registered footprint without a motion measurement cannot earn credit.");
+        }
     }
 
     internal static void TestGymReportsCorrectionsOnlyForAnExistingVisualEstimate()

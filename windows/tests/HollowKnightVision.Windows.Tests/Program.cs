@@ -316,6 +316,7 @@ var tests = new List<(string Name, Action Run)>
     ("native bot verification checks action heads and bound checkpoint hashes", BotPolicyTests.TestNativePolicyChecksActionsAndCheckpointHashes),
     ("Hacker Gym uses authored geometry and preserves fixed objectives and camera gaps", HackerGymObservationTests.TestFixedRouteAndCameraDropout),
     ("Game Play Gym builds a pixel-only Atlas and recovers masked Knight observations", GameplayGymVisualTests.TestVisualFootprintAndMaskedKnightRecovery),
+    ("Game Play Gym coverage excludes camera corrections and unmeasured movement", GameplayGymVisualTests.TestAtlasCreditSurvivesGroundCameraRecovery),
     ("Game Play Gym reports weak Knight corrections from fresh image cues", GameplayGymVisualTests.TestGymReportsCorrectionsOnlyForAnExistingVisualEstimate),
     ("Game Play Gym changes rooms after a confirmed loading cut with the Knight hidden", GameplayGymVisualTests.TestGamePlayGymPublishesOnlyConfirmedRoomChanges),
     ("bot startup latches cutscene skipping until fresh gameplay", BotPolicyTests.TestStartupSkipIsLatchedUntilFreshGameplay),

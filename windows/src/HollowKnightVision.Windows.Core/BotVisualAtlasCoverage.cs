@@ -19,7 +19,21 @@ public sealed class BotVisualAtlasCoverage
     }
 
     public void Register(AtlasPoint pose, WorldSize size, IReadOnlyList<PixelRect> omissions,
-        VisualRoomCompositionBounds bounds = default)
+        VisualRoomCompositionBounds bounds = default) => Place(pose, size, omissions, bounds, measured: true);
+
+    internal void ObserveVerified(AtlasPoint? pose, WorldSize size, IReadOnlyList<PixelRect> omissions,
+        VisualRoomCompositionBounds bounds, GroundHypothesisTrackingResult tracking, bool admitsPlacement)
+    {
+        // A global match establishes a position in the existing grid. Its
+        // difference from the local estimate is not camera travel.
+        if (pose is null || tracking.GlobalCorrection is { } correction && (correction.X != 0 || correction.Y != 0))
+            Interrupt();
+        if (pose is { } placed && admitsPlacement)
+            Place(placed, size, omissions, bounds, GroundMotionEvidence.IsMeasured(tracking));
+    }
+
+    private void Place(AtlasPoint pose, WorldSize size, IReadOnlyList<PixelRect> omissions,
+        VisualRoomCompositionBounds bounds, bool measured)
     {
         if (!AtlasPathPoint.TryQuantize(pose.X, pose.Y, out _)) return;
         var left = Math.Max(pose.X, bounds.MinimumWorldX ?? pose.X);
@@ -35,7 +49,7 @@ public sealed class BotVisualAtlasCoverage
             var pixelX = (x + .5) * step - pose.X;
             var pixelY = size.Height - ((y + .5) * step - pose.Y);
             if (omissions.Any(rect => rect.X <= pixelX && pixelX < rect.Right && rect.Y <= pixelY && pixelY < rect.Bottom)) continue;
-            if (occupied.Add((x, y)) && delta > 1 && delta <= size.Width / 2) earned.Add((x, y));
+            if (occupied.Add((x, y)) && measured && delta > 1 && delta <= size.Width / 2) earned.Add((x, y));
         }
     }
 
