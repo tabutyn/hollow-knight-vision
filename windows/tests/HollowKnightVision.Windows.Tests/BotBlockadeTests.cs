@@ -204,6 +204,9 @@ internal static class BotBlockadeTests
             row = visit.AddAtlasEvidence(Row(tick), first, default(AtlasPoint), width);
         var mark = row?.Blockade?.Mark ?? throw new InvalidOperationException("The first island must have a measured wall contact.");
         Require(mark.Space == first.Space && mark.ViewWidth == width, "The captured mark must retain its measured island and scale.");
+        var published = visit.ActiveMarks;
+        Require(published.SequenceEqual([mark]) && ReferenceEquals(published, visit.ActiveMarks),
+            "An unchanged visit must reuse its immutable display snapshot.");
 
         var nextOrigin = new AtlasPoint(150, -30);
         var transferred = visit.AddAtlasEvidence(Row(13, drive: 0), next, nextOrigin, width);
@@ -223,6 +226,8 @@ internal static class BotBlockadeTests
         Require(visit.AddAtlasEvidence(Row(15, .58, 0), next, nextOrigin, width).Blockade is null
             && visit.AddAtlasEvidence(Row(16, drive: 0), Project(corrected, 0), default(AtlasPoint), width).Blockade is null,
             "Passing a projected wall must retire its original mark before returning to its island.");
+        Require(visit.ActiveMarks.Count == 0 && published.SequenceEqual([mark]),
+            "Crossing clears the live snapshot without mutating previously published contacts.");
     }
 
     internal static void TestWallContactWaitsForVerifiedIslandAndScope()

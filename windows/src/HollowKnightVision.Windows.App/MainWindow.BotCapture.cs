@@ -62,7 +62,16 @@ public partial class MainWindow
             botVisualKnightMemory.Reset();
             botVisualBlockade.Reset();
             botVisualChart = null;
+            Volatile.Write(ref gameplayWallContacts, null);
+            Volatile.Write(ref hackerWallContacts, null);
         }
+        if (Volatile.Read(ref gameplayWallContacts) is { } oldGameplay
+            && (oldGameplay.RoomId != roomId || oldGameplay.CaptureGeneration != generation))
+            Volatile.Write(ref gameplayWallContacts, null);
+        if (receiverTelemetry is { } sample && Volatile.Read(ref hackerWallContacts) is { } oldHacker
+            && (oldHacker.ReceiverSession != sample.SessionId || oldHacker.Scene != sample.SceneName
+                || oldHacker.CaptureGeneration != generation))
+            Volatile.Write(ref hackerWallContacts, null);
         if (!usesDurableWorld && (capture is not null || run?.Domain == BotCaptureDomain.Gameplay))
             botVisualBlockade.ObserveVisualBasis(generation, roomId, walkedCoordinateEpoch, frame.Width,
                 timestamp, camera.HasValue, ground, measuredSceneryCamera);
@@ -88,6 +97,10 @@ public partial class MainWindow
         {
             var cameraTruth = GroundTruthCameraTransform.FromSample(receiverTelemetry, timestamp, new(frame.Width, frame.Height));
             exact = exact with { AtlasView = cameraTruth is null ? null : registeredRoom?.BotView(cameraTruth, exact.MeasuredHealth) };
+            var contacts = botRouteVisit!.ActiveWallContacts;
+            Volatile.Write(ref hackerWallContacts, contacts.Count > 0 && owner is not null
+                ? new(new(owner), epoch, generation, frame.CaptureId, timestamp, roomId, null,
+                    receiverTelemetry.SessionId, receiverTelemetry.SceneName, contacts) : null);
         }
         var visualFloors = GroundStrokeGeometry.MergeWalkedFloors(floors, walked, camera ?? measuredSceneryCamera,
             frame.Width, frame.Height, auditMasks?.GroundKnight);
@@ -132,6 +145,10 @@ public partial class MainWindow
                     (int)Math.Min(roomRevision, int.MaxValue), visual.MeasuredHealth);
             }
             visual = visual with { AtlasView = atlasView };
+            var contacts = botVisualBlockade.ActiveMarks;
+            Volatile.Write(ref gameplayWallContacts, contacts.Count > 0 && owner is not null
+                ? new(new(owner), epoch, generation, frame.CaptureId, timestamp, roomId, committedAtlas?.Room,
+                    null, null, contacts) : null);
         }
         if (capture is not null) capture.TryRecord(frame, visual!, exact);
         if (run is not null && playback is not null)

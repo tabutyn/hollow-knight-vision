@@ -36,14 +36,20 @@ public sealed class BotAtlasBlockadeProjection
     {
         if (source == Space) return default(AtlasPoint);
         if (!placed) return null;
+        var origin = PlacedOrigin(graph, island.RoomId, source);
+        return origin is { } owner
+            ? new(owner.X - island.WorldFromLocal.X, owner.Y - island.WorldFromLocal.Y) : null;
+    }
+
+    public static AtlasPoint? PlacedOrigin(LiveWorldSnapshot graph, int roomId, string source)
+    {
         var parts = source.Split('/');
         if (parts.Length != 4 || parts[0] != "visual"
-            || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var room) || room != island.RoomId
+            || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var room) || room != roomId
             || !int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out var id)
             || !ulong.TryParse(parts[3], NumberStyles.None, CultureInfo.InvariantCulture, out var started)) return null;
         var owner = graph.TrackingIslands.FirstOrDefault(candidate => candidate.Id == id && candidate.RoomId == room
             && BitConverter.DoubleToUInt64Bits(candidate.StartedAt) == started && !candidate.RequiresPlacement);
-        return owner is null ? null
-            : new(owner.WorldFromLocal.X - island.WorldFromLocal.X, owner.WorldFromLocal.Y - island.WorldFromLocal.Y);
+        return owner?.WorldFromLocal;
     }
 }

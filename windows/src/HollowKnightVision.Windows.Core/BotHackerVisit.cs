@@ -13,6 +13,7 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
 {
     private readonly Dictionary<string, RouteRoom> rooms = new(StringComparer.Ordinal);
     private readonly BotBlockadeVisit contact = new();
+    public IReadOnlyList<BotBlockadeMark> ActiveWallContacts => contact.ActiveMarks;
     private RouteRoom? activeRoom;
     private RouteSample? previous;
     private BotAtlasObjective? previousObjective;

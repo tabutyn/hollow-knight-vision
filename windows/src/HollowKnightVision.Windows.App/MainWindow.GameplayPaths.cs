@@ -50,11 +50,15 @@ public partial class MainWindow
     {
         GameplayPathCanvas.Visibility = ShowsGameplayPaths ? Visibility.Visible : Visibility.Collapsed;
         RenderGameplayPlacement();
+        RenderGameplayWallContacts();
     }
 
     private void ResetGameplayPaths()
     {
         gameplayPathPresentation = null;
+        gameplayWallContactScope = null;
+        drawnGameplayWallContacts = null;
+        BotWallContactPresentation.Clear(GameplayWallContactsCanvas);
         atlasPathEvidence.ResetGameplayPreview();
         GameplayPathCanvas.Children.Clear();
         GameplayPathCanvas.Visibility = Visibility.Collapsed;
