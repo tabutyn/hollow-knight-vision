@@ -28,6 +28,8 @@ function Invoke-Dotnet {
   }
 }
 
+& "$root/setup-game-text-windows.ps1"
+
 Invoke-Dotnet build "$root/src/HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj" -c $configuration
 Invoke-Dotnet build "$root/src/HollowKnightVision.Windows.App/HollowKnightVision.Windows.App.csproj" -c $configuration
 if ($CoverageDirectory) {

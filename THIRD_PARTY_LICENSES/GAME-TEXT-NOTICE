@@ -1,0 +1,13 @@
+Windows game text recognition includes the Tesseract .NET package 5.2.0
+(Copyright 2012–2022 Charles Weld and contributors), the Tesseract OCR
+engine, and the tessdata_fast 4.1.0 recognition data. Each uses Apache
+License 2.0. The full license is in tessdata/LICENSE in the installed
+game-text directory.
+
+https://github.com/charlesw/tesseract/tree/5.2.0
+https://github.com/tesseract-ocr/tesseract/tree/5.2.0
+https://github.com/tesseract-ocr/tessdata_fast/tree/4.1.0
+
+The Tesseract .NET package includes Leptonica 1.82.0. Its copyright and
+license appear in LEPTONICA-LICENSE.
+https://github.com/DanBloomberg/leptonica/tree/1.82.0

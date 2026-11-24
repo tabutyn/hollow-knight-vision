@@ -1,0 +1,75 @@
+<Window x:Class="HollowKnightVision.Windows.App.GameTextDebugWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Game Text Log" Width="900" Height="520" MinWidth="720" MinHeight="380"
+        WindowStartupLocation="CenterOwner">
+    <DockPanel Margin="16" LastChildFill="True">
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <Button DockPanel.Dock="Right" Content="Done" IsCancel="True"/>
+            <CheckBox DockPanel.Dock="Right" x:Name="ReadCheck" Content="Read game text"
+                      Foreground="#E6EDF3" VerticalAlignment="Center" Margin="0,0,12,0"
+                      Checked="ReadingChanged" Unchecked="ReadingChanged"/>
+            <TextBlock Text="Game Text Log" FontSize="21" FontWeight="SemiBold" VerticalAlignment="Center"/>
+        </DockPanel>
+        <TextBlock DockPanel.Dock="Top" x:Name="IssueText" Foreground="#FFAB60"
+                   Margin="0,0,0,8" TextWrapping="Wrap" Visibility="Collapsed"/>
+        <TabControl x:Name="SourceTabs" SelectedIndex="1">
+            <TabItem Header="On screen">
+                <Grid Background="#171A20" TextElement.Foreground="#E6EDF3">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="278"/></Grid.ColumnDefinitions>
+                    <Border Background="Black" Padding="7">
+                        <Viewbox x:Name="PreviewView" Stretch="Uniform">
+                            <Grid x:Name="FrameGrid">
+                                <Image x:Name="FrameImage" Stretch="Fill"/>
+                                <Canvas x:Name="LineBoxes" IsHitTestVisible="False"/>
+                            </Grid>
+                        </Viewbox>
+                    </Border>
+                    <TextBlock x:Name="FrameStatus" Grid.ColumnSpan="2" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    <DockPanel Grid.Column="1" Margin="8" x:Name="FrameReadings">
+                        <TextBlock DockPanel.Dock="Top" x:Name="TimingText" Margin="4,0,0,6"/>
+                        <TextBox DockPanel.Dock="Bottom" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="90"
+                                 Text="{Binding SelectedItem.Text, ElementName=VisibleLines, Mode=OneWay}"
+                                 AutomationProperties.Name="Selected on-screen text"/>
+                        <ListBox x:Name="VisibleLines" Background="#20262F" Foreground="#E6EDF3" SelectionChanged="LineSelected" AutomationProperties.Name="Detected text lines">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="2,3">
+                                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap" Width="220"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Id}" Foreground="#AABAD0"/>
+                                            <TextBlock Text="{Binding Confidence, StringFormat={} · {0:P0}}" Foreground="#AABAD0"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </DockPanel>
+                </Grid>
+            </TabItem>
+            <TabItem x:Name="LogTab" Header="Log">
+                <DockPanel Background="#171A20" TextElement.Foreground="#E6EDF3" Margin="5">
+                    <TextBlock DockPanel.Dock="Top" x:Name="ProfileText" Margin="5,3,5,7" FontWeight="SemiBold"/>
+                    <TextBox DockPanel.Dock="Bottom" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="120"
+                             Text="{Binding SelectedItem.Observation.Text, ElementName=LogRows, Mode=OneWay}"
+                             AutomationProperties.Name="Selected original OCR"/>
+                    <Grid>
+                        <ListBox x:Name="LogRows" Background="#20262F" Foreground="#E6EDF3" AutomationProperties.Name="Remembered game text">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="3,4">
+                                        <TextBlock Text="{Binding Observation.Reading}" TextWrapping="Wrap" MaxWidth="710"/>
+                                        <TextBlock Text="{Binding ContextText}" Foreground="#AABAD0"/>
+                                        <TextBlock Text="{Binding Updated, StringFormat={}{0:g}}" Foreground="#AABAD0"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock x:Name="EmptyLog" Text="No text logged yet" Foreground="#AABAD0"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center" IsHitTestVisible="False"/>
+                    </Grid>
+                </DockPanel>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

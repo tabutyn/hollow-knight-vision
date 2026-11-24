@@ -60,6 +60,7 @@ public partial class MainWindow
                 }
                 catch (VisionResetController.PreviousActiveAtlasImportException error) { ShowError(error); }
             }
+            SelectGameTextProfile(activated.Profile);
             SetStatus($"Atlas uses {activated.Profile.Name}.");
 
             void PrepareHacker(SaveProfileAtlas profile, bool adoptUnassigned)

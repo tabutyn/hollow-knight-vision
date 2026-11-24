@@ -626,6 +626,11 @@
                                         <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="38"/></Grid.ColumnDefinitions><TextBlock Text="Detection Extend"/><Slider x:Name="DetectionExtendSlider" Grid.Column="1" Minimum="0" Maximum="50" Value="12" Margin="8,0" ValueChanged="DetectionExtendSlider_ValueChanged"/><TextBlock x:Name="DetectionExtendText" Grid.Column="2" Text="12%" FontFamily="Consolas" HorizontalAlignment="Right"/></Grid>
                                         <CheckBox x:Name="DetectionPixelsCheck" Content="Detection Pixels" Margin="0,0,0,10" Checked="DetectionPixelsCheck_Changed" Unchecked="DetectionPixelsCheck_Changed"/>
                                     </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                        <CheckBox x:Name="ReadGameTextCheck" Content="Read game text" IsChecked="True" VerticalAlignment="Center"
+                                                  Checked="ReadGameTextCheck_Changed" Unchecked="ReadGameTextCheck_Changed"/>
+                                        <Button Content="Game Text Log…" Click="GameTextLog_Click" Margin="14,0,0,0"/>
+                                    </StackPanel>
                                     <CheckBox x:Name="StencilDetectionCheck" IsChecked="True" Content="Stencil Detection" Margin="0,0,0,10"/>
                                     <TextBlock x:Name="StencilLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
                                     <Separator Margin="0,0,0,10"/>

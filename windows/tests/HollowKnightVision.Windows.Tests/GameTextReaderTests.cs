@@ -1,0 +1,119 @@
+using HollowKnightVision.Windows.Core;
+
+internal static class GameTextReaderTests
+{
+    private static readonly StencilRect Bounds = new(.1, .2, .3, .1);
+    private static BgraFrame Frame(int id) => new(2, 2, 8, new byte[16], id, DateTimeOffset.UnixEpoch.AddSeconds(id));
+    private static GameTextLine Line(string text, double confidence) => new(1, text, Bounds, confidence);
+
+    internal static void TestReaderCadenceAndInvalidation()
+    {
+        var reader = new GameTextReader("unused");
+        Require(reader.Enabled && reader.TryStart(Frame(1), "en", "Gameplay", double.NaN) is null, "invalid capture time");
+        var first = reader.TryStart(Frame(1), "en", "Gameplay", 1)!;
+        Require(first is not null && reader.TryStart(Frame(2), "en", "Gameplay", 5) is null, "one in-flight frame");
+
+        reader.SetEnabled(false);
+        Require(!reader.Complete(first!, [Line("Stale gameplay", 1)], 50, 5) && reader.Scan is null,
+            "disabling should discard an unfinished scan");
+        Require(reader.TryStart(Frame(3), "en", "Gameplay", 5) is null, "off should not start work");
+
+        reader.SetEnabled(true);
+        var second = reader.TryStart(Frame(4), "en", "Gameplay", 5)!;
+        Require(reader.Complete(second, [Line("Eastward", .8)], 20, 5.5) && reader.Scan is { Language: "en" }, "published scan");
+        Require(reader.TryStart(Frame(4), "en", "Gameplay", 7) is null, "deduplicate the same capture");
+        Require(reader.TryStart(Frame(5), "en", "Gameplay", 6.3) is null, "throttle from completion");
+        var third = reader.TryStart(Frame(6), "en", "Gameplay", 6.4)!;
+        Require(third is not null && reader.TryStart(Frame(7), "es", "Gameplay", 6.5) is null && reader.Scan is null,
+            "language changes immediately clear the old scan and preserve the one-worker limit");
+        Require(!reader.Complete(third!, [], 100, 7), "discard a superseded language");
+        var failed = reader.TryStart(Frame(8), "es", "Options", 7)!;
+        Require(reader.Complete(failed, [], 40, 7.04, "unavailable") && reader.Issue == "unavailable" && reader.Scan is null,
+            "publish a recognition error without retaining pixels");
+        reader.ResetFrame();
+        Require(reader.Issue is null, "capture shutdown clears the transient issue");
+    }
+
+    internal static void TestOpeningTransferAndNotebookReopen()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "hkv-text-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var reader = new GameTextReader(root);
+            Publish(1, "Select Profile", 1, Line("Ordinary menu", .95));
+            Publish(2, "Select Profile", 2, Line("Ordinary   menu", .65));
+            Publish(3, GameTextNotebook.OpeningContext, 3,
+                Line("Beyond this place", .88), Line("caption noise", .63), Line("100", 1));
+            Require(reader.TryStart(Frame(4), "en", GameTextNotebook.OpeningContext, 3.2) is null, "opening cadence");
+            var unfinished = reader.TryStart(Frame(4), "en", GameTextNotebook.OpeningContext, 3.5)!;
+            var firstSave = new SaveProfileAtlas(1, Guid.NewGuid());
+            reader.SelectProfile(firstSave);
+            Require(!reader.Complete(unfinished, [Line("Old frame", 1)], 10, 3.7), "profile transfer discards late output");
+            Require(reader.Entries is [{ Observation.Text: "Beyond this place" }], "only confirmed opening text follows save selection");
+
+            Publish(5, "Room A", 4, Line("Wait in Darkness!", .78));
+            Require(reader.Entries.Length == 1, "stable gameplay requires a repeat");
+            Publish(6, "Room A", 5, Line("wait  in darkness!", .71));
+            Publish(7, "Room B", 6, Line("Wait in Darkness", .91));
+            Publish(8, "Room B", 7, Line("Wait in Darkness", .72));
+            Require(reader.Entries.Length == 2 && reader.Entries[0].Contexts.SequenceEqual(new[] { "Room A", "Room B" }),
+                "group a repeated reading observed in two rooms");
+            var reopened = new GameTextReader(root);
+            reopened.SelectProfile(firstSave);
+            Require(reopened.Entries.Length == 2 && reopened.Entries[0].Updated == Frame(8).ObservedAt, "durable dated observations");
+            reader.SelectProfile(new SaveProfileAtlas(1, Guid.NewGuid()));
+            Require(reader.Entries.Length == 0, "a reused slot has its own notebook");
+            reader.SelectProfile(firstSave);
+            Require(reader.Entries.Length == 2, "switching back restores earlier observations");
+
+            void Publish(int id, string context, double timestamp, params GameTextLine[] lines)
+            {
+                var work = reader.TryStart(Frame(id), "en", context, timestamp)
+                    ?? throw new InvalidOperationException($"No work for frame {id}.");
+                Require(reader.Complete(work, lines, 25, timestamp + .025), "complete scan");
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    internal static void TestSwiftNotebookCompatibility()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "hkv-swift-text-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var profile = new SaveProfileAtlas(2, Guid.NewGuid());
+            var path = Path.Combine(root, profile.Id.ToString("D").ToUpperInvariant() + ".json");
+            const string swiftJson = """
+            [
+              {"id":"first","text":"Quen's Path","context":"Room A","language":"en","date":60,
+               "interpretation":{"text":"Queen's Path","label":"clue","model":"resident"}},
+              {"id":"second","text":"Queens Path","context":"Room B","language":"en","date":70,"isPassage":true,
+               "interpretation":{"text":"Queen's Path","sameAs":"first","label":"clue","model":"resident"}}
+            ]
+            """;
+            File.WriteAllText(path, swiftJson);
+            var reader = new GameTextReader(root);
+            reader.SelectProfile(profile);
+            Require(reader.Entries is [{ Observation: { Reading: "Queen's Path", Text: "Queens Path", IsPassage: true } }],
+                "display Mac corrections while retaining the original OCR");
+            Require(reader.Entries[0].Contexts.SequenceEqual(new[] { "Room A", "Room B" })
+                && reader.Entries[0].Updated == new DateTimeOffset(2001, 1, 1, 0, 1, 10, TimeSpan.Zero),
+                "Mac Date and explicit aliases");
+            File.WriteAllText(path, "[{\"date\":\"broken\"}]");
+            var damaged = new GameTextReader(root);
+            damaged.SelectProfile(profile);
+            Require(damaged.Entries.Length == 0 && damaged.Issue is not null
+                && File.ReadAllText(path) == "[{\"date\":\"broken\"}]", "malformed evidence should remain untouched");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static void Require(bool condition, string operation)
+    {
+        if (!condition) throw new InvalidOperationException("Game text: " + operation);
+    }
+}

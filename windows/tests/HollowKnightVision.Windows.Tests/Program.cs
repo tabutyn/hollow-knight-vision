@@ -1381,6 +1381,9 @@ var tests = new List<(string Name, Action Run)>
     ("scene session CAS commits exactly one writer", SceneSessionStoreTests.TestConcurrentSceneCompareAndSwapCommitsExactlyOneWriter),
     ("scene session readers wait for the snapshot writer", SceneSessionStoreTests.TestSceneReadersWaitForTheWriterLock),
     ("scene session missing source is explicit", SceneSessionStoreTests.TestMissingSourceThrowsExplicitError),
+    ("game text scan cadence and invalidation", GameTextReaderTests.TestReaderCadenceAndInvalidation),
+    ("game text opening transfer and notebook reopen", GameTextReaderTests.TestOpeningTransferAndNotebookReopen),
+    ("game text reads Swift notebook evidence", GameTextReaderTests.TestSwiftNotebookCompatibility),
     ("scene session rejects schema and path traversal", SceneSessionStoreTests.TestUnsupportedManifestAndPathTraversalAreRejected),
     ("scene session canonical root accepts evidence", SceneSessionStoreTests.TestTmpSymlinkRootAcceptsCanonicalEvidencePath)
 };
