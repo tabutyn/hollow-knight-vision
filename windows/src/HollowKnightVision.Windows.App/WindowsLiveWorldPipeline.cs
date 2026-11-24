@@ -570,7 +570,9 @@ internal sealed class WindowsLiveWorldPipeline
             var storedTimestamp = StoredCaptureTimestamp(request, priorSnapshot);
             var scope = (request.CaptureGeneration, resolvedRoomId, request.WalkedCoordinateEpoch);
             IReadOnlyList<GroundHypothesisAtlasLine> priorWalk = walkedScope == scope ? committedLocalWalk : [];
-            IReadOnlyList<GroundHypothesisAtlasLine> walked = request.StableTrackingVerified ? request.WalkedGround : [];
+            var walked = request.StableTrackingVerified || !placementPending && placedRoomStartedAt is not null
+                && request.WorldEvidence is { HasMeasuredSceneryContinuity: true } && HasMeasuredLocalReference(request)
+                ? request.WalkedGround : [];
             var groundEvidence = LiveWorldWalkedGround.NewEvidence(walked, priorWalk, capturePose);
             StoredFrameObservation? source = null;
             try

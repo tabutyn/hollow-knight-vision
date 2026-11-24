@@ -26,6 +26,8 @@ public sealed record VisualGameplayObservation(
 {
     public GroundHypothesisTrackingResult GroundTracking { get; init; } = GroundHypothesisTrackingResult.Empty;
     public FloorlessCameraEvidence? FloorlessEvidence { get; init; }
+    internal CalibratedSceneMotionEvidence? SelectedScenery =>
+        FloorlessEvidence is { SelectedSource: FloorlessPoseCandidateSource.CalibratedScene } evidence ? evidence.Scene : null;
     public bool RetainsWorldBasisDuringPlacementCheck { get; init; }
     public double? RecoveredAtlasReferenceTimestamp { get; init; }
     public double? MotionBridgeConfidence { get; init; }

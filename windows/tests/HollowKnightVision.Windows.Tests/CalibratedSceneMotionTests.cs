@@ -175,7 +175,7 @@ internal static class CalibratedSceneMotionTests
         var signal = new FrameSignalProfile(64 * 36, 64 * 36, 64 * 36, 100, stationaryScene);
         var identity = new LowResolutionTranslationDiagnostic(null, null, null, ExactIdentity: true);
         GameplayTrackedFrame Observe(int index, int dx, int dy, bool floorVisible, bool hasCommitted,
-            bool resumed = false)
+            bool resumed = false, InputButtons? input = null)
         {
             var time = index * .05;
             var frame = new BgraFrame(width, height, width * 4, new byte[width * height * 4],
@@ -186,15 +186,27 @@ internal static class CalibratedSceneMotionTests
             for (var x = 0; x < width; x++)
                 luma[y * width + x] = (byte)pixels[y / 4 * 160 + x / 4];
             if (!floorVisible) Array.Clear(luma, (155 + dy * 4) * width, 95 * width);
-            DetectedFloorLine[] floors = floorVisible ? [new(200 + dy * 4, new PixelSpan(0, width - 1))] : [];
+            var row = 200 + dy * 4;
+            PixelRect? knight = null;
+            if (input.HasValue)
+            {
+                const int x = 200;
+                knight = new(x - 9, row - 28, 18, 29);
+                for (var y = row - 52; y < row + 25; y++)
+                    luma.AsSpan(y * width + x - 18, 36).Fill(17);
+                for (var y = row - 26; y <= row - 15; y++)
+                for (var column = x - 6; column <= x + 6; column++)
+                    luma[y * width + column] = y == row - 19 && (column == x || column == x + 1) ? (byte)0 : (byte)230;
+            }
+            DetectedFloorLine[] floors = floorVisible ? [new(row, new PixelSpan(0, width - 1))] : [];
             var edgePixels = new byte[luma.Length];
             var edges = new GroundEdgeAnalysis(width, height, edgePixels, luma);
             var comparison = new GroundComparisonAnalysis(width, height, edgePixels, luma);
             var theory = new GroundTheoryAnalysis(comparison, GroundTheoryTuning.Default, [], floors);
             var prepared = new GameplayTrackingPreparation(new GameplayTerrainAnalysis(edges, theory, floors, floors),
-                identity, [], []);
-            return pipeline.Track(frame, prepared, null, new(true, !resumed, resumed, new(true, resumed)),
-                signal, time, 1, "entrance", hasCommitted, null, false);
+                identity, knight is { } actor ? [actor] : [], []);
+            return pipeline.Track(frame, prepared, knight, new(true, !resumed, resumed, new(true, resumed)),
+                signal, time, 1, "entrance", hasCommitted, input, false, captureWorldEvidence: true);
         }
 
         foreach (var hasCommitted in new[] { false, true })
@@ -228,10 +240,39 @@ internal static class CalibratedSceneMotionTests
             var resumed = Observe(26, 14, -21, false, hasCommitted, resumed: true);
             Check(resumed.Observation.FloorlessEvidence is null && !resumed.AllowsAtlasWrite,
                 "Scenery must release its pose reference across a cut.");
+
+            pipeline.Reset();
+            visual.Reset();
+            for (var index = 0; index < 19; index++) _ = Observe(index, 0, 0, true, hasCommitted, input: InputButtons.None);
+            var walkSeed = Observe(19, 0, 0, true, hasCommitted, input: InputButtons.None);
+            for (var index = 20; index <= 24; index++)
+                _ = Observe(index, (index - 19) * 2, (index - 19) * -3, true, hasCommitted, input: InputButtons.None);
+            GameplayTrackedFrame? walking = null;
+            for (var index = 25; index <= 32; index++)
+                walking = Observe(index, 10 + index - 24, -15, false, hasCommitted, input: InputButtons.Left);
+            var darkFloor = walking!;
+            Check(darkFloor.Observation.Source == "calibrated-scene" && !darkFloor.Observation.GroundVerified
+                && darkFloor.Contact.MeasuredFoot is { X: 200, Y: 140 },
+                $"The dark test needs an independently measured Knight and a scenery-only pose. Got {darkFloor.Observation.Source} and {darkFloor.Contact.MeasuredFoot}.");
+            Check(darkFloor.Contact.Floor.HasValue == hasCommitted && (darkFloor.WalkedGround.Count > 0) == hasCommitted,
+                "A level walk through dark ground needs the continued pose of an existing room.");
+            if (hasCommitted)
+            {
+                var visible = GroundStrokeGeometry.MergeWalkedFloors([], darkFloor.WalkedGround,
+                    darkFloor.MeasuredSceneryCamera, width, height, null).Single();
+                Check(visible.Row == 140 && visible.XSpan.Start <= 196 && visible.XSpan.EndInclusive >= 232,
+                    "A late Atlas sample must retain the confirmed span still visible behind the Knight.");
+                CheckWorldPersistence(walkSeed, darkFloor, 32, 1.6, expectWalked: true);
+            }
+
+            var dropping = Observe(33, 19, -18, false, hasCommitted, input: InputButtons.Left);
+            Check(dropping.Contact.Floor is null && dropping.WalkedGround.SequenceEqual(darkFloor.WalkedGround),
+                "Vertical camera motion during a fall must preserve prior ground without extending it.");
         }
     }
 
-    private static void CheckWorldPersistence(GameplayTrackedFrame seed, GameplayTrackedFrame falling)
+    private static void CheckWorldPersistence(GameplayTrackedFrame seed, GameplayTrackedFrame continued,
+        int finalId = 25, double finalTime = 1.25, bool expectWalked = false)
     {
         const int width = 640, height = 360;
         var path = Path.Combine(Path.GetTempPath(), $"hkv-calibrated-scene-world-{Guid.NewGuid():N}");
@@ -243,17 +284,28 @@ internal static class CalibratedSceneMotionTests
                 Check(tracked.AllowsAtlasWrite, "The production tracking pipeline must admit the frame.");
                 var frame = new BgraFrame(width, height, width * 4, new byte[width * height * 4],
                     id, DateTimeOffset.UnixEpoch.AddSeconds(timestamp));
-                return world.Process(new(frame, frame, timestamp, timestamp, tracked.DisplayCamera, width, [],
-                    [new(0, 0, width, height)], 1, tracked.RoomId, 1, 64, tracked.Observation.GroundVerified));
+                return world.Process(new WindowsLiveWorldFrame(frame, frame, timestamp, timestamp, tracked.DisplayCamera, width, [],
+                    [new(0, 0, width, height)], 1, tracked.RoomId, 1, 64, tracked.Observation.GroundVerified)
+                {
+                    WalkedGround = tracked.WalkedGround,
+                    WalkedCoordinateEpoch = tracked.WalkedCoordinateEpoch,
+                    WorldEvidence = tracked.WorldEvidence
+                });
             }
             var ground = Write(seed, 19, .95);
             Check(ground.AllowsAtlasWrite, ground.Diagnostic);
-            var scenery = Write(falling, 25, 1.25);
+            var scenery = Write(continued, finalId, finalTime);
             Check(scenery.AllowsAtlasWrite, scenery.Diagnostic);
             var saved = new LiveWorldSessionStore(path).Load().Snapshot;
-            Check(saved.Observations.Count == 2 && saved.Observations[^1].RawPose == falling.DisplayCamera,
+            Check(saved.Observations.Count == 2 && saved.Observations[^1].RawPose == continued.DisplayCamera,
                 "The reopened world did not keep the measured scenery position.");
-            Check(saved.Landmarks.Count == 0, "A scenery-only frame cannot provide ground landmarks.");
+            var last = saved.Observations[^1];
+            Check(saved.Landmarks.Count == 0 && saved.Keyframes.All(frame => frame.ObservationId != last.Id)
+                && last.GroundGeometry is null && last.ObservedFloorCandidates is null,
+                "A scenery-only frame cannot provide ground landmarks or unconfirmed edges.");
+            Check((last.WalkedGround is { Count: > 0 }) == expectWalked
+                && LiveWorldWalkedGround.ProjectRoom(saved, last.RoomId).SequenceEqual(continued.WalkedGround),
+                "The reopened room must project the walked floor from the same measured image pose.");
         }
         finally
         {

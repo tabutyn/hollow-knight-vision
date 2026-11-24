@@ -246,24 +246,32 @@ internal static class BotDesktopCaptureIntegrationTests
             _ = Step(15, .56, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty);
             Thread.Sleep(115);
             _ = Step(16, .50, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty);
+            Thread.Sleep(115);
+            _ = Step(17, .50, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty);
+            Thread.Sleep(115);
+            _ = Step(18, .50, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty);
 
             finished = true;
             var published = capture.FinishAsync(Clock() + .2, null, completed: true).GetAwaiter().GetResult();
             var clip = published.Published.Single();
-            Check(clip.BotDomain == "gameplay" && clip.ObservationCount == 6, "The desktop path must save all six admitted samples.");
+            Check(clip.BotDomain == "gameplay" && clip.ObservationCount == 8, "The desktop path must save all eight admitted samples.");
             var path = Path.Combine(library, BotCaptureSession.DirectoryName(clip.Id), "events.jsonl");
             var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
             var rows = File.ReadLines(path).Select(line => JsonSerializer.Deserialize<BotCaptureObservation>(line, json)!).ToArray();
-            Check(rows.Select(row => row.DetectionFrameId).SequenceEqual([10L, 11L, 12L, 14L, 15L, 16L]),
+            Check(rows.Select(row => row.DetectionFrameId).SequenceEqual([10L, 11L, 12L, 14L, 15L, 16L, 17L, 18L]),
                 "The unsampled correction frame must stay out of the clip.");
             var expectedDoor = new BotLine(16, 10, 16, 40);
             Check(rows.Take(5).All(row => row.DetectedTerrain?.Doors?.SequenceEqual([expectedDoor]) == true)
-                && rows[^1].DetectedTerrain?.Doors is null && rows.All(row => row.AuthoredTerrain is null),
-                "The clip must retain its room's visual door across correction and omit it without a measured camera.");
+                && rows[5].DetectedTerrain?.Doors is null && rows[6].DetectedTerrain?.Doors?.SequenceEqual([expectedDoor]) == true
+                && rows.All(row => row.AuthoredTerrain is null),
+                "The clip must keep its room's visual door through a correction and continued scenery, and omit it without a measured camera.");
             var expectedFloor = new BotFloor(20, 101, hudFrame.Height - 100, 1);
             Check(rows.Take(5).All(row => row.Grounded == true && row.DetectedTerrain?.Floors.SequenceEqual([expectedFloor]) == true)
-                && rows[^1].DetectedTerrain?.Floors.Any(floor => floor.MinimumX == 20) == false,
+                && rows[5].DetectedTerrain?.Floors.Any(floor => floor.MinimumX == 20) == false,
                 "The saved Game Play observation must use the walked row and reject its competing edge, without projecting unverified ground.");
+            Check(rows.Skip(6).All(row => row.Grounded == true && row.DetectedTerrain?.Floors.SequenceEqual([expectedFloor]) == true
+                    && row.VisualContext is { CameraX: null, CameraY: null } && row.AtlasView is { CoveredCells: > 0 }),
+                "Measured scenery should keep walked floor and both Atlas storage paths' coverage without adding a ground-tracker camera to the clip.");
             var oldWall = rows[2].Blockade;
             var translatedWall = rows[3].Blockade;
             Check(rows.Take(2).All(row => row.Blockade is null)
@@ -328,11 +336,13 @@ internal static class BotDesktopCaptureIntegrationTests
                 var walkedY = camera.Y + frame.Height - 100;
                 GroundHypothesisAtlasLine[] walked = [new(WalkedGroundMemory.WalkedSegmentId,
                     new(camera.X + 20, walkedY), new(camera.X + 80, walkedY))];
+                var usesDurableWorld = id < 18;
                 _ = Method("CaptureBotObservations").Invoke(window, [
                     frame, Generation, Generation, captureAt, 17, 1UL, null, null, batch,
                     new[] { new DetectedFloorLine(101, new(70, 100)), new DetectedFloorLine(112, new(30, 60)) },
-                    TerrainWallDetection.Empty, true, id == 16 ? (AtlasPoint?)null : camera, null, new AtlasPoint(42, 100), input,
-                    null, epoch, ground, false, Array.Empty<PixelRect>(), null, true, world, walked
+                    TerrainWallDetection.Empty, true, id >= 16 ? (AtlasPoint?)null : camera, null, new AtlasPoint(42, 100), input,
+                    null, epoch, ground, !usesDurableWorld, Array.Empty<PixelRect>(), null, usesDurableWorld,
+                    usesDurableWorld ? world : null, walked, id >= 17 ? camera : (AtlasPoint?)null
                 ]);
                 return captureAt;
             }

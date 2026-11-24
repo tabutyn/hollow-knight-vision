@@ -40,6 +40,51 @@ internal static class GameplayGymVisualTests
             throw new InvalidOperationException("Game Play Gym must keep the recorded walked floor under the dark region.");
     }
 
+    internal static void TestGymMeasuresWalkWhileOnlySceneryIsVisible()
+    {
+        var source = new BotVisualGymObservationSource();
+        const int center = 200;
+        BotVisualGymReading? reading = null;
+        double? lastGroundCameraX = null;
+        for (var index = 0; index <= 32; index++)
+        {
+            var time = index * .1;
+            var calibrationStep = Math.Clamp(index - 19, 0, 5);
+            var dx = 8 * calibrationStep + 4 * Math.Max(0, index - 24);
+            var dy = -12 * calibrationStep;
+            var row = 239 + dy;
+            var pixels = new byte[Width * Height * 4];
+            for (var y = 0; y < Height; y++)
+            for (var x = 0; x < Width; x++)
+            {
+                var hash = unchecked((ulong)((x - dx + 1000) / 4) * 0x9e3779b185ebca87uL)
+                    ^ unchecked((ulong)((y - dy + 1000) / 4) * 0xc2b2ae3d27d4eb4fuL);
+                hash = unchecked((hash ^ (hash >> 33)) * 0xff51afd7ed558ccduL);
+                var shade = (byte)(37 + (hash >> 24) % 22);
+                if (index <= 24 && y >= row && y < row + 2) shade = 190;
+                if (y >= row - 26 && y <= row - 15 && Math.Abs(x - center) <= 6)
+                    shade = y == row - 19 && (x == center || x == center + 1) ? (byte)0 : (byte)230;
+                var offset = (y * Width + x) * 4;
+                pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = shade;
+                pixels[offset + 3] = 255;
+            }
+            var frame = new BgraFrame(Width, Height, Width * 4, pixels, index, DateTimeOffset.UnixEpoch.AddSeconds(time));
+            var hud = new HudStencilResult([new(0, "full", new(12, 12, 10, 10), 1),
+                new(1, "full", new(24, 12, 10, 10), 1)], null, [], [], [], default, false, time);
+            reading = source.Observe(frame, time, index <= 24 ? InputButtons.None : InputButtons.Left, frame =>
+                [new ObjectDetection("game.playable-knight",
+                    new((center - 9d) / Width, (row - 28d) / Height, 18d / Width, 29d / Height), .96f)
+                    { SourceFrameIdentifier = frame.CaptureId }], hud);
+            if (index == 24) lastGroundCameraX = reading.Observation?.AtlasView?.Camera[0];
+        }
+
+        if (reading?.Camera is not { PoseSource: "calibrated-scene", GroundVerified: false, AllowsAtlasWrite: true, ReferenceFloors: 0 }
+            || reading.Observation is not { Grounded: true, DetectedTerrain.Floors: { } floors, AtlasView: { CoveredCells: > 0 } atlas }
+            || floors.Count != 1 || floors[0] is not { MinimumX: <= center, MaximumX: >= center + 20, Y: 181 }
+            || lastGroundCameraX is not { } prior || Math.Abs(prior - atlas.Camera[0] - 32) > 2)
+            throw new InvalidOperationException($"The Game Play policy must see the confirmed dark walk in the measured scenery pose. Got {reading?.Camera}, floors {string.Join(',', reading?.Observation?.DetectedTerrain?.Floors ?? [])} and grounded {reading?.Observation?.Grounded}.");
+    }
+
     internal static void TestGamePlayGymUsesVisualBlockadeEvidence()
     {
         var source = new BotVisualGymObservationSource();
