@@ -115,7 +115,8 @@ def verify_ppo_publication(root, vision):
                   createdAt="2099-01-01T00:00:00Z", nativeParity=True))
         with (corrupt / "runtime-policy.json").open("ab") as payload:
             payload.write(b"\n")
-        assert playback_checkpoint(models, "hacker", native_verifier=native) == base
+        selected = playback_checkpoint(models, "hacker", native_verifier=native)
+        assert selected is not None and selected.samefile(base), f"Expected {base}, got {selected}"
 
     room.reset()
     attack = np.array([0, 0, 0, 1], dtype=np.int64)
@@ -137,10 +138,13 @@ def verify_ppo_publication(root, vision):
     assert any(not torch.equal(value, learner.policy.state_dict()[key]) for key, value in policy.policy.state_dict().items())
     evidence = dict(method="ppo", parent=base.name, base=base.name)
     checkpoint = publish(learner, base, work, models, dataset, evidence, vision, parent=base)
-    assert checkpoint.parent == models and playback_checkpoint(models, "hacker", native_verifier=native) == checkpoint
+    assert checkpoint.parent == models
+    selected = playback_checkpoint(models, "hacker", native_verifier=native)
+    assert selected is not None and selected.samefile(checkpoint), f"Expected {checkpoint}, got {selected}"
     private = publish(learner, base, work, models, dataset, evidence, vision, parent=base)
     assert private.parent == work / "winners"
-    assert playback_checkpoint(models, "hacker", native_verifier=native) == checkpoint
+    selected = playback_checkpoint(models, "hacker", native_verifier=native)
+    assert selected is not None and selected.samefile(checkpoint), f"Expected {checkpoint}, got {selected}"
     assert sha(checkpoint / "model.zip") != manifest["modelSHA256"]
     print("PASS installed Windows Gym scored held Attack, skipped a corrupt newer checkpoint, and preserved a verified PPO publication.")
     verify_atlas_direction(work, vision, checkpoint)
