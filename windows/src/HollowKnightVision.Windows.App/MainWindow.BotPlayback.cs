@@ -85,7 +85,7 @@ public partial class MainWindow
         await StartBotPlaybackAsync();
     }
 
-    internal async Task StartBotPlaybackAsync()
+    internal async Task StartBotPlaybackAsync(BotDemoSaveArchive? demoArchive = null)
     {
         if (botCapture is not null || changingBotCapture || forwardedKeys.Count != 0
             || gameControls.BeginBotControl() is not { } owner)
@@ -95,7 +95,7 @@ public partial class MainWindow
         }
 
         var domain = workspace == "Hacker" ? BotCaptureDomain.Hacker : BotCaptureDomain.Gameplay;
-        var archive = recognizedMenuContext == "game" ? null : new BotDemoSaveArchive(
+        var archive = recognizedMenuContext == "game" ? null : demoArchive ?? new BotDemoSaveArchive(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 "AppData", "LocalLow", "Team Cherry", "Hollow Knight"), BotDemoArchiveRoot);
         var run = new BotRun(owner, domain, Interlocked.Read(ref recentCaptureGeneration), BotCaptureClock(),
@@ -182,7 +182,7 @@ public partial class MainWindow
         }
     }
 
-    private BotRun? ObserveBotStartup(BgraFrame frame, long generation, double capturedAt, bool admitted,
+    private BotRun? ObserveBotStartup(BgraFrame frame, long generation, double capturedAt, bool admitted, bool visualGameplay,
         ReceiverGroundTruthSample? receiver, MenuStencilResult? menu, HudStencilResult? hud)
     {
         var run = Volatile.Read(ref botPlayback);
@@ -195,7 +195,7 @@ public partial class MainWindow
             var receiverGameplay = receiver?.AtlasGameplayActive == true;
             var freshHud = hud is { EstablishesGameplay: true, HoldsHealthMask: false }
                 && frameTime - hud.SourceTimestamp is >= 0 and <= .25;
-            var freshGameplay = freshHud && receiver?.AtlasGameplayActive != false
+            var freshGameplay = visualGameplay && freshHud && receiver?.AtlasGameplayActive != false
                 || run.StartedInGameplay && admitted && receiverGameplay;
             if (run.Demo is { } demo)
             {
@@ -211,8 +211,9 @@ public partial class MainWindow
                     EndBotFromWorker(run, "Bot Demo needs a receiver with menu shortcuts.");
                     return null;
                 }
+                if (freshGameplay) gameControls.NeutralizeBotControl(run.Owner);
                 var expiresAt = Math.Min(BotCaptureClock() + .09, capturedAt + .35);
-                if (decision.Buttons != InputButtons.None && !(decision.Phase == BotDemoPhase.Opening && receiverGameplay)
+                if (decision.Buttons != InputButtons.None
                     && !gameControls.RenewBotControl(run.Owner, decision.Buttons, expiresAt))
                 {
                     EndBotFromWorker(run, "Bot Demo input expired or control was interrupted.");
@@ -230,6 +231,7 @@ public partial class MainWindow
                 }
                 if (decision.Phase != BotStartupPhase.Gameplay) return null;
             }
+            if (!admitted) return null;
             Volatile.Write(ref run.Playing, true);
             gameControls.NeutralizeBotControl(run.Owner);
         }
@@ -237,7 +239,7 @@ public partial class MainWindow
         if (Volatile.Read(ref run.Loaded) is not { } loaded) return null;
         if (loaded.Policy is null)
         {
-            EndBotFromWorker(run, loaded.Issue ?? "No verified checkpoint is available.");
+            EndBotFromWorker(run, $"Gameplay reached. {loaded.Issue ?? "No verified checkpoint is available."} Controls returned to you.");
             return null;
         }
         if (admitted && receiver?.AtlasGameplayActive != false) return run;

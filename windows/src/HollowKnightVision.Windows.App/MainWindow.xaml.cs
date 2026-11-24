@@ -3322,9 +3322,10 @@ public partial class MainWindow : Window
             if (atlasPathState == AtlasPathFrameState.Gameplay) paths = observedPaths;
         }
         else trackingPipeline.Paths.Suspend();
-        var botGameplay = !holdAtlas && admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";
+        var visualGameplay = admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";
+        var botGameplay = !holdAtlas && visualGameplay;
         var activeBot = Volatile.Read(ref botPlayback) is null ? null
-            : ObserveBotStartup(frame, captureGeneration, captureTimestamp, botGameplay, receiverTelemetry, recognition.Menu, hudStencil);
+            : ObserveBotStartup(frame, captureGeneration, captureTimestamp, botGameplay, visualGameplay, receiverTelemetry, recognition.Menu, hudStencil);
         if (botGameplay)
         {
             CommittedBotFrame? botAtlas = null;

@@ -173,6 +173,58 @@ internal static class BotDemoTests
             "A racing save must stop the bot before sending confirm and preserve the archive.");
     }
 
+    public static void TestStaleDuplicateAndPreStartFramesCannotAdvanceNavigation()
+    {
+        var navigation = new BotDemoNavigation(100);
+        BotDemoDecision Profile(double capture, double now, double menu) =>
+            navigation.Observe(new(capture, false, "select-profile", "select-profile.slot-4",
+                menu, 15, 8, InputButtons.None), now, activeSave: true);
+
+        Expect(Profile(99.9, 100, 99.9), BotDemoPhase.Navigating);
+        Expect(Profile(100.1, 100.1, 100.1), BotDemoPhase.Navigating);
+        Expect(Profile(100.1, 100.4, 100.1), BotDemoPhase.Navigating);
+        Expect(Profile(100.4, 101, 100.4), BotDemoPhase.Navigating);
+        Expect(Profile(101.1, 101.1, 100.1), BotDemoPhase.Navigating);
+        Expect(Profile(101.4, 101.4, 101.4), BotDemoPhase.Archiving, action: BotDemoSaveAction.Archive);
+    }
+
+    public static void TestIgnoredTitleSelectRetriesOnlyOnTheSameRecognizedMenu()
+    {
+        var navigation = new BotDemoNavigation(100);
+        const string start = "main-title.start-game";
+        BotDemoDecision Menu(double time, string? context, string? option) =>
+            navigation.Observe(new(time, false, context, option, context is null ? null : time,
+                15, 0, InputButtons.None), time, activeSave: false);
+
+        Expect(Menu(100.1, "main-title", start), BotDemoPhase.Navigating);
+        Expect(Menu(100.4, "main-title", start), BotDemoPhase.Navigating, InputButtons.ActionZ);
+        Expect(Menu(102.1, "main-title", "main-title.extras"), BotDemoPhase.Navigating);
+        Expect(Menu(102.4, "main-title", "main-title.extras"), BotDemoPhase.Navigating);
+        Expect(Menu(102.7, null, null), BotDemoPhase.Navigating);
+        Expect(Menu(103, null, null), BotDemoPhase.Navigating);
+        Expect(Menu(103.3, "main-title", start), BotDemoPhase.Navigating);
+        Expect(Menu(103.6, "main-title", start), BotDemoPhase.Navigating, InputButtons.ActionZ);
+        Expect(Menu(104.4, "select-profile", "select-profile.slot-4"), BotDemoPhase.Navigating);
+        Expect(Menu(104.7, "select-profile", "select-profile.slot-4"), BotDemoPhase.Archiving,
+            action: BotDemoSaveAction.Archive);
+    }
+
+    public static void TestUnrecognizedTransitionTimesOutWithoutBlindConfirmations()
+    {
+        var navigation = new BotDemoNavigation(100);
+        BotDemoDecision At(double time, bool title) => navigation.Observe(new(time, false,
+            title ? "main-title" : null, title ? "main-title.start-game" : null, title ? time : null,
+            0, 0, InputButtons.None), time, activeSave: null);
+        Expect(At(100.1, title: true), BotDemoPhase.Navigating);
+        Expect(At(100.4, title: true), BotDemoPhase.Navigating, InputButtons.ActionZ);
+        Expect(At(101.3, title: false), BotDemoPhase.Navigating);
+        Expect(At(103.3, title: false), BotDemoPhase.Navigating);
+        var timedOut = At(116, title: false);
+        Expect(timedOut, BotDemoPhase.Stopped);
+        Check(timedOut.Issue?.Contains("expected menu", StringComparison.Ordinal) == true,
+            "A missing menu after selection should stop before more inputs.");
+    }
+
     public static void TestVisionAdmitsOnlyFreshMeasuredEvidence()
     {
         MenuStencilMatch[] pair =
