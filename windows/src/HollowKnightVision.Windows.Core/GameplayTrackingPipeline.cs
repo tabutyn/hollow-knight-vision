@@ -128,6 +128,24 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             observation = camera.ObserveUnverified(frame, prepared.Motion);
             _ = ObserveRoomPlace(camera.Position, false);
         }
+        if (visualRoom.Cut is not null)
+        {
+            // Prepare resets local tracking on receiver scene changes.
+            // A normal capture learns the room boundary from this loading cut.
+            if (!hasKnownRoom)
+            {
+                ResetRoomEvidence(preserveWalkedGround: true);
+                tracker.ReanchorLocalCamera(camera.Position);
+            }
+            else
+            {
+                walked.BreakContinuity();
+                patches.Reset();
+                Paths.Reset();
+                camera.ResetFloorlessMotion();
+            }
+            observation = new(observation.Telemetry, null, false, false, 0, null, "room-transition");
+        }
         if (!admission.AdmitsTracking) camera.PauseGroundVerification();
         var cameraMilliseconds = Stopwatch.GetElapsedTime(groundStarted).TotalMilliseconds;
         var atlasStarted = Stopwatch.GetTimestamp();
@@ -144,14 +162,6 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
                 prepared.GroundExclusions, terrainAnalysis.Theory);
 
         var room = hasKnownRoom ? knownRoom! : visualRoom.Id;
-        if (visualRoom.Cut is not null)
-        {
-            // The loading cut establishes ownership independently of camera alignment.
-            walked.BreakContinuity();
-            patches.Reset();
-            Paths.Reset();
-            camera.ResetFloorlessMotion();
-        }
         var groundAdjusted = ground.GlobalCorrection is { } correction
             && correction.X * correction.X + correction.Y * correction.Y > 9;
         var measuredGround = observation.GroundVerified && GroundMotionEvidence.IsMeasured(ground);
@@ -278,24 +288,30 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
 
     private void ResetTracking(bool preserveWalkedGround, bool preserveLoadingObservation)
     {
+        ResetRoomEvidence(preserveWalkedGround);
+        needsCameraAnchor = true;
+        if (!preserveLoadingObservation) roomIdentity.ResetObservation();
+        lastKnownRoom = null;
+        frameWidth = 0;
+        frameHeight = 0;
+    }
+
+    private void ResetRoomEvidence(bool preserveWalkedGround)
+    {
         if (preserveWalkedGround) walked.BreakContinuity();
         else ResetWalkedCoordinateEpoch();
         patches.Reset();
         Paths.Reset();
-        needsCameraAnchor = true;
+        motion.Reset();
         tracker.Reset();
         semanticAtlas.Reset();
         reference.Reset();
         measuredAtlasPose.Reset();
         captureIslands.Reset();
         atlasCaptureGap.Reset();
-        camera.ResetFloorlessMotion();
+        camera.ResetRoomTracking();
         placeMemory.Reset();
         placeScope = null;
-        if (!preserveLoadingObservation) roomIdentity.ResetObservation();
-        lastKnownRoom = null;
-        frameWidth = 0;
-        frameHeight = 0;
     }
 
     private void SuspendTracking()

@@ -144,6 +144,73 @@ internal static class VisualSceneDiscontinuityTrackerTests
         Check(inactive.AllowsAtlasWrite && inactive.Cut is null);
     }
 
+    internal static void TestConfirmedCrossingStartsFreshGroundTracking()
+    {
+        const int frameWidth = 640, frameHeight = 360;
+        var texture = new byte[frameWidth * frameHeight];
+        new Random(53).NextBytes(texture);
+        var blank = new byte[texture.Length];
+        var departure = Texture(1);
+        var arrivals = new[] { departure, Texture(2) };
+        foreach (var arrival in arrivals)
+        {
+            var sceneChanged = arrival != departure;
+            var pipeline = new GameplayTrackingPipeline(new VisualGameplayTracker(), new MaskedFrameMotionTracker(),
+                deterministicGlobalSearch: true);
+            GameplayTrackedFrame? cut = null, anchored = null;
+            for (var index = 0; index <= 66; index++)
+            {
+                var loading = index is >= 24 and < 34;
+                var grid = index < 24 ? departure : loading ? Black : arrival;
+                var time = index * .05;
+                var frame = new BgraFrame(frameWidth, frameHeight, frameWidth * 4, new byte[texture.Length * 4],
+                    index, DateTimeOffset.UnixEpoch.AddSeconds(time));
+                GameplayTrackingPreparation preparation;
+                if (loading)
+                {
+                    pipeline.ResetMotionReference();
+                    preparation = new(null, null, [], []);
+                }
+                else
+                {
+                    DetectedFloorLine[] floors = index < 24 || sceneChanged && index >= 46
+                        ? [new(index < 24 ? 198 : 210, new(0, frameWidth - 1))] : [];
+                    var edges = new GroundEdgeAnalysis(frameWidth, frameHeight, blank, texture);
+                    var comparison = new GroundComparisonAnalysis(frameWidth, frameHeight, blank, texture);
+                    var theory = new GroundTheoryAnalysis(comparison, GroundTheoryTuning.Default, [], floors);
+                    preparation = new(new(edges, theory, floors, floors), null, [], []);
+                }
+                var result = pipeline.Track(frame, preparation, null, new(!loading, !loading, loading, new(!loading, index == 34)),
+                    Profile(grid), time, 1, null, true, InputButtons.Right, true, captureWorldEvidence: true);
+                if (index == 23)
+                {
+                    Check(result.Observation.GroundVerified && result.Ground.GlobalFeatureCount > 0
+                        && result.Ground.AtlasLines.Count > 0, "departure must have verified ground and saved local references");
+                    anchored = result;
+                }
+                if (result.SceneCut is not null)
+                {
+                    Check(cut is null && sceneChanged && !result.Observation.GroundVerified
+                        && result.Ground.GlobalFeatureCount == 0 && result.Ground.AtlasLines.Count == 0
+                        && !result.AllowsAtlasWrite && result.WorldEvidence is null && result.RequiresWorldRecovery,
+                        "the first image owned by a new room is display-only and carries no departure ground");
+                    cut = result;
+                }
+                if (index == 42)
+                {
+                    Check(sceneChanged ? cut is not null && result.RecentDoorwayCut == cut.SceneCut
+                        && result.Ground.GlobalFeatureCount == 0 && result.RoomId != anchored!.RoomId
+                        : cut is null && result.Ground.GlobalFeatureCount > 0 && result.RoomId == anchored!.RoomId,
+                        "a confirmed cut clears local references while a fade back to the same room retains them");
+                }
+                if (sceneChanged && index == 66)
+                    Check(result.Observation.GroundVerified && result.Ground.GlobalFeatureCount > 0
+                        && result.Ground.AtlasLines.Count > 0 && result.MeasuredLineage != anchored!.MeasuredLineage,
+                        "fresh images can establish ground in the new room");
+            }
+        }
+    }
+
     internal static void TestAtlasKeepsRoomOnUnprovenLoading()
     {
         var departure = Texture(1);
