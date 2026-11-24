@@ -26,7 +26,7 @@ from gym_policy_search import SampledFrontier
 from gym_route_rehearsal import playable_arrivals, route_examples, route_files, store_route
 from hkv_bot_dataset import SCHEMAS
 from train_hacker_gym import (adjust, crosses_frontier, enemy_maneuver, exploration_checkpoint, first_crossing_lesson, general_improvement, holds_progress, interrupted_proposal, learn_maneuver, measured_candidate, measured_ppo_lesson, moving_approach_end, ppo_barrier_probe, ppo_wall_rehearsal, save_exploration_branch, sha,
-                              advances_learner_past_stall, last_measured_ppo_learner, measured_combat_repair, measured_takeoff_lesson,
+                              advances_learner_past_stall, gym_checkpoint_path, last_measured_ppo_learner, measured_combat_repair, measured_takeoff_lesson,
                               preserves_ppo_combat_repair,
                               practice_another_start, prior_practice_sources, productive_windows, rehearse_crossings, reserve_holdouts, retain_maneuver, retain_measured_ppo_variant, rollout, route_anchors, run, safe_crossing_prefix, verified_ppo_wall_passage, wins)
 
@@ -38,6 +38,23 @@ def frame(x=34.5, y=11.4, **changes):
 
 
 class HackerGymTests(unittest.TestCase):
+    def test_resume_resolves_domain_private_and_legacy_model_paths(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            models = root / "models" / "hacker"
+            work = root / "gym"
+            legacy = models.parent / "bot-start"
+            private = work / "winners" / "bot-private"
+            legacy.mkdir(parents=True)
+            private.mkdir(parents=True)
+            self.assertEqual(gym_checkpoint_path(models, legacy.name), legacy)
+            self.assertEqual(gym_checkpoint_path(models, private.name, work), private)
+            current = models / legacy.name
+            current.mkdir(parents=True)
+            self.assertEqual(gym_checkpoint_path(models, legacy.name), current)
+            with self.assertRaisesRegex(ValueError, "checkpoint name"):
+                gym_checkpoint_path(models, "../gameplay")
+
     def test_alternating_batch_starts_route_before_the_rollout_budget_runs_out(self):
         for batch in range(0, 30, 2):
             first_two = [practice_kind(batch, episode, has_routes=True) for episode in range(2)]

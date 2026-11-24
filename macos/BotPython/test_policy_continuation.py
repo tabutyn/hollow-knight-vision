@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import gymnasium as gym
 import numpy as np
@@ -92,6 +93,19 @@ class ContinuationTests(unittest.TestCase):
             self.assertEqual(playback_checkpoint(models, 'hacker', older), newer)
             (models/'active.json').write_text(json.dumps(dict(directory=older.name, manualChoiceThrough=newer.name)))
             self.assertEqual(playback_checkpoint(models, 'hacker', newer), older)
+
+    def test_native_selection_uses_the_bot_root_and_preserves_a_legacy_parent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'Bot Data'
+            models = root / 'models' / 'gameplay'
+            legacy = models.parent / 'v1'
+            host = Path(temporary) / 'Windows Vision Host.exe'
+            with patch('bot_policy_continuation.subprocess.check_output',
+                       side_effect=[json.dumps(str(legacy)), 'null']) as native:
+                self.assertEqual(playback_checkpoint(models, 'gameplay', native_verifier=host), legacy)
+                native.assert_called_once_with([host, '--bot-playback-checkpoint', root, 'gameplay'],
+                                               encoding='utf-8', timeout=45)
+                self.assertIsNone(playback_checkpoint(models, 'gameplay', legacy, native_verifier=host))
 
     def test_a_clip_update_that_reverses_the_parent_action_is_limited(self):
         import copy

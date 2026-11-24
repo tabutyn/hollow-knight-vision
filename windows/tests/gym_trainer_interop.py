@@ -20,7 +20,7 @@ from bot_projected_ppo import warm_start
 from export_bot_policy import export_policy, write_parity_fixture
 from gym_general_training import train_batch
 from hacker_gym import EpisodeScore, save_json
-from hkv_bot_dataset import ACTION_SIZES, HISTORY_LENGTH, LANDING_GEOMETRY_POLICY_VERSION, SCHEMAS
+from hkv_bot_dataset import ACTION_SIZES, HELD_ATTACK_COST, HISTORY_LENGTH, LANDING_GEOMETRY_POLICY_VERSION, SCHEMAS
 from train_atlas_policy import AtlasCorridor, export_atlas
 from train_hacker_gym import publish, sha, windows_gym_identity
 
@@ -107,6 +107,25 @@ def verify_ppo_publication(root, vision):
     export_policy(base)
     save_json(base / "training-result.json", dict(botDomain="hacker", modelDirectory=base.name,
               createdAt="2026-01-01T00:00:00Z", nativeParity=True))
+    native = vision if os.name == "nt" else None
+    if native is not None:
+        corrupt = models / "bot-corrupt-newer"
+        shutil.copytree(base, corrupt)
+        save_json(corrupt / "training-result.json", dict(botDomain="hacker", modelDirectory=corrupt.name,
+                  createdAt="2099-01-01T00:00:00Z", nativeParity=True))
+        with (corrupt / "runtime-policy.json").open("ab") as payload:
+            payload.write(b"\n")
+        selected = playback_checkpoint(models, "hacker", native_verifier=native)
+        assert selected is not None and selected.samefile(base), f"Expected {base}, got {selected}"
+
+    room.reset()
+    attack = np.array([0, 0, 0, 1], dtype=np.int64)
+    release = np.zeros(4, dtype=np.int64)
+    first_reward = room.step(attack)[1]
+    assert np.isclose(room.step(attack)[1], first_reward - HELD_ATTACK_COST)
+    room.step(release)
+    assert np.isclose(room.step(attack)[1], first_reward)
+    assert room.score.metrics()["heldAttackDecisions"] == 1
     dataset = work / "dataset.npz"
     observations = [room.reset()[0]]
     action = np.array([2, 0, 0, 0], dtype=np.int64)
@@ -117,10 +136,17 @@ def verify_ppo_publication(root, vision):
     learner = PPO.load(learner_path, device="cpu")
     assert seeds and learner.num_timesteps == 128
     assert any(not torch.equal(value, learner.policy.state_dict()[key]) for key, value in policy.policy.state_dict().items())
-    checkpoint = publish(learner, base, work, models, dataset, dict(method="ppo", parent=base.name, base=base.name), vision)
-    assert checkpoint.parent == models and playback_checkpoint(models, "hacker") == checkpoint
+    evidence = dict(method="ppo", parent=base.name, base=base.name)
+    checkpoint = publish(learner, base, work, models, dataset, evidence, vision, parent=base)
+    assert checkpoint.parent == models
+    selected = playback_checkpoint(models, "hacker", native_verifier=native)
+    assert selected is not None and selected.samefile(checkpoint), f"Expected {checkpoint}, got {selected}"
+    private = publish(learner, base, work, models, dataset, evidence, vision, parent=base)
+    assert private.parent == work / "winners"
+    selected = playback_checkpoint(models, "hacker", native_verifier=native)
+    assert selected is not None and selected.samefile(checkpoint), f"Expected {checkpoint}, got {selected}"
     assert sha(checkpoint / "model.zip") != manifest["modelSHA256"]
-    print("PASS installed Windows Gym trained 128 PPO decisions, verified native export, and selected the new checkpoint.")
+    print("PASS installed Windows Gym scored held Attack, skipped a corrupt newer checkpoint, and preserved a verified PPO publication.")
     verify_atlas_direction(work, vision, checkpoint)
 
     projection = [0, room.observation_space.shape[0] - 1]
