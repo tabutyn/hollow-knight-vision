@@ -44,7 +44,7 @@ public partial class MainWindow
         bool analyzedTerrain, AtlasPoint? camera, HudStencilResult? hud, AtlasPoint? measuredFoot, InputButtons? input,
         BotRun? run, long walkedCoordinateEpoch, GroundHypothesisTrackingResult ground,
         bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions, GameplaySceneMasks? auditMasks,
-        bool usesDurableWorld, CommittedBotFrame? committedAtlas)
+        bool usesDurableWorld, CommittedBotFrame? committedAtlas, IReadOnlyList<GroundHypothesisAtlasLine> walked)
     {
         var capture = Volatile.Read(ref botCapture);
         var owner = (object?)capture ?? run;
@@ -87,8 +87,9 @@ public partial class MainWindow
             var cameraTruth = GroundTruthCameraTransform.FromSample(receiverTelemetry, timestamp, new(frame.Width, frame.Height));
             exact = exact with { AtlasView = cameraTruth is null ? null : registeredRoom?.BotView(cameraTruth, exact.MeasuredHealth) };
         }
+        var visualFloors = GroundStrokeGeometry.MergeWalkedFloors(floors, walked, camera, frame.Width, frame.Height, auditMasks?.GroundKnight);
         var visual = capture is not null || playback is not null && run?.Domain == BotCaptureDomain.Gameplay
-            ? BotObservationBuilder.Gameplay(frame, time, batch, floors, terrain.Walls, analyzedTerrain,
+            ? BotObservationBuilder.Gameplay(frame, time, batch, visualFloors, terrain.Walls, analyzedTerrain,
                 camera, hud, measuredFoot, input, exact?.BlueHealthOutcomes,
                 committedAtlas?.ProjectDoors(new(frame.Width, frame.Height))).WithSharedHackerPath(exact) : null;
         if (visual is not null)
@@ -126,7 +127,7 @@ public partial class MainWindow
             var row = run.Domain == BotCaptureDomain.Hacker ? exact : visual;
             if (Volatile.Read(ref run.Loaded)?.Evaluation is { } evaluation)
                 evaluation.RecordFrame(frame, time, row, receiverTelemetry?.SceneName,
-                    visual?.DetectedTerrain?.Floors ?? BotObservationBuilder.ProjectDetectedFloors(frame, floors),
+                    visual?.DetectedTerrain?.Floors ?? BotObservationBuilder.ProjectDetectedFloors(frame, visualFloors),
                     exact?.AuthoredTerrain, auditMasks is null ? null : VisualReplayGroundInput.FromTracking(
                         timestamp, (ulong)generation, frame.Height, auditMasks, input), renderedFrame);
             DriveBotFrame(run, playback, row, input, receiverTelemetry?.SceneName);

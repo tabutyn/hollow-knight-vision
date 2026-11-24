@@ -3351,7 +3351,8 @@ public partial class MainWindow : Window
                 renderedGameFrame, receiverTelemetry, recognition.Objects.MeasuredBatch, ground, terrain,
                 groundAnalysis is not null, visualObservation.GroundVerified ? groundDisplayCamera : null, hudStencil,
                 terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch, groundHypotheses,
-                gameplayAdmitted, atlasCompositionExclusions, masks, usesDurableWorld, botAtlas);
+                gameplayAdmitted, atlasCompositionExclusions, masks, usesDurableWorld, botAtlas,
+                tracked.RoomAllowsAtlasWrite ? localWalkedGround : []);
         }
         else
         {

@@ -3,6 +3,43 @@ using HollowKnightVision.Windows.Core;
 internal static class GameplayGymVisualTests
 {
     private const int Width = 640, Height = 360;
+
+    internal static void TestGymUsesWalkedGroundUnderAnOccluder()
+    {
+        var source = new BotVisualGymObservationSource();
+        var clean = Scene();
+        // Replace the generic detector fixture with a face that the foot locator can measure.
+        for (var y = 191; y < 239; y++)
+        for (var x = 168; x < 194; x++)
+        {
+            var shade = (byte)(20 + (x * 23 + y * 37 + x / 13 * 17) % 33 / 4);
+            clean.AsSpan((y * Width + x) * 4, 3).Fill(shade);
+        }
+
+        BotVisualGymReading? hidden = null;
+        for (var index = 0; index <= 19; index++)
+        {
+            var center = 180 + 3 * Math.Max(0, Math.Min(index, 18) - 8);
+            var pixels = (byte[])clean.Clone();
+            if (index == 19)
+                for (var y = 232; y < Height; y++)
+                for (var x = 164; x <= 239; x++)
+                    pixels.AsSpan((y * Width + x) * 4, 3).Fill(17);
+            for (var y = 213; y <= 224; y++)
+            for (var x = center - 6; x <= center + 6; x++)
+                pixels.AsSpan((y * Width + x) * 4, 3).Fill(y == 220 && (x == center || x == center + 1) ? (byte)0 : (byte)230);
+
+            hidden = source.Observe(Frame(pixels, index), index / 10d,
+                index < 8 ? InputButtons.None : InputButtons.Right, frame =>
+                [.. Detect(frame, knight: false), new ObjectDetection("game.playable-knight",
+                    new((center - 9d) / Width, 211d / Height, 18d / Width, 29d / Height), .96f)
+                    { SourceFrameIdentifier = frame.CaptureId }], hud: null);
+        }
+        if (hidden?.Camera?.GroundVerified != true || hidden.Observation is not { Grounded: true, DetectedTerrain.Floors: { } floors }
+            || !floors.Any(floor => floor.MinimumX <= 183 && floor.MaximumX >= 212 && Math.Abs(Height - 239 - floor.Y) <= 2))
+            throw new InvalidOperationException("Game Play Gym must keep the recorded walked floor under the dark region.");
+    }
+
     internal static void TestGamePlayGymUsesVisualBlockadeEvidence()
     {
         var source = new BotVisualGymObservationSource();

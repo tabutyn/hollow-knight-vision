@@ -260,6 +260,10 @@ internal static class BotDesktopCaptureIntegrationTests
             Check(rows.Take(5).All(row => row.DetectedTerrain?.Doors?.SequenceEqual([expectedDoor]) == true)
                 && rows[^1].DetectedTerrain?.Doors is null && rows.All(row => row.AuthoredTerrain is null),
                 "The clip must retain its room's visual door across correction and omit it without a measured camera.");
+            var expectedFloor = new BotFloor(20, 101, hudFrame.Height - 100, 1);
+            Check(rows.Take(5).All(row => row.Grounded == true && row.DetectedTerrain?.Floors.SequenceEqual([expectedFloor]) == true)
+                && rows[^1].DetectedTerrain?.Floors.Any(floor => floor.MinimumX == 20) == false,
+                "The saved Game Play observation must use the walked row and reject its competing edge, without projecting unverified ground.");
             var oldWall = rows[2].Blockade;
             var translatedWall = rows[3].Blockade;
             Check(rows.Take(2).All(row => row.Blockade is null)
@@ -321,10 +325,14 @@ internal static class BotDesktopCaptureIntegrationTests
                 };
                 var world = new MainWindow.CommittedBotFrame(graph, committedRoom, id == 16 ? null : origin)
                 { DoorPlacement = doors };
+                var walkedY = camera.Y + frame.Height - 100;
+                GroundHypothesisAtlasLine[] walked = [new(WalkedGroundMemory.WalkedSegmentId,
+                    new(camera.X + 20, walkedY), new(camera.X + 80, walkedY))];
                 _ = Method("CaptureBotObservations").Invoke(window, [
                     frame, Generation, Generation, captureAt, 17, 1UL, null, null, batch,
-                    Array.Empty<DetectedFloorLine>(), TerrainWallDetection.Empty, true, camera, null, null, input,
-                    null, epoch, ground, false, Array.Empty<PixelRect>(), null, true, world
+                    new[] { new DetectedFloorLine(101, new(70, 100)), new DetectedFloorLine(112, new(30, 60)) },
+                    TerrainWallDetection.Empty, true, id == 16 ? (AtlasPoint?)null : camera, null, new AtlasPoint(42, 100), input,
+                    null, epoch, ground, false, Array.Empty<PixelRect>(), null, true, world, walked
                 ]);
                 return captureAt;
             }
