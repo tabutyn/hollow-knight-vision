@@ -168,7 +168,7 @@ public sealed class BotVisualGymObservationSource
             terrainAnalyzed: true, placement, hud, contact.MeasuredFoot, controls,
             visualDoors: coverage.ProjectDoors(measuredGround || continuesScenery ? terrainCamera : null, size));
         row = knightMemory.Resolve(row, BotPolicyAction.FromButtons(controls), observations.MeasuredBatch, walkedEpoch);
-        row = blockade.AddAtlasEvidence(row, coverage.BlockadeProjection(lineage, time), contactCamera, frame.Width);
+        row = blockade.AddAtlasEvidence(row, coverage.BlockadeProjection(lineage, time), contactCamera, frame.Width, lineage, walkedEpoch);
         row = row with { AtlasView = coverage.PolicyView(terrainCamera, size, row.MeasuredHealth) };
         return new(row, row.Issues, confidence)
         {

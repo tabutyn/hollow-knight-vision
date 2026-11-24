@@ -18,6 +18,7 @@ public sealed class BotAtlasBlockadeProjection
     }
 
     internal string Space { get; }
+    internal long? MeasuredLineage => island.MeasuredLineage;
 
     public static BotAtlasBlockadeProjection? Create(LiveWorldSnapshot graph, int room,
         LiveIslandPlacementProjection? projection)

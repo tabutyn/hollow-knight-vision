@@ -46,7 +46,7 @@ public partial class MainWindow
         BotRun? run, long walkedCoordinateEpoch, GroundHypothesisTrackingResult ground,
         bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions, GameplaySceneMasks? auditMasks,
         bool usesDurableWorld, CommittedBotFrame? committedAtlas, IReadOnlyList<GroundHypothesisAtlasLine> walked,
-        AtlasPoint? measuredSceneryCamera)
+        AtlasPoint? measuredSceneryCamera, long? wallLineage)
     {
         var capture = Volatile.Read(ref botCapture);
         var owner = (object?)capture ?? run;
@@ -103,7 +103,8 @@ public partial class MainWindow
             var blockedIsland = committedAtlas is { } chart
                 ? BotAtlasBlockadeProjection.Create(chart.Graph, chart.Room, chart.MeasuredOwner) : null;
             visual = usesDurableWorld
-                ? botVisualBlockade.AddAtlasEvidence(visual, blockedIsland, camera ?? measuredSceneryCamera, frame.Width)
+                ? botVisualBlockade.AddAtlasEvidence(visual, blockedIsland, camera ?? measuredSceneryCamera, frame.Width,
+                    wallLineage, walkedCoordinateEpoch)
                 : botVisualBlockade.AddVisualEvidence(visual);
             var size = new WorldSize(frame.Width, frame.Height);
             BotAtlasView? atlasView = null;

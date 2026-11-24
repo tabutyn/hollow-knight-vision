@@ -72,6 +72,7 @@ var tests = new List<(string Name, Action Run)>
     ("a blockade's scenery pose belongs to its exact capture", BotBlockadeTests.TestSceneryBlockadePoseMatchesTheCapture),
     ("Atlas islands expose wall contacts through their latest placed translations", BotBlockadeTests.TestWallContactFollowsRegisteredIslandsAndLatestCorrection),
     ("Atlas wall contacts wait for shared placement and stay scoped to one visit", BotBlockadeTests.TestWallContactWaitsForVerifiedIslandAndScope),
+    ("Atlas cadence binds an already measured wall push to its own island", BotBlockadeTests.TestMeasuredPushSurvivesAtlasAdmissionCadence),
     ("saved clips recover only causal legacy blockade evidence", BotBlockadeTests.TestLegacyReplayUsesOnlyPriorInputAndLeavesRecordedRowsIntact),
     ("bot evaluations preserve source images, applied controls, and paired terrain outside training", BotEvaluationTests.TestBotEvaluationPreservesFramesControlsAndPairedAuditOutsideExpertData),
     ("empty and failed bot evaluations do not publish archives", BotEvaluationTests.TestEmptyAndFailedEvaluationsDoNotPublish),

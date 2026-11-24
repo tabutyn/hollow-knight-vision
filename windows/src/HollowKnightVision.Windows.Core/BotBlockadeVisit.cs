@@ -66,10 +66,34 @@ public sealed class BotBlockadeVisit
         row with { BlockadeVersion = 1, BlockadePose = pose, Blockade = Observe(row, pose) };
 
     public BotCaptureObservation AddAtlasEvidence(BotCaptureObservation row, BotAtlasBlockadeProjection? projection,
-        AtlasPoint? measuredOrigin, int width)
+        AtlasPoint? measuredOrigin, int width, long? measuredLineage = null, long coordinateEpoch = 0)
     {
-        var pose = measuredOrigin is { } origin ? projection?.Pose(origin, width) : null;
+        var unbound = measuredLineage is { } lineage
+            ? FormattableString.Invariant($"visual-local/{row.Generation}/{row.RoomId}/{coordinateEpoch}/{lineage}/{width}") : null;
+        BotBlockadePose? pose = null;
+        if (measuredOrigin is { } origin)
+        {
+            if (projection is not null)
+            {
+                if (unbound is not null && projection.MeasuredLineage == measuredLineage && usesAtlasCoordinates == true)
+                    BindLocalContact(unbound, projection.Space, row);
+                pose = projection.Pose(origin, width);
+            }
+            else if (unbound is not null) pose = new(unbound, origin.X, origin.Y, width);
+        }
         return row with { BlockadeVersion = 1, BlockadePose = pose, Blockade = Observe(row, pose, projection, atlas: true) };
+    }
+
+    private void BindLocalContact(string local, string owner, BotCaptureObservation row)
+    {
+        // Atlas admission may lag the first measured image of a lineage.
+        // Binding its exact owner changes identity only. Coordinates stay local.
+        if (chart is not { } current || (current.Generation, current.Room) != (row.Generation, row.RoomId)) return;
+        for (var i = 0; i < marks.Count; i++)
+            if (marks[i].Space == local) marks[i] = marks[i] with { Space = owner };
+        if (current.Space == local) chart = (row.Generation, row.RoomId, owner);
+        if (lastEvidence is { } evidence && evidence.Mark.Space == local)
+            lastEvidence = evidence with { Mark = evidence.Mark with { Space = owner } };
     }
 
     public BotCaptureObservation AddVisualEvidence(BotCaptureObservation row)
@@ -157,8 +181,8 @@ public sealed class BotBlockadeVisit
             if ((current.Generation, current.Room) != (row.Generation, row.RoomId)) Reset();
             else if (pose is { IsValid: true } next && (current.Space != next.Space || atlas && chartWidth != next.Width))
             {
-                if (projection is null) Reset();
-                else if (chartWidth == next.Width && projection.OffsetFrom(current.Space) is { } shift)
+                if (!atlas) Reset();
+                else if (chartWidth == next.Width && projection?.OffsetFrom(current.Space) is { } shift)
                 {
                     TranslateSighting(shift);
                     chart = (row.Generation, row.RoomId, next.Space);

@@ -261,6 +261,31 @@ internal static class BotBlockadeTests
             "Missing placement, incompatible image scale and a new capture visit cannot inherit old contacts.");
     }
 
+    internal static void TestMeasuredPushSurvivesAtlasAdmissionCadence()
+    {
+        const int width = 640;
+        var assigned = Project(WallIslands(), 0);
+        foreach (var coordinateEpoch in new long[] { 4, 5 })
+        {
+            var visit = new BotBlockadeVisit();
+            var first = visit.AddAtlasEvidence(Row(10), null, default(AtlasPoint), width, measuredLineage: 1, coordinateEpoch: 4);
+            Require(first.Blockade is null && first.BlockadePose?.Space.StartsWith("visual-local/", StringComparison.Ordinal) == true,
+                "A measured frame may track a local contact before its island is committed.");
+            var registered = visit.AddAtlasEvidence(Row(12), assigned, default(AtlasPoint), width,
+                measuredLineage: 1, coordinateEpoch: coordinateEpoch);
+            Require(registered.BlockadePose?.Space == assigned.Space
+                && (coordinateEpoch == 4 ? registered.Blockade?.Mark.Space == assigned.Space : registered.Blockade is null),
+                "Only the exact measured coordinate epoch can carry an in-progress push through Atlas admission.");
+        }
+
+        var local = new BotBlockadeVisit();
+        for (var tick = 10; tick <= 12; tick++)
+            _ = local.AddAtlasEvidence(Row(tick), null, default(AtlasPoint), width, measuredLineage: 1, coordinateEpoch: 4);
+        var result = local.AddAtlasEvidence(Row(13, drive: 0), assigned, default(AtlasPoint), width, measuredLineage: 1, coordinateEpoch: 4);
+        Require(result.Blockade is { } contact && contact.Mark.Space == assigned.Space && Math.Abs(contact.Dx - .015) < 1e-9,
+            "Binding a measured local contact to its assigned island must preserve its position and policy distance.");
+    }
+
     private static LiveWorldSnapshot WallIslands(bool pendingSecond = false)
     {
         var frame = new BgraFrame(32, 24, 128, new byte[32 * 24 * 4], 1, DateTimeOffset.UnixEpoch);

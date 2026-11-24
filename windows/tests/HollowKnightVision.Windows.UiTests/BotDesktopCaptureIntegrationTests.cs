@@ -355,7 +355,7 @@ internal static class BotDesktopCaptureIntegrationTests
                     new[] { new DetectedFloorLine(101, new(70, 100)), new DetectedFloorLine(112, new(30, 60)) },
                     TerrainWallDetection.Empty, true, groundCamera, null, new AtlasPoint(42, 100), input,
                     null, epoch, ground, !usesDurableWorld, Array.Empty<PixelRect>(), null, usesDurableWorld,
-                    usesDurableWorld ? world : null, walked, sceneryCamera
+                    usesDurableWorld ? world : null, walked, sceneryCamera, null
                 ]);
                 return captureAt;
             }
