@@ -95,7 +95,8 @@
                                 IsHitTestVisible="False" Panel.ZIndex="20"/>
                         <Canvas x:Name="GameplayGroundCanvas" Width="640" Height="360"
                                 IsHitTestVisible="False" Panel.ZIndex="19"/>
-                        <Canvas x:Name="GameplayPlacementCanvas" IsHitTestVisible="False"
+                        <Canvas x:Name="GameplayPlacementCanvas" Width="{Binding Width, ElementName=GameplayAtlasCanvas}"
+                                Height="{Binding Height, ElementName=GameplayAtlasCanvas}" IsHitTestVisible="False"
                                 Visibility="Collapsed" Panel.ZIndex="18"/>
                         <Canvas x:Name="GameplayPathCanvas" IsHitTestVisible="False" Visibility="Collapsed" Panel.ZIndex="21"/>
                     </Canvas>
