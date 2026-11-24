@@ -818,8 +818,11 @@ public partial class MainWindow : Window
         playerOpsPreferences = new(root);
         gameTextReader = new(IOPath.Combine(root, "Notebooks"));
         gameTextPreference = IOPath.Combine(root, "read-game-text.txt");
+        gameTextReviewPreference = IOPath.Combine(root, "game-text-review.json");
+        gameTextReview = new(gameTextReader, new LocalThinkingClient());
         InitializeComponent();
         InitializeGameText();
+        InitializeGameTextReview();
         OpsRandomizeAfterLabelCheck.IsChecked = playerOpsPreferences.LoadRandomizeAfterLabel();
         gameControls.GroundTruthReceived += OnReceiverGroundTruth;
         gameplayFraming = gameplayFramingValue;
@@ -1017,6 +1020,7 @@ public partial class MainWindow : Window
             if (visionRunCompletion is { } captureFinished)
                 await captureFinished;
             if (gameTextTask is { } reading) await reading;
+            if (gameTextReviewTask is { } proofreading) await proofreading;
             gameTextRecognition.Dispose();
             await botEvaluationWrites;
             if (replayUiFinished is { } replayUi) await replayUi.Task;
@@ -3854,6 +3858,7 @@ public partial class MainWindow : Window
         labelCapture.Reset(GamePauseState.Unavailable);
         if (workspace == "Label" && !isClosing) _ = SelectWorkspace("Gameplay", capture: false);
         visionCancellation?.Cancel();
+        StopGameTextReview();
         ResetGameTextScan();
         menuStencilRecognizer.StopTracking();
         Volatile.Write(ref hackerObjectFrames, []);

@@ -1384,6 +1384,14 @@ var tests = new List<(string Name, Action Run)>
     ("game text scan cadence and invalidation", GameTextReaderTests.TestReaderCadenceAndInvalidation),
     ("game text opening transfer and notebook reopen", GameTextReaderTests.TestOpeningTransferAndNotebookReopen),
     ("game text reads Swift notebook evidence", GameTextReaderTests.TestSwiftNotebookCompatibility),
+    ("proofreading keeps prices and rejects invented text", GameTextReviewTests.TestConservativeTranscription),
+    ("resident model discovery uses local inventory", GameTextReviewTests.TestResidentDiscovery),
+    ("save-specific notebook review and quest notes", GameTextReviewTests.TestSavedReviewAndQuestNotes),
+    ("invalid transcription and late reply are discarded", GameTextReviewTests.TestInvalidTranscriptionAndLateReply),
+    ("transcription aliases and tutorial schema", GameTextReviewTests.TestTranscriptionAliasesAndTutorialSchema),
+    ("quest checkpoints replay changed evidence", AtlasQuestMemoryTests.TestIncrementalMemoryAndCorrections),
+    ("quest pages bound their evidence and reject missing sources", AtlasQuestMemoryTests.TestPagedEvidenceAndRejectedCitations),
+    ("quest prompts, destinations and cancelled responses", AtlasQuestMemoryTests.TestPromptsDestinationsAndCancellation),
     ("scene session rejects schema and path traversal", SceneSessionStoreTests.TestUnsupportedManifestAndPathTraversalAreRejected),
     ("scene session canonical root accepts evidence", SceneSessionStoreTests.TestTmpSymlinkRootAcceptsCanonicalEvidencePath)
 };

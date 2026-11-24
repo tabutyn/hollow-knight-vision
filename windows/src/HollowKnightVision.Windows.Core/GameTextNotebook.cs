@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -11,15 +13,44 @@ public sealed record GameTextObservation(string Id, string Text, string Context,
     DateTimeOffset Date, bool? IsPassage = null, JsonElement? Interpretation = null)
 {
     [JsonIgnore]
-    public string Reading => Interpretation is { ValueKind: JsonValueKind.Object } edit
-        && edit.TryGetProperty("text", out var reading) && reading.ValueKind == JsonValueKind.String
-        ? reading.GetString() ?? Text : Text;
+    public string Reading => InterpretationString("text") ?? Text;
 
-    internal string? SameAs => Interpretation is { ValueKind: JsonValueKind.Object } edit
-        && edit.TryGetProperty("sameAs", out var id) && id.ValueKind == JsonValueKind.String ? id.GetString() : null;
+    [JsonIgnore]
+    public string DisplayLabel => InterpretationString("detail") ?? (Label switch
+    {
+        "lore" => "Lore tablet", "dialogue" => "NPC dialogue", "hud" => "HUD", "unknown" => "Unclear",
+        { Length: > 0 } label => char.ToUpperInvariant(label[0]) + label[1..], _ => "Awaiting review"
+    });
+
+    internal string? SameAs => InterpretationString("sameAs");
+    internal string? Label => InterpretationString("label");
+
+    private string? InterpretationString(string property) =>
+        Interpretation is { ValueKind: JsonValueKind.Object } edit
+        && edit.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     internal static string Key(string text) =>
         string.Join(' ', text.ToLowerInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    internal static string LogKey(string text)
+    {
+        var letters = new StringBuilder(text.Length);
+        foreach (var scalar in text.EnumerateRunes())
+        {
+            if (Rune.IsLetterOrDigit(scalar)) letters.Append(scalar.ToString());
+            else letters.Append(' ');
+        }
+        return Key(letters.ToString());
+    }
+
+    internal static int Length(string text) => new StringInfo(text).LengthInTextElements;
+    internal static string Prefix(string text, int length)
+    {
+        if (text.Length <= length) return text;
+        var value = new StringInfo(text);
+        return value.LengthInTextElements <= length ? text : value.SubstringByTextElements(0, length);
+    }
+
 }
 
 public sealed record GameTextLogEntry(GameTextObservation Observation, IReadOnlyList<string> Contexts, DateTimeOffset Updated)
@@ -33,8 +64,7 @@ public sealed record GameTextLogEntry(GameTextObservation Observation, IReadOnly
         var keys = new Dictionary<(string Language, string Text), string>();
         foreach (var row in rows)
         {
-            var punctuationAsSpaces = new string(row.Reading.Select(c => char.IsLetterOrDigit(c) ? c : ' ').ToArray());
-            var key = (row.Language, GameTextObservation.Key(punctuationAsSpaces));
+            var key = (row.Language, GameTextObservation.LogKey(row.Reading));
             var id = (row.SameAs is { } other ? aliases.GetValueOrDefault(other) : null)
                 ?? keys.GetValueOrDefault(key) ?? row.Id;
             aliases[row.Id] = id;
@@ -109,6 +139,25 @@ public sealed class GameTextNotebook(string? path = null)
         if (path is not null)
             AtomicFile.Write(path, JsonSerializer.SerializeToUtf8Bytes(updated, Json));
         ids!.UnionWith(newIds);
+        return rows = updated;
+    }
+
+    internal IReadOnlyList<GameTextObservation> Interpret(IReadOnlyDictionary<string, GameTextCorrection> edits)
+    {
+        var current = Read();
+        if (edits.Count == 0) return current;
+        var updated = current.ToArray();
+        var changed = false;
+        for (var i = 0; i < updated.Length; i++)
+        {
+            var row = updated[i];
+            if (row.Interpretation is not null || !edits.TryGetValue(row.Id, out var edit)) continue;
+            updated[i] = row with { Interpretation = JsonSerializer.SerializeToElement(edit, Json) };
+            changed = true;
+        }
+        if (!changed) return current;
+        if (path is not null)
+            AtomicFile.Write(path, JsonSerializer.SerializeToUtf8Bytes(updated, Json));
         return rows = updated;
     }
 

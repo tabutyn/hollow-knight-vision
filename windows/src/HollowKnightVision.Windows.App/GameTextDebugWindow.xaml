@@ -13,7 +13,7 @@
         </DockPanel>
         <TextBlock DockPanel.Dock="Top" x:Name="IssueText" Foreground="#FFAB60"
                    Margin="0,0,0,8" TextWrapping="Wrap" Visibility="Collapsed"/>
-        <TabControl x:Name="SourceTabs" SelectedIndex="1">
+        <TabControl x:Name="SourceTabs" SelectedIndex="1" SelectionChanged="SourceChanged">
             <TabItem Header="On screen">
                 <Grid Background="#171A20" TextElement.Foreground="#E6EDF3">
                     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="278"/></Grid.ColumnDefinitions>
@@ -49,7 +49,20 @@
             </TabItem>
             <TabItem x:Name="LogTab" Header="Log">
                 <DockPanel Background="#171A20" TextElement.Foreground="#E6EDF3" Margin="5">
-                    <TextBlock DockPanel.Dock="Top" x:Name="ProfileText" Margin="5,3,5,7" FontWeight="SemiBold"/>
+                    <StackPanel DockPanel.Dock="Top" Margin="5,3,5,7">
+                        <TextBlock x:Name="ProfileText" FontWeight="SemiBold"/>
+                        <WrapPanel Margin="0,6,0,1">
+                            <CheckBox x:Name="ReviewCheck" Content="Proofread game text"
+                                      Foreground="#E6EDF3" VerticalAlignment="Center"
+                                      Checked="ReviewChanged" Unchecked="ReviewChanged"/>
+                            <ComboBox x:Name="ProofreadingModel" DisplayMemberPath="Title" SelectionChanged="ReviewChanged"
+                                      MinWidth="168" Margin="10,0,10,0" AutomationProperties.Name="Proofreading model"/>
+                            <CheckBox x:Name="CompatibilityServiceCheck" Content="Separate Llama service"
+                                      Foreground="#E6EDF3" VerticalAlignment="Center" ToolTip="Also check Ollama on port 11435."
+                                      Checked="ReviewChanged" Unchecked="ReviewChanged"/>
+                        </WrapPanel>
+                        <TextBlock x:Name="ReviewStatus" Foreground="#AABAD0" TextWrapping="Wrap" Visibility="Collapsed"/>
+                    </StackPanel>
                     <TextBox DockPanel.Dock="Bottom" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="120"
                              Text="{Binding SelectedItem.Observation.Text, ElementName=LogRows, Mode=OneWay}"
                              AutomationProperties.Name="Selected original OCR"/>
@@ -58,6 +71,7 @@
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Margin="3,4">
+                                        <TextBlock Text="{Binding Observation.DisplayLabel}" FontWeight="SemiBold"/>
                                         <TextBlock Text="{Binding Observation.Reading}" TextWrapping="Wrap" MaxWidth="710"/>
                                         <TextBlock Text="{Binding ContextText}" Foreground="#AABAD0"/>
                                         <TextBlock Text="{Binding Updated, StringFormat={}{0:g}}" Foreground="#AABAD0"/>
@@ -68,6 +82,20 @@
                         <TextBlock x:Name="EmptyLog" Text="No text logged yet" Foreground="#AABAD0"
                                    VerticalAlignment="Center" HorizontalAlignment="Center" IsHitTestVisible="False"/>
                     </Grid>
+                </DockPanel>
+            </TabItem>
+            <TabItem x:Name="QuestTab" Header="Quest notes">
+                <DockPanel Background="#171A20" TextElement.Foreground="#E6EDF3" Margin="5">
+                    <StackPanel DockPanel.Dock="Top" Margin="5,3,5,7">
+                        <TextBlock Text="Playthrough goal" FontWeight="SemiBold"/>
+                        <DockPanel Margin="0,3,0,0">
+                            <Button DockPanel.Dock="Right" x:Name="SaveGoalButton" Content="Save goal" Click="SaveGoalClicked"/>
+                            <TextBox x:Name="GoalText" AutomationProperties.Name="Playthrough goal"/>
+                        </DockPanel>
+                        <TextBlock x:Name="DefaultGoalText" Foreground="#AABAD0" Margin="5,0,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <TextBox x:Name="QuestEvidenceText" IsReadOnly="True" TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Quest notes with sources"/>
                 </DockPanel>
             </TabItem>
         </TabControl>
