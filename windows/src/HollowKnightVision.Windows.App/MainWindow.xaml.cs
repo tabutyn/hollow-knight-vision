@@ -598,7 +598,6 @@ public partial class MainWindow : Window
     private IReadOnlyList<GroundEditLine> legacyGroundEdits = [];
     private int legacyGroundMigrationVersion;
     private bool canPersistHackerEdits;
-    private readonly List<TrackedGroundLine> trackedGround = [];
     private readonly Dictionary<string, RoomEdit> rooms = new(StringComparer.Ordinal);
     private readonly List<RoomConnectionEdit> roomConnections = [];
     private AtlasStateStore atlasStateStore;
@@ -1964,7 +1963,7 @@ public partial class MainWindow : Window
         OpsResetRoomButton.IsEnabled = CanResetRoom();
         var groundToolsAvailable = DashboardPresentationPolicy.ShowsGroundTrackingTools(
             workspace, recognizedMenuContext);
-        GroundFeaturesCheck.IsEnabled = groundToolsAvailable;
+        GroundOverlayControls.IsEnabled = groundToolsAvailable;
         TransitionsCheck.IsEnabled = groundToolsAvailable;
         CoarseMotionCheck.IsEnabled = groundToolsAvailable;
         HackerWorkspaceButton.Visibility = CanUseHacker() && recognizedMenuContext == "game" ? Visibility.Visible : Visibility.Collapsed;
@@ -3643,13 +3642,9 @@ public partial class MainWindow : Window
         }
         if (presentsLatestFrame)
         {
-            if (GroundFeaturesCheck.IsChecked == true)
-                DrawGroundHypothesisAtlasOverlay(result);
-            else if (result.AdmitsTracking)
-                UpdateTrackedGround(result.Ground, result.GameplayTelemetry);
-            else GameplayGroundCanvas.Children.Clear();
+            DrawGroundHypothesisAtlasOverlay(result);
+            DrawMotionOverlay(result.Motion);
         }
-        if (presentsLatestFrame) DrawMotionOverlay(result.Motion);
         PersistActiveAtlas(force: false);
     }
 
@@ -3766,33 +3761,36 @@ public partial class MainWindow : Window
         MenuStencilResult? menuStencil,
         HudStencilResult? hudStencil)
     {
-        DetectionCanvas.Children.Clear();
+        LiveDetectionsCanvas.Children.Clear();
         if (ObjectDetectionCheck.IsChecked == true)
         {
-            DrawObjectDetectionOverlay(DetectionCanvas, objects, CanvasWidth, CanvasHeight,
+            DrawObjectDetectionOverlay(LiveDetectionsCanvas, objects, CanvasWidth, CanvasHeight,
                 RawDetectionCheck.IsChecked == true, DetectionPixelsCheck.IsChecked == true);
         }
         if (StencilDetectionCheck.IsEnabled && StencilDetectionCheck.IsChecked == true)
         {
-            if (menuStencil is not null) DrawMenuStencil(DetectionCanvas, menuStencil);
-            if (hudStencil is not null) DrawHudStencil(DetectionCanvas, hudStencil);
+            if (menuStencil is not null) DrawMenuStencil(LiveDetectionsCanvas, menuStencil);
+            if (hudStencil is not null) DrawHudStencil(LiveDetectionsCanvas, hudStencil);
         }
-        if (GroundFeaturesCheck.IsChecked == true)
-        {
+        LiveGroundPatchesCanvas.Children.Clear();
+        LiveGroundCornersCanvas.Children.Clear();
+        if (GroundLinesCheck.IsChecked != true) return;
+        if (GroundTrackingPatchesCheck.IsChecked == true)
             GroundFeatureOverlayPresentation.DrawLive(
-                DetectionCanvas,
+                LiveGroundPatchesCanvas,
                 groundHypotheses,
                 groundLines,
                 measuredPlatformPatches);
-            GroundFeatureOverlayPresentation.DrawTerrainCorners(DetectionCanvas, terrain);
-        }
+        GroundFeatureOverlayPresentation.DrawTerrainCorners(LiveGroundCornersCanvas, terrain);
     }
 
     private void DrawGroundHypothesisAtlasOverlay(VisionAnalysisResult result)
     {
-        GameplayGroundCanvas.Children.Clear();
-        if (!gameplayFrameRegistered || !result.AdmitsTracking) return;
-        GroundFeatureOverlayPresentation.DrawAtlas(GameplayGroundCanvas, result.GroundDisplayCamera,
+        AtlasGroundLinesCanvas.Children.Clear();
+        AtlasGroundPatchesCanvas.Children.Clear();
+        if (GroundLinesCheck.IsChecked != true || !gameplayFrameRegistered || !result.AdmitsTracking) return;
+        var patches = GroundTrackingPatchesCheck.IsChecked == true ? AtlasGroundPatchesCanvas : null;
+        GroundFeatureOverlayPresentation.DrawAtlas(AtlasGroundLinesCanvas, patches, result.GroundDisplayCamera,
             new(result.Frame.Width, result.Frame.Height),
             new(Canvas.GetLeft(GameplayImage), Canvas.GetTop(GameplayImage), GameplayImage.Width, GameplayImage.Height),
             result.GroundDisplayLines, result.GroundHypotheses.AtlasFeatures,
@@ -3813,48 +3811,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void UpdateTrackedGround(
-        IReadOnlyList<DetectedFloorLine> lines,
-        ReceiverGroundTruthSample telemetry)
-    {
-        if (gameplayLiveFrame is not { } frame) return;
-        var scale = telemetry.PixelsPerWorldUnit(frame.Height);
-        if (scale is not > 0) return;
-        var ppu = gameplayAtlas.PixelsPerWorldUnit;
-        foreach (var line in lines)
-        {
-            var x0 = (telemetry.CameraX + (line.XSpan.Start - frame.Width / 2.0) / scale.Value) * ppu;
-            var x1 = (telemetry.CameraX + (line.XSpan.EndInclusive + 1 - frame.Width / 2.0) / scale.Value) * ppu;
-            var worldY = telemetry.CameraY - (line.Row - frame.Height / 2.0) / scale.Value;
-            var y = -worldY * ppu;
-            var existing = trackedGround
-                .Where(candidate => Math.Abs(candidate.Y - y) <= 5
-                    && Math.Min(candidate.X1, x1) - Math.Max(candidate.X0, x0) >= 8)
-                .OrderBy(candidate => Math.Abs(candidate.Y - y))
-                .FirstOrDefault();
-            if (existing is null)
-            {
-                trackedGround.Add(new TrackedGroundLine(x0, x1, y));
-            }
-            else
-            {
-                existing.X0 = (existing.X0 * existing.Observations + x0) / (existing.Observations + 1);
-                existing.X1 = (existing.X1 * existing.Observations + x1) / (existing.Observations + 1);
-                existing.Y = (existing.Y * existing.Observations + y) / (existing.Observations + 1);
-                existing.Observations++;
-            }
-        }
-        DrawTrackedGround();
-    }
-
-    private void DrawTrackedGround()
-    {
-        if (GroundFeaturesCheck.IsChecked == true) return;
-        GameplayGroundCanvas.Children.Clear();
-    }
-
     private void DrawMotionOverlay(LowResolutionTranslationDiagnostic? diagnostic)
     {
+        LiveMotionCanvas.Children.Clear();
         if (CoarseMotionCheck.IsChecked == true)
         {
             var motion = diagnostic?.Motion;
@@ -3870,10 +3829,10 @@ public partial class MainWindow : Window
             };
             Canvas.SetLeft(label, 10);
             Canvas.SetTop(label, 58);
-            DetectionCanvas.Children.Add(label);
+            LiveMotionCanvas.Children.Add(label);
             if (motion is not null)
             {
-                DetectionCanvas.Children.Add(new Line
+                LiveMotionCanvas.Children.Add(new Line
                 {
                     X1 = 320, Y1 = 180,
                     X2 = 320 + motion.ScreenShiftX * 12,
@@ -3894,7 +3853,7 @@ public partial class MainWindow : Window
             };
             Canvas.SetLeft(label, 10);
             Canvas.SetTop(label, 86);
-            DetectionCanvas.Children.Add(label);
+            LiveMotionCanvas.Children.Add(label);
         }
     }
 
@@ -5168,7 +5127,6 @@ public partial class MainWindow : Window
         }
         GameplayGroundCanvas.Width = canvas.Width;
         GameplayGroundCanvas.Height = canvas.Height;
-        DrawTrackedGround();
         if (gameplayFrameRegistered && liveFrame is not null && telemetry is not null)
         {
             PositionLiveFrame(
@@ -5624,8 +5582,7 @@ public partial class MainWindow : Window
                 GameplayAtlasCanvas, gameplayTileImages, gameplayAtlas, delta,
                 ref gameplayAtlasMinimumTileX, ref gameplayAtlasMinimumTileY,
                 GameplayImage, gameplayLiveFrame, gameplayLiveTelemetry);
-            if (GroundFeaturesCheck.IsChecked == true)
-                GroundFeatureOverlayPresentation.DrawSavedAtlas(GameplayGroundCanvas, SavedGroundProjection, gameplaySavedWorld.DisplayLines);
+            GroundFeatureOverlayPresentation.DrawSavedAtlas(AtlasGroundLinesCanvas, SavedGroundProjection, gameplaySavedWorld.DisplayLines);
             gameplayRenderedRevision = delta.Revision;
         }
     }
@@ -5992,8 +5949,10 @@ public partial class MainWindow : Window
         gameplayViewport.Reset();
         gameplayFraming = "Current";
         GameplayPlaceholder.Visibility = Visibility.Visible;
-        DetectionCanvas.Children.Clear();
-        trackedGround.Clear();
+        LiveDetectionsCanvas.Children.Clear();
+        LiveGroundPatchesCanvas.Children.Clear();
+        LiveGroundCornersCanvas.Children.Clear();
+        LiveMotionCanvas.Children.Clear();
         if (reopenLiveWorld && liveWorldPipeline is not null
             && !liveWorldPipeline.Reopen())
         {
@@ -6006,7 +5965,8 @@ public partial class MainWindow : Window
         foreach (var image in gameplayTileImages.Values) GameplayAtlasCanvas.Children.Remove(image);
         gameplayTileImages.Clear();
         gameplayOccupiedTileBounds.Clear();
-        GameplayGroundCanvas.Children.Clear();
+        AtlasGroundLinesCanvas.Children.Clear();
+        AtlasGroundPatchesCanvas.Children.Clear();
         ResetGameplayPaths();
         ResetGameplayPlacement();
         gameplayAtlasMinimumTileX = gameplayAtlasMinimumTileY = null;
@@ -6868,14 +6828,6 @@ public partial class MainWindow : Window
         bool IsHacker)
     {
         public override string ToString() => $"{Name}\n{Detail}";
-    }
-
-    private sealed class TrackedGroundLine(double x0, double x1, double y)
-    {
-        public double X0 { get; set; } = x0;
-        public double X1 { get; set; } = x1;
-        public double Y { get; set; } = y;
-        public int Observations { get; set; } = 1;
     }
 
     private sealed record GroundEditLine(

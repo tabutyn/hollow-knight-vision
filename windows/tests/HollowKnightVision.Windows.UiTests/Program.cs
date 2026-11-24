@@ -991,7 +991,8 @@ internal static class Program
             "The Atlas page repeated its heading.");
         var named = tabs.Select(tab => tab.Descendants().Select(item => (string?)item.Attribute(x + "Name"))
             .OfType<string>().ToHashSet(StringComparer.Ordinal)).ToArray();
-        Check(named[0].Contains("AtlasStatesList") && named[1].Contains("GroundFeaturesCheck")
+        Check(named[0].Contains("AtlasStatesList") && named[1].Contains("GroundLinesCheck")
+            && named[1].Contains("GroundTrackingPatchesCheck")
             && named[2].Contains("OpsResetRoomButton") && named[2].Contains("SettingsLanguageCombo"),
             "Controls appeared in the wrong settings section.");
         var estimated = tabs[1].Descendants(ns + "CheckBox")
@@ -2100,13 +2101,13 @@ internal static class Program
         var source = File.ReadAllText(System.IO.Path.Combine(
             AppContext.BaseDirectory,
             "MainWindow.source.xaml"));
-        foreach (var name in new[] { "GameStateCheck", "StencilDetectionCheck", "GroundFeaturesCheck" })
+        foreach (var name in new[] { "GameStateCheck", "StencilDetectionCheck", "GroundLinesCheck", "GroundTrackingPatchesCheck" })
         {
             var element = Regex.Match(source, "<CheckBox\\s+[^>]*x:Name=\"" + name + "\"[^>]*/>", RegexOptions.Singleline);
             Check(element.Success && Regex.IsMatch(element.Value, @"IsChecked\s*=\s*""True"""),
                 $"The Windows debug option {name} is not enabled by default.");
         }
-        Console.WriteLine("PASS game state, stencil detection and ground features default on");
+        Console.WriteLine("PASS game state, stencil detection, ground lines and tracking patches default on");
     }
 
     private static void TestGroundFeatureOverlayUsesMacReviewPalette()
@@ -2167,16 +2168,18 @@ internal static class Program
         var camera = new AtlasPoint(50, 12);
         var lines = GroundStrokeGeometry.VisibleLines([walked with { SegmentId = 7 }], [],
             [walked], camera, 360, null);
-        GroundFeatureOverlayPresentation.DrawAtlas(canvas, camera, new(640, 360), new(17, -42, 1280, 1080),
+        var patches = new Canvas();
+        GroundFeatureOverlayPresentation.DrawAtlas(canvas, patches, camera, new(640, 360), new(17, -42, 1280, 1080),
             lines, [atlasFeature with { AtlasPosition = new(35, 238) },
                 atlasFeature with { AtlasPosition = new(80, 238) },
                 atlasFeature with { AtlasPosition = new(35, 180) }]);
-        Check(canvas.Children.Count == 2, "Walked floor replaced its duplicate and should keep its patch box.");
+        Check(canvas.Children.Count == 1 && patches.Children.Count == 1,
+            "Walked floor replaced its duplicate and should keep its patch box.");
         var ground = canvas.Children.OfType<Line>().Single();
         Check(ground.X1 == -43 && ground.X2 == 277 && ground.Y1 == 342 && ground.Y2 == 342
             && ground.Stroke is SolidColorBrush groundBrush && groundBrush.Color == Color.FromRgb(69, 255, 120),
             "The clean green line did not follow the live frame scale and position.");
-        var patch = canvas.Children.OfType<Rectangle>().Single();
+        var patch = patches.Children.OfType<Rectangle>().Single();
         Check(Canvas.GetLeft(patch) == -29 && Canvas.GetTop(patch) == ground.Y1,
             "The tracking patch and floor did not share the atlas projection.");
         Console.WriteLine("PASS live and persistent ground boxes and walked floor use the atlas projection");
@@ -2193,7 +2196,7 @@ internal static class Program
         canvas.Children.Clear();
         var localCamera = new AtlasPoint(10, 22);
         var live = new GroundHypothesisAtlasLine(12, new(315, 191), new(410, 191));
-        GroundFeatureOverlayPresentation.DrawAtlas(canvas, localCamera, new(640, 360),
+        GroundFeatureOverlayPresentation.DrawAtlas(canvas, null, localCamera, new(640, 360),
             new(-384, 152, 1280, 720), [live], [], projection, [saved]);
         AssertStroke();
         Console.WriteLine("PASS saved green floor uses the atlas tile frame and replaces jittered live duplicates");

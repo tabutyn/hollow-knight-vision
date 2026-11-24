@@ -12,6 +12,13 @@
         <SolidColorBrush x:Key="Panel" Color="#202124" />
         <SolidColorBrush x:Key="PanelHover" Color="#303236" />
         <SolidColorBrush x:Key="Outline" Color="#35FFFFFF" />
+        <BooleanToVisibilityConverter x:Key="OverlayVisibility"/>
+        <Style x:Key="GroundLinesOverlay" TargetType="Canvas">
+            <Setter Property="Visibility" Value="{Binding IsChecked, ElementName=GroundLinesCheck, Converter={StaticResource OverlayVisibility}}"/>
+        </Style>
+        <Style x:Key="GroundPatchesOverlay" TargetType="Canvas">
+            <Setter Property="Visibility" Value="{Binding IsChecked, ElementName=GroundTrackingPatchesCheck, Converter={StaticResource OverlayVisibility}}"/>
+        </Style>
         <Style TargetType="TextBlock"><Setter Property="Foreground" Value="#ECECEC"/></Style>
         <Style TargetType="Button">
             <Setter Property="Foreground" Value="#ECECEC"/><Setter Property="Background" Value="#26272A"/>
@@ -92,9 +99,19 @@
                         <Image x:Name="GameplayImage" Width="640" Height="360" Stretch="Fill"
                                SnapsToDevicePixels="True" IsHitTestVisible="False" Panel.ZIndex="10"/>
                         <Canvas x:Name="DetectionCanvas" Width="640" Height="360"
-                                IsHitTestVisible="False" Panel.ZIndex="20"/>
+                                IsHitTestVisible="False" Panel.ZIndex="20">
+                            <Canvas x:Name="LiveDetectionsCanvas"/>
+                            <Canvas Style="{StaticResource GroundLinesOverlay}">
+                                <Canvas x:Name="LiveGroundPatchesCanvas" Style="{StaticResource GroundPatchesOverlay}"/>
+                                <Canvas x:Name="LiveGroundCornersCanvas"/>
+                            </Canvas>
+                            <Canvas x:Name="LiveMotionCanvas"/>
+                        </Canvas>
                         <Canvas x:Name="GameplayGroundCanvas" Width="640" Height="360"
-                                IsHitTestVisible="False" Panel.ZIndex="19"/>
+                                IsHitTestVisible="False" Panel.ZIndex="19" Style="{StaticResource GroundLinesOverlay}">
+                            <Canvas x:Name="AtlasGroundPatchesCanvas" Style="{StaticResource GroundPatchesOverlay}"/>
+                            <Canvas x:Name="AtlasGroundLinesCanvas"/>
+                        </Canvas>
                         <Canvas x:Name="GameplayPlacementCanvas" Width="{Binding Width, ElementName=GameplayAtlasCanvas}"
                                 Height="{Binding Height, ElementName=GameplayAtlasCanvas}" IsHitTestVisible="False"
                                 Visibility="Collapsed" Panel.ZIndex="18"/>
@@ -593,7 +610,11 @@
                                     <CheckBox x:Name="StencilDetectionCheck" IsChecked="True" Content="Stencil Detection" Margin="0,0,0,10"/>
                                     <TextBlock x:Name="StencilLockedText" TextWrapping="Wrap" Foreground="#999999" Margin="0,0,0,10"/>
                                     <Separator Margin="0,0,0,10"/>
-                                    <CheckBox x:Name="GroundFeaturesCheck" Content="Ground Features" Margin="0,0,0,10" IsChecked="True"/>
+                                    <StackPanel x:Name="GroundOverlayControls">
+                                        <CheckBox x:Name="GroundLinesCheck" Content="Ground Lines" Margin="0,0,0,10" IsChecked="True"/>
+                                        <CheckBox x:Name="GroundTrackingPatchesCheck" Content="Ground Tracking Patches"
+                                                  Margin="0,0,0,10" IsChecked="True" IsEnabled="{Binding IsChecked, ElementName=GroundLinesCheck}"/>
+                                    </StackPanel>
                                     <CheckBox x:Name="AtlasPathsCheck" Content="Atlas paths" IsChecked="True" Margin="0,0,0,10"
                                               Checked="AtlasPaths_Changed" Unchecked="AtlasPaths_Changed"/>
                                     <CheckBox x:Name="EstimatedRoomOutlinesCheck" Content="Estimated Room Outlines"

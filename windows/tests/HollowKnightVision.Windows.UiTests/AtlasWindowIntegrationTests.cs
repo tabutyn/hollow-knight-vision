@@ -35,6 +35,7 @@ internal static class AtlasWindowIntegrationTests
         Console.WriteLine("PASS Hacker Atlas draws restored rooms at the measured passage elevation");
         Console.WriteLine("PASS Gameplay Atlas draws measured doorways independently of optional outlines and hides them outside gameplay");
         Console.WriteLine("PASS Gameplay window applies only ordered Atlas placements and keeps menu images in capture coordinates");
+        Console.WriteLine("PASS Game Play toggles ground lines and tracking patches in the live view and Atlas");
         Console.WriteLine("PASS Game Play and Hacker draw only scoped bot wall contacts while Atlas Paths is enabled");
     }
 
@@ -157,6 +158,8 @@ internal static class AtlasWindowIntegrationTests
                 && placement.Visibility == Visibility.Collapsed && walls.Visibility == Visibility.Collapsed,
                 "An unresolved capture must hold the displayed placement while hiding registered doorway overlays.");
 
+            VerifyGroundOverlayControls(window, initial with { Frame = newest, GameplayTiles = null, WorldFrame = null });
+
             var viewport = GetField<GameplayViewportController>(window, "gameplayViewport");
             viewport.SetFreeFlyTransform(new(1, 0, 0));
             var settledPan = viewport.AtlasPan(4);
@@ -222,6 +225,64 @@ internal static class AtlasWindowIntegrationTests
             SetField(window, "isClosing", true);
             Wait(InvokeTask(window, "PrepareShutdownAsync"));
         }
+    }
+
+    private static void VerifyGroundOverlayControls(MainWindow window, MainWindow.VisionAnalysisResult gameplay)
+    {
+        _ = Invoke(window, "UpdateModeAvailability");
+        var lines = Control<CheckBox>(window, "GroundLinesCheck");
+        var patches = Control<CheckBox>(window, "GroundTrackingPatchesCheck");
+        var livePatches = Control<Canvas>(window, "LiveGroundPatchesCanvas");
+        var liveCorners = Control<Canvas>(window, "LiveGroundCornersCanvas");
+        var atlas = Control<Canvas>(window, "GameplayGroundCanvas");
+        var atlasLines = Control<Canvas>(window, "AtlasGroundLinesCanvas");
+        var atlasPatches = Control<Canvas>(window, "AtlasGroundPatchesCanvas");
+        var analysis = gameplay with
+        {
+            Ground = [new(7, new(2, 24))],
+            MeasuredPlatformPatches = [new(3, 7, 16, 12)],
+            Terrain = new([], [new(0, 0, 20, 7, 24)]),
+            GroundDisplayLines = [new(WalkedGroundMemory.WalkedSegmentId, new(-22, 18), new(21, 18))],
+            GroundHypotheses = GroundHypothesisTrackingResult.Empty with
+            {
+                AtlasFeatures = [new(1, 0, new(-8, 12), [], [])]
+            }
+        };
+        window.ApplyVisionAnalysis(analysis);
+        Program.Pump();
+        Check(lines.IsChecked == true && patches.IsChecked == true && patches.IsEnabled
+            && atlas.Visibility == Visibility.Visible && livePatches.Visibility == Visibility.Visible
+            && atlasPatches.Visibility == Visibility.Visible && atlasLines.Children.OfType<Line>().Count() == 1
+            && livePatches.Children.OfType<Rectangle>().Count() == 1 && atlasPatches.Children.OfType<Rectangle>().Count() == 1,
+            "Game Play must start with one green stroke and both live and persistent tracking patches.");
+
+        patches.IsChecked = false;
+        Program.Pump();
+        Check(livePatches.Visibility == Visibility.Collapsed && atlasPatches.Visibility == Visibility.Collapsed
+            && atlas.Visibility == Visibility.Visible && atlasLines.Children.OfType<Line>().Count() == 1,
+            "Toggling Track Patches must hide both box layers before another analysis arrives.");
+        window.ApplyVisionAnalysis(analysis);
+        Check(livePatches.Children.Count == 0 && atlasPatches.Children.Count == 0
+            && liveCorners.Children.OfType<Line>().Count() == 1 && atlasLines.Children.OfType<Line>().Count() == 1,
+            "Tracking patches must stay off without removing the green stroke or the horizontal corner.");
+
+        patches.IsChecked = true;
+        lines.IsChecked = false;
+        Program.Pump();
+        Check(atlas.Visibility == Visibility.Collapsed && liveCorners.Parent is Canvas { Visibility: Visibility.Collapsed }
+            && !patches.IsEnabled && patches.IsChecked == true,
+            "Turning off Ground Lines must hide ground overlays and preserve the tracking patch preference.");
+        window.ApplyVisionAnalysis(analysis);
+        Check(livePatches.Children.Count == 0 && liveCorners.Children.Count == 0
+            && atlasLines.Children.Count == 0 && atlasPatches.Children.Count == 0,
+            "Hidden ground overlays should skip drawing on subsequent frames.");
+
+        lines.IsChecked = true;
+        Program.Pump();
+        window.ApplyVisionAnalysis(analysis);
+        Check(patches.IsEnabled && livePatches.Children.Count == 1 && atlasPatches.Children.Count == 1
+            && atlasLines.Children.OfType<Line>().Count() == 1,
+            "The next gameplay analysis should restore the ground stroke and both patch layers.");
     }
 
     private static void AssertWall(Canvas canvas, double x, double y, double halfHeight)
