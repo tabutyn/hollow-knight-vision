@@ -8,7 +8,7 @@ internal sealed class BotGymAtlasCoverage
     private const int MaximumReferenceImages = 32;
     private readonly LiveWorldTracker world = new();
     private readonly BotCommittedAtlasCoverage coverage = new();
-    private readonly BotVisualAtlasCoverage localCoverage = new();
+    private readonly Dictionary<int, BotVisualAtlasCoverage> localCharts = [];
     private readonly HashSet<int> placedRooms = [];
     private readonly Dictionary<int, (BgraFrame Image, IReadOnlyList<WorldRect> Exclusions)> referenceImages = [];
     private readonly Queue<int> referenceOrder = [];
@@ -16,7 +16,7 @@ internal sealed class BotGymAtlasCoverage
     private LiveWorldPlacementProjection doorPlacement = LiveWorldPlacementProjection.Empty;
     private int? room;
     private ulong epoch;
-    private int? localIslandId;
+    private BotVisualAtlasCoverage? localCoverage;
     private AtlasPoint basis;
     private AtlasPoint? lastPose;
     private AtlasPoint? lastTrustedPose;
@@ -57,7 +57,7 @@ internal sealed class BotGymAtlasCoverage
 
     internal void Observe(BgraFrame frame, AtlasPoint? pose, double time, IReadOnlyList<PixelRect> omissions,
         VisualRoomCompositionBounds bounds, GroundHypothesisTrackingResult tracking, bool admitsPlacement,
-        bool continuesMeasuredScenery = false, bool retainBasis = false, LiveWorldCaptureEvidence? groundEvidence = null)
+        bool continuesMeasuredScenery = false, bool retainBasis = false, LiveWorldCaptureEvidence? captureEvidence = null)
     {
         var correction = tracking.GlobalCorrection;
         if (correction is { } shift && shift.X * shift.X + shift.Y * shift.Y > 9)
@@ -79,7 +79,7 @@ internal sealed class BotGymAtlasCoverage
             .Concat(VisualRoomCompositionMask.OmittedRects(bounds, local, size.Width, size)).ToArray();
         // A stationary Knight near a doorway still supplies fresh, separate
         // floor contacts. Preserve them at the ordinary graph cadence.
-        var samplesDoorway = groundEvidence is { GroundGeometry: not null, PlayerBounds: { } player }
+        var samplesDoorway = captureEvidence is { GroundGeometry: not null, PlayerBounds: { } player }
             && (incomingDoorway is not null || LiveDoorwayFloorEvidence.AtDepartureEdge(player.X + player.Width / 2,
                 size.Width, rightSide: player.X + player.Width / 2 >= size.Width / 2));
         if (!awaitingPlacement && !samplesDoorway && lastPose == local && masks.SequenceEqual(lastMasks)) return;
@@ -105,7 +105,7 @@ internal sealed class BotGymAtlasCoverage
             basis = new(centerX - center.X, 0);
         }
         var placed = new AtlasPoint(center.X + basis.X, center.Y + basis.Y);
-        var evidence = groundEvidence ?? new(time) { HasMeasuredSceneryContinuity = continuesMeasuredScenery };
+        var evidence = captureEvidence ?? new(time) { HasMeasuredSceneryContinuity = continuesMeasuredScenery };
         var id = world.Snapshot.Observations.Count;
         world.Ingest(id, time, frame, center, size.Width,
             exclusions: masks, searchForClosure: false, localPose: center, captureGeneration: 1,
@@ -142,12 +142,10 @@ internal sealed class BotGymAtlasCoverage
         if (world.LatestIslandAwaitsPlacement)
         {
             var island = snapshot.TrackingIslands[^1].Id;
-            if (localIslandId != island)
-            {
-                localCoverage.Reset();
-                localIslandId = island;
-            }
-            localCoverage.Register(local, size, omissions, bounds, creditExploration: false);
+            if (!localCharts.TryGetValue(island, out var chart))
+                localCharts.Add(island, chart = new BotVisualAtlasCoverage());
+            localCoverage = chart;
+            chart.Register(local, size, omissions, bounds, creditExploration: false);
             return;
         }
 
@@ -168,10 +166,10 @@ internal sealed class BotGymAtlasCoverage
         awaitingPlacement = false;
         requiresMatch = false;
         lastTrustedPose = local;
-        if (localIslandId.HasValue)
+        if (localCoverage is not null)
         {
-            localCoverage.Reset();
-            localIslandId = null;
+            localCharts.Clear();
+            localCoverage = null;
         }
     }
 
@@ -187,7 +185,7 @@ internal sealed class BotGymAtlasCoverage
         if (!awaitingPlacement) return View(pose, size, health);
         // The local chart can supply directional context during recovery. Its
         // cells have no global position or exploration credit before placement.
-        if (!open || localCoverage.View(pose, size, world.Snapshot.MapRevision, health) is not { } local)
+        if (!open || localCoverage?.View(pose, size, world.Snapshot.MapRevision, health) is not { } local)
             return null;
         var (covered, earned) = coverage.Totals;
         return local with { CoveredCells = covered, EarnedCells = earned };
@@ -210,8 +208,8 @@ internal sealed class BotGymAtlasCoverage
         lastScanAt = double.NegativeInfinity;
         lastRecoverySearch = double.NegativeInfinity;
         open = false;
-        localCoverage.Reset();
-        localIslandId = null;
+        localCharts.Clear();
+        localCoverage = null;
     }
 
     private static AtlasPoint Center(AtlasPoint origin, WorldSize size) =>

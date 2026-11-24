@@ -44,6 +44,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
     private readonly GroundPlatformPatches patches = new();
     private readonly NormalAtlasRoomIdentity roomIdentity = new();
     private readonly MeasuredAtlasPoseLineage measuredAtlasPose = new();
+    private readonly CaptureIslandLineage captureIslands = new();
     private readonly AtlasCaptureGap atlasCaptureGap = new();
     private bool needsCameraAnchor = true;
     private string? lastKnownRoom;
@@ -195,6 +196,11 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             terrain = TerrainWallDetector.ApplyContact(terrain, contact, floors, edges);
             platformPatches = patches.Observe(edges, floors, prepared.ProtectedOcclusions, verifiedCamera, timestamp);
         }
+        var referenceTimestamp = measuredGround ? ground.LocalReferenceTimestamp
+            : selectedScene?.ReferenceTimestamp;
+        var lineage = captureIslands.Observe(generation, room, timestamp,
+            admission.AdmitsTracking && visualRoom.AllowsAtlasWrite && (measuredGround || publishesScenery),
+            referenceTimestamp, groundAdjusted || admission.Transition.ResumedAfterTransition || visualRoom.Cut is not null);
         LiveWorldCaptureEvidence? worldEvidence = null;
         if (captureWorldEvidence && admission.AllowsAtlasWrite && visualRoom.AllowsAtlasWrite)
         {
@@ -202,14 +208,15 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             {
                 worldEvidence = LiveWorldCaptureEvidence.FromGround(timestamp, frame.Width, frame.Height,
                     floors, ground.LineReviews, knight, contact.MeasuredFoot, contact.Floor) with
-                { LocalReferenceTimestamp = ground.LocalReferenceTimestamp };
+                { LocalReferenceTimestamp = referenceTimestamp, MeasuredLineage = lineage };
             }
             else if (publishesScenery)
             {
                 worldEvidence = new LiveWorldCaptureEvidence(timestamp)
                 {
-                    LocalReferenceTimestamp = selectedScene?.ReferenceTimestamp,
-                    HasMeasuredSceneryContinuity = true
+                    LocalReferenceTimestamp = referenceTimestamp,
+                    HasMeasuredSceneryContinuity = true,
+                    MeasuredLineage = lineage
                 };
             }
         }
@@ -239,6 +246,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         semanticAtlas.Reset();
         reference.Reset();
         measuredAtlasPose.Reset();
+        captureIslands.Reset();
         atlasCaptureGap.Reset();
         camera.ResetFloorlessMotion();
         if (!preserveLoadingObservation) roomIdentity.ResetObservation();

@@ -299,6 +299,10 @@ internal static class CalibratedSceneMotionTests
             var saved = new LiveWorldSessionStore(path).Load().Snapshot;
             Check(saved.Observations.Count == 2 && saved.Observations[^1].RawPose == continued.DisplayCamera,
                 "The reopened world did not keep the measured scenery position.");
+            Check(seed.WorldEvidence?.MeasuredLineage is { } lineage
+                && continued.WorldEvidence?.MeasuredLineage == lineage
+                && saved.TrackingIslands.Count == 1 && saved.TrackingIslands[0].MeasuredLineage == lineage,
+                "Measured ground and scenery must share their owner through the captures skipped by persistence.");
             var last = saved.Observations[^1];
             Check(saved.Landmarks.Count == 0 && saved.Keyframes.All(frame => frame.ObservationId != last.Id)
                 && last.GroundGeometry is null && last.ObservedFloorCandidates is null,

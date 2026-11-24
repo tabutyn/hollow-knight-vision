@@ -29,11 +29,15 @@ public sealed record LiveTrackingIsland(
 {
     internal const string RecoveryBreakReason = "local-tracking-recovery";
     internal const string PlacedTrackingBreakReason = "measured-local-tracking";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? MeasuredLineage { get; init; }
+
     internal bool RequiresPlacement => Placement == LiveIslandPlacement.Estimated && BreakReason == RecoveryBreakReason;
 
     internal bool IsValid => Id >= 0 && RoomId >= 0 && double.IsFinite(StartedAt)
         && LiveWorldSnapshot.Finite(WorldFromLocal) && Enum.IsDefined(Placement)
-        && Uncertainty.IsValid && BreakReason is not null && Members is { Count: > 0 };
+        && Uncertainty.IsValid && BreakReason is not null && Members is { Count: > 0 }
+        && MeasuredLineage is null or > 0;
 
     internal static LiveTrackingIsland Legacy(int islandId, LiveWorldObservation observation) =>
         new(islandId, observation.RoomId, observation.Timestamp, observation.OptimizedPose,
