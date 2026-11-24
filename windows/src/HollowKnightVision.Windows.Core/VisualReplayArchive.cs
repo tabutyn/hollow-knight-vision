@@ -54,18 +54,28 @@ public sealed class VisualReplayArchiveReader
 
     public VisualReplayArchiveReader(string root, RecordedVisualFrameArchive summary, Guid expectedPathId,
         bool requireComplete = true)
+        : this(root, expectedPathId, summary, requireComplete) { }
+
+    internal static VisualReplayArchiveReader OpenClipFrames(string root, Guid pathId) =>
+        new(root, pathId, expectedSummary: null, requireComplete: false);
+
+    private VisualReplayArchiveReader(string root, Guid expectedPathId, RecordedVisualFrameArchive? expectedSummary,
+        bool requireComplete)
     {
-        if (expectedPathId == Guid.Empty || summary.DirectoryName != $"frames-{expectedPathId:D}")
+        var directoryName = $"frames-{expectedPathId:D}";
+        if (expectedPathId == Guid.Empty || expectedSummary is not null && expectedSummary.DirectoryName != directoryName)
             throw new InvalidDataException("Visual replay directory does not match the input path.");
 
-        DirectoryPath = Path.Combine(Path.GetFullPath(root), summary.DirectoryName);
+        DirectoryPath = Path.Combine(Path.GetFullPath(root), directoryName);
         using var manifestStream = File.OpenRead(Path.Combine(DirectoryPath, "manifest.json"));
         Manifest = JsonSerializer.Deserialize<VisualReplayManifest>(manifestStream, Json)
             ?? throw new InvalidDataException("Visual replay manifest is empty.");
         if (Manifest.SchemaVersion != SchemaVersion)
             throw new InvalidDataException($"Visual replay archive schema {Manifest.SchemaVersion} is unsupported.");
 
-        if (Manifest.PathId != expectedPathId || Manifest.Summary != summary || Manifest.Frames is null
+        var summary = Manifest.Summary;
+        if (Manifest.PathId != expectedPathId || summary?.DirectoryName != directoryName
+            || expectedSummary is not null && summary != expectedSummary || Manifest.Frames is null
             || Manifest.GroundInputs is null || Manifest.Configuration is null || Manifest.StageEvents is null
             || Manifest.Frames.Count != summary.CapturedFrameCount)
             throw new InvalidDataException("Visual replay manifest does not match the input path.");
@@ -92,7 +102,7 @@ public sealed class VisualReplayArchiveReader
     {
         if (frame.Index < 0 || frame.Index >= Manifest.Frames.Count || Manifest.Frames[frame.Index] != frame
             || frame.FileName is not { } fileName
-            || fileName != frame.Index.ToString("D8", CultureInfo.InvariantCulture) + ".png"
+            || !IsFrameFileName(frame)
             || frame.Issue is not null || !double.IsFinite(frame.SolveWidth) || frame.SolveWidth <= 0
             || !double.IsFinite(frame.CaptureTimestamp) || !double.IsFinite(frame.CapturedAt))
             throw new InvalidDataException($"Visual replay frame {frame.Index} has invalid evidence.");
@@ -106,6 +116,9 @@ public sealed class VisualReplayArchiveReader
             throw new InvalidDataException($"Visual replay frame {frame.Index} has unexpected image dimensions.");
         return image;
     }
+
+    internal static bool IsFrameFileName(VisualReplayFrame frame) =>
+        frame.FileName == frame.Index.ToString("D8", CultureInfo.InvariantCulture) + ".png";
 
     public static VisualReplayArchiveInspection Inspect(string path)
     {

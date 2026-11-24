@@ -328,10 +328,15 @@
                             </DataGrid.Columns>
                         </DataGrid>
                         <DockPanel Grid.Column="1" Margin="16,0,0,0" LastChildFill="True">
-                            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
-                                <Button x:Name="BotPreviousFrame" Content="Previous" Click="BotPreviousFrame_Click" IsEnabled="False"/>
-                                <Button x:Name="BotNextFrame" Content="Next" Click="BotNextFrame_Click" IsEnabled="False" Margin="6,0,0,0"/>
-                                <TextBlock x:Name="BotPreviewPosition" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                            <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                                <Slider x:Name="BotClipScrubber" AutomationProperties.Name="Clip playback position"
+                                        Minimum="0" Maximum="0" IsEnabled="False" ValueChanged="BotClipScrubber_Changed"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Button x:Name="BotPlayClip" Content="Play" Click="BotPlayClip_Click" MinWidth="52" IsEnabled="False"/>
+                                    <Button x:Name="BotPreviousFrame" Content="Previous" Click="BotPreviousFrame_Click" IsEnabled="False" Margin="6,0,0,0"/>
+                                    <Button x:Name="BotNextFrame" Content="Next" Click="BotNextFrame_Click" IsEnabled="False" Margin="6,0,0,0"/>
+                                    <TextBlock x:Name="BotPreviewPosition" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                                </StackPanel>
                             </StackPanel>
                             <Border Background="#0C1014" ClipToBounds="True">
                                 <Viewbox Stretch="Uniform">
