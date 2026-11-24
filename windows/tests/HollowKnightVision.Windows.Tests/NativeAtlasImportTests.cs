@@ -536,8 +536,19 @@ internal static class NativeAtlasImportTests
                     && last.CameraPose == new AtlasPoint(expectedX, 35)
                     && last.AppliedCorrection == new AtlasPoint(0, 15),
                     "the durable graph, tiles and live camera agree after a vertical-only correction");
-                Check(pipeline.Process(Arrive(15)).CameraPose == new AtlasPoint(expectedX, 35),
-                    "subsequent frames retain the aligned basis");
+                var obscured = Arrive(15) with { WorldEvidence = null, LocalPose = new(98, 0) };
+                var continued = pipeline.Process(obscured);
+                Check(continued.AllowsAtlasWrite && continued.CameraPose == new AtlasPoint(expectedX + 18, 35),
+                    "subsequent frames retain the aligned basis while the floor is occluded");
+                var continuedPlacement = continued.SavedWorld!.Placement;
+                Check(continuedPlacement.Doorways.SequenceEqual(placement.Doorways)
+                    && continuedPlacement.EstimatedFootprints.Except(placement.EstimatedFootprints).Any(),
+                    "a registered image without floor evidence must still update placement outlines without moving the join");
+                var newer = Arrive(16) with { MonotonicTimestamp = obscured.MonotonicTimestamp + .01, WorldEvidence = null };
+                var throttled = pipeline.Process(newer);
+                Check(throttled.State == WindowsLiveWorldPipelineState.Throttled
+                    && ReferenceEquals(throttled.SavedWorld, continued.SavedWorld),
+                    "analysis between Atlas writes must keep the previous placement projection");
             });
         }
     }

@@ -103,7 +103,7 @@ public static class LiveWorldGroundOverlay
             }
             footprints.Add(new(new(left, bottom), new(right - left, top - bottom)));
         }
-        return new(doorways, footprints);
+        return new(doorways, footprints.Distinct().ToArray());
 
         static AtlasPoint Endpoint(LiveWorldObservation observation, AtlasPoint floor)
         {

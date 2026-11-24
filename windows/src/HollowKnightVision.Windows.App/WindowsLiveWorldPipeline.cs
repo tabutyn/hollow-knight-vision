@@ -708,7 +708,8 @@ internal sealed class WindowsLiveWorldPipeline
                 if (!placementPending && (requiresRebuild || committed.GroundGeometry is not null
                     || groundEvidence.Count != 0 || !projected.PathRooms.ContainsKey(resolvedRoomId)))
                     projected = LiveWorldGroundOverlay.ProjectWorld(durableSnapshot);
-                else if (!placementPending && durableSnapshot.TrackingIslands.LastOrDefault() is { Placement: LiveIslandPlacement.Estimated })
+                else if (!placementPending && durableSnapshot.TrackingIslands.LastOrDefault() is
+                    { Placement: LiveIslandPlacement.Estimated or LiveIslandPlacement.LegacyUnknown })
                     projected = projected with { Placement = LiveWorldGroundOverlay.ProjectPlacement(durableSnapshot) };
                 transactionObserver?.Invoke("publish");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
