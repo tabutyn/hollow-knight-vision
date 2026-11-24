@@ -1,17 +1,17 @@
 namespace HollowKnightVision.Windows.Core;
 
-/// <summary>Floor previously measured by foot contact in each registered room.</summary>
+/// <summary>Floor previously measured by foot contact in each room and measured coordinate space.</summary>
 public sealed class WalkedGroundMemory
 {
     public const long WalkedSegmentId = long.MaxValue;
-    private readonly Dictionary<string, GroundHypothesisAtlasLine[]> rooms = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string Room, long? Lineage), GroundHypothesisAtlasLine[]> rooms = [];
 
     public void Reset() => rooms.Clear();
 
-    public IReadOnlyList<GroundHypothesisAtlasLine> InRoom(string room) =>
-        rooms.TryGetValue(room, out var lines) ? lines : [];
+    public IReadOnlyList<GroundHypothesisAtlasLine> InRoom(string room, long? lineage = null) =>
+        rooms.TryGetValue((room, lineage), out var lines) ? lines : [];
 
-    public void Record(string room, CleanFloorLine floor, AtlasPoint measuredCamera, int imageHeight)
+    public void Record(string room, CleanFloorLine floor, AtlasPoint measuredCamera, int imageHeight, long? lineage = null)
     {
         if (string.IsNullOrEmpty(room) || !double.IsFinite(measuredCamera.X) || !double.IsFinite(measuredCamera.Y)
             || floor.Row < 0 || floor.Row >= imageHeight) return;
@@ -19,11 +19,11 @@ public sealed class WalkedGroundMemory
         var row = imageHeight + measuredCamera.Y - floor.Row;
         var left = measuredCamera.X + floor.XSpan.Start;
         var right = measuredCamera.X + floor.XSpan.EndInclusive + 1;
-        var known = InRoom(room);
+        var known = InRoom(room, lineage);
         if (known.Any(line => Math.Abs(line.AtlasStart.Y - row) <= 2
             && line.AtlasStart.X <= left + .5 && line.AtlasEnd.X >= right - .5)) return;
 
-        rooms[room] = GroundStrokeGeometry.Coalesce(known.Append(new(WalkedSegmentId,
+        rooms[(room, lineage)] = GroundStrokeGeometry.Coalesce(known.Append(new(WalkedSegmentId,
             new(left, row), new(right, row))));
     }
 }
@@ -188,14 +188,16 @@ public sealed class WalkedGroundTracker
     private readonly KnightWallContact wallContact = new();
     private readonly WalkedGroundMemory memory = new();
     private string? activeRoom;
+    internal long? ActiveLineage { get; private set; }
     private (long Generation, int Width, int Height)? owner;
     private long? measuredEpoch;
 
-    public IReadOnlyList<GroundHypothesisAtlasLine> InRoom(string room) => memory.InRoom(room);
+    public IReadOnlyList<GroundHypothesisAtlasLine> InRoom(string room) =>
+        memory.InRoom(room, room == activeRoom ? ActiveLineage : null);
 
     public KnightTerrainContact Observe(string room, GroundEdgeAnalysis frame, PixelRect? knight, AtlasPoint? measuredCamera,
         InputButtons? buttons, double time, IReadOnlyList<DetectedFloorLine> detected, IReadOnlyList<DetectedWall>? walls = null,
-        long generation = 0, long coordinateEpoch = 0)
+        long generation = 0, long coordinateEpoch = 0, long? measuredLineage = null)
     {
         var nextOwner = (generation, frame.Width, frame.Height);
         var hasPose = measuredCamera is { } camera && double.IsFinite(camera.X) && double.IsFinite(camera.Y);
@@ -205,10 +207,11 @@ public sealed class WalkedGroundTracker
             owner = nextOwner;
         }
         if (hasPose) measuredEpoch = coordinateEpoch;
-        if (room != activeRoom)
+        if (room != activeRoom || hasPose && measuredLineage != ActiveLineage)
         {
             BreakContinuity();
             activeRoom = room;
+            if (hasPose) ActiveLineage = measuredLineage;
         }
         var direction = buttons is { } held ? KnightLevelWalk.Direction(held) : 0;
         var actor = locator.Locate(frame, knight, direction, time);
@@ -223,7 +226,7 @@ public sealed class WalkedGroundTracker
                 && Math.Abs(line.Row - floor.Row) <= Math.Max(1, (int)(2 * frame.Width / 640d)))
             .MinBy(line => Math.Abs(line.Row - floor.Row));
         var snapped = nearest is null ? floor : floor with { Row = nearest.Row };
-        memory.Record(room, snapped, pose, frame.Height);
+        memory.Record(room, snapped, pose, frame.Height, ActiveLineage);
         return new(snapped, wall) { MeasuredFoot = foot };
     }
 
@@ -233,6 +236,7 @@ public sealed class WalkedGroundTracker
         walk.Reset();
         wallContact.Reset();
         activeRoom = null;
+        ActiveLineage = null;
     }
 
     public void Reset()

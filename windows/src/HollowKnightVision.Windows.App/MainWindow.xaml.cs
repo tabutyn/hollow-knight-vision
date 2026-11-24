@@ -3273,6 +3273,7 @@ public partial class MainWindow : Window
                 {
                     WalkedGround = localWalkedGround,
                     WalkedCoordinateEpoch = walkedCoordinateEpoch,
+                    WalkedGroundLineage = tracked.WalkedGroundLineage,
                     RoomIdentityIsVisual = gameMode == GameRuntimeMode.Normal,
                     DoorwayCut = tracked.RecentDoorwayCut,
                     WorldEvidence = tracked.WorldEvidence
@@ -3295,6 +3296,7 @@ public partial class MainWindow : Window
                         CameraTargetY = visualTelemetry.CameraTargetY + basis.Y
                     };
                     var recorded = liveWorldResult.WalkedCoordinateEpoch == walkedCoordinateEpoch
+                        && liveWorldResult.WalkedGroundLineage == tracked.WalkedGroundLineage
                         ? liveWorldResult.RecordedLocalWalk : [];
                     localWalkedGround = LiveWorldWalkedGround.MergeForDisplay(
                         localWalkedGround, recorded, liveWorldResult.WalkedGround, basis);
@@ -3353,7 +3355,8 @@ public partial class MainWindow : Window
                 groundAnalysis is not null, visualObservation.GroundVerified ? groundDisplayCamera : null, hudStencil,
                 terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch, groundHypotheses,
                 gameplayAdmitted, atlasCompositionExclusions, masks, usesDurableWorld, botAtlas,
-                tracked.RoomAllowsAtlasWrite ? localWalkedGround : [], tracked.MeasuredSceneryCamera);
+                tracked.RoomAllowsAtlasWrite && tracked.MeasuredLineage is not null ? localWalkedGround : [],
+                tracked.MeasuredSceneryCamera);
         }
         else
         {

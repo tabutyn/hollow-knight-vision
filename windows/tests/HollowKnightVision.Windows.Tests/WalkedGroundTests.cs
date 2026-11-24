@@ -121,6 +121,40 @@ internal static class WalkedGroundTests
         }
     }
 
+    public static void TestWalkUsesOnlyItsMeasuredIslandAndResumesKnownGround()
+    {
+        var tracker = new WalkedGroundTracker();
+        for (var index = 0; index < 20; index++)
+            Observe(index, 1, new(index * 2, 0));
+        var established = tracker.InRoom("room").Single();
+        for (var index = 20; index < 23; index++)
+        {
+            Check(Observe(index, null, null).Floor is null && tracker.InRoom("room").Single() == established,
+                "An occluded camera can hold the last walked line without extending it.");
+        }
+        Check(Observe(23, 1, new(46, 0)).Floor.HasValue,
+            "A short gap followed by the same measured owner can extend the floor.");
+        var beforeIslandChange = tracker.InRoom("room").Single();
+
+        var unsupported = Observe(24, 2, new(48, 0));
+        Check(unsupported.Floor is null && tracker.InRoom("room").Count == 0,
+            "A nearby pose on a different island must start with its own ground.");
+        for (var index = 25; index < 38; index++)
+            Observe(index, 2, new(index * 2, 0));
+        Check(tracker.InRoom("room").Single().AtlasStart.X > beforeIslandChange.AtlasStart.X,
+            "Newly walked ground on the second island must exclude columns seen on the first.");
+
+        Check(Observe(38, 1, new(76, 0)).Floor is null
+            && tracker.InRoom("room").Single() == beforeIslandChange,
+            "A return to a measured island restores its own floor without bridging the unsupported handoff.");
+        Check(Observe(39, 1, new(78, 0), "next").Floor is null && tracker.InRoom("next").Count == 0,
+            "The same lineage value must not project into another room.");
+
+        KnightTerrainContact Observe(int index, long? lineage, AtlasPoint? camera, string room = "room") =>
+            tracker.Observe(room, Mask(200), Knight, camera, InputButtons.Right, index / 40d, [],
+                generation: 1, coordinateEpoch: 7, measuredLineage: lineage);
+    }
+
     public static void TestBotFloorsUseTheWalkedRowAndKeepOnlySupportedExtensions()
     {
         var pose = new AtlasPoint(20, 10);

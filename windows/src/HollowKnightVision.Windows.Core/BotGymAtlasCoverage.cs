@@ -9,6 +9,8 @@ internal sealed class BotGymAtlasCoverage
     private readonly LiveWorldTracker world = new();
     private readonly BotCommittedAtlasCoverage coverage = new();
     private readonly Dictionary<int, BotVisualAtlasCoverage> localCharts = [];
+    private readonly Dictionary<long, IReadOnlyList<GroundHypothesisAtlasLine>> recordedLocalWalk = [];
+    private readonly Dictionary<int, IReadOnlyList<GroundHypothesisAtlasLine>> placedWalk = [];
     private readonly HashSet<int> placedRooms = [];
     private readonly Dictionary<int, (BgraFrame Image, IReadOnlyList<WorldRect> Exclusions)> referenceImages = [];
     private readonly Queue<int> referenceOrder = [];
@@ -57,7 +59,8 @@ internal sealed class BotGymAtlasCoverage
 
     internal void Observe(BgraFrame frame, AtlasPoint? pose, double time, IReadOnlyList<PixelRect> omissions,
         VisualRoomCompositionBounds bounds, GroundHypothesisTrackingResult tracking, bool admitsPlacement,
-        bool continuesMeasuredScenery = false, bool retainBasis = false, LiveWorldCaptureEvidence? captureEvidence = null)
+        bool continuesMeasuredScenery = false, bool retainBasis = false, LiveWorldCaptureEvidence? captureEvidence = null,
+        IReadOnlyList<GroundHypothesisAtlasLine>? walkedGround = null)
     {
         var correction = tracking.GlobalCorrection;
         if (correction is { } shift && shift.X * shift.X + shift.Y * shift.Y > 9)
@@ -82,7 +85,15 @@ internal sealed class BotGymAtlasCoverage
         var samplesDoorway = captureEvidence is { GroundGeometry: not null, PlayerBounds: { } player }
             && (incomingDoorway is not null || LiveDoorwayFloorEvidence.AtDepartureEdge(player.X + player.Width / 2,
                 size.Width, rightSide: player.X + player.Width / 2 >= size.Width / 2));
-        if (!awaitingPlacement && !samplesDoorway && lastPose == local && masks.SequenceEqual(lastMasks)) return;
+        // The graph uses image centers. Walked positions use the same local
+        // coordinate system and must retain a per-owner persistence baseline.
+        var center = Center(local, size);
+        var lineage = captureEvidence?.MeasuredLineage;
+        var currentWalk = walkedGround ?? [];
+        var previousWalk = lineage is { } owner ? recordedLocalWalk.GetValueOrDefault(owner) ?? [] : [];
+        var freshWalk = lineage is not null && currentWalk.Count > 0
+            ? LiveWorldWalkedGround.NewEvidence(currentWalk, previousWalk, center) : [];
+        if (!awaitingPlacement && !samplesDoorway && freshWalk.Count == 0 && lastPose == local && masks.SequenceEqual(lastMasks)) return;
 
         var recovering = awaitingPlacement;
         // The same visually confirmed room can return at its last measured
@@ -90,9 +101,6 @@ internal sealed class BotGymAtlasCoverage
         if (awaitingPlacement && !requiresMatch && local == lastTrustedPose)
             awaitingPlacement = false;
 
-        // The camera matcher and committed grid use frame centers. The
-        // local ground tracker supplies the image's lower-left origin.
-        var center = Center(local, size);
         if (!HasPlacedRoom && incomingDoorway is { } arrival)
         {
             // The cut determines which side to draw the new room on. The
@@ -110,7 +118,9 @@ internal sealed class BotGymAtlasCoverage
         world.Ingest(id, time, frame, center, size.Width,
             exclusions: masks, searchForClosure: false, localPose: center, captureGeneration: 1,
             localEpoch: epoch, roomId: roomId, placedCameraPose: placed,
-            captureEvidence: evidence, placementPending: awaitingPlacement);
+            walkedGround: freshWalk, captureEvidence: evidence, placementPending: awaitingPlacement);
+        if (lineage is { } recordedOwner && freshWalk.Count > 0)
+            recordedLocalWalk[recordedOwner] = GroundStrokeGeometry.Coalesce(previousWalk.Concat(currentWalk));
         BgraFrame? masked = null;
         var searchDue = time - lastRecoverySearch >= RecoverySearchInterval;
         if (awaitingPlacement && referenceImages.Count != 0
@@ -150,6 +160,16 @@ internal sealed class BotGymAtlasCoverage
         }
 
         var observation = snapshot.Observations[^1];
+        if (recovering || alignedDoorway)
+        {
+            var pending = snapshot.UnplacedObservationIds();
+            placedWalk[roomId] = GroundStrokeGeometry.Coalesce(snapshot.Observations
+                .Where(row => row.RoomId == roomId && !pending.Contains(row.Id))
+                .SelectMany(LiveWorldWalkedGround.ProjectObservation));
+        }
+        else if (freshWalk.Count > 0)
+            placedWalk[roomId] = GroundStrokeGeometry.Coalesce((placedWalk.GetValueOrDefault(roomId) ?? [])
+                .Concat(LiveWorldWalkedGround.ProjectObservation(observation)));
         if (observation.GroundGeometry is not null && snapshot.Keyframes.LastOrDefault()?.ObservationId == id)
         {
             // Only placed ground keyframes can verify a later recovery. Keep
@@ -189,6 +209,15 @@ internal sealed class BotGymAtlasCoverage
             return null;
         var (covered, earned) = coverage.Totals;
         return local with { CoveredCells = covered, EarnedCells = earned };
+    }
+
+    internal IReadOnlyList<GroundHypothesisAtlasLine> WalkedForPolicy(
+        IReadOnlyList<GroundHypothesisAtlasLine> current, long? lineage)
+    {
+        if (!HasPlacedRoom || awaitingPlacement || room is not { } roomId
+            || !placedWalk.TryGetValue(roomId, out var projected)) return current;
+        var recorded = lineage is { } owner ? recordedLocalWalk.GetValueOrDefault(owner) ?? [] : [];
+        return LiveWorldWalkedGround.MergeForDisplay(current, recorded, projected, basis);
     }
 
     internal IReadOnlyList<BotLine>? ProjectDoors(AtlasPoint? pose, WorldSize size)

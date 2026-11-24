@@ -133,15 +133,14 @@ public sealed class BotVisualGymObservationSource
         if (continuity.RequiresRecovery) coverage.Interrupt(requireMatch: true);
         var continuesScenery = measuredScenery && coverage.CanContinueMeasuredScenery && camera.AllowsAtlasPlacement;
         var terrainCamera = continuesScenery ? localCamera : placement;
-        var contact = walked.Observe(roomKey, analysis.Edges, masks.GroundKnight,
-            terrainCamera, controls, time, analysis.Floors, terrain.Walls, Generation, walkedEpoch);
-        terrain = TerrainWallDetector.ApplyContact(terrain, contact, analysis.Floors, analysis.Edges);
-        var floors = GroundStrokeGeometry.MergeWalkedFloors(analysis.Floors, walked.InRoom(roomKey), terrainCamera,
-            frame.Width, frame.Height, masks.GroundKnight);
         var referenceTimestamp = measuredGround ? observed.GroundTracking.LocalReferenceTimestamp
             : observed.SelectedScenery?.ReferenceTimestamp;
         var lineage = captureIslands.Observe(Generation, roomKey, time, measuredGround || continuesScenery,
             referenceTimestamp, corrected);
+        var contactCamera = lineage is null ? null : terrainCamera;
+        var contact = walked.Observe(roomKey, analysis.Edges, masks.GroundKnight,
+            contactCamera, controls, time, analysis.Floors, terrain.Walls, Generation, walkedEpoch, lineage);
+        terrain = TerrainWallDetector.ApplyContact(terrain, contact, analysis.Floors, analysis.Edges);
         LiveWorldCaptureEvidence? captureEvidence = null;
         if (admitted.AllowsAtlasWrite && (measuredGround || continuesScenery))
         {
@@ -151,8 +150,13 @@ public sealed class BotVisualGymObservationSource
                 : new LiveWorldCaptureEvidence(time) { HasMeasuredSceneryContinuity = true };
             captureEvidence = captureEvidence with { LocalReferenceTimestamp = referenceTimestamp, MeasuredLineage = lineage };
         }
+        var localWalk = walked.InRoom(roomKey);
         coverage.Observe(frame, terrainCamera, time, masks.AtlasExclusions, room.CompositionBounds,
-            observed.GroundTracking, admitted.AllowsAtlasWrite, continuesScenery, continuity.RetainBasis, captureEvidence);
+            observed.GroundTracking, admitted.AllowsAtlasWrite, continuesScenery, continuity.RetainBasis, captureEvidence,
+            lineage is not null ? localWalk : null);
+        var floors = GroundStrokeGeometry.MergeWalkedFloors(analysis.Floors,
+            coverage.WalkedForPolicy(localWalk, lineage), contactCamera,
+            frame.Width, frame.Height, masks.GroundKnight);
 
         var timing = new BotCaptureTiming(time, time, Generation, chart, room.Revision);
         blockade.ObserveVisualBasis(Generation, chart, walkedEpoch, frame.Width, time, placement.HasValue,

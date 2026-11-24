@@ -9,7 +9,7 @@ public sealed record LiveWorldCaptureEvidence(
 {
     public double? LocalReferenceTimestamp { get; init; }
     public bool HasMeasuredSceneryContinuity { get; internal init; }
-    internal long? MeasuredLineage { get; init; }
+    public long? MeasuredLineage { get; internal init; }
 
     internal static LiveWorldCaptureEvidence FromGround(
         double timestamp,

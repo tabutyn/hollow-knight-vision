@@ -21,6 +21,8 @@ public sealed record GameplayTrackedFrame(
     public bool AllowsAtlasWrite => Observation.AllowsAtlasWrite || HasMeasuredSceneryContinuity;
     public bool HasMeasuredSceneryContinuity { get; init; }
     public AtlasPoint? MeasuredSceneryCamera => HasMeasuredSceneryContinuity ? DisplayCamera : null;
+    public long? MeasuredLineage { get; init; }
+    public long? WalkedGroundLineage { get; init; }
     public bool RequiresWorldRecovery => !RoomAllowsAtlasWrite || SceneCut is not null
         || CaptureGap == AtlasCaptureGapState.RequiresRecovery
         || (!AllowsAtlasWrite && !Observation.RetainsWorldBasisDuringPlacementCheck
@@ -181,6 +183,10 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         }
         else atlasCaptureGap.Reset();
 
+        var referenceTimestamp = measuredGround ? ground.LocalReferenceTimestamp : selectedScene?.ReferenceTimestamp;
+        var lineage = captureIslands.Observe(generation, room, timestamp,
+            admission.AdmitsTracking && visualRoom.AllowsAtlasWrite && (measuredGround || publishesScenery),
+            referenceTimestamp, groundAdjusted || admission.Transition.ResumedAfterTransition || visualRoom.Cut is not null);
         var terrain = TerrainWallDetection.Empty;
         KnightTerrainContact contact = default;
         IReadOnlyList<PixelRect> platformPatches = [];
@@ -190,17 +196,13 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             var verifiedCamera = observation.GroundVerified && visualRoom.AllowsAtlasWrite
                 ? ground.CameraPosition : null;
             terrain = TerrainWallDetector.Detect(edges, floors);
-            contact = walked.Observe(room, edges, knight, publishesScenery ? localCamera : verifiedCamera,
+            var contactCamera = lineage is null ? null : publishesScenery ? localCamera : verifiedCamera;
+            contact = walked.Observe(room, edges, knight, contactCamera,
                 buttons, timestamp, floors, terrain.Walls,
-                generation, walkedCoordinateEpoch);
+                generation, walkedCoordinateEpoch, lineage);
             terrain = TerrainWallDetector.ApplyContact(terrain, contact, floors, edges);
             platformPatches = patches.Observe(edges, floors, prepared.ProtectedOcclusions, verifiedCamera, timestamp);
         }
-        var referenceTimestamp = measuredGround ? ground.LocalReferenceTimestamp
-            : selectedScene?.ReferenceTimestamp;
-        var lineage = captureIslands.Observe(generation, room, timestamp,
-            admission.AdmitsTracking && visualRoom.AllowsAtlasWrite && (measuredGround || publishesScenery),
-            referenceTimestamp, groundAdjusted || admission.Transition.ResumedAfterTransition || visualRoom.Cut is not null);
         LiveWorldCaptureEvidence? worldEvidence = null;
         if (captureWorldEvidence && admission.AllowsAtlasWrite && visualRoom.AllowsAtlasWrite)
         {
@@ -225,6 +227,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         {
             RoomAllowsAtlasWrite = visualRoom.AllowsAtlasWrite,
             HasMeasuredSceneryContinuity = publishesScenery,
+            MeasuredLineage = lineage,
+            WalkedGroundLineage = walked.ActiveLineage,
             CaptureGap = captureGap,
             SceneCut = visualRoom.Cut,
             RecentDoorwayCut = roomIdentity.RecentDoorwayCut(timestamp),
