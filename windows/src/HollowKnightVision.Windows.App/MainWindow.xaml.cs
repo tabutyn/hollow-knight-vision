@@ -737,7 +737,7 @@ public partial class MainWindow : Window
     private string? recognizedMenuContext;
     private string? recognizedMenuSelection;
 
-    private sealed record VisionAnalysisResult(
+    internal sealed record VisionAnalysisResult(
         BgraFrame Frame,
         IReadOnlyList<ObjectDetection> Detections,
         IReadOnlyList<DetectedFloorLine> Ground,
@@ -766,7 +766,8 @@ public partial class MainWindow : Window
         public long CaptureGeneration { get; init; }
         public AtlasPoint? WorldBasisOffset { get; init; }
         internal WindowsLiveWorldFrameScope? WorldFrame { get; init; }
-        internal bool WorldPlacementConfirmed { get; init; }
+        // Tile-only atlases do not require a durable world placement.
+        internal bool? WorldPlacementConfirmed { get; init; }
         public double? WorldBasisTimestamp { get; init; }
         public GroundTruthAtlasMosaic? AtlasSource { get; init; }
         public bool ReplacesGameplayAtlas { get; init; }
@@ -3453,7 +3454,7 @@ public partial class MainWindow : Window
                 WorldFrame = worldFrame,
                 WorldBasisOffset = worldPlacement?.WorldFromLocal,
                 WorldBasisTimestamp = worldPlacement.HasValue ? captureTimestamp : null,
-                WorldPlacementConfirmed = worldPlacement?.IsPlaced == true,
+                WorldPlacementConfirmed = usesDurableWorld ? worldPlacement?.IsPlaced == true : null,
                 AtlasSource = resultGameplayAtlas,
                 ReplacesGameplayAtlas = replacesGameplayAtlas,
                 GameplayAtlasReplacement = replacesGameplayAtlas
@@ -3497,7 +3498,7 @@ public partial class MainWindow : Window
         Interlocked.Exchange(ref gameplayAtlasPresentationPending, replacement);
     }
 
-    private void ApplyVisionAnalysis(VisionAnalysisResult result)
+    internal void ApplyVisionAnalysis(VisionAnalysisResult result)
     {
         if (result.CaptureGeneration != Interlocked.Read(ref recentCaptureGeneration)
             || !labelCapture.CanProcess(result.LabelRevision)) return;
@@ -3585,6 +3586,7 @@ public partial class MainWindow : Window
             }
             if (result.SavedWorld is { } savedWorld) gameplaySavedWorld = savedWorld;
             gameplayPlacementFrame = result.AtlasPathState == AtlasPathFrameState.Gameplay
+                && result.WorldPlacementConfirmed != false
                 ? (result.Frame.CaptureId, result.CaptureTimestamp) : null;
             Volatile.Write(ref recognizedMenuContext, result.MenuContext);
             gameplayPathPresentation = result.PathPresentation is { } paths && gameplayPathPresentation is { } visible
@@ -3597,7 +3599,7 @@ public partial class MainWindow : Window
                 ObjectInferenceIssueText, ObjectDetectionOptions, result.ObjectDiagnostics);
             PresentGameplayFrame(
                 gameplayPresentation.LatestFrame!,
-                result.WorldFrame is not null && result.WorldBasisOffset is null
+                result.WorldPlacementConfirmed == false && result.WorldBasisOffset is null
                     ? gameplayLiveTelemetry ?? result.GameplayTelemetry : result.GameplayTelemetry,
                 (BitmapSource)GameplayImage.Source,
                 result.MenuContext);
@@ -5162,7 +5164,7 @@ public partial class MainWindow : Window
         GameplayGroundCanvas.Width = canvas.Width;
         GameplayGroundCanvas.Height = canvas.Height;
         DrawTrackedGround();
-        if (liveFrame is not null && telemetry is not null)
+        if (gameplayFrameRegistered && liveFrame is not null && telemetry is not null)
         {
             PositionLiveFrame(
                 canvas, liveImage, DetectionCanvas,
