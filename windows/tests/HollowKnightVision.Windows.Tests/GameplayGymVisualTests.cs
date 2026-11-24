@@ -224,6 +224,9 @@ internal static class GameplayGymVisualTests
         var pixels = new byte[width * height * 4];
         new Random(71).NextBytes(pixels);
         for (var offset = 3; offset < pixels.Length; offset += 4) pixels[offset] = 255;
+        var conflicting = (byte[])pixels.Clone();
+        Array.Clear(conflicting, (height - 32) * width * 4, 20 * width * 4);
+        LiveGroundLineEvidence[] floor = [new(0, new(0, 30), new(width, 30))];
         var measured = GroundHypothesisTrackingResult.Empty with
         {
             PoseVerified = true, HasConfirmedGround = true, LocalTextureSupport = 8
@@ -232,6 +235,10 @@ internal static class GameplayGymVisualTests
         atlas.EnterRoom(7);
         var start = new AtlasPoint(0, 0);
         var drifted = new AtlasPoint(96, 0);
+        var matcher = new GlobalFeatureMatcher();
+        var broadReference = matcher.MakeReference(Frame(0, pixels), start, width);
+        if (broadReference is null || matcher.Match(Frame(2, conflicting), [broadReference], currentSolveWidth: width) is null)
+            throw new InvalidOperationException("The conflicting floor fixture must still have matching scenery.");
         Observe(0, start, measured);
         var baseline = atlas.View(start, size, 5)!;
         if (baseline is not { CoveredCells: 5, EarnedCells: 0 })
@@ -239,39 +246,58 @@ internal static class GameplayGymVisualTests
         Observe(1, start, measured);
         if (atlas.Snapshot.Observations.Count != 1)
             throw new InvalidOperationException("An unchanged verified view must not add a duplicate graph observation.");
-        Observe(2, drifted, measured with { GlobalCorrection = new(96, 0) });
+        Observe(2, drifted, measured with { GlobalCorrection = new(96, 0) }, conflicting);
         if (atlas.View(drifted, size, 5) is not null || atlas.Snapshot.UnplacedObservationIds().Count != 1)
             throw new InvalidOperationException("The first recovery vote must not extend committed coverage.");
         if (atlas.PolicyView(drifted, size, 5) is not { CoveredCells: 5, EarnedCells: 0, Health: 5 } local
             || local.Camera[0] != drifted.X || local.Missing is not { Count: 15 })
             throw new InvalidOperationException("The recovering island must supply local policy context with the committed totals.");
 
-        Observe(3, drifted, measured);
+        Observe(3, drifted, measured, conflicting);
+        if (!atlas.PlacementPending || atlas.Snapshot.LoopClosureEdges.Count != 0)
+            throw new InvalidOperationException("Matching scenery with a conflicting floor must stay unplaced.");
+        Observe(4, drifted, measured);
+        if (!atlas.PlacementPending || atlas.Snapshot.UnplacedObservationIds().Count != 3)
+            throw new InvalidOperationException("The first corroborated floor match must wait for a separate capture.");
+        Observe(5, drifted, measured);
         var recovered = atlas.View(drifted, size, 5);
         var graph = atlas.Snapshot;
         if (recovered is not { CoveredCells: 5, EarnedCells: 0 }
             || Math.Abs(recovered.Camera[0]) > 1 || graph.LoopClosureEdges.Count != 1
-            || graph.UnplacedObservationIds().Count != 0 || graph.Observations.Count != 3
+            || graph.UnplacedObservationIds().Count != 0 || graph.Observations.Count != 5
             || graph.Observations.Skip(1).Any(row => row.RawPose.X != 256 || Math.Abs(row.OptimizedPose.X - 160) > 1))
             throw new InvalidOperationException("Two measured matches must reproject the whole recovery island without earning cells.");
 
-        Observe(4, new(160, 0), measured);
+        Observe(6, new(160, 0), measured);
         if (atlas.View(new(160, 0), size, 5) is not { CoveredCells: 6, EarnedCells: 1 })
             throw new InvalidOperationException("Movement beyond the corrected footprint must earn one new cell.");
         atlas.EnterRoom(8);
         if (atlas.View(start, size, 5) is not null)
             throw new InvalidOperationException("Coverage from the prior room must not become the current room's frontier.");
-        Observe(5, start, measured);
+        Observe(7, start, measured);
         if (atlas.View(start, size, 5) is not { CoveredCells: 11, EarnedCells: 1 }
-            || atlas.Snapshot.Observations.Count != 5)
+            || atlas.Snapshot.Observations.Count != 7)
             throw new InvalidOperationException("A new room must receive an independent baseline while preserving the episode map.");
 
-        void Observe(int frame, AtlasPoint pose, GroundHypothesisTrackingResult evidence)
+        for (var index = 8; index <= 40; index++)
+            Observe(index, new(96 * (index - 7), 0), measured);
+        atlas.EnterRoom(7);
+        Observe(41, drifted, measured);
+        Observe(42, drifted, measured);
+        if (!atlas.PlacementPending || atlas.View(drifted, size, 5) is not null
+            || atlas.Snapshot.LoopClosureEdges.Count != 1)
+            throw new InvalidOperationException("An old room with evicted reference images must stay registered only locally.");
+
+        void Observe(int frame, AtlasPoint pose, GroundHypothesisTrackingResult evidence, byte[]? image = null)
         {
             var time = frame / 5d;
-            atlas.Observe(new(width, height, width * 4, pixels, frame, DateTimeOffset.UnixEpoch.AddSeconds(time)),
-                pose, time, [], default, evidence, admitsPlacement: true);
+            atlas.Observe(Frame(frame, image ?? pixels),
+                pose, time, [], default, evidence, admitsPlacement: true,
+                groundEvidence: new(time, new(floor), new(floor)));
         }
+
+        static BgraFrame Frame(int id, byte[] image) =>
+            new(width, height, width * 4, image, id, DateTimeOffset.UnixEpoch.AddSeconds(id / 5d));
     }
 
     internal static void TestGymContinuesItsLocalAtlasWhilePlacementIsPending()

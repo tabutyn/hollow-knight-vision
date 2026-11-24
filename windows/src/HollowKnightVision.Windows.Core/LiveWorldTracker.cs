@@ -765,7 +765,7 @@ public sealed class LiveWorldTracker
     public LiveWorldLoopClosureEdge? LinkGroundRecovery(
         BgraFrame maskedFrame, IReadOnlyList<StencilRect> exclusions,
         Func<int, BgraFrame> loadImage, Func<int, IReadOnlyList<WorldRect>> loadExclusions,
-        bool isConfirmationProbe)
+        bool isConfirmationProbe, Predicate<int>? hasSource = null)
     {
         if (Snapshot.TrackingIslands.LastOrDefault() is not { RequiresPlacement: true } target
             || Snapshot.Observations.LastOrDefault() is not { CaptureTimestamp: { } timestamp } current
@@ -776,6 +776,7 @@ public sealed class LiveWorldTracker
         var components = new LiveIslandComponents(Snapshot);
         var observations = Snapshot.Observations.Where(observation => observation.RoomId == current.RoomId
             && observation.SolveWidth == current.SolveWidth && observation.GroundGeometry?.Lines.Count > 0
+            && (hasSource is null || hasSource(observation.SourceObservationId))
             && components.Owner(observation.Id) is { } owner
             && !components.SameRigidComponent(owner.Id, target.Id)).ToDictionary(observation => observation.Id);
         var sources = new List<LiveGroundClosureSearch.Source>();
