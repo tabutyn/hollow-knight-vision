@@ -321,8 +321,22 @@ internal static class ForwarderPauseTests
             }
 
             Check(await forwarder.StartRecordingAsync());
+            Check(!forwarder.RoomResetAvailable);
             Check(await forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.ResetRoom) is null);
             Check(await forwarder.StopRecordingAsync() is not null);
+            var owner = forwarder.BeginBotControl() ?? throw new InvalidOperationException("Failed to acquire bot control.");
+            Check(!forwarder.RoomResetAvailable);
+            Check(await forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.ResetRoom) is null);
+            Check(forwarder.OwnsBotControl(owner), "A refused room reset must leave the bot running.");
+            forwarder.EndBotControl(owner);
+
+            var queryInProgress = forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.Query);
+            var activeQuery = ReceiverWireCodec.DecodeLine<ReceiverPlayerOpsCommand>(await fixture.Next("playerOps"));
+            Check(activeQuery.Operation == "query" && !forwarder.RoomResetAvailable);
+            Check(await forwarder.PerformPlayerOpsAsync(ReceiverPlayerOpsCommand.ResetRoom) is null);
+            await fixture.AcknowledgePlayerOps(activeQuery);
+            Check((await queryInProgress)?.Accepted == true && forwarder.RoomResetAvailable);
+
             var recorded = new RecordedInputPath(RecordedInputPath.CurrentSchemaVersion,
                 Guid.NewGuid(), DateTimeOffset.UtcNow, .1, null, null, null, [], runtimeMetadata: null);
 
