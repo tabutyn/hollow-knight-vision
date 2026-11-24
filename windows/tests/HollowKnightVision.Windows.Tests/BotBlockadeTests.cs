@@ -136,6 +136,62 @@ internal static class BotBlockadeTests
         }
     }
 
+    internal static void TestPinnedSceneryCameraAllowsWalkAndMeasuresDoorPush()
+    {
+        foreach (var side in new[] { -1, 1 })
+        {
+            var visit = new BotBlockadeVisit();
+            for (var tick = 0; tick <= 12; tick++)
+                Require(Observe(tick, .5 + side * .004 * tick).Blockade is null,
+                    "Slow walking at a camera limit must remain unblocked.");
+
+            var pinned = .5 + side * .05;
+            for (var tick = 13; tick <= 15; tick++) _ = Observe(tick, pinned);
+            var wall = Observe(16, pinned);
+            Require(wall.Blockade is { } contact && contact.Mark.Direction == side
+                && contact.Mark.Space == wall.BlockadePose?.Space
+                && wall.BlockadePose is { X: .1, Y: -.05, Width: 1 },
+                "Held movement against a door must produce the blockade with a measured scenery pose and no ground labels.");
+            Require(Observe(17, pinned + side * .05).Blockade is null && Observe(18, pinned, drive: false).Blockade is null,
+                "Passage must clear the blocked direction for this visit.");
+
+            BotCaptureObservation Observe(int tick, double knight, bool drive = true)
+            {
+                var row = Row(tick, knight, drive ? side : 0) with
+                {
+                    Issues = ["missing-terrain-analysis"],
+                    VisualContext = new(640, 360d / 640, null, null)
+                };
+                visit.ObserveVisualBasis(row.Generation, row.RoomId, 4, 640, row.CaptureTimestamp,
+                    false, GroundHypothesisTrackingResult.Empty, new(64, -32));
+                return visit.AddVisualEvidence(row);
+            }
+        }
+    }
+
+    internal static void TestSceneryBlockadePoseMatchesTheCapture()
+    {
+        var visit = new BotBlockadeVisit();
+        var row = Row(10) with { VisualContext = new(640, 360d / 640, null, null) };
+        var ground = GroundHypothesisTrackingResult.Empty;
+        visit.ObserveVisualBasis(1, 1, 4, 640, 1, false, ground, new(64, -32));
+        Require(visit.AddVisualEvidence(row with { CaptureTimestamp = .99 }).BlockadePose is null
+            && visit.AddVisualEvidence(row with { Generation = 2 }).BlockadePose is null
+            && visit.AddVisualEvidence(row with { RoomId = 2 }).BlockadePose is null
+            && visit.AddVisualEvidence(row with { VisualContext = new(320, 180d / 320, null, null) }).BlockadePose is null,
+            "A measured pose belongs to one frame, capture generation, room and scale.");
+        visit.ObserveVisualBasis(1, 1, 4, 640, .95, false, ground, new(128, 0));
+        Require(visit.AddVisualEvidence(row).BlockadePose is { X: .1, Y: -.05 },
+            "An older analysis update cannot replace the current scenery pose.");
+
+        visit.ObserveVisualBasis(1, 1, 4, 640, 1.1, false, ground, new(double.NaN, 0));
+        Require(visit.AddVisualEvidence(Row(11) with { VisualContext = row.VisualContext }).BlockadePose is null,
+            "Invalid or unmeasured camera poses must not leave reusable evidence in the visit.");
+        visit.ObserveVisualBasis(1, 1, 4, 640, 1.2, true, ground, new(128, 0));
+        Require(visit.AddVisualEvidence(Row(12, camera: .3)).BlockadePose is { X: .3 },
+            "A verified ground camera must own its capture's coordinates.");
+    }
+
     private static GroundHypothesisTrackingResult CameraCorrection(double x, double y) =>
         GroundHypothesisTrackingResult.Empty with
         {
