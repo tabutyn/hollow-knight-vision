@@ -23,12 +23,12 @@ public sealed class BotVisualGymObservationSource
     private readonly VisualGameplayTracker camera = new();
     private readonly GroundHypothesisTracker ground = new(.2, backgroundGlobalSearch: true, confirmedLossGraceSeconds: 3,
         productionCameraSolver: true, deterministicGlobalSearch: true);
-    private readonly GroundSemanticAtlas terrainAtlas = new();
     private readonly WalkedGroundTracker walked = new();
     private readonly BotGymAtlasCoverage coverage = new();
     private readonly BotBlockadeVisit blockade = new();
     private readonly BotVisualKnightMemory knightMemory = new();
     private int chart;
+    private long walkedEpoch;
     private int? activeRoom;
 
     public BotVisualGymReading Observe(BgraFrame frame, double time, InputButtons controls,
@@ -91,26 +91,19 @@ public sealed class BotVisualGymObservationSource
             camera.Reset();
             motion.Reset();
             walked.Reset();
-            terrainAtlas.Reset();
             return new(null, ["room-transition"], confidence);
         }
         activeRoom = room.RoomID;
         coverage.EnterRoom(room.RoomID);
         var terrain = TerrainWallDetector.Detect(analysis.Edges, analysis.Floors);
         var roomKey = chart.ToString(CultureInfo.InvariantCulture);
+        if (placement.HasValue && observed.GroundTracking.GlobalCorrection is { } correction
+            && correction.X * correction.X + correction.Y * correction.Y > 9) walkedEpoch++;
         var contact = walked.Observe(roomKey, analysis.Edges, masks.GroundKnight,
-            placement, controls, time, analysis.Floors, terrain.Walls);
+            placement, controls, time, analysis.Floors, terrain.Walls, Generation, walkedEpoch);
         terrain = TerrainWallDetector.ApplyContact(terrain, contact, analysis.Floors, analysis.Edges);
-        var floors = analysis.Floors;
-        if (placement is { } pose)
-        {
-            var confirmed = terrainAtlas.Update(observed.GroundTracking.AtlasLines,
-                analysis.Floors.Select(line => line.ToSemanticLine()).ToArray(), pose,
-                frame.Width, frame.Height, poseVerified: true);
-            var strokes = GroundStrokeGeometry.VisibleLines(confirmed, observed.GroundTracking.LineReviews,
-                walked.InRoom(roomKey), pose, frame.Height, masks.GroundKnight);
-            floors = CombineFloors(floors, strokes, pose, frame.Width, frame.Height);
-        }
+        var floors = GroundStrokeGeometry.MergeWalkedFloors(analysis.Floors, walked.InRoom(roomKey), placement,
+            frame.Width, frame.Height, masks.GroundKnight);
         coverage.Observe(frame, placement, time, masks.AtlasExclusions, room.CompositionBounds,
             observed.GroundTracking, admitted.AllowsAtlasWrite);
 
@@ -137,30 +130,6 @@ public sealed class BotVisualGymObservationSource
         VisualRoomSnapshot ObserveRoom(AtlasPoint pose, bool groundVerified) =>
             rooms.Observe(signal, admitted.Transition, direction, masks.GroundRegions.Knight,
                 size, pose, frame.Width, time, groundTrackingReliable: groundVerified);
-    }
-
-    private static IReadOnlyList<DetectedFloorLine> CombineFloors(IReadOnlyList<DetectedFloorLine> detected,
-        IReadOnlyList<GroundHypothesisAtlasLine> persisted, AtlasPoint pose, int width, int height)
-    {
-        var lines = detected.ToList();
-        foreach (var floor in persisted.Where(line => line.SegmentId == WalkedGroundMemory.WalkedSegmentId))
-        {
-            var row = AtlasPathPoint.Round(height + pose.Y - floor.AtlasStart.Y);
-            var left = Math.Max(0, (int)Math.Floor(floor.AtlasStart.X - pose.X));
-            var right = Math.Min(width - 1, (int)Math.Ceiling(floor.AtlasEnd.X - pose.X) - 1);
-            if (row < 0 || row >= height || left >= right) continue;
-            // An admitted walked extent extends the measured edge across local occlusion.
-            var overlaps = lines.Where(line => Math.Abs(line.Row - row) <= 2
-                && left <= line.XSpan.EndInclusive && right >= line.XSpan.Start).ToArray();
-            if (overlaps.Length > 0)
-            {
-                left = Math.Min(left, overlaps.Min(line => line.XSpan.Start));
-                right = Math.Max(right, overlaps.Max(line => line.XSpan.EndInclusive));
-                lines.RemoveAll(overlaps.Contains);
-            }
-            lines.Add(new(row, new(left, right)));
-        }
-        return lines;
     }
 
 }

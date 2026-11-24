@@ -86,6 +86,70 @@ internal static class WalkedGroundTests
             "Ambiguous bright masks supplied a foot measurement.");
     }
 
+    public static void TestShortUnmeasuredCameraGapRequiresSameMeasuredBasis()
+    {
+        Resume(7, 1, 3, resumes: true);
+        Resume(8, 1, 3, resumes: false);
+        Resume(7, 2, 3, resumes: false);
+        Resume(7, 1, 12, resumes: false);
+
+        static void Resume(long epoch, long generation, int gap, bool resumes)
+        {
+            var tracker = new WalkedGroundTracker();
+            for (var i = 0; i < 20; i++)
+                tracker.Observe("room", Mask(200), Knight, new(i * 2, 0), InputButtons.Right, i / 40d, [],
+                    generation: 1, coordinateEpoch: 7);
+            var ownedBeforeGap = tracker.InRoom("room").Single();
+            for (var i = 20; i < 20 + gap; i++)
+            {
+                var estimate = tracker.Observe("room", Mask(200), Knight, null, InputButtons.Right,
+                    i / 40d, [], generation: 1, coordinateEpoch: 8);
+                Check(estimate.Floor is null && tracker.InRoom("room").Single() == ownedBeforeGap,
+                    "An unmeasured camera cannot add a walk or invalidate the owned floor.");
+            }
+
+            var returned = tracker.Observe("room", Mask(200), Knight, new(2 * (20 + gap), 0), InputButtons.Right,
+                (20 + gap) / 40d, [], generation: generation, coordinateEpoch: epoch);
+            Check(returned.Floor.HasValue == resumes, "Only a short gap on the original measured basis can extend the old walk.");
+            if (resumes)
+                Check(tracker.InRoom("room").Single().AtlasEnd.X > ownedBeforeGap.AtlasEnd.X,
+                    "A verified resumption must extend the owned floor.");
+            else if (epoch != 7 || generation != 1)
+                Check(tracker.InRoom("room").Count == 0, "An old room's coordinates must not be projected into the new capture basis.");
+            else
+                Check(tracker.InRoom("room").Single() == ownedBeforeGap, "A long gap in the same basis must preserve earlier ground.");
+        }
+    }
+
+    public static void TestBotFloorsUseTheWalkedRowAndKeepOnlySupportedExtensions()
+    {
+        var pose = new AtlasPoint(20, 10);
+        var walked = Line(WalkedGroundMemory.WalkedSegmentId, 120, 240, 240);
+        var size = new PixelRect(180, 92, 20, 38);
+        DetectedFloorLine[] edges = [new(132, new(70, 249), [new(70, 109), new(200, 249)]),
+            new(143, new(80, 239)), new(129, new(310, 371), [new(310, 320), new(350, 371)]), new(80, new(115, 155))];
+        var merged = GroundStrokeGeometry.MergeWalkedFloors(edges, [walked], pose, Width, Height, size);
+        var spans = merged.Select(floor => (floor.Row, floor.XSpan.Start, floor.XSpan.EndInclusive)).ToHashSet();
+        Check(spans.SetEquals([(130, 70, 249), (129, 310, 320), (129, 350, 371), (80, 115, 155)]),
+            "The bot should retain the walked row, nearby measured extensions, real gaps and other-height platforms.");
+        var dark = GroundStrokeGeometry.MergeWalkedFloors([], [walked], pose, Width, Height, size).Single();
+        Check(dark.Row == 130 && dark.XSpan == new PixelSpan(100, 219), "The bot must still see verified ground when the edge is hidden.");
+        Check(ReferenceEquals(edges, GroundStrokeGeometry.MergeWalkedFloors(edges, [walked], null, Width, Height, size))
+            && ReferenceEquals(edges, GroundStrokeGeometry.MergeWalkedFloors(edges, [walked], new(2000, 0), Width, Height, size))
+            && ReferenceEquals(edges, GroundStrokeGeometry.MergeWalkedFloors(edges, [walked with { SegmentId = 2 }], pose, Width, Height, size)),
+            "Without measured placement in the current image, ordinary detector edges must stay intact.");
+        var clipped = GroundStrokeGeometry.MergeWalkedFloors([], [walked], new(140, 10), Width, Height, size).Single();
+        Check(clipped.XSpan == new PixelSpan(0, 99), "Walking into the next view must clip the old footprint without stretching it.");
+
+        foreach (var second in new[] { 153, 154 })
+        {
+            var duplicate = GroundStrokeGeometry.MergeWalkedFloors([new(360 - second, new(265, 355))],
+                [Line(walked.SegmentId, 267, 309, 150), Line(walked.SegmentId, 295, 324, second)], default(AtlasPoint), Width, Height, size);
+            Check(duplicate.Count == 1 && duplicate[0].Row == 210 && duplicate[0].XSpan == new PixelSpan(265, 355),
+                "Overlapping walks on nearby rows must share one elevation after the camera's projection rounds to pixels.");
+        }
+    }
+
     public static void TestWalkSnapsToAnObservedFloorAndReplacesOverlappingStrokes()
     {
         var tracker = new WalkedGroundTracker();
@@ -116,7 +180,7 @@ internal static class WalkedGroundTests
             "Stroke cleanup bridged an empty column or a step.");
     }
 
-    private static GroundHypothesisAtlasLine Line(int id, double left, double right, double y) =>
+    private static GroundHypothesisAtlasLine Line(long id, double left, double right, double y) =>
         new(id, new(left, y), new(right, y));
 
     private static GroundEdgeAnalysis Mask(int center, int rowOffset = 0) => Image([center], rowOffset);

@@ -42,9 +42,9 @@ public static class GroundStrokeGeometry
         internal GroundHypothesisAtlasLine Line =>
             new(Representative.SegmentId, new(Left, Representative.AtlasStart.Y), new(Right, Representative.AtlasStart.Y));
 
-        internal bool Overlaps(Stroke other)
+        internal bool Overlaps(Stroke other, int rowTolerance)
         {
-            if (Math.Max(High, other.High) - Math.Min(Low, other.Low) > 3) return false;
+            if (Math.Max(High, other.High) - Math.Min(Low, other.Low) > rowTolerance) return false;
             var overlap = Math.Min(Right, other.Right) - Math.Max(Left, other.Left);
             return Representative.AtlasStart.Y == other.Representative.AtlasStart.Y
                 ? overlap >= 0 : overlap >= Math.Min(3, Math.Min(Right - Left, other.Right - other.Left));
@@ -63,7 +63,9 @@ public static class GroundStrokeGeometry
         }
     }
 
-    public static GroundHypothesisAtlasLine[] Coalesce(IEnumerable<GroundHypothesisAtlasLine> lines)
+    public static GroundHypothesisAtlasLine[] Coalesce(IEnumerable<GroundHypothesisAtlasLine> lines) => Coalesce(lines, 3);
+
+    private static GroundHypothesisAtlasLine[] Coalesce(IEnumerable<GroundHypothesisAtlasLine> lines, int rowTolerance)
     {
         var ordered = lines.Where(line => double.IsFinite(line.AtlasStart.X)
                 && double.IsFinite(line.AtlasStart.Y) && double.IsFinite(line.AtlasEnd.X)
@@ -82,7 +84,7 @@ public static class GroundStrokeGeometry
                     result.Add(prior.Line);
                     return true;
                 }
-                if (!next.Overlaps(prior)) return false;
+                if (!next.Overlaps(prior, rowTolerance)) return false;
                 next.Absorb(prior);
                 return true;
             });
@@ -113,6 +115,51 @@ public static class GroundStrokeGeometry
         return [.. walked, .. edges.SelectMany(line => ExcludeColumns(line, footprints, knightHeight))];
     }
 
+    /// <summary>Uses walked floor for the bot wherever the current camera can project that evidence.</summary>
+    public static IReadOnlyList<DetectedFloorLine> MergeWalkedFloors(IReadOnlyList<DetectedFloorLine> detected,
+        IReadOnlyList<GroundHypothesisAtlasLine> walked, AtlasPoint? camera, int width, int height, PixelRect? knight)
+    {
+        if (walked.Count == 0 || camera is not { } pose || !double.IsFinite(pose.X) || !double.IsFinite(pose.Y)
+            || width <= 0 || height <= 0) return detected;
+
+        var projected = walked.Where(line => line.SegmentId == WalkedGroundMemory.WalkedSegmentId
+                && line.AtlasStart.Y == line.AtlasEnd.Y).Select(line =>
+            {
+                var row = Math.Round(height + pose.Y - line.AtlasStart.Y, MidpointRounding.AwayFromZero);
+                return new GroundHypothesisAtlasLine(line.SegmentId,
+                    new(Math.Clamp(Math.Ceiling(line.AtlasStart.X - pose.X), 0, width), row),
+                    new(Math.Clamp(Math.Floor(line.AtlasEnd.X - pose.X), 0, width), row));
+            }).Where(line => line.AtlasStart.Y >= 0 && line.AtlasStart.Y < height
+                && line.AtlasStart.X < line.AtlasEnd.X);
+        // Allow the extra pixel introduced when two measured ground rows are
+        // independently rounded into this frame. Resolve their overlap before
+        // choosing which walk row an observed edge should extend.
+        const int projectedRowTolerance = 4;
+        var footprints = Coalesce(projected, projectedRowTolerance).OrderBy(line => line.AtlasStart.X).ToArray();
+        if (footprints.Length == 0) return detected;
+
+        var clearance = GroundClearance.KnightHeight(height, knight);
+        var source = detected.Where(floor => floor.Row < height).SelectMany(floor => floor.EvidenceSpans
+            .Select(span => new GroundHypothesisAtlasLine(0, new(Math.Max(0, span.Start), floor.Row),
+                new(Math.Min((long)width, (long)span.EndInclusive + 1), floor.Row))));
+        var merged = Coalesce(footprints.Concat(source.SelectMany(KeepUnwalked)))
+            .Select(line => new DetectedFloorLine((int)line.AtlasStart.Y,
+                new((int)line.AtlasStart.X, (int)line.AtlasEnd.X - 1))).ToArray();
+        return GroundClearance.Filter(merged, height, knight);
+
+        IEnumerable<GroundHypothesisAtlasLine> KeepUnwalked(GroundHypothesisAtlasLine edge)
+        {
+            if (edge.AtlasStart.X >= edge.AtlasEnd.X) return [];
+            var match = footprints.Where(floor => Math.Abs(floor.AtlasStart.Y - edge.AtlasStart.Y) <= projectedRowTolerance
+                && floor.AtlasStart.X < edge.AtlasEnd.X && edge.AtlasStart.X < floor.AtlasEnd.X)
+                .OrderBy(floor => Math.Abs(floor.AtlasStart.Y - edge.AtlasStart.Y)).FirstOrDefault();
+            if (match.SegmentId == WalkedGroundMemory.WalkedSegmentId)
+                edge = edge with { AtlasStart = edge.AtlasStart with { Y = match.AtlasStart.Y },
+                    AtlasEnd = edge.AtlasEnd with { Y = match.AtlasStart.Y } };
+            return ExcludeColumns(edge, footprints, clearance);
+        }
+    }
+
     // Each real footprint supersedes detector strokes in its columns, without
     // erasing an unvisited platform next to it or above the available headroom.
     internal static IEnumerable<GroundHypothesisAtlasLine> ExcludeColumns(GroundHypothesisAtlasLine line,
@@ -141,12 +188,23 @@ public sealed class WalkedGroundTracker
     private readonly KnightWallContact wallContact = new();
     private readonly WalkedGroundMemory memory = new();
     private string? activeRoom;
+    private (long Generation, int Width, int Height)? owner;
+    private long? measuredEpoch;
 
     public IReadOnlyList<GroundHypothesisAtlasLine> InRoom(string room) => memory.InRoom(room);
 
     public KnightTerrainContact Observe(string room, GroundEdgeAnalysis frame, PixelRect? knight, AtlasPoint? measuredCamera,
-        InputButtons? buttons, double time, IReadOnlyList<DetectedFloorLine> detected, IReadOnlyList<DetectedWall>? walls = null)
+        InputButtons? buttons, double time, IReadOnlyList<DetectedFloorLine> detected, IReadOnlyList<DetectedWall>? walls = null,
+        long generation = 0, long coordinateEpoch = 0)
     {
+        var nextOwner = (generation, frame.Width, frame.Height);
+        var hasPose = measuredCamera is { } camera && double.IsFinite(camera.X) && double.IsFinite(camera.Y);
+        if (owner != nextOwner || hasPose && measuredEpoch is { } previous && previous != coordinateEpoch)
+        {
+            Reset();
+            owner = nextOwner;
+        }
+        if (hasPose) measuredEpoch = coordinateEpoch;
         if (room != activeRoom)
         {
             BreakContinuity();
@@ -181,5 +239,7 @@ public sealed class WalkedGroundTracker
     {
         BreakContinuity();
         memory.Reset();
+        owner = null;
+        measuredEpoch = null;
     }
 }

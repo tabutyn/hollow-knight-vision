@@ -189,7 +189,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             var verifiedCamera = observation.GroundVerified && visualRoom.AllowsAtlasWrite
                 ? ground.CameraPosition : null;
             terrain = TerrainWallDetector.Detect(edges, floors);
-            contact = walked.Observe(room, edges, knight, verifiedCamera, buttons, timestamp, floors, terrain.Walls);
+            contact = walked.Observe(room, edges, knight, verifiedCamera, buttons, timestamp, floors, terrain.Walls,
+                generation, walkedCoordinateEpoch);
             terrain = TerrainWallDetector.ApplyContact(terrain, contact, floors, edges);
             platformPatches = patches.Observe(edges, floors, prepared.ProtectedOcclusions, verifiedCamera, timestamp);
         }
