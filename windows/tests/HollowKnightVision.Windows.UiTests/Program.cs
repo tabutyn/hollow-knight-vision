@@ -98,6 +98,7 @@ internal static class Program
         TestModeSelection();
         TestSettingsSections();
         AtlasWindowIntegrationTests.Run();
+        HackerTerrainWindowTests.Run();
         TestBottomControlScope();
         TestFramingGroupsAreMutuallyExclusive();
         TestHackerTerrainControls();

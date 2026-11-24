@@ -171,11 +171,26 @@ public partial class MainWindow
 
     private void CancelGroundTruthGesture()
     {
+        DiscardGroundTruthGesture();
+        if (GroundUndoButton is not null) GroundUndoButton.IsEnabled = groundTruthLabels.CanUndo;
+        if (HackerOverlayCanvas is not null) RedrawHackerEdits();
+    }
+
+    private void DiscardGroundTruthGesture()
+    {
         groundTruthLabels.CancelGesture();
         groundDragRoom = null;
         if (ReferenceEquals(Mouse.Captured, AtlasCanvas)) Mouse.Capture(null);
-        if (GroundUndoButton is not null) GroundUndoButton.IsEnabled = groundTruthLabels.CanUndo;
-        if (HackerOverlayCanvas is not null) RedrawHackerEdits();
+    }
+
+    private void UpdateGroundDragPlacement(IReadOnlyList<TerrainRoom> rooms)
+    {
+        if (groundDragRoom is not { } active) return;
+        // The controller stores the anchor in the room's world coordinates.
+        // Subsequent pointer positions must use the room's current placement.
+        var current = rooms.FirstOrDefault(room => room.Key == active.Key && room.SceneName == active.SceneName);
+        if (current is null) DiscardGroundTruthGesture();
+        else groundDragRoom = current;
     }
 
     private void RenderHackerTerrain(double originX, double originY, IReadOnlyList<TerrainRoom> rooms)
