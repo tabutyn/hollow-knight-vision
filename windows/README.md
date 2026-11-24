@@ -457,6 +457,21 @@ dotnet run --project src/HollowKnightVision.Windows.Host -c Release -- `
   --capture-once artifacts/hollow-knight-640x360.bmp
 ```
 
+Read the recognized menu and selected row from a running game, or save a
+calibration capture to the user's menu stencil library:
+
+```powershell
+$visionHost = "$env:LOCALAPPDATA\Programs\Hollow Knight Vision\HollowKnightVision.Windows.Host.exe"
+& $visionHost --menu-calibration menu-calibration-status --enable-automation-control
+& $visionHost --menu-calibration menu-calibration-capture --enable-automation-control
+& $visionHost --menu-calibration 'menu-calibration-capture:es:extras:extras.credits' --enable-automation-control
+```
+
+The third command lets you supply the language, menu and row while collecting a
+selection that recognition cannot identify yet. Bring that row up in Hollow
+Knight before running the command. A successful capture reports its PNG path in
+JSON. Status prints the recognized context and row without writing a capture.
+
 Verify the in-game receiver or print one Hacker camera-transform sample:
 
 ```powershell

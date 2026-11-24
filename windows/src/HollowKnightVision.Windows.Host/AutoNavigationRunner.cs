@@ -292,18 +292,20 @@ public static class AutoNavigationRunner
     internal static IEnumerable<string> GymStencilInputs(string supportRoot) =>
         LiveStartupStencilEvidenceProvider.StencilInputs(supportRoot);
 
-    private sealed class LiveStartupStencilEvidenceProvider : IStartupStencilEvidenceProvider
+    internal sealed class LiveStartupStencilEvidenceProvider : IStartupStencilEvidenceProvider
     {
         private readonly MenuStencilTracker menu;
         private readonly HudStencilTracker hud;
         private readonly bool allowGeometryFallback;
 
         private LiveStartupStencilEvidenceProvider(
+            MenuStencilCatalog catalog,
             MenuStencilTracker menu,
             HudStencilTracker hud,
             bool allowGeometryFallback,
             string diagnostic)
         {
+            Catalog = catalog;
             this.menu = menu;
             this.hud = hud;
             this.allowGeometryFallback = allowGeometryFallback;
@@ -311,13 +313,14 @@ public static class AutoNavigationRunner
         }
 
         internal string Diagnostic { get; }
+        internal MenuStencilCatalog Catalog { get; }
+        internal static string DefaultSupportRoot => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HollowKnightVision");
 
         internal static LiveStartupStencilEvidenceProvider CreateDefault(
             string? supportRoot, bool allowFallback = true, bool allowCalibrationWrites = true)
         {
-            supportRoot ??= Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "HollowKnightVision");
+            supportRoot ??= DefaultSupportRoot;
             var examplesRoot = Path.Combine(supportRoot, "labeling-v1", "examples");
             var examples = LoadExamples(examplesRoot);
             var calibrationPath = MenuStencilCalibration.WritablePath(examplesRoot);
@@ -366,6 +369,7 @@ public static class AutoNavigationRunner
             var diagnostic = FormattableString.Invariant(
                 $"menu-scenes={catalog.Scenes.Count}; title-fallback={(allowGeometryFallback ? "geometry" : "disabled")}; hud={(capturedHud is not null ? "captured" : "unavailable")}; language={language}");
             return new(
+                catalog,
                 new MenuStencilTracker(catalog, minimumSearchInterval: .1, calibration),
                 new HudStencilTracker(capturedHud),
                 allowGeometryFallback,
@@ -402,7 +406,7 @@ public static class AutoNavigationRunner
         public StartupStencilEvidence Observe(BgraFrame frame)
         {
             var timestamp = (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds;
-            var menuEvidence = menu.Observe(frame, timestamp)
+            var menuEvidence = ObserveMenu(frame)
                 ?? (allowGeometryFallback
                     ? FallbackMenuEvidence(frame, timestamp)
                     : null);
@@ -410,6 +414,9 @@ public static class AutoNavigationRunner
                 menuEvidence,
                 hud.Observe(frame, gameplay: true, timestamp, generation: 1));
         }
+
+        internal MenuStencilResult? ObserveMenu(BgraFrame frame) =>
+            menu.Observe(frame, (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds);
 
         // Geometry is a last-resort bootstrap for a truly empty menu catalog
         // and runs only on the validated Hollow Knight client image. Saved
