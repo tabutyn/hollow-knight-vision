@@ -71,19 +71,26 @@ public partial class MainWindow
         if (!force && (atlasOperationInProgress || isClosing || Volatile.Read(ref profileAtlasHeld)
             || DateTimeOffset.UtcNow < nextHackerAutosave))
             return Task.CompletedTask;
-        if (hackerAtlasPipeline.Revision == hackerSavedRasterRevision && hackerLayoutRevision == hackerSavedLayoutRevision)
-            return Task.CompletedTask;
-
         nextHackerAutosave = DateTimeOffset.UtcNow + HackerAutosaveInterval;
+        var pipeline = hackerAtlasPipeline;
         var layoutRevision = hackerLayoutRevision;
+        var savedAtlasRevision = hackerSavedRasterRevision;
+        var savedLayoutRevision = hackerSavedLayoutRevision;
         var profile = hackerArchiveProfile;
-        var capture = hackerAtlasPipeline.CaptureArchive(CaptureHackerRoomOffsets());
+        var offsets = CaptureHackerRoomOffsets();
         return hackerArchiveWrite = WriteAsync();
 
         async Task WriteAsync()
         {
-            await Task.Run(() => hackerArchiveStore.Write(profile, capture.Archive));
-            hackerSavedRasterRevision = capture.Revision;
+            var saved = await Task.Run<ulong?>(() =>
+            {
+                if (pipeline.Revision == savedAtlasRevision && layoutRevision == savedLayoutRevision) return null;
+                var capture = pipeline.CaptureArchive(offsets);
+                hackerArchiveStore.Write(profile, capture.Archive);
+                return capture.Revision;
+            });
+            if (saved is not { } revision || !ReferenceEquals(pipeline, hackerAtlasPipeline)) return;
+            hackerSavedRasterRevision = revision;
             hackerSavedLayoutRevision = layoutRevision;
         }
     }
@@ -109,6 +116,7 @@ public partial class MainWindow
     private void InstallHackerArchive(LoadedHackerArchive loaded)
     {
         ClearHackerPresentation();
+        lock (hackerFrameGate)
         lock (hackerAtlasGate)
         {
             hackerAtlasPipeline = loaded.Pipeline;

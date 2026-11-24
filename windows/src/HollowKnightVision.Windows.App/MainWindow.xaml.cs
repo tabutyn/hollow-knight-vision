@@ -556,6 +556,7 @@ public partial class MainWindow : Window
     private const int HackerAtlasSampleStride = 8;
     private const int HackerPublicationRetryLimit = 3;
     private readonly object hackerAtlasGate = new();
+    private readonly object hackerFrameGate = new();
     private readonly HackerFramePreparer hackerFramePreparer = new();
     private HackerAtlasPipeline hackerAtlasPipeline = new();
     private readonly VisualGameplayTracker visualGameplayTracker = new();
@@ -696,7 +697,7 @@ public partial class MainWindow : Window
 
     private readonly record struct HackerTileKey(Guid RoomId, long LayerId);
 
-    private sealed record HackerPipelineWork(
+    internal sealed record HackerPipelineWork(
         HackerMatchedFrame Match,
         long CaptureGeneration,
         long WorkGeneration,
@@ -2508,8 +2509,7 @@ public partial class MainWindow : Window
             var analysisFrames = Channel.CreateBounded<PendingVisionFrame>(new BoundedChannelOptions(preservesStepEvidence ? 16 : 1)
             { FullMode = preservesStepEvidence ? BoundedChannelFullMode.Wait : BoundedChannelFullMode.DropOldest,
                 SingleReader = true, SingleWriter = false });
-            var hackerFrames = Channel.CreateUnbounded<HackerPipelineWork>(new UnboundedChannelOptions
-            { SingleReader = true, SingleWriter = false, AllowSynchronousContinuations = false });
+            var hackerFrames = LatestHackerChannel<HackerPipelineWork>(singleWriter: false);
             var captureGeneration = Interlocked.Increment(ref recentCaptureGeneration);
             gameplayPresentation.Reset();
             ResetGameplayPaths();
@@ -2755,47 +2755,105 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task RunHackerPipelineAsync(
-        ChannelReader<HackerPipelineWork> frames,
-        long captureGeneration)
-    {
-        await foreach (var work in frames.ReadAllAsync().ConfigureAwait(false))
+    internal static Channel<T> LatestHackerChannel<T>(bool singleWriter) =>
+        Channel.CreateBounded<T>(new BoundedChannelOptions(1)
         {
-            if (!work.OwnsHackerWork
-                || work.CaptureGeneration != captureGeneration
-                || work.WorkGeneration != Interlocked.Read(ref hackerWorkGeneration))
-            {
-                continue;
-            }
+            SingleReader = true,
+            SingleWriter = singleWriter,
+            FullMode = BoundedChannelFullMode.DropOldest,
+            AllowSynchronousContinuations = false
+        });
 
-            HackerPreparedFrame? prepared;
-            HackerAtlasOutput? output;
-            lock (hackerAtlasGate)
+    internal async Task RunHackerPipelineAsync(ChannelReader<HackerPipelineWork> frames, long captureGeneration)
+    {
+        var atlasFrames = LatestHackerChannel<(HackerPreparedFrame Frame, long WorkGeneration)>(singleWriter: true);
+        var publicationGate = new object();
+        HackerPipelinePublication? latestLive = null;
+        using var lifetime = new CancellationTokenSource();
+        var atlasTask = Task.Run(async () =>
+        {
+            try
             {
-                if (work.WorkGeneration != hackerWorkGeneration || Volatile.Read(ref profileAtlasHeld)) continue;
+                await foreach (var work in atlasFrames.Reader.ReadAllAsync().ConfigureAwait(false))
+                {
+                    HackerAtlasOutput? output;
+                    lock (hackerAtlasGate)
+                    {
+                        if (!CanProcessHackerFrame(captureGeneration, work.WorkGeneration)) continue;
+                        hackerAtlasPipeline.ConfigureHudTemplate(menuStencilRecognizer.CapturedHudTemplate);
+                        output = hackerAtlasPipeline.Process(work.Frame);
+                    }
+                    if (output is null) continue;
+                    var staged = StageHackerAtlas(output, work.Frame.CapturedAt);
+                    lock (hackerAtlasGate)
+                    {
+                        if (!CanProcessHackerFrame(captureGeneration, work.WorkGeneration)) continue;
+                        lock (publicationGate)
+                        {
+                            latestStagedHackerAtlas = staged;
+                            if (latestLive is { } live && live.WorkGeneration == work.WorkGeneration)
+                                QueueHackerPublication(live with { Atlas = staged });
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                lifetime.Cancel();
+                throw;
+            }
+        });
+        try
+        {
+            await RunHackerLiveAsync(frames, captureGeneration, atlasFrames.Writer, PublishLive, lifetime.Token);
+        }
+        finally
+        {
+            atlasFrames.Writer.TryComplete();
+            await atlasTask;
+        }
+
+        void PublishLive(HackerPipelinePublication publication)
+        {
+            lock (publicationGate)
+            {
+                if (!CanProcessHackerFrame(captureGeneration, publication.WorkGeneration)) return;
+                latestLive = publication;
+                QueueHackerPublication(publication with { Atlas = latestStagedHackerAtlas });
+            }
+        }
+    }
+
+    private bool CanProcessHackerFrame(long captureGeneration, long workGeneration) =>
+        captureGeneration == Interlocked.Read(ref recentCaptureGeneration)
+        && workGeneration == Interlocked.Read(ref hackerWorkGeneration)
+        && !Volatile.Read(ref profileAtlasHeld);
+
+    private async Task RunHackerLiveAsync(ChannelReader<HackerPipelineWork> frames, long captureGeneration,
+        ChannelWriter<(HackerPreparedFrame Frame, long WorkGeneration)> atlasFrames,
+        Action<HackerPipelinePublication> publish, CancellationToken cancellationToken)
+    {
+        await foreach (var work in frames.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (!work.OwnsHackerWork || work.CaptureGeneration != captureGeneration) continue;
+            HackerPreparedFrame? prepared;
+            lock (hackerFrameGate)
+            {
+                if (!CanProcessHackerFrame(captureGeneration, work.WorkGeneration)) continue;
                 prepared = hackerFramePreparer.Process(work.Match);
-                hackerAtlasPipeline.ConfigureHudTemplate(menuStencilRecognizer.CapturedHudTemplate);
-                output = prepared is null ? null : hackerAtlasPipeline.Process(prepared);
             }
             if (prepared is null) continue;
 
-            var staged = output is null ? null : StageHackerAtlas(output, prepared.CapturedAt);
-            HackerAtlasPublication? stagedAtlas;
-            lock (hackerAtlasGate)
-            {
-                if (work.WorkGeneration != hackerWorkGeneration) continue;
-                if (staged is not null) latestStagedHackerAtlas = staged;
-                stagedAtlas = latestStagedHackerAtlas;
-            }
-
-            var publication = new HackerPipelinePublication(
+            // Publish the clean preview immediately. The atlas lane can skip
+            // superseded pending frames while its current composition finishes.
+            publish(new HackerPipelinePublication(
                 prepared,
                 FrameBitmap(prepared.LiveImage),
-                stagedAtlas,
+                null,
                 work.CaptureGeneration,
                 work.WorkGeneration,
-                prepared.Sample.AtlasGameplayActive != false && FrameRegionRenderer.ContainsGameplaySignal(work.Match.Capture.Image));
-            QueueHackerPublication(publication);
+                prepared.Sample.AtlasGameplayActive != false && FrameRegionRenderer.ContainsGameplaySignal(work.Match.Capture.Image)));
+            atlasFrames.TryWrite((prepared, work.WorkGeneration));
         }
     }
 
@@ -2928,6 +2986,7 @@ public partial class MainWindow : Window
 
     private void InvalidatePendingHackerWork(bool resetCore = false)
     {
+        lock (hackerFrameGate)
         lock (hackerAtlasGate)
         {
             Interlocked.Increment(ref hackerWorkGeneration);
@@ -3072,8 +3131,8 @@ public partial class MainWindow : Window
         bool ownsHackerWork,
         long hackerGeneration)
     {
-        // Every exact pair owned by Hacker reaches the ordered compositor lane.
-        // Latest-only suppression below applies only to analysis/presentation.
+        // Exact pairs are offered in capture order. Live and atlas workers
+        // each keep the newest pending frame while their current work runs.
         QueueReceiverHackerMatch(new HackerPipelineWork(
             matched,
             receiverFrameJoinGeneration,

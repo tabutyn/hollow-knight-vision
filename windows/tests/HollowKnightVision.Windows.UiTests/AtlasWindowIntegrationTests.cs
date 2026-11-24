@@ -38,6 +38,7 @@ internal static class AtlasWindowIntegrationTests
         Console.WriteLine("PASS Game Play toggles ground lines and tracking patches in the live view and Atlas");
         Console.WriteLine("PASS Game Play ground diagnostics are opt-in and use the analyzed frame's exact pixels");
         Console.WriteLine("PASS Hacker displays fresh object detections through the measured camera and drops cross-room results");
+        Console.WriteLine("PASS Hacker preview stays current during a stalled Atlas composition and pending capture is bounded");
         Console.WriteLine("PASS Game Play and Hacker draw only scoped bot wall contacts while Atlas Paths is enabled");
     }
 
@@ -221,6 +222,7 @@ internal static class AtlasWindowIntegrationTests
             _ = Invoke(window, "RefreshAtlasPathVisibility");
             Check(hackerWalls.Visibility == Visibility.Collapsed, "The Atlas Paths toggle must also hide Hacker wall contacts.");
             VerifyHackerObjectOverlay(window, sample, generation, GetField<long>(menuRecognizer, "generation"));
+            VerifyBoundedHackerWork(window, sample, generation);
         }
         finally
         {
@@ -229,6 +231,73 @@ internal static class AtlasWindowIntegrationTests
             _ = capture.FinishAsync(5, null, completed: false).GetAwaiter().GetResult();
             SetField(window, "isClosing", true);
             Wait(InvokeTask(window, "PrepareShutdownAsync"));
+        }
+    }
+
+    private static void VerifyBoundedHackerWork(MainWindow window, ReceiverGroundTruthSample sample, long generation)
+    {
+        var workGeneration = GetField<long>(window, "hackerWorkGeneration");
+        var frames = MainWindow.LatestHackerChannel<MainWindow.HackerPipelineWork>(singleWriter: false);
+        for (var id = 100; id <= 140; id++) Offer(id);
+        Check(frames.Reader.TryRead(out var retained) && retained.Match.Capture.Image.CaptureId == 140
+            && !frames.Reader.TryRead(out _), "A capture burst must retain only the newest exact match.");
+
+        var atlas = GetField<HackerAtlasPipeline>(window, "hackerAtlasPipeline");
+        var before = atlas.Revision;
+        var presentedBefore = GetField<ulong>(window, "hackerPublishedRevision");
+        var coreGate = typeof(HackerAtlasPipeline).GetField("gate", InstanceMembers)!.GetValue(atlas)!;
+        var atlasGate = GetField<object>(window, "hackerAtlasGate");
+        using var stalled = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var simulatedSlowAtlas = Task.Run(() =>
+        {
+            lock (atlasGate)
+            lock (coreGate)
+            {
+                stalled.Set();
+                if (!release.Wait(TimeSpan.FromSeconds(12))) throw new TimeoutException("The Atlas fixture was not released.");
+            }
+        });
+        SetField(window, "hackerArchiveReady", true);
+        SetField(window, "hackerSavedRasterRevision", ulong.MaxValue);
+        var worker = Task.Run(() => window.RunHackerPipelineAsync(frames.Reader, generation));
+        try
+        {
+            Check(stalled.Wait(TimeSpan.FromSeconds(3)), "The fixture could not stall Atlas composition.");
+            Offer(140);
+            Wait(WaitForLiveFrame(140));
+            for (var id = 141; id <= 180; id++) Offer(id);
+            Wait(WaitForLiveFrame(180));
+            Check(GetField<ulong>(window, "hackerPublishedRevision") == presentedBefore
+                && GetField<Task>(window, "hackerArchiveWrite") is { IsCompleted: false },
+                "The live Hacker view must advance while Atlas composition and its autosave snapshot wait.");
+        }
+        finally
+        {
+            release.Set();
+            frames.Writer.TryComplete();
+            Wait(simulatedSlowAtlas);
+            Wait(worker);
+        }
+        Program.Pump();
+        Check(atlas.Revision > before && GetField<BgraFrame>(window, "hackerLiveFrame").CaptureId == 180,
+            "Atlas completion must resume without rewinding the already presented live frame.");
+
+        void Offer(int id)
+        {
+            var time = id / 30d;
+            var frame = SolidFrame(id, 96, 72);
+            var camera = sample with { UnityFrame = id, CameraX = id / 10d, HeroAvailable = true };
+            var work = new MainWindow.HackerPipelineWork(new(new(id, frame, time, true), camera, time),
+                generation, workGeneration, true);
+            Check(frames.Writer.TryWrite(work), "The Hacker capture lane stopped accepting live frames.");
+        }
+
+        async Task WaitForLiveFrame(long id)
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (GetField<BgraFrame?>(window, "hackerLiveFrame")?.CaptureId != id)
+                await Task.Delay(10, deadline.Token);
         }
     }
 
