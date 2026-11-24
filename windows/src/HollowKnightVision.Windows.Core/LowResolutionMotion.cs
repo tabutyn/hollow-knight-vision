@@ -172,6 +172,13 @@ public sealed class LowResolutionRoomMotionTracker
         double requiredImprovement = MinimumImprovement) =>
         Match(reference, current, requiredImprovement, roomMotion: true);
 
+    // Local contrast is used near the nominal comparison age. Across longer
+    // gaps it can lose the landmarks that anchor ground recovery.
+    internal static LowResolutionTranslationDiagnostic DiagnoseCaptureRateTranslation(
+        LowResolutionMotionGrid reference, LowResolutionMotionGrid current, double comparisonAge) =>
+        Match(reference, current, MinimumImprovement,
+            roomMotion: comparisonAge <= PreferredComparisonAge + ComparisonAgeMinimum);
+
     // The fixed union of both frames' exclusions gives capture registration
     // a common set of visible pixels. Coarse room motion handles moving light.
     internal static LowResolutionTranslationDiagnostic RegisterMaskedCapture(
