@@ -107,6 +107,7 @@ public sealed class LowResolutionRoomMotionTracker
     public const double MinimumImprovement = 0.055;
     public const double MinimumTextureDeviation = 4.0;
     private const byte MinimumVisibleLuma = 8;
+    private const byte MinimumSceneryLuma = 16;
     private const double VisibilityMaskDarkFraction = 0.12;
     private readonly List<Sample> history = [];
     private readonly List<Vote> votes = [];
@@ -168,20 +169,43 @@ public sealed class LowResolutionRoomMotionTracker
     public static LowResolutionTranslationDiagnostic DiagnoseTranslation(
         LowResolutionMotionGrid reference,
         LowResolutionMotionGrid current,
-        double requiredImprovement = MinimumImprovement)
+        double requiredImprovement = MinimumImprovement) =>
+        Match(reference, current, requiredImprovement, roomMotion: true);
+
+    // The fixed union of both frames' exclusions gives capture registration
+    // a common set of visible pixels. Coarse room motion handles moving light.
+    internal static LowResolutionTranslationDiagnostic RegisterMaskedCapture(
+        LowResolutionMotionGrid reference, LowResolutionMotionGrid current) =>
+        Match(reference, current, MinimumImprovement, roomMotion: false);
+
+    private static LowResolutionTranslationDiagnostic Match(LowResolutionMotionGrid reference,
+        LowResolutionMotionGrid current, double requiredImprovement, bool roomMotion)
     {
         ArgumentNullException.ThrowIfNull(reference);
         ArgumentNullException.ThrowIfNull(current);
-        var narrow = BestTranslationAttempt(reference, current, 3, requiredImprovement);
-        var wideLimit = Math.Min(MaximumVerticalShift, Math.Max(3, reference.Height / 3));
-        var needsWide = narrow.Motion is null || Math.Abs(narrow.Motion.ScreenShiftY) >= 2.75;
-        var wide = wideLimit > 3 && needsWide
-            ? BestTranslationAttempt(reference, current, wideLimit, requiredImprovement)
-            : null;
+        const int narrowLimit = 3;
+        var wideLimit = Math.Min(MaximumVerticalShift, Math.Max(narrowLimit, reference.Height / 3));
+        if (reference.Width != current.Width || reference.Height != current.Height
+            || reference.Width <= MaximumShift * 2 + 4 || reference.Height <= narrowLimit * 2 + 1)
+            return Rejected(LowResolutionTranslationRejection.IncompatibleGrid);
+
+        var visibilityMask = RequiresVisibilityMask(reference) || RequiresVisibilityMask(current);
+        var localContrast = roomMotion && visibilityMask;
+        if (localContrast && (reference.Luma.Count(value => value > MinimumSceneryLuma) < RequiredSceneryCells(reference)
+            || current.Luma.Count(value => value > MinimumSceneryLuma) < RequiredSceneryCells(current)))
+            return Rejected(LowResolutionTranslationRejection.InsufficientOverlap);
+
+        var normalizedReference = Normalize(reference, visibilityMask, localContrast);
+        var normalizedCurrent = Normalize(current, visibilityMask, localContrast);
+        if (normalizedReference.Deviation < MinimumTextureDeviation || normalizedCurrent.Deviation < MinimumTextureDeviation)
+            return Rejected(LowResolutionTranslationRejection.InsufficientTexture);
+
+        var narrow = Attempt(narrowLimit);
+        var needsWide = narrow.Motion is null || Math.Abs(narrow.Motion.ScreenShiftY) >= narrowLimit - .25;
+        var wide = wideLimit > narrowLimit && needsWide ? Attempt(wideLimit) : null;
         // In a dark landing the floor may lie entirely beyond the ordinary scoring band.
-        var edge = narrow.Motion is null && wide?.Motion is null
-            && (RequiresVisibilityMask(reference) || RequiresVisibilityMask(current))
-            ? BestTranslationAttempt(reference, current, wideLimit, requiredImprovement, usesVisibleExtent: true)
+        var edge = narrow.Motion is null && wide?.Motion is null && visibilityMask && HasVisibleEdgeSupport(reference, current)
+            ? Attempt(wideLimit, usesVisibleExtent: true)
             : null;
         var fallback = narrow.Motion ?? wide?.Motion ?? edge?.Motion;
         if (fallback is null)
@@ -190,7 +214,7 @@ public sealed class LowResolutionRoomMotionTracker
                 null, narrow.Rejection, wide?.Rejection,
                 narrow.ExactIdentity || wide?.ExactIdentity == true);
         }
-        var vertical = wide?.Motion is { } wideMotion && Math.Abs(wideMotion.ScreenShiftY) > 3
+        var vertical = wide?.Motion is { } wideMotion && Math.Abs(wideMotion.ScreenShiftY) > narrowLimit
             ? wideMotion
             : narrow.Motion ?? fallback;
         var horizontal = narrow.Motion ?? fallback;
@@ -201,6 +225,13 @@ public sealed class LowResolutionRoomMotionTracker
                 Math.Min(horizontal.Confidence, vertical.Confidence)),
             narrow.Rejection,
             wide?.Rejection);
+
+        LowResolutionTranslationDiagnostic Rejected(LowResolutionTranslationRejection reason) =>
+            new(null, reason, wideLimit > narrowLimit ? reason : null);
+
+        TranslationAttempt Attempt(int shiftLimit, bool usesVisibleExtent = false) =>
+            BestTranslationAttempt(reference, current, normalizedReference, normalizedCurrent,
+                shiftLimit, requiredImprovement, usesVisibleExtent, clipInterior: roomMotion || usesVisibleExtent);
     }
 
     private void Expire(double timestamp)
@@ -234,28 +265,13 @@ public sealed class LowResolutionRoomMotionTracker
     private static TranslationAttempt BestTranslationAttempt(
         LowResolutionMotionGrid reference,
         LowResolutionMotionGrid current,
+        NormalizedGrid normalizedReference,
+        NormalizedGrid normalizedCurrent,
         int verticalShiftLimit,
         double requiredImprovement,
-        bool usesVisibleExtent = false)
+        bool usesVisibleExtent,
+        bool clipInterior)
     {
-        if (reference.Width != current.Width || reference.Height != current.Height
-            || reference.Width <= MaximumShift * 2 + 4
-            || reference.Height <= verticalShiftLimit * 2 + 1)
-        {
-            return TranslationAttempt.Rejected(LowResolutionTranslationRejection.IncompatibleGrid);
-        }
-        if (usesVisibleExtent && !HasVisibleEdgeSupport(reference, current))
-            return TranslationAttempt.Rejected(LowResolutionTranslationRejection.InsufficientOverlap);
-
-        var usesVisibilityMask = RequiresVisibilityMask(reference)
-            || RequiresVisibilityMask(current);
-        var normalizedReference = Normalize(reference, usesVisibilityMask);
-        var normalizedCurrent = Normalize(current, usesVisibilityMask);
-        if (normalizedReference.Deviation < MinimumTextureDeviation
-            || normalizedCurrent.Deviation < MinimumTextureDeviation)
-        {
-            return TranslationAttempt.Rejected(LowResolutionTranslationRejection.InsufficientTexture);
-        }
         var yStart = usesVisibleExtent ? Math.Max(1, reference.Height / 6)
             : Math.Max(verticalShiftLimit, reference.Height / 6);
         var yEnd = usesVisibleExtent ? reference.Height - 1
@@ -277,7 +293,7 @@ public sealed class LowResolutionRoomMotionTracker
                     available++;
                     var currentX = x + shiftX;
                     var currentY = y + shiftY;
-                    if (usesVisibleExtent && (currentX < 1 || currentX >= current.Width - 1
+                    if (clipInterior && (currentX < 1 || currentX >= current.Width - 1
                         || currentY < 1 || currentY >= current.Height - 1))
                         continue;
                     var currentIndex = currentY * current.Width + currentX;
@@ -345,10 +361,10 @@ public sealed class LowResolutionRoomMotionTracker
             normalizedReference.Values,
             normalizedCurrent.Values,
             reference.Width,
-            usesVisibleExtent ? Math.Max(xStart, 1 - best.Key.X) : xStart,
-            usesVisibleExtent ? Math.Min(xEnd, current.Width - 1 - best.Key.X) : xEnd,
-            usesVisibleExtent ? Math.Max(yStart, 1 - best.Key.Y) : yStart,
-            usesVisibleExtent ? Math.Min(yEnd, current.Height - 1 - best.Key.Y) : yEnd,
+            clipInterior ? Math.Max(xStart, 1 - best.Key.X) : xStart,
+            clipInterior ? Math.Min(xEnd, current.Width - 1 - best.Key.X) : xEnd,
+            clipInterior ? Math.Max(yStart, 1 - best.Key.Y) : yStart,
+            clipInterior ? Math.Min(yEnd, current.Height - 1 - best.Key.Y) : yEnd,
             best.Key.X,
             best.Key.Y,
             normalizedReference.Visible,
@@ -389,7 +405,7 @@ public sealed class LowResolutionRoomMotionTracker
             for (var y = Math.Max(1, grid.Height / 6); y < grid.Height - 1; y++)
             for (var x = 1; x < grid.Width - 1; x++)
             {
-                if (grid.Luma[y * grid.Width + x] <= 16) continue;
+                if (grid.Luma[y * grid.Width + x] <= MinimumSceneryLuma) continue;
                 visible++;
                 if (y >= grid.Height * 5 / 6 || x < MaximumShift || x >= grid.Width - MaximumShift)
                     edge++;
@@ -399,10 +415,11 @@ public sealed class LowResolutionRoomMotionTracker
 
         var first = Count(reference);
         var second = Count(current);
-        var required = Math.Max(96, reference.Width * reference.Height / 20);
-        return Math.Min(first.Visible, second.Visible) >= required
+        return Math.Min(first.Visible, second.Visible) >= RequiredSceneryCells(reference)
             && Math.Max(first.Edge, second.Edge) >= reference.Width;
     }
+
+    private static int RequiredSceneryCells(LowResolutionMotionGrid grid) => Math.Max(96, grid.Luma.Length / 20);
 
     private static (double X, double Y) SubcellResidual(
         IReadOnlyList<double> reference,
@@ -470,7 +487,8 @@ public sealed class LowResolutionRoomMotionTracker
 
     private static NormalizedGrid Normalize(
         LowResolutionMotionGrid grid,
-        bool excludingDarkPixels)
+        bool excludingDarkPixels,
+        bool localContrast)
     {
         var values = grid.Luma.Select(value => (double)value).ToArray();
         var visible = excludingDarkPixels
@@ -483,10 +501,43 @@ public sealed class LowResolutionRoomMotionTracker
         var mean = retained.Average();
         var variance = retained.Sum(value => (value - mean) * (value - mean)) / retained.Length;
         var deviation = Math.Sqrt(variance);
-        return deviation > 0.001
-            ? new NormalizedGrid(values.Select(value => (value - mean) / deviation).ToArray(),
-                deviation, visible)
-            : new NormalizedGrid(new double[values.Length], deviation, visible);
+        if (deviation <= 0.001) return new NormalizedGrid(new double[values.Length], deviation, visible);
+        var texture = localContrast && visible is not null
+            ? LocalTexture(values, visible, grid.Width, grid.Height)
+            : values.Select(value => (value - mean) / deviation).ToArray();
+        return new NormalizedGrid(texture, deviation, visible);
+    }
+
+    private static double[] LocalTexture(double[] values, bool[] visible, int width, int height)
+    {
+        const int radius = 2;
+        var texture = new double[values.Length];
+        for (var y = 0; y < height; y++)
+        for (var x = 0; x < width; x++)
+        {
+            var index = y * width + x;
+            if (!visible[index]) continue;
+
+            var sum = 0.0;
+            var squareSum = 0.0;
+            var count = 0;
+            for (var sy = Math.Max(0, y - radius); sy <= Math.Min(height - 1, y + radius); sy++)
+            for (var sx = Math.Max(0, x - radius); sx <= Math.Min(width - 1, x + radius); sx++)
+            {
+                var neighbor = sy * width + sx;
+                if (!visible[neighbor]) continue;
+                var value = values[neighbor];
+                sum += value;
+                squareSum += value * value;
+                count++;
+            }
+
+            if (count < 6) continue;
+            var localMean = sum / count;
+            var deviation = Math.Sqrt(Math.Max(0, squareSum / count - localMean * localMean));
+            texture[index] = (values[index] - localMean) / Math.Max(MinimumTextureDeviation, deviation);
+        }
+        return texture;
     }
 
     private sealed record Sample(double Timestamp, LowResolutionMotionGrid Grid);

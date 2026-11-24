@@ -71,7 +71,7 @@ public sealed class MaskedFrameMotionTracker
         var size = new SourcePoint(frame.Width, frame.Height);
         // Apply the same padded union to both images. A moving hole must not
         // become a feature which falsely drags the camera along with the Knight.
-        return LowResolutionRoomMotionTracker.DiagnoseTranslation(
+        return LowResolutionRoomMotionTracker.RegisterMaskedCapture(
             LowResolutionMotionGrid.FromFrame(RegistrationFrameMask.Applying(reference, union, size)),
             LowResolutionMotionGrid.FromFrame(RegistrationFrameMask.Applying(frame, union, size)));
     }
