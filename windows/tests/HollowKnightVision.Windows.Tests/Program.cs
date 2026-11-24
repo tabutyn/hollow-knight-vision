@@ -1118,6 +1118,8 @@ var tests = new List<(string Name, Action Run)>
     ("global ground verification resolves local loss", GroundPlacementRecoveryTests.TestGlobalVerification),
     ("provisional ground bootstrap can reseed its origin", GroundPlacementRecoveryTests.TestProvisionalBootstrap),
     ("normal ground motion and reset stay trusted", GroundPlacementRecoveryTests.TestNormalAndReset),
+    ("three sparse horizontal ground solves recover an underestimated fallback", GroundPlacementRecoveryTests.TestSparseHorizontalGroundRecoversUnderestimatedFallback),
+    ("sparse horizontal ground recovery rejects unverified evidence", GroundPlacementRecoveryTests.TestSparseHorizontalGroundRejectsUnverifiedRecovery),
     ("sparse ground descent needs two coherent observations", GroundPlacementRecoveryTests.TestSparseDescent),
     ("sparse ground recovery rejects unsafe evidence", GroundPlacementRecoveryTests.TestSparseRejections),
     ("live world pose replacement preserves raw evidence", TestLiveWorldPoseReplacement),
