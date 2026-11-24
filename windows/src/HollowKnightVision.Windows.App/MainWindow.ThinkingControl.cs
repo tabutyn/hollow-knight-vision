@@ -43,17 +43,18 @@ public partial class MainWindow
         var reading = Volatile.Read(ref latestThinkingReading);
         if (reading is null || reading.Context != context || capturedAt - reading.CapturedAt is not (>= 0 and <= 2.5)) reading = null;
         ThinkingScene? scene = null;
-        if (gameplay && domain == BotCaptureDomain.Hacker)
+        if (gameplay && receiver is { } matched && renderedFrame == HackerFrameSynchronizer.Key(matched.UnityFrame))
         {
-            if (receiver is not null) room = WindowsLiveWorldPipeline.RoomIdentifier(receiver.SceneName);
-            var routes = ThinkingHackerRoutes(frame, receiver, renderedFrame, generation, capturedAt, room);
-            scene = ThinkingScene.FromMatchedReceiver(room, receiver, routes);
+            room = WindowsLiveWorldPipeline.RoomIdentifier(matched.SceneName);
+            var routes = ThinkingHackerRoutes(frame, matched, renderedFrame, generation, capturedAt, room, input);
+            scene = ThinkingScene.FromMatchedReceiver(room, matched, routes);
         }
-        else if (gameplay && paths is { Camera: not null, Hint: { } hint } && paths.KnightWidth > 0)
+        else if (gameplay && gameMode == GameRuntimeMode.Normal
+            && paths is { Camera: not null, Hint: { } hint } && paths.KnightWidth > 0)
         {
             var route = ThinkingRoute.FromPath(FormattableString.Invariant($"gameplay/{room}/{chartEpoch}"),
                 hint, paths.KnightWidth, frame.Width, frontier: paths.SelectedObjective is null);
-            scene = new(room, receiver?.Grounded == true, null, [], [], [route]);
+            scene = new(room, false, null, [], [], [route]);
         }
         var scope = new ThinkingScope(generation, domain, context, thinkingReceiverSession);
         var sight = new ThinkingSight(scope, capturedAt, gameplay, menu?.ContextIdentifier,
@@ -116,10 +117,10 @@ public partial class MainWindow
         }
     }
 
-    private IReadOnlyList<ThinkingRoute> ThinkingHackerRoutes(BgraFrame frame, ReceiverGroundTruthSample? receiver,
-        int? renderedFrame, long generation, double capturedAt, int room)
+    private IReadOnlyList<ThinkingRoute> ThinkingHackerRoutes(BgraFrame frame, ReceiverGroundTruthSample receiver,
+        int? renderedFrame, long generation, double capturedAt, int room, InputButtons? input)
     {
-        if (receiver is null || Volatile.Read(ref thinkingAuthored) is not { } authored) return [];
+        if (Volatile.Read(ref thinkingAuthored) is not { } authored) return [];
         var epoch = (generation, authored.Epoch);
         if (thinkingVisit is null || thinkingVisitEpoch != epoch)
         {
@@ -135,7 +136,7 @@ public partial class MainWindow
             var registered = latestStagedHackerAtlas is { } staged && staged.CapturedAt <= capturedAt
                 ? staged.Output.Rooms.FirstOrDefault(candidate => candidate.SceneName == scene) : null;
             thinkingVisit.Observe(new(frame.Width, frame.Height), renderedFrame, receiver,
-                new(capturedAt, capturedAt, generation, room, 0), null, 0,
+                new(capturedAt, capturedAt, generation, room, 0), input, 0,
                 objective: objectives.SelectedFor(scene), roomKey: HackerLayoutId("room", scene).ToString("D").ToUpperInvariant(),
                 automaticObjective: objectives.IsAutomatic(scene), registeredRoom: registered);
             thinkingRouteAt = capturedAt;

@@ -3432,7 +3432,8 @@ public partial class MainWindow : Window
         GameplayPathView? paths = null;
         if (workspace == "Gameplay" && admission.AdmitsTracking && tracked.RoomAllowsAtlasWrite
             && atlasPathState != AtlasPathFrameState.Hidden && receiverTelemetry?.AtlasGameplayActive != false
-            && recognition.GameplayEnabled && (Volatile.Read(ref atlasPathsEnabled) || Volatile.Read(ref thinkingEnabled)))
+            && recognition.GameplayEnabled && (Volatile.Read(ref atlasPathsEnabled)
+                || gameMode == GameRuntimeMode.Normal && Volatile.Read(ref thinkingEnabled)))
         {
             var pathCamera = visualObservation.GroundVerified ? groundHypotheses.CameraPosition : tracked.MeasuredSceneryCamera;
             var registeredPath = worldPlacement is { IsPlaced: true } placement

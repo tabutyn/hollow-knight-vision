@@ -116,9 +116,13 @@ internal static class BotDesktopEvaluationTests
                 "B still stops ordinary playback after a Thinking policy.");
             await ExpectWireState(InputButtons.None);
 
+            Field("workspace").SetValue(window, "Gameplay");
             Observe(first);
-            _ = Method("QueueThinkingPlan").Invoke(window, [OfferFocus()]);
-            Check(Observe(first), "A fresh policy should use the same receiver lease without a PPO checkpoint.");
+            var gameplay = OfferFocus();
+            Check(gameplay.Scope.Domain == BotCaptureDomain.Gameplay,
+                "Game Play v2 must bind the same exact receiver actors without changing the playback observation domain.");
+            _ = Method("QueueThinkingPlan").Invoke(window, [gameplay]);
+            Check(Observe(first), "A fresh Game Play policy should use the receiver lease without a PPO checkpoint.");
             await ExpectWireState(InputButtons.ActionA);
             Check((bool)Method("StopThinkingControl").Invoke(window, ["Paused."])!,
                 "An interrupted standalone Thinking maneuver must release its lease.");

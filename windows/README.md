@@ -91,8 +91,9 @@ decision. The inspector shows the sampled frame, the exact model messages
 and schema, the offered targets, and the reply. It keeps the model's image
 available when a newer frame appears. A scored offer can drive a short
 maneuver when automatic policies are enabled and Modded Gameplay or Hacker
-has focus. Vision checks each target against the current frame before using
-the same input lease as PPO. Press **B** to stop. Normal mode is for inspection.
+has focus. Both workspaces use the shared registered routes and frame-matched
+receiver actors for Thinking decisions. Vision rechecks the target before
+using the same input lease as PPO. Press **B** to stop. Normal mode is for inspection.
 
 Parity verification is tracked in `mac-parity-audit.json`. Run
 `./Test-MacParity.ps1` for the complete Mac source/test inventory and remaining
