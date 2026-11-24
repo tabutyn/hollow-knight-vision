@@ -1013,7 +1013,7 @@ internal static class Program
         // The standalone test loads the production template without window-bound event handlers.
         var markup = new System.Xml.Linq.XElement(root);
         var events = new HashSet<string>(StringComparer.Ordinal)
-            { "Click", "SelectionChanged", "ValueChanged", "Checked", "Unchecked" };
+            { "Click", "SelectionChanged", "ValueChanged", "Checked", "Unchecked", "PreviewKeyDown" };
         foreach (var attribute in markup.DescendantsAndSelf().SelectMany(item => item.Attributes())
             .Where(attribute => attribute.Name.Namespace == System.Xml.Linq.XNamespace.None
                 && events.Contains(attribute.Name.LocalName)).ToArray()) attribute.Remove();
