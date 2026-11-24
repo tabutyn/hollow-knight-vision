@@ -543,7 +543,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? startupCancellation;
     private CancellationTokenSource? gameLostCountdownCancellation;
     private Process? monitoredGameProcess;
-    private readonly WindowsGameControlForwarder gameControls = new();
+    private readonly WindowsGameControlForwarder gameControls;
     private readonly WindowsNormalGameInput? normalGameInput;
     private readonly DispatcherTimer inputHeartbeat;
     private readonly DispatcherTimer viewportAnimationTimer;
@@ -799,10 +799,13 @@ public partial class MainWindow : Window
     {
     }
 
-    internal MainWindow(GameRuntimeMode gameMode, string? gamePath, string root, string documents)
+    internal MainWindow(GameRuntimeMode gameMode, string? gamePath, string root, string documents,
+        Func<ReceiverClient>? createReceiver = null)
     {
         this.gameMode = gameMode;
         this.gamePath = gamePath;
+        BotRoot = IOPath.Combine(root, "bot-v1");
+        gameControls = new(createReceiver);
         InitializeComponent();
         gameControls.GroundTruthReceived += OnReceiverGroundTruth;
         gameplayFraming = gameplayFramingValue;
