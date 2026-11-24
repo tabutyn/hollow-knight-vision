@@ -20,6 +20,8 @@ public partial class MainWindow
     private BotHackerVisit? botRouteVisit;
     private int botRouteEpoch, activeBotRouteEpoch;
     private readonly BotVisualAtlasCoverage botVisualCoverage = new();
+    private readonly BotCommittedAtlasCoverage botCommittedCoverage = new();
+    internal readonly record struct CommittedBotFrame(LiveWorldSnapshot Graph, int Room, AtlasPoint? CameraCenter);
     private readonly BotVisualKnightMemory botVisualKnightMemory = new();
     private readonly BotBlockadeVisit botVisualBlockade = new();
     private (int Room, long Coordinates)? botVisualChart;
@@ -35,7 +37,8 @@ public partial class MainWindow
         LiveObjectDetectionBatch? batch, IReadOnlyList<DetectedFloorLine> floors, TerrainWallDetection terrain,
         bool analyzedTerrain, AtlasPoint? camera, HudStencilResult? hud, AtlasPoint? measuredFoot, InputButtons? input,
         BotRun? run, long walkedCoordinateEpoch, GroundHypothesisTrackingResult ground,
-        bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions, GameplaySceneMasks? auditMasks)
+        bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions, GameplaySceneMasks? auditMasks,
+        bool usesDurableWorld, CommittedBotFrame? committedAtlas)
     {
         var capture = Volatile.Read(ref botCapture);
         var owner = (object?)capture ?? run;
@@ -47,6 +50,7 @@ public partial class MainWindow
             var labels = capture is { CapturesHacker: true } ? capture.Authored : run?.Authored;
             botRouteVisit = labels is null ? null : new(labels, hackerPathLinks);
             botVisualCoverage.Reset();
+            botCommittedCoverage.Reset();
             botVisualKnightMemory.Reset();
             botVisualBlockade.Reset();
             botVisualChart = null;
@@ -79,21 +83,33 @@ public partial class MainWindow
                 camera, hud, measuredFoot, input, exact?.BlueHealthOutcomes).WithSharedHackerPath(exact) : null;
         if (visual is not null)
         {
-            var currentChart = (roomId, walkedCoordinateEpoch);
-            if (botVisualChart != currentChart)
-            {
-                botVisualCoverage.Reset();
-                botVisualChart = currentChart;
-            }
-            var size = new WorldSize(frame.Width, frame.Height);
-            if (camera is { } pose && admitsPlacement) botVisualCoverage.Register(pose, size, atlasExclusions);
-            else if (camera is null) botVisualCoverage.Interrupt();
             BotPolicyAction? appliedAction = playback is not null && input is { } applied
                 ? BotPolicyAction.FromButtons(applied) : null;
             visual = botVisualKnightMemory.Resolve(visual, appliedAction, batch, walkedCoordinateEpoch);
             visual = botVisualBlockade.AddVisualEvidence(visual);
-            visual = visual with { AtlasView = botVisualCoverage.View(camera, size,
-                (int)Math.Min(roomRevision, int.MaxValue), visual.MeasuredHealth) };
+            var size = new WorldSize(frame.Width, frame.Height);
+            BotAtlasView? atlasView = null;
+            if (usesDurableWorld)
+            {
+                if (committedAtlas is { } placement)
+                {
+                    botCommittedCoverage.Update(placement.Graph);
+                    atlasView = botCommittedCoverage.View(placement.CameraCenter, size, placement.Room, visual.MeasuredHealth);
+                }
+            }
+            else
+            {
+                var currentChart = (roomId, walkedCoordinateEpoch);
+                if (botVisualChart != currentChart)
+                {
+                    botVisualCoverage.Reset();
+                    botVisualChart = currentChart;
+                }
+                if (camera is { } pose && admitsPlacement) botVisualCoverage.Register(pose, size, atlasExclusions);
+                else if (camera is null) botVisualCoverage.Interrupt();
+                atlasView = botVisualCoverage.View(camera, size, (int)Math.Min(roomRevision, int.MaxValue), visual.MeasuredHealth);
+            }
+            visual = visual with { AtlasView = atlasView };
         }
         if (capture is not null) capture.TryRecord(frame, visual!, exact);
         if (run is not null && playback is not null)

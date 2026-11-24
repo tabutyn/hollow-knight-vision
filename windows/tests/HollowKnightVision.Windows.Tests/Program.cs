@@ -70,6 +70,8 @@ var tests = new List<(string Name, Action Run)>
     ("atlas score counts blue health once and repeated attack decisions", BotAtlasRunTests.TestOutcomesAndHeldAttack),
     ("older atlas scores load without blue health and held attack counts", BotAtlasRunTests.TestLegacyAtlasScore),
     ("Hacker atlas coverage scores committed opaque cells only once after restore", BotAtlasRunTests.TestHackerCommittedCoverage),
+    ("committed Game Play atlas reprojects corrections without awarding cells again", BotCommittedAtlasCoverageTests.TestRevisitAndCorrectionKeepCoverageWithoutAwardingCells),
+    ("unplaced Game Play atlas recovery and masked pixels do not earn credit", BotCommittedAtlasCoverageTests.TestUnplacedRecoveryAndCompositionMasksDoNotEarn),
     ("recorded Atlas path recovery is causal", BotRecordedAtlasPathTests.TestRecoveryIsCausalAndUsesRecordedTerrain),
     ("recorded routes preserve existing paths and stop scoring across gaps", BotRecordedAtlasPathTests.TestMissingPoseBreaksProgressAndCurrentPathsArePreserved),
     ("recovered routes preserve credited distance across camera gaps", BotRecordedAtlasPathTests.TestReacquisitionDoesNotEarnAlreadyMeasuredDistance),

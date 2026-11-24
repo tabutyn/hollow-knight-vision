@@ -3327,12 +3327,19 @@ public partial class MainWindow : Window
             : ObserveBotStartup(frame, captureGeneration, captureTimestamp, botGameplay, receiverTelemetry, recognition.Menu, hudStencil);
         if (botGameplay)
         {
+            CommittedBotFrame? botAtlas = null;
+            if (liveWorldResult is { CommittedGraph: { } graph, CommittedRoomId: { } committedRoom } placement)
+            {
+                AtlasPoint? center = !placement.PlacementPending && placement.WalkedCoordinateEpoch == walkedCoordinateEpoch
+                    && visualObservation.GroundVerified ? new(visualTelemetry.CameraX, visualTelemetry.CameraY) : null;
+                botAtlas = new(graph, committedRoom, center);
+            }
             CaptureBotObservations(frame, captureGeneration, recognition.Generation, captureTimestamp,
                 WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0),
                 renderedGameFrame, receiverTelemetry, recognition.Objects.MeasuredBatch, ground, terrain,
                 groundAnalysis is not null, visualObservation.GroundVerified ? groundDisplayCamera : null, hudStencil,
                 terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch, groundHypotheses,
-                gameplayAdmitted && liveWorldResult?.PlacementPending != true, atlasCompositionExclusions, masks);
+                gameplayAdmitted, atlasCompositionExclusions, masks, usesDurableWorld, botAtlas);
         }
         else
         {
