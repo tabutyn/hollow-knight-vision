@@ -24,8 +24,9 @@ internal sealed class BotGymAtlasCoverage
     internal bool PlacementPending => awaitingPlacement;
     internal LiveWorldSnapshot Snapshot => world.Snapshot;
 
-    internal void Interrupt()
+    internal void Interrupt(bool requireMatch = false)
     {
+        requiresMatch |= requireMatch && HasPlacedRoom;
         if (!open) return;
         BeginVisit();
         awaitingPlacement = HasPlacedRoom;
@@ -45,7 +46,7 @@ internal sealed class BotGymAtlasCoverage
 
     internal void Observe(BgraFrame frame, AtlasPoint? pose, double time, IReadOnlyList<PixelRect> omissions,
         VisualRoomCompositionBounds bounds, GroundHypothesisTrackingResult tracking, bool admitsPlacement,
-        bool continuesMeasuredScenery = false)
+        bool continuesMeasuredScenery = false, bool retainBasis = false)
     {
         var correction = tracking.GlobalCorrection;
         if (correction is { } shift && shift.X * shift.X + shift.Y * shift.Y > 9)
@@ -53,7 +54,7 @@ internal sealed class BotGymAtlasCoverage
             Interrupt();
             requiresMatch = HasPlacedRoom;
         }
-        else if (pose is null)
+        else if (pose is null && !retainBasis)
             Interrupt();
         if (room is not { } roomId || pose is not { } local || !admitsPlacement
             || !(GroundMotionEvidence.IsMeasured(tracking) || continuesMeasuredScenery && CanContinueMeasuredScenery)
