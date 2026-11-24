@@ -25,7 +25,7 @@ internal static class Program
     private static void Main(string[] args)
     {
         // Tests use offscreen controls or an unshown Atlas window with temporary data.
-        // No test here starts Hollow Knight or connects a receiver.
+        // Receiver tests use their own loopback listeners. No test starts Hollow Knight.
         _ = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
         if (args.Contains("--input-only"))
@@ -51,6 +51,7 @@ internal static class Program
             return;
         }
         InputPathReplayIntegrationTests.Run();
+        BotDesktopEvaluationTests.Run();
         MenuParticleTests.Run();
         TestRejectedMenuDoesNotDrawStencils();
         ControlledStepCaptureTests.Run();

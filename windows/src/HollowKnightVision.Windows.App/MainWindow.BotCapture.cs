@@ -23,9 +23,7 @@ public partial class MainWindow
     private readonly BotVisualKnightMemory botVisualKnightMemory = new();
     private readonly BotBlockadeVisit botVisualBlockade = new();
     private (int Room, long Coordinates)? botVisualChart;
-    private string BotRoot => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "HollowKnightVision", "bot-v1");
+    private string BotRoot { get; }
     private string BotCaptureRoot => Path.Combine(BotRoot, "demonstrations");
     private static string InputPathRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "HollowKnightVision", "paths");

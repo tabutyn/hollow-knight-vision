@@ -82,6 +82,11 @@ public partial class MainWindow
             SetStatus("Bot playback requires an active modded game capture.");
             return;
         }
+        await StartBotPlaybackAsync();
+    }
+
+    internal async Task StartBotPlaybackAsync()
+    {
         if (botCapture is not null || changingBotCapture || forwardedKeys.Count != 0
             || gameControls.BeginBotControl() is not { } owner)
         {
@@ -94,7 +99,7 @@ public partial class MainWindow
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 "AppData", "LocalLow", "Team Cherry", "Hollow Knight"), BotDemoArchiveRoot);
         var run = new BotRun(owner, domain, Interlocked.Read(ref recentCaptureGeneration), BotCaptureClock(),
-            groundTruthLabels.Document, archive);
+            groundTruthLabels.Document.Clone(), archive);
         Volatile.Write(ref botPlayback, run);
         SetStatus(run.StartedInGameplay ? "Loading the latest verified bot checkpoint."
             : "Bot Demo active. Press B again to stop.");
