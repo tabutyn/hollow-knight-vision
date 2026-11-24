@@ -170,6 +170,13 @@ public static class HollowKnightWindowLocator
         return SourceWindowIdentity.IsHollowKnightProcess(processName);
     }
 
+    public static bool OwnsForegroundWindow(int processId)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        return GetWindowThreadProcessId(GetForegroundWindow(), out var foregroundProcessId) != 0
+            && foregroundProcessId == processId;
+    }
+
     public static bool TryBringToForeground(HollowKnightWindow window)
     {
         if (!OperatingSystem.IsWindows()) return false;

@@ -36,7 +36,7 @@ internal static class AtlasWindowIntegrationTests
             temporary.Delete(recursive: true);
         }
         Console.WriteLine("PASS Atlas window saves, restores and deletes scoped snapshots and switches both playthroughs");
-        Console.WriteLine("PASS Windows Reset Room protects active capture and clears both atlases only after confirmation");
+        Console.WriteLine("PASS Windows Reset Room handles local and game-focused R, protects capture, and clears both atlases only after confirmation");
         Console.WriteLine("PASS Hacker Atlas draws restored rooms at the measured passage elevation");
         Console.WriteLine("PASS Gameplay Atlas draws measured doorways independently of optional outlines and hides them outside gameplay");
         Console.WriteLine("PASS Gameplay window applies only ordered Atlas placements and keeps menu images in capture coordinates");
@@ -596,6 +596,11 @@ internal static class AtlasWindowIntegrationTests
         var receiver = ServeResetReceiverAsync();
         var window = new MainWindow(GameRuntimeMode.Modded, gamePath: null, root: root, documents: root,
             createReceiver: () => new ReceiverClient(port: port));
+        var gameFocused = false;
+        Task? focusedReset = null;
+        using var focusedShortcut = new WindowsFocusedRoomReset(window.Dispatcher,
+            () => gameFocused && (bool)Invoke(window, "CanResetRoomFromShortcut")!,
+            () => focusedReset = InvokeTask(window, "ResetRoomAsync"));
         try
         {
             Wait(InvokeTask(window, "InitializeAtlasesAsync"));
@@ -639,8 +644,25 @@ internal static class AtlasWindowIntegrationTests
                 LabelRevision = GetField<LabelCaptureSession>(window, "labelCapture").Revision
             };
 
-            Check(PressReset(), "The room-reset shortcut did not re-enable after an unconfirmed reply.");
-            var confirmedReset = GetField<Task>(window, "atlasOperationCompletion");
+            focusedShortcut.ObserveR(down: true, modified: false);
+            gameFocused = true;
+            focusedShortcut.ObserveR(down: true, modified: false);
+            Program.Pump();
+            Check(focusedReset is null, "A key held when the game gains focus must not reset the room.");
+            focusedShortcut.ObserveR(down: false, modified: false);
+            focusedShortcut.ObserveR(down: true, modified: true);
+            Program.Pump();
+            Check(focusedReset is null, "A modified game-focused R must leave the room alone.");
+            focusedShortcut.ObserveR(down: false, modified: false);
+            focusedShortcut.ObserveR(down: true, modified: false);
+            gameFocused = false;
+            Program.Pump();
+            Check(focusedReset is null, "A queued reset must be discarded if the game loses focus.");
+            focusedShortcut.ObserveR(down: false, modified: false);
+            gameFocused = true;
+            focusedShortcut.ObserveR(down: true, modified: false);
+            Program.Pump();
+            var confirmedReset = focusedReset ?? throw new InvalidOperationException("Game-focused R did not start a reset.");
             var second = ReadResetCommand();
             Reply(second with { SessionId = Guid.NewGuid() }, scene: null);
             Program.Pump();
@@ -652,6 +674,10 @@ internal static class AtlasWindowIntegrationTests
                 && SaveProfileAtlas.Read(activeWorld) == profile
                 && hacker.LoadState(saved).Rooms.Single().Id == room.Rooms.Single().Id,
                 "A confirmed reset must clear the active atlases and keep the playthrough and saved snapshot.");
+            focusedShortcut.ObserveR(down: true, modified: false);
+            Program.Pump();
+            Check(ReferenceEquals(focusedReset, confirmedReset) && !commands.Reader.TryRead(out _),
+                "Holding R through completion must not start another room reset.");
 
             window.ApplyVisionAnalysis(pendingAnalysis);
             _ = Invoke(window, "ApplyHackerPipelinePublication", pendingPreview);
