@@ -242,9 +242,13 @@ internal static class BotDesktopCaptureIntegrationTests
             // This capture belongs to the solver, but falls inside the clip's sampling interval.
             var betweenSamples = before + .03;
             Check(!capture.WantsFrame(Generation, betweenSamples), "The correction must arrive between clip samples.");
+            WaitUntilCaptureTime(betweenSamples);
             _ = Step(13, .50, InputButtons.Right, 3, shift, correction, betweenSamples);
-            Thread.Sleep(115);
-            _ = Step(14, .50, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty);
+            // Fix the measured gap across the change of island. CI scheduling
+            // and graph construction can take longer than the intended sample spacing.
+            var afterCorrection = before + .125;
+            WaitUntilCaptureTime(afterCorrection);
+            _ = Step(14, .50, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty, afterCorrection);
             Thread.Sleep(115);
             _ = Step(15, .56, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty);
             Check(Field("gameplayWallContacts").GetValue(window) is null,
@@ -406,6 +410,12 @@ internal static class BotDesktopCaptureIntegrationTests
     }
 
     private static double Clock() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
+
+    private static void WaitUntilCaptureTime(double timestamp)
+    {
+        var remaining = timestamp - Clock();
+        if (remaining > 0) Thread.Sleep(TimeSpan.FromSeconds(remaining) + TimeSpan.FromMilliseconds(1));
+    }
 
     private static FieldInfo Field(string name) => typeof(MainWindow).GetField(name, InstanceMembers)
         ?? throw new MissingFieldException(typeof(MainWindow).Name, name);

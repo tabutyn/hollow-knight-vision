@@ -37,6 +37,7 @@ internal static class AtlasWindowIntegrationTests
         Console.WriteLine("PASS Gameplay window applies only ordered Atlas placements and keeps menu images in capture coordinates");
         Console.WriteLine("PASS Game Play toggles ground lines and tracking patches in the live view and Atlas");
         Console.WriteLine("PASS Game Play ground diagnostics are opt-in and use the analyzed frame's exact pixels");
+        Console.WriteLine("PASS Hacker displays fresh object detections through the measured camera and drops cross-room results");
         Console.WriteLine("PASS Game Play and Hacker draw only scoped bot wall contacts while Atlas Paths is enabled");
     }
 
@@ -219,6 +220,7 @@ internal static class AtlasWindowIntegrationTests
             paths.IsChecked = false;
             _ = Invoke(window, "RefreshAtlasPathVisibility");
             Check(hackerWalls.Visibility == Visibility.Collapsed, "The Atlas Paths toggle must also hide Hacker wall contacts.");
+            VerifyHackerObjectOverlay(window, sample, generation, GetField<long>(menuRecognizer, "generation"));
         }
         finally
         {
@@ -228,6 +230,81 @@ internal static class AtlasWindowIntegrationTests
             SetField(window, "isClosing", true);
             Wait(InvokeTask(window, "PrepareShutdownAsync"));
         }
+    }
+
+    private static void VerifyHackerObjectOverlay(MainWindow window, ReceiverGroundTruthSample sample,
+        long captureGeneration, long menuGeneration)
+    {
+        var workGeneration = GetField<long>(window, "hackerWorkGeneration");
+        var labelRevision = GetField<LabelCaptureSession>(window, "labelCapture").Revision;
+        var check = Control<CheckBox>(window, "ObjectDetectionCheck");
+        var raw = Control<CheckBox>(window, "RawDetectionCheck");
+        var pixels = Control<CheckBox>(window, "DetectionPixelsCheck");
+        var canvas = Control<Canvas>(window, "HackerObjectDetectionsCanvas");
+        var live = Control<Image>(window, "HackerLiveImage");
+        var publicationType = typeof(MainWindow).GetNestedType("HackerPipelinePublication", BindingFlags.NonPublic)!;
+        var bitmapFactory = typeof(MainWindow).GetMethod("FrameBitmap", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var tracked = new ObjectDetection("enemies.crawlid", new(.35, .4, .15, .2), .9f);
+        var sourceCamera = sample with { CameraX = 110, CameraY = 30 };
+        var currentCamera = sample with { CameraX = 113, CameraY = 32, PixelsPerWorldUnitX = 2, PixelsPerWorldUnitY = 2 };
+
+        void Detect(long captureId, double time, ObjectDetection detection)
+        {
+            var frame = SolidFrame(captureId);
+            var result = new LiveObjectInferencePublication(frame, menuGeneration, [detection])
+            {
+                Snapshot = new([detection], [detection with { Box = detection.Box with { X = .5 } }], [], frame)
+            };
+            _ = Invoke(window, "PublishHackerObjectDetections", result, sourceCamera, time, captureGeneration, workGeneration, labelRevision);
+        }
+
+        void Present(long captureId, double time, ReceiverGroundTruthSample camera, bool gameplay = true)
+        {
+            var frame = SolidFrame(captureId);
+            var transform = GroundTruthCameraTransform.FromSample(camera, time, new(frame.Width, frame.Height))!;
+            var prepared = new HackerPreparedFrame(frame, new(30, 40, frame.Width, frame.Height), default,
+                transform, camera, default, camera.SceneName, (int)captureId, time, true, true);
+            var bitmap = bitmapFactory.Invoke(null, [frame]);
+            _ = Invoke(window, "ApplyHackerPipelinePublication", Activator.CreateInstance(publicationType,
+                [prepared, bitmap, null, captureGeneration, workGeneration, gameplay, 0])!);
+        }
+
+        check.IsChecked = true;
+        Detect(4, 4.1, tracked);
+        Detect(6, 4.25, tracked with { Box = tracked.Box with { X = .8 } });
+        Present(5, 4.2, currentCamera);
+        Program.Pump();
+        var box = canvas.Children.OfType<Rectangle>().Single();
+        Check(Math.Abs(Canvas.GetLeft(box) - 11.2) < 1e-9 && Canvas.GetLeft(canvas) == -22 && Canvas.GetTop(canvas) == -8
+            && canvas.RenderTransform is System.Windows.Media.ScaleTransform { ScaleX: 2, ScaleY: 2 },
+            "The current Hacker frame must use the eligible older result at its measured camera position.");
+        Check(canvas.Parent is Canvas clip && clip.ClipToBounds && !clip.IsHitTestVisible
+            && Canvas.GetLeft(clip) == Canvas.GetLeft(live) && Canvas.GetTop(clip) == Canvas.GetTop(live),
+            "The detection layer must track the exact live image bounds and leave terrain editing interactive.");
+
+        Present(5, 4.22, currentCamera with { CameraX = 114 });
+        Check(ReferenceEquals(box, canvas.Children.OfType<Rectangle>().Single()) && Canvas.GetLeft(canvas) == -24,
+            "A camera move should reposition the existing detections without rebuilding their boxes.");
+        raw.IsChecked = true;
+        pixels.IsChecked = true;
+        Check(Canvas.GetLeft(canvas.Children.OfType<Rectangle>().Single()) == 16
+            && canvas.Children.OfType<Image>().Any(), "Raw detections and detection pixels must be available in Hacker.");
+
+        Present(5, 4.22, currentCamera with { SceneName = "DifferentRoom" });
+        Check(canvas.Children.Count == 0, "A detection batch must not cross a room boundary.");
+        Present(5, 4.22, currentCamera with { SessionId = Guid.NewGuid() });
+        Check(canvas.Children.Count == 0, "A detection batch must not cross receiver sessions.");
+        Present(5, 4.22, currentCamera, gameplay: false);
+        Check(canvas.Children.Count == 0, "A non-gameplay Hacker frame must hide object detections.");
+        Present(7, 4.7, currentCamera);
+        Check(canvas.Children.Count == 0, "The current image must discard expired detection evidence.");
+
+        Detect(8, 4.72, tracked);
+        Present(8, 4.72, currentCamera);
+        Check(canvas.Children.OfType<Rectangle>().Count() == 1, "Fresh results must resume after a gap.");
+        check.IsChecked = false;
+        Check(canvas.Children.Count == 0 && !GetField<bool>(window, "createsObjectPixelDiagnostic"),
+            "Turning object detection off must clear Hacker overlays and stop producing diagnostic pixels.");
     }
 
     private static void VerifyGroundOverlayControls(MainWindow window, MainWindow.VisionAnalysisResult gameplay)
