@@ -19,7 +19,7 @@ public sealed record VisualReplayGroundInput(double CaptureTimestamp, ulong Capt
     int? HorizontalDrive = null, bool? RecentJump = null, InputButtons? WindowsMovementButtons = null,
     double[][][]? WindowsAtlasExcludingRects = null)
 {
-    internal static VisualReplayGroundInput FromTracking(double timestamp, ulong generation, int imageHeight,
+    public static VisualReplayGroundInput FromTracking(double timestamp, ulong generation, int imageHeight,
         GameplaySceneMasks masks, InputButtons? buttons)
     {
         // The shared archive uses CGRect coordinates. Convert once at the wire boundary.

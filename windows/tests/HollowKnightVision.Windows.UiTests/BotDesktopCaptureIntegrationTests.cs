@@ -104,7 +104,7 @@ internal static class BotDesktopCaptureIntegrationTests
                 _ = Method("CaptureBotObservations").Invoke(window, [
                     frame, Generation, Generation, captureAt, 17, 1UL, null, null, batch,
                     Array.Empty<DetectedFloorLine>(), TerrainWallDetection.Empty, true, camera, null, null, input,
-                    null, epoch, ground, false, Array.Empty<PixelRect>()
+                    null, epoch, ground, false, Array.Empty<PixelRect>(), null
                 ]);
                 return captureAt;
             }

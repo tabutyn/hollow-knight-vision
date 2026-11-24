@@ -37,6 +37,7 @@ public sealed class BotNativePolicy
     private readonly Document document;
     public int Version => document.ObservationSchemaVersion;
     public string Name => document.ModelName;
+    public string SourceCheckpointSha256 => document.SourceSha256;
     public int FeatureCount => document.FeatureNames.Length;
     public bool SupportsMaskedKnight => document.SupportsMaskedKnight == true;
 

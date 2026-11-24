@@ -17,7 +17,10 @@ public sealed record BotCaptureManifest(
     public IReadOnlyList<int> ActionSizes => BotRecordingContract.ActionSizes;
     public int HistoryLength => BotRecordingContract.HistoryLength;
     public double SampleInterval => BotRecordingContract.SampleInterval;
-    public string StopReason => "user-stop";
+    public string StopReason { get; init; } = "user-stop";
+    public bool? ExpertDemonstration { get; init; }
+    public int? TerrainAuditCount { get; init; }
+    public int? TerrainPairedFrameCount { get; init; }
 }
 
 public sealed record BotCaptureInput(double Timestamp, string Button, bool IsPressed)
@@ -33,7 +36,7 @@ public sealed record BotCaptureResult(IReadOnlyList<BotCaptureManifest> Publishe
 /// <summary>Streams a single run into separate camera domains. An eight-frame queue bounds pending image memory.</summary>
 public sealed class BotCaptureSession
 {
-    private static readonly JsonSerializerOptions Json = new()
+    internal static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -137,10 +140,7 @@ public sealed class BotCaptureSession
         {
             if (finished || replay is not null || !double.IsFinite(time) || time < StartedAt) return;
             var next = input ?? InputButtons.None;
-            var changed = next ^ held;
-            foreach (var bit in ButtonBits)
-                if ((changed & bit) != 0 && bit.ToRecordedGameButton() is { } pressed)
-                    nativeInput.Add(new(time, Name(pressed), (next & bit) != 0));
+            AppendInputEdges(nativeInput, held, next, time);
             held = next;
         }
     }
@@ -216,6 +216,7 @@ public sealed class BotCaptureSession
                 var manifest = JsonSerializer.Deserialize<BotCaptureManifest>(
                     File.ReadAllBytes(Path.Combine(folder, "manifest.json")), Json);
                 if (manifest is { Status: "completed", SchemaVersion: BotRecordingContract.SchemaVersion }
+                    && manifest.ExpertDemonstration != false
                     && string.Equals(Path.GetFileName(folder), DirectoryName(manifest.Id), StringComparison.OrdinalIgnoreCase))
                     captures.Add(manifest);
             }
@@ -274,6 +275,14 @@ public sealed class BotCaptureSession
 
     private static string Name(RecordedGameButton button) => button.ToString().ToLowerInvariant();
 
+    internal static void AppendInputEdges(List<BotCaptureInput> inputs, InputButtons prior, InputButtons current, double time)
+    {
+        var changed = current ^ prior;
+        foreach (var bit in ButtonBits)
+            if ((changed & bit) != 0 && bit.ToRecordedGameButton() is { } button)
+                inputs.Add(new(time, Name(button), (current & bit) != 0));
+    }
+
     private sealed class CaptureDateConverter : JsonConverter<DateTimeOffset>
     {
         public override DateTimeOffset Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
@@ -292,7 +301,7 @@ public sealed class BotCaptureSession
             writer.WriteStringValue(value.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture));
     }
 
-    private sealed class Clip : IDisposable
+    internal sealed class Clip : IDisposable
     {
         internal Guid Id { get; }
         internal string Directory { get; }

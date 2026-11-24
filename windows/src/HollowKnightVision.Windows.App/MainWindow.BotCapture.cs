@@ -37,7 +37,7 @@ public partial class MainWindow
         LiveObjectDetectionBatch? batch, IReadOnlyList<DetectedFloorLine> floors, TerrainWallDetection terrain,
         bool analyzedTerrain, AtlasPoint? camera, HudStencilResult? hud, AtlasPoint? measuredFoot, InputButtons? input,
         BotRun? run, long walkedCoordinateEpoch, GroundHypothesisTrackingResult ground,
-        bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions)
+        bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions, GameplaySceneMasks? auditMasks)
     {
         var capture = Volatile.Read(ref botCapture);
         var owner = (object?)capture ?? run;
@@ -91,7 +91,15 @@ public partial class MainWindow
         }
         if (capture is not null) capture.TryRecord(frame, visual!, exact);
         if (run is not null && playback is not null)
-            DriveBotFrame(run, playback, run.Domain == BotCaptureDomain.Hacker ? exact : visual, input);
+        {
+            var row = run.Domain == BotCaptureDomain.Hacker ? exact : visual;
+            if (Volatile.Read(ref run.Loaded)?.Evaluation is { } evaluation)
+                evaluation.RecordFrame(frame, time, row, receiverTelemetry?.SceneName,
+                    visual?.DetectedTerrain?.Floors ?? BotObservationBuilder.ProjectDetectedFloors(frame, floors),
+                    exact?.AuthoredTerrain, auditMasks is null ? null : VisualReplayGroundInput.FromTracking(
+                        timestamp, (ulong)generation, frame.Height, auditMasks, input), renderedFrame);
+            DriveBotFrame(run, playback, row, input);
+        }
     }
 
     private async void PathRecording_Click(object sender, RoutedEventArgs e)

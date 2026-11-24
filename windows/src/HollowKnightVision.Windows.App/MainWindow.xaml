@@ -408,7 +408,10 @@
                         Visibility="Collapsed" Click="BotPlayback_Click"
                         ToolTip="Start or stop the bot. In menus, archive slot 4 and start a fresh save. In Gameplay, play the current save.">
                     <Button.ContextMenu>
-                        <ContextMenu><MenuItem Header="Show save archives" Click="BotDemoArchives_Click"/></ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Show bot evaluations" Click="BotEvaluations_Click"/>
+                            <MenuItem Header="Show save archives" Click="BotDemoArchives_Click"/>
+                        </ContextMenu>
                     </Button.ContextMenu>
                 </Button>
                 <Button x:Name="PathRecordingButton" Content="K" ToolTip="Start or stop a bot capture" Click="PathRecording_Click"/>

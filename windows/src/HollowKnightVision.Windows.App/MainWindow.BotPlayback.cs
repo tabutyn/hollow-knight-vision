@@ -8,7 +8,11 @@ namespace HollowKnightVision.Windows.App;
 
 public partial class MainWindow
 {
-    private sealed record LoadedBot(BotPolicyPlayback? Policy, string? ModelName, string? Issue);
+    private sealed record LoadedBot(BotPolicyPlayback? Policy, string? ModelName, string? Issue)
+    {
+        public string? ModelHash { get; init; }
+        public BotEvaluationRecorder? Evaluation { get; init; }
+    }
 
     private sealed class BotRun(Guid owner, BotCaptureDomain domain, long generation, double startedAt,
         GroundTruthLineDocument authored, BotDemoSaveArchive? archive)
@@ -33,8 +37,23 @@ public partial class MainWindow
     private BotRun? botPlayback;
     private string? lastBotDemoArchive;
     private string BotDemoArchiveRoot => Path.Combine(BotRoot, "save-archives");
+    private string BotEvaluationRoot => Path.Combine(BotRoot, "evaluations");
+    private Task botEvaluationWrites = Task.CompletedTask;
 
     private async void BotPlayback_Click(object sender, RoutedEventArgs e) => await ToggleBotPlaybackAsync();
+
+    private void BotEvaluations_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var directory = Directory.CreateDirectory(BotEvaluationRoot).FullName;
+            Process.Start(new ProcessStartInfo(directory) { UseShellExecute = true });
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            ShowError(error);
+        }
+    }
 
     private void BotDemoArchives_Click(object sender, RoutedEventArgs e)
     {
@@ -54,7 +73,7 @@ public partial class MainWindow
     {
         if (Volatile.Read(ref botPlayback) is not null)
         {
-            StopBotPlayback("Bot stopped.");
+            StopBotPlayback("Bot stopped.", reason: "user-stop");
             return;
         }
         if (gameMode != GameRuntimeMode.Modded || visionCancellation is null || !IsActive
@@ -87,24 +106,57 @@ public partial class MainWindow
             var selected = await Task.Run(() => new BotModelStore(root, domain).LoadPlayback());
             var name = domain == BotCaptureDomain.Hacker ? "Hacker" : "Game Play";
             loaded = selected is null ? new(null, null, $"Train or select a {name} checkpoint before bot gameplay.")
-                : new(new BotPolicyPlayback(selected.Policy, domain), selected.Policy.Name, null);
+                : new(new BotPolicyPlayback(selected.Policy, domain), selected.Policy.Name, null)
+                {
+                    ModelHash = selected.Policy.SourceCheckpointSha256
+                };
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
         {
             loaded = new(null, null, $"Bot checkpoint unavailable. {error.Message}");
         }
         if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
+        if (loaded is { Policy: not null, ModelName: { } modelName, ModelHash: { } hash })
+            loaded = loaded with
+            {
+                Evaluation = new(BotEvaluationRoot, domain, modelName, hash, run.Authored, run.Generation, run.StartedAt)
+            };
         if (run.StartedInGameplay && loaded.Policy is null)
             StopBotPlayback(loaded.Issue);
         else
             Volatile.Write(ref run.Loaded, loaded);
     }
 
-    private void StopBotPlayback(string? status = null)
+    private void StopBotPlayback(string? status = null, string reason = "interrupted")
     {
         if (Interlocked.Exchange(ref botPlayback, null) is not { } run) return;
         gameControls.EndBotControl(run.Owner);
+        FinishBotEvaluation(run, reason);
         if (status is not null) SetStatus(status);
+    }
+
+    private void ObserveBotInputSent(Guid owner, InputButtons buttons, double time)
+    {
+        if (Volatile.Read(ref botPlayback) is { } run && run.Owner == owner && Volatile.Read(ref run.Playing))
+            Volatile.Read(ref run.Loaded)?.Evaluation?.RecordControls(buttons, time);
+    }
+
+    private void FinishBotEvaluation(BotRun run, string reason)
+    {
+        if (Volatile.Read(ref run.Loaded)?.Evaluation is not { } evaluation) return;
+        var write = SaveBotEvaluationAsync(evaluation, reason);
+        botEvaluationWrites = botEvaluationWrites.IsCompleted ? write : Task.WhenAll(botEvaluationWrites, write);
+    }
+
+    private async Task SaveBotEvaluationAsync(BotEvaluationRecorder evaluation, string reason)
+    {
+        try { _ = await evaluation.FinishAsync(BotCaptureClock(), reason); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
+        {
+            Trace.TraceError("Bot evaluation could not be saved: {0}", error.Message);
+            if (!isClosing && Volatile.Read(ref botPlayback) is null)
+                SetStatus($"Bot evaluation could not be saved. {error.Message}");
+        }
     }
 
     private void CheckBotOwnership()
@@ -227,7 +279,9 @@ public partial class MainWindow
         gameControls.EndBotControl(run.Owner);
         Dispatcher.InvokeAsync(() =>
         {
-            if (Interlocked.CompareExchange(ref botPlayback, null, run) == run) SetStatus(issue);
+            if (Interlocked.CompareExchange(ref botPlayback, null, run) != run) return;
+            FinishBotEvaluation(run, issue);
+            SetStatus(issue);
         });
     }
 }

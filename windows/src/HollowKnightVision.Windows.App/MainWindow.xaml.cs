@@ -911,6 +911,7 @@ public partial class MainWindow : Window
         RefreshOps();
         UpdateModeAvailability();
         RefreshSettingsText();
+        gameControls.BotInputSent += ObserveBotInputSent;
         Loaded += async (_, _) =>
         {
             atlasOperationInProgress = true;
@@ -991,6 +992,7 @@ public partial class MainWindow : Window
         {
             if (visionRunCompletion is { } captureFinished)
                 await captureFinished;
+            await botEvaluationWrites;
             if (replayUiFinished is { } replayUi) await replayUi.Task;
             await worldWorker.DrainAsync();
             if (persistentWorldInitialization is { } worldInitialization)
@@ -3325,7 +3327,7 @@ public partial class MainWindow : Window
                 renderedGameFrame, receiverTelemetry, recognition.Objects.MeasuredBatch, ground, terrain,
                 groundAnalysis is not null, visualObservation.GroundVerified ? groundDisplayCamera : null, hudStencil,
                 terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch, groundHypotheses,
-                admission.AllowsAtlasWrite, masks.AtlasExclusions);
+                admission.AllowsAtlasWrite, masks.AtlasExclusions, masks);
         }
         else
         {
