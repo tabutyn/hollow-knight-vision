@@ -8,7 +8,10 @@ public sealed record BotBlockadePose(string Space, double X, double Y, double Wi
 
     public static BotBlockadePose? Visual(BotCaptureObservation row, long coordinateEpoch = 0) =>
         row.VisualContext is { CameraX: { } x, CameraY: { } y }
-            ? new($"visual/{row.Generation}/{row.RoomId}/{coordinateEpoch}", x, y, 1) : null;
+            ? new(VisualSpace(row.Generation, row.RoomId, coordinateEpoch), x, y, 1) : null;
+
+    internal static string VisualSpace(long generation, int room, long coordinateEpoch) =>
+        FormattableString.Invariant($"visual/{generation}/{room}/{coordinateEpoch}");
 
     internal static BotBlockadePose? Hacker(GroundTruthCameraTransform camera, WorldSize size)
     {
@@ -22,14 +25,26 @@ public sealed record BotBlockadePose(string Space, double X, double Y, double Wi
 /// <summary>Registers stationary pushes using fresh Knight positions in one visit's coordinate space.</summary>
 public sealed class BotBlockadeVisit
 {
+    private readonly record struct VisualBasis(long Generation, int Room, long TrackerEpoch, int Width,
+        double StartedAt, double Latest);
+
     private readonly List<BotBlockadeMark> marks = [];
     private (AtlasPoint Position, double Time)? previous;
     private (AtlasPoint Anchor, double Time, int Side, int Samples)? push;
     private (long Generation, int Room, string Space)? chart;
     private (long? Frame, double Time)? lastDetection;
     private BotBlockadeEvidence? lastEvidence;
+    private VisualBasis? visualBasis;
+    private long visualEpoch;
 
     public void Reset()
+    {
+        visualBasis = null;
+        visualEpoch = 0;
+        ClearContacts();
+    }
+
+    private void ClearContacts()
     {
         marks.Clear();
         chart = null;
@@ -46,6 +61,62 @@ public sealed class BotBlockadeVisit
 
     public BotCaptureObservation AddEvidence(BotCaptureObservation row, BotBlockadePose? pose) =>
         row with { BlockadeVersion = 1, BlockadePose = pose, Blockade = Observe(row, pose) };
+
+    public BotCaptureObservation AddVisualEvidence(BotCaptureObservation row) =>
+        AddEvidence(row, BotBlockadePose.Visual(row, visualEpoch));
+
+    /// <summary>Accepts camera basis updates at capture cadence, including frames between policy samples.</summary>
+    public void ObserveVisualBasis(long generation, int room, long trackerEpoch, int width, double timestamp,
+        bool verifiedCamera, GroundHypothesisTrackingResult ground)
+    {
+        if (width <= 0 || !double.IsFinite(timestamp)) return;
+        if (visualBasis is not { } prior || (prior.Generation, prior.Room) != (generation, room))
+        {
+            Reset();
+            visualBasis = new(generation, room, trackerEpoch, width, timestamp, timestamp);
+            return;
+        }
+        if (timestamp <= prior.Latest) return;
+
+        var correction = ground.GlobalCorrection;
+        var changed = trackerEpoch != prior.TrackerEpoch || width != prior.Width
+            || correction is { } offset && (offset.X != 0 || offset.Y != 0);
+        if (!changed)
+        {
+            visualBasis = prior with { Latest = timestamp };
+            return;
+        }
+
+        var source = BotBlockadePose.VisualSpace(generation, room, visualEpoch);
+        var destination = BotBlockadePose.VisualSpace(generation, room, ++visualEpoch);
+        if (width == prior.Width && verifiedCamera && GroundMotionEvidence.IsMeasured(ground)
+            && ground.LocalTextureSupport > 0 && ground.LocalReferenceTimestamp is { } reference
+            && reference >= prior.StartedAt && reference <= prior.Latest && timestamp - reference <= .35
+            && ground.LocalReferencePosition is { } position && IsFinite(position)
+            && ground.LocalMatchedImageDisplacement is { } displacement && IsFinite(displacement)
+            && correction is { } translation && IsFinite(translation)
+            && chart == (generation, room, source))
+        {
+            Rebase(new(translation.X / width, translation.Y / width), destination);
+            chart = (generation, room, destination);
+        }
+        else ClearContacts();
+        visualBasis = new(generation, room, trackerEpoch, width, timestamp, timestamp);
+    }
+
+    private void Rebase(AtlasPoint translation, string destination)
+    {
+        for (var index = 0; index < marks.Count; index++) marks[index] = Moved(marks[index]);
+        if (previous is { } sighting) previous = (MovedPoint(sighting.Position), sighting.Time);
+        if (push is { } drive) push = (MovedPoint(drive.Anchor), drive.Time, drive.Side, drive.Samples);
+        if (lastEvidence is { } evidence) lastEvidence = evidence with { Mark = Moved(evidence.Mark) };
+
+        BotBlockadeMark Moved(BotBlockadeMark mark) =>
+            mark with { Space = destination, X = mark.X + translation.X, Y = mark.Y + translation.Y };
+        AtlasPoint MovedPoint(AtlasPoint point) => new(point.X + translation.X, point.Y + translation.Y);
+    }
+
+    private static bool IsFinite(CameraVector value) => double.IsFinite(value.X) && double.IsFinite(value.Y);
 
     public BotBlockadeEvidence? Observe(BotCaptureObservation row, BotBlockadePose? pose)
     {

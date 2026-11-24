@@ -3324,7 +3324,7 @@ public partial class MainWindow : Window
                 WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0),
                 renderedGameFrame, receiverTelemetry, recognition.Objects.MeasuredBatch, ground, terrain,
                 groundAnalysis is not null, visualObservation.GroundVerified ? groundDisplayCamera : null, hudStencil,
-                terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch,
+                terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch, groundHypotheses,
                 admission.AllowsAtlasWrite, masks.AtlasExclusions);
         }
         else
