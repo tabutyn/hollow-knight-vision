@@ -150,6 +150,17 @@ internal static class GroundCameraSolverTests
         Check(GroundPoseInnovationPolicy.Rejects(9, 19.45, 11.48)); Check(!GroundPoseInnovationPolicy.Rejects(12, 19.45, 11.48));
         Check(!GroundPoseInnovationPolicy.Rejects(9, 19, 11.48)); Check(!GroundPoseInnovationPolicy.Rejects(9, 19.45, 8));
     }
+    public static void TestInvalidPoseQualityIsRejectedEvenWithBroadSupport()
+    {
+        foreach (var support in new[] { 3, 4, 8, 12, 32 })
+        foreach (var error in new[] { double.PositiveInfinity, double.NegativeInfinity, double.NaN, -1d })
+        {
+            Check(GroundPoseAcceptancePolicy.Rejects(support, error), $"Invalid pose quality: {support}, {error}.");
+            Check(!GroundReferencePromotionPolicy.Permits(support, error),
+                $"Invalid reference quality: {support}, {error}.");
+        }
+    }
+
     public static void TestProvisionalPromotion()
     {
         Check(!GroundProvisionalPromotionPolicy.Permits(.199, 12, 6, 18)); Check(!GroundProvisionalPromotionPolicy.Permits(.2, 11, 6, 18));

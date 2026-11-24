@@ -2,7 +2,8 @@ namespace HollowKnightVision.Windows.Core;
 
 public static class GroundReferencePromotionPolicy
 {
-    public static bool Permits(int support, double error) => (support >= 6 && error <= 18) || (support >= 4 && error <= 10);
+    public static bool Permits(int support, double error) => double.IsFinite(error) && error >= 0
+        && ((support >= 6 && error <= 18) || (support >= 4 && error <= 10));
 }
 public static class GroundRecentReferenceCadence
 {
@@ -11,7 +12,8 @@ public static class GroundRecentReferenceCadence
 }
 public static class GroundPoseAcceptancePolicy
 {
-    public static bool Rejects(int support, double error) => (support <= 4 && error > 14) || (support < 8 && error > 18) || (support < 12 && error > 20);
+    public static bool Rejects(int support, double error) => !double.IsFinite(error) || error < 0
+        || (support <= 4 && error > 14) || (support < 8 && error > 18) || (support < 12 && error > 20);
 }
 public static class GroundPoseInnovationPolicy
 {
