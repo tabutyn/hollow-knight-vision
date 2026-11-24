@@ -24,7 +24,8 @@ private struct GameModeChooserView: View {
     let icon: NSImage
     let normalAvailable: Bool
     let moddedAvailable: Bool
-    let choose: (HollowKnightRuntimeMode?) -> Void
+    @State var thinkingEnabled: Bool
+    let choose: (HollowKnightRuntimeMode?, Bool) -> Void
 
     var body: some View {
         VStack(spacing: 24) {
@@ -34,21 +35,25 @@ private struct GameModeChooserView: View {
                 .scaledToFit()
                 .frame(width: 156, height: 156)
 
+            Toggle(visionText("enableThinking"), isOn: $thinkingEnabled)
+                .toggleStyle(.checkbox)
+                .accessibilityIdentifier("enable-thinking")
+
             HStack(spacing: 10) {
                 Button(visionText(HollowKnightRuntimeMode.normal.title)) {
-                    choose(.normal)
+                    choose(.normal, thinkingEnabled)
                 }
                 .disabled(!normalAvailable)
                 .accessibilityLabel(visionText(HollowKnightRuntimeMode.normal.title))
 
                 Button(visionText(HollowKnightRuntimeMode.modded.title)) {
-                    choose(.modded)
+                    choose(.modded, thinkingEnabled)
                 }
                 .disabled(!moddedAvailable)
                 .accessibilityLabel(visionText(HollowKnightRuntimeMode.modded.title))
 
                 Button(visionText("Quit")) {
-                    choose(nil)
+                    choose(nil, false)
                 }
                 .keyboardShortcut(.cancelAction)
                 .accessibilityLabel(visionText("Quit"))
@@ -59,7 +64,7 @@ private struct GameModeChooserView: View {
         }
         .padding(.horizontal, 30)
         .padding(.vertical, 26)
-        .frame(minWidth: 500, minHeight: 270)
+        .frame(minWidth: 500, minHeight: 320)
         .background(.regularMaterial)
     }
 }
@@ -67,6 +72,7 @@ private struct GameModeChooserView: View {
 struct HollowKnightVisionLaunchOptions: Equatable {
     static let autoNavigateFlag = "--auto-navigate-gameplay"
     static let automationControlFlag = "--enable-automation-control"
+    static let thinkingFlag = "--enable-thinking"
 
     static func retiredArgument(in arguments: [String]) -> String? {
         let retired: Set<String> = [
@@ -82,6 +88,7 @@ struct HollowKnightVisionLaunchOptions: Equatable {
 
     let autoNavigateToGameplay: Bool
     let automationControlEnabled: Bool
+    let thinkingEnabled: Bool
     let gameMode: HollowKnightRuntimeMode?
     let gameModeError: HollowKnightRuntimeModeArgumentError?
     let gamePath: String?
@@ -90,6 +97,7 @@ struct HollowKnightVisionLaunchOptions: Equatable {
     init(arguments: [String]) {
         autoNavigateToGameplay = arguments.contains(Self.autoNavigateFlag)
         automationControlEnabled = arguments.contains(Self.automationControlFlag)
+        thinkingEnabled = arguments.contains(Self.thinkingFlag)
         do {
             gameMode = try HollowKnightRuntimeModeParser.parse(arguments)
             gameModeError = nil
@@ -115,7 +123,7 @@ struct HollowKnightVisionLaunchOptions: Equatable {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let model: LiveCaptureModel
-    @MainActor private lazy var thinkingSession = ThinkingModelSession()
+    private let requestedThinking: Bool
     private let automationControlEnabled: Bool
     private var requestedGamePath: String?
     private let requestedGameMode: HollowKnightRuntimeMode?
@@ -139,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         availableInstallations = installations
         requestedGameMode = options.gameMode
+        requestedThinking = options.thinkingEnabled
         requestedGamePath = options.gameMode.flatMap {
             installations.installation(for: $0)?.path
         }
@@ -173,7 +182,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
            let icon = NSImage(contentsOf: resourceURL.appendingPathComponent(iconFilename)) {
             NSApp.applicationIconImage = icon
         }
-        thinkingSession.select(.startup)
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         if requiresGameModeChoice {
@@ -186,11 +194,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        startDashboard()
+        startDashboard(thinkingEnabled: requestedThinking)
     }
 
-    @MainActor private func startDashboard() {
-        showDashboard()
+    @MainActor private func startDashboard(thinkingEnabled: Bool) {
+        let session = ThinkingModelSession(isEnabled: thinkingEnabled)
+        if thinkingEnabled { session.select(.startup) }
+        showDashboard(thinkingSession: session)
         model.startGame(gamePath: requestedGamePath)
         if automationControlEnabled {
             automationController = GameAutomationController(model: model)
@@ -199,7 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.startCapture()
     }
 
-    @MainActor private func showDashboard() {
+    @MainActor private func showDashboard(thinkingSession: ThinkingModelSession) {
         let visibleFrame = NSScreen.main?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 1_200, height: 800)
         let initialFrame = DashboardWindowLayout.initialFrame(
@@ -236,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @MainActor private func showGameModeChooser() {
         let panel = NSPanel(
-            contentRect: CGRect(x: 0, y: 0, width: 500, height: 270),
+            contentRect: CGRect(x: 0, y: 0, width: 500, height: 320),
             styleMask: [.titled, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -250,17 +260,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             icon: NSApp.applicationIconImage,
             normalAvailable: availableInstallations.normal != nil,
             moddedAvailable: availableInstallations.modded != nil,
-            choose: { [weak self] selection in
+            thinkingEnabled: requestedThinking,
+            choose: { [weak self] selection, thinkingEnabled in
                 guard let self, let chooser = self.modeChooser else { return }
                 self.modeChooser = nil
                 chooser.close()
                 guard let selection else { NSApp.terminate(nil); return }
                 self.requestedGamePath = self.availableInstallations.installation(for: selection)?.path
                 self.model.configureGameMode(selection)
-                self.startDashboard()
+                self.startDashboard(thinkingEnabled: thinkingEnabled)
             }
         ))
-        // Let application launch finish so Ollama can warm up while this is on screen.
         modeChooser = panel
         panel.center()
         panel.makeKeyAndOrderFront(nil)

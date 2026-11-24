@@ -53,8 +53,13 @@ final class LiveDashboardViewTests: XCTestCase {
     }
 
     func testBottomBarControlsAreScopedToGameplayAndModdedGameState() {
-        XCTAssertEqual(DashboardControlVisibility.workspaces, [.gameplay, .label, .stencils, .model, .bot, .thinking, .hacker])
-        XCTAssertFalse(DashboardControlVisibility.shortcutWorkspaces.contains(.bot), "B must remain bot start/stop")
+        XCTAssertEqual(DashboardControlVisibility.workspaces(thinkingEnabled: true), [.gameplay, .label, .stencils, .model, .bot, .thinking, .hacker])
+        XCTAssertEqual(DashboardControlVisibility.workspaces(thinkingEnabled: false), [.gameplay, .label, .stencils, .model, .bot, .hacker])
+        for enabled in [false, true] {
+            let shortcuts = DashboardControlVisibility.shortcutWorkspaces(thinkingEnabled: enabled)
+            XCTAssertEqual(shortcuts.contains(.thinking), enabled)
+            XCTAssertFalse(shortcuts.contains(.bot), "B must remain bot start/stop")
+        }
         for workspace in DashboardWorkspace.allCases {
             for complete in [false, true] {
                 for context in [nil, "Main Title", "Gameplay"] as [String?] {

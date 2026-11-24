@@ -3,6 +3,18 @@ import XCTest
 @testable import HollowKnightVision
 
 final class GameStartupDetectorTests: XCTestCase {
+    func testThinkingRequiresAnExplicitLaunchChoice() {
+        for args in [[], ["--game-mode", "normal"], ["--game-mode=modded", "--auto-navigate-gameplay",
+                      "--enable-automation-control"], ["--hacker-gym-observations", "16", "labels.json"],
+                     ["--gameplay-gym-observations", "16", "frame.rgb", "false"]] {
+            XCTAssertFalse(HollowKnightVisionLaunchOptions(arguments: ["Vision"] + args).thinkingEnabled)
+        }
+        for args in [["--enable-thinking"], ["--game-mode", "normal", "--enable-thinking"],
+                     ["--enable-thinking", "--game-mode=modded"]] {
+            XCTAssertTrue(HollowKnightVisionLaunchOptions(arguments: ["Vision"] + args).thinkingEnabled)
+        }
+    }
+
     func testAutomaticNavigationRequiresExplicitLaunchFlag() {
         let ordinary = HollowKnightVisionLaunchOptions(arguments: ["HollowKnightVision"])
         XCTAssertFalse(ordinary.autoNavigateToGameplay)

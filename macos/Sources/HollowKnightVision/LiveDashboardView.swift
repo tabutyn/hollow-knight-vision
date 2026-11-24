@@ -137,9 +137,13 @@ enum DashboardControlVisibility {
                          recognizedContext: String?) -> Bool {
         workspace == .gameplay && mode == .modded && recognizedContext == "Gameplay"
     }
-    static let workspaces = DashboardWorkspace.allCases.filter { $0 != .ops }
+    static func workspaces(thinkingEnabled: Bool) -> [DashboardWorkspace] {
+        DashboardWorkspace.allCases.filter { $0 != .ops && (thinkingEnabled || $0 != .thinking) }
+    }
     // B is reserved for bot start/stop in Gameplay and Hacker.
-    static let shortcutWorkspaces = DashboardWorkspace.allCases.filter { $0 != .bot }
+    static func shortcutWorkspaces(thinkingEnabled: Bool) -> [DashboardWorkspace] {
+        DashboardWorkspace.allCases.filter { $0 != .bot && (thinkingEnabled || $0 != .thinking) }
+    }
 }
 
 enum WorkspaceExitShortcutPolicy {
@@ -750,6 +754,7 @@ struct DashboardView: View {
     var body: some View {
         visibleContent
         .task(id: thinkingSession.model) {
+            guard thinkingSession.isEnabled else { return }
             let selected = thinkingSession.model
             while !Task.isCancelled {
                 await thinkingSession.checkResidency(of: selected)
@@ -1088,7 +1093,9 @@ struct DashboardView: View {
                             .padding(.vertical, 5)
                             .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 7))
                     }
-                    GameplayNotebookReadout(reader: gameTextReader, session: thinkingSession, enabled: readGameText)
+                    if thinkingSession.isEnabled {
+                        GameplayNotebookReadout(reader: gameTextReader, session: thinkingSession, enabled: readGameText)
+                    }
                 }.padding(8).allowsHitTesting(false)
             }
         }
@@ -1135,7 +1142,7 @@ struct DashboardView: View {
     }
 
     private var showsModelLoadingOverGame: Bool {
-        (workspace == .gameplay || workspace == .hacker) && model.labelImage == nil
+        thinkingSession.isEnabled && (workspace == .gameplay || workspace == .hacker) && model.labelImage == nil
     }
 
     private var hackerCanvas: some View {
@@ -1923,7 +1930,7 @@ struct DashboardView: View {
     }
 
     private var visibleWorkspaces: [DashboardWorkspace] {
-        DashboardControlVisibility.workspaces.filter { destination in
+        DashboardControlVisibility.workspaces(thinkingEnabled: thinkingSession.isEnabled).filter { destination in
             if destination == .model || destination == .bot { return initialization.isFirstPhaseComplete }
             if destination == .hacker { return model.canUseHacker && model.liveGameStatus == "Gameplay" }
             return true
@@ -1955,7 +1962,7 @@ struct DashboardView: View {
 
     private var workspaceShortcuts: some View {
         ZStack {
-            ForEach(DashboardControlVisibility.shortcutWorkspaces) { destination in
+            ForEach(DashboardControlVisibility.shortcutWorkspaces(thinkingEnabled: thinkingSession.isEnabled)) { destination in
                 Button("Open \(destination.rawValue)") { performWorkspaceShortcut(destination) }
                     .keyboardShortcut(KeyEquivalent(destination.shortcutCharacter), modifiers: [])
             }
@@ -2012,6 +2019,7 @@ struct DashboardView: View {
 
     private func selectWorkspace(_ destination: DashboardWorkspace) {
         guard !showingSettings, destination != workspace else { return }
+        guard destination != .thinking || thinkingSession.isEnabled else { return }
         guard (destination != .model && destination != .bot) || initialization.isFirstPhaseComplete else { return }
         if destination == .hacker && (!model.canUseHacker || model.liveGameStatus != "Gameplay") {
             lockedWorkspaceMessage = model.gameMode == .normal

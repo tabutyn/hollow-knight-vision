@@ -2,7 +2,7 @@
 
 The long-term goal is to complete the Atlas, including the progression required to beat the game. The policy request always carries the fixed objective code `expandAtlas`.
 
-Press **T** to inspect the latest timed capture, the exact context, the response schema and the latest JSON proposal. Once a minute, the selected Ollama model receives a captured frame, the fixed Atlas objective and the candidates Vision has prepared for that screen. Atlas observations, OCR, earlier readings and saved quest notes help the model rank those options. In a ready Gameplay or Hacker workspace Vision immediately runs the highest eligible choice from each fresh reply. The inspector displays the result. **Automatic policies** pauses future dispatch, and **B** can stop an active session.
+Enable **Thinking** at launch (or pass `--enable-thinking`), then press **T** to inspect the latest timed capture, the exact context, the response schema and the latest JSON proposal. Once a minute, the selected Ollama model receives a captured frame, the fixed Atlas objective and the candidates Vision has prepared for that screen. Atlas observations, OCR, earlier readings and saved quest notes help the model rank those options. In a ready Gameplay or Hacker workspace Vision immediately runs the highest eligible choice from each fresh reply. The inspector displays the result. **Automatic policies** pauses future dispatch, and **B** can stop an active session.
 
 The [Gemma context design](../docs/playing-policies/README.md#how-gemma-uses-the-notebook) traces the playthrough notebook, evidence-backed quest notes and the separate JSON decision request.
 

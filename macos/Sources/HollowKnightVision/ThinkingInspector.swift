@@ -75,6 +75,7 @@ final class ThinkingInspector: ObservableObject {
     func monitor(reader: GameTextReader, session: ThinkingModelSession, interval: Duration = .seconds(60),
                  dispatch: @escaping (Output) -> String? = { _ in nil },
                  snapshot: () -> ThinkingFrame?) async {
+        guard session.isEnabled else { return }
         defer { reset(session: session, keepFrame: true) }
         while !Task.isCancelled {
             if let sample = snapshot() {

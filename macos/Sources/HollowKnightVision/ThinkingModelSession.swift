@@ -74,7 +74,10 @@ final class ThinkingModelSession: ObservableObject {
     @Published private(set) var lastLoadSeconds: TimeInterval?
     @Published var answering = false
     private var loadTask: Task<Void, Never>?
+    let isEnabled: Bool
     var isReady: Bool { state == .ready(model) }
+
+    init(isEnabled: Bool) { self.isEnabled = isEnabled }
 
     func checkResidency(of target: ThinkingModel) async {
         guard state == .ready(target), !answering else { return }
@@ -87,6 +90,7 @@ final class ThinkingModelSession: ObservableObject {
 
     func select(_ target: ThinkingModel, force: Bool = false,
                 load: ((ThinkingModel) async throws -> Void)? = nil) {
+        guard isEnabled else { return }
         if !force, state == .loading(target) || state == .ready(target) { return }
         loadTask?.cancel()
         model = target
@@ -119,7 +123,7 @@ final class ThinkingModelSession: ObservableObject {
 
     func waitUntilReady(for requested: ThinkingModel) async throws {
         try Task.checkCancellation()
-        guard model == requested else { throw CancellationError() }
+        guard isEnabled, model == requested else { throw CancellationError() }
         if state == .ready(requested) { return }
         if state != .loading(requested) { select(requested) }
         while state == .loading(requested), let load = loadTask {
@@ -132,6 +136,7 @@ final class ThinkingModelSession: ObservableObject {
     }
 
     func answer(model requested: ThinkingModel, image: CGImage, context: ThinkingContext) async throws -> String {
+        guard isEnabled else { throw CancellationError() }
         func submit() async throws -> String {
             try await ThinkingClient.answer(model: requested, image: image, context: context)
         }
