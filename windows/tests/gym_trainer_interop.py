@@ -1,5 +1,6 @@
 """Exercise the installed runtime and PPO publication without opening a game or a user save."""
 from argparse import Namespace
+import json
 import os
 from pathlib import Path
 import shutil
@@ -20,6 +21,7 @@ from export_bot_policy import export_policy, write_parity_fixture
 from gym_general_training import train_batch
 from hacker_gym import EpisodeScore, save_json
 from hkv_bot_dataset import ACTION_SIZES, HISTORY_LENGTH, LANDING_GEOMETRY_POLICY_VERSION, SCHEMAS
+from train_atlas_policy import AtlasCorridor, export_atlas
 from train_hacker_gym import publish, sha, windows_gym_identity
 
 
@@ -119,6 +121,7 @@ def verify_ppo_publication(root, vision):
     assert checkpoint.parent == models and playback_checkpoint(models, "hacker") == checkpoint
     assert sha(checkpoint / "model.zip") != manifest["modelSHA256"]
     print("PASS installed Windows Gym trained 128 PPO decisions, verified native export, and selected the new checkpoint.")
+    verify_atlas_direction(work, vision, checkpoint)
 
     projection = [0, room.observation_space.shape[0] - 1]
     projected = warm_start(learner, room, projection, seed=11)
@@ -132,6 +135,51 @@ def verify_ppo_publication(root, vision):
     write_parity_fixture(exported, fixture, observations=np.stack(observations))
     subprocess.run([vision, "--hacker-gym-observations", "verify", compact, fixture], check=True, timeout=45)
     print("PASS installed Windows runtime matched PPO logits and decisions with projected observation columns.")
+
+
+def verify_atlas_direction(work, vision, checkpoint):
+    folder = work / "Atlas direction fixture"
+    folder.mkdir()
+    for name in ("model.zip", "runtime-policy.json", "runtime-manifest.json"):
+        shutil.copyfile(checkpoint / name, folder / name)
+
+    class WorldFixture(AtlasCorridor):
+        def world_observation(self):
+            return self.row.copy()
+
+    room = WorldFixture()
+    policy = PPO("MlpPolicy", room, device="cpu", n_steps=16, batch_size=8, seed=7)
+    atlas_checkpoint = folder / "atlas-model.zip"
+    policy.save(atlas_checkpoint)
+    runtime_path = folder / "runtime-policy.json"
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime["atlasPolicy"] = export_atlas(folder, {"checkpointSHA256": sha(atlas_checkpoint)})
+    save_json(runtime_path, runtime)
+    manifest_path = folder / "runtime-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    save_json(manifest_path, manifest | {"policySHA256": sha(runtime_path)})
+
+    inputs = np.random.default_rng(42).uniform(0, 1, (128, 8)).astype(np.float32)
+    inputs[:, 7] = np.tile([-1, 0, 1, 0], 32)
+    inputs[:4, 1] = inputs[:4, 0]
+    canonical, mirrored = [], []
+    for row in inputs:
+        room.row = row
+        room.previous = row[7]
+        canonical.append(room.observation())
+        mirrored.append(room.mirrored)
+    actions, _ = policy.predict(np.stack(canonical), deterministic=True)
+    world_actions = []
+    for action, mirror in zip(actions, mirrored, strict=True):
+        room.mirrored = mirror
+        world_actions.append(room.world_action(action))
+
+    fixture = folder / "world-directions.json"
+    save_json(fixture, {"inputs": inputs.tolist(), "worldActions": world_actions})
+    result = subprocess.run([vision, "--hacker-gym-observations", "verify-atlas-direction", folder, fixture],
+                            check=True, capture_output=True, text=True, timeout=45)
+    assert f"Verified {len(inputs)} Atlas direction observations." in result.stdout
+    print(f"PASS installed Windows runtime matched {len(inputs)} Stable-Baselines3 Atlas directions.")
 
 
 if __name__ == "__main__":
