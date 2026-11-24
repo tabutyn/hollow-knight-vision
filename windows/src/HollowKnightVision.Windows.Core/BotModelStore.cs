@@ -25,17 +25,20 @@ public sealed class BotModelStore(string root, BotCaptureDomain domain)
     private sealed record Manifest(string? BotDomain, string? Name);
     private sealed record Candidate(string Directory, DateTimeOffset CreatedAt, string? Name);
 
-    public BotPlaybackModel? LoadPlayback() => LoadPlayback(honorManualChoice: true);
+    public BotPlaybackModel? LoadPlayback() => LoadPlayback(out _);
 
-    internal BotPlaybackModel? UseLatestVerified() => LoadPlayback(honorManualChoice: false);
+    internal BotPlaybackModel? LoadPlayback(out BotPlaybackModel? latest) => LoadPlayback(honorManualChoice: true, out latest);
 
-    private BotPlaybackModel? LoadPlayback(bool honorManualChoice)
+    internal BotPlaybackModel? UseLatestVerified() => LoadPlayback(honorManualChoice: false, out _);
+
+    private BotPlaybackModel? LoadPlayback(bool honorManualChoice, out BotPlaybackModel? latest)
     {
         lock (SelectionLock)
         {
             var selected = ReadSelection();
             var currentDirectory = FindDirectory(selected.Directory);
-            if (LatestVerified() is { } latest)
+            latest = LatestVerified();
+            if (latest is not null)
             {
                 var name = Path.GetFileName(latest.Directory);
                 if (honorManualChoice && SameName(name, selected.ManualChoiceThrough) && !SameName(name, selected.Directory)

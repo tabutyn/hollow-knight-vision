@@ -64,12 +64,14 @@ internal static class BotDesktopEvaluationTests
         var session = Guid.NewGuid();
         var peer = ServeAsync(server, Channel.CreateUnbounded<ReceiverInputSnapshot>().Writer, token);
         var botRoot = Path.Combine(root, "bot-v1");
+        var captures = Path.Combine(botRoot, "demonstrations");
         var created = new DateTimeOffset(2026, 11, 22, 12, 0, 0, TimeSpan.Zero);
         var store = new BotModelStore(botRoot, BotCaptureDomain.Hacker);
+        var initial = PublishPair(created);
         WriteCheckpoint(botRoot, "hacker", "First Hacker", "bot-first", created);
         _ = store.LoadPlayback();
-        WriteCheckpoint(botRoot, "hacker", "Second Hacker", "bot-second", created.AddMinutes(1));
-        WriteCheckpoint(botRoot, "gameplay", "Game Play actor", "bot-gameplay", created);
+        WriteCheckpoint(botRoot, "hacker", "Second Hacker", "bot-second", created.AddMinutes(1), [initial.Hacker]);
+        WriteCheckpoint(botRoot, "gameplay", "Game Play actor", "bot-gameplay", created, [initial.Gameplay]);
         var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
         try
         {
@@ -77,6 +79,7 @@ internal static class BotDesktopEvaluationTests
             var versions = (ComboBox)window.FindName("BotPlaybackVersion");
             var use = (Button)window.FindName("BotUseVersion");
             var restore = (Button)window.FindName("BotRestorePrevious");
+            var pending = (TextBlock)window.FindName("BotNewCaptureSummary");
             Refresh();
             await WaitFor(() => versions.SelectedValue as string == "bot-gameplay");
             Check(versions.Items.Count == 1 && !restore.IsEnabled, "Game Play must show only its own verified checkpoint.");
@@ -97,8 +100,9 @@ internal static class BotDesktopEvaluationTests
             await WaitFor(() => versions.SelectedValue as string == "bot-first" && restore.IsEnabled);
             Check(Field("botPlayback").GetValue(window) is null && store.Catalog().ActiveId == "bot-first",
                 "Rollback must release the previous actor and persist the new selection.");
+            Check(pending.Text == "0 new runs · Hacker 0 · Game Play 0", "Rollback must preserve completed clip counts.");
 
-            WriteCheckpoint(botRoot, "hacker", "Third Hacker", "bot-third", created.AddMinutes(2));
+            WriteCheckpoint(botRoot, "hacker", "Third Hacker", "bot-third", created.AddMinutes(2), [initial.Hacker]);
             Refresh();
             await WaitFor(() => versions.SelectedValue as string == "bot-third");
             versions.SelectedValue = "bot-second";
@@ -109,7 +113,22 @@ internal static class BotDesktopEvaluationTests
                 && new BotModelStore(botRoot, BotCaptureDomain.Gameplay).Catalog().ActiveId == "bot-gameplay",
                 "Selection should persist until a new export and must stay scoped to Hacker.");
 
-            void Refresh() => Method("RefreshBotTrainingPlans").Invoke(window, [Array.Empty<BotCaptureManifest>()]);
+            var fresh = PublishPair(created.AddMinutes(3));
+            var clips = (DataGrid)window.FindName("BotCaptureClips");
+            clips.SelectedIndex = -1;
+            using (File.Open(Events(fresh.Hacker), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            using (File.Open(Events(fresh.Gameplay), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                Refresh();
+                Check(pending.Text == "1 new run · Hacker 1 · Game Play 1",
+                    "The paired capture should appear from its manifests while the preview events are unavailable.");
+            }
+            WriteCheckpoint(botRoot, "hacker", "Trained Hacker", "bot-trained", created.AddMinutes(4), [initial.Hacker, fresh.Hacker]);
+            Refresh();
+            await WaitFor(() => pending.Text == "1 new run · Hacker 0 · Game Play 1");
+            Check(versions.SelectedValue as string == "bot-trained", "New training must reduce the correct count while activating its policy.");
+
+            void Refresh() => Method("RefreshBotLibrary").Invoke(window, null);
             async Task WaitFor(Func<bool> condition)
             {
                 while (!condition()) await Task.Delay(25, token);
@@ -122,6 +141,27 @@ internal static class BotDesktopEvaluationTests
             await peer.WaitAsync(TimeSpan.FromSeconds(5));
         }
         Console.WriteLine("PASS Desktop bot version controls restore and select each domain and follow new completed checkpoints");
+        Console.WriteLine("PASS Desktop new capture counts publish before preview and follow training independently");
+
+        (Guid Hacker, Guid Gameplay) PublishPair(DateTimeOffset time)
+        {
+            var hacker = Guid.NewGuid();
+            var gameplay = Guid.NewGuid();
+            Save(hacker, gameplay, "hacker");
+            Save(gameplay, hacker, "gameplay");
+            return (hacker, gameplay);
+
+            void Save(Guid id, Guid partner, string domain)
+            {
+                var folder = Directory.CreateDirectory(Path.Combine(captures, BotCaptureSession.DirectoryName(id))).FullName;
+                var clip = new BotCaptureManifest(BotRecordingContract.SchemaVersion, id, time, 1, "modded", "fixture",
+                    "receiver-sent", "completed", .4, 4, 4, 2, 0, domain, hacker, partner);
+                File.WriteAllText(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(clip, Json));
+                File.WriteAllText(Events(id), "{\"type\":\"input\"}\n");
+            }
+        }
+
+        string Events(Guid id) => Path.Combine(captures, BotCaptureSession.DirectoryName(id), "events.jsonl");
     }
 
     private static async Task VerifyOpeningWithoutCheckpointAsync(string root, CancellationToken token)
@@ -379,7 +419,7 @@ internal static class BotDesktopEvaluationTests
     };
 
     private static string WriteCheckpoint(string root, string domain, string modelName,
-        string version = "verified-fixture", DateTimeOffset? createdAt = null)
+        string version = "verified-fixture", DateTimeOffset? createdAt = null, Guid[]? included = null)
     {
         var directory = Directory.CreateDirectory(Path.Combine(root, "models", domain, version)).FullName;
         var checkpoint = Path.Combine(directory, "model.zip");
@@ -401,7 +441,7 @@ internal static class BotDesktopEvaluationTests
         File.WriteAllBytes(Path.Combine(directory, "runtime-policy.json"), policy);
         Write("runtime-manifest.json", new { schemaVersion = 1, policyFile = "runtime-policy.json",
             policySHA256 = Hash(policy), sourceCheckpointSHA256 });
-        Write("manifest.json", new { botDomain = domain, name = modelName });
+        Write("manifest.json", new { botDomain = domain, name = modelName, trainingSessions = included });
         Write("training-result.json", new { nativeParity = true, botDomain = domain, modelDirectory = version,
             createdAt = createdAt ?? DateTimeOffset.UtcNow });
         return sourceCheckpointSHA256;

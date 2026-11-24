@@ -25,12 +25,14 @@ public partial class MainWindow
     private async void RefreshBotTrainingPlans(IReadOnlyList<BotCaptureManifest> library)
     {
         botTrainingLibrary = library;
+        PresentNewBotCaptures();
         var generation = ++botTrainingPlanGeneration;
         var root = BotRoot;
         var plans = await Task.Run(() => (gameplay: Plan(BotCaptureDomain.Gameplay), hacker: Plan(BotCaptureDomain.Hacker)));
         if (generation != botTrainingPlanGeneration || isClosing) return;
         (gameplayTrainingPlan, gameplayCheckpoints) = plans.gameplay;
         (hackerTrainingPlan, hackerCheckpoints) = plans.hacker;
+        PresentNewBotCaptures();
         BotModelSummary.Text = $"Hacker · {hackerTrainingPlan.PolicyName ?? "No verified checkpoint"}    "
             + $"Game Play · {gameplayTrainingPlan.PolicyName ?? "No verified checkpoint"}";
         PresentBotCheckpoints();
@@ -48,6 +50,20 @@ public partial class MainWindow
                 return (new(domain == BotCaptureDomain.Hacker ? "hacker" : "gameplay", "Checkpoint unavailable", [], false, error.Message), null);
             }
         }
+    }
+
+    private void PresentNewBotCaptures()
+    {
+        if (hackerTrainingPlan?.LatestIncludedClips is not { } hacker
+            || gameplayTrainingPlan?.LatestIncludedClips is not { } gameplay)
+        {
+            BotNewCaptureSummary.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var pending = BotTrainingJob.CountNewCaptures(botTrainingLibrary, hacker, gameplay);
+        var runs = pending.Runs == 1 ? "1 new run" : $"{pending.Runs} new runs";
+        BotNewCaptureSummary.Text = $"{runs} · Hacker {pending.HackerClips} · Game Play {pending.GameplayClips}";
+        BotNewCaptureSummary.Visibility = Visibility.Visible;
     }
 
     private void BotTrainingDomain_Changed(object sender, SelectionChangedEventArgs e)

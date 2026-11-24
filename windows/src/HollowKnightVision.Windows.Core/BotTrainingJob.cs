@@ -7,7 +7,10 @@ public sealed record BotTrainingPlan(string Domain, string? PolicyName, IReadOnl
     bool UpgradeObservations, string? Unavailable)
 {
     public bool CanTrain => Unavailable is null;
+    public IReadOnlySet<Guid>? LatestIncludedClips { get; init; }
 }
+
+public readonly record struct BotNewCaptureCounts(int Runs, int HackerClips, int GameplayClips);
 
 public static class BotTrainingJob
 {
@@ -21,21 +24,34 @@ public static class BotTrainingJob
         Guid[]? AncestorSessions, SourceReport? SourceReport, ValidationStrategy? ValidationStrategy, double? HeldAttackCost);
     private sealed record Receipt(Guid Id, string BotDomain, string ModelDirectory, bool NativeParity, DateTimeOffset CreatedAt);
 
+    public static BotNewCaptureCounts CountNewCaptures(IReadOnlyList<BotCaptureManifest> library,
+        IReadOnlySet<Guid> hackerIncluded, IReadOnlySet<Guid> gameplayIncluded)
+    {
+        var pending = library.Where(IsTrainingCapture).Where(clip => clip.BotDomain switch
+        {
+            "hacker" => !hackerIncluded.Contains(clip.Id),
+            "gameplay" => !gameplayIncluded.Contains(clip.Id),
+            _ => false
+        }).DistinctBy(clip => clip.Id).ToArray();
+        return new(pending.Select(clip => clip.ReplayId ?? clip.Id).Distinct().Count(),
+            pending.Count(clip => clip.BotDomain == "hacker"), pending.Count(clip => clip.BotDomain == "gameplay"));
+    }
+
     public static BotTrainingPlan Plan(string root, BotCaptureDomain domain, IReadOnlyList<BotCaptureManifest> library)
     {
         var name = domain == BotCaptureDomain.Hacker ? "hacker" : "gameplay";
-        var clips = library.Where(clip => clip.BotDomain == name && clip.Status == "completed" && clip.ObservationCount > 0)
+        var clips = library.Where(clip => clip.BotDomain == name && IsTrainingCapture(clip))
             .Select(clip => clip.Id).Distinct().ToArray();
-        var active = new BotModelStore(root, domain).LoadPlayback();
+        var active = new BotModelStore(root, domain).LoadPlayback(out var latest);
+        latest ??= active; // The verified legacy base may be the only trained version.
+        var latestEvidence = latest is null ? null : TryReadEvidence(latest.Directory);
         var upgrade = active is not null && active.Policy.Version < BotPolicyContract.CurrentVersion;
         var unavailable = clips.Length < 2 ? "Record two separate clips for this bot." : null;
         if (unavailable is null && active is not null && !upgrade)
         {
-            var parent = Read<ParentEvidence>(Path.Combine(active.Directory, "manifest.json"));
-            var known = (parent.TrainingSessions ?? []).Concat(parent.ValidationSessions ?? [])
-                .Concat(parent.AncestorSessions ?? []).Concat(parent.SourceReport?.Sessions?.Select(row => row.Id) ?? [])
-                .ToHashSet();
-            if (parent.ValidationStrategy?.SourceSession is { } source) known.Add(source);
+            var parent = (active.Directory == latest?.Directory ? latestEvidence : null)
+                ?? Read<ParentEvidence>(Path.Combine(active.Directory, "manifest.json"));
+            var known = IncludedClips(parent);
             var fresh = clips.Count(id => !known.Contains(id));
             var held = (parent.ValidationSessions ?? []).ToHashSet();
             held.ExceptWith(parent.TrainingSessions ?? []);
@@ -43,7 +59,29 @@ public static class BotTrainingJob
                 && clips.Any(id => !held.Contains(id));
             if (fresh < 2 && !canRescore) unavailable = "Record two new clips for a held-out comparison.";
         }
-        return new(name, active?.Policy.Name, clips, upgrade, unavailable);
+        return new(name, active?.Policy.Name, clips, upgrade, unavailable)
+        {
+            LatestIncludedClips = latest is null || latestEvidence is not null ? IncludedClips(latestEvidence) : null
+        };
+    }
+
+    private static bool IsTrainingCapture(BotCaptureManifest clip) =>
+        clip.Status == "completed" && clip.ExpertDemonstration != false && clip.ObservationCount > 0;
+
+    private static HashSet<Guid> IncludedClips(ParentEvidence? evidence)
+    {
+        var clips = (evidence?.TrainingSessions ?? []).Concat(evidence?.ValidationSessions ?? [])
+            .Concat(evidence?.AncestorSessions ?? []).Concat(evidence?.SourceReport?.Sessions?.Select(row => row.Id) ?? [])
+            .ToHashSet();
+        if (evidence?.ValidationStrategy?.SourceSession is { } source) clips.Add(source);
+        return clips;
+    }
+
+    private static ParentEvidence? TryReadEvidence(string directory)
+    {
+        try { return Read<ParentEvidence>(Path.Combine(directory, "manifest.json")); }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+        { return null; }
     }
 
     public static ProcessStartInfo Prepare(string root, string launcher, string host, Guid id, BotTrainingPlan plan)
