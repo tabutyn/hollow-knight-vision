@@ -98,8 +98,7 @@ internal sealed class BotGymAtlasCoverage
             : [];
         if (!awaitingPlacement && !samplesDoorway && freshWalk.Count == 0 && carriedWalks.Count == 0
             && lastPose == local && masks.SequenceEqual(lastMasks)
-            && (lineage is not { } source || lineage == world.Snapshot.TrackingIslands.LastOrDefault()?.MeasuredLineage
-                || LiveWorldWalkedGround.UnboundOwner(world.Snapshot, roomId, 1, source) is null)) return;
+            && (lineage is null || lineage == world.Snapshot.TrackingIslands.LastOrDefault()?.MeasuredLineage)) return;
 
         var recovering = awaitingPlacement;
         // The same visually confirmed room can return at its last measured
@@ -118,9 +117,13 @@ internal sealed class BotGymAtlasCoverage
                 : previous.Min(row => row.OptimizedPose.X - row.SolveWidth / 2) - size.Width * .6;
             basis = new(centerX - center.X, 0);
         }
-        var placed = new AtlasPoint(center.X + basis.X, center.Y + basis.Y);
-        var evidence = captureEvidence ?? new(time) { HasMeasuredSceneryContinuity = continuesMeasuredScenery };
         var previousSnapshot = world.Snapshot;
+        var ownerPlacement = lineage is { } measured
+            ? LiveIslandWorldProjection.Resolve(previousSnapshot, 1, roomId, epoch, measured, time) : null;
+        var captureBasis = ownerPlacement is { } ownerIsland && ownerIsland.IsPlaced == !awaitingPlacement
+            ? ownerIsland.WorldFromLocal : basis;
+        var placed = new AtlasPoint(center.X + captureBasis.X, center.Y + captureBasis.Y);
+        var evidence = captureEvidence ?? new(time) { HasMeasuredSceneryContinuity = continuesMeasuredScenery };
         var id = previousSnapshot.Observations.Count;
         world.Ingest(id, time, frame, center, size.Width,
             exclusions: masks, searchForClosure: false, localPose: center, captureGeneration: 1,
@@ -234,6 +237,15 @@ internal sealed class BotGymAtlasCoverage
             return null;
         return BotObservationBuilder.ProjectVisualDoors(doorPlacement, roomId,
             new(local.X + basis.X, local.Y + basis.Y), size.Width, size);
+    }
+
+    internal BotAtlasBlockadeProjection? BlockadeProjection(long? lineage, double captureTimestamp)
+    {
+        if (!open || room is not { } roomId || lineage is not { } measured) return null;
+        var snapshot = world.Snapshot;
+        var owner = LiveIslandWorldProjection.Resolve(snapshot, 1, roomId, epoch, measured, captureTimestamp);
+        if (owner is { } found && awaitingPlacement) owner = found with { IsPlaced = false };
+        return BotAtlasBlockadeProjection.Create(snapshot, roomId, owner);
     }
 
     private void BeginVisit()

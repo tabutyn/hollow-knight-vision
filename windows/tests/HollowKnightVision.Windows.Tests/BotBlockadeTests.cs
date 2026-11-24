@@ -192,6 +192,119 @@ internal static class BotBlockadeTests
             "A verified ground camera must own its capture's coordinates.");
     }
 
+    internal static void TestWallContactFollowsRegisteredIslandsAndLatestCorrection()
+    {
+        const int width = 640;
+        var graph = WallIslands();
+        var first = Project(graph, 0);
+        var next = Project(graph, 1);
+        var visit = new BotBlockadeVisit();
+        BotCaptureObservation? row = null;
+        for (var tick = 10; tick <= 12; tick++)
+            row = visit.AddAtlasEvidence(Row(tick), first, default(AtlasPoint), width);
+        var mark = row?.Blockade?.Mark ?? throw new InvalidOperationException("The first island must have a measured wall contact.");
+        Require(mark.Space == first.Space && mark.ViewWidth == width, "The captured mark must retain its measured island and scale.");
+
+        var nextOrigin = new AtlasPoint(150, -30);
+        var transferred = visit.AddAtlasEvidence(Row(13, drive: 0), next, nextOrigin, width);
+        Require(transferred.Blockade is { } contact && contact.Mark == mark && Math.Abs(contact.Dx - .015) < 1e-9
+            && Math.Abs(contact.Dy) < 1e-9 && transferred.BlockadePose?.Space == next.Space,
+            "The next island must see the same wall at the same policy distance.");
+
+        var corrected = graph.ReplaceOptimizedPoses(new Dictionary<int, AtlasPoint> { [0] = new(436, 220), [1] = new(420, 220) },
+            graph.MapRevision);
+        next = Project(corrected, 1);
+        var repeated = visit.AddAtlasEvidence(Row(14, .58, 0) with { DetectionFrameId = 13 }, next, nextOrigin, width);
+        Require(repeated.Blockade is { } cached && cached.Mark == mark && Math.Abs(cached.Dx - .04) < 1e-9,
+            "A repeated detection can reproject the contact, without asserting that the Knight crossed it.");
+        var moved = visit.AddAtlasEvidence(Row(14, drive: 0), next, nextOrigin, width);
+        Require(moved.Blockade is { } changed && changed.Mark == mark && Math.Abs(changed.Dx - .04) < 1e-9,
+            "A later correction must move the wall in policy coordinates while leaving the saved mark local.");
+        Require(visit.AddAtlasEvidence(Row(15, .58, 0), next, nextOrigin, width).Blockade is null
+            && visit.AddAtlasEvidence(Row(16, drive: 0), Project(corrected, 0), default(AtlasPoint), width).Blockade is null,
+            "Passing a projected wall must retire its original mark before returning to its island.");
+    }
+
+    internal static void TestWallContactWaitsForVerifiedIslandAndScope()
+    {
+        var graph = WallIslands(pendingSecond: true);
+        var first = Project(graph, 0);
+        var pending = Project(graph, 1);
+        Require(first.OffsetFrom(pending.Space) is null && pending.OffsetFrom(first.Space) is null
+            && first.OffsetFrom(first.Space + "1") is null && first.OffsetFrom("visual/8/0/0") is null
+            && first.OffsetFrom("other/7/0/0") is null && first.OffsetFrom("invalid") is null,
+            "Only verified placements with matching room and saved island identity can be related.");
+        Require(BotAtlasBlockadeProjection.Create(graph, 8, new(0, new(100, 40), true)) is null
+            && BotAtlasBlockadeProjection.Create(graph, 7, new(0, default, true)) is null
+            && BotAtlasBlockadeProjection.Create(graph, 7, null) is null,
+            "An absent, stale or wrong-room owner must not supply a wall projection.");
+
+        const int width = 640;
+        var visit = new BotBlockadeVisit();
+        for (var tick = 10; tick <= 11; tick++)
+            Require(visit.AddAtlasEvidence(Row(tick), first, default(AtlasPoint), width).Blockade is null,
+                "A stationary push needs fresh contact over time.");
+        var placed = WallIslands();
+        var other = Project(placed, 1);
+        var otherOrigin = new AtlasPoint(150, -30);
+        Require(visit.AddAtlasEvidence(Row(12), other, otherOrigin, width).Blockade?.Mark.Space == other.Space,
+            "A verified translation must carry a fresh stationary push into the new island.");
+        Require(visit.AddAtlasEvidence(Row(13, drive: 0), pending, otherOrigin, width).Blockade?.Mark.Space == pending.Space,
+            "A measured island can use its own contact while its placement is still pending.");
+        Require(visit.AddAtlasEvidence(Row(14, drive: 0), first, default(AtlasPoint), width).Blockade is null,
+            "An unplaced source cannot publish its wall into another island.");
+        Require(visit.AddAtlasEvidence(Row(15, drive: 0), Project(placed, 0), default(AtlasPoint), width).Blockade is not null,
+            "A contact retained during recovery becomes available once its island is placed.");
+        Require(visit.AddAtlasEvidence(Row(16, drive: 0), null, null, width).BlockadePose is null
+            && visit.AddAtlasEvidence(Row(17, drive: 0), other, otherOrigin, width / 2).Blockade is null
+            && visit.AddAtlasEvidence(Row(18, drive: 0) with { Generation = 2 }, other, otherOrigin, width).Blockade is null,
+            "Missing placement, incompatible image scale and a new capture visit cannot inherit old contacts.");
+    }
+
+    internal static void TestMeasuredPushSurvivesAtlasAdmissionCadence()
+    {
+        const int width = 640;
+        var assigned = Project(WallIslands(), 0);
+        foreach (var coordinateEpoch in new long[] { 4, 5 })
+        {
+            var visit = new BotBlockadeVisit();
+            var first = visit.AddAtlasEvidence(Row(10), null, default(AtlasPoint), width, measuredLineage: 1, coordinateEpoch: 4);
+            Require(first.Blockade is null && first.BlockadePose?.Space.StartsWith("visual-local/", StringComparison.Ordinal) == true,
+                "A measured frame may track a local contact before its island is committed.");
+            var registered = visit.AddAtlasEvidence(Row(12), assigned, default(AtlasPoint), width,
+                measuredLineage: 1, coordinateEpoch: coordinateEpoch);
+            Require(registered.BlockadePose?.Space == assigned.Space
+                && (coordinateEpoch == 4 ? registered.Blockade?.Mark.Space == assigned.Space : registered.Blockade is null),
+                "Only the exact measured coordinate epoch can carry an in-progress push through Atlas admission.");
+        }
+
+        var local = new BotBlockadeVisit();
+        for (var tick = 10; tick <= 12; tick++)
+            _ = local.AddAtlasEvidence(Row(tick), null, default(AtlasPoint), width, measuredLineage: 1, coordinateEpoch: 4);
+        var result = local.AddAtlasEvidence(Row(13, drive: 0), assigned, default(AtlasPoint), width, measuredLineage: 1, coordinateEpoch: 4);
+        Require(result.Blockade is { } contact && contact.Mark.Space == assigned.Space && Math.Abs(contact.Dx - .015) < 1e-9,
+            "Binding a measured local contact to its assigned island must preserve its position and policy distance.");
+    }
+
+    private static LiveWorldSnapshot WallIslands(bool pendingSecond = false)
+    {
+        var frame = new BgraFrame(32, 24, 128, new byte[32 * 24 * 4], 1, DateTimeOffset.UnixEpoch);
+        var world = new LiveWorldTracker();
+        world.Ingest(0, 1, frame, new(320, 180), 640, searchForClosure: false, localPose: new(320, 180),
+            captureGeneration: 1, roomId: 7, placedCameraPose: new(420, 220), captureEvidence: new(1) { MeasuredLineage = 1 });
+        world.Ingest(1, 2, frame, new(470, 150), 640, searchForClosure: false, localPose: new(470, 150),
+            captureGeneration: 1, roomId: 7, placedCameraPose: new(420, 220), captureEvidence: new(2) { MeasuredLineage = 2 },
+            placementPending: pendingSecond);
+        return world.Snapshot;
+    }
+
+    private static BotAtlasBlockadeProjection Project(LiveWorldSnapshot graph, int islandId)
+    {
+        var island = graph.TrackingIslands.Single(item => item.Id == islandId);
+        return BotAtlasBlockadeProjection.Create(graph, island.RoomId,
+            new(island.Id, island.WorldFromLocal, !island.RequiresPlacement))!;
+    }
+
     private static GroundHypothesisTrackingResult CameraCorrection(double x, double y) =>
         GroundHypothesisTrackingResult.Empty with
         {

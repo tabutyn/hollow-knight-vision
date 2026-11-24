@@ -18,6 +18,7 @@ public partial class MainWindow
     private readonly BotCommittedAtlasCoverage botCommittedCoverage = new();
     internal readonly record struct CommittedBotFrame(LiveWorldSnapshot Graph, int Room, AtlasPoint? CameraCenter)
     {
+        public LiveIslandPlacementProjection? MeasuredOwner { get; init; }
         internal LiveWorldPlacementProjection? DoorPlacement { get; init; }
 
         internal IReadOnlyList<BotLine>? ProjectDoors(WorldSize size)
@@ -45,7 +46,7 @@ public partial class MainWindow
         BotRun? run, long walkedCoordinateEpoch, GroundHypothesisTrackingResult ground,
         bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions, GameplaySceneMasks? auditMasks,
         bool usesDurableWorld, CommittedBotFrame? committedAtlas, IReadOnlyList<GroundHypothesisAtlasLine> walked,
-        AtlasPoint? measuredSceneryCamera)
+        AtlasPoint? measuredSceneryCamera, long? wallLineage)
     {
         var capture = Volatile.Read(ref botCapture);
         var owner = (object?)capture ?? run;
@@ -62,7 +63,7 @@ public partial class MainWindow
             botVisualBlockade.Reset();
             botVisualChart = null;
         }
-        if (capture is not null || run?.Domain == BotCaptureDomain.Gameplay)
+        if (!usesDurableWorld && (capture is not null || run?.Domain == BotCaptureDomain.Gameplay))
             botVisualBlockade.ObserveVisualBasis(generation, roomId, walkedCoordinateEpoch, frame.Width,
                 timestamp, camera.HasValue, ground, measuredSceneryCamera);
         if (capture?.WantsFrame(generation, timestamp) != true) capture = null;
@@ -99,7 +100,12 @@ public partial class MainWindow
             BotPolicyAction? appliedAction = playback is not null && input is { } applied
                 ? BotPolicyAction.FromButtons(applied) : null;
             visual = botVisualKnightMemory.Resolve(visual, appliedAction, batch, walkedCoordinateEpoch);
-            visual = botVisualBlockade.AddVisualEvidence(visual);
+            var blockedIsland = committedAtlas is { } chart
+                ? BotAtlasBlockadeProjection.Create(chart.Graph, chart.Room, chart.MeasuredOwner) : null;
+            visual = usesDurableWorld
+                ? botVisualBlockade.AddAtlasEvidence(visual, blockedIsland, camera ?? measuredSceneryCamera, frame.Width,
+                    wallLineage, walkedCoordinateEpoch)
+                : botVisualBlockade.AddVisualEvidence(visual);
             var size = new WorldSize(frame.Width, frame.Height);
             BotAtlasView? atlasView = null;
             if (usesDurableWorld)

@@ -3344,6 +3344,7 @@ public partial class MainWindow : Window
             : ObserveBotStartup(frame, captureGeneration, captureTimestamp, botGameplay, visualGameplay, receiverTelemetry, recognition.Menu, hudStencil);
         if (botGameplay)
         {
+            var wallLineage = tracked.RoomAllowsAtlasWrite && !tracked.RequiresWorldRecovery ? tracked.MeasuredLineage : null;
             CommittedBotFrame? botAtlas = null;
             if (liveWorldResult is { CommittedGraph: { } graph, CommittedRoomId: { } committedRoom } placement)
             {
@@ -3351,6 +3352,7 @@ public partial class MainWindow : Window
                     ? new(visualTelemetry.CameraX, visualTelemetry.CameraY) : null;
                 botAtlas = new(graph, committedRoom, center)
                 {
+                    MeasuredOwner = wallLineage.HasValue ? worldPlacement : null,
                     DoorPlacement = center.HasValue ? placement.BotDoorPlacement(walkedCoordinateEpoch) : null
                 };
             }
@@ -3361,7 +3363,7 @@ public partial class MainWindow : Window
                 terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch, groundHypotheses,
                 gameplayAdmitted, atlasCompositionExclusions, masks, usesDurableWorld, botAtlas,
                 tracked.RoomAllowsAtlasWrite && tracked.MeasuredLineage is not null ? localWalkedGround : [],
-                tracked.MeasuredSceneryCamera);
+                tracked.MeasuredSceneryCamera, wallLineage);
         }
         else
         {

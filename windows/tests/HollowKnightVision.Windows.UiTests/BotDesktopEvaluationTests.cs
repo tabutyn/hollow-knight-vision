@@ -374,7 +374,7 @@ internal static class BotDesktopEvaluationTests
                     batch, new[] { new DetectedFloorLine(100, new(20, 170)) }, TerrainWallDetection.Empty,
                     true, new AtlasPoint(0, 0), null, new AtlasPoint(96, 100), previous,
                     run, 1L, GroundHypothesisTrackingResult.Empty, true, masks.AtlasExclusions, masks, true, null,
-                    Array.Empty<GroundHypothesisAtlasLine>(), null
+                    Array.Empty<GroundHypothesisAtlasLine>(), null, null
                 ]);
                 return now;
             }
