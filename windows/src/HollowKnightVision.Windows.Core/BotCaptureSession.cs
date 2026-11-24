@@ -29,7 +29,15 @@ public sealed record BotCaptureInput(double Timestamp, string Button, bool IsPre
 }
 
 public sealed record BotCaptureReviewFrame(string? ImageFile, double Offset, BotScreenTerrain? Terrain, bool Authored,
-    IReadOnlyList<double> Features);
+    IReadOnlyList<double> Features)
+{
+    public BotRoadHint? PathHint { get; init; }
+    public BotBlockadeEvidence? Blockade { get; init; }
+    public IReadOnlyList<BotObjectBounds> GeoCaches { get; init; } = [];
+    public IReadOnlyList<BotObjectBounds> LifebloodCocoons { get; init; } = [];
+    public IReadOnlyList<string> Issues { get; init; } = [];
+    public bool HasMaskedKnightEvidence { get; init; }
+}
 
 public sealed record BotCaptureResult(IReadOnlyList<BotCaptureManifest> Published, int Discarded);
 
@@ -238,9 +246,12 @@ public sealed class BotCaptureSession
         if (manifest is not { Status: "completed", SchemaVersion: BotRecordingContract.SchemaVersion }) return (manifest, [], []);
         var authored = manifest.BotDomain == "hacker";
         var frames = new List<ReviewObservation>();
+        var observations = new List<BotCaptureObservation>();
         var inputs = new List<BotCaptureInput>();
         var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)) + Path.DirectorySeparatorChar;
-        foreach (var line in File.ReadLines(Path.Combine(folder, "events.jsonl")))
+        using var events = File.OpenRead(Path.Combine(folder, "events.jsonl"));
+        using var reader = new StreamReader(events);
+        while (reader.ReadLine() is { } line)
         {
             cancellationToken.ThrowIfCancellationRequested();
             using var document = JsonDocument.Parse(line);
@@ -263,9 +274,51 @@ public sealed class BotCaptureSession
             var offset = observation.CaptureTimestamp - manifest.StartedAt;
             if (!double.IsFinite(offset)) continue;
             var terrain = authored ? observation.AuthoredTerrain : observation.DetectedTerrain;
-            frames.Add(new(observation.Generation, new(image, Math.Max(0, offset), terrain, authored, observation.Features)));
+            frames.Add(new(observation.Generation, new(image, Math.Max(0, offset), terrain, authored, observation.Features ?? [])
+            {
+                PathHint = observation.HackerPathVersion == 1 || observation.AtlasPathVersion == 1 ? observation.RoadHint : null,
+                Blockade = observation.Blockade,
+                GeoCaches = observation.GeoCaches ?? [],
+                LifebloodCocoons = observation.LifebloodCocoons ?? [],
+                Issues = observation.Issues ?? [],
+                HasMaskedKnightEvidence = observation.Features is not null && observation.HasMaskedKnightEvidence
+            }));
+            if (!requireImage) observations.Add(observation);
         }
+        if (!requireImage && observations.Count == manifest.ObservationCount)
+            ApplyRecoveredAnnotations();
         return (manifest, frames, inputs);
+
+        void ApplyRecoveredAnnotations()
+        {
+            var hints = observations.Any(row => row.HackerPathVersion != 1 && row.AtlasPathVersion != 1)
+                ? BotClipPathSidecar.Read(folder, events, manifest, observations, cancellationToken) : [];
+            var blockades = new Dictionary<(long Generation, double CaptureTimestamp), BotBlockadeEvidence>();
+            if (inputs.Count == manifest.InputEventCount && observations.Any(row => row.DriveDirection is null
+                || row is { BlockadeVersion: null, BlockadePose: null, TerrainSource: "detected" }))
+            {
+                try
+                {
+                    foreach (var row in BotBlockadeReplay.Recover(observations, inputs, cancellationToken))
+                        blockades[(row.Generation, row.CaptureTimestamp)] = row.Blockade;
+                }
+                catch (InvalidDataException) { }
+            }
+            for (var index = 0; index < observations.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var row = observations[index];
+                var hint = row.HackerPathVersion != 1 && row.AtlasPathVersion != 1 ? hints.GetValueOrDefault(index) : null;
+                var blockade = blockades.GetValueOrDefault((row.Generation, row.CaptureTimestamp));
+                if (hint is null && blockade is null) continue;
+                var frame = frames[index];
+                frames[index] = frame with { Frame = frame.Frame with
+                {
+                    PathHint = frame.Frame.PathHint ?? hint,
+                    Blockade = frame.Frame.Blockade ?? blockade
+                } };
+            }
+        }
 
         string? PreviewPath(JsonElement row)
         {

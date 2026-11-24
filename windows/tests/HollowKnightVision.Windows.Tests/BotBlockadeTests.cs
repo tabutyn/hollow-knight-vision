@@ -151,13 +151,17 @@ internal static class BotBlockadeTests
         {
             var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
             var id = Guid.NewGuid();
-            File.WriteAllText(Path.Combine(temporary.FullName, "manifest.json"), JsonSerializer.Serialize(new { id }, json));
+            var manifest = new BotCaptureManifest(2, id, DateTimeOffset.UnixEpoch, 0, "normal", "fixture", "native-posted",
+                "completed", 1, 10, 10, 1, 3, "gameplay", null, null);
+            File.WriteAllText(Path.Combine(temporary.FullName, "manifest.json"), JsonSerializer.Serialize(manifest, json));
             var frames = Enumerable.Range(0, 10).Select(i => Row(i, drive: null) with
             {
                 BlockadeVersion = i == 6 ? 1 : null,
                 VisualContext = i == 7 ? null : Row(i).VisualContext,
-                Features = i >= 8 ? Row(i, .54).Features : Row(i).Features
+                Features = i >= 8 ? Row(i, .54).Features : Row(i).Features,
+                ImagePath = i is 4 or 5 or 6 ? $"{i}.png" : null
             });
+            foreach (var index in new[] { 4, 5, 6 }) File.WriteAllText(Path.Combine(temporary.FullName, $"{index}.png"), "fixture");
             var events = Path.Combine(temporary.FullName, "events.jsonl");
             File.WriteAllLines(events, frames.Select(row => JsonSerializer.Serialize(row, json))
                 .Append(JsonSerializer.Serialize(new BotCaptureInput(.25, "right", true), json)));
@@ -166,6 +170,10 @@ internal static class BotBlockadeTests
             Require(recovered.Id == id && recovered.Rows.Select(row => row.CaptureTimestamp).SequenceEqual([.5])
                 && recovered.Rows[0].Blockade.Mark.Direction == 1,
                 "The replay may only recover contact after prior input, with a measured pose, on rows without a saved decision.");
+            var review = BotClipTimeline.Open(temporary.FullName, Path.Combine(temporary.FullName, "no-source-images"));
+            Require(review.Count == 3 && review.Overlay(0)?.Blockade is null
+                && review.Overlay(1)?.Blockade == recovered.Rows[0].Blockade && review.Overlay(2)?.Blockade is null,
+                "Clip review must attach recovered wall contact only to its original observation, without overriding a saved decision.");
             Require(before.SequenceEqual(File.ReadAllBytes(events)), "Replaying blockade evidence cannot modify the clip.");
         }
         finally { temporary.Delete(recursive: true); }

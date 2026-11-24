@@ -68,21 +68,33 @@ internal static class BotDesktopCaptureIntegrationTests
         var play = (Button)window.FindName("BotPlayClip");
         var previous = (Button)window.FindName("BotPreviousFrame");
         var inputs = (TextBlock)window.FindName("BotClipInputs");
+        var route = (TextBlock)window.FindName("BotClipRouteLegend");
+        var blockade = (TextBlock)window.FindName("BotClipBlockadeLegend");
+        var issue = (TextBlock)window.FindName("BotClipFrameIssue");
 
         _ = Method("RefreshBotLibrary").Invoke(window, null);
         await WaitFor(() => HasPixel(10));
         Check(canvas.Children.Count == 0 && position.Maximum == 1 && play.IsEnabled
-            && inputs.Text == "Recorded input · Right",
+            && inputs.Text == "Recorded input · Right" && route.Visibility == Visibility.Collapsed,
             "The archive starts before the first observation and must show original pixels without future terrain.");
         position.Value = .55;
         await WaitFor(() => HasPixel(30));
         Check(canvas.Children.OfType<Line>().Single() is { Y1: 32 } floor && floor.Stroke == Brushes.SpringGreen
-            && inputs.Text == "Recorded input · Released",
+            && inputs.Text == "Recorded input · Released" && route.Visibility == Visibility.Collapsed
+            && blockade.Visibility == Visibility.Collapsed,
             "The paused image must show the correct Hacker observation for that time.");
         previous.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         await WaitFor(() => HasPixel(20));
-        Check(canvas.Children.OfType<Line>().Single().Y1 == 36 && inputs.Text == "Recorded input · Right + X",
+        var lines = canvas.Children.OfType<Line>().ToArray();
+        Check(lines.Single(line => line.Stroke == Brushes.SpringGreen).Y1 == 36 && inputs.Text == "Recorded input · Right + X",
             "Frame stepping must update terrain and held buttons with the image.");
+        Check(lines.Count(line => line.Stroke == Brushes.MediumOrchid) == 3
+            && lines.Any(line => line.Stroke == Brushes.MediumOrchid && line.X1 == 40 && line.X2 > 49)
+            && lines.Count(line => line.Stroke == Brushes.Orange) == 2
+            && blockade.Text == "Orange marker · Blocked moving right" && route.Visibility == Visibility.Visible,
+            "The exact frame should show the recorded route arrow and rightward wall contact.");
+        Check(canvas.Children.OfType<System.Windows.Shapes.Ellipse>().Count() == 2,
+            "Geo and Lifeblood targets should use their saved positions on the image.");
 
         play.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         await WaitFor(() => HasPixel(30));
@@ -96,8 +108,11 @@ internal static class BotDesktopCaptureIntegrationTests
         clips.SelectedIndex = 1;
         await WaitFor(() => HasPixel(90));
         Check(!play.IsEnabled && (string)play.Content == "Play"
-            && canvas.Children.OfType<Line>().Single().Stroke == Brushes.DeepSkyBlue,
+            && canvas.Children.OfType<Line>().Single().Stroke == Brushes.DeepSkyBlue
+            && route.Visibility == Visibility.Collapsed && blockade.Visibility == Visibility.Collapsed
+            && issue.Text == "Excluded frame · stale-or-missing-detection",
             "Changing clips should stop playback, clear the old image, and retain a legacy Game Play still.");
+        Console.WriteLine("PASS Desktop clip annotations follow the displayed image and clear across clips");
         Console.WriteLine("PASS Desktop bot review plays raw clip frames with synchronized overlays and legacy still fallback");
 
         var delete = (Button)window.FindName("BotDeleteClip");
@@ -166,11 +181,19 @@ internal static class BotDesktopCaptureIntegrationTests
             {
                 var terrain = new BotScreenTerrain(80, 48, [new(5, 70, 12 + index * 4, 1)], []);
                 var authored = domain == "hacker";
+                var annotated = authored && index == 0;
+                var features = new double[BotRecordingContract.FeatureNames.Count];
+                if (annotated) { features[0] = .5; features[1] = .25; features[4] = 1; }
                 return new BotCaptureObservation(start + time, start + time, start + time, Generation, 1, 0,
-                    new double[BotRecordingContract.FeatureNames.Count], [], authored ? "human-authored" : "detected")
+                    features, authored ? [] : ["stale-or-missing-detection"], authored ? "human-authored" : "detected")
                 {
                     AuthoredTerrain = authored ? terrain : null,
                     DetectedTerrain = authored ? null : terrain,
+                    HackerPathVersion = authored ? 1 : null,
+                    RoadHint = annotated ? new(1, 0, .2, .3, false) : null,
+                    Blockade = annotated ? new(new("room", 0, 0, 1, 80, false), .14, 0) : null,
+                    GeoCaches = annotated ? [new(.3, .2, .06, .08)] : null,
+                    LifebloodCocoons = annotated ? [new(.4, .3, .08, .09)] : null,
                     ImagePath = replay.HasValue ? null : "still.png"
                 };
             });
