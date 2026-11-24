@@ -229,6 +229,9 @@ internal static class BotDesktopCaptureIntegrationTests
             _ = Step(11, .50, InputButtons.Right, 2, default, GroundHypothesisTrackingResult.Empty);
             Thread.Sleep(115);
             var before = Step(12, .50, InputButtons.Right, 2, default, GroundHypothesisTrackingResult.Empty);
+            Check(Field("gameplayWallContacts").GetValue(window) is MainWindow.BotWallContactsFrame
+                { CaptureGeneration: Generation, CaptureId: 12, PlacedRoom: 19, Marks.Count: 1 },
+                "The live overlay must receive the measured wall from the same desktop observation that the bot records.");
 
             var correction = GroundHypothesisTrackingResult.Empty with
             {
@@ -244,6 +247,8 @@ internal static class BotDesktopCaptureIntegrationTests
             _ = Step(14, .50, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty);
             Thread.Sleep(115);
             _ = Step(15, .56, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty);
+            Check(Field("gameplayWallContacts").GetValue(window) is null,
+                "The desktop must remove a wall contact from the live overlay after a measured crossing.");
             Thread.Sleep(115);
             _ = Step(16, .50, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty);
             Thread.Sleep(115);

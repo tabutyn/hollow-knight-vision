@@ -29,6 +29,7 @@ public sealed class BotBlockadeVisit
         double StartedAt, double Latest, AtlasPoint? SceneryCamera);
 
     private readonly List<BotBlockadeMark> marks = [];
+    private IReadOnlyList<BotBlockadeMark>? activeMarks;
     private (AtlasPoint Position, double Time)? previous;
     private (AtlasPoint Anchor, double Time, int Side, int Samples)? push;
     private (long Generation, int Room, string Space)? chart;
@@ -38,6 +39,10 @@ public sealed class BotBlockadeVisit
     private BotBlockadeEvidence? lastEvidence;
     private VisualBasis? visualBasis;
     private long visualEpoch;
+
+    /// <summary>An immutable snapshot of this visit's wall contacts that have not been crossed.</summary>
+    public IReadOnlyList<BotBlockadeMark> ActiveMarks =>
+        activeMarks ??= marks.Count == 0 ? [] : Array.AsReadOnly(marks.Where(mark => !mark.Crossed).ToArray());
 
     public void Reset()
     {
@@ -50,6 +55,7 @@ public sealed class BotBlockadeVisit
     private void ClearContacts()
     {
         marks.Clear();
+        activeMarks = null;
         chart = null;
         Interrupt();
     }
@@ -90,7 +96,7 @@ public sealed class BotBlockadeVisit
         // Binding its exact owner changes identity only. Coordinates stay local.
         if (chart is not { } current || (current.Generation, current.Room) != (row.Generation, row.RoomId)) return;
         for (var i = 0; i < marks.Count; i++)
-            if (marks[i].Space == local) marks[i] = marks[i] with { Space = owner };
+            if (marks[i].Space == local) ReplaceMark(i, marks[i] with { Space = owner });
         if (current.Space == local) chart = (row.Generation, row.RoomId, owner);
         if (lastEvidence is { } evidence && evidence.Mark.Space == local)
             lastEvidence = evidence with { Mark = evidence.Mark with { Space = owner } };
@@ -152,7 +158,7 @@ public sealed class BotBlockadeVisit
 
     private void Rebase(AtlasPoint translation, string destination)
     {
-        for (var index = 0; index < marks.Count; index++) marks[index] = Moved(marks[index]);
+        for (var index = 0; index < marks.Count; index++) ReplaceMark(index, Moved(marks[index]));
         TranslateSighting(translation);
         if (lastEvidence is { } evidence) lastEvidence = evidence with { Mark = Moved(evidence.Mark) };
 
@@ -252,8 +258,12 @@ public sealed class BotBlockadeVisit
                     && (projection is null || candidate.ViewWidth == width)
                     && Distance(new(candidate.X, candidate.Y), point) <= .045 * width);
                 var mark = new BotBlockadeMark(pose.Space, point.X, point.Y, side, width, false);
-                if (matching < 0) marks.Add(mark);
-                else if (marks[matching].Crossed) marks[matching] = mark;
+                if (matching < 0)
+                {
+                    marks.Add(mark);
+                    activeMarks = null;
+                }
+                else if (marks[matching].Crossed) ReplaceMark(matching, mark);
             }
             push = drive;
         }
@@ -274,7 +284,7 @@ public sealed class BotBlockadeVisit
             if (!repeated && previous is { } evidence && ahead < -.018 && Math.Abs(evidence.Position.Y - y) <= .065 * width
                 && (x - evidence.Position.X) * mark.Direction >= -.018 * width)
             {
-                marks[i] = mark with { Crossed = true };
+                ReplaceMark(i, mark with { Crossed = true });
                 continue;
             }
             if (ahead is >= -.018 and <= .095 && (nearest is null || Math.Abs(dx) < Math.Abs(nearest.Dx)))
@@ -283,6 +293,12 @@ public sealed class BotBlockadeVisit
         if (!repeated) previous = (position, time);
         lastEvidence = nearest;
         return lastEvidence;
+    }
+
+    private void ReplaceMark(int index, BotBlockadeMark mark)
+    {
+        marks[index] = mark;
+        activeMarks = null;
     }
 
     private static double Distance(AtlasPoint a, AtlasPoint b) =>

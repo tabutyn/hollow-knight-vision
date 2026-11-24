@@ -99,6 +99,9 @@
                                 Height="{Binding Height, ElementName=GameplayAtlasCanvas}" IsHitTestVisible="False"
                                 Visibility="Collapsed" Panel.ZIndex="18"/>
                         <Canvas x:Name="GameplayPathCanvas" IsHitTestVisible="False" Visibility="Collapsed" Panel.ZIndex="21"/>
+                        <Canvas x:Name="GameplayWallContactsCanvas" Width="{Binding Width, ElementName=GameplayAtlasCanvas}"
+                                Height="{Binding Height, ElementName=GameplayAtlasCanvas}" IsHitTestVisible="False"
+                                Visibility="Collapsed" Panel.ZIndex="22"/>
                     </Canvas>
                     <local:MenuStencilParticles x:Name="MenuParticles" IsHitTestVisible="False"/>
                     <StackPanel x:Name="GameplayPlaceholder" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -409,6 +412,9 @@
                                    SnapsToDevicePixels="True" IsHitTestVisible="False" Panel.ZIndex="10"/>
                             <Canvas x:Name="HackerOverlayCanvas" Width="640" Height="360" Background="Transparent" Panel.ZIndex="20"/>
                             <Canvas x:Name="HackerPathCanvas" IsHitTestVisible="False" Visibility="Collapsed" Panel.ZIndex="21"/>
+                            <Canvas x:Name="HackerWallContactsCanvas" Width="{Binding Width, ElementName=AtlasCanvas}"
+                                    Height="{Binding Height, ElementName=AtlasCanvas}" IsHitTestVisible="False"
+                                    Visibility="Collapsed" Panel.ZIndex="22"/>
                         </Canvas>
                         <StackPanel x:Name="AtlasEmptyPanel" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="Waiting for a matched game frame…" FontSize="14" Foreground="#9AA3AD"/></StackPanel>
                         <TextBlock x:Name="AtlasPreviewText" Visibility="Collapsed"/>

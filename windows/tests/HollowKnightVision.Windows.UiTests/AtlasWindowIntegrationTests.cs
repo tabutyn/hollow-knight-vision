@@ -35,6 +35,7 @@ internal static class AtlasWindowIntegrationTests
         Console.WriteLine("PASS Hacker Atlas draws restored rooms at the measured passage elevation");
         Console.WriteLine("PASS Gameplay Atlas draws measured doorways independently of optional outlines and hides them outside gameplay");
         Console.WriteLine("PASS Gameplay window applies only ordered Atlas placements and keeps menu images in capture coordinates");
+        Console.WriteLine("PASS Game Play and Hacker draw only scoped bot wall contacts while Atlas Paths is enabled");
     }
 
     private static void VerifyGameplayWorldHandoff(string root)
@@ -71,11 +72,15 @@ internal static class AtlasWindowIntegrationTests
             }
         };
         var window = new MainWindow(GameRuntimeMode.Normal, gamePath: null, root: root, documents: root);
+        var capture = new BotCaptureSession(Path.Combine(root, "wall-contacts"), "normal", "fixture", generation, 0, new());
+        using var vision = new CancellationTokenSource();
         try
         {
             SetField(window, "workspace", "Gameplay");
             SetField(window, "recentCaptureGeneration", generation);
             SetField(window, "hasFreshGameFrame", true);
+            SetField(window, "botCapture", capture);
+            SetField(window, "visionCancellation", vision);
             var completedWorld = typeof(MainWindow).GetNestedType("CompletedWorld", BindingFlags.NonPublic)!;
             SetField(window, "completedWorld", Activator.CreateInstance(completedWorld, publication, result)!);
 
@@ -84,6 +89,15 @@ internal static class AtlasWindowIntegrationTests
             var menuRecognizer = GetField<WindowsMenuStencilRecognizer>(window, "menuStencilRecognizer");
             var bitmap = Control<Image>(window, "GameplayImage");
             var placement = Control<Canvas>(window, "GameplayPlacementCanvas");
+            var walls = Control<Canvas>(window, "GameplayWallContactsCanvas");
+            var paths = Control<CheckBox>(window, "AtlasPathsCheck");
+            var firstOwner = corrected.TrackingIslands.Single(island => island.MeasuredLineage == 1);
+            var space = FormattableString.Invariant($"visual/7/{firstOwner.Id}/{BitConverter.DoubleToUInt64Bits(firstOwner.StartedAt)}");
+            var wall = new BotBlockadeMark(space, 15, 20, 1, 640, false);
+            var epoch = GetField<int>(window, "botRouteEpoch");
+            var contacts = new MainWindow.BotWallContactsFrame(new(capture), epoch, generation, first.CaptureId,
+                1.5, 7, 7, null, null, [wall, wall with { Crossed = true }, wall with { Space = space + "1" }]);
+            SetField(window, "gameplayWallContacts", contacts);
 
             void PresentCapture(BgraFrame frame, bool gameplay = true)
             {
@@ -114,6 +128,22 @@ internal static class AtlasWindowIntegrationTests
                 "The newest pixels must use the measured owner's revised placement when an older analysis arrives.");
             Check(placement.Visibility == Visibility.Visible && placement.Children.OfType<Line>().Count() == 1,
                 "The measured doorway should be presented with confirmed gameplay placement.");
+            AssertWall(walls, 135, -45, 22.4);
+            Check(Control<Canvas>(window, "GameplayPathCanvas").Visibility == Visibility.Collapsed,
+                "A wall contact must be visible with Atlas Paths enabled even when no route can be drawn.");
+            paths.IsChecked = false;
+            _ = Invoke(window, "UpdateGameplayPathVisibility");
+            Check(walls.Visibility == Visibility.Collapsed, "Toggling Atlas Paths off must hide Game Play wall contacts.");
+            paths.IsChecked = true;
+            _ = Invoke(window, "UpdateGameplayPathVisibility");
+            AssertWall(walls, 135, -45, 22.4);
+
+            var movedAgain = corrected.ReplaceOptimizedPoses(new Dictionary<int, AtlasPoint> { [0] = new(147, 39), [1] = new(350, 37) },
+                corrected.MapRevision);
+            SetField(window, "completedWorld", Activator.CreateInstance(completedWorld, publication,
+                result with { Revision = movedAgain.MapRevision, CommittedGraph = movedAgain })!);
+            _ = Invoke(window, "UpdateGameplayPathVisibility");
+            AssertWall(walls, 142, -49, 22.4);
 
             window.ApplyVisionAnalysis(initial with
             {
@@ -124,7 +154,7 @@ internal static class AtlasWindowIntegrationTests
                 WorldFrame = new(generation, room, 2.5, coordinateEpoch, 99, 99, false)
             });
             Check(ReferenceEquals(newestPixels, bitmap.Source) && Canvas.GetLeft(bitmap) == 124 && Canvas.GetTop(bitmap) == -47
-                && placement.Visibility == Visibility.Collapsed,
+                && placement.Visibility == Visibility.Collapsed && walls.Visibility == Visibility.Collapsed,
                 "An unresolved capture must hold the displayed placement while hiding registered doorway overlays.");
 
             var viewport = GetField<GameplayViewportController>(window, "gameplayViewport");
@@ -156,14 +186,52 @@ internal static class AtlasWindowIntegrationTests
                 AdmitsTracking = false
             });
             Check(ReferenceEquals(menuPixels, bitmap.Source) && Canvas.GetLeft(bitmap) == 0 && Canvas.GetTop(bitmap) == 0
-                && bitmap.Width == menu.Width && bitmap.Height == menu.Height && placement.Visibility == Visibility.Collapsed,
+                && bitmap.Width == menu.Width && bitmap.Height == menu.Height && placement.Visibility == Visibility.Collapsed
+                && walls.Visibility == Visibility.Collapsed,
                 "Rendering committed tiles must leave a menu image in capture coordinates.");
+
+            var sample = Camera(120, 40) with { SessionId = Guid.NewGuid(), AtlasGameplayActive = true };
+            var camera = new GroundTruthCameraTransform(room, new(120, 40), 2, 2, new(32, 24));
+            var prepared = new HackerPreparedFrame(menu, new(16, 29, 32, 24), default, camera,
+                sample, default, room, 4, 4, true, true);
+            var current = contacts with { CaptureId = menu.CaptureId, CapturedAt = 4, ReceiverSession = sample.SessionId,
+                Scene = room, PlacedRoom = null,
+                Marks = [new("hacker/" + room, 123, 42, -1, 16, false), new("hacker/OtherRoom", 123, 42, -1, 16, false)] };
+            SetField(window, "workspace", "Hacker");
+            SetField(window, "hackerWallContacts", current);
+            var hackerPublication = typeof(MainWindow).GetNestedType("HackerPipelinePublication", BindingFlags.NonPublic)!;
+            var publicationArgs = new object?[] { prepared, menuPixels, null, generation,
+                GetField<long>(window, "hackerWorkGeneration"), true, 0 };
+            _ = Invoke(window, "ApplyHackerPipelinePublication", Activator.CreateInstance(hackerPublication, publicationArgs)!);
+            var hackerImage = Control<Image>(window, "HackerLiveImage");
+            var hackerWalls = Control<Canvas>(window, "HackerWallContactsCanvas");
+            AssertWall(hackerWalls, Canvas.GetLeft(hackerImage) + 22, Canvas.GetTop(hackerImage) + 8, 1.12);
+            SetField(window, "hackerWallContacts", current with { ReceiverSession = Guid.NewGuid() });
+            _ = Invoke(window, "RefreshAtlasPathVisibility");
+            Check(hackerWalls.Visibility == Visibility.Collapsed, "Another receiver session cannot draw its wall on the current Hacker room.");
+            SetField(window, "hackerWallContacts", current);
+            paths.IsChecked = false;
+            _ = Invoke(window, "RefreshAtlasPathVisibility");
+            Check(hackerWalls.Visibility == Visibility.Collapsed, "The Atlas Paths toggle must also hide Hacker wall contacts.");
         }
         finally
         {
+            SetField(window, "botCapture", null!);
+            SetField(window, "visionCancellation", null!);
+            _ = capture.FinishAsync(5, null, completed: false).GetAwaiter().GetResult();
             SetField(window, "isClosing", true);
             Wait(InvokeTask(window, "PrepareShutdownAsync"));
         }
+    }
+
+    private static void AssertWall(Canvas canvas, double x, double y, double halfHeight)
+    {
+        var line = canvas.Children.OfType<Line>().Single();
+        Check(canvas.Visibility == Visibility.Visible && !canvas.IsHitTestVisible && !line.IsHitTestVisible
+            && line.Stroke is System.Windows.Media.SolidColorBrush orange && orange.Color.R == 255 && orange.Color.G == 133
+            && Math.Abs(line.X1 - x) < 1e-9 && Math.Abs(line.X2 - x) < 1e-9
+            && Math.Abs(line.Y1 - (y - halfHeight)) < 1e-9 && Math.Abs(line.Y2 - (y + halfHeight)) < 1e-9,
+            "The live wall contact must be a noninteractive orange marker at its current Atlas position.");
     }
 
     private static BgraFrame SolidFrame(long id, int width = 32, int height = 24)

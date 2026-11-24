@@ -44,6 +44,7 @@ public partial class MainWindow
             HackerPathCanvas.Visibility = Visibility.Collapsed;
         }
         HackerCameraControlsPanel.Visibility = HasHackerPathPreview ? Visibility.Visible : Visibility.Collapsed;
+        RenderHackerWallContacts();
     }
 
     private HackerPathCache HackerPaths(TerrainRoom room)

@@ -3590,6 +3590,7 @@ public partial class MainWindow : Window
             gameplayPlacementFrame = result.AtlasPathState == AtlasPathFrameState.Gameplay
                 && result.WorldPlacementConfirmed != false
                 ? (result.Frame.CaptureId, result.CaptureTimestamp) : null;
+            gameplayWallContactScope = result.WorldFrame;
             Volatile.Write(ref recognizedMenuContext, result.MenuContext);
             gameplayPathPresentation = result.PathPresentation is { } paths && gameplayPathPresentation is { } visible
                 ? paths with { View = paths.View.PreserveNewerSelection(visible.View) }
@@ -4226,6 +4227,7 @@ public partial class MainWindow : Window
         var terrainRooms = HackerTerrainRooms();
         RenderHackerTerrain(originX, originY, terrainRooms);
         RenderHackerPaths(originX, originY, terrainRooms);
+        RenderHackerWallContacts();
         if (hackerEditingTarget == "Rooms")
         {
             var topology = BuildHackerRoomLayout();
@@ -6032,6 +6034,8 @@ public partial class MainWindow : Window
         hackerAtlasMinimumTileX = hackerAtlasMinimumTileY = null;
         hackerLiveFrame = null;
         hackerPathPreview = null;
+        drawnHackerWallContacts = null;
+        BotWallContactPresentation.Clear(HackerWallContactsCanvas);
         hackerPathRoute.Interrupt();
         hackerPreviewActive = false;
         HackerLiveImage.Source = null;
