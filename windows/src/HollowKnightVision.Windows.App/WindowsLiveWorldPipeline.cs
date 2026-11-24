@@ -555,8 +555,6 @@ internal sealed class WindowsLiveWorldPipeline
             {
                 return Publish(Throttled(request, activeTracker, resolvedRoomId));
             }
-            lastPersistenceAt = request.MonotonicTimestamp;
-
             var worldPose = resolvedObservation.Value.WorldPose;
             // Keep raw motion in the capture basis. The placed pose belongs to
             // the image and to any ground geometry recorded with that image.
@@ -567,6 +565,7 @@ internal sealed class WindowsLiveWorldPipeline
             IReadOnlyList<GroundHypothesisAtlasLine> priorWalk = walkedScope == scope ? committedLocalWalk : [];
             IReadOnlyList<GroundHypothesisAtlasLine> walked = request.StableTrackingVerified ? request.WalkedGround : [];
             var groundEvidence = LiveWorldWalkedGround.NewEvidence(walked, priorWalk, capturePose);
+            StoredFrameObservation? source = null;
             try
             {
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
@@ -575,7 +574,7 @@ internal sealed class WindowsLiveWorldPipeline
                     throw new IOException("Injected live-world append failure.");
                 }
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
-                var source = activeStore.Append(
+                source = activeStore.Append(
                     request.MaskedFrame,
                     storedTimestamp,
                     capturePose,
@@ -637,7 +636,6 @@ internal sealed class WindowsLiveWorldPipeline
                     && !activeTracker.LatestIslandAwaitsPlacement;
                 var doorwayAligned = !localRecoveryPlaced && newRoomDoorway is { } doorway
                     && activeTracker.AlignNewRoomThroughDoorway(doorway);
-                if (doorwayAligned) newRoomDoorway = null;
                 var requiresRebuild = doorwayAligned || localRecoveryPlaced;
                 var requiresBasisUpdate = requiresRebuild || groundClosure is not null;
                 var durableSnapshot = WithCompositionExclusions(activeTracker.Snapshot);
@@ -652,18 +650,20 @@ internal sealed class WindowsLiveWorldPipeline
                     if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 }
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
-                if (!activeStore.Commit(
+                if (transactionFault?.Invoke("commit") == true || !activeStore.Commit(
                         durableSnapshot,
                         priorSnapshot.MapRevision,
                         durableSnapshot.MapRevision))
                 {
-                    RollBackTracker(priorSnapshot);
+                    RollBackFailedFrame(activeStore, priorSnapshot, source);
                     return Fail("live-world snapshot CAS was stale");
                 }
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 transactionObserver?.Invoke("commit");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 Volatile.Write(ref hasDurableEvidence, true);
+                lastPersistenceAt = request.MonotonicTimestamp;
+                if (doorwayAligned) newRoomDoorway = null;
                 if (localRecoveryPlaced) placementPending = false;
                 placedRoomStartedAt ??= request.MonotonicTimestamp;
                 var committed = durableSnapshot.Observations[^1];
@@ -739,7 +739,7 @@ internal sealed class WindowsLiveWorldPipeline
             }
             catch (Exception error)
             {
-                RollBackTracker(priorSnapshot);
+                RollBackFailedFrame(activeStore, priorSnapshot, source);
                 return Fail($"live-world transaction failed: {error.Message}");
             }
         }
@@ -912,6 +912,30 @@ internal sealed class WindowsLiveWorldPipeline
     private void RollBackTracker(LiveWorldSnapshot fallback)
     {
         if (!ReloadLocked()) tracker = new LiveWorldTracker(fallback);
+    }
+
+    private void RollBackFailedFrame(LiveWorldSessionStore activeStore, LiveWorldSnapshot priorSnapshot,
+        StoredFrameObservation? source)
+    {
+        try
+        {
+            var committedTracker = activeStore.LoadTracker();
+            if (committedTracker.Snapshot.MapRevision == priorSnapshot.MapRevision)
+            {
+                // The already committed source and arrival images still belong to this visit.
+                // Preserve the calibrated basis and pending doorway for the next captured frame.
+                committedTracker.ResumeCommittedVisit(persistentCaptureGeneration);
+                tracker = committedTracker;
+                if (source is not null) compositionExclusions.Remove(source.Id);
+                return;
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or LiveWorldSessionStoreException
+            or SceneSessionStoreException or LiveWorldModelException or LiveWorldTrackerException)
+        {
+            // Reopen below so a store which changed on disk gets its own fresh basis.
+        }
+        RollBackTracker(priorSnapshot);
     }
 
     private bool ReloadLocked()

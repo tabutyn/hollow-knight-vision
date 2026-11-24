@@ -436,6 +436,7 @@ var tests = new List<(string Name, Action Run)>
     ("measured walks retain ground beneath a hidden edge in the saved Atlas", NativeAtlasImportTests.TestMeasuredWalkSavesFloorUnderAHiddenEdge),
     ("restored Atlas aligns doorway floors only with measured foot contact on both sides", NativeAtlasImportTests.TestDoorwayFloorAlignsOnlyWithMeasuredContactOnBothSides),
     ("Windows Atlas stitches a measured doorway and preserves saved legacy coordinates", NativeAtlasImportTests.TestWindowsAtlasExtendsAndAlignsWithoutMovingLegacyFrames),
+    ("Windows retries the doorway floor alignment after a failed commit", NativeAtlasImportTests.TestDoorwayCommitFailureKeepsPlacedRoomAndRetriesAlignment),
     ("same-room recovery retains measured evidence until placed imagery confirms it", NativeAtlasImportTests.TestLocalRecoveryRetainsEvidenceUntilAPlacedMatch),
     ("same-room recovery reconnects a Mac Atlas through rebuilt visual references", NativeAtlasImportTests.TestImportedWorldPlacesMeasuredRecoveryThroughRegeneratedFeatures),
     ("same-room recovery verifies broad scenery matches against saved floor texture", NativeAtlasImportTests.TestSameRoomRecoveryVerifiesBroadMatchesWithFloorTexture),
@@ -9520,7 +9521,8 @@ static void TestPipelinePublishesClosureOnlyAfterRebuildAndCommit()
     WithTemporaryDirectory(root =>
     {
         var stages = new List<string>();
-        var pipeline = new LiveWorldPipelineHarness(root, stages.Add);
+        var failCommit = false;
+        var pipeline = new LiveWorldPipelineHarness(root, stages.Add, stage => failCommit && stage == "commit");
         var firstTexture = PipelineTexturePixels(191);
         var secondTexture = PipelineTexturePixels(811);
         Equal("Committed", pipeline.Process(
@@ -9554,6 +9556,17 @@ static void TestPipelinePublishesClosureOnlyAfterRebuildAndCommit()
              && commitIndex > rebuildIndex
              && basisIndex > commitIndex
              && publishIndex > basisIndex);
+
+        failCommit = true;
+        var failed = pipeline.Process(PipelineTextureFrameFromPixels(5, firstTexture), 104, 2.2, 1, "Tutorial_01");
+        Equal("Failed", failed.State);
+        Equal(closure.Revision, new LiveWorldSessionStore(root).Load().Snapshot.MapRevision);
+        failCommit = false;
+        var next = pipeline.Process(PipelineTextureFrameFromPixels(6, firstTexture), 105, 2.3, 1, "Tutorial_01");
+        Equal("Committed", next.State);
+        True(next.AcceptedClosure is null);
+        Equal(rebuiltWorld.LoopClosureEdges.Count,
+            new LiveWorldSessionStore(root).Load().Snapshot.LoopClosureEdges.Count);
     });
 }
 

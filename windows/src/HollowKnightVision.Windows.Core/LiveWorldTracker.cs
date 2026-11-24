@@ -181,6 +181,27 @@ public sealed class LiveWorldTracker
         lastObservationId = null;
     }
 
+    /// <summary>Restores the committed observations of a capture after a failed write.</summary>
+    public void ResumeCommittedVisit(ulong captureGeneration)
+    {
+        BeginVisit();
+        foreach (var observation in Snapshot.Observations)
+        {
+            if (observation.CaptureGeneration != captureGeneration) continue;
+            currentVisitObservationIds.Add(observation.Id);
+            lastObservationId = observation.Id;
+        }
+        if (Snapshot.LoopClosureEdges.Count == 0) return;
+        var observationsByKeyframe = Snapshot.Keyframes.ToDictionary(keyframe => keyframe.Id, keyframe => keyframe.ObservationId);
+        foreach (var edge in Snapshot.LoopClosureEdges)
+        {
+            var observationId = observationsByKeyframe[edge.ToKeyframeId];
+            if (!currentVisitObservationIds.Contains(observationId)) continue;
+            closedReferenceKeyframeIds.Add(edge.FromKeyframeId);
+            lastAcceptedClosureTravel = cumulativeTravel[observationId];
+        }
+    }
+
     /// <summary>
     /// Starts a fresh two-frame relocalization attempt. Recovery searches all
     /// committed references independently of pose-graph closure cooldowns.
