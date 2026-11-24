@@ -406,7 +406,7 @@ public static class AutoNavigationRunner
         public StartupStencilEvidence Observe(BgraFrame frame)
         {
             var timestamp = (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds;
-            var menuEvidence = ObserveMenu(frame)
+            var menuEvidence = menu.Observe(frame, timestamp)
                 ?? (allowGeometryFallback
                     ? FallbackMenuEvidence(frame, timestamp)
                     : null);
@@ -414,9 +414,6 @@ public static class AutoNavigationRunner
                 menuEvidence,
                 hud.Observe(frame, gameplay: true, timestamp, generation: 1));
         }
-
-        internal MenuStencilResult? ObserveMenu(BgraFrame frame) =>
-            menu.Observe(frame, (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds);
 
         // Geometry is a last-resort bootstrap for a truly empty menu catalog
         // and runs only on the validated Hollow Knight client image. Saved

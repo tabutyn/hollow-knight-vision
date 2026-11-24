@@ -148,6 +148,11 @@ internal static class LiveGameStatusTests
     public static void TestStableMenuGate()
     {
         var gate = new GameplayMenuEvidenceGate();
+        Check(!gate.Admits("quit-game", false, 5, 1));
+        Check(!gate.Admits("quit-game", false, 0, 1.1));
+        Check(!gate.Admits("pause", false, 0, 1.4));
+        Check(gate.Admits("pause", false, 0, 1.45));
+        gate.Reset();
         Check(!gate.Admits(null, true, 5, 1)); Check(!gate.Admits("pause", true, 0, 1.4));
         Check(gate.Admits("pause", true, 0, 1.45)); Check(gate.Admits("pause", true, 0, 1.5));
         Check(!gate.Admits("options", true, 0, 1.6)); Check(gate.Admits("options", true, 0, 1.7));
@@ -159,8 +164,9 @@ internal static class LiveGameStatusTests
     {
         var pipeline = new LiveGameStatusPipeline(); var calls = 0;
         IReadOnlyList<ObjectDetection> Inference() { calls++; return []; }
-        var first = pipeline.Observe(null, Hud(), 1, inferObjects: Inference);
-        Check(first.Status?.IsGameplay == true && first.RecognizedStatus?.IsGameplay == true && first.RanObjectInference);
+        var first = pipeline.Observe(Menu("quit-game", "Yes"), Hud(), 1, inferObjects: Inference);
+        Check(first.Menu is null && first.Status?.IsGameplay == true
+            && first.RecognizedStatus?.IsGameplay == true && first.RanObjectInference);
         var flash = pipeline.Observe(Menu("keyboard"), Hud(), 1.1, inferObjects: Inference);
         Check(flash.Menu is null && flash.Status?.IsGameplay == true && flash.RanObjectInference);
         var missing = pipeline.Observe(null, null, 1.2, inferObjects: Inference);

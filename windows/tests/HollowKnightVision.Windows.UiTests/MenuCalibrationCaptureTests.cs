@@ -36,6 +36,10 @@ internal static class MenuCalibrationCaptureTests
                 && json.RootElement.GetProperty("contextIdentifier").GetString() == "extras"
                 && !json.RootElement.TryGetProperty("capturePath", out _), "Status JSON differs from the Mac command.");
 
+            var hud = new HudStencilResult([new(0, "full", default, .9), new(1, "full", default, .9)],
+                null, [], [], [], default, false, 182);
+            Check(hud.EstablishesGameplay && !capture.Evaluate(frame, catalog, menu, store, hud).Ok,
+                "Gameplay health masks must prevent automatic captures of menu lookalikes.");
             Check(!capture.Evaluate(frame, catalog, menu with { IsMatch = false }, store).Ok
                 && !capture.Evaluate(frame, catalog, menu with { SelectedOptionIdentifier = "extras.invalid" }, store).Ok
                 && !Request("menu-calibration-capture:brightness:brightness.exit").Evaluate(frame, catalog, menu, store).Ok
