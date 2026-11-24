@@ -5,6 +5,16 @@ public sealed record LiveWorldGroundProjection(
     IReadOnlyDictionary<int, GameplaySavedRoomPath> PathRooms)
 {
     public static LiveWorldGroundProjection Empty { get; } = new([], new Dictionary<int, GameplaySavedRoomPath>());
+    public LiveWorldPlacementProjection Placement { get; init; } = LiveWorldPlacementProjection.Empty;
+}
+
+public readonly record struct LiveWorldDoorwayStroke(AtlasPoint Start, AtlasPoint End);
+
+public sealed record LiveWorldPlacementProjection(
+    IReadOnlyList<LiveWorldDoorwayStroke> Doorways,
+    IReadOnlyList<WorldRect> EstimatedFootprints)
+{
+    public static LiveWorldPlacementProjection Empty { get; } = new([], []);
 }
 
 /// <summary>Projects durable green strokes from the same poses used to place Atlas images.</summary>
@@ -55,13 +65,51 @@ public static class LiveWorldGroundOverlay
             pathRooms.Add(room.Key, new(room.Key, pathFloors, room.Where(HasMeasuredPlacement)
                 .Select(ImageBounds).Distinct().ToArray()));
         }
-        return new(result, pathRooms);
+        return new(result, pathRooms) { Placement = ProjectPlacement(snapshot) };
 
         bool HasMeasuredPlacement(LiveWorldObservation observation) =>
             owners.TryGetValue(observation.Id, out var owner)
                 ? owner.member.Measured && (owner.island.Placement is LiveIslandPlacement.Reference or LiveIslandPlacement.Connected
                     || owner.island is { Placement: LiveIslandPlacement.Estimated, BreakReason: LiveTrackingIsland.PlacedTrackingBreakReason })
                 : usesLegacyWindowsPoses;
+    }
+
+    /// <summary>Display geometry from the same centered image placements as the saved Atlas.</summary>
+    public static LiveWorldPlacementProjection ProjectPlacement(LiveWorldSnapshot snapshot)
+    {
+        var estimated = snapshot.TrackingIslands.Where(island => !island.RequiresPlacement
+            && island.Placement is LiveIslandPlacement.Estimated or LiveIslandPlacement.LegacyUnknown).TakeLast(512).ToArray();
+        if (estimated.Length == 0 && snapshot.DoorwayFloorConstraints.Count == 0)
+            return LiveWorldPlacementProjection.Empty;
+
+        var observations = snapshot.Observations.ToDictionary(observation => observation.Id);
+        var doorways = snapshot.DoorwayFloorConstraints.TakeLast(256).Select(edge => new LiveWorldDoorwayStroke(
+            Endpoint(observations[edge.DepartureObservationId], edge.DepartureFloor),
+            Endpoint(observations[edge.ArrivalObservationId], edge.ArrivalFloor))).ToArray();
+        var footprints = new List<WorldRect>(estimated.Length);
+        foreach (var island in estimated)
+        {
+            var left = double.PositiveInfinity;
+            var bottom = double.PositiveInfinity;
+            var right = double.NegativeInfinity;
+            var top = double.NegativeInfinity;
+            foreach (var member in island.Members)
+            {
+                var bounds = ImageBounds(observations[member.ObservationId]);
+                left = Math.Min(left, bounds.X);
+                bottom = Math.Min(bottom, bounds.Y);
+                right = Math.Max(right, bounds.X + bounds.Width);
+                top = Math.Max(top, bounds.Y + bounds.Height);
+            }
+            footprints.Add(new(new(left, bottom), new(right - left, top - bottom)));
+        }
+        return new(doorways, footprints.Distinct().ToArray());
+
+        static AtlasPoint Endpoint(LiveWorldObservation observation, AtlasPoint floor)
+        {
+            var origin = ImageBounds(observation).Origin;
+            return new(origin.X + floor.X, origin.Y + floor.Y);
+        }
     }
 
     public static IReadOnlyList<GroundHypothesisAtlasLine> CombineWithLive(

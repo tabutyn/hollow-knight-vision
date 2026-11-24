@@ -46,8 +46,11 @@ public partial class MainWindow
     private ViewportRect GameplayPathImageBounds() =>
         new(Canvas.GetLeft(GameplayImage), Canvas.GetTop(GameplayImage), GameplayImage.Width, GameplayImage.Height);
 
-    private void UpdateGameplayPathVisibility() =>
+    private void UpdateGameplayPathVisibility()
+    {
         GameplayPathCanvas.Visibility = ShowsGameplayPaths ? Visibility.Visible : Visibility.Collapsed;
+        RenderGameplayPlacement();
+    }
 
     private void ResetGameplayPaths()
     {
