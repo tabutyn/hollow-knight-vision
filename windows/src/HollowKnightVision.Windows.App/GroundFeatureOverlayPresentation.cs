@@ -81,7 +81,8 @@ internal static class GroundFeatureOverlayPresentation
     internal static void DrawSavedAtlas(Canvas canvas, AtlasProjection projection,
         IReadOnlyList<GroundHypothesisAtlasLine> lines) => DrawLines(canvas, lines, projection.ToCanvas);
 
-    internal static void DrawAtlas(Canvas canvas, AtlasPoint camera, ViewportSize capture, ViewportRect live,
+    internal static void DrawAtlas(Canvas linesCanvas, Canvas? patchesCanvas,
+        AtlasPoint camera, ViewportSize capture, ViewportRect live,
         IReadOnlyList<GroundHypothesisAtlasLine> lines, IReadOnlyList<GroundHypothesisAtlasFeature> features,
         AtlasProjection savedProjection = default, IReadOnlyList<GroundHypothesisAtlasLine>? saved = null,
         PixelRect? knight = null)
@@ -107,6 +108,8 @@ internal static class GroundFeatureOverlayPresentation
             }).ToArray();
             lines = LiveWorldGroundOverlay.CombineWithLive(projected, lines, (int)capture.Height, knight);
         }
+        DrawLines(linesCanvas, lines, Project);
+        if (patchesCanvas is null) return;
         foreach (var feature in features)
         {
             if (!double.IsFinite(feature.AtlasPosition.X) || !double.IsFinite(feature.AtlasPosition.Y)) continue;
@@ -120,10 +123,8 @@ internal static class GroundFeatureOverlayPresentation
             var marker = PersistentRectangle(feature, scaleX, scaleY);
             Canvas.SetLeft(marker, center.X - marker.Width * .5);
             Canvas.SetTop(marker, center.Y - marker.Height * .5);
-            canvas.Children.Add(marker);
+            patchesCanvas.Children.Add(marker);
         }
-
-        DrawLines(canvas, lines, Project);
     }
 
     private static void DrawLines(Canvas canvas, IReadOnlyList<GroundHypothesisAtlasLine> lines,
