@@ -44,6 +44,70 @@ internal static class AtlasCaptureGapTests
         Check(finder.Match(arriving, [], null, 1, "room", 1.08) is null, "Released placement left a usable reference.");
     }
 
+    internal static void TestGymFloorlessIntervalKeepsOnlyVerifiedPlacement()
+    {
+        var masks = new GameplaySceneMasks(SceneRegions.Startup(), SceneRegions.Startup(), [], [], null);
+        var origin = new AtlasPoint(24, 31);
+        var size = new WorldSize(640, 360);
+        var floor = GroundHypothesisTrackingResult.Empty with
+        {
+            HasConfirmedGround = true, PoseVerified = true, LocalTextureSupport = 8
+        };
+        foreach (var groundAgrees in new[] { true, false })
+        {
+            var coverage = new BotGymAtlasCoverage();
+            var motion = new BotGymAtlasMotion();
+            coverage.EnterRoom(7);
+            Submit(Frame(0, 1), 1, origin, floor);
+            var entry = coverage.View(origin, size, 5)!;
+
+            Submit(Frame(-10, 2), 1.1, new(34, 31), source: FloorlessPoseCandidateSource.MaskedRegistration);
+            // A motion estimate from the coarse scene is only presentation.
+            Submit(Frame(-15, 3), 1.2, new(64, 31), source: FloorlessPoseCandidateSource.CoarseCaptureRate);
+            var arriving = Frame(-20, 4);
+            Check(motion.MatchSkipped(arriving, masks, 2, "7", 1.3) is null
+                && motion.MatchSkipped(arriving, masks, 1, "8", 1.3) is null
+                && motion.MatchSkipped(arriving, masks, 1, "7", 1.35) is null,
+                "The skip must stay in its capture generation, room and age limit.");
+            var skipped = motion.MatchSkipped(arriving, masks, 1, "7", 1.3);
+            Check(skipped is { ReferenceTimestamp: 1.1, Confidence: >= .8f }
+                && Math.Abs(skipped.CameraPosition.X - 44) < 1.5 && Math.Abs(skipped.CameraPosition.Y - 31) < 1.5,
+                $"The skip must track from the previous accepted image. Received {skipped}.");
+            Submit(arriving, 1.3, skipped!.CameraPosition, source: FloorlessPoseCandidateSource.MaskedRegistration,
+                recoveredAt: skipped.ReferenceTimestamp);
+            Check(!coverage.PlacementPending && coverage.Snapshot.Observations.Count == 1
+                && coverage.View(origin, size, 5)?.EarnedCells == entry.EarnedCells,
+                "Floorless measurements can preserve registration without adding Atlas images or earning cells.");
+
+            var landing = groundAgrees ? new AtlasPoint(54, 31) : origin;
+            Submit(Frame(-30, 5), 1.4, landing, floor);
+            if (groundAgrees)
+                Check(!coverage.PlacementPending && coverage.View(landing, size, 5) is not null
+                    && coverage.Snapshot.UnplacedObservationIds().Count == 0,
+                    "The independently corroborated landing must use its registered Atlas placement.");
+            else
+                Check(coverage.PlacementPending && coverage.View(landing, size, 5) is null
+                    && coverage.PolicyView(landing, size, 5) is { } local && local.EarnedCells == entry.EarnedCells,
+                    "A disagreement needs an independent place match, even at the last trusted ground pose.");
+
+            void Submit(BgraFrame image, double time, AtlasPoint pose, GroundHypothesisTrackingResult? ground = null,
+                FloorlessPoseCandidateSource? source = null, double? recoveredAt = null)
+            {
+                var observation = new VisualGameplayObservation(default!, null, ground is not null, true, 0, null, "test")
+                {
+                    FloorlessEvidence = source.HasValue ? new(null, pose, null, source, null, false) : null,
+                    MotionBridgeConfidence = source.HasValue ? 1 : null,
+                    RecoveredAtlasReferenceTimestamp = recoveredAt
+                };
+                var continuity = motion.Observe(image, masks, 1, "7", time, pose, observation,
+                    coverage.CanContinueMeasuredScenery, ground is not null, measuredScenery: false, corrected: false);
+                if (continuity.RequiresRecovery) coverage.Interrupt(requireMatch: true);
+                coverage.Observe(image, ground is null ? null : pose, time, [], default,
+                    ground ?? GroundHypothesisTrackingResult.Empty, admitsPlacement: true, retainBasis: continuity.RetainBasis);
+            }
+        }
+    }
+
     private static BgraFrame Frame(int offset, long id)
     {
         const int width = 640, height = 360;
