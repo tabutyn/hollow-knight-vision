@@ -9,7 +9,22 @@ public sealed record HackerAtlasArchive(
     IReadOnlyList<HackerRoomConnection> Connections,
     IReadOnlyDictionary<string, AtlasPoint> RoomOffsets,
     long RegistrationCount,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt)
+{
+    internal HackerAtlasArchive RetainRoomsWithPixels()
+    {
+        var retained = Rooms.Where(room => room.Tiles.Count > 0).ToArray();
+        var ids = retained.Select(room => room.Id).ToHashSet();
+        var scenes = retained.Select(room => room.SceneName).ToHashSet(StringComparer.Ordinal);
+        return this with
+        {
+            Rooms = retained,
+            Connections = Connections.Where(edge => ids.Contains(edge.FromRoomId) && ids.Contains(edge.ToRoomId)).ToArray(),
+            RoomOffsets = RoomOffsets.Where(offset => scenes.Contains(offset.Key))
+                .ToDictionary(offset => offset.Key, offset => offset.Value, StringComparer.Ordinal)
+        };
+    }
+}
 
 public sealed record HackerAtlasArchivedRoom(
     Guid Id,
@@ -35,7 +50,7 @@ public sealed class HackerAtlasArchiveStore(string root)
         SaveProfileAtlas? Profile,
         Room[] Rooms,
         HackerRoomConnection[] Connections,
-        Dictionary<string, AtlasPoint> RoomOffsets,
+        Dictionary<string, AtlasPoint>? RoomOffsets,
         long RegistrationCount,
         DateTimeOffset CreatedAt);
 
@@ -114,7 +129,9 @@ public sealed class HackerAtlasArchiveStore(string root)
                 }
                 rooms.Add(new(room.Id, room.SceneName, room.Position, room.CameraAnchor, room.TerrainProjection, room.ContentBounds, tiles));
             }
-            return new(rooms, manifest.Connections, manifest.RoomOffsets, manifest.RegistrationCount, manifest.CreatedAt);
+            // Older Windows versions could save a room before the first tile arrived.
+            return new HackerAtlasArchive(rooms, manifest.Connections, manifest.RoomOffsets ?? new(),
+                manifest.RegistrationCount, manifest.CreatedAt).RetainRoomsWithPixels();
         }
     }
 
@@ -139,6 +156,8 @@ public sealed class HackerAtlasArchiveStore(string root)
             new Dictionary<string, AtlasPoint>(archive.RoomOffsets, StringComparer.Ordinal),
             archive.RegistrationCount, archive.CreatedAt);
         Validate(manifest, profile);
+        if (manifest.Rooms.Any(room => room.Tiles.Length == 0))
+            throw new InvalidDataException("A Hacker Atlas archive cannot save a room without registered tiles.");
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         var staging = destination + $".{Guid.NewGuid():N}.tmp";
         try
@@ -189,7 +208,7 @@ public sealed class HackerAtlasArchiveStore(string root)
     private static void Validate(Manifest manifest, SaveProfileAtlas? profile)
     {
         if (manifest.Version != Version || manifest.Profile != profile || manifest.RegistrationCount < 0
-            || manifest.Rooms is null || manifest.Connections is null || manifest.RoomOffsets is null)
+            || manifest.Rooms is null || manifest.Connections is null)
             throw new InvalidDataException("Invalid Hacker Atlas manifest or save profile.");
 
         var roomIds = new HashSet<Guid>();
@@ -204,7 +223,7 @@ public sealed class HackerAtlasArchiveStore(string root)
                 || room.Tiles.Any(tile => !ValidCoordinate(tile.X) || !ValidCoordinate(tile.Y)))
                 throw new InvalidDataException("Invalid room geometry in the Hacker Atlas archive.");
         }
-        if (manifest.RoomOffsets.Any(offset => string.IsNullOrWhiteSpace(offset.Key) || !Finite(offset.Value)))
+        if (manifest.RoomOffsets?.Any(offset => string.IsNullOrWhiteSpace(offset.Key) || !Finite(offset.Value)) == true)
             throw new InvalidDataException("Invalid room position in the Hacker Atlas archive.");
         var connectionIds = new HashSet<Guid>();
         foreach (var connection in manifest.Connections)
