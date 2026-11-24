@@ -8,6 +8,9 @@ namespace HollowKnightVision.Windows.App;
 
 public partial class MainWindow
 {
+    private const double BotDemoHandoffTimeout = 15;
+    private const string BotDemoHandoffIssue = "Gameplay reached. Bot controls did not become ready. Controls returned to you.";
+
     private sealed record LoadedBot(BotPolicyPlayback? Policy, string? ModelName, string? Issue)
     {
         public string? ModelHash { get; init; }
@@ -26,6 +29,7 @@ public partial class MainWindow
         internal BotDemoSession? Demo { get; } = archive is null ? null : new(archive, startedAt);
         internal BotStartupNavigation Startup { get; } = new(startedAt);
         internal LoadedBot? Loaded;
+        internal double HandoffDeadline = double.PositiveInfinity;
         internal BotPlaybackUpdate PlaybackUpdate = new(BotPlaybackUpdate.WaitingForFrame);
         internal string? DisplayedPlaybackStatus; // UI thread
         // The vision analysis worker owns these fields.
@@ -168,7 +172,9 @@ public partial class MainWindow
     private void CheckBotOwnership()
     {
         if (Volatile.Read(ref botPlayback) is not { } run) return;
-        if (!gameControls.OwnsBotControl(run.Owner))
+        if (!Volatile.Read(ref run.Playing) && BotCaptureClock() >= Volatile.Read(ref run.HandoffDeadline))
+            StopBotPlayback(BotDemoHandoffIssue, reason: "handoff-timeout");
+        else if (!gameControls.OwnsBotControl(run.Owner))
             StopBotPlayback("Bot stopped. Press B to start again.");
         else if (run.Demo is not null && !Volatile.Read(ref run.Playing) && BotCaptureClock() - run.StartedAt > 720)
             StopBotPlayback("Bot Demo timed out.");
@@ -182,7 +188,7 @@ public partial class MainWindow
         }
     }
 
-    private BotRun? ObserveBotStartup(BgraFrame frame, long generation, double capturedAt, bool admitted, bool visualGameplay,
+    private BotRun? ObserveBotStartup(BgraFrame frame, long generation, double capturedAt, bool admitted, bool recognizedGameplay,
         ReceiverGroundTruthSample? receiver, MenuStencilResult? menu, HudStencilResult? hud)
     {
         var run = Volatile.Read(ref botPlayback);
@@ -193,9 +199,9 @@ public partial class MainWindow
             var now = BotCaptureClock();
             var frameTime = (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds;
             var receiverGameplay = receiver?.AtlasGameplayActive == true;
-            var freshHud = hud is { EstablishesGameplay: true, HoldsHealthMask: false }
+            var freshHud = hud is { EstablishesGameplay: true }
                 && frameTime - hud.SourceTimestamp is >= 0 and <= .25;
-            var freshGameplay = visualGameplay && freshHud && receiver?.AtlasGameplayActive != false
+            var freshGameplay = recognizedGameplay && freshHud
                 || run.StartedInGameplay && admitted && receiverGameplay;
             if (run.Demo is { } demo)
             {
@@ -220,6 +226,17 @@ public partial class MainWindow
                     return null;
                 }
                 if (decision.Phase != BotDemoPhase.Gameplay) return null;
+                var deadline = Volatile.Read(ref run.HandoffDeadline);
+                if (double.IsPositiveInfinity(deadline))
+                {
+                    deadline = now + BotDemoHandoffTimeout;
+                    Volatile.Write(ref run.HandoffDeadline, deadline);
+                }
+                if (now >= deadline)
+                {
+                    EndBotFromWorker(run, BotDemoHandoffIssue);
+                    return null;
+                }
             }
             else
             {
@@ -231,7 +248,7 @@ public partial class MainWindow
                 }
                 if (decision.Phase != BotStartupPhase.Gameplay) return null;
             }
-            if (!admitted) return null;
+            if (!admitted || receiver?.AtlasGameplayActive == false || Volatile.Read(ref run.Loaded) is null) return null;
             Volatile.Write(ref run.Playing, true);
             gameControls.NeutralizeBotControl(run.Owner);
         }

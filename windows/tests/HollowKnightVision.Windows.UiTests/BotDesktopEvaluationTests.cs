@@ -47,6 +47,8 @@ internal static class BotDesktopEvaluationTests
             foreach (var domain in new[] { "gameplay", "hacker" })
                 await VerifyDomainAsync(temporary.FullName, domain, label, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening"), timeout.Token);
+            await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-timeout"), timeout.Token,
+                expireHandoff: true);
             await VerifyCheckpointControlsAsync(Path.Combine(temporary.FullName, "versions"), timeout.Token);
         }
         finally
@@ -164,7 +166,7 @@ internal static class BotDesktopEvaluationTests
         string Events(Guid id) => Path.Combine(captures, BotCaptureSession.DirectoryName(id), "events.jsonl");
     }
 
-    private static async Task VerifyOpeningWithoutCheckpointAsync(string root, CancellationToken token)
+    private static async Task VerifyOpeningWithoutCheckpointAsync(string root, CancellationToken token, bool expireHandoff = false)
     {
         using var server = new TcpListener(IPAddress.Loopback, 0);
         server.Start();
@@ -203,33 +205,51 @@ internal static class BotDesktopEvaluationTests
             var released = false;
             do
             {
-                Step(null, receiverGameplay: true, visualGameplay: true, admitGameplay: false, showHud: true);
+                Step(null, receiverGameplay: false, recognizedGameplay: true, admitGameplay: false, showHud: true, holdsHealthMask: true);
                 while (states.Reader.TryRead(out var state))
                 {
-                    Check(!released || !state.Enabled, "A visual Gameplay HUD must suppress skip pulses while the profile Atlas is loading.");
+                    Check(!released || !state.Enabled, "A visual Gameplay HUD must suppress skip pulses while the receiver and profile Atlas are getting ready.");
                     released |= !state.Enabled && state.HeldButtons == InputButtons.None;
                 }
                 await Task.Delay(40, token);
             } while (Clock() < preparingUntil);
-            Check(released && bridge.OwnsBotControl(owner), "Controls must stay neutral while the profile Atlas finishes loading.");
-            while (Field("botPlayback").GetValue(window) is not null)
-            {
-                Step(null, receiverGameplay: true, visualGameplay: true, admitGameplay: true, showHud: true);
-                await Task.Delay(40, token);
-            }
-            Check(!bridge.OwnsBotControl(owner), "The session must release ownership after a fresh Gameplay HUD without a checkpoint.");
+            Check(released && bridge.OwnsBotControl(owner), "Controls must stay neutral while the receiver and profile Atlas are getting ready.");
+            var handoffDeadline = run.GetType().GetField("HandoffDeadline", Instance)!;
+            var remaining = (double)handoffDeadline.GetValue(run)! - Clock();
+            Check(remaining is > 12 and <= 15, "A stable Gameplay HUD must start the bounded handoff even before the receiver is ready.");
+            Step(null, receiverGameplay: false, recognizedGameplay: true, admitGameplay: true, showHud: true);
+            Check(bridge.OwnsBotControl(owner), "A lagging receiver must defer the handoff even after the Atlas is ready.");
+
             var status = (System.Windows.Controls.TextBlock)window.FindName("StatusText");
-            Check(status.Text.Contains("Gameplay reached.", StringComparison.Ordinal)
-                && status.Text.Contains("Train or select a Hacker", StringComparison.Ordinal)
+            if (expireHandoff)
+            {
+                // Advance the pending deadline without waiting for more frames.
+                handoffDeadline.SetValue(run, Clock() - .1);
+                Method("CheckBotOwnership").Invoke(window, null);
+                Check(Field("botPlayback").GetValue(window) is null
+                    && status.Text.Contains("Bot controls did not become ready", StringComparison.Ordinal),
+                    "The heartbeat must end an expired handoff without waiting for another capture.");
+            }
+            else
+            {
+                while (Field("botPlayback").GetValue(window) is not null)
+                {
+                    Step(null, receiverGameplay: true, recognizedGameplay: true, admitGameplay: true, showHud: true);
+                    await Task.Delay(40, token);
+                }
+                Check(status.Text.Contains("Train or select a Hacker", StringComparison.Ordinal),
+                    "The no-checkpoint handoff must explain how to start gameplay playback.");
+            }
+            Check(!bridge.OwnsBotControl(owner) && status.Text.Contains("Gameplay reached.", StringComparison.Ordinal)
                 && status.Text.Contains("Controls returned to you.", StringComparison.Ordinal),
-                "The no-checkpoint handoff must explain how to resume manual play.");
+                "The session must release control at the end of either handoff.");
             Check(!Directory.Exists(Path.Combine(root, "bot-v1", "evaluations")), "Opening alone must not write a policy evaluation.");
 
             async Task ExpectAction(InputButtons button, string context, bool receiverGameplay, bool showHud = false)
             {
                 while (true)
                 {
-                    Step(context, receiverGameplay, visualGameplay: false, admitGameplay: false, showHud);
+                    Step(context, receiverGameplay, recognizedGameplay: false, admitGameplay: false, showHud);
                     while (states.Reader.TryRead(out var state))
                         if (state.Enabled && state.HeldButtons == button) return;
                     Check(bridge.OwnsBotControl(owner), $"Bot lost control before sending {button}.");
@@ -237,7 +257,8 @@ internal static class BotDesktopEvaluationTests
                 }
             }
 
-            void Step(string? context, bool receiverGameplay, bool visualGameplay, bool admitGameplay, bool showHud)
+            void Step(string? context, bool receiverGameplay, bool recognizedGameplay, bool admitGameplay, bool showHud,
+                bool holdsHealthMask = false)
             {
                 ++index;
                 var observed = DateTimeOffset.UtcNow;
@@ -251,10 +272,10 @@ internal static class BotDesktopEvaluationTests
                 };
                 var hud = showHud
                     ? new HudStencilResult([new(0, "full", default, 1), new(1, "full", default, 1)],
-                        null, [], [], [], default, false, timestamp)
+                        null, [], [], [], default, holdsHealthMask, timestamp)
                     : null;
                 _ = Method("ObserveBotStartup").Invoke(window,
-                    [image, Generation, Clock(), admitGameplay, visualGameplay,
+                    [image, Generation, Clock(), admitGameplay, recognizedGameplay,
                         Telemetry(session, index) with { AtlasGameplayActive = receiverGameplay }, menu, hud]);
             }
         }
@@ -264,7 +285,8 @@ internal static class BotDesktopEvaluationTests
             await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
             await peer.WaitAsync(TimeSpan.FromSeconds(5));
         }
-        Console.WriteLine("PASS Untrained desktop bot skips opening despite receiver and menu ambiguity and returns controls at the Gameplay HUD");
+        Console.WriteLine(expireHandoff ? "PASS Desktop bot returns control when the Gameplay HUD handoff expires without new frames"
+            : "PASS Desktop bot stops skip input at the Gameplay HUD while the receiver and Atlas prepare, and returns control without a checkpoint");
     }
 
     private static async Task VerifyDomainAsync(string root, string domain, GroundTruthWorldLine label,

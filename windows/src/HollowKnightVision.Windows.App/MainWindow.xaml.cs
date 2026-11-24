@@ -3338,10 +3338,10 @@ public partial class MainWindow : Window
             if (atlasPathState == AtlasPathFrameState.Gameplay) paths = observedPaths;
         }
         else trackingPipeline.Paths.Suspend();
-        var visualGameplay = admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";
-        var botGameplay = !holdAtlas && visualGameplay;
+        var botGameplay = !holdAtlas && admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";
         var activeBot = Volatile.Read(ref botPlayback) is null ? null
-            : ObserveBotStartup(frame, captureGeneration, captureTimestamp, botGameplay, visualGameplay, receiverTelemetry, recognition.Menu, hudStencil);
+            : ObserveBotStartup(frame, captureGeneration, captureTimestamp, botGameplay,
+                recognition.RecognizedStatus?.IsGameplay == true, receiverTelemetry, recognition.Menu, hudStencil);
         if (botGameplay)
         {
             var wallLineage = tracked.RoomAllowsAtlasWrite && !tracked.RequiresWorldRecovery ? tracked.MeasuredLineage : null;
