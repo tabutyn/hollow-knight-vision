@@ -106,6 +106,42 @@ internal static class SceneSessionStoreTests
         });
     }
 
+    public static void TestSceneReadersWaitForTheWriterLock()
+    {
+        WithTemporaryDirectory(root =>
+        {
+            var store = new SceneSessionStore(root);
+            Check(store.SaveScene([3, 7], expectedRevision: 0, newRevision: 1));
+            var lockPath = Path.Combine(root, "scene.snapshot.lock");
+            Func<int>[] readers =
+            [
+                () => new SceneSessionStore(root).SceneRevision,
+                () =>
+                {
+                    Check((store.LoadScene() ?? []).SequenceEqual(new byte[] { 3, 7 }));
+                    return store.SceneRevision;
+                }
+            ];
+            foreach (var readScene in readers)
+            {
+                Task<int> read;
+                using var started = new ManualResetEventSlim(false);
+                using (var writerLock = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                {
+                    read = Task.Factory.StartNew(() =>
+                    {
+                        started.Set();
+                        return readScene();
+                    }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                    Check(started.Wait(TimeSpan.FromSeconds(5)), "The scene reader did not start.");
+                    Check(!read.Wait(TimeSpan.FromMilliseconds(200)), "A scene reader bypassed the writer lock.");
+                }
+                Check(read.Wait(TimeSpan.FromSeconds(5)) && read.Result == 1,
+                    "The reader should see the complete snapshot after the writer releases the lock.");
+            }
+        });
+    }
+
     public static void TestMissingSourceThrowsExplicitError()
     {
         WithTemporaryDirectory(root =>

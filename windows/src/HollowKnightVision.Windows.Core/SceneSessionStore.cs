@@ -148,6 +148,7 @@ public sealed class SceneSessionStore
         }
 
         Directory.CreateDirectory(FramesDirectory);
+        using var sceneLock = AcquireSceneLock();
         var scene = ReadSceneEnvelope();
         SceneRevision = scene?.Revision ?? 0;
         sceneData = scene?.Data;
@@ -326,6 +327,7 @@ public sealed class SceneSessionStore
 
     public byte[]? LoadScene()
     {
+        using var sceneLock = AcquireSceneLock();
         var scene = ReadSceneEnvelope();
         SceneRevision = scene?.Revision ?? 0;
         sceneData = scene?.Data;
