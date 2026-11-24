@@ -166,7 +166,11 @@ public sealed record HackerRoomConnection(
     HackerRoomSide FromSide,
     HackerRoomSide ToSide,
     double FromCoordinate,
-    double ToCoordinate);
+    double ToCoordinate)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool HasGroundedAlignment { get; init; }
+}
 
 /// <summary>
 /// One independently movable Hacker room. Bounds are room-local while
@@ -229,7 +233,7 @@ public sealed record HackerRoomLayout(
     /// <summary>
     /// Builds the largest possible rectilinear forest. Tree edges keep their
     /// doorways exactly aligned with a small gap. A conflicting loop or an
-    /// overlap starts a fanned island, joined by a free-form connector.
+    /// overlap can lengthen a passage while preserving its floor elevation.
     /// </summary>
     public static HackerRoomLayout Make(
         IReadOnlyList<HackerAtlasRoom> rooms,
@@ -243,7 +247,8 @@ public sealed record HackerRoomLayout(
         var roomsById = rooms.ToDictionary(room => room.Id);
         var positions = new Dictionary<Guid, AtlasPoint>();
         var freeform = new HashSet<Guid>();
-        var pending = connections.ToList();
+        var pending = connections.Where(edge => roomsById.ContainsKey(edge.FromRoomId) && roomsById.ContainsKey(edge.ToRoomId)).ToList();
+        var hasGroundedAlignment = pending.Any(edge => edge.HasGroundedAlignment);
 
         HackerAtlasRect WorldBounds(HackerAtlasRoom room, AtlasPoint position) =>
             room.Bounds.Offset(position.X, position.Y);
@@ -313,18 +318,15 @@ public sealed record HackerRoomLayout(
             HackerRoomSide connectionSide)
         {
             if (!Collides(room, candidate)) return candidate;
-            var stride = connectionSide.IsHorizontal()
-                ? Math.Max(64, room.Bounds.Height + gap)
-                : Math.Max(64, room.Bounds.Width + gap);
+            var horizontal = connectionSide.IsHorizontal();
+            var stride = Math.Max(64, (horizontal ? room.Bounds.Width : room.Bounds.Height) + gap);
+            var sign = connectionSide is HackerRoomSide.Right or HackerRoomSide.Top ? 1d : -1d;
             for (var distance = 1; distance <= Math.Max(8, rooms.Count * 2); distance++)
             {
-                foreach (var sign in new[] { 1d, -1d })
-                {
-                    var shifted = connectionSide.IsHorizontal()
-                        ? candidate with { Y = candidate.Y + distance * stride * sign }
-                        : candidate with { X = candidate.X + distance * stride * sign };
-                    if (!Collides(room, shifted)) return shifted;
-                }
+                var shifted = horizontal
+                    ? candidate with { X = candidate.X + distance * stride * sign }
+                    : candidate with { Y = candidate.Y + distance * stride * sign };
+                if (!Collides(room, shifted)) return shifted;
             }
             return candidate;
         }
@@ -357,8 +359,25 @@ public sealed record HackerRoomLayout(
         while (pending.Count > 0)
         {
             var progressed = false;
-            var remainder = new List<HackerRoomConnection>();
-            foreach (var connection in pending)
+            IReadOnlyList<HackerRoomConnection> work = pending;
+            List<HackerRoomConnection> remainder = [];
+            if (hasGroundedAlignment)
+            {
+                // Re-evaluate after each edge so newly reachable measured floors
+                // take priority over estimated spacing around a return loop.
+                var reachable = pending.FindIndex(edge => edge.HasGroundedAlignment && IsReachable(edge));
+                if (reachable < 0) reachable = pending.FindIndex(IsReachable);
+                if (reachable < 0)
+                {
+                    var root = roomsById[pending[0].FromRoomId];
+                    positions[root.Id] = root.Position;
+                    continue;
+                }
+                work = [pending[reachable]];
+                pending.RemoveAt(reachable);
+                remainder = pending;
+            }
+            foreach (var connection in work)
             {
                 if (!roomsById.TryGetValue(connection.FromRoomId, out var fromRoom)
                     || !roomsById.TryGetValue(connection.ToRoomId, out var toRoom)) continue;
@@ -436,6 +455,9 @@ public sealed record HackerRoomLayout(
             positions.TryAdd(room.Id, room.Position);
         }
         return new HackerRoomLayout(positions, freeform);
+
+        bool IsReachable(HackerRoomConnection edge) =>
+            positions.ContainsKey(edge.FromRoomId) || positions.ContainsKey(edge.ToRoomId);
     }
 }
 
@@ -730,6 +752,10 @@ public sealed class HackerAtlasPipeline
         FrameSignalProfile Profile,
         AtlasPoint CameraPosition);
 
+    private sealed record GroundedReference(Guid SessionId, double Timestamp, double LocalY, double ScreenX, double Width);
+    private sealed record PendingFloorAlignment(int ConnectionIndex, RoomState DepartureRoom, RoomState ArrivalRoom,
+        HackerRoomSide DepartureSide, Guid SessionId, double DepartureTime, double ArrivalTime);
+
     private sealed class RoomState
     {
         internal RoomState(Guid id, string sceneName, AtlasPoint position, AtlasPoint cameraAnchor, HackerTerrainProjection terrainProjection,
@@ -755,11 +781,13 @@ public sealed class HackerAtlasPipeline
         internal HudStencilTracker HudStencilTracker { get; set; }
         internal FadeReference? FadeReference { get; set; }
         internal int? LastIntegratedUnityFrame { get; set; }
+        internal Queue<GroundedReference> GroundedReferences { get; } = new();
     }
 
     private readonly object gate = new();
     private readonly Dictionary<string, RoomState> rooms = new(StringComparer.Ordinal);
     private readonly List<HackerRoomConnection> connections = [];
+    private readonly List<PendingFloorAlignment> pendingFloorAlignments = [];
     private HudStencilTemplate? hudTemplate;
     private HackerPreparedFrame? lastPlayableFrame;
     private long nextObservationId;
@@ -828,6 +856,7 @@ public sealed class HackerAtlasPipeline
         {
             rooms.Clear();
             connections.Clear();
+            pendingFloorAlignments.Clear();
             lastPlayableFrame = null;
             nextObservationId = 0;
             registrationCount = 0;
@@ -872,6 +901,7 @@ public sealed class HackerAtlasPipeline
                 return Integrate(reference.Prepared, state);
             }
 
+            RecordGroundedReference(prepared, state);
             if (lastPlayableFrame is { } previous
                 && !string.Equals(
                     previous.SceneName,
@@ -883,10 +913,12 @@ public sealed class HackerAtlasPipeline
                 state.Composer.EndTemporalWindow();
                 RecordConnection(previous, previousState, prepared, state);
             }
+            var refinedAlignment = RefineHorizontalFloorAlignments(prepared.CapturedAt);
             lastPlayableFrame = prepared;
 
             UpdateFadeReference(prepared, profile, position, state);
-            return prepared.IntegratesAtlas ? Integrate(prepared, state) : null;
+            if (prepared.IntegratesAtlas && Integrate(prepared, state) is { } integrated) return integrated;
+            return refinedAlignment ? BuildOutput(prepared.SceneName, prepared.UnityFrame) : null;
         }
     }
 
@@ -995,7 +1027,7 @@ public sealed class HackerAtlasPipeline
     {
         var fromSide = TransitionSide(previous, current);
         var toSide = fromSide.Opposite();
-        var duplicate = connections.Any(connection =>
+        var index = connections.FindIndex(connection =>
             connection.FromRoomId == previousRoom.Id
             && connection.ToRoomId == currentRoom.Id
             && connection.FromSide == fromSide
@@ -1004,16 +1036,90 @@ public sealed class HackerAtlasPipeline
             && connection.ToRoomId == previousRoom.Id
             && connection.FromSide == toSide
             && connection.ToSide == fromSide);
-        if (duplicate) return;
-        connections.Add(new HackerRoomConnection(
-            Guid.NewGuid(),
-            previousRoom.Id,
-            currentRoom.Id,
-            fromSide,
-            toSide,
-            DoorwayCoordinate(previous, previousRoom, fromSide),
-            DoorwayCoordinate(current, currentRoom, toSide)));
-        revision = unchecked(revision + 1);
+        if (index < 0)
+        {
+            index = connections.Count;
+            connections.Add(new HackerRoomConnection(
+                Guid.NewGuid(),
+                previousRoom.Id,
+                currentRoom.Id,
+                fromSide,
+                toSide,
+                DoorwayCoordinate(previous, previousRoom, fromSide),
+                DoorwayCoordinate(current, currentRoom, toSide)));
+            revision = unchecked(revision + 1);
+        }
+
+        if (fromSide.IsHorizontal() && !connections[index].HasGroundedAlignment
+            && previous.Sample.SessionId == current.Sample.SessionId && current.CapturedAt > previous.CapturedAt)
+        {
+            pendingFloorAlignments.RemoveAll(pending => pending.ConnectionIndex == index);
+            pendingFloorAlignments.Add(new(index, previousRoom, currentRoom, fromSide, current.Sample.SessionId,
+                previous.CapturedAt, current.CapturedAt));
+        }
+    }
+
+    private static void RecordGroundedReference(HackerPreparedFrame prepared, RoomState room)
+    {
+        var sample = prepared.Sample;
+        if (sample.AtlasGameplayActive == false || !sample.Grounded || Math.Abs(sample.VelocityY) >= .1
+            || !double.IsFinite(prepared.CapturedAt)
+            || HeroScreenPoint(sample, prepared.LiveBounds.Width, prepared.LiveBounds.Height) is not { } hero
+            || hero.X < 0 || hero.X > prepared.LiveBounds.Width || hero.Y < 0 || hero.Y > prepared.LiveBounds.Height)
+        {
+            return;
+        }
+
+        var references = room.GroundedReferences;
+        references.Enqueue(new(sample.SessionId, prepared.CapturedAt,
+            prepared.LiveBounds.MinY + hero.Y - room.Position.Y, hero.X, prepared.LiveBounds.Width));
+        if (references.Count > 180) references.Dequeue();
+    }
+
+    private bool RefineHorizontalFloorAlignments(double timestamp)
+    {
+        var revised = false;
+        pendingFloorAlignments.RemoveAll(pending =>
+        {
+            if (timestamp > pending.ArrivalTime + 3) return true;
+            var from = StableGroundHeight(pending.DepartureRoom, pending.DepartureSide, pending.SessionId,
+                pending.DepartureTime - 1.5, pending.DepartureTime);
+            var to = StableGroundHeight(pending.ArrivalRoom, pending.DepartureSide.Opposite(), pending.SessionId,
+                pending.ArrivalTime, pending.ArrivalTime + 3);
+            if (from is null || to is null) return false;
+
+            var connection = connections[pending.ConnectionIndex];
+            var forward = connection.FromRoomId == pending.DepartureRoom.Id;
+            connections[pending.ConnectionIndex] = connection with
+            {
+                FromCoordinate = forward ? from.Value : to.Value,
+                ToCoordinate = forward ? to.Value : from.Value,
+                HasGroundedAlignment = true
+            };
+            revised = true;
+            return true;
+        });
+        if (revised) revision = unchecked(revision + 1);
+        return revised;
+    }
+
+    // A grounded Knight's center has the same offset from the floor on both
+    // sides. Compare several exact frames near each doorway.
+    private static double? StableGroundHeight(RoomState room, HackerRoomSide side, Guid sessionId, double start, double end)
+    {
+        var candidates = room.GroundedReferences.Where(reference =>
+            reference.SessionId == sessionId && reference.Timestamp >= start && reference.Timestamp <= end
+            && (side == HackerRoomSide.Right ? reference.ScreenX >= reference.Width * .65 : reference.ScreenX <= reference.Width * .35))
+            .ToArray();
+        if (candidates.Length < 3) return null;
+        var last = candidates[^1];
+        var recent = candidates.Where(reference => last.Timestamp - reference.Timestamp is >= 0 and <= .5
+            && Math.Abs(reference.LocalY - last.LocalY) <= 2 * last.Width / 640).ToArray();
+        if (recent.Length < 3 || last.Timestamp - recent[0].Timestamp < .05
+            || !recent.Zip(recent.Skip(1), (a, b) => b.Timestamp - a.Timestamp).All(gap => gap is > 0 and <= .25))
+            return null;
+        var heights = recent.Select(reference => reference.LocalY).Order().ToArray();
+        return heights[heights.Length / 2];
     }
 
     private static HackerRoomSide TransitionSide(

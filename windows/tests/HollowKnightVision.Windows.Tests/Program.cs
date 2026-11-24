@@ -323,7 +323,7 @@ var tests = new List<(string Name, Action Run)>
     ("hacker atlas direct camera placement uses independent XY projection scale", TestDirectCameraPlacementUsesIndependentXYProjectionScale),
     ("hacker atlas room layout keeps tree doorways rectilinear with a gap", TestRoomLayoutKeepsTreeDoorwaysRectilinearWithAGap),
     ("hacker atlas room layout leaves contradictory loop freeform", TestRoomLayoutLeavesContradictoryLoopAsFreeformConnection),
-    ("hacker atlas room layout fans overlapping branch into a rectified island", TestRoomLayoutFansOverlappingBranchIntoNewRectifiedIsland),
+    ("Hacker Atlas extends overlapping horizontal branches without shifting the floor", TestRoomLayoutMovesOverlappingHorizontalBranchOutward),
     ("input acknowledgement measures only state changes", InputAcknowledgementTrackerTests.TestAcknowledgementTrackerMeasuresOnlyMatchedStateChanges),
     ("input acknowledgement rejects mismatch and stale identity", InputAcknowledgementTrackerTests.TestAcknowledgementTrackerRejectsMismatchAndOldOrUnknownAcknowledgements),
     ("input acknowledgement bounds pending state and calculates p95", InputAcknowledgementTrackerTests.TestAcknowledgementTrackerBoundsPendingStatesAndCalculatesRollingP95),
@@ -900,6 +900,9 @@ var tests = new List<(string Name, Action Run)>
     ("profile Atlas adopts, switches and restores real raster tiles", ProfileAtlasTests.TestProfileAtlasRoundTrip),
     ("profile Atlas keeps previous tiles when a saved profile is invalid or activation fails", ProfileAtlasTests.TestProfileAtlasRollback),
     ("Hacker Atlas restores rooms, doorways and raster and continues compositing", HackerAtlasArchiveTests.TestRestoresPlaythroughAndContinuesCompositing),
+    ("Hacker Atlas aligns both directions after landing and keeps the alignment in restored maps", HackerAtlasArchiveTests.TestGroundedDoorwayHeightsSurviveArchiveAndAirborneReturn),
+    ("Hacker Atlas requires fresh grounded poses close to both doorway edges", HackerAtlasArchiveTests.TestAirborneAndOutOfPositionSamplesDoNotAlignDoorways),
+    ("Hacker Atlas prioritizes measured floors over estimated return-loop spacing", HackerAtlasArchiveTests.TestMeasuredReturnFloorsTakePriorityOverEstimatedSpacing),
     ("Hacker Atlas archive rejects damaged tiles and preserves prior generation", HackerAtlasArchiveTests.TestArchiveWriteAndReadFailurePreserveLastGoodVersion),
     ("Hacker Atlas profile preflight preserves both previous writers on failure", HackerAtlasArchiveTests.TestProfilePreflightKeepsBothWritersOnFailure),
     ("Hacker named Atlas Save, Load, New and Delete preserve playthroughs", HackerAtlasArchiveTests.TestNamedStatesPreserveCurrentAndOriginalPlaythroughs),
@@ -9910,7 +9913,7 @@ static void TestRoomLayoutLeavesContradictoryLoopAsFreeformConnection()
     Equal(new AtlasPoint(124, 124), layout.Positions[c.Id]);
 }
 
-static void TestRoomLayoutFansOverlappingBranchIntoNewRectifiedIsland()
+static void TestRoomLayoutMovesOverlappingHorizontalBranchOutward()
 {
     var a = HackerRoom("A", new AtlasPoint(0, 0), new WorldSize(100, 100));
     var b = HackerRoom("B", new AtlasPoint(0, 0), new WorldSize(100, 100));
@@ -9923,8 +9926,7 @@ static void TestRoomLayoutFansOverlappingBranchIntoNewRectifiedIsland()
     var cPosition = layout.Positions[c.Id];
 
     Equal(new AtlasPoint(124, 0), bPosition);
-    Equal(124d, cPosition.X);
-    True(cPosition.Y != 0);
+    Equal(new AtlasPoint(248, 0), cPosition);
     True(layout.FreeformConnectionIds.Contains(ac.Id));
     True(!b.Bounds.Offset(bPosition.X, bPosition.Y).Intersects(
         c.Bounds.Offset(cPosition.X, cPosition.Y)));
