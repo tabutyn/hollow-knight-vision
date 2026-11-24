@@ -247,10 +247,14 @@ internal static class NativeAtlasImportTests
             var failAppend = false;
             var pipeline = new WindowsLiveWorldPipeline(root.FullName, transactionObserver: null,
                 transactionFault: stage => failAppend && stage == "append");
-            Check(pipeline.Process(ResumeFrame(1, 71)).AllowsAtlasWrite, "first frame is committed");
+            var first = pipeline.Process(ResumeFrame(1, 71));
+            Check(first.AllowsAtlasWrite && first.CommittedGraph is { Observations.Count: 1 } baseline
+                && baseline.Observations[0].RoomId == first.CommittedRoomId, "the first frame publishes its committed graph");
             var throttled = ResumeFrame(2, 71) with { Timestamp = .35, MonotonicTimestamp = .35 };
-            Check(pipeline.Process(throttled).State == WindowsLiveWorldPipelineState.Throttled,
-                "the newer frame reaches the live tracker between persistence ticks");
+            var betweenCommits = pipeline.Process(throttled);
+            Check(betweenCommits.State == WindowsLiveWorldPipelineState.Throttled
+                && ReferenceEquals(first.CommittedGraph, betweenCommits.CommittedGraph),
+                "analysis between persistence ticks must keep the same committed graph");
             var delayed = ResumeFrame(3, 191) with
             {
                 RoomName = "Tutorial_Other", Timestamp = .32, MonotonicTimestamp = .32
@@ -259,8 +263,8 @@ internal static class NativeAtlasImportTests
                 "a newer capture ID cannot replay time before a throttled frame");
 
             failAppend = true;
-            Check(pipeline.Process(ResumeFrame(3, 71)).State == WindowsLiveWorldPipelineState.Failed,
-                "a later admitted frame reaches the injected write failure");
+            Check(pipeline.Process(ResumeFrame(3, 71)) is { State: WindowsLiveWorldPipelineState.Failed, CommittedGraph: null },
+                "an injected write failure cannot publish an uncommitted graph");
             failAppend = false;
             var oldCapture = ResumeFrame(5, 191) with { CaptureGeneration = 0, RoomName = "Tutorial_Other" };
             CheckDiscarded(pipeline.Process(oldCapture), "stale capture generation",

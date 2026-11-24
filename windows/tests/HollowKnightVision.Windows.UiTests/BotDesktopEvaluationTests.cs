@@ -158,7 +158,7 @@ internal static class BotDesktopEvaluationTests
                     frame, Generation, Generation, now, 1, 1UL, unityFrame, sample,
                     batch, new[] { new DetectedFloorLine(100, new(20, 170)) }, TerrainWallDetection.Empty,
                     true, new AtlasPoint(0, 0), null, new AtlasPoint(96, 100), previous,
-                    run, 1L, GroundHypothesisTrackingResult.Empty, true, masks.AtlasExclusions, masks
+                    run, 1L, GroundHypothesisTrackingResult.Empty, true, masks.AtlasExclusions, masks, true, null
                 ]);
                 return now;
             }

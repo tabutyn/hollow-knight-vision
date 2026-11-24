@@ -90,6 +90,14 @@ internal static class BotDesktopCaptureIntegrationTests
                 && Math.Abs(translatedWall.Dx - oldWall.Dx) < 1e-8,
                 "The published observation must carry the translated wall and its original relative distance.");
             Check(rows.Skip(4).All(row => row.Blockade is null), "Walking through the wall must retire it in the clip.");
+            var beforeCoverage = rows[2].AtlasView;
+            var afterCoverage = rows[3].AtlasView;
+            Check(rows[0].AtlasView is { EarnedCells: 0 }
+                && beforeCoverage is { EarnedCells: > 0 } && afterCoverage is not null
+                && afterCoverage.EarnedCells == beforeCoverage.EarnedCells
+                && afterCoverage.CoveredCells == beforeCoverage.CoveredCells
+                && Math.Abs(afterCoverage.Camera[0] - beforeCoverage.Camera[0] - 640) < 1e-8,
+                "A saved visual clip must retain its committed coverage across a camera correction without duplicate credit.");
 
             double Step(long id, double knightX, InputButtons input, long epoch, AtlasPoint camera,
                 GroundHypothesisTrackingResult ground, double? timestamp = null)
@@ -101,10 +109,32 @@ internal static class BotDesktopCaptureIntegrationTests
                     { SourceFrameIdentifier = id };
                 var batch = new LiveObjectDetectionBatch([knight], id, id, Generation, 0);
                 var captureAt = timestamp ?? Clock();
+                const int committedRoom = 19;
+                var center = new AtlasPoint(frame.Width / 2d, frame.Height / 2d);
+                double[] offsets = id switch
+                {
+                    <= 10 => [0],
+                    11 => [0, 128],
+                    12 => [0, 128, 256],
+                    _ => [640, 768, 896, 768]
+                };
+                var observations = offsets.Select((offset, index) =>
+                {
+                    var pose = center with { X = center.X + offset };
+                    return LiveWorldObservation.Create(index, index, index + 1, frame.Width, frame.Height,
+                        frame.Width, 160, [], pose, pose, roomId: committedRoom);
+                }).ToArray();
+                var origin = observations[0].OptimizedPose;
+                var island = new LiveTrackingIsland(0, committedRoom, 1, origin,
+                    LiveIslandPlacement.Reference, default, "test",
+                    observations.Select(row => new LiveIslandMember(row.Id, new(row.OptimizedPose.X - origin.X, 0), true)).ToArray());
+                var graph = new LiveWorldSnapshot(mapRevision: (int)id, anchoredObservationId: 0,
+                    observations: observations, trackingIslands: [island]);
+                var world = new MainWindow.CommittedBotFrame(graph, committedRoom, origin);
                 _ = Method("CaptureBotObservations").Invoke(window, [
                     frame, Generation, Generation, captureAt, 17, 1UL, null, null, batch,
                     Array.Empty<DetectedFloorLine>(), TerrainWallDetection.Empty, true, camera, null, null, input,
-                    null, epoch, ground, false, Array.Empty<PixelRect>(), null
+                    null, epoch, ground, false, Array.Empty<PixelRect>(), null, true, world
                 ]);
                 return captureAt;
             }
