@@ -119,8 +119,7 @@ public partial class MainWindow
         {
             var root = BotRoot;
             var selected = await Task.Run(() => new BotModelStore(root, domain).LoadPlayback());
-            var name = domain == BotCaptureDomain.Hacker ? "Hacker" : "Game Play";
-            loaded = selected is null ? new(null, null, $"Train or select a {name} checkpoint before bot gameplay.")
+            loaded = selected is null ? new(new BotPolicyPlayback(BotStarterPolicy.Load(), domain), "Built-in playing policies", null)
                 : new(new BotPolicyPlayback(selected.Policy, domain), selected.Policy.Name, null)
                 {
                     Motor = selected.Policy,

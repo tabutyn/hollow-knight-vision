@@ -73,6 +73,7 @@ var tests = new List<(string Name, Action Run)>
     ("bot capture dates round-trip with macOS and earlier Windows clips", BotCaptureTests.TestReadsMacAndPreviousWindowsCaptureDates),
     ("Windows captures preserve extended ability edges and verified receiver evidence", BotCaptureTests.TestSkillButtonsPreserveWireNamesAndEvidence),
     ("native ability models use the validated compact and legacy observation layouts", BotLearnedSkillTests.TestAbilityModelsAndBoundInference),
+    ("built-in game policies use the shared compact layout and stop on stale input", BotStarterPolicyTests.TestBuiltInPoliciesUseSharedFeaturesAndRelease),
     ("bot clip timeline uses the original timestamped frames and matching terrain", BotCaptureTests.TestClipTimelineUsesExactSourceRowsAndFallsBackToStills),
     ("bot clip route evidence verifies clip, replay, checksum and frame identity", BotClipAnnotationTests.TestSidecarRequiresMatchingClipChecksumAndFrameIdentity),
     ("bot clip deletion keeps shared replay until the last domain is deleted", BotCaptureTests.TestDeletionKeepsSharedReplayUntilLastClipInEitherOrder),

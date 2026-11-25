@@ -95,6 +95,11 @@ has focus. Both workspaces use the shared registered routes and frame-matched
 receiver actors for Thinking decisions. Vision rechecks the target before
 using the same input lease as PPO. Press **B** to stop. Normal mode is for inspection.
 
+Before the first training run, **B** uses the built-in explorer in modded Game
+Play or Hacker. It waits for admitted gameplay and fresh movement observations.
+After a verified checkpoint is available for that domain, **B** uses the
+selected trained policy.
+
 With a compatible mod receiver, **C** sends Dash, **E** sends Crystal Dash,
 **F** sends Quick Cast, and **D** sends Dream Nail. A **K** recording saves these
 presses and releases for both camera domains. The ability exporter uses clips
