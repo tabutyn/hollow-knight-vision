@@ -197,7 +197,8 @@ public sealed class OnnxObjectDetector : IDisposable
     private static readonly IReadOnlySet<string> CrawlidClass = new HashSet<string>([LiveActorConfirmation.Crawlid]);
 
     public OnnxObjectDetector(string runDirectory, LabelingModelSemanticVersion? modelVersion = null,
-        IReadOnlySet<string>? trainedClassIdentifiers = null, Guid? sourceRunIdentifier = null, bool useActorCalibrations = true)
+        IReadOnlySet<string>? trainedClassIdentifiers = null, Guid? sourceRunIdentifier = null, bool useActorCalibrations = true,
+        IReadOnlyDictionary<string, string?>? calibrationOverrides = null)
     {
         if (string.IsNullOrWhiteSpace(runDirectory)) throw new ArgumentException("Run directory is required.", nameof(runDirectory));
         RunDirectory = Path.GetFullPath(runDirectory);
@@ -237,10 +238,9 @@ public sealed class OnnxObjectDetector : IDisposable
             session.Dispose();
             throw new InvalidDataException("ONNX model does not expose image, scores, and boxes.");
         }
-        var run = sourceRunIdentifier ?? (root.TryGetProperty("id", out var id)
-            && id.ValueKind == JsonValueKind.String && id.TryGetGuid(out var manifestRun) ? manifestRun : Guid.Empty);
-        if (useActorCalibrations && run != Guid.Empty)
-            calibration = OnnxActorCalibration.Load(RunDirectory, run, TrainedClassIdentifiers);
+        if (useActorCalibrations)
+            calibration = OnnxActorCalibration.Load(RunDirectory, SourceRun(root, sourceRunIdentifier),
+                TrainedClassIdentifiers, calibrationOverrides);
     }
 
     public string RunDirectory { get; }
@@ -248,6 +248,18 @@ public sealed class OnnxObjectDetector : IDisposable
     public LabelingModelSemanticVersion? ModelVersion { get; }
     public IReadOnlyList<string> ClassIdentifiers { get; }
     public IReadOnlySet<string> TrainedClassIdentifiers { get; }
+
+    internal bool HasActorCalibration(string identifier) => calibration?.HasActor(identifier) == true;
+
+    public static string[] ActorCalibrationFingerprints(string runDirectory, JsonElement manifest,
+        IReadOnlySet<string> trainedClassIdentifiers, Guid? sourceRunIdentifier,
+        IReadOnlyDictionary<string, string?>? calibrationOverrides = null) =>
+        OnnxActorCalibration.Fingerprints(Path.GetFullPath(runDirectory), SourceRun(manifest, sourceRunIdentifier),
+            trainedClassIdentifiers, calibrationOverrides);
+
+    private static Guid SourceRun(JsonElement manifest, Guid? registeredRun) =>
+        registeredRun ?? (manifest.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String
+            && id.TryGetGuid(out var run) ? run : Guid.Empty);
 
     public static (IReadOnlyList<string> Declared, IReadOnlySet<string> Trained) ReadClasses(
         string runDirectory, JsonElement manifest, IReadOnlySet<string>? trainedClassIdentifiers = null)

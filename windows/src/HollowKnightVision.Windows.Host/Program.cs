@@ -335,12 +335,12 @@ internal static class Program
                 return Task.FromResult(1);
             }
         }
-        if (arguments is ["--gym-runtime-info", var domain, var gamePath, var supportPath])
+        if (arguments is ["--gym-runtime-info", var domain, var gamePath, var supportPath, ..] && arguments.Length <= 7)
         {
             try
             {
                 var info = GymRuntimeInfo.Read(domain, gamePath, supportPath,
-                    Environment.GetEnvironmentVariable("HKV_GYM_VISUAL_MODEL_DIR"));
+                    Environment.GetEnvironmentVariable("HKV_GYM_VISUAL_MODEL_DIR"), arguments.Skip(4).ToArray());
                 (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(info, WorldReplayJsonOptions));
                 return Task.FromResult(0);
             }

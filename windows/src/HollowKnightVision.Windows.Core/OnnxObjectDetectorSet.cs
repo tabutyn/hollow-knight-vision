@@ -6,7 +6,7 @@ public sealed class OnnxObjectDetectorSet : IDisposable
     private readonly List<OnnxObjectDetector> detectors = [];
     public bool HasModels => detectors.Count > 0;
     public OnnxObjectDetectorSet(IEnumerable<string> runDirectories, IReadOnlyList<LabelingActiveModelArtifact>? artifacts = null,
-        bool useActorCalibrations = true)
+        bool useActorCalibrations = true, IReadOnlyDictionary<string, string?>? calibrationOverrides = null)
     {
         try
         {
@@ -16,7 +16,7 @@ public sealed class OnnxObjectDetectorSet : IDisposable
                     Path.GetDirectoryName(Path.GetFullPath(item.ModelPath)), directory, StringComparison.OrdinalIgnoreCase));
                 if (artifact?.TrainedClassIdentifiers is { Count: 0 }) continue;
                 var detector = new OnnxObjectDetector(directory, artifact?.Version, artifact?.TrainedClassIdentifiers,
-                    artifact?.SourceRunIdentifier, useActorCalibrations);
+                    artifact?.SourceRunIdentifier, useActorCalibrations, calibrationOverrides);
                 if (detector.TrainedClassIdentifiers.Count > 0) detectors.Add(detector);
                 else detector.Dispose();
             }
@@ -25,6 +25,7 @@ public sealed class OnnxObjectDetectorSet : IDisposable
     }
     public IReadOnlyList<ObjectDetection> Detect(BgraFrame source, bool raw = false) =>
         detectors.SelectMany(detector => detector.Detect(source, raw)).ToArray();
+    public bool HasActorCalibration(string identifier) => detectors.Any(detector => detector.HasActorCalibration(identifier));
     public void Dispose()
     {
         foreach (var detector in detectors) detector.Dispose();

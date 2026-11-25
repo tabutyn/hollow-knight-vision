@@ -1,5 +1,6 @@
 """Exercise the Game Play encoder with the same line protocol as the Gym trainer."""
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ from hkv_bot_dataset import HISTORY_LENGTH, LANDING_GEOMETRY_POLICY_VERSION, SCH
 WIDTH, HEIGHT = 640, 360
 CLASSES = ["game.playable-knight", "enemies.crawlid", "world.geo-deposit"]
 TRAINED_CLASSES = ["game.playable-knight", "enemies.crawlid"]
+SOURCE_RUN = "e6b6783a-e063-4607-ad05-83e6e0776ae7"
 
 
 def fixture_detector(directory):
@@ -37,8 +39,28 @@ def fixture_detector(directory):
          helper.make_tensor_value_info("boxes", TensorProto.FLOAT, [1, 4, 1, 3])], values)
     save(helper.make_model(graph, ir_version=9, opset_imports=[helper.make_opsetid("", 17)]),
          directory / "Detector.onnx")
-    (directory / "training.json").write_text(json.dumps(dict(modelFormat="onnx",
+    (directory / "training.json").write_text(json.dumps(dict(id=SOURCE_RUN, modelFormat="onnx",
         modelFilename="Detector.onnx", classIdentifiers=CLASSES, trainedClassIdentifiers=TRAINED_CLASSES)))
+
+
+def fixture_knight_calibration(directory):
+    directory.mkdir(parents=True)
+    model = directory / "Knight.onnx"
+    values = [helper.make_tensor("dimensions", TensorProto.INT64, [4], [1, 1, 90, 160]),
+              helper.make_tensor("peak", TensorProto.INT64, [1, 4], [0, 0, 54, 45]),
+              helper.make_tensor("score", TensorProto.FLOAT, [1], [.986])]
+    nodes = [helper.make_node("ConstantOfShape", ["dimensions"], ["empty"]),
+             helper.make_node("ScatterND", ["empty", "peak", "score"], ["heatmap"])]
+    graph = helper.make_graph(nodes, "knight-localizer",
+        [helper.make_tensor_value_info("image", TensorProto.FLOAT, [1, 3, HEIGHT, WIDTH])],
+        [helper.make_tensor_value_info("heatmap", TensorProto.FLOAT, [1, 1, 90, 160])], values)
+    save(helper.make_model(graph, ir_version=9, opset_imports=[helper.make_opsetid("", 17)]), model)
+    receipt = directory / f"knight-{SOURCE_RUN}.json"
+    receipt.write_text(json.dumps(dict(sourceRunIdentifier=SOURCE_RUN, weakConfidence=.25,
+        referenceConfidence=.975, correctHUDMatches=True, localizer=dict(modelFilename=model.name,
+            sha256=hashlib.sha256(model.read_bytes()).hexdigest(), standaloneConfidence=.98,
+            boxWidth=.045, boxHeight=.14))), encoding="utf-8")
+    return receipt
 
 
 def pixels():
@@ -133,6 +155,25 @@ def check(encoder_command, root):
         compared += 1
     assert compared >= 4, f"Only {compared} visual decisions had valid terrain."
     print(f"PASS Windows Game Play Gym returned {compared} visual vectors unchanged by altered mod actors, pose, or health.")
+
+    # The active detector's sibling heatmap must supplement the same RGB input used by live Vision.
+    calibration = fixture_knight_calibration(model.parent / "calibrations")
+    calibrated = run(command, frames[:4], env, rgb, image)
+    assert all(row["knightLocalizerActive"] for row in calibrated), calibrated[2] | {"input": "omitted"}
+    assert calibrated[2]["knight"] == "visual" and calibrated[2]["knightConfidence"] > .97
+    assert "input" in calibrated[2] and not calibrated[2].get("weakKnightCorrection")
+    assert calibrated[3]["issues"] == ["transition-blackout"] and "input" not in calibrated[3]
+    recovered = np.frombuffer(base64.b64decode(calibrated[2]["input"], validate=True), dtype="<f4").reshape(HISTORY_LENGTH, -1)
+    assert recovered[-1, names.index("knight_confidence")] > .97
+
+    alternate = calibration.with_name("explicit-knight.json")
+    calibration.rename(alternate)
+    explicit = run([*command, "-", str(alternate)], frames[:4], env, rgb, image)
+    assert explicit == calibrated, "An explicit receipt must apply the same model and the same validation as the active default."
+    alternate.write_text(alternate.read_text().replace(SOURCE_RUN, "2e13c2fa-c27a-4135-bbfa-1dcce49119ba"), encoding="utf-8")
+    invalid = run([*command, "-", str(alternate)], frames[:4], env, rgb, image)
+    assert invalid == baseline[:4], "A receipt bound to another run must fall back to the primary detector."
+    print("PASS Game Play Gym consumes verified default and explicit Knight heatmaps in the policy vector.")
 
 
 if __name__ == "__main__":

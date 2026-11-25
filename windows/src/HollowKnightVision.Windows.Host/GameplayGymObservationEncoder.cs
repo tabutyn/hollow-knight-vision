@@ -7,6 +7,8 @@ public static class GameplayGymObservationEncoder
 {
     private const int FrameWidth = 640, FrameHeight = 360;
     private static readonly string[] LocalizerClasses = ["enemies.crawlid", "game.playable-knight", "world.geo-deposit"];
+    internal sealed record LocalizerSelection(IReadOnlyDictionary<string, string?> Receipts,
+        IReadOnlyDictionary<string, string> LegacyRuns);
     private sealed record Request(int Ticks, int Width, int Height, int[] Previous, ReceiverGroundTruthSample Sample);
     private sealed record Reply(IReadOnlyList<string> Issues, bool PathReachable, string Knight, int Floors, int Walls,
         bool Atlas, bool HealthKnown, bool CrawlidLocalizerActive, bool KnightLocalizerActive, bool DepositLocalizerActive,
@@ -16,15 +18,17 @@ public static class GameplayGymObservationEncoder
 
     public static void Run(int version, string rgbPath, bool allowMaskedKnight, string supportRoot,
         string labelsPath, TextReader input, TextWriter output, string? detectorDirectory = null,
-        IReadOnlyList<string>? localizerDirectories = null, string? connectionsPath = null, AtlasPoint? fixedObjective = null)
+        IReadOnlyList<string>? localizerOverrides = null, string? connectionsPath = null, AtlasPoint? fixedObjective = null)
     {
-        if (BotPolicyContract.Names(version) is null || localizerDirectories?.Count > LocalizerClasses.Length)
-            throw new InvalidDataException("Unknown observation schema or visual model configuration.");
+        if (BotPolicyContract.Names(version) is null) throw new InvalidDataException("Unknown observation schema.");
+        var selection = SelectLocalizers(localizerOverrides);
         var (directories, artifacts) = DetectorRuns(supportRoot, detectorDirectory);
-        // Gym localizers are provided explicitly and bound to the training runtime configuration.
-        using var detector = new OnnxObjectDetectorSet(directories, artifacts, useActorCalibrations: false);
+        using var detector = new OnnxObjectDetectorSet(directories, artifacts, calibrationOverrides: selection.Receipts);
         if (!detector.HasModels) throw new InvalidDataException("Game Play Gym requires an ONNX detector with trained classes.");
-        using var localizers = new Localizers(localizerDirectories);
+        using var localizers = new Localizers(selection.LegacyRuns);
+        var crawlidActive = HasLocalizer(LocalizerClasses[0]);
+        var knightActive = HasLocalizer(LocalizerClasses[1]);
+        var depositActive = HasLocalizer(LocalizerClasses[2]);
         var stencils = AutoNavigationRunner.CreateGymStencilSource(supportRoot);
         var visual = new BotVisualGymObservationSource();
         var route = new GymHackerRoute(labelsPath, connectionsPath, fixedObjective);
@@ -56,8 +60,8 @@ public static class GameplayGymObservationEncoder
             var visibleHealth = row?.AtlasView?.Health;
             var reply = new Reply(result.Issues, route.ObjectiveReachable, row?.KnightSource ?? "missing",
                 row?.DetectedTerrain?.Floors.Count ?? 0, row?.DetectedTerrain?.Walls.Count ?? 0,
-                row?.AtlasView is not null, visibleHealth.HasValue, localizers.Active(0),
-                localizers.Active(1), localizers.Active(2), result.KnightConfidence, visibleHealth,
+                row?.AtlasView is not null, visibleHealth.HasValue, crawlidActive,
+                knightActive, depositActive, result.KnightConfidence, visibleHealth,
                 HackerGymObservationEncoder.Encode(vector), authored?.PathProgress, authored?.PathAlignment, trace ? result.Camera : null,
                 result.WeakKnightCorrection);
             HackerGymObservationEncoder.Write(output, reply);
@@ -65,6 +69,31 @@ public static class GameplayGymObservationEncoder
 
         IReadOnlyList<ObjectDetection> Detect(BgraFrame frame) =>
             localizers.ReplaceClasses(detector.Detect(frame), frame);
+        bool HasLocalizer(string identifier) => localizers.Active(identifier) || detector.HasActorCalibration(identifier);
+    }
+
+    internal static LocalizerSelection SelectLocalizers(IReadOnlyList<string>? overrides)
+    {
+        var receipts = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var runs = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (overrides is null) return new(receipts, runs);
+        if (overrides.Count > LocalizerClasses.Length)
+            throw new InvalidDataException("Expected at most three Game Play localizer overrides.");
+        for (var i = 0; i < overrides.Count; i++)
+        {
+            var selected = overrides[i];
+            if (selected == "-") continue;
+            var identifier = LocalizerClasses[i];
+            if (Directory.Exists(selected))
+            {
+                runs.Add(identifier, selected);
+                receipts.Add(identifier, null);
+            }
+            else if (string.Equals(Path.GetExtension(selected), ".json", StringComparison.OrdinalIgnoreCase))
+                receipts.Add(identifier, selected);
+            else throw new InvalidDataException($"Supply an ONNX calibration receipt or run directory for {identifier}.");
+        }
+        return new(receipts, runs);
     }
 
     internal static (IReadOnlyList<string> Directories, IReadOnlyList<LabelingActiveModelArtifact> Artifacts)
@@ -103,46 +132,40 @@ public static class GameplayGymObservationEncoder
 
     private sealed class Localizers : IDisposable
     {
-        private readonly OnnxObjectDetector?[] models = new OnnxObjectDetector?[LocalizerClasses.Length];
+        private readonly Dictionary<string, OnnxObjectDetector> models = new(StringComparer.Ordinal);
 
-        public Localizers(IReadOnlyList<string>? paths)
+        public Localizers(IReadOnlyDictionary<string, string> paths)
         {
-            if (paths is null) return;
             try
             {
-                for (var i = 0; i < paths.Count; i++)
+                foreach (var (identifier, directory) in paths)
                 {
-                    if (paths[i] == "-") continue;
-                    if (!Directory.Exists(paths[i])) throw new InvalidDataException(
-                        $"Supply a Windows ONNX run directory for {LocalizerClasses[i]}.");
-                    var model = new OnnxObjectDetector(paths[i]);
-                    models[i] = model;
-                    if (!model.TrainedClassIdentifiers.Contains(LocalizerClasses[i]))
-                        throw new InvalidDataException($"The ONNX localizer does not include {LocalizerClasses[i]}.");
+                    var model = new OnnxObjectDetector(directory, useActorCalibrations: false);
+                    models.Add(identifier, model);
+                    if (!model.TrainedClassIdentifiers.Contains(identifier))
+                        throw new InvalidDataException($"The ONNX localizer does not include {identifier}.");
                 }
             }
             catch { Dispose(); throw; }
         }
 
-        public bool Active(int index) => models[index] is not null;
+        public bool Active(string identifier) => models.ContainsKey(identifier);
 
         public IReadOnlyList<ObjectDetection> ReplaceClasses(IReadOnlyList<ObjectDetection> baseline, BgraFrame frame)
         {
-            if (models.All(model => model is null)) return baseline;
+            if (models.Count == 0) return baseline;
             var result = baseline.ToList();
-            for (var i = 0; i < models.Length; i++)
+            foreach (var (identifier, model) in models)
             {
-                if (models[i] is not { } model) continue;
-                var kind = LocalizerClasses[i];
-                result.RemoveAll(item => Canonical(item.ClassIdentifier) == kind);
-                result.AddRange(model.Detect(frame).Where(item => Canonical(item.ClassIdentifier) == kind));
+                result.RemoveAll(item => Canonical(item.ClassIdentifier) == identifier);
+                result.AddRange(model.Detect(frame).Where(item => Canonical(item.ClassIdentifier) == identifier));
             }
             return result;
         }
 
         public void Dispose()
         {
-            foreach (var model in models) model?.Dispose();
+            foreach (var model in models.Values) model.Dispose();
         }
 
         private static string Canonical(string id) => LabelingClassIdentity.CanonicalIdentifier(id);
