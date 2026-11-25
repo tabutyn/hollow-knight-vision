@@ -301,6 +301,52 @@ internal static class BotCaptureTests
         });
     }
 
+    internal static void TestRecorderStreamsTapsAndPeriodicImagesUntilFinalization()
+    {
+        WithLibrary(root =>
+        {
+            var active = new BotCaptureSession(root, "normal", "fixture", Generation, Start, Labels());
+            active.ObserveNativeInput(InputButtons.Right, Start + .05);
+            active.ObserveNativeInput(InputButtons.Right, Start + .06);
+            for (var index = 0; index < 15; index++)
+            {
+                var time = Start + .125 * (index + 1);
+                var source = Input(index);
+                var row = Visual(source with { Time = new(time, time, Generation, 1, 0) });
+                if (index == 4)
+                {
+                    active.ObserveNativeInput(InputButtons.Right | InputButtons.ActionZ, time + .03);
+                    active.ObserveNativeInput(InputButtons.Right, time + .05);
+                }
+                Check(SpinWait.SpinUntil(() => active.TryRecord(source.Frame, row, null), TimeSpan.FromSeconds(5)),
+                    $"The capture writer did not admit frame {index}.");
+            }
+            active.ObserveNativeInput(InputButtons.None, Start + 2);
+            var staging = Directory.GetDirectories(root, ".pending-demo-*").Single();
+            Check(SpinWait.SpinUntil(() => Directory.EnumerateFiles(staging, "0.png", SearchOption.AllDirectories).Any(),
+                    TimeSpan.FromSeconds(5)) && BotCaptureSession.Library(root).Count == 0,
+                "Images must stream to staging while the incomplete clip stays out of the library.");
+            var result = active.FinishAsync(Start + 2.1, null, completed: true).GetAwaiter().GetResult();
+            var clip = result.Published.Single();
+            var directory = Path.Combine(root, BotCaptureSession.DirectoryName(clip.Id));
+            var events = File.ReadAllLines(Path.Combine(directory, "events.jsonl"));
+            Check(clip is { Status: "completed", ObservationCount: 15, InputEventCount: 4, ImageCount: 2 }
+                && events.Length == 19 && File.Exists(Path.Combine(directory, "frames", "0.png"))
+                && File.Exists(Path.Combine(directory, "frames", "8.png")) && !Directory.Exists(staging),
+                "The finalized manifest must describe all frames, the two stored images, and the four input edges.");
+            var recorded = events.Skip(15).Select(line => JsonSerializer.Deserialize<BotCaptureInput>(line, BotCaptureSession.Json)!).ToArray();
+            Check(recorded.Select(edge => (edge.Button, edge.IsPressed)).SequenceEqual(
+                new[] { ("right", true), ("z", true), ("z", false), ("right", false) }),
+                "A repeated held key must not create an extra edge or erase the jump tap.");
+            var interrupted = new BotCaptureSession(root, "modded", "fixture", Generation + 1, Start + 10, Labels());
+            var previous = Input(0);
+            Check(!interrupted.TryRecord(previous.Frame, Visual(previous), null)
+                && interrupted.FinishAsync(Start + 11, null, completed: false).GetAwaiter().GetResult().Discarded == 1
+                && BotCaptureSession.Library(root).Select(row => row.Id).SequenceEqual([clip.Id]),
+                "Previous capture work and interrupted clips must stay out of the finalized library.");
+        });
+    }
+
     internal static void TestCaptureRequiresItsOwnVisualAnchorForPredictedKnight()
     {
         WithLibrary(root =>

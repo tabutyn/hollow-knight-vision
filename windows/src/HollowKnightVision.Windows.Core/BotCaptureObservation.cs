@@ -123,6 +123,7 @@ public sealed record BotCaptureObservation(
 
 public static class BotObservationBuilder
 {
+    private const int MaximumFrameDimension = 65_536;
     private readonly record struct Box(double X, double Y, double Width, double Height, double Confidence);
 
     public static BotCaptureObservation? Hacker(BgraFrame image, int? renderedFrame, ReceiverGroundTruthSample? sample,
@@ -132,7 +133,8 @@ public static class BotObservationBuilder
     public static BotCaptureObservation? Hacker(WorldSize size, int? renderedFrame, ReceiverGroundTruthSample? sample,
         GroundTruthLineDocument authored, BotCaptureTiming timing, InputButtons? input)
     {
-        if (sample is null || renderedFrame != HackerFrameSynchronizer.Key(sample.UnityFrame)
+        if (size.Width is not (> 1 and <= MaximumFrameDimension) || size.Height is not (> 1 and <= MaximumFrameDimension)
+            || sample is null || renderedFrame != HackerFrameSynchronizer.Key(sample.UnityFrame)
             || sample.AtlasGameplayActive == false || !sample.HasFiniteCoordinates()
             || GroundTruthCameraTransform.FromSample(sample, timing.CaptureTimestamp, size) is not { } camera)
             return null;
@@ -183,10 +185,15 @@ public static class BotObservationBuilder
         BotBlueHealthOutcomes? blueHealth = null, IReadOnlyList<BotLine>? visualDoors = null,
         IReadOnlyList<DetectedFloorLine>? supportingFloors = null, GameplaySceneMasks? masks = null)
     {
+        var issues = BaseIssues(timing);
+        if (image.Width > MaximumFrameDimension || image.Height > MaximumFrameDimension)
+        {
+            issues.Add("invalid-frame-size");
+            return Make(timing, new(1, 1, [], []), null, [], false, 0, issues, "detected");
+        }
         var terrain = new BotScreenTerrain(image.Width, image.Height,
             ProjectDetectedFloors(image, floors, walls, supportingFloors, masks), ProjectDetectedWalls(image, walls),
             Doors: visualDoors is { Count: > 0 } ? visualDoors : null);
-        var issues = BaseIssues(timing);
         var age = batch is null ? double.PositiveInfinity : (image.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds - batch.SourceTimestamp;
         var fresh = batch is not null && batch.CaptureGeneration == timing.Generation
             && batch.SourceFrameIdentifier <= image.CaptureId && age is >= 0 and <= BotRecordingContract.MaximumDetectionAge;

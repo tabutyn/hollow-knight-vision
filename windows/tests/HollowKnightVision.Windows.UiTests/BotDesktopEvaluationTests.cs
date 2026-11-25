@@ -48,6 +48,8 @@ internal static class BotDesktopEvaluationTests
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             foreach (var domain in new[] { "gameplay", "hacker" })
                 await VerifyDomainAsync(temporary.FullName, domain, label, timeout.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            await VerifyBotShortcutAsync(Path.Combine(temporary.FullName, "shortcut"), timeout.Token);
             await VerifyHackerWithoutVisualAnalysisAsync(Path.Combine(temporary.FullName, "receiver-playback"), timeout.Token);
             await VerifyPlaybackCaptureFailureAsync(Path.Combine(temporary.FullName, "blocked-evaluation"), timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening"), OpeningOutcome.Gameplay, timeout.Token);
@@ -67,6 +69,120 @@ internal static class BotDesktopEvaluationTests
         {
             Environment.SetEnvironmentVariable(labelsEnvironment, previousLabels);
             temporary.Delete(recursive: true);
+        }
+    }
+
+    private static async Task VerifyBotShortcutAsync(string root, CancellationToken token)
+    {
+        using var server = new TcpListener(IPAddress.Loopback, 0);
+        server.Start();
+        var port = ((IPEndPoint)server.LocalEndpoint).Port;
+        var session = Guid.NewGuid();
+        var peer = ServeAsync(server, Channel.CreateUnbounded<ReceiverInputSnapshot>().Writer, token);
+        using var capture = new CancellationTokenSource();
+        var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port))
+            { Topmost = true };
+        try
+        {
+            // Open the actual WPF window with automatic game launch disabled.
+            Field("isClosing").SetValue(window, true);
+            window.Show();
+            await WaitFor(() => window.IsLoaded && Field("atlasOperationInProgress").GetValue(window) is false);
+            Field("isClosing").SetValue(window, false);
+            Field("visionCancellation").SetValue(window, capture);
+            Field("recentCaptureGeneration").SetValue(window, Generation);
+            Field("recognizedMenuContext").SetValue(window, "game");
+            var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
+            bridge.Start();
+            await WaitFor(() => bridge.PauseState == GamePauseState.Ready);
+            var button = (Button)window.FindName("BotPlaybackButton");
+            var settings = (FrameworkElement)window.FindName("SettingsOverlay");
+            var text = new TextBox { Width = 100, Height = 25, HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top };
+            Panel.SetZIndex(text, 100);
+            ((Grid)window.Content).Children.Add(text);
+            _ = window.Activate();
+            await WaitFor(() => window.IsActive);
+
+            foreach (var workspace in new[] { "Label", "Model", "Bot", "Stencil", "Ops", "Gameplay", "Hacker" })
+            {
+                var available = workspace is "Gameplay" or "Hacker";
+                Field("workspace").SetValue(window, workspace);
+                Method("UpdateModeAvailability").Invoke(window, null);
+                Check((button.Visibility == Visibility.Visible) == available, $"Unexpected B button scope in {workspace}.");
+                if (!available) Check(!LocalB(), $"The bot shortcut should remain unhandled in {workspace}.");
+            }
+            Field("recognizedMenuContext").SetValue(window, "select-profile");
+            Method("UpdateModeAvailability").Invoke(window, null);
+            Check(button.Visibility == Visibility.Visible, "B must remain available during pre-training menus.");
+            Field("recognizedMenuContext").SetValue(window, "game");
+
+            var modal = new Window { Owner = window, Width = 220, Height = 100, Content = new TextBox(), ShowInTaskbar = false };
+            modal.ContentRendered += (_, _) =>
+            {
+                PressB((UIElement)modal.Content);
+                modal.Close();
+            };
+            _ = modal.ShowDialog();
+            Check(Field("botPlayback").GetValue(window) is null, "A modal dialog must keep the owner's B shortcut idle.");
+            _ = window.Activate();
+            await WaitFor(() => window.IsActive);
+            Keyboard.Focus(text);
+            await WaitFor(() => text.IsKeyboardFocused);
+            Check(!PressB(text) && Field("botPlayback").GetValue(window) is null,
+                "Text entry must keep its B key.");
+            Keyboard.Focus(button);
+            await WaitFor(() => button.IsKeyboardFocused);
+            foreach (var modifier in new[] { ModifierKeys.Control, ModifierKeys.Shift, ModifierKeys.Alt, ModifierKeys.Windows })
+                Check(!LocalB(modifiers: modifier), $"B with {modifier} must remain the user's shortcut.");
+            settings.Visibility = Visibility.Visible;
+            _ = LocalB();
+            Check(Field("botPlayback").GetValue(window) is null, "B must leave bot control alone while settings is open.");
+            settings.Visibility = Visibility.Collapsed;
+
+            foreach (var (workspace, domain) in new[] { ("Gameplay", BotCaptureDomain.Gameplay), ("Hacker", BotCaptureDomain.Hacker) })
+            {
+                Field("workspace").SetValue(window, workspace);
+                Keyboard.Focus(button);
+                await WaitFor(() => button.IsKeyboardFocused);
+                Check(PressB(button), $"The {workspace} window did not handle B.");
+                var run = Field("botPlayback").GetValue(window);
+                Check(run?.GetType().GetProperty("Domain", Instance)?.GetValue(run) is BotCaptureDomain actual && actual == domain,
+                    $"B must start the {workspace} domain before any training.");
+                Check(LocalB(repeat: true) && ReferenceEquals(Field("botPlayback").GetValue(window), run),
+                    "A held B must not stop the just-started bot.");
+                var loaded = run!.GetType().GetField("Loaded", Instance)!;
+                await WaitFor(() => loaded.GetValue(run) is not null);
+                var selected = loaded.GetValue(run);
+                Check(selected?.GetType().GetProperty("ModelName")?.GetValue(selected)
+                    is "Built-in playing policies", "The untrained bot must load the built-in policy.");
+                Check(PressB(button) && Field("botPlayback").GetValue(window) is null,
+                    "A second B press must stop the current bot.");
+            }
+            Console.WriteLine("PASS Windows B starts either bot before training and preserves text entry, dialogs, and modifiers");
+
+            bool LocalB(bool repeat = false, ModifierKeys modifiers = ModifierKeys.None) =>
+                (bool)Method("HandleLocalShortcut").Invoke(window, [Key.B, repeat, modifiers])!;
+            static bool PressB(UIElement target)
+            {
+                var source = PresentationSource.FromVisual(target) ?? throw new InvalidOperationException("Missing keyboard source.");
+                var down = new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.B) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+                target.RaiseEvent(down);
+                target.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.B) { RoutedEvent = Keyboard.PreviewKeyUpEvent });
+                return down.Handled;
+            }
+            async Task WaitFor(Func<bool> ready)
+            {
+                var deadline = Clock() + 5;
+                while (!ready() && Clock() < deadline) await Task.Delay(10, token);
+                Check(ready(), "The shortcut fixture did not acquire its window, input focus, or receiver in time.");
+            }
+        }
+        finally
+        {
+            Field("isClosing").SetValue(window, true);
+            await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
+            await peer.WaitAsync(TimeSpan.FromSeconds(5));
         }
     }
 
