@@ -54,6 +54,7 @@ public sealed record BotCaptureReviewFrame(string? ImageFile, double Offset, Bot
 }
 
 public sealed record BotCaptureResult(IReadOnlyList<BotCaptureManifest> Published, int Discarded);
+public sealed record BotCaptureLibraryEntry(string Folder, BotCaptureManifest Manifest);
 
 /// <summary>Streams a single run into separate camera domains. An eight-frame queue bounds pending image memory.</summary>
 public sealed class BotCaptureSession
@@ -245,10 +246,13 @@ public sealed class BotCaptureSession
 
     public static string DirectoryName(Guid id) => $"demo-{id:D}";
 
-    public static IReadOnlyList<BotCaptureManifest> Library(string root)
+    public static IReadOnlyList<BotCaptureManifest> Library(string root) =>
+        ResolveLibraryDomains(ReadLibraryManifests(root));
+
+    public static IReadOnlyList<BotCaptureLibraryEntry> ReadLibraryManifests(string root)
     {
         if (!Directory.Exists(root)) return [];
-        var captures = new List<BotCaptureManifest>();
+        var captures = new List<BotCaptureLibraryEntry>();
         foreach (var folder in Directory.EnumerateDirectories(root, "demo-*"))
         {
             try
@@ -258,18 +262,32 @@ public sealed class BotCaptureSession
                 if (manifest is { Status: "completed", SchemaVersion: 1 or BotRecordingContract.SchemaVersion }
                     && manifest.ExpertDemonstration != false
                     && string.Equals(Path.GetFileName(folder), DirectoryName(manifest.Id), StringComparison.OrdinalIgnoreCase))
-                {
-                    if (manifest.BotDomain is null)
-                    {
-                        var domain = BotRecordedAtlasPath.ReadCapture(folder).Domain;
-                        manifest = manifest with { BotDomain = domain == BotCaptureDomain.Hacker ? "hacker" : "gameplay" };
-                    }
-                    captures.Add(manifest);
-                }
+                    captures.Add(new(folder, manifest));
             }
             catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException) { }
         }
-        return captures.OrderByDescending(item => item.CreatedAt).ToArray();
+        return captures.OrderByDescending(item => item.Manifest.CreatedAt).ToArray();
+    }
+
+    public static IReadOnlyList<BotCaptureManifest> ResolveLibraryDomains(IReadOnlyList<BotCaptureLibraryEntry> entries)
+    {
+        var captures = new List<BotCaptureManifest>(entries.Count);
+        foreach (var (folder, manifest) in entries)
+        {
+            if (manifest.BotDomain is not null)
+            {
+                captures.Add(manifest);
+                continue;
+            }
+            try
+            {
+                var domain = BotRecordedAtlasPath.ReadCapture(folder).Domain;
+                captures.Add(manifest with { BotDomain = domain == BotCaptureDomain.Hacker ? "hacker" : "gameplay" });
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                or JsonException or KeyNotFoundException or InvalidOperationException) { }
+        }
+        return captures;
     }
 
     internal sealed record ReviewObservation(long Generation, BotCaptureReviewFrame Frame);

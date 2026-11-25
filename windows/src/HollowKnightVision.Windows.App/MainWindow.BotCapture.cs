@@ -268,12 +268,70 @@ public partial class MainWindow
         if (IsLoaded) SelectWorkspace("Bot");
     }
 
-    private void RefreshBotLibrary()
+    private readonly SemaphoreSlim botLegacyCaptureDecode = new(1, 1);
+    private int botLibraryGeneration;
+    private bool refreshingBotLibrary;
+
+    private async void RefreshBotLibrary() => await RefreshBotLibraryAsync();
+
+    internal async Task RefreshBotLibraryAsync(
+        Func<IReadOnlyList<BotCaptureLibraryEntry>, IReadOnlyList<BotCaptureManifest>>? resolveDomains = null)
     {
-        var sessions = BotCaptureSession.Library(BotCaptureRoot);
-        RefreshBotTrainingPlans(sessions);
+        if (isClosing) return;
+        var generation = ++botLibraryGeneration;
+        ++botTrainingPlanGeneration;
+        refreshingBotLibrary = true;
+        UpdateBotTrainingControls();
+        var root = BotCaptureRoot;
+        try
+        {
+            var entries = await Task.Run(() => BotCaptureSession.ReadLibraryManifests(root));
+            if (!IsCurrent()) return;
+            IReadOnlyList<BotCaptureManifest> sessions = entries.Select(entry => entry.Manifest).ToArray();
+            if (sessions.Any(clip => clip.BotDomain is null))
+            {
+                var known = botTrainingLibrary.DistinctBy(clip => clip.Id).ToDictionary(clip => clip.Id);
+                var visible = sessions.Select(clip => clip.BotDomain is not null ? clip
+                    : known.TryGetValue(clip.Id, out var prior) ? clip with { BotDomain = prior.BotDomain } : null);
+                PresentBotLibrary(visible.OfType<BotCaptureManifest>().ToArray());
+
+                await botLegacyCaptureDecode.WaitAsync();
+                try
+                {
+                    if (!IsCurrent()) return;
+                    resolveDomains ??= BotCaptureSession.ResolveLibraryDomains;
+                    sessions = await Task.Run(() => resolveDomains(entries));
+                }
+                finally { botLegacyCaptureDecode.Release(); }
+                if (!IsCurrent()) return;
+            }
+            PresentBotLibrary(sessions);
+            await RefreshBotTrainingPlansAsync(sessions);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            if (IsCurrent()) SetStatus($"Capture library could not be read. {error.Message}");
+        }
+        finally
+        {
+            if (IsCurrent())
+            {
+                refreshingBotLibrary = false;
+                UpdateBotTrainingControls();
+            }
+        }
+
+        bool IsCurrent() => generation == botLibraryGeneration && !isClosing;
+    }
+
+    private void PresentBotLibrary(IReadOnlyList<BotCaptureManifest> sessions)
+    {
         var runs = sessions.Select(session => session.ReplayId ?? session.Id).Distinct().Count();
         BotCaptureSummary.Text = $"{runs} recorded runs · {sessions.Count(session => session.BotDomain == "hacker")} Hacker clips · {sessions.Count(session => session.BotDomain == "gameplay")} Game Play clips";
+        var changed = BotCaptureClips.ItemsSource is null || !botTrainingLibrary.SequenceEqual(sessions);
+        botTrainingLibrary = sessions;
+        PresentNewBotCaptures();
+        if (!changed) return;
         var previous = (BotCaptureClips.SelectedItem as BotClipRow)?.Folder;
         var clips = sessions.Select(session => new BotClipRow(
             DisplayBotDomain(session.BotDomain), session.ObservationCount, session.UsableObservationCount,
