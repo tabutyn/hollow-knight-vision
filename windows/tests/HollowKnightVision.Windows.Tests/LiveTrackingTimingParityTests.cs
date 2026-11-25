@@ -12,6 +12,19 @@ internal static class LiveTrackingTimingParityTests
     private static void Close(double expected, double actual) =>
         Check(Math.Abs(expected - actual) <= .001);
 
+    public static void TestHistoryIsBoundedAndDelayedSolvesReplaceOnlyTheirExactCapture()
+    {
+        var history = new VisualMotionPoseHistory();
+        for (var time = 0; time < 100; time++)
+            history.Record(time, new(time, 0), completed: null);
+        Check(history.PoseAt(35) is null && history.PoseAt(36) == new AtlasPoint(36, 0));
+        history.Record(99, new(500, 0), new VisualCameraPoseSample(98, new(490, 2)));
+        Check(history.PoseAt(97) == new AtlasPoint(97, 0) && history.PoseAt(98) == new AtlasPoint(490, 2)
+            && history.PoseAt(99) == new AtlasPoint(500, 0));
+        history.Reset();
+        Check(history.PoseAt(98) is null);
+    }
+
     public static void TestFloorlessSelectorRejectsStaleCoarsePoseAfterDirectionReversal()
     {
         var result = FloorlessPoseCandidateSelector.Select(

@@ -553,6 +553,7 @@ var tests = new List<(string Name, Action Run)>
     ("broad recent noisy surface overrides sparse old phase", BroadRecentConsensusParityTests.TestBroadNoisyRecentSurfaceOverridesSparseOldPhaseAndStaysAnchored),
     ("broad recent evidence must be fresh and clearly better", BroadRecentConsensusParityTests.TestBroadRecentEvidenceMustBeFreshAndClearlyBetter),
     ("floorless selector rejects stale coarse reversal", LiveTrackingTimingParityTests.TestFloorlessSelectorRejectsStaleCoarsePoseAfterDirectionReversal),
+    ("camera pose history bounds delayed solves to their exact captures", LiveTrackingTimingParityTests.TestHistoryIsBoundedAndDelayedSolvesReplaceOnlyTheirExactCapture),
     ("floorless selector uses larger agreeing capture step", LiveTrackingTimingParityTests.TestFloorlessSelectorUsesLargerAgreeingCaptureRateStep),
     ("floorless selector preserves stop and vertical travel", LiveTrackingTimingParityTests.TestFloorlessSelectorKeepsMaskedHorizontalStopAndCoarseVerticalTravel),
     ("floorless selector accepts absolute place match", LiveTrackingTimingParityTests.TestFloorlessSelectorAlwaysAcceptsAbsolutePlaceMatch),
@@ -641,6 +642,9 @@ var tests = new List<(string Name, Action Run)>
     ("Atlas patch proposals handle exposure changes after features fail", GroundPlaneClosureVerifierTests.TestPatchProposalSurvivesExposureChange),
     ("placed Atlas verifies floor texture after a scenery patch fallback", GroundPlaneClosureVerifierTests.TestPlacedAtlasUsesFloorVerifiedPatchFallback),
     ("Atlas patch cache stays bounded and reloads changed image identity", GroundPlaneClosureVerifierTests.TestPatchSearchBoundsItsCacheAndReloadsChangedSource),
+    ("Atlas patch search recovers displacement under exposure and occlusion", GroundPlaneClosureVerifierTests.TestPatchSearchRecoversDisplacementWithExposureAndOcclusion),
+    ("Atlas patch search distinguishes rival positions from coincident views", GroundPlaneClosureVerifierTests.TestPatchSearchRejectsSeparateMatchesAndAcceptsCoincidentViews),
+    ("Atlas patch search rejects dark, masked, repeated, unrelated and out-of-range views", GroundPlaneClosureVerifierTests.TestPatchSearchRejectsDarkMaskedRepeatedUnrelatedAndDistantViews),
     ("live world round trip and optimization preserve raw evidence", LiveWorldModelParityTests.TestRoundTripAndPoseReplacementPreserveRawEvidence),
     ("live world legacy observations preserve raw pose in epoch zero", LiveWorldModelParityTests.TestLegacyObservationDecodesIntoEpochZeroWithoutMovingItsWorldPose),
     ("live world invalid models are rejected", LiveWorldModelParityTests.TestInvalidModelsAreRejected),
@@ -1533,6 +1537,8 @@ var tests = new List<(string Name, Action Run)>
     ("live tiled atlas rolls back cancelled pose correction and retries", LiveTiledAtlasBatchOneTests.TestCancelledPoseCorrectionRollsBackAndCanBeRetried),
     ("live tiled atlas cancels pose correction inside a crowded tile", LiveTiledAtlasBatchOneTests.TestPoseCorrectionCanCancelInsideOneCrowdedTile),
     ("live tiled atlas rolls back insert cancelled inside pixel work", LiveTiledAtlasBatchOneTests.TestIncrementalInsertCanCancelInsidePixelWorkAndRollBack),
+    ("live tiled atlas rejects its first staged anchor and pixels", LiveTiledAtlasBatchOneTests.TestRejectedFirstInsertRestoresAnchorAndPixels),
+    ("live tiled atlas rolls back failed temporal insertion and correction", LiveTiledAtlasBatchOneTests.TestTemporalInsertAndCorrectionRollBackOnError),
     ("live tiled atlas treats transparent pixels as absent and black as evidence", LiveTiledAtlasBatchOneTests.TestIncrementalOpaqueBlackWinsWhileTransparentLeavesPriorPixel),
     ("live tiled atlas preserve-brighter agrees incrementally and on rebuild", LiveTiledAtlasBatchOneTests.TestPreserveBrighterRejectsDarkOverwriteIncrementallyAndOnRebuild),
     ("live tiled atlas incremental insertion matches full rebuild", LiveTiledAtlasBatchOneTests.TestIncrementalInsertionMatchesFullRebuild),
@@ -13219,6 +13225,73 @@ file static class LiveTiledAtlasBatchOneTests
 
         Check(atlas.Insert(2, image, 256, new(0, 0)),
             "Insertion could not be retried after cancellation.");
+    }
+
+    public static void TestRejectedFirstInsertRestoresAnchorAndPixels()
+    {
+        var atlas = new LiveTiledAtlas();
+        var image = Solid(16, 16, red: 255, green: 255, blue: 255);
+        var rejectedAnchor = new AtlasPoint(400, 20);
+        var sawStagedAnchor = false;
+        Check(!atlas.Insert(1, image, 16, rejectedAnchor, shouldCancel: () =>
+            {
+                sawStagedAnchor = atlas.FixedAnchorPosition == rejectedAnchor;
+                return sawStagedAnchor;
+            })
+            && sawStagedAnchor, "Reject only after staging the first anchor.");
+        Check(atlas.FixedAnchorPosition is null && atlas.Tiles.Count == 0 && atlas.Revision == 0
+            && atlas.RetainedContributionTileLinkCount == 0, "A rejected first frame must leave an empty Atlas.");
+        var acceptedAnchor = new AtlasPoint(100, 30);
+        Check(atlas.Insert(2, image, 16, acceptedAnchor)
+            && atlas.FixedAnchorPosition == acceptedAnchor
+            && atlas.Snapshot.ContentBounds == new StencilRect(0, 0, 16, 16)
+            && atlas.Tiles.Single().ContributionIds.SequenceEqual([2L]),
+            "The next committed frame must establish its own anchor and pixels.");
+    }
+
+    public static void TestTemporalInsertAndCorrectionRollBackOnError()
+    {
+        var atlas = new LiveTiledAtlas(pixelPolicy: LiveTiledAtlasPixelPolicy.TemporalAgreement);
+        var red = Solid(16, 16, red: 255);
+        var green = Solid(16, 16, green: 255);
+        Check(atlas.Insert(1, red, 16, default, timestamp: 1), "Commit the baseline.");
+        var before = atlas.Snapshot;
+        var diagnostics = atlas.TemporalDiagnostics;
+        var links = atlas.RetainedContributionTileLinkCount;
+
+        RejectAndVerify(() => atlas.Insert(2, green, 16, new(300, 0), timestamp: 1.1,
+            shouldCancel: FailAfterStaging));
+        RejectAndVerify(() => atlas.ReplaceCameraPositions(
+            new Dictionary<long, AtlasPoint> { [1] = new(252, 0) }, before.Revision, FailAfterStaging));
+        Check(atlas.Insert(3, green, 16, new(300, 0), captureIdentity: 2, timestamp: 1.1)
+            && atlas.Tiles.SelectMany(tile => tile.ContributionIds).ToHashSet().SetEquals([1L, 3L]),
+            "Retry must retain the new contribution and discard the rejected capture identity.");
+
+        bool FailAfterStaging()
+        {
+            if (atlas.RetainedContributionTileLinkCount > links)
+                throw new IOException("Injected Atlas composition failure.");
+            return false;
+        }
+
+        void RejectAndVerify(Func<bool> change)
+        {
+            var rejected = false;
+            try { _ = change(); }
+            catch (IOException exception) when (exception.Message == "Injected Atlas composition failure.")
+            {
+                rejected = true;
+            }
+            var after = atlas.Snapshot;
+            Check(rejected && atlas.FixedAnchorPosition == default(AtlasPoint)
+                && after.Revision == before.Revision && after.ContentBounds == before.ContentBounds
+                && after.Tiles.Select(tile => tile.Id).SequenceEqual(before.Tiles.Select(tile => tile.Id))
+                && after.Tiles.Zip(before.Tiles).All(pair =>
+                    pair.First.ContributionIds.SequenceEqual(pair.Second.ContributionIds)
+                    && pair.First.Image.Pixels.SequenceEqual(pair.Second.Image.Pixels))
+                && atlas.TemporalDiagnostics == diagnostics && atlas.RetainedContributionTileLinkCount == links,
+                "Composition failure must preserve the published Atlas and temporal evidence.");
+        }
     }
 
     public static void TestIncrementalOpaqueBlackWinsWhileTransparentLeavesPriorPixel()
