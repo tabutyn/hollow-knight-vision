@@ -1458,7 +1458,7 @@ var tests = new List<(string Name, Action Run)>
     ("startup coordinator closes gameplay gate on menu", TestStartupCoordinatorClosesGate),
     ("startup detector title selection", TestStartupDetectorTitleSelection),
     ("startup detector profile selection", TestStartupDetectorProfileSelection),
-    ("startup detector gameplay hud", TestStartupDetectorGameplayHud),
+    ("startup rejects small bright HUD lookalikes", TestSmallBrightHudLookalikesDoNotEstablishGameplay),
     ("detection decoder local maximum", TestDetectionDecoderLocalMaximum),
     ("detection decoder classwise nms", TestDetectionDecoderClasswiseNms),
     ("detection decoder exposes raw candidates", TestDetectionDecoderRaw),
@@ -9159,13 +9159,13 @@ static void TestStartupDetectorProfileSelection()
     Equal("2.", evidence.SelectedOption!);
 }
 
-static void TestStartupDetectorGameplayHud()
+static void TestSmallBrightHudLookalikesDoNotEstablishGameplay()
 {
     var frame = BlankFrame();
     Paint(frame, 30, 15, 10, 10);
     Paint(frame, 80, 20, 10, 10);
     var evidence = new GameStartupDetector().Detect(frame);
-    True(evidence.GameplayLikely);
+    True(!evidence.GameplayLikely);
     True(evidence.Screen is null);
 }
 
