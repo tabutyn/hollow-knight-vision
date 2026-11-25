@@ -15,12 +15,19 @@ internal sealed record GymRuntimeInfo(string VisionSource, string Receiver, stri
         var receiver = Convert.ToHexString(HashFile(HollowKnightGameLauncher.ReceiverAssembly(game)));
         if (domain == "hacker") return new(source, receiver, null);
 
-        var (runs, _) = GameplayGymObservationEncoder.DetectorRuns(supportRoot, detectorOverride);
-        var inputs = runs.SelectMany(DetectorFiles).Concat(AutoNavigationRunner.GymStencilInputs(supportRoot));
-        return new(source, receiver, HashFiles(inputs));
+        var (runs, artifacts) = GameplayGymObservationEncoder.DetectorRuns(supportRoot, detectorOverride);
+        var detectors = runs.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .Select(run => DetectorInputs(run, artifacts.FirstOrDefault(artifact => string.Equals(
+                Path.GetDirectoryName(artifact.ModelPath), run, StringComparison.OrdinalIgnoreCase))?.TrainedClassIdentifiers))
+            .ToArray();
+        var inputs = detectors.SelectMany(detector => new[] { detector.Manifest, detector.Model })
+            .Concat(AutoNavigationRunner.GymStencilInputs(supportRoot));
+        return new(source, receiver, HashFiles(inputs, detectors.Select(detector => detector.TrainedClasses)));
     }
 
-    private static IEnumerable<string> DetectorFiles(string directory)
+    private static (string Manifest, string Model, string[] TrainedClasses) DetectorInputs(
+        string directory, IReadOnlySet<string>? trainedClasses)
     {
         var path = Path.Combine(directory, "training.json");
         using var manifest = JsonDocument.Parse(File.ReadAllText(path));
@@ -29,16 +36,18 @@ internal sealed record GymRuntimeInfo(string VisionSource, string Receiver, stri
             || !string.Equals(Path.GetExtension(model), ".onnx", StringComparison.OrdinalIgnoreCase)
             || !string.Equals(manifest.RootElement.GetProperty("modelFormat").GetString(), "onnx", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException($"Invalid ONNX detector run: {directory}");
-        yield return path;
-        yield return Path.Combine(directory, model);
+        var (_, enabled) = OnnxObjectDetector.ReadClasses(directory, manifest.RootElement, trainedClasses);
+        return (path, Path.Combine(directory, model), enabled.Order(StringComparer.Ordinal).ToArray());
     }
 
-    private static string HashFiles(IEnumerable<string> files)
+    private static string HashFiles(IEnumerable<string> files, IEnumerable<string[]>? detectorClasses = null)
     {
         using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         foreach (var file in files.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.OrdinalIgnoreCase))
             digest.AppendData(HashFile(file));
+        if (detectorClasses is not null)
+            digest.AppendData(JsonSerializer.SerializeToUtf8Bytes(detectorClasses));
         return Convert.ToHexString(digest.GetHashAndReset());
     }
 

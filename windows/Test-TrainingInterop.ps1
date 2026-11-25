@@ -33,6 +33,8 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Native bot trial commands failed.' }
   & $Dotnet $tests --inspect-atlas-road-host-probe $NativeVerifier
   if ($LASTEXITCODE -ne 0) { throw 'Native Hacker Atlas road inspection failed.' }
+  & $Python -B (Join-Path $PSScriptRoot 'tests\gym_runtime_identity.py') $NativeVerifier
+  if ($LASTEXITCODE -ne 0) { throw 'Native Gym detector identity fixtures failed.' }
   & $Python -B -m unittest discover -s $trainerRoot -p test_incremental_trainer.py
   if ($LASTEXITCODE -ne 0) { throw 'Shared trainer unit tests failed.' }
   $null = New-Item -ItemType Directory -Path $fixtureRoot

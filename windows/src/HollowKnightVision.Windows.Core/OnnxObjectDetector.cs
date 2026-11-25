@@ -209,18 +209,7 @@ public sealed class OnnxObjectDetector : IDisposable
         }
         var filename = root.GetProperty("modelFilename").GetString();
         if (string.IsNullOrWhiteSpace(filename)) throw new InvalidDataException("Training manifest has no model filename.");
-        ClassIdentifiers = root.GetProperty("classIdentifiers")
-            .EnumerateArray()
-            .Select(value => value.GetString())
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Select(value => value!)
-            .ToArray();
-        if (ClassIdentifiers.Count == 0) throw new InvalidDataException("Training manifest has no classes.");
-        var parent = Directory.GetParent(RunDirectory);
-        var trainingRoot = parent?.Name == "runs" ? parent.Parent?.FullName : null;
-        var trained = trainedClassIdentifiers ?? LabelingTrainingEvidence.FromManifest(root, trainingRoot)
-            ?? LabelingTrainingEvidence.Canonical([]);
-        TrainedClassIdentifiers = LabelingTrainingEvidence.Canonical(ClassIdentifiers).Where(trained.Contains).ToHashSet(StringComparer.Ordinal);
+        (ClassIdentifiers, TrainedClassIdentifiers) = ReadClasses(RunDirectory, root, trainedClassIdentifiers);
         ModelPath = Path.Combine(RunDirectory, filename);
         if (!File.Exists(ModelPath)) throw new FileNotFoundException("ONNX model is missing.", ModelPath);
         if (TrainedClassIdentifiers.Count == 0) return;
@@ -252,6 +241,22 @@ public sealed class OnnxObjectDetector : IDisposable
     public LabelingModelSemanticVersion? ModelVersion { get; }
     public IReadOnlyList<string> ClassIdentifiers { get; }
     public IReadOnlySet<string> TrainedClassIdentifiers { get; }
+
+    public static (IReadOnlyList<string> Declared, IReadOnlySet<string> Trained) ReadClasses(
+        string runDirectory, JsonElement manifest, IReadOnlySet<string>? trainedClassIdentifiers = null)
+    {
+        var declared = manifest.GetProperty("classIdentifiers").EnumerateArray()
+            .Select(value => value.GetString())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .ToArray();
+        if (declared.Length == 0) throw new InvalidDataException("Training manifest has no classes.");
+        var parent = Directory.GetParent(runDirectory);
+        var trainingRoot = parent?.Name == "runs" ? parent.Parent?.FullName : null;
+        var trained = trainedClassIdentifiers ?? LabelingTrainingEvidence.FromManifest(manifest, trainingRoot)
+            ?? LabelingTrainingEvidence.Canonical([]);
+        return (declared, LabelingTrainingEvidence.Canonical(declared).Where(trained.Contains).ToHashSet(StringComparer.Ordinal));
+    }
 
     public IReadOnlyList<ObjectDetection> Detect(BgraFrame source, bool raw = false)
     {
