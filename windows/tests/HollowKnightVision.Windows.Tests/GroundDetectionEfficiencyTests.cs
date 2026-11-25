@@ -43,6 +43,38 @@ internal static class GroundDetectionEfficiencyTests
         }
     }
 
+    public static void TestGroundMaskKeepsHudAndRecoversRoomInsideAtlasShield()
+    {
+        var frame = Image(640, 360);
+        var knight = new ObjectDetection("game.playable-knight", new(300d / 640, 258d / 360, 34d / 640, 52d / 360), .9f);
+        var hud = new HudStencilResult([], null, [], [new(245, 27, 12, 14)], [], default, false, 1);
+        var masks = GameplaySceneMasks.Create(frame.Width, frame.Height, [knight], hud);
+        var before = GroundLineDetector.Analyze(frame, masks.AtlasExclusions).ValidSourcePixels!;
+        var after = GameplayTerrainAnalysis.Analyze(frame, masks).Edges.ValidSourcePixels!;
+        int Pixel(int x, int row) => row * frame.Width + x;
+        foreach (var (x, row) in new[] { (0, 1), (117, 4), (44, 33), (100, 60), (203, 33), (251, 30), (313, 280) })
+            Check(after[Pixel(x, row)] == 0, $"HUD or Knight evidence leaked at ({x}, {row}).");
+        Check(before[Pixel(204, 83)] == 0 && after[Pixel(204, 83)] == 1,
+            "Ground detection must recover room below the HUD while the atlas still masks it.");
+        Check(!before.Zip(after).Any(pixel => pixel.First == 1 && pixel.Second == 0),
+            "Narrowing the reference shield must not hide new room pixels in this fixture.");
+
+        var recorded = VisualReplayGroundInput.FromTracking(1, 1, frame.Height, masks, InputButtons.Right);
+        foreach (var input in new[] { recorded, recorded with { WindowsAtlasExcludingRects = null } })
+        {
+            var restored = VisualReplayGroundInput.RestoreMasks(input, frame);
+            Check(restored.AtlasExclusions.SequenceEqual(masks.AtlasExclusions)
+                && restored.GroundExclusions.SequenceEqual(masks.GroundExclusions),
+                "Both Windows and shared replay records must recover the same ground mask and atlas shield.");
+        }
+
+        var scaled = GameplaySceneMasks.Create(1280, 720, [], null);
+        Check(scaled.AtlasExclusions.SequenceEqual(new[] { new PixelRect(0, 0, 512, 180) })
+            && scaled.GroundExclusions.SequenceEqual(new[] { new PixelRect(0, 0, 240, 12),
+                new PixelRect(58, 34, 166, 104), new PixelRect(144, 44, 328, 46) }),
+            "Fixed capture footprints must scale with the input resolutions.");
+    }
+
     public static void TestReleaseEdgeAndKernelTimingAtCaptureResolution()
     {
         var frame = Image(640, 360);

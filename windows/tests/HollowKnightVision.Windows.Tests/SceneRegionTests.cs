@@ -144,7 +144,7 @@ internal static class SceneRegionTests
         var unrelated = new ObjectDetection("world.sign", new(.7, .4, .05, .1), .99f);
         var masks = GameplaySceneMasks.Create(640, 360, [unrelated, Knight()], null);
         Rect(masks.AtlasRegions.Knight, new(320, 144, 32, 36));
-        Check(masks.AtlasExclusions.Count == 2 && masks.GroundExclusions.Count == 2);
+        Check(masks.AtlasExclusions.Count == 2 && masks.GroundExclusions.Count == 4);
         var frame = Solid();
         var mosaic = new GroundTruthAtlasMosaic(1, 64, 0);
         Check(mosaic.AddFrame(frame, Sample(), masks.AtlasExclusions));
