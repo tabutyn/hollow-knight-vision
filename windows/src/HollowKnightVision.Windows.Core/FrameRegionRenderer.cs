@@ -5,6 +5,8 @@ public static class FrameRegionRenderer
     private const double MinimumFeatureMarkerSize = 8;
     private const double KnightMarkerPadding = 2;
     private const int SignalWidth = 64;
+    private const int GameplaySignalThreshold = 5;
+    private const int VisibleSignalThreshold = 16;
 
     public static bool ContainsGameplaySignal(BgraFrame frame)
     {
@@ -15,7 +17,8 @@ public static class FrameRegionRenderer
         for (var x = 0; x < SignalWidth; x++)
         {
             var (red, green, blue) = pixels.Rgb(x, y)!.Value;
-            if ((red >= 5 || green >= 5 || blue >= 5) && --needed == 0) return true;
+            if ((red >= GameplaySignalThreshold || green >= GameplaySignalThreshold || blue >= GameplaySignalThreshold)
+                && --needed == 0) return true;
         }
         return false;
     }
@@ -34,13 +37,44 @@ public static class FrameRegionRenderer
             var (red, green, blue) = pixels.Rgb(x, y)!.Value;
             var index = y * width + x;
             peak[index] = Math.Max(red, Math.Max(green, blue));
-            if (peak[index] >= 5) signaled++;
-            if (peak[index] >= 16) visible++;
+            if (peak[index] >= GameplaySignalThreshold) signaled++;
+            if (peak[index] >= VisibleSignalThreshold) visible++;
             total += peak[index];
             luma[index] = (byte)((77 * red + 150 * green + 29 * blue) >> 8);
         }
         return new(peak.Length, signaled, visible, (double)total / peak.Length,
             new(width, height, luma), EdgeBlackBands(peak, width, height));
+    }
+
+    internal static FrameSignalProfile HackerFadeProfile(BgraFrame frame)
+    {
+        const int referenceCaptureWidth = 640;
+        var height = SignalHeight(frame);
+        var scale = frame.Width / SignalWidth;
+        if (frame.Width % referenceCaptureWidth != 0 || frame.Height != (long)height * scale)
+            return SignalProfile(frame);
+
+        // At integral multiples of the reference capture size, the macOS
+        // low-quality draw reads the lower of the two center pixels per axis.
+        // Interpolation here can advance the pre-fade reference to a different frame.
+        var center = (scale - 1) / 2;
+        var signaled = 0;
+        var visible = 0;
+        long total = 0;
+        for (var y = center; y < frame.Height; y += scale)
+        {
+            var row = frame.Row(y);
+            for (var x = center; x < frame.Width; x += scale)
+            {
+                var offset = x * BgraFrame.BytesPerPixel;
+                var peak = Math.Max(row[offset], Math.Max(row[offset + 1], row[offset + 2]));
+                if (peak >= GameplaySignalThreshold) signaled++;
+                if (peak >= VisibleSignalThreshold) visible++;
+                total += peak;
+            }
+        }
+        var count = checked(SignalWidth * height);
+        return new(count, signaled, visible, (double)total / count);
     }
 
     private static int SignalHeight(BgraFrame frame) => Math.Max(16,

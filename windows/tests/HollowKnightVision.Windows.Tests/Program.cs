@@ -791,6 +791,7 @@ var tests = new List<(string Name, Action Run)>
     ("frame signal preserves thresholds full aspect and 64-wide motion grid", FrameSignalTests.TestSignalThresholdsAndGeometry),
     ("darkening remains trackable and stable frames resume after blackout", FrameSignalTests.TestDarkeningAndBlackoutGate),
     ("transition settling resets on changing fades and capture restarts", FrameSignalTests.TestSettlingResetAndBoundaries),
+    ("Hacker fade references sample the measured capture pixel centers", FrameSignalTests.TestHackerFadeUsesUnblendedCapturePixelCenters),
     ("black-band detector preserves separate doorway edges and compact heights", FrameSignalTests.TestDoorwayBlackBands),
     ("black-band runs tolerate one gap but reject broad all-black omissions", FrameSignalTests.TestBlackBandRunRules),
     ("transition edge masks are straight rectangles with intact black interiors", FrameSignalTests.TestRectangularOmissions),

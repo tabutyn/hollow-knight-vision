@@ -68,6 +68,33 @@ internal static class FrameSignalTests
             "Whole-frame signal sampling cropped away the top of a tall source.");
     }
 
+    public static void TestHackerFadeUsesUnblendedCapturePixelCenters()
+    {
+        foreach (var factor in new[] { 1, 2, 3 })
+        {
+            var frame = Frame(640 * factor, 360 * factor, gray: 80, padding: 12);
+            var scale = 10 * factor;
+            var center = (scale - 1) / 2;
+            for (var y = 0; y < 36; y++)
+            for (var x = 0; x < 64; x++)
+            {
+                var value = x < 32 ? (byte)4 : (byte)16;
+                Paint(frame, center + x * scale, center + y * scale, 1, 1, 0, value, 0);
+            }
+            var hacker = FrameRegionRenderer.HackerFadeProfile(frame);
+            Check(hacker.SignaledCount == 1152 && hacker.VisibleCount == 1152 && hacker.HasGameplaySignal);
+            Near(hacker.MeanPeak, 10);
+            var visual = FrameRegionRenderer.SignalProfile(frame);
+            Check(visual.VisibleCount == 2304 && visual.MeanPeak > 60,
+                "Game Play should retain its interpolated signal and motion grid.");
+        }
+
+        var fractional = Frame(130, 74, gray: 20);
+        var fallback = FrameRegionRenderer.HackerFadeProfile(fractional);
+        Near(fallback.MeanPeak, 20);
+        Check(fallback.MotionGrid is not null && fallback.VisibleCount == fallback.SampleCount);
+    }
+
     public static void TestDarkeningAndBlackoutGate()
     {
         var gate = new TransitionFrameGate();
