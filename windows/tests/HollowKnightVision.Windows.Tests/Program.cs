@@ -870,6 +870,8 @@ var tests = new List<(string Name, Action Run)>
     ("synthetic language change releases a tracked foreign advanced scene", MenuTrackerTests.TestLanguageChangeReleasesTrackedForeignAdvancedScene),
     ("synthetic advanced video scene releases to parent menus", MenuTrackerTests.TestVideoAdvancedReleasesToParentMenusAcrossLiveFrames),
     ("menu catalog builds masked text and inferred selector rows", MenuCatalogTests.TestHumanCatalog),
+    ("requested current Brightness, Clear Save, Select Profile and Video references remain recognized",
+        MenuCatalogTests.TestCurrentUserMenuReferencesWhenRequested),
     ("focused labels augment scenes while correction markers stay separate", MenuCatalogTests.TestFocusedCorrections),
     ("menu catalog keeps foreign glyph widths and language probes", MenuCatalogTests.TestForeignText),
     ("menu live reference limits and holdouts prevent positive evidence leakage", MenuCatalogTests.TestLiveLimitsAndHoldouts),
