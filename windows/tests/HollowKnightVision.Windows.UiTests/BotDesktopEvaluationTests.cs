@@ -234,7 +234,7 @@ internal static class BotDesktopEvaluationTests
                         new TerrainWallDetection([new(135, 20, 100, true)], []),
                         true, new AtlasPoint(0, 0), null, new AtlasPoint(76, 100), InputButtons.Right,
                         null, 1L, GroundHypothesisTrackingResult.Empty, true, Array.Empty<PixelRect>(), null, false, null,
-                        Array.Empty<GroundHypothesisAtlasLine>(), null, null, null
+                        Array.Empty<GroundHypothesisAtlasLine>(), null, null, null, false
                     ]);
                     bridge.Release(InputButtons.Right);
                     await WaitFor(() => Clock() >= availableAt + BotRecordingContract.SampleInterval);
@@ -511,7 +511,7 @@ internal static class BotDesktopEvaluationTests
                         current.Image, Generation, Generation, current.Time, 1, 1UL, 42, truth, null,
                         Array.Empty<DetectedFloorLine>(), TerrainWallDetection.Empty, true, null, null, null, InputButtons.None,
                         null, 1L, GroundHypothesisTrackingResult.Empty, true, Array.Empty<PixelRect>(), null, false,
-                        null, Array.Empty<GroundHypothesisAtlasLine>(), null, null, skillFrame
+                        null, Array.Empty<GroundHypothesisAtlasLine>(), null, null, skillFrame, false
                     ]);
                 return handled;
             }
@@ -940,7 +940,7 @@ internal static class BotDesktopEvaluationTests
                     gameplayFrame, Generation, Generation, Clock(), 1, 1UL, index, Telemetry(session, index), null,
                     Array.Empty<DetectedFloorLine>(), TerrainWallDetection.Empty, true, null, null, null, InputButtons.None,
                     run, 1L, GroundHypothesisTrackingResult.Empty, true, Array.Empty<PixelRect>(), null, false,
-                    null, Array.Empty<GroundHypothesisAtlasLine>(), null, null, null
+                    null, Array.Empty<GroundHypothesisAtlasLine>(), null, null, null, false
                 ]);
                 while ((await states.Reader.ReadAsync(token)).HeldButtons != InputButtons.Right) { }
                 Check((bool)Method("HandleLocalShortcut").Invoke(window, [Key.B, false, ModifierKeys.None])!
@@ -1206,6 +1206,8 @@ internal static class BotDesktopEvaluationTests
                     .SequenceEqual(Enumerable.Range(renderedFrame, captureTimes.Count).Select(frame => (int?)frame))
                 && frames.Select(saved => saved.CaptureTimestamp).SequenceEqual(captureTimes)
                 && reader.Manifest.GroundInputs.Select(input => input.WindowsMovementButtons).SequenceEqual(movement)
+                && reader.Manifest.GroundInputs.Select(input => input.RecentJump)
+                    .SequenceEqual(Enumerable.Range(0, captureTimes.Count).Select(index => (bool?)(index == 1)))
                 && frames.All(saved => reader.ReadImage(saved).Pixels.SequenceEqual(pixels))
                 && new GroundTruthLineStore(Path.Combine(directory, "authored-ground.json")).Load().Lines.SequenceEqual([label]),
                 "The evaluation lost the verified checkpoint, frame, masks, or frozen authored reference.");
@@ -1227,7 +1229,7 @@ internal static class BotDesktopEvaluationTests
                     batch, new[] { new DetectedFloorLine(100, new(20, 170)) }, TerrainWallDetection.Empty,
                     true, new AtlasPoint(0, 0), null, new AtlasPoint(96, 100), previous,
                     run, 1L, GroundHypothesisTrackingResult.Empty, true, masks.AtlasExclusions, masks, true, null,
-                    Array.Empty<GroundHypothesisAtlasLine>(), null, null, null
+                    Array.Empty<GroundHypothesisAtlasLine>(), null, null, null, frameId == 42
                 ]);
                 return now;
             }

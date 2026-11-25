@@ -71,7 +71,7 @@ public partial class MainWindow
         BotRun? run, long walkedCoordinateEpoch, GroundHypothesisTrackingResult ground,
         bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions, GameplaySceneMasks? auditMasks,
         bool usesDurableWorld, CommittedBotFrame? committedAtlas, IReadOnlyList<GroundHypothesisAtlasLine> walked,
-        AtlasPoint? measuredSceneryCamera, long? wallLineage, ThinkingPlaybackFrame? skillFrame)
+        AtlasPoint? measuredSceneryCamera, long? wallLineage, ThinkingPlaybackFrame? skillFrame, bool recentJump)
     {
         var capture = Volatile.Read(ref botCapture);
         var playbackRun = run ?? skillFrame?.Lease.PriorRun;
@@ -207,7 +207,7 @@ public partial class MainWindow
                 visual?.DetectedTerrain?.Floors ?? BotObservationBuilder.ProjectDetectedFloors(frame,
                     visualFloors, terrain.Walls, supportingFloors: floors, masks: auditMasks),
                 exact?.AuthoredTerrain, auditMasks is null ? null : VisualReplayGroundInput.FromTracking(
-                    timestamp, (ulong)generation, frame.Height, auditMasks, input), renderedFrame, skill: skillFrame is not null);
+                    timestamp, (ulong)generation, frame.Height, auditMasks, input, recentJump), renderedFrame, skill: skillFrame is not null);
         }
     }
 

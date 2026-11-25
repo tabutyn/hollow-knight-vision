@@ -3524,7 +3524,7 @@ public partial class MainWindow : Window
                     visualObservation.GroundVerified ? groundDisplayCamera : tracked.MeasuredSceneryCamera,
                     frame.Width, frame.Height, masks.GroundKnight);
                 hackerEvaluation.RecordHackerVisualEvidence(VisualReplayGroundInput.FromTracking(captureTimestamp,
-                    (ulong)captureGeneration, frame.Height, masks, movementButtons),
+                    (ulong)captureGeneration, frame.Height, masks, movementButtons, recentJump),
                     BotObservationBuilder.ProjectDetectedFloors(frame, visualFloors, terrain.Walls, ground, masks));
             }
             var wallLineage = tracked.RoomAllowsAtlasWrite && !tracked.RequiresWorldRecovery ? tracked.MeasuredLineage : null;
@@ -3546,7 +3546,7 @@ public partial class MainWindow : Window
                 terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch, groundHypotheses,
                 gameplayAdmitted, atlasCompositionExclusions, masks, usesDurableWorld, botAtlas,
                 tracked.RoomAllowsAtlasWrite && tracked.MeasuredLineage is not null ? localWalkedGround : [],
-                tracked.MeasuredSceneryCamera, wallLineage, thinkingPlaybackFrame);
+                tracked.MeasuredSceneryCamera, wallLineage, thinkingPlaybackFrame, recentJump);
         }
         else
         {
