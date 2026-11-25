@@ -373,6 +373,13 @@ internal static class BotCaptureTests
                 var folder = Path.Combine(root, BotCaptureSession.DirectoryName(capture.Id));
                 var (manifest, _, events) = BotCaptureSession.ReadReviewEvidence(folder, default);
                 Check(manifest.RecordedSkillControls == true, "Skill capability evidence is missing from the paired clip.");
+                var wire = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "manifest.json")))!;
+                var paired = verified.Published.Single(clip => clip.Id != capture.Id);
+                var pairedWire = JsonNode.Parse(File.ReadAllText(Path.Combine(root, BotCaptureSession.DirectoryName(paired.Id), "manifest.json")))!;
+                Check(wire["id"]!.GetValue<string>() == capture.Id.ToString("D").ToUpperInvariant()
+                    && wire["pairedClipID"]!.GetValue<string>() == pairedWire["id"]!.GetValue<string>()
+                    && wire["replayID"]!.GetValue<string>() == pairedWire["replayID"]!.GetValue<string>(),
+                    "Capture references must match the named session on the trainer wire.");
                 foreach (var button in expected)
                     Check(events.Where(item => item.Button == button).Select(item => item.IsPressed).SequenceEqual([true, false]),
                         $"Missing original press/release or wrong wire case for {button}.");

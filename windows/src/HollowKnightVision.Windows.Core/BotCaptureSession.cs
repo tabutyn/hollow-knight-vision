@@ -11,8 +11,8 @@ public sealed record BotCaptureManifest(
     DateTimeOffset CreatedAt, double StartedAt, string GameMode, string DetectorVersion,
     string InputSource, string Status, double Duration, int ObservationCount, int UsableObservationCount,
     int InputEventCount, int ImageCount, string BotDomain,
-    [property: JsonPropertyName("replayID")] Guid? ReplayId,
-    [property: JsonPropertyName("pairedClipID")] Guid? PairedClipId)
+    [property: JsonPropertyName("replayID"), JsonConverter(typeof(CaptureIdConverter))] Guid? ReplayId,
+    [property: JsonPropertyName("pairedClipID"), JsonConverter(typeof(CaptureIdConverter))] Guid? PairedClipId)
 {
     public IReadOnlyList<string> FeatureNames => BotRecordingContract.FeatureNames;
     public IReadOnlyList<int> ActionSizes => BotRecordingContract.ActionSizes;
