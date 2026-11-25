@@ -45,12 +45,13 @@ internal static class BotEvaluationTests
             "UnlabelledRoom", detected, audited, input, 44);
         recorder.RecordFrame(image, new(1.3, 1.32, Generation, 1, 0), null, scene, detected, audited with { Floors = [] }, null, 45);
 
-        var finish = recorder.FinishAsync(1.5, "user-stop");
+        var stopReason = domain == BotCaptureDomain.Hacker ? "local-control" : "user-stop";
+        var finish = recorder.FinishAsync(1.5, stopReason);
         Check(ReferenceEquals(finish, recorder.FinishAsync(2, "interrupted")), "Closing twice must use the same archive transaction.");
         var directory = finish.GetAwaiter().GetResult() ?? throw new InvalidOperationException("No evaluation was published.");
         var manifest = Load<BotCaptureManifest>(directory, "manifest.json");
-        Check(manifest is { ExpertDemonstration: false, ObservationCount: 1, UsableObservationCount: 0, ImageCount: 1,
-            TerrainAuditCount: 3, TerrainPairedFrameCount: 2, InputEventCount: 4, StopReason: "user-stop" },
+        Check(manifest is { Status: "completed", ExpertDemonstration: false, ObservationCount: 1, UsableObservationCount: 0, ImageCount: 1,
+            TerrainAuditCount: 3, TerrainPairedFrameCount: 2, InputEventCount: 4 } && manifest.StopReason == stopReason,
             "Evaluations must keep diagnostic frames even when the policy had no usable Knight observation.");
         Check(Path.GetFileName(Path.GetDirectoryName(directory)) == manifest.BotDomain
             && BotCaptureSession.Library(Path.Combine(root, "demonstrations")).Count == 0
