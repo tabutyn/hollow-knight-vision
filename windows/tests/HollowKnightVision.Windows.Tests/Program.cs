@@ -1389,6 +1389,8 @@ var tests = new List<(string Name, Action Run)>
     ("a brief unmeasured gap only resumes walked ground in the same camera basis", WalkedGroundTests.TestShortUnmeasuredCameraGapRequiresSameMeasuredBasis),
     ("Game Play bot floors use walked terrain without inventing unobserved spans", WalkedGroundTests.TestBotFloorsUseTheWalkedRowAndKeepOnlySupportedExtensions),
     ("walked ground matches observed elevation and owns its columns", WalkedGroundTests.TestWalkSnapsToAnObservedFloorAndReplacesOverlappingStrokes),
+    ("two current platforms keep their gap over a stored edge", WalkedGroundTests.TestCurrentPlatformsKeepTheirGapOverStoredGround),
+    ("a walked line suppresses only its observed columns after panning", WalkedGroundTests.TestWalkedDisplayOwnsOnlyItsColumnsAfterPanning),
     ("ground clearance trims overlapping platform tips", GroundClearanceTests.TestGroundClearanceTrimsOnlyShortSharedTips),
     ("terrain edits preserve shared Mac room calibrations", HackerTerrainEditingTests.TestMacRoomCalibrationsSurviveTerrainEditAndUndo),
     ("wall preview and persisted ground corners", HackerTerrainEditingTests.TestWallSnapsBothCornersAndCommitsOnRelease),

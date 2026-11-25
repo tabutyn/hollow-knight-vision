@@ -120,6 +120,43 @@ public static class GroundStrokeGeometry
         return [.. walked, .. edges.SelectMany(line => ExcludeColumns(line, footprints, knightHeight))];
     }
 
+    /// <summary>Composes the current image's ground strokes with ground remembered in the Atlas.</summary>
+    public static GroundHypothesisAtlasLine[] ComposeDisplay(
+        IReadOnlyList<GroundHypothesisAtlasLine> history,
+        IReadOnlyList<DetectedFloorLine> currentFloors,
+        AtlasPoint camera, int width, int height, PixelRect? knight)
+    {
+        var right = camera.X + width;
+        var top = camera.Y + height;
+        var edges = Coalesce(currentFloors.Where(floor => floor.Row < height).Select((floor, index) =>
+        {
+            var y = top - floor.Row - .5;
+            return new GroundHypothesisAtlasLine(index,
+                new(camera.X + Math.Clamp(floor.XSpan.Start, 0, width), y),
+                new(camera.X + Math.Clamp((long)floor.XSpan.EndInclusive + 1, 0, width), y));
+        }));
+        var walked = history.Where(IsWalked).OrderBy(line => line.AtlasStart.X).ToArray();
+        var clearance = GroundClearance.KnightHeight(height, knight);
+        return [.. history.SelectMany(KeepVisibleHistory), .. edges.SelectMany(edge => ExcludeColumns(edge, walked, clearance))];
+
+        IEnumerable<GroundHypothesisAtlasLine> KeepVisibleHistory(GroundHypothesisAtlasLine line)
+        {
+            if (IsWalked(line) || line.AtlasStart.Y < camera.Y || line.AtlasStart.Y > top
+                || line.AtlasEnd.X <= camera.X || line.AtlasStart.X >= right)
+            {
+                yield return line;
+                yield break;
+            }
+            // The current image owns its edge detections. Keep the portions on either side of it.
+            if (line.AtlasStart.X < camera.X)
+                yield return line with { AtlasEnd = line.AtlasEnd with { X = camera.X } };
+            if (line.AtlasEnd.X > right)
+                yield return line with { AtlasStart = line.AtlasStart with { X = right } };
+        }
+
+        static bool IsWalked(GroundHypothesisAtlasLine line) => line.SegmentId == WalkedGroundMemory.WalkedSegmentId;
+    }
+
     /// <summary>Uses walked floor for the bot wherever the current camera can project that evidence.</summary>
     public static IReadOnlyList<DetectedFloorLine> MergeWalkedFloors(IReadOnlyList<DetectedFloorLine> detected,
         IReadOnlyList<GroundHypothesisAtlasLine> walked, AtlasPoint? camera, int width, int height, PixelRect? knight)

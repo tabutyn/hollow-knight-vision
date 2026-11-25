@@ -7,6 +7,39 @@ internal static class WalkedGroundTests
     private static readonly PixelRect Knight = new(183, 90, 34, 47);
     private static readonly GroundEdgeAnalysis Hidden = Image([]);
 
+    public static void TestCurrentPlatformsKeepTheirGapOverStoredGround()
+    {
+        var stored = Line(700, -20, 120, 81);
+        var above = Line(701, -10, 110, 120);
+        DetectedFloorLine[] current =
+        [
+            new(20, new(0, 40)), new(21, new(34, 59)), new(20, new(75, 99))
+        ];
+        var strokes = GroundStrokeGeometry.ComposeDisplay([stored, above], current, default, 100, 100, null);
+        Check(strokes.SequenceEqual([Line(700, -20, 0, 81), Line(700, 100, 120, 81), above,
+                Line(0, 0, 60, 79.5), Line(2, 75, 100, 79.5)]),
+            "The current image must have exactly one measured stroke per platform with an open pit.");
+        Check(GroundStrokeGeometry.ComposeDisplay([stored], [], default, 100, 100, null)
+                .SequenceEqual([Line(700, -20, 0, 81), Line(700, 100, 120, 81)]),
+            "An undetected edge must retire inside the image while remaining in the outside Atlas.");
+    }
+
+    public static void TestWalkedDisplayOwnsOnlyItsColumnsAfterPanning()
+    {
+        var walked = Line(WalkedGroundMemory.WalkedSegmentId, 20, 80, 79);
+        var nearby = Line(700, 10, 95, 80);
+        var camera = new AtlasPoint(-4, 0);
+        var strokes = GroundStrokeGeometry.ComposeDisplay([walked, nearby], [new(20, new(10, 95))],
+            camera, 100, 100, null);
+        Check(strokes.SequenceEqual([walked, Line(0, 6, 20, 79.5), Line(0, 80, 92, 79.5)]),
+            "After a pan, the walk must suppress just its covered columns of the detector edge.");
+        Check(strokes.Skip(1).Select(line => (line.AtlasStart.X - camera.X, line.AtlasEnd.X - camera.X))
+                .SequenceEqual([(10d, 24d), (84d, 96d)]),
+            "The unwalked live portions must stay at their own image columns.");
+        Check(GroundStrokeGeometry.ComposeDisplay([walked], [], camera, 100, 100, null).SequenceEqual([walked]),
+            "Walked ground must survive an occluder without a current detector line.");
+    }
+
     public static void TestWalkedDarkGroundSurvivesOcclusionAndReversal()
     {
         var tracker = new WalkedGroundTracker();
