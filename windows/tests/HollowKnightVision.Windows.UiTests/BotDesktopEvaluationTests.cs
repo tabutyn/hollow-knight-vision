@@ -52,12 +52,142 @@ internal static class BotDesktopEvaluationTests
             await VerifyCheckpointControlsAsync(Path.Combine(temporary.FullName, "versions"), timeout.Token);
             await TestSummaryAndQueuedCaptureUpdateWhileEventDecodeIsBlocked(Path.Combine(temporary.FullName, "summary"), timeout.Token);
             await VerifyThinkingLeaseAsync(Path.Combine(temporary.FullName, "thinking"), timeout.Token);
+            await TestKRecordsBothDomainsFromEitherWorkspace(Path.Combine(temporary.FullName, "paired-shortcut"));
         }
         finally
         {
             Environment.SetEnvironmentVariable(labelsEnvironment, previousLabels);
             temporary.Delete(recursive: true);
         }
+    }
+
+    private static async Task TestKRecordsBothDomainsFromEitherWorkspace(string root)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var receiverLifetime = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+        using var captureLifetime = new CancellationTokenSource();
+        using var server = new TcpListener(IPAddress.Loopback, 0);
+        server.Start();
+        var token = timeout.Token;
+        var session = Guid.NewGuid();
+        var port = ((IPEndPoint)server.LocalEndpoint).Port;
+        var states = Channel.CreateUnbounded<ReceiverInputSnapshot>();
+        var checkpoint = JsonSerializer.Deserialize<RecordedGameCheckpoint>(
+            """{"sceneName":"Tutorial_01","entryGateName":"left1","heroY":1.28,"grounded":true,"cameraY":2}""", Json)!;
+        var peer = ServeAsync(server, states.Writer, receiverLifetime.Token, checkpoint: checkpoint);
+        var oldLabelRoot = Environment.GetEnvironmentVariable("HKV_GROUND_LABEL_ROOT");
+        Environment.SetEnvironmentVariable("HKV_GROUND_LABEL_ROOT", root);
+        try
+        {
+            new GroundTruthLineStore().Save(new()
+            {
+                Lines = [new(Scene, -2, 4, 0, GroundTruthLineKind.Positive, false)],
+                Walls = [new GroundTruthWorldLine(Scene, 1.5, 1.5, -.5, GroundTruthLineKind.Wall, false) { EndWorldY = 3 }]
+            });
+            var availableAt = 0d;
+            var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port))
+            {
+                ReadBotObservationTime = () => availableAt
+            };
+            var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
+            var library = Path.Combine(root, "bot-v1", "demonstrations");
+            var paths = Path.Combine(root, "HollowKnightVision", "paths");
+            var status = (TextBlock)window.FindName("StatusText");
+            try
+            {
+                Field("visionCancellation").SetValue(window, captureLifetime);
+                Field("recognizedMenuContext").SetValue(window, "game");
+                Field("recentCaptureGeneration").SetValue(window, Generation);
+                bridge.Start();
+                await WaitFor(() => bridge.CanUseTrialCheckpoint);
+                var frameId = 900;
+                foreach (var workspace in new[] { "Gameplay", "Hacker" })
+                {
+                    Field("workspace").SetValue(window, workspace);
+                    Check(!PressK(ModifierKeys.Shift) && !bridge.IsRecording, "Shift+K must leave the capture idle.");
+                    Check(PressK(), $"K should start a capture in {workspace}.");
+                    await WaitFor(() => Field("changingBotCapture").GetValue(window) is false);
+                    Check(bridge.Recording.HasValue
+                        && Field("botCapture").GetValue(window) is BotCaptureSession { CapturesHacker: true },
+                        $"The {workspace} shortcut did not start both domains. {status.Text}");
+                    var (replayId, startedAt) = bridge.Recording!.Value;
+                    Check(!PressK(ModifierKeys.Shift) && bridge.IsRecording, "Shift+K must leave the capture running.");
+
+                    bridge.Press(InputButtons.Right);
+                    while (await states.Reader.ReadAsync(token) is not { Enabled: true, HeldButtons: InputButtons.Right }) { }
+                    var marker = ++frameId;
+                    var frame = new BgraFrame(Width, Height, Width * 4, new byte[Width * Height * 4],
+                        marker, DateTimeOffset.UnixEpoch.AddSeconds(5));
+                    var knight = new ObjectDetection("game.playable-knight", new(.38, .61, .04, .16), .97f)
+                        { SourceFrameIdentifier = marker };
+                    var batch = new LiveObjectDetectionBatch([knight], marker, 5, Generation, 0);
+                    var timestamp = startedAt + .02;
+                    availableAt = timestamp + .015;
+                    bridge.RecordVisualFrame(frame, timestamp, timestamp, (ulong)Generation, marker);
+                    _ = Method("CaptureBotObservations").Invoke(window, [
+                        frame, Generation, Generation, timestamp, 1, 1UL, marker, Telemetry(session, marker),
+                        batch, new[] { new DetectedFloorLine(100, new(20, 170)) },
+                        new TerrainWallDetection([new(135, 20, 100, true)], []),
+                        true, new AtlasPoint(0, 0), null, new AtlasPoint(76, 100), InputButtons.Right,
+                        null, 1L, GroundHypothesisTrackingResult.Empty, true, Array.Empty<PixelRect>(), null, false, null,
+                        Array.Empty<GroundHypothesisAtlasLine>(), null, null, null
+                    ]);
+                    bridge.Release(InputButtons.Right);
+                    await WaitFor(() => Clock() >= availableAt + BotRecordingContract.SampleInterval);
+                    Check(PressK(), $"K should stop the paired capture in {workspace}.");
+                    await WaitFor(() => Field("changingBotCapture").GetValue(window) is false);
+                    Check(!bridge.IsRecording && Field("botCapture").GetValue(window) is null
+                        && status.Text.StartsWith("Saved both Hacker and Game Play clips.", StringComparison.Ordinal),
+                        $"The paired capture did not publish from {workspace}. {status.Text}");
+
+                    var clips = BotCaptureSession.Library(library).Where(row => row.ReplayId == replayId).ToArray();
+                    var hacker = clips.Single(clip => clip.BotDomain == "hacker");
+                    var visual = clips.Single(clip => clip.BotDomain == "gameplay");
+                    Check(hacker.Id == replayId && hacker.PairedClipId == visual.Id && visual.PairedClipId == hacker.Id
+                        && clips.All(clip => clip.InputEventCount == 2 && clip.UsableObservationCount == 1),
+                        "The clip manifests must keep the shared run and both input edges.");
+                    var authored = Reopen(hacker);
+                    var detected = Reopen(visual);
+                    Check(authored.DetectedTerrain is null && authored.AuthoredTerrain?.Walls.Single().SolidSide == 0
+                        && detected.AuthoredTerrain is null && detected.DetectedTerrain?.Walls.Single().X == 135
+                        && authored.Features[0] == .5 && Math.Abs(detected.Features[0] - .4) < 1e-9,
+                        "Each domain must reopen with its own wall geometry and Knight source.");
+
+                    var replayFile = Directory.EnumerateFiles(paths, $"path-*-{replayId:D}.json").Single();
+                    var replay = new RecordedInputPathStore(paths).Load(replayFile);
+                    Check(replay.Id == replayId && replay.StartCheckpoint?.EntryGateName == "left1"
+                        && replay.Events.All(edge => edge.Button == RecordedGameButton.Right)
+                        && replay.Events.Select(edge => edge.Transition).SequenceEqual(
+                            [RecordedInputTransition.Pressed, RecordedInputTransition.Released])
+                        && replay.VisualFrameArchive is { Complete: true, SavedFrameCount: 1 },
+                        "The replay must preserve its checkpoint, input edges and visual frame.");
+                    var archive = new VisualReplayArchiveReader(paths, replay.VisualFrameArchive!, replayId);
+                    Check(archive.Manifest.Frames.Single().RenderedGameFrame == marker,
+                        "The replay frame must match the observation's rendered game frame.");
+                }
+            }
+            finally
+            {
+                receiverLifetime.Cancel();
+                Field("isClosing").SetValue(window, true);
+                await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
+                try { await peer.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (OperationCanceledException error) when (error.CancellationToken == receiverLifetime.Token) { }
+            }
+            Console.WriteLine("PASS Unmodified K starts and stops paired Game Play and Hacker clips from either workspace");
+
+            bool PressK(ModifierKeys modifiers = ModifierKeys.None) =>
+                Method("HandleLocalShortcut").Invoke(window, [Key.K, false, modifiers]) is true;
+
+            BotCaptureObservation Reopen(BotCaptureManifest clip) =>
+                BotRecordedAtlasPath.ReadCapture(Path.Combine(library, BotCaptureSession.DirectoryName(clip.Id))).Observations.Single();
+
+            async Task WaitFor(Func<bool> condition)
+            {
+                while (!condition()) await Task.Delay(10, token);
+            }
+        }
+        finally { Environment.SetEnvironmentVariable("HKV_GROUND_LABEL_ROOT", oldLabelRoot); }
     }
 
     private static async Task TestSummaryAndQueuedCaptureUpdateWhileEventDecodeIsBlocked(string root, CancellationToken token)
@@ -751,7 +881,7 @@ internal static class BotDesktopEvaluationTests
     }
 
     private static async Task ServeAsync(TcpListener listener, ChannelWriter<ReceiverInputSnapshot> states,
-        CancellationToken token, bool skills = false)
+        CancellationToken token, bool skills = false, RecordedGameCheckpoint? checkpoint = null)
     {
         using var client = await listener.AcceptTcpClientAsync(token);
         using var reader = new StreamReader(client.GetStream());
@@ -760,11 +890,33 @@ internal static class BotDesktopEvaluationTests
         string[] capabilities = skills
             ? ["input-state-v1", ReceiverProtocol.PauseCapability, ReceiverProtocol.SkillControlsCapability]
             : ["input-state-v1", ReceiverProtocol.PauseCapability];
+        if (checkpoint is not null)
+        {
+            Check(hello.RenderFrameMarker == true, "Paired recording needs rendered-frame correlation.");
+            capabilities = [.. capabilities, ReceiverProtocol.PlayerCheckpointCapability];
+        }
         await writer.WriteAsync(ReceiverWireCodec.EncodeLine(new ReceiverCapabilitiesAcknowledgement(
             2, "capabilitiesAck", hello.SessionId, capabilities, 2000)));
+        if (checkpoint is not null)
+            await writer.WriteAsync(ReceiverWireCodec.EncodeLine(Telemetry(hello.SessionId, 1)));
         while (await reader.ReadLineAsync(token) is { } line)
-            if (ReceiverWireCodec.MessageType(line) == "state")
-                states.TryWrite(ReceiverWireCodec.DecodeLine<ReceiverInputSnapshot>(line));
+        {
+            var type = ReceiverWireCodec.MessageType(line);
+            if (type == "state")
+            {
+                var state = ReceiverWireCodec.DecodeLine<ReceiverInputSnapshot>(line);
+                states.TryWrite(state);
+                if (checkpoint is not null)
+                    await writer.WriteAsync(ReceiverWireCodec.EncodeLine(new ReceiverInputAcknowledgement(
+                        1, "ack", hello.SessionId, state.Sequence, state.HeldButtons, state.Enabled)));
+            }
+            else if (type == "captureCheckpoint" && checkpoint is not null)
+            {
+                var command = ReceiverWireCodec.DecodeLine<ReceiverCheckpointCommand>(line);
+                await writer.WriteAsync(ReceiverWireCodec.EncodeLine(new ReceiverCheckpointAcknowledgement(
+                    2, "captureCheckpointAck", hello.SessionId, command.CommandId, true, checkpoint, null)));
+            }
+        }
     }
 
     private static ReceiverGroundTruthSample Telemetry(Guid session, int frame) => new(

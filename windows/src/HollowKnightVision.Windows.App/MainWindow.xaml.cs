@@ -1560,7 +1560,7 @@ public partial class MainWindow : Window
             SelectWorkspace(destination);
             return true;
         }
-        if (key == Key.K && (botCapture is not null
+        if (key == Key.K && modifiers == ModifierKeys.None && (botCapture is not null
             || DashboardPresentationPolicy.ShowsBotCapture(workspace, gameMode, recognizedMenuContext)))
         {
             PathRecording_Click(this, new RoutedEventArgs());
