@@ -13,6 +13,7 @@ using System.Windows.Threading;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 using Line = System.Windows.Shapes.Line;
+using OverlayPath = System.Windows.Shapes.Path;
 using Rectangle = System.Windows.Shapes.Rectangle;
 using SerialWorldWorker = VisionApp::HollowKnightVision.Windows.App.SerialWorldWorker;
 using WindowsLiveWorldPipeline = VisionApp::HollowKnightVision.Windows.App.WindowsLiveWorldPipeline;
@@ -329,7 +330,8 @@ internal static class AtlasWindowIntegrationTests
             window.ApplyVisionAnalysis(initial);
             Check(ReferenceEquals(newestPixels, bitmap.Source) && Canvas.GetLeft(bitmap) == 124 && Canvas.GetTop(bitmap) == -47,
                 "The newest pixels must use the measured owner's revised placement when an older analysis arrives.");
-            Check(placement.Visibility == Visibility.Visible && placement.Children.OfType<Line>().Count() == 1,
+            SetGameplayViewport(window, new(1, 240, 100));
+            Check(placement.Visibility == Visibility.Visible && placement.Children.OfType<OverlayPath>().Count() == 1,
                 "The measured doorway should be presented with confirmed gameplay placement.");
             AssertWall(walls, 135, -45, 22.4);
             Check(Control<Canvas>(window, "GameplayPathCanvas").Visibility == Visibility.Collapsed,
@@ -1228,9 +1230,11 @@ internal static class AtlasWindowIntegrationTests
     private static void VerifyGameplayPlacementVisibility(MainWindow window)
     {
         var layer = Control<Canvas>(window, "GameplayPlacementCanvas");
+        var panel = Control<Grid>(window, "GameplayPanel");
         var outlines = Control<CheckBox>(window, "EstimatedRoomOutlinesCheck");
         var tiles = (Dictionary<AtlasTileCoordinate, Image>)typeof(MainWindow)
             .GetField("gameplayTileImages", InstanceMembers)!.GetValue(window)!;
+        var visibility = panel.Visibility;
         tiles.Add(new(0, 0), new Image());
         try
         {
@@ -1242,19 +1246,32 @@ internal static class AtlasWindowIntegrationTests
                     [new(new(40, -26), new(28, 20))])
             });
             SetField(window, "gameplayAtlasMinimumTileX", -1);
+            SetGameplayViewport(window, ViewportTransform.Identity);
             _ = Invoke(window, "UpdateGameplayPathVisibility");
-            var join = layer.Children.OfType<Line>().Single();
+            var join = layer.Children.OfType<OverlayPath>().Single();
+            var figures = join.Data.GetFlattenedPathGeometry().Figures;
             Check(outlines.IsChecked == false && layer.Visibility == Visibility.Visible && !layer.IsHitTestVisible
-                && layer.Children.Count == 1 && join.X1 == 286 && join.X2 == 316 && join.Y1 == 12 && join.Y2 == 12,
+                && layer.Children.Count == 1 && figures.Count == 3
+                && figures[0].StartPoint == new Point(286, 12) && figures[1].StartPoint == new Point(296, 12),
                 "A saved Atlas should show its measured horizontal join with the tile origin, without vertical lines or outlines.");
 
             outlines.IsChecked = true;
-            var box = layer.Children.OfType<Rectangle>().Single();
-            Check(Canvas.GetLeft(box) == 296 && Canvas.GetTop(box) == 6 && box.Width == 28 && box.Height == 20
-                && box.StrokeDashArray.Count == 2 && layer.Children.OfType<Line>().Count() == 1,
+            var box = (OverlayPath)layer.Children[1];
+            Check(box.Data.Bounds == new Rect(296, 6, 28, 20)
+                && box.Data.GetFlattenedPathGeometry().Figures.Count == 10,
                 "The Debug View toggle should add only the dashed footprint.");
             outlines.IsChecked = false;
             Check(layer.Children.Count == 1, "Turning outlines off must keep the measured join.");
+
+            SetGameplayViewport(window, new(2, -240, 17));
+            var zoomedJoin = layer.Children.OfType<OverlayPath>().Single();
+            var zoomedFigures = zoomedJoin.Data.GetFlattenedPathGeometry().Figures;
+            var start = zoomedFigures[0].StartPoint;
+            var onScreen = layer.TranslatePoint(start, panel);
+            Check(zoomedFigures.Count == 5 && start == new Point(332, 41)
+                && zoomedFigures[1].StartPoint == new Point(344, 41)
+                && onScreen == start && zoomedJoin.StrokeThickness == 1,
+                "Panning and zooming should redraw the measured join with stable screen-space dashes.");
 
             SetField(window, "hasFreshGameFrame", true);
             _ = Invoke(window, "UpdateGameplayPathVisibility");
@@ -1276,9 +1293,20 @@ internal static class AtlasWindowIntegrationTests
         }
         finally
         {
+            panel.Visibility = visibility;
             tiles.Clear();
             _ = Invoke(window, "ClearGameplayAtlasRuntime", false);
         }
+    }
+
+    private static void SetGameplayViewport(MainWindow window, ViewportTransform transform)
+    {
+        var panel = Control<Grid>(window, "GameplayPanel");
+        panel.Visibility = Visibility.Visible;
+        panel.Measure(new Size(640, 360));
+        panel.Arrange(new Rect(0, 0, 640, 360));
+        _ = Invoke(window, "ApplySettledViewportTransform", Control<Canvas>(window, "GameplayAtlasCanvas"),
+            GetField<GameplayViewportController>(window, "gameplayViewport").SetFreeFlyTransform(transform));
     }
 
     private static ProfileLaunch ConfirmLaunch(MainWindow window, int slot, int[] occupied)

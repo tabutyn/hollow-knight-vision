@@ -293,4 +293,52 @@ internal static class LayerSceneViewportParityTests
         Near(projected!.Value.X, 35);
         Near(projected.Value.Y, 67);
     }
+
+    public static void TestPlacementDashesUseScreenSpaceAndStayBounded()
+    {
+        var footprint = new WorldRect(new(0, 0), new(120, 10));
+        var placement = new LiveWorldPlacementProjection([], [footprint]);
+        var dashes = TopDashes(1);
+        Check(dashes.Length == 10, "A visible 120-DIP edge must draw ten dashes.");
+        Near(dashes[0].End.X, 7.2);
+        Near(dashes[1].Start.X, 12);
+        Check(TopDashes(2).Length == 20, "Zoom must preserve dash size on screen.");
+        Check(TopDashes(1_000_000).Length == 64, "Each edge may emit at most 64 dashes.");
+        var many = placement with { EstimatedFootprints = Enumerable.Repeat(footprint, 10_000).ToArray() };
+        Check(Build(many, 1_000_000).Count == GameplayPlacementGeometry.MaximumDashes,
+            "The full overlay exceeded the dash budget.");
+
+        GameplayPlacementGeometry.Dash[] TopDashes(double zoom) => Build(placement, zoom)
+            .Where(dash => dash.Start.Y == 0 && dash.End.Y == 0).ToArray();
+
+        static List<GameplayPlacementGeometry.Dash> Build(LiveWorldPlacementProjection input, double zoom) =>
+            GameplayPlacementGeometry.Build(input, point => new(point.X * zoom, (10 - point.Y) * zoom),
+                new(180_000_000, 5), showsEstimatedOutlines: true);
+    }
+
+    public static void TestOffscreenPlacementDoesNotConsumeDashBudget()
+    {
+        var hidden = new WorldRect(new(-10_000, -55), new(2_000, 20));
+        var placement = new LiveWorldPlacementProjection(
+            [new(new(10, -40), new(130, -40))],
+            [.. Enumerable.Repeat(hidden, 200), new(new(10, -60), new(120, 10))]);
+        var dashes = GameplayPlacementGeometry.Build(placement, point => new(point.X, -point.Y),
+            new(400, 300), showsEstimatedOutlines: true);
+        Check(dashes.Count(dash => !dash.Estimated) == 10, "A measured doorway lost its visible dashes.");
+        Check(dashes.Count(dash => dash.Estimated) == 22
+            && dashes.All(dash => dash.Start.X >= 10 && dash.End.X >= 10),
+            "Offscreen geometry must leave budget for the visible estimated footprint.");
+    }
+
+    public static void TestPlacementClipsHugeEdgesBeforeGeneratingDashes()
+    {
+        var placement = new LiveWorldPlacementProjection(
+            [new(new(-100, -10), new(20, 100))],
+            [new(new(-1_000_000_000, -240), new(2_000_000_000, 200))]);
+        var dashes = GameplayPlacementGeometry.Build(placement, point => new(point.X, -point.Y),
+            new(320, 180), showsEstimatedOutlines: true);
+        Check(dashes.Count == 27 && dashes.All(dash => dash.Estimated
+            && dash.Start.X >= -1.001 && dash.End.X <= 321.001 && dash.Start.Y == 40 && dash.End.Y == 40),
+            "Only the portion crossing the viewport should contribute dashes.");
+    }
 }

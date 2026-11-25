@@ -5326,6 +5326,7 @@ public partial class MainWindow : Window
             OffsetY = atlasPan.Y
         };
         ApplyViewportTransform(surface, atlasTransform);
+        RenderGameplayPlacement();
 
         // The atlas eases into a new basis while the live capture remains at
         // the authoritative pose. Counter-translate only the live layers.

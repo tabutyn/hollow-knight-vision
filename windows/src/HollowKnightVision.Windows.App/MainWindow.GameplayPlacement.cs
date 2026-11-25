@@ -6,7 +6,8 @@ namespace HollowKnightVision.Windows.App;
 public partial class MainWindow
 {
     private (long CaptureId, double CapturedAt)? gameplayPlacementFrame;
-    private (LiveWorldPlacementProjection Placement, GroundFeatureOverlayPresentation.AtlasProjection Projection, bool Outlines)?
+    private (LiveWorldPlacementProjection Placement, GroundFeatureOverlayPresentation.AtlasProjection Projection,
+        ViewportTransform Transform, ViewportSize Viewport, bool Outlines)?
         drawnGameplayPlacement;
 
     private void EstimatedRoomOutlines_Changed(object sender, RoutedEventArgs e) => RenderGameplayPlacement();
@@ -21,9 +22,14 @@ public partial class MainWindow
         GameplayPlacementCanvas.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         if (!visible) return;
 
-        var display = (gameplaySavedWorld.Placement, Projection: SavedGroundProjection, Outlines: EstimatedRoomOutlinesCheck.IsChecked == true);
+        var matrix = GameplayAtlasCanvas.RenderTransform.Value;
+        var display = (gameplaySavedWorld.Placement, Projection: SavedGroundProjection,
+            Transform: new ViewportTransform(matrix.M11, matrix.OffsetX, matrix.OffsetY),
+            Viewport: new ViewportSize(GameplayPanel.ActualWidth, GameplayPanel.ActualHeight),
+            Outlines: EstimatedRoomOutlinesCheck.IsChecked == true);
         if (drawnGameplayPlacement == display) return;
-        GameplayPlacementPresentation.Draw(GameplayPlacementCanvas, display.Placement, display.Projection, display.Outlines);
+        GameplayPlacementPresentation.Draw(GameplayPlacementCanvas,
+            display.Placement, display.Projection, display.Transform, display.Viewport, display.Outlines);
         drawnGameplayPlacement = display;
     }
 
