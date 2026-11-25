@@ -385,10 +385,44 @@ public sealed class LiveWorldSessionStore
         var current = OpenCurrentStoreUnderLock();
         using var sourceHandles = ValidateSourceReferences(snapshot, current);
         var encoded = LiveWorldJson.WriteSnapshot(snapshot);
-        var committed = TranslateSnapshotStoreErrors(
-            () => current.SaveScene(encoded, expectedRevision, newRevision));
+        var committed = TranslateSnapshotStoreErrors(() => current.SaveScene(
+            encoded, expectedRevision, newRevision,
+            beforeReplace: snapshot.UsesSwiftWireFormat || current.Manifest.UsesSwiftWireFormat
+                ? (previous, revision) => PreserveLegacySnapshot(current, previous, revision)
+                : null));
         sceneStore = current;
         return committed;
+    }
+
+    private static void PreserveLegacySnapshot(
+        SceneSessionStore current, ReadOnlyMemory<byte> previous, int revision)
+    {
+        int? schema;
+        try
+        {
+            schema = LiveWorldJson.ReadLegacySwiftSchemaVersion(previous, current.Manifest.UsesSwiftWireFormat);
+        }
+        catch (JsonException exception)
+        {
+            throw Error(
+                LiveWorldSessionStoreError.CorruptSnapshot,
+                "Could not read the existing Atlas schema.",
+                innerException: exception);
+        }
+        if (schema is null) return;
+
+        var backup = Path.Combine(current.RootDirectory,
+            FormattableString.Invariant($"legacy-world-schema-{schema}-revision-{revision}.json"));
+        if (!File.Exists(backup))
+        {
+            AtomicFile.Write(backup, previous.Span, overwrite: false);
+        }
+        else if (!previous.Span.SequenceEqual(ReadExistingFile(backup)))
+        {
+            throw Error(
+                LiveWorldSessionStoreError.CorruptSnapshot,
+                "The existing legacy Atlas backup differs from the committed snapshot.");
+        }
     }
 
     public LiveWorldSessionArchive ArchiveAndReset(

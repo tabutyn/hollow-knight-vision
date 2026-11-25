@@ -297,7 +297,14 @@ public sealed class SceneSessionStore
     }
 
     /// <summary>Stores a revision and complete scene in one atomic envelope.</summary>
-    public bool SaveScene(byte[] data, int expectedRevision, int newRevision)
+    public bool SaveScene(byte[] data, int expectedRevision, int newRevision) =>
+        SaveScene(data, expectedRevision, newRevision, beforeReplace: null);
+
+    internal bool SaveScene(
+        byte[] data,
+        int expectedRevision,
+        int newRevision,
+        Action<ReadOnlyMemory<byte>, int>? beforeReplace)
     {
         ArgumentNullException.ThrowIfNull(data);
         using var sceneLock = AcquireSceneLock();
@@ -314,6 +321,11 @@ public sealed class SceneSessionStore
             throw Error(
                 SceneSessionStoreError.InvalidRevision,
                 "Scene revision must advance.");
+        }
+
+        if (current is not null)
+        {
+            beforeReplace?.Invoke(current.Data, currentRevision);
         }
 
         var envelope = new SceneSnapshotEnvelope(newRevision, data.ToArray());

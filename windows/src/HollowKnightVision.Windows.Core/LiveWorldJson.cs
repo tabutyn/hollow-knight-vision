@@ -41,6 +41,20 @@ internal static class LiveWorldJson
             ?? throw new JsonException("Live-world snapshot is empty.");
     }
 
+    internal static int? ReadLegacySwiftSchemaVersion(ReadOnlyMemory<byte> data, bool swiftSession)
+    {
+        // Read the schema without building a JSON tree on every current Atlas commit.
+        var schema = JsonSerializer.Deserialize<SnapshotSchema>(data.Span, Native)
+            ?? throw new JsonException("Live-world snapshot is empty.");
+        if (schema.SchemaVersion == 2) return 2;
+        if (schema.SchemaVersion != 1) return null;
+
+        using var document = JsonDocument.Parse(data);
+        return UsesSwiftV1Encoding(document.RootElement, swiftSession) ? 1 : null;
+    }
+
+    private sealed record SnapshotSchema([property: JsonRequired] int SchemaVersion);
+
     private static bool UsesSwiftV1Encoding(JsonElement root, bool swiftSession)
     {
         // Both platforms used schema number 1. Swift uses coordinate arrays

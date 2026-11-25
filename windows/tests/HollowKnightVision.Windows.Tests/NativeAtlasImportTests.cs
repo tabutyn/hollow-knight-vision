@@ -2058,6 +2058,63 @@ internal static class NativeAtlasImportTests
         throw new InvalidOperationException($"Expected native atlas error {expected}.");
     }
 
+    internal static void TestLegacySwiftCommitPreservesOriginalSnapshotAndSourceBytes()
+    {
+        foreach (var version in new[] { 1, 2 })
+        {
+            WithFixture((root, store, payload) =>
+            {
+                var legacy = JsonNode.Parse(payload)!.AsObject();
+                legacy["schemaVersion"] = version;
+                legacy["mapRevision"] = 2;
+                legacy.Remove("doorwayFloorConstraints");
+                if (version == 1) legacy.Remove("trackingIslands");
+                var bytes = JsonSerializer.SerializeToUtf8Bytes(legacy, new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+                var scene = new SceneSessionStore(root);
+                Check(scene.SaveScene(bytes, 1, 2), $"write Swift v{version} fixture");
+                var sources = scene.Manifest.Observations.ToDictionary(
+                    observation => Path.Combine(root, observation.ImagePath),
+                    observation => File.ReadAllBytes(Path.Combine(root, observation.ImagePath)));
+                var restored = store.Load().Snapshot;
+                var moved = restored.TranslateRoom(SourceRoom, new(7, -1));
+                var backup = Path.Combine(root, $"legacy-world-schema-{version}-revision-2.json");
+                Check(!store.Commit(moved, 1, 3) && !File.Exists(backup), "a stale revision must not create a backup");
+
+                const string conflictingBackup = "conflicting backup";
+                File.WriteAllText(backup, conflictingBackup);
+                var rejected = false;
+                try { store.Commit(moved, 2, 3); }
+                catch (LiveWorldSessionStoreException exception)
+                    when (exception.Error == LiveWorldSessionStoreError.CorruptSnapshot)
+                {
+                    rejected = true;
+                }
+                Check(rejected && File.ReadAllText(backup) == conflictingBackup
+                    && scene.LoadScene()!.SequenceEqual(bytes) && scene.SceneRevision == 2,
+                    "a conflicting backup must leave both files untouched");
+
+                if (version == 1) File.Delete(backup);
+                else File.WriteAllBytes(backup, bytes);
+                Check(store.Commit(moved, 2, 3) && File.ReadAllBytes(backup).SequenceEqual(bytes),
+                    $"archive exact original Swift v{version} bytes before upgrading");
+                var reopened = new LiveWorldSessionStore(root).Load();
+                Check(reopened.SceneRevision == 3 && reopened.Snapshot.SchemaVersion == LiveWorldSnapshot.CurrentSchemaVersion
+                    && reopened.Snapshot.Observations.Select(frame => (frame.Id, frame.RawPose, frame.OptimizedPose))
+                        .SequenceEqual(moved.Observations.Select(frame => (frame.Id, frame.RawPose, frame.OptimizedPose))),
+                    "reopen the committed upgraded map");
+                var movedAgain = reopened.Snapshot.TranslateRoom(SourceRoom, new(1, 0));
+                Check(store.Commit(movedAgain, 3, 4)
+                    && Directory.GetFiles(root, "legacy-world-schema-*.json").SequenceEqual([backup])
+                    && File.ReadAllBytes(backup).SequenceEqual(bytes)
+                    && sources.All(source => File.ReadAllBytes(source.Key).SequenceEqual(source.Value)),
+                    "a subsequent commit must preserve the original archive and every source PNG");
+            });
+        }
+    }
+
     private static void WithFixture(Action<string, LiveWorldSessionStore, byte[]> body)
     {
         var temporary = Directory.CreateTempSubdirectory("hkv-native-atlas-");

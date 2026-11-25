@@ -595,6 +595,7 @@ var tests = new List<(string Name, Action Run)>
     ("frame telemetry rejects negative and nonfinite durations", FramePipelineTelemetryTests.TestRejectsNegativeAndNonFiniteDurations),
     ("Swift v3 live Atlas preserves rigid islands and doorway evidence after Windows capture", NativeAtlasImportTests.TestNativeAtlasPersistsMasksIslandsAndDoorway),
     ("older Swift Atlas schemas migrate without inventing a doorway", NativeAtlasImportTests.TestLegacySwiftSnapshotsPreserveOnlySupportedPlacementEvidence),
+    ("legacy Swift Atlas commit preserves original snapshot and source bytes", NativeAtlasImportTests.TestLegacySwiftCommitPreservesOriginalSnapshotAndSourceBytes),
     ("Swift live Atlas rejects corrupt capture ownership and reads prior schema", NativeAtlasImportTests.TestCorruptNativeAtlasAndLegacyOwners),
     ("named Mac Atlas restore rebuilds Windows tiles and reopens the production world", NativeAtlasImportTests.TestNamedAtlasRestoreRebuildsTheWindowsMosaic),
     ("imported Atlas resumes in the room confirmed by two images", NativeAtlasImportTests.TestImportedAtlasRequiresTwoMatchesInTheSameRoom),
