@@ -45,6 +45,7 @@ public sealed class GlobalFeatureMatcher
     public int LastSelfPlacementPairChecks { get; private set; }
     public bool LastSelfPlacementWasAmbiguous { get; private set; }
     internal bool LastMatchWasAmbiguous { get; private set; }
+    internal IReadOnlyList<GlobalFeatureReference> LastSearchedReferences { get; private set; } = [];
 
     internal bool PermitsPatchProposal(GlobalFeatureReference reference) =>
         !HasAmbiguousSelfPlacement(reference.Id, reference.Features.Take(MaximumFeatures)
@@ -143,6 +144,7 @@ public sealed class GlobalFeatureMatcher
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(references);
         LastMatchWasAmbiguous = false;
+        LastSearchedReferences = [];
         var exclusions = excluding ?? [];
         if (currentSolveWidth is { } width && (!double.IsFinite(width) || width <= 0)
             || exclusions.Any(rectangle => !ValidRect(rectangle)))
@@ -163,6 +165,7 @@ public sealed class GlobalFeatureMatcher
 
         var signature = AppearanceSignature(currentFeatures.Select(value => value.Descriptor));
         var selected = SelectReferences(references, signature, preferredReferenceId);
+        LastSearchedReferences = selected;
         var candidates = new List<Candidate>();
         foreach (var reference in selected)
         {

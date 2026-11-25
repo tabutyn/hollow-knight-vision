@@ -589,6 +589,8 @@ var tests = new List<(string Name, Action Run)>
     ("Atlas closure rejects missing or wrong-height floor evidence", GroundPlaneClosureVerifierTests.TestUnobservedOrWrongElevationFloorCannotValidateProposal),
     ("Atlas ground verification rejects a clipped optimum", GroundPlaneClosureVerifierTests.TestSearchBoundaryDoesNotAcceptClippedOptimum),
     ("Atlas patch proposals handle exposure changes after features fail", GroundPlaneClosureVerifierTests.TestPatchProposalSurvivesExposureChange),
+    ("placed Atlas verifies floor texture after a scenery patch fallback", GroundPlaneClosureVerifierTests.TestPlacedAtlasUsesFloorVerifiedPatchFallback),
+    ("Atlas patch cache stays bounded and reloads changed image identity", GroundPlaneClosureVerifierTests.TestPatchSearchBoundsItsCacheAndReloadsChangedSource),
     ("live world round trip and optimization preserve raw evidence", LiveWorldModelParityTests.TestRoundTripAndPoseReplacementPreserveRawEvidence),
     ("live world legacy observations preserve raw pose in epoch zero", LiveWorldModelParityTests.TestLegacyObservationDecodesIntoEpochZeroWithoutMovingItsWorldPose),
     ("live world invalid models are rejected", LiveWorldModelParityTests.TestInvalidModelsAreRejected),

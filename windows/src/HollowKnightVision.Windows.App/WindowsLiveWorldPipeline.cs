@@ -666,7 +666,9 @@ internal sealed class WindowsLiveWorldPipeline
                     captureEvidence: request.WorldEvidence,
                     placementPending: placementPending,
                     carriedWalks: carriedWalks,
-                    loadGroundImage: measuredIsland ? id => id == source.Id ? request.MaskedFrame : activeStore.Source(id) : null);
+                    loadGroundSource: measuredIsland
+                        ? id => (id == source.Id ? request.MaskedFrame : activeStore.Source(id), compositionExclusions[id])
+                        : null);
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 transactionObserver?.Invoke("ingest");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
