@@ -34,7 +34,7 @@ internal static class TrainingIntegrationTests
             var frame = new BgraFrame(2, 2, 8, new byte[16], 0, DateTimeOffset.UnixEpoch);
             LabelingExampleAnnotation Box(string id, bool negative = false) => new(Guid.NewGuid(), id, .1, .1, .2, .2, negative);
             var menu = store.Save(frame, "main-title", [Box("world.sign")]);
-            var game = store.Save(frame, "game", [Box("world.sign")]);
+            var game = store.Save(frame, "game", [Box("world.sign"), Box("enemies.shade", negative: true)]);
             var empty = store.Save(frame, "game", [], knownClassIdentifiers: ["world.sign"]);
             var negative = store.Save(frame, "game", [Box("world.sign", negative: true)]);
             var modelClasses = LabelingSharedModelPolicy.ClassIdentifiers();
@@ -47,9 +47,13 @@ internal static class TrainingIntegrationTests
             // the live capture window or providing any model-name UI state.
             var snapshot = MainWindow.ExportSharedTrainingDataset(examples, Path.Combine(root.FullName, "datasets"), classes);
             Check(snapshot.Manifest.ClassIdentifier == LabelingSharedModelPolicy.ModelIdentifier
-                && snapshot.Manifest.ClassIdentifiers!.SequenceEqual(classes), "Train exported an empty or per-object model identity.");
+                && snapshot.Manifest.ClassIdentifiers!.SequenceEqual(["world.sign"]),
+                "Train must retain the shared model identity and export only classes with positive Gameplay labels.");
             Check(snapshot.Manifest.Items.Select(item => item.ExampleIdentifier).ToHashSet().SetEquals([game.Id, empty.Id, negative.Id])
                 && snapshot.Manifest.TrainingAnnotationCount == 1, "Shared training must use just the Game Play sign, known-empty frame, and hard negative.");
+            var annotations = File.ReadAllText(Path.Combine(snapshot.DirectoryPath, "training", LabelingDatasetExporter.AnnotationsFilename));
+            Check(!annotations.Contains("enemies.shade", StringComparison.Ordinal),
+                "A negative-only class must not enter the training annotations.");
             Check(LabelingTrainingConfiguration.ForModel(snapshot.Manifest.ClassIdentifier).MaximumIterations == 100,
                 "Shared model export selected the short per-object training preset.");
         }

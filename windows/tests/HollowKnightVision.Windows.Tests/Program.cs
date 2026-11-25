@@ -830,6 +830,7 @@ var tests = new List<(string Name, Action Run)>
     ("label contracts share Mac resources and reject incomplete screens", LabelingContractTests.TestCatalogAndIncompleteScreens),
     ("label contracts enforce bounds and ignore hard negatives", LabelingContractTests.TestCountsAndNegatives),
     ("gameplay labels and contracts exclude HUD fields", LabelingContractTests.TestGameplayDoesNotRequireHud),
+    ("gameplay screenshots have no completeness or occurrence contracts", LabelingContractTests.TestGameplayHasNoContracts),
     ("profile detection finds only visible Clear Save copies", MenuCatalogTests.TestRepeatedClearSaveDetection),
     ("label auto-advance respects repeats and contract exemptions migrate", LabelingContractTests.TestAdvanceAndExemptions),
     ("menu admission uses contracts with normal Options exception", LabelingContractTests.TestMenuAdmission),

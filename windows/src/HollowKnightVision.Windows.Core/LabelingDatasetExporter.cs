@@ -109,16 +109,17 @@ public sealed class LabelingDatasetExporter
             .ToHashSet(StringComparer.Ordinal);
         if (included.Count == 0) throw new ArgumentException("Include at least one class.");
 
-        var candidates = examples.Where(example => IsCandidate(example, included)).ToArray();
-        if (!candidates.Any(example => example.Manifest.Annotations.Any(annotation =>
-                !annotation.IsHardNegative
-                && included.Contains(LabelingClassIdentity.CanonicalIdentifier(
-                    annotation.ClassIdentifier)))))
+        var savedExamples = examples.ToArray();
+        included.IntersectWith(savedExamples.SelectMany(example => example.Manifest.Annotations)
+            .Where(annotation => !annotation.IsHardNegative)
+            .Select(annotation => LabelingClassIdentity.CanonicalIdentifier(annotation.ClassIdentifier)));
+        if (included.Count == 0)
         {
             throw new InvalidOperationException(
                 $"No labeled instances exist for {modelIdentifier}.");
         }
 
+        var candidates = savedExamples.Where(example => IsCandidate(example, included)).ToArray();
         var records = candidates.Select(example => SourceRecord.Create(example, included)).ToArray();
         var validationIds = ValidationExampleIdentifiers(records, modelIdentifier);
         var items = records.Select(record => new LabelingDatasetItem(

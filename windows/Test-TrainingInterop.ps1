@@ -70,7 +70,7 @@ import hkv_incremental_trainer as trainer
 import torch
 manifest, samples = trainer.load_dataset(Path(sys.argv[2]))
 assert len(samples) == 3, 'Menu frame leaked into gameplay dataset'
-assert len(manifest['classIdentifiers']) == 7
+assert manifest['classIdentifiers'] == ['enemies.crawlid', 'game.playable-knight']
 assert sum(not box.is_negative for sample in samples for box in sample.annotations) == 3
 assert sum(box.is_negative for sample in samples for box in sample.annotations) == 1
 empty_index = next(index for index, sample in enumerate(samples) if not sample.annotations)
