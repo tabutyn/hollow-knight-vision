@@ -33,12 +33,12 @@ public static class LiveObjectDetectionPostprocessor
         LabelingClassIdentity.CanonicalIdentifier(classIdentifier) == Knight ? .05f : .5f;
 
     public static IReadOnlyList<ObjectDetection> Process(IEnumerable<ObjectDetection> predictions) =>
-        Suppress(predictions.Select(Prepare).OfType<ObjectDetection>(), .45, 12, 100);
+        Suppress(predictions.Select(prediction => Prepare(prediction)).OfType<ObjectDetection>(), .45, 12, 100);
 
-    internal static ObjectDetection? Prepare(ObjectDetection prediction)
+    internal static ObjectDetection? Prepare(ObjectDetection prediction, float? minimumConfidence = null)
     {
         var id = LabelingClassIdentity.CanonicalIdentifier(prediction.ClassIdentifier);
-        if (!float.IsFinite(prediction.Confidence) || prediction.Confidence < ConfidenceThreshold(id)) return null;
+        if (!float.IsFinite(prediction.Confidence) || prediction.Confidence < (minimumConfidence ?? ConfidenceThreshold(id))) return null;
         var box = ObjectDetectionGeometry.UnitRect(prediction.Box);
         var area = box.Width * box.Height;
         if (box.IsEmpty || area < .00025 || area > .5) return null;

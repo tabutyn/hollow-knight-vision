@@ -833,6 +833,22 @@ samples go in its `raw` subdirectory.
 
 ## CPU model training on Windows
 
+Windows Vision can load optional Knight, Crawlid, and geo deposit heatmaps
+alongside an ONNX detector. Existing macOS calibrations can be exported on a
+Mac using its training Python with `onnx` installed.
+
+```sh
+python windows/TrainingPython/export_macos_actor_calibrations.py \
+  "/path/to/training-v1/runs/RUN-ID" \
+  "/path/to/models-v1/shared-object-model/calibrations" \
+  "/path/to/windows-export"
+```
+
+Copy the export directory to Windows and select its `detector` directory in
+Vision. Keep the sibling `calibrations` directory with it. Each optional
+heatmap requires the matching detector run, trained class evidence, and a
+verified model checksum.
+
 The shared incremental detector can train on Windows without Core ML and export
 an ONNX model. Setup installs CPU-only PyTorch into the repository's ignored
 `.tools/hkv-training-windows` environment and caches the pretrained MobileNet
