@@ -406,7 +406,7 @@ public sealed class LabelingExampleStore
 
 internal static class AtomicFile
 {
-    internal static void Write(string path, ReadOnlySpan<byte> data)
+    internal static void Write(string path, ReadOnlySpan<byte> data, bool overwrite = true)
     {
         var fullPath = Path.GetFullPath(path);
         var directory = Path.GetDirectoryName(fullPath)
@@ -424,7 +424,7 @@ internal static class AtomicFile
                 stream.Write(data);
                 stream.Flush(flushToDisk: true);
             }
-            File.Move(temporary, fullPath, overwrite: true);
+            File.Move(temporary, fullPath, overwrite);
         }
         catch
         {

@@ -35,7 +35,7 @@ public sealed record GameplayTrackedFrame(
 
 /// <summary>Ground, camera and terrain state shared by the capture worker and offline archive replay.</summary>
 public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, MaskedFrameMotionTracker motion,
-    bool deterministicGlobalSearch = false)
+    bool deterministicGlobalSearch = false, GroundFrameAudits? groundAudits = null)
 {
     private readonly GroundHypothesisTracker tracker = new(minimumObservationSeconds: .2,
         backgroundGlobalSearch: true, confirmedLossGraceSeconds: 3, productionCameraSolver: true,
@@ -227,6 +227,10 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
                 generation, walkedCoordinateEpoch, lineage);
             terrain = TerrainWallDetector.ApplyContact(terrain, contact, floors, edges);
             platformPatches = patches.Observe(edges, floors, prepared.ProtectedOcclusions, verifiedCamera, timestamp);
+            if (groundAudits is not null && !ReferenceEquals(observation.GroundTracking, GroundHypothesisTrackingResult.Empty)
+                && edges.SourceLuma is { } luma)
+                groundAudits.Record(frame, timestamp, generation, luma, floors, prepared.ProtectedOcclusions,
+                    terrainAnalysis.SemanticTheory.Tuning, ground, platformPatches, tracker);
         }
         LiveWorldCaptureEvidence? worldEvidence = null;
         if (captureWorldEvidence && admission.AllowsAtlasWrite && visualRoom.AllowsAtlasWrite)

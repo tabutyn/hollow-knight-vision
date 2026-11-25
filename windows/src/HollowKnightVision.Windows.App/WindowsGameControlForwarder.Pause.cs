@@ -12,8 +12,11 @@ internal sealed partial class WindowsGameControlForwarder
 
     private readonly ReceiverPauseController pause = new();
     private readonly Func<ReceiverClient> createReceiver;
-    internal WindowsGameControlForwarder(Func<ReceiverClient>? createReceiver = null) =>
+    internal WindowsGameControlForwarder(Func<ReceiverClient>? createReceiver = null, bool rawGroundAudit = false)
+    {
         this.createReceiver = createReceiver ?? (() => new ReceiverClient());
+        inputPathRecorder = new(rawGroundAudit ? new Dictionary<string, string> { ["rawGroundAudit"] = "true" } : null);
+    }
     internal GamePauseState PauseState { get { lock (stateLock) return pause.State; } }
 
     internal bool SetLabelPauseActive(bool active)

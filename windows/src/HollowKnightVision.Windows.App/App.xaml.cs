@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using HollowKnightVision.Windows.Core;
 using HollowKnightVision.Windows.Host;
 
 namespace HollowKnightVision.Windows.App;
@@ -53,7 +54,7 @@ public partial class App : Application
                 throw new FileNotFoundException(
                     $"A compatible {selectedMode} Hollow Knight installation was not found.");
             }
-            var window = new MainWindow(selectedMode, selectedExecutable, thinkingEnabled);
+            var window = new MainWindow(selectedMode, selectedExecutable, thinkingEnabled, GroundFrameAudits.Launch(e.Args));
             MainWindow = window;
             ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose;
             window.Show();

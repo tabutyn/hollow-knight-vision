@@ -35,7 +35,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
     private ReceivedGroundTruth? latestGroundTruth;
     private readonly Dictionary<Guid, TaskCompletionSource<ReceiverPlayerOpsAcknowledgement>>
         pendingPlayerOps = [];
-    private readonly InputPathRecorder inputPathRecorder = new();
+    private readonly InputPathRecorder inputPathRecorder;
 
     internal event Action<ReceiverGroundTruthSample, double>? GroundTruthReceived;
 

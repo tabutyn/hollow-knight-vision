@@ -81,6 +81,8 @@ if (args is ["--train-bot-probe", var installedVision])
 
 var tests = new List<(string Name, Action Run)>
 {
+    ("live ground audit keeps the exact capture, solution and feature bank", GroundFrameAuditTests.TestLiveTrackingWritesExactSourceAndFeatureBank),
+    ("ground audit saves at bounded cadence and releases failed writes", GroundFrameAuditTests.TestCadenceAndFailedWritesStayBounded),
     ("bot training admits separate published clips in the selected domain", BotTrainingTests.TestTrainingPlanSeparatesDomains),
     ("new bot captures follow completed training independently of playback", BotTrainingTests.TestNewCaptureCountsTrackCompletionAndIgnoreRollback),
     ("bot capture dates round-trip with macOS and earlier Windows clips", BotCaptureTests.TestReadsMacAndPreviousWindowsCaptureDates),

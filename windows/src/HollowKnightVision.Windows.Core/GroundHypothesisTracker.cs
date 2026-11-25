@@ -1481,6 +1481,19 @@ public sealed class GroundHypothesisTracker
         return sequence;
     }
 
+    // Capture metadata on the tracker's owner. The descriptor and pixel arrays are immutable.
+    internal object SnapshotAuditFeatureBank() => new
+    {
+        camera = new[] { cameraX, cameraY }, anchorValid = globalAnchorValid, frameIndex,
+        canonicalIDs = canonicalAnchorFeatures.Keys.Order().ToArray(),
+        firstViewIDs = canonicalFirstViewIds.Order().ToArray(),
+        features = RelocalizationFeatures().Select(feature => new
+        {
+            feature.Id, segment = feature.SegmentId, sequence = feature.SequenceIndex,
+            x = feature.WorldX, y = feature.WorldTopY, feature.Descriptor, pixels = feature.MatchingPatch
+        }).ToArray()
+    };
+
     private GlobalFeature[] RelocalizationFeatures()
     {
         if (cachedRelocalizationFeatures is { } cached) return cached;
