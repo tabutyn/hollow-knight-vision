@@ -150,18 +150,26 @@ public sealed record LiveDoorwayFloorConstraint(
         var unit = departure.SolveWidth / 640;
         var sourceY = departure.OptimizedPose.Y + DepartureFloor.Y;
         var targetY = arrival.OptimizedPose.Y + ArrivalFloor.Y;
+        // Reopened Mac worlds retain their stored date clock, which may be
+        // rebased or advanced to keep the graph ordered after a system clock
+        // change. A crossing measured in one capture uses its elapsed clock.
+        var useCaptureTime = departure.CaptureGeneration == arrival.CaptureGeneration
+            && departure.CaptureTimestamp.HasValue && arrival.CaptureTimestamp.HasValue;
         return (!requiringAlignment || Math.Abs(sourceY - targetY) <= 4 * unit)
             && StableSupport(DepartureSupport, departure, source.Island.Id, sourceY, unit,
-                observations, owners, out _)
+                observations, owners, useCaptureTime, out _)
             && StableSupport(ArrivalSupport, arrival, target.Island.Id, targetY, unit,
-                observations, owners, out var arrivingAt)
-            && departure.Timestamp < arrivingAt;
+                observations, owners, useCaptureTime, out var arrivingAt)
+            && ObservationTime(departure, useCaptureTime) < arrivingAt;
     }
 
     private static bool OnGround(AtlasPoint point, LiveWorldObservation observation) =>
         LiveWorldSnapshot.Finite(point) && observation.GroundGeometry?.Lines.Any(line =>
             Math.Abs(line.Start.Y - point.Y) <= 0.000001
             && point.X >= line.Start.X && point.X <= line.End.X) == true;
+
+    private static double ObservationTime(LiveWorldObservation frame, bool useCaptureTime) =>
+        useCaptureTime ? frame.CaptureTimestamp!.Value : frame.Timestamp;
 
     private static bool StableSupport(
         IReadOnlyList<int>? ids,
@@ -171,6 +179,7 @@ public sealed record LiveDoorwayFloorConstraint(
         double unit,
         IReadOnlyDictionary<int, LiveWorldObservation> observations,
         IReadOnlyDictionary<int, (LiveTrackingIsland Island, LiveIslandMember Member)> owners,
+        bool useCaptureTime,
         out double firstTime)
     {
         firstTime = double.NaN;
@@ -187,6 +196,7 @@ public sealed record LiveDoorwayFloorConstraint(
                 || !owners.TryGetValue(id, out var owner)
                 || owner.Island.Id != islandId || !owner.Member.Measured
                 || frame.RoomId != endpoint.RoomId || frame.SolveWidth != endpoint.SolveWidth
+                || useCaptureTime && (frame.CaptureTimestamp is null || frame.CaptureGeneration != endpoint.CaptureGeneration)
                 || frame.GroundGeometry?.Lines.Any(line =>
                     Math.Abs(frame.OptimizedPose.Y + line.Start.Y - worldY) <= 2 * unit) != true)
             {
@@ -195,10 +205,10 @@ public sealed record LiveDoorwayFloorConstraint(
             frames.Add(frame);
         }
 
-        var times = frames.Select(frame => frame.Timestamp).Order().ToArray();
+        var times = frames.Select(frame => ObservationTime(frame, useCaptureTime)).Order().ToArray();
         firstTime = times[0];
         var duration = times[^1] - firstTime;
-        return times[^1] == endpoint.Timestamp && duration is >= 0.25 and <= 2
+        return times[^1] == ObservationTime(endpoint, useCaptureTime) && duration is >= 0.25 and <= 2
             && frames.Max(frame => frame.OptimizedPose.Y) - frames.Min(frame => frame.OptimizedPose.Y) <= 4 * unit
             && times.Zip(times.Skip(1)).All(pair => pair.Second - pair.First is > 0 and <= 0.35);
     }
