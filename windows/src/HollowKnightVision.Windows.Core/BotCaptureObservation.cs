@@ -139,8 +139,8 @@ public static class BotObservationBuilder
         var terrain = ProjectAuthored(authored, camera);
         var issues = BaseIssues(timing);
         var mod = sample.Actors;
-        var fresh = mod is { Version: 1, Enemies: { Count: <= 64 } };
-        var valid = fresh && mod!.Enemies!.All(actor => actor is { IsValid: true })
+        var fresh = mod is { Version: 1, Enemies: not null };
+        var valid = fresh && mod!.Enemies!.Count <= 64 && mod.Enemies.All(actor => actor is { IsValid: true })
             && mod.Enemies!.Select(actor => actor.Id).Distinct().Count() == mod.Enemies!.Count
             && (mod.Hero is null || mod.Hero.IsValid);
         if (!fresh) issues.Add("missing-hacker-actor-telemetry");
@@ -291,6 +291,12 @@ public static class BotObservationBuilder
     public static BotScreenTerrain ProjectAuthored(GroundTruthLineDocument document, GroundTruthCameraTransform camera)
     {
         var size = camera.FrameSize;
+        if (size.Width is not (> 0 and < double.PositiveInfinity)
+            || size.Height is not (> 0 and < double.PositiveInfinity)
+            || camera.PixelsPerWorldUnitX is not (> 0 and < double.PositiveInfinity)
+            || camera.PixelsPerWorldUnitY is not (> 0 and < double.PositiveInfinity)
+            || !double.IsFinite(camera.CameraWorld.X) || !double.IsFinite(camera.CameraWorld.Y))
+            return new(size.Width, size.Height, [], [], [], []);
         var frame = new GroundTruthRect(0, 0, size.Width, size.Height);
         var floors = new List<BotFloor>();
         var walls = new List<BotWall>();
