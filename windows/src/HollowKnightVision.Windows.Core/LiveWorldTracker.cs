@@ -128,6 +128,8 @@ public sealed class LiveWorldTracker
     private const double MinimumClosureTravelFraction = 0.75;
     private const int MaximumMissedRecoveryFrames = 4;
     private const double MaximumGroundConfirmationAge = 1.25;
+    private const double GroundRecoverySearchInterval = .25;
+    private const double GroundConfirmationProbeWindow = .5;
 
     private readonly GlobalFeatureMatcher matcher = new();
     private readonly LiveGroundClosureSearch groundClosureSearch = new();
@@ -141,6 +143,7 @@ public sealed class LiveWorldTracker
     private PendingRecovery? pendingRecovery;
     private PendingRecovery? pendingGroundPlacement;
     private GroundRecoveryVote? groundRecoveryVote;
+    private double lastGroundRecoverySearchAt = double.NegativeInfinity;
     private int recoveryEpoch;
     private double? lastAcceptedClosureTravel;
     private int? lastObservationId;
@@ -168,8 +171,17 @@ public sealed class LiveWorldTracker
     public bool HasPlacedGroundReference(int roomId, double solveWidth) =>
         PlacedGroundReferences(roomId, solveWidth).Any();
 
-    public bool CanConfirmGroundRecovery(double timestamp) =>
-        groundRecoveryVote is { } vote && timestamp - vote.Timestamp is > 0 and <= .5;
+    public bool WantsGroundRecovery(double timestamp) =>
+        Snapshot.TrackingIslands.LastOrDefault() is { RequiresPlacement: true } target
+        && Snapshot.Observations.LastOrDefault() is { CaptureTimestamp: { } capturedAt } current
+        && capturedAt == timestamp
+        && (current.ObservedFloorCandidates?.Lines ?? current.GroundGeometry?.Lines) is { Count: > 0 }
+        && (timestamp - lastGroundRecoverySearchAt >= GroundRecoverySearchInterval
+            || IsGroundConfirmationProbe(target.Id, timestamp));
+
+    private bool IsGroundConfirmationProbe(int islandId, double timestamp) =>
+        groundRecoveryVote is { } vote && vote.TargetIslandId == islandId
+        && timestamp - vote.Timestamp is > 0 and < GroundConfirmationProbeWindow;
 
     public void BeginVisit()
     {
@@ -212,6 +224,7 @@ public sealed class LiveWorldTracker
         pendingRecovery = null;
         pendingGroundPlacement = null;
         groundRecoveryVote = null;
+        lastGroundRecoverySearchAt = double.NegativeInfinity;
         pendingClosure = null;
     }
 
@@ -862,13 +875,19 @@ public sealed class LiveWorldTracker
     public LiveWorldLoopClosureEdge? LinkGroundRecovery(
         BgraFrame maskedFrame, IReadOnlyList<StencilRect> exclusions,
         Func<int, BgraFrame> loadImage, Func<int, IReadOnlyList<WorldRect>> loadExclusions,
-        bool isConfirmationProbe, Predicate<int>? hasSource = null)
+        Predicate<int>? hasSource = null)
     {
         if (Snapshot.TrackingIslands.LastOrDefault() is not { RequiresPlacement: true } target
             || Snapshot.Observations.LastOrDefault() is not { CaptureTimestamp: { } timestamp } current
             || (current.ObservedFloorCandidates?.Lines ?? current.GroundGeometry?.Lines) is not { Count: > 0 } ground)
             return null;
         if (groundRecoveryVote is { } previous && timestamp <= previous.Timestamp) return null;
+        var isConfirmationProbe = IsGroundConfirmationProbe(target.Id, timestamp);
+        if (!isConfirmationProbe)
+        {
+            if (timestamp - lastGroundRecoverySearchAt < GroundRecoverySearchInterval) return null;
+            lastGroundRecoverySearchAt = timestamp;
+        }
 
         var components = new LiveIslandComponents(Snapshot);
         var observations = Snapshot.Observations.Where(observation => observation.RoomId == current.RoomId
@@ -885,8 +904,8 @@ public sealed class LiveWorldTracker
             ground, current.SolveWidth, loadImage, loadExclusions);
         if (match is null)
         {
-            if (!isConfirmationProbe || !CanConfirmGroundRecovery(timestamp))
-                groundRecoveryVote = null;
+            // An occluded probe neither confirms the vote nor postpones the next scheduled floor scan.
+            if (!isConfirmationProbe) groundRecoveryVote = null;
             return null;
         }
 
@@ -895,7 +914,7 @@ public sealed class LiveWorldTracker
         var correction = Difference(match.CameraPose, current.RawPose);
         var consistency = Math.Max(current.SolveWidth * .0125, 4);
         var confirmed = groundRecoveryVote is { } vote && vote.TargetIslandId == target.Id
-            && timestamp - vote.Timestamp <= .5 && Distance(vote.Correction, correction) <= consistency
+            && timestamp - vote.Timestamp <= MaximumGroundConfirmationAge && Distance(vote.Correction, correction) <= consistency
             && components.SameRigidComponent(vote.ReferenceIslandId, referenceIsland.Id);
         groundRecoveryVote = confirmed ? null : new(referenceIsland.Id, target.Id, timestamp, correction);
         if (!confirmed || PlanLink(components, source.Id, current, match.CameraPose) is not { } plan)

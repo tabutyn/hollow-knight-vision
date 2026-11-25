@@ -4,7 +4,6 @@ namespace HollowKnightVision.Windows.Core;
 internal sealed class BotGymAtlasCoverage
 {
     private const double ObservationInterval = 1 / 7.5;
-    private const double RecoverySearchInterval = .25;
     private const int MaximumReferenceImages = 32;
     private readonly LiveWorldTracker world = new();
     private readonly BotCommittedAtlasCoverage coverage = new();
@@ -24,7 +23,6 @@ internal sealed class BotGymAtlasCoverage
     private AtlasPoint? lastTrustedPose;
     private IReadOnlyList<StencilRect> lastMasks = [];
     private double lastScanAt = double.NegativeInfinity;
-    private double lastRecoverySearch = double.NegativeInfinity;
     private bool awaitingPlacement;
     private bool requiresMatch;
     private bool open;
@@ -133,15 +131,11 @@ internal sealed class BotGymAtlasCoverage
             recordedLocalWalk[batch.Lineage] = GroundStrokeGeometry.Coalesce(
                 (recordedLocalWalk.GetValueOrDefault(batch.Lineage) ?? []).Concat(batch.Spans));
         BgraFrame? masked = null;
-        var searchDue = time - lastRecoverySearch >= RecoverySearchInterval;
-        if (awaitingPlacement && referenceImages.Count != 0
-            && (evidence.FloorCandidates is not null || evidence.GroundGeometry is not null)
-            && (searchDue || world.CanConfirmGroundRecovery(time)))
+        if (awaitingPlacement && referenceImages.Count != 0 && world.WantsGroundRecovery(time))
         {
-            if (searchDue) lastRecoverySearch = time;
             masked = FrameRegionRenderer.MapFrame(frame, SceneRegions.Startup(), masks);
             world.LinkGroundRecovery(masked, masks, source => referenceImages[source].Image,
-                source => referenceImages[source].Exclusions, isConfirmationProbe: !searchDue,
+                source => referenceImages[source].Exclusions,
                 hasSource: referenceImages.ContainsKey);
         }
         lastPose = local;
@@ -253,7 +247,6 @@ internal sealed class BotGymAtlasCoverage
         lastPose = null;
         lastMasks = [];
         lastScanAt = double.NegativeInfinity;
-        lastRecoverySearch = double.NegativeInfinity;
         open = false;
         localCharts.Clear();
         localCoverage = null;

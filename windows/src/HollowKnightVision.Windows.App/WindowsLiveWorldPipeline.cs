@@ -669,13 +669,10 @@ internal sealed class WindowsLiveWorldPipeline
                 if (roomDoorway is { } pendingDoor && request.MonotonicTimestamp - pendingDoor.ArrivalCaptureTimestamp > 3)
                     roomDoorway = null;
 
-                var groundConfirmationProbe = !globalSearchDue
-                    && activeTracker.CanConfirmGroundRecovery(request.MonotonicTimestamp);
-                var groundClosure = (globalSearchDue || groundConfirmationProbe)
-                    && placementPending && update.AcceptedClosure is null
-                    && restoredPlacement is null
+                var groundClosure = placementPending && update.AcceptedClosure is null
+                    && restoredPlacement is null && activeTracker.WantsGroundRecovery(request.MonotonicTimestamp)
                     ? activeTracker.LinkGroundRecovery(request.MaskedFrame, request.Exclusions, activeStore.Source,
-                        id => compositionExclusions[id], groundConfirmationProbe)
+                        id => compositionExclusions[id])
                     : null;
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 var acceptedClosure = groundClosure ?? update.AcceptedClosure;
