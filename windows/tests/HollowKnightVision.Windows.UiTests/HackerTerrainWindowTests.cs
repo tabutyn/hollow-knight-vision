@@ -50,7 +50,10 @@ internal static class HackerTerrainWindowTests
         new GroundTruthLineStore(Path.Combine(root, GroundTruthLineStore.Filename)).Save(new()
         {
             Lines = [new(Room, 0, 30, 0, GroundTruthLineKind.Positive, false),
-                new(Room, 32, 42, 2, GroundTruthLineKind.Positive, false)]
+                new(Room, 32, 42, 2, GroundTruthLineKind.Positive, false)],
+            Walls = [new GroundTruthWorldLine(Room, 9, 9, -3, GroundTruthLineKind.Wall, false) { EndWorldY = -1 }],
+            Doors = [new(Room, 12, 14, -2, GroundTruthLineKind.Door, false)],
+            Spikes = [new(Room, 16, 17, -2, GroundTruthLineKind.Spike, false)]
         });
         using var capture = new CancellationTokenSource();
         var window = new MainWindow(GameRuntimeMode.Modded, gamePath: null, root: root, documents: root) { Topmost = true };
@@ -68,11 +71,16 @@ internal static class HackerTerrainWindowTests
             Field(window, "hackerFramingValue").SetValue(window, "Free Fly");
             var viewport = (GameplayViewportController)Field(window, "hackerViewport").GetValue(window)!;
             var atlas = Control<Canvas>(window, "AtlasCanvas");
+            var overlay = Control<Canvas>(window, "HackerOverlayCanvas");
             var routeCanvas = Control<Canvas>(window, "HackerPathCanvas");
             var live = Control<FrameworkElement>(window, "HackerLiveImage");
             var showPaths = Control<CheckBox>(window, "AtlasPathsCheck");
             var target = Control<ComboBox>(window, "HackerTerrainTarget");
             Check(target.SelectedItem is ComboBoxItem { Content: "Objective" }, "Hacker should open with Objective selected.");
+            var pathActions = Control<FrameworkElement>(window, "HackerPathActions");
+            var terrainActions = Control<FrameworkElement>(window, "HackerTerrainActions");
+            Check(pathActions.Visibility == Visibility.Collapsed && terrainActions.Visibility == Visibility.Collapsed,
+                "Objective must keep the path and terrain editing actions closed.");
 
             var sample = new ReceiverGroundTruthSample(
                 Version: 2, Type: "groundTruth", SessionId: Guid.NewGuid(), Sequence: 1,
@@ -94,6 +102,7 @@ internal static class HackerTerrainWindowTests
             _ = window.Activate();
             window.UpdateLayout();
             Check(routeCanvas.Visibility == Visibility.Visible, "The frame-matched Hacker path must be visible.");
+            AssertAuthoredTerrain();
 
             var originX = ((int?)Field(window, "hackerAtlasMinimumTileX").GetValue(window) ?? 0) * LiveTiledAtlas.TileSize;
             var originY = ((int?)Field(window, "hackerAtlasMinimumTileY").GetValue(window) ?? 0) * LiveTiledAtlas.TileSize;
@@ -107,6 +116,7 @@ internal static class HackerTerrainWindowTests
 
             showPaths.IsChecked = false;
             Check(routeCanvas.Visibility == Visibility.Collapsed, "Turning Atlas paths off must hide the white route.");
+            AssertAuthoredTerrain();
             showPaths.IsChecked = true;
             AssertWhiteRoute();
             Present(gameplay: false);
@@ -121,14 +131,31 @@ internal static class HackerTerrainWindowTests
             showPaths.IsChecked = false;
             target.SelectedItem = target.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Content, "Path"));
             Check(showPaths.IsChecked == true && routeCanvas.Visibility == Visibility.Visible
-                && Control<FrameworkElement>(window, "HackerPathActions").IsVisible,
+                && pathActions.IsVisible && !terrainActions.IsVisible,
                 "Selecting Path must turn the overlay on and expose its editor.");
+            AssertAuthoredTerrain();
             showPaths.IsChecked = false;
             Check(routeCanvas.Visibility == Visibility.Collapsed && target.SelectedItem is ComboBoxItem { Content: "Objective" },
                 "Turning the overlay off again must hide the paths and leave Path editing.");
+            AssertAuthoredTerrain();
             Console.WriteLine("PASS Windows Hacker objective clicks beyond captured tiles immediately show the whole reachable route");
+            Console.WriteLine("PASS Windows Hacker Objective and Path modes keep authored walls, doors, spikes, and ground visible");
 
             HackerAtlasObjectives Objectives() => (HackerAtlasObjectives)Field(window, "hackerObjectives").GetValue(window)!;
+
+            void AssertAuthoredTerrain()
+            {
+                var authored = overlay.Children.OfType<Line>().ToArray();
+                var green = Color.FromRgb(69, 255, 120);
+                var door = Color.FromRgb(102, 222, 247);
+                Check(overlay.IsVisible && authored.Length == 5 && !overlay.Children.OfType<Rectangle>().Any()
+                    && authored.Count(line => line.Stroke is SolidColorBrush brush && brush.Color == green && line.Y1 == line.Y2) == 2
+                    && authored.Count(line => line.Stroke is SolidColorBrush brush && brush.Color == green && line.X1 == line.X2
+                        && Math.Abs(Math.Abs(line.Y2 - line.Y1) - 20) < .01) == 1
+                    && authored.Count(line => line.Stroke is SolidColorBrush brush && brush.Color == door && line.Y1 == line.Y2) == 1
+                    && authored.Count(line => line.Stroke == Brushes.OrangeRed && line.Y1 == line.Y2) == 1,
+                    "The authored overlay must show the two floors, vertical green wall, horizontal blue door, and spike without edit handles.");
+            }
 
             void Present(bool gameplay)
             {

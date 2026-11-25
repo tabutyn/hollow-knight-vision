@@ -344,6 +344,25 @@ internal static class AtlasPlatformGraphTests
             "An authored jump should replace the drop for its pair.");
     }
 
+    internal static void TestAuthoredWallsAndSpikesConstrainRoadsWithoutCreatingGround()
+    {
+        var room = new AtlasPathCalibration("room", "room", default, new(10, 10));
+        var ground = new GroundTruthWorldLine("room", 0, 20, 0, GroundTruthLineKind.Positive, false);
+        var wall = new GroundTruthWorldLine("room", 10, 10, 0, GroundTruthLineKind.Wall, false) { EndWorldY = 12 };
+        var spike = new GroundTruthWorldLine("room", 4, 6, 0, GroundTruthLineKind.Spike, false);
+        var blocked = AuthoredAtlasGraph.Build(new() { Lines = [ground], Walls = [wall] }, room);
+        Require(blocked.Floors.Count == 2 && blocked.Strokes.Count > 0
+            && blocked.Strokes.All(stroke => stroke is { Kind: Walk, Horizontal: true })
+            && !Reachable(blocked, new(10, blocked.KnightHeight), new(190, blocked.KnightHeight)),
+            "A tall authored wall must split the floor and constrain travel without producing a wall guide stroke.");
+        var hazardous = AuthoredAtlasGraph.Build(new() { Lines = [ground], Spikes = [spike] }, room);
+        Require(hazardous.Floors.Count == 2 && !hazardous.Floors.Any(floor => floor.Contains(50)),
+            "An authored spike must remove the hazardous part of a floor.");
+        var noGround = AuthoredAtlasGraph.Build(new() { Spikes = [spike] }, room);
+        Require(noGround.Floors.Count == 0 && noGround.Strokes.Count == 0,
+            "An authored spike alone cannot create walkable ground.");
+    }
+
     internal static void TestIncrementalIntersectionsStayEquivalentThroughFloorEdits()
     {
         AtlasPathPlatform[] original = [new(0, 100, 0), new(112, 175, 25)];

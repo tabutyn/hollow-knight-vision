@@ -1391,6 +1391,7 @@ var tests = new List<(string Name, Action Run)>
     ("Hacker objectives clear and reproject independently of graph edits", AtlasPlatformGraphTests.TestHackerObjectiveDefaultClearReplacementAndRoomHitOrder),
     ("automatic guidance follows the jump shelf after an early takeoff", AtlasPlatformGraphTests.TestAutomaticGuidanceCrossesShelfAfterAnEarlyTakeoff),
     ("doors, spikes and manual jumps constrain terrain routes", AtlasPlatformGraphTests.TestDoorsSpikesAndManualConnectionsConstrainTravel),
+    ("authored walls and spikes constrain paths without creating walkable ground", AtlasPlatformGraphTests.TestAuthoredWallsAndSpikesConstrainRoadsWithoutCreatingGround),
     ("path rebuilding keeps only current terrain intersections", AtlasPlatformGraphTests.TestIncrementalIntersectionsStayEquivalentThroughFloorEdits),
     ("path search reaches exact objectives while sharing fall shafts", AtlasPlatformGraphTests.TestExplicitRouteConnectsMidpointsAndShowsOneFallShaft),
     ("overlapping jump shelves connect through their measured landing", AtlasPlatformGraphTests.TestAnExistingNodeCannotTransferThroughAnOverlappingJump),
