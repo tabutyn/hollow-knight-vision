@@ -778,11 +778,7 @@ public partial class MainWindow : Window
         internal bool? WorldPlacementConfirmed { get; init; }
         public double? WorldBasisTimestamp { get; init; }
         public GroundTruthAtlasMosaic? AtlasSource { get; init; }
-        public bool ReplacesGameplayAtlas { get; init; }
-        public GroundTruthAtlasMosaic? GameplayAtlasReplacement { get; init; }
-        public LiveWorldLoopClosureEdge? AcceptedClosure { get; init; }
         public int LiveWorldRevision { get; init; }
-        public AtlasPoint AppliedWorldCorrection { get; init; }
         public double CaptureTimestamp { get; init; }
         public bool OwnsHackerWork { get; init; }
         public bool IntegratesHackerAtlas { get; init; }
@@ -2802,7 +2798,6 @@ public partial class MainWindow : Window
                     AnalysisMilliseconds = Stopwatch.GetElapsedTime(analysisStarted).TotalMilliseconds,
                     QueueMilliseconds = queueMilliseconds
                 };
-                PublishAuthoritativeVisionState(result);
                 await Dispatcher.InvokeAsync(
                     () => ApplyVisionAnalysis(result),
                     DispatcherPriority.Render,
@@ -3573,19 +3568,15 @@ public partial class MainWindow : Window
                 ObserveReplayDecision(decision);
             }
         }
-        var replacesGameplayAtlas = false; // Background world owner publishes closure replacements.
-        var resultGameplayAtlas = replacesGameplayAtlas
-            ? liveWorldResult!.RebuiltAtlas!
-            : gameplayAtlas;
+        var resultGameplayAtlas = Volatile.Read(ref gameplayAtlas);
         var gameplayAccepted = gameplayAdmitted && !usesDurableWorld
-            && (replacesGameplayAtlas
-                || resultGameplayAtlas.AddFrame(
-                    frame,
-                    visualTelemetry,
-                    atlasCompositionExclusions,
-                    roomId: atlasRoomId,
-                    captureGeneration: liveWorldGeneration,
-                    captureIdentity: atlasCaptureIdentity));
+            && resultGameplayAtlas.AddFrame(
+                frame,
+                visualTelemetry,
+                atlasCompositionExclusions,
+                roomId: atlasRoomId,
+                captureGeneration: liveWorldGeneration,
+                captureIdentity: atlasCaptureIdentity);
         Volatile.Write(ref replayVision, new(captureTimestamp, captureGeneration,
             groundHypotheses.PoseVerified && groundHypotheses.HasConfirmedGround && groundHypotheses.GroundSegmentCount > 0, frame.Width, frame.Height));
         var publishedCameraPosition = new AtlasPoint(
@@ -3618,14 +3609,10 @@ public partial class MainWindow : Window
             visualObservation.FloorlessEvidence, visualObservation.SceneMotionMilliseconds,
             visualObservation.RecoveredAtlasReferenceTimestamp);
         if ((usesDurableWorld && resultGameplayAtlas.Revision != Interlocked.Read(ref gameplayRenderedRevision))
-            || gameplayAccepted && (replacesGameplayAtlas
-            || resultGameplayAtlas.AcceptedFrameCount == 1
-            || resultGameplayAtlas.AcceptedFrameCount % 3 == 0))
+            || gameplayAccepted && (resultGameplayAtlas.AcceptedFrameCount == 1
+                || resultGameplayAtlas.AcceptedFrameCount % 3 == 0))
         {
-            gameplayTiles = resultGameplayAtlas.SnapshotSince(
-                replacesGameplayAtlas
-                    ? -1
-                    : Interlocked.Read(ref gameplayRenderedRevision));
+            gameplayTiles = resultGameplayAtlas.SnapshotSince(Interlocked.Read(ref gameplayRenderedRevision));
         }
         return new VisionAnalysisResult(
             frame, detections, ground, gameplayTiles,
@@ -3647,16 +3634,7 @@ public partial class MainWindow : Window
                 WorldBasisTimestamp = worldPlacement.HasValue ? captureTimestamp : null,
                 WorldPlacementConfirmed = usesDurableWorld ? worldPlacement?.IsPlaced == true : null,
                 AtlasSource = resultGameplayAtlas,
-                ReplacesGameplayAtlas = replacesGameplayAtlas,
-                GameplayAtlasReplacement = replacesGameplayAtlas
-                    ? resultGameplayAtlas
-                    : null,
-                AcceptedClosure = gameplayAccepted
-                    ? liveWorldResult?.AcceptedClosure
-                    : null,
                 LiveWorldRevision = liveWorldResult?.Revision ?? 0,
-                AppliedWorldCorrection = liveWorldResult?.AppliedCorrection
-                    ?? new AtlasPoint(0, 0),
                 CaptureTimestamp = captureTimestamp,
                 OwnsHackerWork = ownsHackerWork,
                 IntegratesHackerAtlas = integratesHackerAtlas,
@@ -3679,12 +3657,6 @@ public partial class MainWindow : Window
                     CapturedAt = captureTimestamp
                 }
             };
-    }
-
-    private void PublishAuthoritativeVisionState(VisionAnalysisResult result)
-    {
-        if (result.GameplayAtlasReplacement is not { } replacement) return;
-        lock (gameplayWorldPublicationGate) StageGameplayAtlasReplacement(replacement);
     }
 
     private void StageGameplayAtlasReplacement(GroundTruthAtlasMosaic replacement)
@@ -3711,8 +3683,7 @@ public partial class MainWindow : Window
             || !labelCapture.CanProcess(result.LabelRevision)) return;
         var menuEvidenceIsCurrent = menuStencilRecognizer.IsCurrent(result.MenuGeneration);
         var acceptsGameplayPlacement = menuEvidenceIsCurrent && gameplayPresentation.TryAcceptAnalysis(result.Frame);
-        var canPresentReplacement = (menuEvidenceIsCurrent || result.GameplayAtlasReplacement is not null)
-            && (result.WorldFrame is null || acceptsGameplayPlacement);
+        var canPresentReplacement = menuEvidenceIsCurrent && (result.WorldFrame is null || acceptsGameplayPlacement);
         GroundTruthAtlasMosaic renderAtlas;
         CompletedWorld? placement;
         bool presentsReplacement, defersReplacement;
@@ -3746,11 +3717,7 @@ public partial class MainWindow : Window
             atlasPathEvidence.ObserveHacker(result.CaptureGeneration, result.Frame.CaptureId, result.AtlasPathState);
             RefreshAtlasPathVisibility();
         }
-        // A closure has already committed its optimized graph before it reaches
-        // the dispatcher. Publish that rebuilt atlas even if unrelated async
-        // menu evidence advanced meanwhile; never publish the stale menu result.
-        if (!menuEvidenceIsCurrent
-            && result.GameplayAtlasReplacement is null) return;
+        if (!menuEvidenceIsCurrent) return;
         if (presentsReplacement)
         {
             foreach (var image in gameplayTileImages.Values)
@@ -3758,34 +3725,6 @@ public partial class MainWindow : Window
             gameplayTileImages.Clear();
             gameplayOccupiedTileBounds.Clear();
             // Keep the old origin until RenderLiveAtlas has rebased the viewport.
-        }
-        if (!menuEvidenceIsCurrent)
-        {
-            if (result.SavedWorld is { } committedWorld) gameplaySavedWorld = committedWorld;
-            if (result.GameplayTiles is not null)
-            {
-                RenderLiveAtlas(
-                    GameplayAtlasCanvas,
-                    gameplayTileImages,
-                    renderAtlas,
-                    result.GameplayTiles,
-                    ref gameplayAtlasMinimumTileX,
-                    ref gameplayAtlasMinimumTileY,
-                    GameplayImage,
-                    gameplayLiveFrame,
-                    gameplayLiveTelemetry);
-                PublishGameplayRenderedRevision(renderAtlas, result.GameplayTiles.Revision);
-            }
-            if (result.AcceptedClosure is { } committedClosure)
-            {
-                gameControls.RecordLoopClosure(
-                    result.CaptureTimestamp,
-                    result.LiveWorldRevision,
-                    result.AppliedWorldCorrection,
-                    committedClosure);
-            }
-            PersistActiveAtlas(force: false);
-            return;
         }
         // The capture loop has usually displayed a newer bitmap while tracking
         // runs. Accept ordered positions without replacing it with older pixels.
@@ -3849,14 +3788,6 @@ public partial class MainWindow : Window
             PublishGameplayRenderedRevision(renderAtlas, result.GameplayTiles.Revision);
         }
         else if (acceptsGameplayPlacement) RenderGameplayPaths();
-        if (result.AcceptedClosure is { } closure)
-        {
-            gameControls.RecordLoopClosure(
-                result.CaptureTimestamp,
-                result.LiveWorldRevision,
-                result.AppliedWorldCorrection,
-                closure);
-        }
         if (presentsLatestFrame)
         {
             DrawGroundHypothesisAtlasOverlay(result);
