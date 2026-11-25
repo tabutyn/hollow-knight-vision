@@ -9,6 +9,7 @@ using System.Threading.Channels;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Threading;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
@@ -1246,26 +1247,29 @@ internal static class AtlasWindowIntegrationTests
                     [new(new(40, -26), new(28, 20))])
             });
             SetField(window, "gameplayAtlasMinimumTileX", -1);
+            GetField<GameplayViewportController>(window, "gameplayViewport").Reset();
             SetGameplayViewport(window, ViewportTransform.Identity);
             _ = Invoke(window, "UpdateGameplayPathVisibility");
             var join = layer.Children.OfType<OverlayPath>().Single();
-            var figures = join.Data.GetFlattenedPathGeometry().Figures;
+            var figures = PathGeometry.CreateFromGeometry(join.Data).Figures;
             Check(outlines.IsChecked == false && layer.Visibility == Visibility.Visible && !layer.IsHitTestVisible
-                && layer.Children.Count == 1 && figures.Count == 3
-                && figures[0].StartPoint == new Point(286, 12) && figures[1].StartPoint == new Point(296, 12),
-                "A saved Atlas should show its measured horizontal join with the tile origin, without vertical lines or outlines.");
+                && layer.Children.Count == 1, "Default Debug View must show only the measured join without intercepting input.");
+            Check(figures.Count == 3 && figures[0].StartPoint == new Point(286, 12)
+                && figures[1].StartPoint == new Point(296, 12),
+                $"The saved join should have three dashes using the tile origin. Got [{string.Join(", ", figures.Select(figure => figure.StartPoint))}].");
 
             outlines.IsChecked = true;
             var box = (OverlayPath)layer.Children[1];
-            Check(box.Data.Bounds == new Rect(296, 6, 28, 20)
-                && box.Data.GetFlattenedPathGeometry().Figures.Count == 10,
-                "The Debug View toggle should add only the dashed footprint.");
+            var outlineFigures = PathGeometry.CreateFromGeometry(box.Data).Figures;
+            Check(outlineFigures.Count == 10 && outlineFigures[0].StartPoint == new Point(296, 6)
+                && outlineFigures[5].StartPoint == new Point(324, 26),
+                $"The Debug View toggle should add the footprint at its projected corners. Got [{string.Join(", ", outlineFigures.Select(figure => figure.StartPoint))}].");
             outlines.IsChecked = false;
             Check(layer.Children.Count == 1, "Turning outlines off must keep the measured join.");
 
             SetGameplayViewport(window, new(2, -240, 17));
             var zoomedJoin = layer.Children.OfType<OverlayPath>().Single();
-            var zoomedFigures = zoomedJoin.Data.GetFlattenedPathGeometry().Figures;
+            var zoomedFigures = PathGeometry.CreateFromGeometry(zoomedJoin.Data).Figures;
             var start = zoomedFigures[0].StartPoint;
             var onScreen = layer.TranslatePoint(start, panel);
             Check(zoomedFigures.Count == 5 && start == new Point(332, 41)
