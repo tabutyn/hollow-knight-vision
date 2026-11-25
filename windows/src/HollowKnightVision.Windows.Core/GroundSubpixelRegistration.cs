@@ -156,26 +156,48 @@ public static class GroundSubpixelRegistration
                     samples[count++] = (patch.Pixels[row * 16 + column], target, gx, gy);
                 }
             if (count != 96) continue;
-            double sourceMean = 0, targetMean = 0;
-            foreach (var value in samples) { sourceMean += value.Source; targetMean += value.Target; }
-            sourceMean /= 96; targetMean /= 96;
-            double sourceEnergy = 0, targetEnergy = 0;
+            double sourceMean = 0, targetMean = 0, meanGx = 0, meanGy = 0;
             foreach (var value in samples)
             {
-                sourceEnergy += Math.Pow(value.Source - sourceMean, 2);
-                targetEnergy += Math.Pow(value.Target - targetMean, 2);
+                sourceMean += value.Source;
+                targetMean += value.Target;
+                meanGx += value.Gx;
+                meanGy += value.Gy;
+            }
+            sourceMean /= count;
+            targetMean /= count;
+            meanGx /= count;
+            meanGy /= count;
+            double sourceEnergy = 0, targetEnergy = 0, contrastX = 0, contrastY = 0;
+            foreach (var value in samples)
+            {
+                var source = value.Source - sourceMean;
+                var target = value.Target - targetMean;
+                sourceEnergy += source * source;
+                targetEnergy += target * target;
+                contrastX += target * (value.Gx - meanGx);
+                contrastY += target * (value.Gy - meanGy);
             }
             if (targetEnergy < Math.Max(96, sourceEnergy * .1)) continue;
-            var gain = Math.Clamp(Math.Sqrt(sourceEnergy / targetEnergy), .5, 2); double patchError = 0;
+            var unconstrainedGain = Math.Sqrt(sourceEnergy / targetEnergy);
+            var gain = Math.Clamp(unconstrainedGain, .5, 2);
+            // Differentiate the centered, contrast-normalized residual used
+            // for the fit. Gain is constant when it reaches either bound.
+            var gainSlope = derivatives && unconstrainedGain is > .5 and < 2 ? -gain / targetEnergy : 0;
+            var gainX = gainSlope * contrastX;
+            var gainY = gainSlope * contrastY;
+            double patchError = 0;
             foreach (var value in samples)
             {
-                var residual = (value.Target - targetMean) * gain - (value.Source - sourceMean);
+                var target = value.Target - targetMean;
+                var residual = target * gain - (value.Source - sourceMean);
                 var magnitude = Math.Abs(residual); var weight = Math.Min(1, 12 / Math.Max(magnitude, .0001));
                 result.Loss += magnitude <= 12 ? residual * residual : 24 * magnitude - 144;
                 patchError += magnitude;
                 if (derivatives)
                 {
-                    var gx = value.Gx * gain; var gy = value.Gy * gain;
+                    var gx = (value.Gx - meanGx) * gain + target * gainX;
+                    var gy = (value.Gy - meanGy) * gain + target * gainY;
                     result.G0 += weight * gx * residual; result.G1 += weight * gy * residual;
                     result.H00 += weight * gx * gx; result.H01 += weight * gx * gy; result.H11 += weight * gy * gy;
                 }

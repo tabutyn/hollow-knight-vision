@@ -157,8 +157,9 @@ public sealed partial class GroundCameraSolver
         }
         profiledSubpixel += System.Diagnostics.Stopwatch.GetElapsedTime(subpixelStarted).TotalMilliseconds;
         var matched = new CameraVector(best.Dx + (subpixel?.Offset.X ?? 0), best.Dy + (subpixel?.Offset.Y ?? 0));
-        var scale = MotionScale(matchSource, matched);
-        var next = Add(prior.Position, new(matched.X * scale.X, matched.Y * scale.Y));
+        var scale = MotionScale(matchSource, matched, subpixelRefined: subpixel is not null);
+        var projected = new CameraVector(matched.X * scale.X, matched.Y * scale.Y);
+        var next = Add(prior.Position, projected);
         var translation = Subtract(next, imagePosition);
         var expected = new CameraVector(velocity.X * Math.Min(elapsed, .1), velocity.Y * Math.Min(elapsed, .1));
         var uniqueLocalTextureMatch = broadSearchEveryFrame && prior.PoseTrusted && consensus is not null
@@ -202,6 +203,7 @@ public sealed partial class GroundCameraSolver
         }
         return new(translation, best.Support, best.Error, prior.PoseTrusted, prior.Timestamp, prior.Position, matched, matchSource)
         {
+            ProjectedImageDisplacement = projected,
             IndependentTextureConsensus = broadSearchEveryFrame && consensus is not null && prior.PoseTrusted,
             UniqueLocalTextureMatch = uniqueLocalTextureMatch
         };

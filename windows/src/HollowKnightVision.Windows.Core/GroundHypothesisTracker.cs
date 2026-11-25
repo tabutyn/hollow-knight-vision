@@ -55,6 +55,7 @@ public sealed record GroundHypothesisTrackingResult(
     public double? LocalReferenceTimestamp { get; init; }
     public CameraVector? LocalReferencePosition { get; init; }
     public CameraVector? LocalMatchedImageDisplacement { get; init; }
+    internal CameraVector? LocalProjectedImageDisplacement { get; init; }
     public static GroundHypothesisTrackingResult Empty { get; } = new(
         [], null, 0, null, 0, 0, null, null, null, 0, [], [], [], null, false, false,
         0, null, false);
@@ -916,7 +917,8 @@ public sealed class GroundHypothesisTracker
             LocalMatchSource = localSolution?.MatchSource,
             LocalReferenceTimestamp = localSolution?.ReferenceTimestamp,
             LocalReferencePosition = localSolution?.ReferencePosition,
-            LocalMatchedImageDisplacement = localSolution?.MatchedImageDisplacement
+            LocalMatchedImageDisplacement = localSolution?.MatchedImageDisplacement,
+            LocalProjectedImageDisplacement = localSolution?.ProjectedImageDisplacement
         };
         LastOutputMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(outputStarted).TotalMilliseconds;
         return result;

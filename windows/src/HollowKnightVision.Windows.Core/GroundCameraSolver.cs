@@ -170,6 +170,7 @@ public sealed partial class GroundCameraSolver
     {
         public bool IndependentTextureConsensus { get; init; }
         public bool UniqueLocalTextureMatch { get; init; }
+        public CameraVector? ProjectedImageDisplacement { get; init; }
     }
     private sealed record Reference(byte[] Pixels, GroundTextureLine[] Lines, StencilRect[] Exclusions,
         double Timestamp, CameraVector Position, bool PoseTrusted = true);
@@ -290,7 +291,9 @@ public sealed partial class GroundCameraSolver
         var result = SolveRegistration(pixels, width, height, lines, timestamp, exclusions);
         return result is null ? null : result with {
             ImageTranslation = ToCameraCoordinates(result.ImageTranslation),
-            ReferencePosition = result.ReferencePosition is { } position ? ToCameraCoordinates(position) : null
+            ReferencePosition = result.ReferencePosition is { } position ? ToCameraCoordinates(position) : null,
+            ProjectedImageDisplacement = result.ProjectedImageDisplacement is { } displacement
+                ? ToCameraCoordinates(displacement) : null
         };
     }
 
@@ -417,10 +420,12 @@ public sealed partial class GroundCameraSolver
         && Length(Subtract(recent.ImageTranslation, anchor.ImageTranslation)) <= 32
         && recent.Error + 1.5 <= anchor.Error;
 
-    private CameraVector MotionScale(string source, CameraVector displacement)
+    private CameraVector MotionScale(string source, CameraVector displacement, bool subpixelRefined = false)
     {
         if (source is not ("recent" or "provisional")) return anchorImageMotionScale;
         if (!usesAdaptiveRecentMotionScale) return recentImageMotionScale;
+        // The adaptive factors compensate for coarse integer matches.
+        if (subpixelRefined) return anchorImageMotionScale;
         return Length(displacement) switch { < 8 => new(.9920, .9982), < 16 => new(.9800, .9916), < 32 => new(.9773, .9934), _ => new(.9900, .9951) };
     }
     internal sealed class Patch

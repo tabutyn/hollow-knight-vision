@@ -141,7 +141,7 @@ public sealed class VisualGameplayTracker
         if (tracking.GlobalCorrection is not null) calibratedScene.Reset();
         var calibration = groundMeasured && tracking.GlobalCorrection is null
             && tracking.LocalReferenceTimestamp is { } reference
-            && tracking.LocalMatchedImageDisplacement is { } displacement
+            && tracking.LocalProjectedImageDisplacement is { } displacement
             ? new CalibratedSceneMotionTracker.GroundCalibration(tracking.CameraPosition!.Value, reference, displacement)
             : null;
         CalibratedSceneMotionEvidence? scene = null;

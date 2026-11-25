@@ -198,6 +198,32 @@ internal static class GroundSubpixelTests
             ?? throw new Exception("Fractional translation was not recovered.");
         Near(.4, result.Offset.X, .07); Near(-.3, result.Offset.Y, .07); Check(result.Iterations <= 6);
     }
+    public static void TestFractionalMotionAcrossExposureChanges()
+    {
+        var patches = Patches(ExposedFrame(0, 0, 1, 110));
+        foreach (var gain in new[] { .55, 1, 1.3 })
+        {
+            var target = ExposedFrame(.8, .7, gain, 120);
+            var result = GroundSubpixelRegistration.Refine(patches, target, Width, Height, 0, 0)
+                ?? throw new Exception($"No fractional match at exposure gain {gain}.");
+            Near(.8, result.Offset.X, .07);
+            Near(.7, result.Offset.Y, .07);
+            Check(result.Iterations <= 6);
+        }
+
+        static byte[] ExposedFrame(double dx, double dy, double gain, double mean) =>
+            Enumerable.Range(0, Width * Height).Select(index =>
+            {
+                var x = index % Width - dx;
+                var y = index / Width - dy;
+                var signal = 45 * Math.Sin(.08 * x + .07 * y)
+                    + 35 * Math.Cos(.04 * x - .08 * y)
+                    + 7 * Math.Sin(.47 * x + .2 * y)
+                    + 6 * Math.Cos(.17 * x - .31 * y);
+                return (byte)Math.Clamp(Math.Round(mean + gain * signal, MidpointRounding.AwayFromZero), 0, 255);
+            }).ToArray();
+    }
+
     public static void TestIntegratedFractionalSolve()
     {
         var solver = new GroundCameraSolver(subpixelEnabled: true);
@@ -226,6 +252,49 @@ internal static class GroundSubpixelTests
         Near(-2.65, match.X, .12);
         Near(4.75, match.Y, .12);
         Check(proposal is { IndependentTextureConsensus: false, UniqueLocalTextureMatch: false });
+
+        tracker = new GroundHypothesisTracker(minimumObservationSeconds: 0, productionCameraSolver: true);
+        _ = tracker.Update(Frame(), Width, Height, lines, timestamp: 0);
+        for (var capture = 1; capture <= 18; capture++)
+        {
+            var motion = capture * .35;
+            var pan = tracker.Update(Frame(offsetX: motion), Width, Height, lines, timestamp: capture / 60d);
+            if (!pan.PoseVerified || pan.CameraPosition is not { } camera)
+                throw new Exception($"The live pan lost its measured pose at capture {capture}.");
+            Near(-motion * GroundCameraSolver.HackerCalibratedAnchorScale.X, camera.X, .15);
+            Near(0, camera.Y, .12);
+        }
+    }
+
+    public static void TestSceneryCalibrationUsesProjectedDisplacement()
+    {
+        var solver = new GroundCameraSolver(imageMotionScale: new(.8, 1.2));
+        Check(solver.Solve(Frame(), Width, Height, Lines(), 0, []) is not null);
+        var result = solver.Solve(Frame(-4, 5), Width, Height, Lines(5), 1d / 60, [])
+            ?? throw new Exception("The scenery calibration fixture did not register ground.");
+        Check(result.ReferenceTimestamp == 0 && result.MatchedImageDisplacement == new CameraVector(-4, 5));
+        var projected = result.ProjectedImageDisplacement ?? throw new Exception("The measured projection was missing.");
+        Near(-3.2, projected.X, 1e-8);
+        Near(6, projected.Y, 1e-8);
+        Check(result.ImageTranslation == projected);
+    }
+
+    public static void TestRefinedProvisionalMotionRetainsCameraScale()
+    {
+        foreach (var customScale in new CameraVector?[] { null, new(.9, .8) })
+        {
+            var solver = new GroundCameraSolver(keyframeSubpixelEnabled: true,
+                calibratedMotionEnabled: true, imageMotionScale: customScale);
+            _ = solver.Solve(Enumerable.Repeat((byte)80, Width * Height).ToArray(), Width, Height, Lines(), 0, []);
+            solver.FollowMeasuredCamera(CameraVector.Zero, Frame(), Width, Height, Lines(), .1, []);
+            var result = solver.Solve(Frame(16, offsetX: .4), Width, Height, Lines(), .2, [])
+                ?? throw new Exception("A measured provisional reference did not register.");
+            Check(result.MatchSource == "provisional" && !result.ReferenceTrusted);
+            Near(16.4, result.MatchedImageDisplacement!.Value.X, .07);
+            var projected = result.ProjectedImageDisplacement!.Value;
+            Near(16.4 * (customScale ?? GroundCameraSolver.HackerCalibratedAnchorScale).X, projected.X, .1);
+            Check(result.ImageTranslation == projected);
+        }
     }
 
     public static void TestIntegerAndFlat()
