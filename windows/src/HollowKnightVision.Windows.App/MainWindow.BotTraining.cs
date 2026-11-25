@@ -22,10 +22,8 @@ public partial class MainWindow
     private BotCheckpointCatalog? SelectedBotCheckpoints => SelectedBotTrainingDomain == BotCaptureDomain.Hacker
         ? hackerCheckpoints : gameplayCheckpoints;
 
-    private async void RefreshBotTrainingPlans(IReadOnlyList<BotCaptureManifest> library)
+    private async Task RefreshBotTrainingPlansAsync(IReadOnlyList<BotCaptureManifest> library)
     {
-        botTrainingLibrary = library;
-        PresentNewBotCaptures();
         var generation = ++botTrainingPlanGeneration;
         var root = BotRoot;
         var plans = await Task.Run(() => (gameplay: Plan(BotCaptureDomain.Gameplay), hacker: Plan(BotCaptureDomain.Hacker)));
@@ -93,7 +91,7 @@ public partial class MainWindow
 
     private async Task SelectBotCheckpointAsync(string? version)
     {
-        if (isClosing || changingBotCheckpoint || botTrainingCancellation is not null) return;
+        if (isClosing || changingBotCheckpoint || refreshingBotLibrary || botTrainingCancellation is not null) return;
         var domain = SelectedBotTrainingDomain;
         var store = new BotModelStore(BotRoot, domain);
         changingBotCheckpoint = true;
@@ -113,11 +111,7 @@ public partial class MainWindow
         finally
         {
             changingBotCheckpoint = false;
-            if (!isClosing)
-            {
-                UpdateBotTrainingControls();
-                RefreshBotTrainingPlans(botTrainingLibrary);
-            }
+            if (!isClosing && !refreshingBotLibrary) await RefreshBotTrainingPlansAsync(botTrainingLibrary);
         }
     }
 
@@ -132,7 +126,7 @@ public partial class MainWindow
         if (BotTrainingStatus is null) return;
         var active = botTrainingCancellation;
         var plan = SelectedBotTrainingDomain == BotCaptureDomain.Hacker ? hackerTrainingPlan : gameplayTrainingPlan;
-        var canSelect = !isClosing && active is null && !changingBotCheckpoint;
+        var canSelect = !isClosing && active is null && !changingBotCheckpoint && !refreshingBotLibrary;
         BotTrainingDomain.IsEnabled = active is null && !changingBotCheckpoint;
         BotPlaybackVersion.IsEnabled = canSelect && SelectedBotCheckpoints is { Versions.Count: > 0 };
         BotUseVersion.IsEnabled = canSelect && BotPlaybackVersion.SelectedItem is BotCheckpointVersion version
@@ -140,7 +134,7 @@ public partial class MainWindow
         BotRestorePrevious.IsEnabled = canSelect && SelectedBotCheckpoints?.PreviousId is not null;
         BotTrainButton.Content = active is null ? "Train" : "Stop";
         BotTrainButton.IsEnabled = !isClosing && !changingBotCheckpoint && !deletingBotClip
-            && (active is null ? plan?.CanTrain == true : !active.IsCancellationRequested);
+            && (active is null ? !refreshingBotLibrary && plan?.CanTrain == true : !active.IsCancellationRequested);
         BotTrainingStatus.Text = botTrainingMessage ?? plan?.Unavailable ?? "";
         UpdateBotClipDeletionControls();
     }
@@ -155,6 +149,7 @@ public partial class MainWindow
             UpdateBotTrainingControls();
             return;
         }
+        if (refreshingBotLibrary) return;
 
         var domain = SelectedBotTrainingDomain;
         var title = domain == BotCaptureDomain.Hacker ? "Hacker" : "Game Play";

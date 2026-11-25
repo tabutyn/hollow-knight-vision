@@ -376,13 +376,21 @@ internal static class BotCaptureTests
             Check(date["createdAt"]!.GetValue<string>().EndsWith('Z')
                 && !date["createdAt"]!.GetValue<string>().Contains('.'), "New dates must use the Mac's ISO 8601 format.");
             date["createdAt"] = 3600;
+            date.Remove("botDomain");
             File.WriteAllText(manifest, date.ToJsonString());
+            var manifests = BotCaptureSession.ReadLibraryManifests(root);
+            Check(manifests.Count == 2 && manifests[1].Manifest.BotDomain is null,
+                "The fast manifest scan should include domainless metadata before opening its events.");
             var clips = BotCaptureSession.Library(root);
             Check(clips.Count == 2 && clips[0].Id == recent.Id && clips[1].Id == legacy.Id
+                && clips[1].BotDomain == legacy.BotDomain
                 && clips[1].CreatedAt == new DateTimeOffset(2001, 1, 1, 1, 0, 0, TimeSpan.Zero),
-                "Current Mac dates and existing Windows numeric dates must sort by actual capture time.");
+                "Legacy clips should recover their domain and sort by actual capture time.");
             Check(BotCaptureSession.Review(Path.GetDirectoryName(manifest)!).Count == 1,
                 "Older Windows clips must still open for review.");
+            File.WriteAllText(Path.Combine(Path.GetDirectoryName(manifest)!, "events.jsonl"), "{}\n");
+            Check(BotCaptureSession.ResolveLibraryDomains(manifests).Single().Id == recent.Id,
+                "A damaged legacy event should not hide other captures.");
         });
     }
 

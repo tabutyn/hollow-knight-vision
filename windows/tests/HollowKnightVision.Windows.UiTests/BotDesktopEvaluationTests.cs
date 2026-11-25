@@ -50,12 +50,83 @@ internal static class BotDesktopEvaluationTests
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-timeout"), timeout.Token,
                 expireHandoff: true);
             await VerifyCheckpointControlsAsync(Path.Combine(temporary.FullName, "versions"), timeout.Token);
+            await TestSummaryAndQueuedCaptureUpdateWhileEventDecodeIsBlocked(Path.Combine(temporary.FullName, "summary"), timeout.Token);
             await VerifyThinkingLeaseAsync(Path.Combine(temporary.FullName, "thinking"), timeout.Token);
         }
         finally
         {
             Environment.SetEnvironmentVariable(labelsEnvironment, previousLabels);
             temporary.Delete(recursive: true);
+        }
+    }
+
+    private static async Task TestSummaryAndQueuedCaptureUpdateWhileEventDecodeIsBlocked(string root, CancellationToken token)
+    {
+        var window = new MainWindow(GameRuntimeMode.Normal, null, root, root);
+        var library = Path.Combine(root, "bot-v1", "demonstrations");
+        var summary = (TextBlock)window.FindName("BotCaptureSummary");
+        var newCaptures = (TextBlock)window.FindName("BotNewCaptureSummary");
+        var train = (Button)window.FindName("BotTrainButton");
+        var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task first = Task.CompletedTask, second = Task.CompletedTask;
+        try
+        {
+            await window.RefreshBotLibraryAsync().WaitAsync(token);
+            var legacy = await WriteCapture();
+            var legacyManifest = Path.Combine(library, BotCaptureSession.DirectoryName(legacy.Id), "manifest.json");
+            File.WriteAllBytes(legacyManifest,
+                JsonSerializer.SerializeToUtf8Bytes(legacy with { BotDomain = null! }, BotCaptureSession.Json));
+
+            await WriteCapture();
+            first = window.RefreshBotLibraryAsync(entries =>
+            {
+                blocked.TrySetResult();
+                release.Task.WaitAsync(token).GetAwaiter().GetResult();
+                return BotCaptureSession.ResolveLibraryDomains(entries);
+            });
+            await blocked.Task.WaitAsync(token);
+            Check(summary.Text.Contains("1 Game Play clips", StringComparison.Ordinal)
+                && newCaptures.Text.StartsWith("1 new run", StringComparison.Ordinal)
+                && !train.IsEnabled && !first.IsCompleted,
+                "The first new capture should appear while legacy events are still being decoded.");
+
+            await WriteCapture();
+            second = window.RefreshBotLibraryAsync();
+            while (!summary.Text.Contains("2 Game Play clips", StringComparison.Ordinal))
+                await Task.Delay(10, token);
+            Check(newCaptures.Text.StartsWith("2 new runs", StringComparison.Ordinal)
+                && !train.IsEnabled && !second.IsCompleted,
+                "The newest summary should update before the queued legacy decode and training plan have finished.");
+
+            release.TrySetResult();
+            await Task.WhenAll(first, second).WaitAsync(token);
+            Check(summary.Text.Contains("3 Game Play clips", StringComparison.Ordinal)
+                && newCaptures.Text.StartsWith("3 new runs", StringComparison.Ordinal) && train.IsEnabled,
+                "The validated legacy clip should reappear without discarding the two new clips.");
+            Console.WriteLine("PASS Windows Bot Summary shows new captures while legacy event decoding is blocked");
+        }
+        finally
+        {
+            release.TrySetResult();
+            Field("isClosing").SetValue(window, true);
+            await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(10));
+            await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+
+        async Task<BotCaptureManifest> WriteCapture()
+        {
+            var capture = new BotCaptureSession(library, "normal", "fixture", Generation, 1, new());
+            var frame = new BgraFrame(16, 16, 16 * 4, new byte[16 * 16 * 4], 1, DateTimeOffset.UtcNow);
+            var row = new BotCaptureObservation(1, 1, 1, Generation, 1, 1,
+                new double[BotRecordingContract.FeatureNames.Count], [], "detected")
+            {
+                AtlasPathVersion = 1,
+                DriveDirection = 0,
+                BlockadeVersion = 1
+            };
+            Check(capture.TryRecord(frame, row, null), "Could not stage a Game Play observation.");
+            return (await capture.FinishAsync(2, null, completed: true)).Published.Single();
         }
     }
 
@@ -332,10 +403,14 @@ internal static class BotDesktopEvaluationTests
             using (File.Open(Events(fresh.Gameplay), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
                 Refresh();
-                Check(pending.Text == "1 new run · Hacker 1 · Game Play 1",
-                    "The paired capture should appear from its manifests while the preview events are unavailable.");
+                await WaitFor(() => pending.Text == "1 new run · Hacker 1 · Game Play 1");
             }
             WriteCheckpoint(botRoot, "hacker", "Trained Hacker", "bot-trained", created.AddMinutes(4), [initial.Hacker, fresh.Hacker]);
+            await window.StartBotPlaybackAsync().WaitAsync(token);
+            var run = Field("botPlayback").GetValue(window);
+            var loaded = run?.GetType().GetField("Loaded", Instance)?.GetValue(run);
+            Check(loaded?.GetType().GetProperty("ModelName")?.GetValue(loaded) as string == "Trained Hacker",
+                "The next playback should load the completed checkpoint before the summary is refreshed.");
             Refresh();
             await WaitFor(() => pending.Text == "1 new run · Hacker 0 · Game Play 1");
             Check(versions.SelectedValue as string == "bot-trained", "New training must reduce the correct count while activating its policy.");
