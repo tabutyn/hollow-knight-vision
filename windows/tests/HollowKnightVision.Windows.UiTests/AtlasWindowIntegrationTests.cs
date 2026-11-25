@@ -105,12 +105,17 @@ internal static class AtlasWindowIntegrationTests
             var before = viewport.SetFreeFlyTransform(new(1, 0, 0));
 
             var arriving = AtlasDoorwayFrame(7, entering: true);
+            var queued = AtlasDoorwayFrame(8, entering: true) with { LocalPose = new(90, -2) };
             // This pre-rebuild analysis reaches the dispatcher after the worker's corrected result.
             var delayed = Analysis(arriving);
             var latestImage = live.Source;
             var update = Submit(arriving);
             Check(update is { AllowsAtlasComposition: true, RebuiltAtlas: { } }
                 && update.CameraPose == new AtlasPoint(432, 15), update.Diagnostic);
+            window.ApplyVisionAnalysis(delayed with { MenuGeneration = -1 });
+            Check(GetField<int?>(window, "gameplayAtlasMinimumTileY") == -3
+                && GetField<GroundTruthAtlasMosaic>(window, "gameplayAtlasPresentationPending") == update.RebuiltAtlas,
+                "A stale menu result must leave the committed Atlas replacement pending.");
             window.ApplyVisionAnalysis(oldState with
             {
                 AtlasSource = update.RebuiltAtlas,
@@ -134,6 +139,25 @@ internal static class AtlasWindowIntegrationTests
             Check(ReferenceEquals(live.Source, latestImage) && Canvas.GetTop(live) == 23
                 && viewport.Transform.OffsetY == before.OffsetY - 32,
                 "The displayed frame and Free Fly transform must use the rebuilt origin together.");
+
+            var store = new LiveWorldSessionStore(Path.Combine(root, "live-world"));
+            var aligned = store.Load().Snapshot;
+            var arrival = aligned.Observations[^1];
+            var arrivalIsland = aligned.TrackingIslands.Single(island => island.Members.Any(member =>
+                member.ObservationId == arrival.Id));
+            var connector = LiveWorldGroundOverlay.ProjectPlacement(aligned).Doorways.Single();
+            var continued = Submit(queued);
+            var saved = store.Load().Snapshot;
+            var registered = saved.Observations[^1];
+            Check(continued is { AllowsAtlasComposition: true, RebuiltAtlas: null }
+                && registered.CaptureTimestamp == queued.MonotonicTimestamp
+                && registered.RawPose == queued.LocalPose && registered.LocalPose == queued.LocalPose
+                && continued.CameraPose == new AtlasPoint(442, 13) && registered.OptimizedPose == continued.CameraPose,
+                "A captured frame processed after alignment must retain its local motion and use the corrected Atlas basis.");
+            Check(saved.TrackingIslands.Single(island => island.Id == arrivalIsland.Id).Members[^1].ObservationId == registered.Id
+                && saved.DoorwayFloorConstraints.Single().Id == aligned.DoorwayFloorConstraints.Single().Id
+                && LiveWorldGroundOverlay.ProjectPlacement(saved).Doorways.Single() == connector,
+                "The queued frame must join its corrected island without changing the committed doorway.");
 
             MainWindow.VisionAnalysisResult Analysis(WindowsLiveWorldFrame request)
             {

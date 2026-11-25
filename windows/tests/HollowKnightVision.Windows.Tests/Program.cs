@@ -587,6 +587,7 @@ var tests = new List<(string Name, Action Run)>
     ("a tentative doorway match prevents duplication of a saved room", NativeAtlasImportTests.TestImportedAtlasKeepsSearchingForAKnownDoorwayArrival),
     ("measured walks retain ground beneath a hidden edge in the saved Atlas", NativeAtlasImportTests.TestMeasuredWalkSavesFloorUnderAHiddenEdge),
     ("restored Atlas aligns doorway floors only with measured foot contact on both sides", NativeAtlasImportTests.TestDoorwayFloorAlignsOnlyWithMeasuredContactOnBothSides),
+    ("doorway alignment rejects unsupported departures and stale crossings", NativeAtlasImportTests.TestDoorwayFloorRejectsUnprovenCrossings),
     ("Windows Atlas stitches a measured doorway and preserves saved legacy coordinates", NativeAtlasImportTests.TestWindowsAtlasExtendsAndAlignsWithoutMovingLegacyFrames),
     ("a grounded return aligns the estimated room against the saved Atlas", NativeAtlasImportTests.TestReturningDoorwayAlignsAnEstimatedRoomAgainstSavedImagery),
     ("Game Play Gym keeps grounded return doorways after image recovery", NativeAtlasImportTests.TestGymRetainsGroundedReturnDoorwaysAfterImageRecovery),

@@ -803,6 +803,67 @@ internal static class NativeAtlasImportTests
         }
     }
 
+    internal static void TestDoorwayFloorRejectsUnprovenCrossings()
+    {
+        foreach (var evidence in new[]
+        {
+            "grounded", "unmeasured", "missing floor", "falling", "missing player",
+            "airborne", "away from exit", "ambiguous floor"
+        })
+        {
+            var tracker = new LiveWorldTracker();
+            for (var id = 0; id < 6; id++)
+            {
+                var departing = id < 3;
+                var time = departing ? 1 + id * .16 : 3 + (id - 3) * .16;
+                var image = RecoveryTexture(departing ? 71 : 901, id);
+                var floor = departing ? 45 : 30;
+                var start = departing ? 120 : 0;
+                var surface = new LiveGroundLineEvidence(id, new(start, floor), new(start + 199, floor));
+                var other = new LiveGroundLineEvidence(id + 10, new(start, floor + 10), new(start + 199, floor + 10));
+                var geometry = departing ? evidence switch
+                {
+                    "missing floor" => null,
+                    "ambiguous floor" => new LiveWorldGroundGeometry([surface, other]),
+                    _ => new LiveWorldGroundGeometry([surface])
+                } : new LiveWorldGroundGeometry([surface]);
+                var playerX = departing ? evidence == "away from exit" ? 175 : 268 : 20;
+                var playerY = departing && evidence == "airborne" ? floor + 15 : floor;
+                var player = departing && evidence == "missing player" ? (WorldRect?)null : new(new(playerX, playerY), new(24, 35));
+                var pose = departing ? new AtlasPoint(0, evidence == "falling" ? -id * 10 : 0) : new AtlasPoint(432, 0);
+                var capture = departing && evidence == "unmeasured" ? null : new LiveWorldCaptureEvidence(time, geometry,
+                    PlayerBounds: player) { MeasuredLineage = departing ? 1 : 2 };
+                _ = tracker.Ingest(id, time, image, pose, image.Width, searchForClosure: false, localPose: pose,
+                    captureGeneration: 1, localEpoch: 1, roomId: departing ? 0 : 1, captureEvidence: capture);
+            }
+
+            var before = tracker.Snapshot;
+            var crossing = new LiveDoorwayTransition(0, 1, 1, 1.35, 3, VisualRoomDirection.Right);
+            if (evidence != "grounded")
+            {
+                Check(!tracker.AlignRoomThroughDoorway(crossing) && ReferenceEquals(tracker.Snapshot, before),
+                    $"A doorway needs proven departure support. Accepted evidence was {evidence}.");
+                continue;
+            }
+
+            Check(!tracker.AlignRoomThroughDoorway(crossing with { DepartureCaptureTimestamp = 2.1 })
+                && !tracker.AlignRoomThroughDoorway(crossing with { DepartureCaptureTimestamp = 3, ArrivalCaptureTimestamp = 4 })
+                && ReferenceEquals(tracker.Snapshot, before),
+                "Departure support must be recent and the arrival must already be observed.");
+            Check(tracker.AlignRoomThroughDoorway(crossing), "A fresh measured and grounded crossing should align the rooms.");
+            var aligned = tracker.Snapshot;
+            var edge = aligned.DoorwayFloorConstraints.Single();
+            Check(edge.DepartureSupport.SequenceEqual([0, 1, 2]) && edge.ArrivalSupport.SequenceEqual([3, 4, 5])
+                && aligned.MapRevision == before.MapRevision + 1
+                && aligned.Observations.Where(row => row.RoomId == 1).All(row => row.OptimizedPose == new AtlasPoint(432, 15))
+                && aligned.Observations.Select(row => (row.RawPose, row.GroundGeometry, row.ObservedPlayerBounds))
+                    .SequenceEqual(before.Observations.Select(row => (row.RawPose, row.GroundGeometry, row.ObservedPlayerBounds))),
+                "A measured doorway moves the whole arrival island vertically and preserves every capture's evidence.");
+            Check(!tracker.AlignRoomThroughDoorway(crossing) && ReferenceEquals(tracker.Snapshot, aligned),
+                "The same crossing cannot add another constraint.");
+        }
+    }
+
     internal static void TestWindowsAtlasExtendsAndAlignsWithoutMovingLegacyFrames() =>
         VerifyWindowsDoorwayCommit(failAlignmentCommit: false);
 
