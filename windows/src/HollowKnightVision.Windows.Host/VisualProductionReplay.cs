@@ -51,7 +51,7 @@ internal sealed record VisualProductionReplayOptions(string Path, string Output,
 internal sealed record VisualProductionReplayReport(int SchemaVersion,
     [property: JsonPropertyName("sourcePathID")] Guid SourcePathId, int Frames, int ArchiveFrameCount,
     int SelectedFrameCount, int SkippedBeforeVision, IReadOnlyList<int> MissingFrameIndices, bool ArchiveComplete,
-    int MaskInputs, int GroundVerifiedFrames, int CommittedFrames, int WorldObservations, int AtlasTiles,
+    int MaskInputs, int CarriedMaskInputs, int GroundVerifiedFrames, int CommittedFrames, int WorldObservations, int AtlasTiles,
     double ElapsedSeconds, double FramesPerSecond, string VisualDigest, string CoarseVisualDigest, string WorldDigest,
     string AtlasDigest, string WorldDirectory, string OutputPath, string WorldSnapshotPath, string DiagnosticsPath,
     string WorldSnapshotTimestampDomain, IReadOnlyList<string> Notes);
@@ -59,6 +59,9 @@ internal sealed record VisualProductionReplayReport(int SchemaVersion,
 /// <summary>Feeds recorded images and visual input into the capture worker's camera and durable atlas pipeline.</summary>
 internal static class VisualProductionReplay
 {
+    private const double MaximumMaskAge = .1;
+    private const double JumpContactCooldown = .4;
+
     private readonly record struct FrameKey(ulong Generation, long TimestampBits)
     {
         internal static FrameKey Of(ulong generation, double timestamp) =>
@@ -110,6 +113,7 @@ internal static class VisualProductionReplay
         var admissionPolicy = new GameplayFrameAdmission();
         var coarseMotion = new LowResolutionRoomMotionTracker();
         var masksUsed = 0;
+        var carriedMasksUsed = 0;
         var groundVerified = 0;
         var committed = 0;
         var lostTracking = false;
@@ -124,6 +128,8 @@ internal static class VisualProductionReplay
             });
         var eventIndex = 0;
         var held = InputButtons.None;
+        var lastJump = double.NegativeInfinity;
+        (VisualReplayGroundInput Input, int Width, int Height)? previousMask = null;
         var began = Stopwatch.GetTimestamp();
         using var visualDigest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         using var coarseDigest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -135,34 +141,52 @@ internal static class VisualProductionReplay
                 cancellationToken.ThrowIfCancellationRequested();
                 var image = reader.ReadImage(evidence);
                 var key = FrameKey.Of(evidence.CaptureGeneration, evidence.CaptureTimestamp);
-                groundInputs.TryGetValue(key, out var input);
-                if (input is not null) masksUsed++;
+                groundInputs.TryGetValue(key, out var exactInput);
                 var captureGeneration = checked((long)evidence.CaptureGeneration);
                 if (generation.HasValue && generation != captureGeneration)
                 {
                     tracking.Reset();
                     coarseMotion.Reset();
+                    previousMask = null;
+                    lastJump = double.NegativeInfinity;
                 }
                 generation = captureGeneration;
+                var maskInput = exactInput;
+                if (exactInput is not null)
+                {
+                    masksUsed++;
+                    previousMask = (exactInput, image.Width, image.Height);
+                }
+                else if (previousMask is { } previous && previous.Width == image.Width && previous.Height == image.Height
+                    && evidence.CaptureTimestamp - previous.Input.CaptureTimestamp is >= 0 and <= MaximumMaskAge)
+                {
+                    maskInput = previous.Input;
+                    carriedMasksUsed++;
+                }
+
                 var offset = evidence.CapturedAt - timeBase.Start;
+                var jumpDuringFrame = (held & InputButtons.ActionZ) != 0;
                 while (eventIndex < source.Events.Count && source.Events[eventIndex].Offset <= offset)
                 {
                     var item = source.Events[eventIndex++];
                     var bit = item.Button.ToInputButton();
                     var pressed = item.Transition == RecordedInputTransition.Pressed;
+                    jumpDuringFrame |= pressed && bit == InputButtons.ActionZ;
                     held = pressed ? held | bit : held & ~bit;
                     replayTrace.RecordInput(item.Button, pressed, timeBase.Start + item.Offset);
                 }
-                var buttons = ResolveMovement(input, held);
+                if (jumpDuringFrame) lastJump = evidence.CaptureTimestamp;
+                var recentJump = evidence.CaptureTimestamp - lastJump is >= 0 and <= JumpContactCooldown;
+                var buttons = ResolveMovement(exactInput, held, recentJump);
                 var frame = new BgraFrame(image.Width, image.Height, image.Stride, image.Pixels, image.CaptureId,
                     source.CreatedAt.AddSeconds(offset));
                 var signal = FrameRegionRenderer.SignalProfile(frame);
                 var coarse = coarseMotion.Observe(signal.MotionGrid, evidence.CaptureTimestamp);
-                var admission = admissionPolicy.Observe(signal, input is not null, captureGeneration);
+                var admission = admissionPolicy.Observe(signal, maskInput is not null, captureGeneration);
                 if (admission.ResetMotionReference) tracking.ResetMotionReference();
-                var masks = VisualReplayGroundInput.RestoreMasks(input, frame);
+                var masks = VisualReplayGroundInput.RestoreMasks(maskInput, frame);
                 var prepared = tracking.Prepare(frame, masks, admission.AdmitsTracking,
-                    tuning: input?.Tuning, semanticTuning: input?.SemanticTuning);
+                    tuning: maskInput?.Tuning, semanticTuning: maskInput?.SemanticTuning);
                 var tracked = tracking.Track(frame, prepared, masks.GroundKnight, admission, signal, evidence.CaptureTimestamp,
                     captureGeneration, knownRoom: null, atlas.TileCount > 0, buttons,
                     resetWorldCoordinatesForCorrection: true, captureWorldEvidence: true, coarseMotion: coarse);
@@ -236,6 +260,7 @@ internal static class VisualProductionReplay
 
                 var visual = new {
                     evidence.Index, evidence.CaptureTimestamp, evidence.CaptureGeneration, evidence.RenderedGameFrame,
+                    maskAgeSeconds = evidence.CaptureTimestamp - maskInput?.CaptureTimestamp, movementButtons = buttons,
                     admission.AdmitsTracking, admission.Transition.ResumedAfterTransition, observation.Source,
                     observation.GroundVerified, tracked.AllowsAtlasWrite, tracked.HasMeasuredSceneryContinuity,
                     tracked.AtlasBootstrapWalk, walkedFloor = tracked.Contact.Floor,
@@ -275,7 +300,7 @@ internal static class VisualProductionReplay
         var tracePath = new RecordedInputPathStore(output).Save(trace);
         var tileDigest = WriteAtlas(atlas, Path.Combine(output, "atlas"));
         var report = new VisualProductionReplayReport(3, source.Id, frames.Length, manifest.Frames.Count, selected.Length,
-            available.Length - frames.Length, missing, archive.Complete, masksUsed, groundVerified, committed,
+            available.Length - frames.Length, missing, archive.Complete, masksUsed, carriedMasksUsed, groundVerified, committed,
             snapshot.Observations.Count, atlas.TileCount, elapsed, frames.Length / Math.Max(.001, elapsed),
             Hex(visualDigest.GetHashAndReset()), Hex(coarseDigest.GetHashAndReset()), Hex(SHA256.HashData(snapshotBytes)),
             tileDigest, worldDirectory, tracePath, snapshotPath, diagnosticsPath, "capture-uptime",
@@ -304,7 +329,7 @@ internal static class VisualProductionReplay
             : (captured.CapturedAt, worldStart, "Legacy input timing uses the first readable capture as its start.");
     }
 
-    private static InputButtons ResolveMovement(VisualReplayGroundInput? input, InputButtons held)
+    private static InputButtons ResolveMovement(VisualReplayGroundInput? input, InputButtons held, bool recentJump)
     {
         if (input?.WindowsMovementButtons is { } exact) return exact;
         if (input?.HorizontalDrive is { } drive)
@@ -313,7 +338,7 @@ internal static class VisualProductionReplay
             if (drive < 0) held |= InputButtons.Left;
             if (drive > 0) held |= InputButtons.Right;
         }
-        return input?.RecentJump == true ? held | InputButtons.ActionZ : held;
+        return (input?.RecentJump ?? recentJump) ? held | InputButtons.ActionZ : held & ~InputButtons.ActionZ;
     }
 
     private static string WriteAtlas(GroundTruthAtlasMosaic atlas, string directory)
