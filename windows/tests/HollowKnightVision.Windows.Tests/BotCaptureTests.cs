@@ -220,6 +220,106 @@ internal static class BotCaptureTests
         });
     }
 
+    internal static void TestPairedCaptureRetainsOnlyEligibleOccludedGameplay()
+    {
+        WithLibrary(root =>
+        {
+            var input = Input(0);
+            var previous = Begin();
+            Check(previous.Capture.TryRecord(input.Frame, Visual(input), Hacker(input, input.Mod)),
+                "The interrupted pair must have evidence in both domains.");
+            var interrupted = previous.Capture.FinishAsync(Start + 1, previous.Path, completed: false).GetAwaiter().GetResult();
+            Check(interrupted is { Published.Count: 0, Discarded: 2 } && Directory.GetFileSystemEntries(root).Length == 0,
+                "Stopping an interrupted pair must discard both staged clips.");
+
+            var current = Begin();
+            var hidden = Visual(input with { Detections = input.Detections with { Detections = [] } });
+            Check(current.Capture.TryRecord(input.Frame, hidden, null), "The Game Play frame should record through Knight occlusion.");
+            var result = current.Capture.FinishAsync(Start + 1, current.Path, completed: true).GetAwaiter().GetResult();
+            var saved = result.Published.Single();
+            var directory = Path.Combine(root, BotCaptureSession.DirectoryName(saved.Id));
+            Check(result.Discarded == 1 && saved is { BotDomain: "gameplay", PairedClipId: null, UsableObservationCount: 0 }
+                && saved.ReplayId == current.Path!.Id && BotCaptureSession.Review(directory).Single().HasMaskedKnightEvidence,
+                "Fresh terrain with a hidden Knight should keep only the Game Play training clip and its replay.");
+
+            var empty = Begin();
+            var blank = empty.Capture.FinishAsync(Start + 1, empty.Path, completed: true).GetAwaiter().GetResult();
+            Check(blank is { Published.Count: 0, Discarded: 2 }
+                && Directory.GetFileSystemEntries(root).SequenceEqual([directory]),
+                "An empty pair must leave the earlier eligible clip intact.");
+
+            (BotCaptureSession Capture, RecordedInputPath? Path) Begin()
+            {
+                var id = Guid.NewGuid();
+                var recorder = new InputPathRecorder();
+                recorder.Start(Start, id: id);
+                recorder.RecordInput(RecordedGameButton.Right, true, Start);
+                recorder.RecordInput(RecordedGameButton.Z, true, Start + .04);
+                return (new(root, "modded", "visual", Generation, Start, Labels(), id, paired: true),
+                    recorder.Stop(Start + 1));
+            }
+        });
+    }
+
+    internal static void TestCaptureRequiresACompleteCompatibleActionWindow()
+    {
+        WithLibrary(root =>
+        {
+            var first = Input(0);
+            Check(Finish([(Start, InputButtons.Left | InputButtons.Right)]) is { Published.Count: 0, Discarded: 1 },
+                "Opposing held directions must not keep an otherwise unusable clip.");
+            Check(Finish([(Start, InputButtons.Up | InputButtons.Down)]) is { Published.Count: 0, Discarded: 1 },
+                "Opposing aim directions must also discard the clip.");
+            Check(Finish([(Start, InputButtons.ActionA)]) is { Published.Count: 0, Discarded: 1 },
+                "Unsupported controls must not authorize a standard training clip.");
+            Check(Finish([(Start, InputButtons.Right)], stopAt: first.Time.AvailableAt + .09)
+                is { Published.Count: 0, Discarded: 1 }, "Stopping before the full action window must discard the clip.");
+
+            (double, InputButtons)[] switchDirections =
+                [(Start, InputButtons.Left), (Start + .04, InputButtons.None), (Start + .06, InputButtons.Right)];
+            Check(Finish(switchDirections) is { Published.Count: 0, Discarded: 1 },
+                "Short opposing taps within a single training decision are incompatible.");
+            Check(Finish(switchDirections, addLaterFrame: true) is { Published.Count: 1, Discarded: 0 },
+                "A later compatible training decision must keep the clip and its original controls.");
+
+            var end = first.Time.AvailableAt + BotRecordingContract.SampleInterval;
+            Check(Finish([(Start, InputButtons.Left), (end, InputButtons.Left | InputButtons.Right)])
+                is { Published.Count: 1, Discarded: 0 },
+                "An edge at the end belongs to the next training decision.");
+            Check(FinishSkill(verified: false) is { Published.Count: 0, Discarded: 1 }
+                && FinishSkill(verified: true).Published.Single().RecordedSkillControls == true,
+                "A skill-only decision must retain its clip when the receiver verified the skill controls.");
+            Check(BotCaptureSession.Library(root).Count == 3 && Directory.GetDirectories(root, ".pending-demo-*").Length == 0,
+                "Bot Summary should contain only clips with compatible action windows.");
+
+            BotCaptureResult Finish((double Time, InputButtons Buttons)[] states, bool addLaterFrame = false,
+                double stopAt = Start + 1)
+            {
+                var capture = new BotCaptureSession(root, "normal", "visual", Generation, Start, Labels());
+                foreach (var (time, buttons) in states) capture.ObserveNativeInput(buttons, time);
+                Check(capture.TryRecord(first.Frame, Visual(first), null), "The recorder should preserve the first observation.");
+                if (addLaterFrame)
+                {
+                    var later = Input(3);
+                    Check(capture.TryRecord(later.Frame, Visual(later), null), "The recorder should preserve the later observation.");
+                }
+                return capture.FinishAsync(stopAt, null, completed: true).GetAwaiter().GetResult();
+            }
+
+            BotCaptureResult FinishSkill(bool verified)
+            {
+                var id = Guid.NewGuid();
+                var recorder = new InputPathRecorder();
+                recorder.Start(Start, id: id, metadata: verified
+                    ? new Dictionary<string, string> { [RecordedInputPath.SkillControlsMetadata] = "true" } : null);
+                recorder.RecordInput(RecordedGameButton.Dash, true, Start);
+                var capture = new BotCaptureSession(root, "modded", "visual", Generation, Start, Labels(), id);
+                Check(capture.TryRecord(first.Frame, Visual(first), null), "The recorder should preserve the skill observation.");
+                return capture.FinishAsync(Start + 1, recorder.Stop(Start + 1), completed: true).GetAwaiter().GetResult();
+            }
+        });
+    }
+
     internal static void TestReviewUsesTheSavedDomainAndSafeLocalImage()
     {
         WithLibrary(root =>

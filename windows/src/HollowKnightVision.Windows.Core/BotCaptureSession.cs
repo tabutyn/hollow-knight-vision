@@ -73,6 +73,10 @@ public sealed class BotCaptureSession
         InputButtons.ActionA, InputButtons.ActionZ, InputButtons.ActionX, InputButtons.Inventory, InputButtons.PauseMenu,
         InputButtons.QuickCast, InputButtons.Dash, InputButtons.SuperDash, InputButtons.DreamNail
     ];
+    private static readonly IReadOnlySet<string> StandardTrainingButtons =
+        new HashSet<string>(["left", "right", "up", "down", "z", "x"], StringComparer.Ordinal);
+    private static readonly IReadOnlySet<string> SkillTrainingButtons =
+        Enum.GetValues<RecordedGameButton>().Select(button => button.WireName()).ToHashSet(StringComparer.Ordinal);
     private readonly record struct Sample(BgraFrame Image, BotCaptureObservation Gameplay, BotCaptureObservation? Hacker);
 
     private readonly object gate = new();
@@ -122,8 +126,8 @@ public sealed class BotCaptureSession
         Clip? authoredClip = null;
         try
         {
-            visual = new Clip(staging, paired ? Guid.NewGuid() : replayId ?? Guid.NewGuid(), "gameplay");
-            if (paired) authoredClip = new Clip(staging, replayId!.Value, "hacker");
+            visual = new Clip(staging, paired ? Guid.NewGuid() : replayId ?? Guid.NewGuid(), "gameplay", trackTraining: true);
+            if (paired) authoredClip = new Clip(staging, replayId!.Value, "hacker", trackTraining: true);
             gameplay = visual;
             hacker = authoredClip;
             if (hacker is not null)
@@ -190,10 +194,11 @@ public sealed class BotCaptureSession
             var events = path is null ? nativeInput.Where(e => e.Timestamp <= stoppedAt).ToArray()
                 : path.Events.Select(e => new BotCaptureInput(StartedAt + e.Offset, e.Button.WireName(),
                     e.Transition == RecordedInputTransition.Pressed)).Where(e => e.Timestamp <= stoppedAt + .001).ToArray();
+            var orderedEvents = events.OrderBy(input => input.Timestamp).ToArray();
+            var recordedSkillControls = path?.RuntimeMetadata?.GetValueOrDefault(RecordedInputPath.SkillControlsMetadata) == "true";
+            var supportedButtons = recordedSkillControls ? SkillTrainingButtons : StandardTrainingButtons;
             var clips = new[] { gameplay, hacker }.OfType<Clip>().ToArray();
-            // A training decision requires one full subsequent action window.
-            var eligible = clips.Where(clip => clip.FirstTrainableAt is { } time
-                && time + BotRecordingContract.SampleInterval <= stoppedAt).ToArray();
+            var eligible = clips.Where(clip => clip.HasTrainableActionWindow(orderedEvents, supportedButtons, stoppedAt)).ToArray();
             var manifests = new List<BotCaptureManifest>();
             foreach (var clip in eligible)
             {
@@ -206,7 +211,7 @@ public sealed class BotCaptureSession
                     stoppedAt - StartedAt, clip.Count, clip.UsableCount, events.Length, clip.ImageCount, clip.Domain,
                     replay, other?.Id)
                 {
-                    RecordedSkillControls = path?.RuntimeMetadata?.GetValueOrDefault(RecordedInputPath.SkillControlsMetadata) == "true"
+                    RecordedSkillControls = recordedSkillControls
                 };
                 AtomicFile.Write(Path.Combine(clip.Directory, "manifest.json"), JsonSerializer.SerializeToUtf8Bytes(manifest, Json));
                 if (path?.VisualFrameArchive is not null && replayRoot is not null)
@@ -446,16 +451,17 @@ public sealed class BotCaptureSession
         internal int Count { get; private set; }
         internal int UsableCount { get; private set; }
         internal int ImageCount { get; private set; }
-        internal double? FirstTrainableAt { get; private set; }
+        private readonly List<double>? trainingCandidateTimes;
         private readonly StreamWriter stream;
         private double lastImage = double.NegativeInfinity;
         private double lastAvailable = double.NegativeInfinity;
         private bool closed;
 
-        internal Clip(string staging, Guid id, string domain)
+        internal Clip(string staging, Guid id, string domain, bool trackTraining = false)
         {
             Id = id;
             Domain = domain;
+            trainingCandidateTimes = trackTraining ? [] : null;
             Directory = Path.Combine(staging, DirectoryName(id));
             System.IO.Directory.CreateDirectory(Directory);
             stream = new StreamWriter(new FileStream(Path.Combine(Directory, "events.jsonl"),
@@ -485,8 +491,40 @@ public sealed class BotCaptureSession
             lastAvailable = observation.AvailableAt;
             Count++;
             if (observation.Issues.Count == 0) UsableCount++;
-            if (observation.CanTrain) FirstTrainableAt ??= observation.AvailableAt;
+            if (trainingCandidateTimes is not null && observation.CanTrain)
+                trainingCandidateTimes.Add(observation.AvailableAt);
             return path;
+        }
+
+        internal bool HasTrainableActionWindow(IReadOnlyList<BotCaptureInput> inputs, IReadOnlySet<string> supported,
+            double stoppedAt)
+        {
+            if (trainingCandidateTimes is not { Count: > 0 } times) return false;
+            var held = new HashSet<string>(StringComparer.Ordinal);
+            var window = new HashSet<string>(StringComparer.Ordinal);
+            var index = 0;
+            foreach (var start in times)
+            {
+                var end = start + BotRecordingContract.SampleInterval;
+                if (end > stoppedAt) break;
+                while (index < inputs.Count && inputs[index].Timestamp <= start)
+                {
+                    var edge = inputs[index++];
+                    if (edge.IsPressed) held.Add(edge.Button);
+                    else held.Remove(edge.Button);
+                }
+
+                // Match the shared trainer's held controls and taps in [start, end).
+                window.Clear();
+                window.UnionWith(held);
+                for (var tap = index; tap < inputs.Count && inputs[tap].Timestamp < end; tap++)
+                    if (inputs[tap].IsPressed) window.Add(inputs[tap].Button);
+
+                if (window.IsSubsetOf(supported)
+                    && !(window.Contains("left") && window.Contains("right"))
+                    && !(window.Contains("up") && window.Contains("down"))) return true;
+            }
+            return false;
         }
 
         internal void Append<T>(T record) => stream.WriteLine(JsonSerializer.Serialize(record, Json));
