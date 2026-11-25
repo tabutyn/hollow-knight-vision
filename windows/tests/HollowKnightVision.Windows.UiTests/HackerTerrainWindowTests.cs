@@ -29,6 +29,9 @@ internal static class HackerTerrainWindowTests
         {
             Environment.SetEnvironmentVariable(LabelRoot, directory.FullName);
             VerifyGestures(directory.FullName);
+            var objectiveRoot = Path.Combine(directory.FullName, "objective");
+            Environment.SetEnvironmentVariable(LabelRoot, objectiveRoot);
+            TestClickBeyondVisitedAtlasHighlightsFullRouteImmediately(objectiveRoot);
         }
         finally
         {
@@ -37,6 +40,139 @@ internal static class HackerTerrainWindowTests
             directory.Delete(recursive: true);
         }
         Console.WriteLine("PASS native Hacker door editing reaches paths beyond visited tiles and keeps drafts attached to their room");
+    }
+
+    private static void TestClickBeyondVisitedAtlasHighlightsFullRouteImmediately(string root)
+    {
+        const int size = 100;
+        const long generation = 8;
+        const double capturedAt = 1;
+        new GroundTruthLineStore(Path.Combine(root, GroundTruthLineStore.Filename)).Save(new()
+        {
+            Lines = [new(Room, 0, 30, 0, GroundTruthLineKind.Positive, false),
+                new(Room, 32, 42, 2, GroundTruthLineKind.Positive, false)]
+        });
+        using var capture = new CancellationTokenSource();
+        var window = new MainWindow(GameRuntimeMode.Modded, gamePath: null, root: root, documents: root) { Topmost = true };
+        try
+        {
+            Field(window, "isClosing").SetValue(window, true);
+            window.Show();
+            WaitFor(() => window.IsLoaded, "The objective fixture did not load its window.");
+            Field(window, "workspace").SetValue(window, "Hacker");
+            Field(window, "visionCancellation").SetValue(window, capture);
+            Field(window, "recentCaptureGeneration").SetValue(window, generation);
+            Control<FrameworkElement>(window, "GameplayPanel").Visibility = Visibility.Collapsed;
+            Control<FrameworkElement>(window, "HackerPanel").Visibility = Visibility.Visible;
+            Control<FrameworkElement>(window, "GameplayControlsPanel").Visibility = Visibility.Collapsed;
+            Field(window, "hackerFramingValue").SetValue(window, "Free Fly");
+            var viewport = (GameplayViewportController)Field(window, "hackerViewport").GetValue(window)!;
+            var atlas = Control<Canvas>(window, "AtlasCanvas");
+            var routeCanvas = Control<Canvas>(window, "HackerPathCanvas");
+            var live = Control<FrameworkElement>(window, "HackerLiveImage");
+            var showPaths = Control<CheckBox>(window, "AtlasPathsCheck");
+            var target = Control<ComboBox>(window, "HackerTerrainTarget");
+            Check(target.SelectedItem is ComboBoxItem { Content: "Objective" }, "Hacker should open with Objective selected.");
+
+            var sample = ReceiverWireCodec.DecodeLine<ReceiverGroundTruthSample>(
+                """
+                {"version":2,"type":"groundTruth","sceneName":"Tutorial_01","unityFrame":1,
+                 "heroAvailable":true,"heroX":5,"heroY":0.64,"grounded":true,
+                 "cameraAvailable":true,"cameraX":5,"cameraY":5,"pixelsPerWorldUnitX":10,"pixelsPerWorldUnitY":10,
+                 "screenWidth":100,"screenHeight":100,"projectionPixelWidth":100,"projectionPixelHeight":100,
+                 "atlasGameplayActive":true}
+                """)
+                with { SessionId = Guid.NewGuid() };
+            var image = new BgraFrame(size, size, size * 4, new byte[size * size * 4], 1, DateTimeOffset.UnixEpoch);
+            var bitmap = typeof(MainWindow).GetMethod("FrameBitmap", BindingFlags.Static | BindingFlags.NonPublic)!
+                .Invoke(null, [image]);
+            var publication = typeof(MainWindow).GetNestedType("HackerPipelinePublication", BindingFlags.NonPublic)!;
+            var work = (long)Field(window, "hackerWorkGeneration").GetValue(window)!;
+            Present(gameplay: true);
+            Invoke(window, "ApplySettledViewportTransform", atlas, viewport.SetFreeFlyTransform(new(1, 65, 20)));
+            _ = window.Activate();
+            window.UpdateLayout();
+            Check(routeCanvas.Visibility == Visibility.Visible, "The frame-matched Hacker path must be visible.");
+
+            var originX = ((int?)Field(window, "hackerAtlasMinimumTileX").GetValue(window) ?? 0) * LiveTiledAtlas.TileSize;
+            var originY = ((int?)Field(window, "hackerAtlasMinimumTileY").GetValue(window) ?? 0) * LiveTiledAtlas.TileSize;
+            var point = new Point(395 - originX, -33 - originY);
+            Check(point.X > Canvas.GetLeft(live) + live.Width, "The objective click should be beyond the live image.");
+            ClickObjective();
+            WaitFor(() => Objectives().SelectedFor(Room) is not null, "The viewport did not apply the objective click.");
+            Check(Objectives().SelectedFor(Room) is { } chosen && Math.Abs(chosen.WorldPosition.X - 39.5) < .15,
+                "Clicking a route beyond the visited image should select its actual position.");
+            AssertWhiteRoute();
+
+            showPaths.IsChecked = false;
+            Check(routeCanvas.Visibility == Visibility.Collapsed, "Turning Atlas paths off must hide the white route.");
+            showPaths.IsChecked = true;
+            AssertWhiteRoute();
+            Present(gameplay: false);
+            Check(routeCanvas.Visibility == Visibility.Collapsed, "A frame outside Gameplay must hide Hacker paths.");
+            Present(gameplay: true);
+            AssertWhiteRoute();
+            ClickObjective();
+            WaitFor(() => Objectives().IsAutomatic(Room), "The viewport did not clear the objective on the second click.");
+            Check(!routeCanvas.Children.OfType<Line>().Any(line => line.Stroke == Brushes.White)
+                && routeCanvas.Children.OfType<Line>().Any(line => line.Stroke == Brushes.Gold),
+                "Clicking the target again should clear the white route and leave the authored path visible.");
+            showPaths.IsChecked = false;
+            target.SelectedItem = target.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Content, "Path"));
+            Check(showPaths.IsChecked == true && routeCanvas.Visibility == Visibility.Visible
+                && Control<FrameworkElement>(window, "HackerPathActions").IsVisible,
+                "Selecting Path must turn the overlay on and expose its editor.");
+            showPaths.IsChecked = false;
+            Check(routeCanvas.Visibility == Visibility.Collapsed && target.SelectedItem is ComboBoxItem { Content: "Objective" },
+                "Turning the overlay off again must hide the paths and leave Path editing.");
+            Console.WriteLine("PASS Windows Hacker objective clicks beyond captured tiles immediately show the whole reachable route");
+
+            HackerAtlasObjectives Objectives() => (HackerAtlasObjectives)Field(window, "hackerObjectives").GetValue(window)!;
+
+            void Present(bool gameplay)
+            {
+                var now = sample with { AtlasGameplayActive = gameplay };
+                var camera = GroundTruthCameraTransform.FromSample(now, capturedAt, new(size, size))!;
+                var prepared = new HackerPreparedFrame(image, new(0, 0, size, size), default, camera,
+                    now, default, Room, 1, capturedAt, true, true);
+                Invoke(window, "ApplyHackerPipelinePublication", Activator.CreateInstance(publication,
+                    [prepared, bitmap, null, generation, work, gameplay, 0])!);
+                window.UpdateLayout();
+            }
+
+            void ClickObjective()
+            {
+                var screen = atlas.PointToScreen(point);
+                Check(SetCursorPos((int)Math.Round(screen.X), (int)Math.Round(screen.Y)),
+                    "Could not position the pointer on the route.");
+                WaitFor(() => (Mouse.GetPosition(atlas) - point).Length < 1.5, "The pointer did not reach the objective.");
+                MouseEvent(LeftDown, 0, 0, 0, 0);
+                MouseEvent(LeftUp, 0, 0, 0, 0);
+                Pump();
+            }
+
+            void AssertWhiteRoute()
+            {
+                var white = routeCanvas.Children.OfType<Line>().Where(line => line.Stroke == Brushes.White).ToArray();
+                Check(routeCanvas.Visibility == Visibility.Visible
+                    && white.Any(line => line.X1 == 50 - originX && line.X2 == 298 - originX
+                        && line.Y1 == -13 - originY && line.Y2 == line.Y1)
+                    && white.Any(line => line.X1 == 298 - originX && line.X1 == line.X2
+                        && line.Y1 == -13 - originY && line.Y2 == -36 - originY)
+                    && white.Any(line => line.X1 == 322 - originX && Math.Abs(line.X2 - point.X) <= 1.5
+                        && line.Y1 == point.Y && line.Y2 == point.Y),
+                    "The white route must immediately cover the floor, the rise, and the part of the ledge beyond the image.");
+            }
+        }
+        finally
+        {
+            Field(window, "visionCancellation").SetValue(window, null);
+            var shutdown = (Task)Invoke(window, "PrepareShutdownAsync")!;
+            WaitFor(() => shutdown.IsCompleted, "The objective fixture did not finish shutdown.");
+            shutdown.GetAwaiter().GetResult();
+            Field(window, "shutdownReady").SetValue(window, true);
+            window.Close();
+        }
     }
 
     private static void VerifyGestures(string root)
