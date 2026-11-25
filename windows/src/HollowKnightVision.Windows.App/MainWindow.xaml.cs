@@ -3196,6 +3196,7 @@ public partial class MainWindow : Window
         bool ownsHackerWork,
         long hackerGeneration)
     {
+        QueueMatchedHackerCapture(matched, receiverFrameJoinGeneration);
         // Exact pairs are offered in capture order. Live and atlas workers
         // each keep the newest pending frame while their current work runs.
         QueueReceiverHackerMatch(new HackerPipelineWork(
