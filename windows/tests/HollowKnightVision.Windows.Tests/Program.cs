@@ -421,6 +421,8 @@ var tests = new List<(string Name, Action Run)>
     ("slow or transitioning frames cannot produce training clips", BotCaptureTests.TestSlowFramesAndReceiverTransitionsAreExcluded),
     ("paired captures publish immediate evidence while invalid clips are discarded", BotCaptureTests.TestPairedEvidencePublishesOnceAndHazardClipsAreDiscarded),
     ("native controls produce edges and interrupted bot captures are discarded", BotCaptureTests.TestNativeControlsAndInterruptedCapture),
+    ("an interrupted pair is discarded and a valid hidden Knight keeps only Game Play", BotCaptureTests.TestPairedCaptureRetainsOnlyEligibleOccludedGameplay),
+    ("bot recordings require at least one complete compatible action window", BotCaptureTests.TestCaptureRequiresACompleteCompatibleActionWindow),
     ("bot clip preview uses the saved image and domain", BotCaptureTests.TestReviewUsesTheSavedDomainAndSafeLocalImage),
     ("input ground truth telemetry provides projection scale", InputBridgeParityTests.TestGroundTruthTelemetryDecodesAndProvidesProjectionScale),
     ("input player pose playback preserves recorded truth", InputBridgeParityTests.TestPlayerPosePlaybackEncodesRecordedGroundTruth),
