@@ -21,6 +21,7 @@ internal static class BotDesktopEvaluationTests
     private const int Width = 192, Height = 128;
     private const InputButtons Action = InputButtons.Right | InputButtons.ActionX;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private enum OpeningOutcome { Gameplay, HandoffTimeout, ArchiveFailure }
 
     internal static void Run()
     {
@@ -46,9 +47,9 @@ internal static class BotDesktopEvaluationTests
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             foreach (var domain in new[] { "gameplay", "hacker" })
                 await VerifyDomainAsync(temporary.FullName, domain, label, timeout.Token);
-            await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening"), timeout.Token);
-            await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-timeout"), timeout.Token,
-                expireHandoff: true);
+            await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening"), OpeningOutcome.Gameplay, timeout.Token);
+            await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-timeout"), OpeningOutcome.HandoffTimeout, timeout.Token);
+            await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-backup-failure"), OpeningOutcome.ArchiveFailure, timeout.Token);
             await VerifyCheckpointControlsAsync(Path.Combine(temporary.FullName, "versions"), timeout.Token);
             await TestSummaryAndQueuedCaptureUpdateWhileEventDecodeIsBlocked(Path.Combine(temporary.FullName, "summary"), timeout.Token);
             await VerifyThinkingLeaseAsync(Path.Combine(temporary.FullName, "thinking"), timeout.Token);
@@ -581,7 +582,7 @@ internal static class BotDesktopEvaluationTests
         string Events(Guid id) => Path.Combine(captures, BotCaptureSession.DirectoryName(id), "events.jsonl");
     }
 
-    private static async Task VerifyOpeningWithoutCheckpointAsync(string root, CancellationToken token, bool expireHandoff = false)
+    private static async Task VerifyOpeningWithoutCheckpointAsync(string root, OpeningOutcome outcome, CancellationToken token)
     {
         using var server = new TcpListener(IPAddress.Loopback, 0);
         server.Start();
@@ -591,6 +592,13 @@ internal static class BotDesktopEvaluationTests
         var peer = ServeAsync(server, states.Writer, token);
         var saves = Directory.CreateDirectory(Path.Combine(root, "saves")).FullName;
         var archives = Path.Combine(root, "bot-v1", "save-archives");
+        var slotFour = Path.Combine(saves, "user4.dat");
+        if (outcome == OpeningOutcome.ArchiveFailure)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(archives)!);
+            File.WriteAllText(archives, "archive destination is a file");
+            File.WriteAllText(slotFour, "original save");
+        }
         var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
         try
         {
@@ -608,6 +616,26 @@ internal static class BotDesktopEvaluationTests
             var pixels = new byte[Width * Height * 4];
             var index = 0;
             var selector = new MenuStencilMatch("selector", "Selector", new(10, 10, 6, 6), 1, null);
+            var status = (TextBlock)window.FindName("StatusText");
+            if (outcome == OpeningOutcome.ArchiveFailure)
+            {
+                while (Field("botPlayback").GetValue(window) is not null)
+                {
+                    Step("select-profile", receiverGameplay: false, recognizedGameplay: false, admitGameplay: false, showHud: false);
+                    await Task.Delay(30, token);
+                }
+                var demo = (BotDemoSession)run.GetType().GetProperty("Demo", Instance)!.GetValue(run)!;
+                Check(!bridge.OwnsBotControl(owner) && demo.Phase == BotDemoPhase.Stopped
+                    && !string.IsNullOrEmpty(demo.Status) && status.Text == demo.Status
+                    && File.ReadAllText(slotFour) == "original save"
+                    && File.ReadAllText(archives) == "archive destination is a file",
+                    "A failed save backup must stop the desktop bot, report an issue, and release control.");
+                while (states.Reader.TryRead(out var state))
+                    Check(!state.Enabled && state.HeldButtons == InputButtons.None,
+                        "A failed save backup must not send clear or start commands to the receiver.");
+                Console.WriteLine("PASS Desktop bot releases controls and leaves the save intact when its archive fails");
+                return;
+            }
             await ExpectAction(InputButtons.ActionZ, "select-profile", receiverGameplay: false);
             Check(File.Exists(Path.Combine(Directory.GetDirectories(archives).Single(), "manifest.json"))
                 && Directory.GetFileSystemEntries(saves).Length == 0,
@@ -635,8 +663,7 @@ internal static class BotDesktopEvaluationTests
             Step(null, receiverGameplay: false, recognizedGameplay: true, admitGameplay: true, showHud: true);
             Check(bridge.OwnsBotControl(owner), "A lagging receiver must defer the handoff even after the Atlas is ready.");
 
-            var status = (System.Windows.Controls.TextBlock)window.FindName("StatusText");
-            if (expireHandoff)
+            if (outcome == OpeningOutcome.HandoffTimeout)
             {
                 // Advance the pending deadline without waiting for more frames.
                 handoffDeadline.SetValue(run, Clock() - .1);
@@ -673,7 +700,7 @@ internal static class BotDesktopEvaluationTests
             }
             await ((Task)Field("botEvaluationWrites").GetValue(window)!).WaitAsync(token);
             var evaluationRoot = Path.Combine(root, "bot-v1", "evaluations");
-            if (expireHandoff)
+            if (outcome == OpeningOutcome.HandoffTimeout)
                 Check(!Directory.Exists(evaluationRoot), "An opening without a playable frame must leave no evaluation.");
             else
             {
@@ -707,6 +734,7 @@ internal static class BotDesktopEvaluationTests
                     [], [selector, selector], [], 0, 0, 1, MenuStencilPhase.Tracking, 1, timestamp, "en")
                 {
                     CheckedProfileSlots = context == "select-profile" ? [1, 2, 3, 4] : [],
+                    OccupiedProfileSlots = outcome == OpeningOutcome.ArchiveFailure && context == "select-profile" ? [4] : [],
                     SelectedOptionIdentifier = context == "select-profile" ? "select-profile.slot-4" : "shared.yes"
                 };
                 var hud = showHud
@@ -724,7 +752,7 @@ internal static class BotDesktopEvaluationTests
             await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
             await peer.WaitAsync(TimeSpan.FromSeconds(5));
         }
-        Console.WriteLine(expireHandoff ? "PASS Desktop bot returns control when the Gameplay HUD handoff expires without new frames"
+        Console.WriteLine(outcome == OpeningOutcome.HandoffTimeout ? "PASS Desktop bot returns control when the Gameplay HUD handoff expires without new frames"
             : "PASS Desktop bot stops cutscene input at the Gameplay HUD, starts the built-in explorer, and releases with B");
     }
 

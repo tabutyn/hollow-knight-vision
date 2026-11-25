@@ -8,9 +8,6 @@ public sealed class BotDemoSession(BotDemoSaveArchive saves, double startedAt)
     private readonly BotDemoNavigation navigation = new(startedAt);
     private Task<(BotDemoSaveBackup? Backup, string? Issue)>? archiveTask;
     private string? failure;
-    private double lastProfileCheck = double.NegativeInfinity;
-    private int? checkedOccupancy;
-    private bool? activeSave;
 
     public BotDemoSaveBackup? Backup { get; private set; }
     public string Status => failure ?? navigation.Status;
@@ -52,12 +49,10 @@ public sealed class BotDemoSession(BotDemoSaveArchive saves, double startedAt)
         if (!frame.ProfilesMeasured || now - frame.CapturedAt is < 0 or > .5
             || navigation.Phase is BotDemoPhase.Archiving or BotDemoPhase.Opening or BotDemoPhase.Gameplay)
             return null;
-        if (checkedOccupancy == frame.OccupiedSlots && now - lastProfileCheck < .2) return activeSave;
-        lastProfileCheck = now;
-        checkedOccupancy = frame.OccupiedSlots;
-        try { activeSave = saves.HasActiveSave(frame.OccupiedSlots); }
-        catch (BotDemoSaveProfileMismatchException) { activeSave = null; }
-        return activeSave;
+        // The last profile image can outlive an on-disk save change. Use
+        // current files before navigation can select or retry the slot.
+        try { return saves.HasActiveSave(frame.OccupiedSlots); }
+        catch (BotDemoSaveProfileMismatchException) { return null; }
     }
 
     private (BotDemoSaveBackup? Backup, string? Issue) Archive(int occupiedSlots)

@@ -144,19 +144,7 @@ internal static class BotDemoTests
         }
         _ = Step("select-profile", "select-profile.slot-4");
         Expect(Step("select-profile", "select-profile.slot-4"), BotDemoPhase.Archiving, action: BotDemoSaveAction.Archive);
-        var until = DateTime.UtcNow.AddSeconds(10);
-        var entered = false;
-        while (DateTime.UtcNow < until && !entered)
-        {
-            // Poll completion at a held capture timestamp. Navigation advances
-            // only after a new frame and the archive validates independently.
-            var result = session.Observe(new(clock, false, "select-profile", "select-profile.slot-4",
-                clock, 15, 8, InputButtons.None), clock);
-            Check(result.Phase != BotDemoPhase.Stopped, result.Issue ?? "Archive failed.");
-            entered = session.Backup is not null;
-            if (!entered) Thread.Sleep(5);
-        }
-        Check(entered, "The archive background job never completed.");
+        Expect(WaitForArchive(session, SlotFour(clock, 8)), BotDemoPhase.SelectingClear);
         _ = Step("select-profile", "select-profile.slot-4");
         Expect(Step("select-profile", "select-profile.slot-4"), BotDemoPhase.SelectingClear, InputButtons.Right);
         _ = Step("select-profile", "select-profile.clear-save-4");
@@ -171,6 +159,75 @@ internal static class BotDemoTests
             && File.ReadAllText(Path.Combine(fixture.Saves, "user4.dat")) == "Steam changed the save"
             && File.ReadAllText(Path.Combine(session.Backup!.Directory, "user4.dat")) == "original save",
             "A racing save must stop the bot before sending confirm and preserve the archive.");
+    }
+
+    public static void TestSessionStopsWhenArchiveCannotBePublished()
+    {
+        using var fixture = new Fixture();
+        fixture.Write("user4.dat", "original save");
+        File.WriteAllText(fixture.Archives, "archive destination is a file");
+        var session = new BotDemoSession(fixture.Store, 0);
+        var profile = SlotFour(.4, 8);
+
+        Expect(session.Observe(SlotFour(.1, 8), .1), BotDemoPhase.Navigating);
+        Expect(session.Observe(profile, .4), BotDemoPhase.Archiving, action: BotDemoSaveAction.Archive);
+        var failed = WaitForArchive(session, profile);
+        Expect(failed, BotDemoPhase.Stopped);
+        Check(!string.IsNullOrEmpty(failed.Issue) && session.Backup is null,
+            "The bot needs a verified backup before it can clear a save.");
+        Expect(session.Observe(SlotFour(.8, 8), .8), BotDemoPhase.Stopped);
+        Check(File.ReadAllText(Path.Combine(fixture.Saves, "user4.dat")) == "original save"
+            && File.ReadAllText(fixture.Archives) == "archive destination is a file",
+            "A failed archive must preserve the original files and send no controls.");
+    }
+
+    public static void TestSessionRechecksSaveBeforeStartingOrRetrying()
+    {
+        foreach (var retry in new[] { false, true })
+        {
+            using var fixture = new Fixture();
+            var session = new BotDemoSession(fixture.Store, 0);
+            BotDemoDecision Observe(double time, int occupied = 0) =>
+                session.Observe(SlotFour(time, occupied), time);
+
+            Expect(Observe(.1), BotDemoPhase.Navigating);
+            Expect(Observe(.4), BotDemoPhase.Archiving, action: BotDemoSaveAction.Archive);
+            Expect(WaitForArchive(session, SlotFour(.4, 0)), BotDemoPhase.StartingSave);
+            Expect(Observe(.5), BotDemoPhase.StartingSave);
+
+            if (retry)
+            {
+                Expect(Observe(.83), BotDemoPhase.LeavingProfile, InputButtons.ActionZ);
+                Expect(Observe(2.72), BotDemoPhase.LeavingProfile);
+            }
+            else Expect(Observe(.72), BotDemoPhase.StartingSave);
+
+            fixture.Write("user4.dat", "save appeared after the last empty observation");
+            Expect(Observe(retry ? 2.86 : .77), retry ? BotDemoPhase.LeavingProfile : BotDemoPhase.StartingSave);
+
+            if (!retry)
+            {
+                Expect(Observe(.83, 8), BotDemoPhase.StartingSave);
+                Expect(Observe(1.12, 8), BotDemoPhase.Stopped);
+            }
+            Check(File.ReadAllText(Path.Combine(fixture.Saves, "user4.dat")) ==
+                "save appeared after the last empty observation", "The replacement save must remain intact.");
+        }
+    }
+
+    private static BotDemoFrame SlotFour(double time, int occupied) =>
+        new(time, false, "select-profile", "select-profile.slot-4", time, 15, occupied, InputButtons.None);
+
+    private static BotDemoDecision WaitForArchive(BotDemoSession session, BotDemoFrame lastProfile)
+    {
+        BotDemoDecision decision = default;
+        // Poll completion without making the same profile frame advance navigation.
+        Check(SpinWait.SpinUntil(() =>
+        {
+            decision = session.Observe(lastProfile, lastProfile.CapturedAt);
+            return decision.Phase != BotDemoPhase.Archiving;
+        }, TimeSpan.FromSeconds(10)), "The archive background job never completed.");
+        return decision;
     }
 
     public static void TestStaleDuplicateAndPreStartFramesCannotAdvanceNavigation()
@@ -283,12 +340,13 @@ internal static class BotDemoTests
     {
         private readonly string root = Directory.CreateTempSubdirectory("hkv-bot-demo-").FullName;
         public string Saves { get; }
+        public string Archives => Path.Combine(root, "archives");
         public BotDemoSaveArchive Store { get; }
 
         public Fixture()
         {
             Saves = Directory.CreateDirectory(Path.Combine(root, "saves")).FullName;
-            Store = new(Saves, Path.Combine(root, "archives"));
+            Store = new(Saves, Archives);
         }
 
         public void Write(string name, string contents) => File.WriteAllText(Path.Combine(Saves, name), contents);
