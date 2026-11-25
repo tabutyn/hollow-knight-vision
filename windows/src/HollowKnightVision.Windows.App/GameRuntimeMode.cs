@@ -46,15 +46,22 @@ internal sealed record GameLaunchOptions(GameRuntimeMode? Mode, string? GamePath
                 };
                 continue;
             }
+            string? pathValue = null;
             if (argument == "--game-path")
             {
                 if (++index >= arguments.Length)
                     throw new ArgumentException("--game-path requires a path.");
-                gamePath = arguments[index];
+                pathValue = arguments[index];
             }
             else if (argument.StartsWith("--game-path=", StringComparison.Ordinal))
             {
-                gamePath = argument["--game-path=".Length..];
+                pathValue = argument["--game-path=".Length..];
+            }
+            if (pathValue is not null)
+            {
+                if (gamePath is not null)
+                    throw new ArgumentException("--game-path may be specified only once.");
+                gamePath = pathValue;
             }
         }
         return new GameLaunchOptions(mode, gamePath, thinkingEnabled);
