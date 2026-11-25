@@ -1036,6 +1036,8 @@ var tests = new List<(string Name, Action Run)>
     ("Bot Demo skips the opening and requires a fresh Gameplay HUD", BotDemoTests.TestEmptySlotSkipsOpeningAndRequiresFreshHud),
     ("Bot Demo keeps skipping long opening sequences until the HUD", BotDemoTests.TestLongOpeningRetainsSkipActionsUntilHud),
     ("Bot Demo aborts before confirmation when the save changes", BotDemoTests.TestSessionStopsIfGameSaveChangesBeforeConfirm),
+    ("Bot Demo sends no clear commands when its archive cannot be published", BotDemoTests.TestSessionStopsWhenArchiveCannotBePublished),
+    ("Bot Demo rechecks save evidence before starting or retrying the new save", BotDemoTests.TestSessionRechecksSaveBeforeStartingOrRetrying),
     ("Bot Demo uses fresh menu timing, selection and dialog geometry", BotDemoTests.TestVisionAdmitsOnlyFreshMeasuredEvidence),
     ("Bot Demo rejects stale, duplicate and pre-start evidence", BotDemoTests.TestStaleDuplicateAndPreStartFramesCannotAdvanceNavigation),
     ("Bot Demo retries only the original recognized selection", BotDemoTests.TestIgnoredTitleSelectRetriesOnlyOnTheSameRecognizedMenu),
