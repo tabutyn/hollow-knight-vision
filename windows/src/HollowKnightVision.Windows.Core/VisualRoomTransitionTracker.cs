@@ -1125,7 +1125,11 @@ public sealed class VisualRoomTransitionTracker
     public VisualRoomSnapshot RestoreTopology(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        var data = File.ReadAllBytes(path);
+        return RestoreTopology(File.ReadAllBytes(path));
+    }
+
+    private VisualRoomSnapshot RestoreTopology(byte[] data)
+    {
         using var document = JsonDocument.Parse(data);
         ValidatePersistedShape(document.RootElement);
         var state = JsonSerializer.Deserialize<PersistedState>(data, SerializerOptions)
@@ -1183,6 +1187,53 @@ public sealed class VisualRoomTransitionTracker
             portals.Clear();
             foreach (var pair in restoredPortals) portals.Add(pair.Key, pair.Value);
             ClearTransientState(resetPlaceMemory: true);
+            return SnapshotLocked();
+        }
+    }
+
+    public VisualRoomSnapshot RestoreOrImportDisconnectedRooms(string path, LiveWorldSnapshot world)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentNullException.ThrowIfNull(world);
+        var fullPath = Path.GetFullPath(path);
+        byte[]? existing;
+        try { existing = File.ReadAllBytes(fullPath); }
+        catch (FileNotFoundException) { existing = null; }
+        if (existing is not null)
+        {
+            try { return RestoreTopology(existing); }
+            catch (Exception error) when (error is JsonException or InvalidDataException)
+            {
+                var backup = Path.Join(Path.GetDirectoryName(fullPath),
+                    $"{Path.GetFileNameWithoutExtension(fullPath)}.rejected-{Guid.NewGuid():N}.json");
+                // Archive exactly the bytes the decoder rejected before replacing anything.
+                AtomicFile.Write(backup, existing, overwrite: false);
+            }
+        }
+        var restored = RestoreDisconnectedRooms(world);
+        SaveTopology(fullPath);
+        return restored;
+    }
+
+    public VisualRoomSnapshot RestoreDisconnectedRooms(LiveWorldSnapshot world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+        lock (sync)
+        {
+            var observations = world.Observations;
+            var latest = observations.MaxBy(observation => (observation.Timestamp, observation.Id));
+            var highestRoom = latest is null ? 0 : observations.Max(observation => observation.RoomId);
+            if (highestRoom == int.MaxValue)
+                throw new InvalidDataException("Saved visual rooms have exhausted the room identifiers.");
+            var entry = latest is null ? null : observations.First(observation => observation.RoomId == latest.RoomId);
+            ResetLocked();
+            if (entry is not null)
+            {
+                activeRoomID = entry.RoomId;
+                activeEntryWorldPose = entry.OptimizedPose;
+                nextRoomID = highestRoom + 1;
+                revision++;
+            }
             return SnapshotLocked();
         }
     }
@@ -1325,18 +1376,19 @@ public sealed class VisualRoomTransitionTracker
         }
     }
 
-    public VisualRoomSnapshot RestoreActiveRoomFromDurableEvidence(int roomID)
+    public VisualRoomSnapshot RestoreActiveRoomFromDurableEvidence(int roomID, AtlasPoint? entryWorldPose = null)
     {
         lock (sync)
         {
-            if (roomID < 0 || roomID == activeRoomID
-                || portals.Values.FirstOrDefault(value => value.RoomID == roomID)
-                    is not { } target)
+            var entry = portals.Values.FirstOrDefault(value => value.RoomID == roomID)?.EntryWorldPose ?? entryWorldPose;
+            if (roomID < 0 || roomID == int.MaxValue || roomID == activeRoomID
+                || entry is not { } pose || !LiveWorldSnapshot.Finite(pose))
             {
                 return SnapshotLocked();
             }
             activeRoomID = roomID;
-            activeEntryWorldPose = target.EntryWorldPose;
+            activeEntryWorldPose = pose;
+            nextRoomID = Math.Max(nextRoomID, roomID + 1);
             activeAppearance = roomAppearances.TryGetValue(roomID, out var appearance)
                 ? appearance
                 : null;
@@ -1356,18 +1408,23 @@ public sealed class VisualRoomTransitionTracker
     {
         lock (sync)
         {
-            activeRoomID = 0;
-            activeEntryWorldPose = default;
-            revision = 0;
-            nextRoomID = 1;
-            nextPortalID = 1;
-            portals.Clear();
-            portalConnections.Clear();
-            roomAppearances.Clear();
-            activeAppearance = null;
-            ClearTransientState(resetPlaceMemory: true);
+            ResetLocked();
             return SnapshotLocked();
         }
+    }
+
+    private void ResetLocked()
+    {
+        activeRoomID = 0;
+        activeEntryWorldPose = default;
+        revision = 0;
+        nextRoomID = 1;
+        nextPortalID = 1;
+        portals.Clear();
+        portalConnections.Clear();
+        roomAppearances.Clear();
+        activeAppearance = null;
+        ClearTransientState(resetPlaceMemory: true);
     }
 
     public VisualRoomSnapshot Observe(
@@ -2085,7 +2142,7 @@ public sealed class VisualRoomTransitionTracker
             || state.Appearances is null || state.Edges is null || state.Connections is null
             || state.ActiveAppearance is not null
                 && !TryParseAppearance(state.ActiveAppearance, out _)
-            || state.Appearances.Any(value => value.RoomID < 0
+            || state.Appearances.Any(value => value.RoomID < 0 || value.RoomID >= state.NextRoomID
                 || !TryParseAppearance(value.Value, out _))
             || state.Edges.Any(edge => edge.SourceRoomID < 0 || edge.TargetRoomID < 0
                 || edge.Direction is not (-1 or 1)

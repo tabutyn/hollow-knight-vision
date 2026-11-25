@@ -1066,6 +1066,7 @@ internal sealed class WindowsLiveWorldPipeline
             var reopenedCompositionExclusions = manifest.Observations.ToDictionary(
                 observation => observation.Id,
                 observation => CompositionRects(observation.ExcludedRects));
+            RestorePortableRoomTopology(reopened.RootDirectory, snapshot);
             store = reopened;
             tracker = reopenedTracker;
             placedRoomIds.Clear();
@@ -1106,6 +1107,31 @@ internal sealed class WindowsLiveWorldPipeline
             Volatile.Write(ref savedGround, LiveWorldGroundProjection.Empty);
             LastError = $"live-world reopen failed: {error.Message}";
             return false;
+        }
+    }
+
+    private static void RestorePortableRoomTopology(string directory, LiveWorldSnapshot snapshot)
+    {
+        // Preserve the Mac topology alongside imported worlds. Windows camera
+        // recovery still derives placements and doorway evidence from the graph.
+        var path = Path.Combine(directory, "visual-rooms.json");
+        if (!File.Exists(path) && (!snapshot.UsesSwiftWireFormat || snapshot.Observations.Count == 0)) return;
+        try
+        {
+            var topology = new VisualRoomTransitionTracker();
+            var restored = topology.RestoreOrImportDisconnectedRooms(path, snapshot);
+            if (snapshot.Observations.FirstOrDefault() is { } entry && restored.RoomID != entry.RoomId
+                && snapshot.Observations.All(observation => observation.RoomId == entry.RoomId))
+            {
+                topology.RestoreActiveRoomFromDurableEvidence(entry.RoomId, entry.OptimizedPose);
+                topology.SaveTopology(path);
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // A failed backup leaves the original sidecar untouched. The
+            // independently validated world can still be displayed.
+            System.Diagnostics.Trace.TraceWarning($"Could not restore portable room topology: {error.Message}");
         }
     }
 

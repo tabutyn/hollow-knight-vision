@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using HollowKnightVision.Windows.Core;
 
 internal static class VisualSceneDiscontinuityTrackerTests
@@ -325,6 +326,7 @@ internal static class VisualSceneDiscontinuityTrackerTests
         var arrival = Texture(2);
         var arrivingPose = new AtlasPoint(207, -39);
         var departureRoom = tracker.Snapshot.RoomID;
+        (int SourceRoomId, VisualSceneDiscontinuityTracker.Cut Cut)? observedCut = null;
         for (var index = 0; index < 40; index++)
         {
             var grid = index < 8 ? source : index < 18 ? Black : arrival;
@@ -334,21 +336,105 @@ internal static class VisualSceneDiscontinuityTrackerTests
                 Check(current.IsTransitioning && current.TransitionDirection == VisualRoomDirection.Right
                     && current.TransitionWorldPose == Departure && current.RoomID == departureRoom,
                     "Loading must withhold the source room before a confirmed arrival.");
+            if (current.ConfirmedSceneCut is { } cut)
+            {
+                Check(observedCut is null, "A single loading cut must publish only one room transition.");
+                observedCut = cut;
+            }
         }
         var arrived = tracker.Snapshot;
         Check(!arrived.IsTransitioning && arrived.RoomID == 1 && arrived.Revision == 1
             && arrived.EntryWorldPose == arrivingPose && arrived.Portals.Count == 0);
+        Check(observedCut is { SourceRoomId: 0, Cut.Direction: VisualRoomDirection.Right }
+            && Math.Abs(observedCut.Value.Cut.DepartureTimestamp - .35) < .001);
         var path = Path.GetTempFileName();
         try
         {
             tracker.SaveTopology(path);
             var restored = new VisualRoomTransitionTracker().RestoreTopology(path);
             Check(!restored.IsTransitioning && restored.RoomID == arrived.RoomID
-                && restored.EntryWorldPose == arrived.EntryWorldPose && restored.Portals.Count == 0);
-            Check(tracker.Reset() is { RoomID: 0, IsTransitioning: false, Portals.Count: 0 });
+                && restored.EntryWorldPose == arrived.EntryWorldPose && restored.Portals.Count == 0
+                && restored.ConfirmedSceneCut is null);
+            Check(tracker.Reset() is { RoomID: 0, IsTransitioning: false, Portals.Count: 0, ConfirmedSceneCut: null });
         }
         finally { File.Delete(path); }
     }
+
+    internal static void TestLegacyRoomsRestoreWithoutAnInventedPortalOrPlacement()
+    {
+        var world = new LiveWorldSnapshot(anchoredObservationId: 0, observations:
+        [
+            Observation(0, 0, 0, new(301, -73)),
+            Observation(1, 1, 1, new(-990, 420)),
+            Observation(2, 1, 2, new(-850, 420))
+        ]);
+        var before = LiveWorldJson.WriteSnapshot(world);
+        var root = Directory.CreateTempSubdirectory("hkv-legacy-visual-rooms-");
+        try
+        {
+            var path = Path.Combine(root.FullName, "visual-rooms.json");
+            var result = new VisualRoomTransitionTracker().RestoreOrImportDisconnectedRooms(path, world);
+            Check(result is { RoomID: 1, EntryWorldPose: { X: -990, Y: 420 }, Portals.Count: 0 }
+                && LiveWorldJson.WriteSnapshot(world).SequenceEqual(before),
+                "An imported room must keep its first saved pose and leave the graph unchanged.");
+            var reopened = new VisualRoomTransitionTracker().RestoreTopology(path);
+            Check(reopened.RoomID == result.RoomID && reopened.EntryWorldPose == result.EntryWorldPose
+                && reopened.Portals.Count == 0 && reopened.ConfirmedSceneCut is null);
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    internal static void TestDisconnectedRoomIdsAreReservedAndDurableRoomsDoNotRequirePortals()
+    {
+        var world = new LiveWorldSnapshot(anchoredObservationId: 1, observations: [Observation(1, 42, 1, default)]);
+        var tracker = new VisualRoomTransitionTracker();
+        Check(tracker.RestoreDisconnectedRooms(world) is { RoomID: 42, Portals.Count: 0 });
+        var source = Texture(1);
+        var arrival = Texture(2);
+        for (var index = 0; index < 40; index++)
+        {
+            var pixels = index < 8 ? source : index < 18 ? Black : arrival;
+            _ = tracker.Observe(Profile(pixels), new(index < 8 || index >= 18, false),
+                VisualRoomDirection.Right, null, new(640, 360), default, 640, 2 + index * .05);
+        }
+        Check(tracker.Snapshot is { RoomID: 43, Portals.Count: 0 },
+            "The next loading cut cannot reuse a durable room identifier.");
+        Check(tracker.RestoreActiveRoomFromDurableEvidence(42, new(5, 7))
+            is { RoomID: 42, EntryWorldPose: { X: 5, Y: 7 }, Portals.Count: 0, IsTransitioning: false });
+    }
+
+    internal static void TestDuplicateRoomAppearancesAreRejectedAndPreserved()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-duplicate-room-");
+        try
+        {
+            var path = Path.Combine(root.FullName, "visual-rooms.json");
+            var tracker = new VisualRoomTransitionTracker();
+            tracker.SaveTopology(path);
+            var payload = JsonNode.Parse(File.ReadAllBytes(path))!.AsObject();
+            payload["appearances"] = JsonNode.Parse("""[{"roomID":0,"value":"normal"},{"roomID":0,"value":"dark"}]""");
+            var original = System.Text.Encoding.UTF8.GetBytes(payload.ToJsonString());
+            File.WriteAllBytes(path, original);
+
+            try
+            {
+                _ = tracker.RestoreTopology(path);
+                throw new InvalidOperationException("Duplicate room appearances were accepted.");
+            }
+            catch (InvalidDataException) { }
+            Check(File.ReadAllBytes(path).SequenceEqual(original));
+
+            var restored = tracker.RestoreOrImportDisconnectedRooms(path, new LiveWorldSnapshot());
+            var backup = Directory.GetFiles(root.FullName, "visual-rooms.rejected-*.json").Single();
+            Check(restored is { RoomID: 0, Portals.Count: 0 } && File.ReadAllBytes(backup).SequenceEqual(original));
+            _ = tracker.RestoreOrImportDisconnectedRooms(path, new LiveWorldSnapshot());
+            Check(Directory.GetFiles(root.FullName).Length == 2, "Reopening repaired topology must not create another backup.");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    private static LiveWorldObservation Observation(int id, int room, double time, AtlasPoint pose) =>
+        LiveWorldObservation.Create(id, id, time, 640, 360, 640, 160, [], pose, pose, roomId: room);
 
     private static FrameSignalProfile Profile(LowResolutionMotionGrid grid) =>
         new(grid.Luma.Length, grid.Luma.Count(value => value >= 5), grid.Luma.Count(value => value >= 16),

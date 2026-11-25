@@ -1742,6 +1742,56 @@ internal static class NativeAtlasImportTests
         };
     }
 
+    internal static void TestNativeReopenPreservesRejectedPortableRoomTopology()
+    {
+        WithFixture((root, store, _) =>
+        {
+            var graph = store.Load().Snapshot;
+            var graphBytes = LiveWorldJson.WriteSnapshot(graph);
+            var original = "{invalid old topology"u8.ToArray();
+            var topologyPath = Path.Combine(root, "visual-rooms.json");
+            File.WriteAllBytes(topologyPath, original);
+
+            var pipeline = new WindowsLiveWorldPipeline(root);
+            var restored = new VisualRoomTransitionTracker().RestoreTopology(topologyPath);
+            var backup = Directory.GetFiles(root, "visual-rooms.rejected-*.json").Single();
+            var entry = graph.Observations.First(observation => observation.RoomId == TargetRoom);
+            Check(pipeline.HasDurableEvidence && restored.RoomID == TargetRoom
+                && restored.EntryWorldPose == entry.OptimizedPose && restored.Portals.Count == 0,
+                "Native restore should keep the durable room independently of rejected topology.");
+            Check(File.ReadAllBytes(backup).SequenceEqual(original)
+                && LiveWorldJson.WriteSnapshot(store.Load().Snapshot).SequenceEqual(graphBytes),
+                "Rebuilding the portable room list must preserve the rejected file and the validated graph.");
+            Check(pipeline.Reopen() && Directory.GetFiles(root, "visual-rooms.rejected-*.json").Length == 1,
+                "Reopening the same recovered world must not create another rejected copy.");
+        });
+    }
+
+    internal static void TestNativeReopenUsesTheOnlyDurableRoomWhenPortableTopologySelectsAnEmptyRoom()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-native-durable-room-");
+        try
+        {
+            var store = new LiveWorldSessionStore(root.FullName);
+            var frame = Frame();
+            var pose = new AtlasPoint(120, -80);
+            var source = store.Append(frame, 1, pose, 640, []);
+            var observation = LiveWorldObservation.Create(0, source.Id, 1, frame.Width, frame.Height,
+                640, 160, [], pose, pose, roomId: 42);
+            var graph = new LiveWorldSnapshot(mapRevision: 1, anchoredObservationId: 0, observations: [observation]);
+            Check(store.Commit(graph, 0, 1), "commit the only durable room");
+            var path = Path.Combine(root.FullName, "visual-rooms.json");
+            new VisualRoomTransitionTracker().SaveTopology(path);
+
+            var pipeline = new WindowsLiveWorldPipeline(root.FullName);
+            var restored = new VisualRoomTransitionTracker().RestoreTopology(path);
+            Check(pipeline.HasDurableEvidence && restored.RoomID == 42 && restored.EntryWorldPose == pose
+                && restored.Portals.Count == 0 && Directory.GetFiles(root.FullName, "visual-rooms.rejected-*.json").Length == 0,
+                "a valid portable room list should prefer the only durable room without requiring a portal");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
     internal static void TestAtlasLinksPreserveDoorwayAxesAndFixedPlacements()
     {
         WithFixture((root, store, _) =>
