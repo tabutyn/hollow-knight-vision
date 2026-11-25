@@ -34,6 +34,10 @@ internal static class GameControlKeyPolicy
             [Key.A] = InputButtons.ActionA,
             [Key.Z] = InputButtons.ActionZ,
             [Key.X] = InputButtons.ActionX,
+            [Key.F] = InputButtons.QuickCast,
+            [Key.C] = InputButtons.Dash,
+            [Key.E] = InputButtons.SuperDash,
+            [Key.D] = InputButtons.DreamNail,
             [Key.I] = InputButtons.Inventory,
             [Key.P] = InputButtons.PauseMenu
         };
@@ -68,8 +72,9 @@ internal static class GameControlKeyPolicy
         Key key,
         out InputButtons button)
     {
-        if (!IsModelReviewReserved(workspace, key))
-            return TryMapReceiverButton(key, out button);
+        if (!IsModelReviewReserved(workspace, key) && TryMapReceiverButton(key, out button)
+            && ((button & InputButtons.SkillAbilities) == 0 || workspace is "Gameplay" or "Hacker"))
+            return true;
         button = InputButtons.None;
         return false;
     }
@@ -1391,6 +1396,7 @@ public partial class MainWindow : Window
         {
             return;
         }
+        if ((button & InputButtons.SkillAbilities) != 0 && !gameControls.SkillControlsAvailable) return;
         e.Handled = true;
         if (e.IsRepeat || !forwardedKeys.Add(key)) return;
         gameControls.Press(button);
@@ -1416,7 +1422,7 @@ public partial class MainWindow : Window
         {
             if (FirstResponderConsumesTextInput() && !(SettingsOverlay.Visibility == Visibility.Visible && key is Key.Left or Key.Right or Key.Up or Key.Down)) return;
             if (workspace == "Label"
-                || GameControlKeyPolicy.IsModelReviewReserved(workspace, key))
+                || !GameControlKeyPolicy.TryMapReceiverButton(workspace, key, out _))
             {
                 return;
             }
@@ -1425,6 +1431,7 @@ public partial class MainWindow : Window
             {
                 return;
             }
+            if ((button & InputButtons.SkillAbilities) != 0 && !gameControls.SkillControlsAvailable) return;
         }
         gameControls.Release(button);
         e.Handled = true;
@@ -3484,7 +3491,7 @@ public partial class MainWindow : Window
                 terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch, groundHypotheses,
                 gameplayAdmitted, atlasCompositionExclusions, masks, usesDurableWorld, botAtlas,
                 tracked.RoomAllowsAtlasWrite && tracked.MeasuredLineage is not null ? localWalkedGround : [],
-                tracked.MeasuredSceneryCamera, wallLineage);
+                tracked.MeasuredSceneryCamera, wallLineage, thinkingAbilityFrame);
         }
         else
         {

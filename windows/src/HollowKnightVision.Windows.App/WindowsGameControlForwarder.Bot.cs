@@ -48,7 +48,8 @@ internal sealed partial class WindowsGameControlForwarder
         lock (stateLock)
         {
             var remaining = deadline - MonotonicSeconds();
-            if (botOwner != owner || !CanDriveBotLocked || !(remaining > 0 && remaining <= .35)) return false;
+            if (botOwner != owner || !CanDriveBotLocked || !(remaining > 0 && remaining <= .35)
+                || !skillControlsAvailable && (buttons & InputButtons.SkillAbilities) != 0) return false;
             botRequested = buttons;
             botDeadline = deadline;
             QueueBotStateLocked(owner);

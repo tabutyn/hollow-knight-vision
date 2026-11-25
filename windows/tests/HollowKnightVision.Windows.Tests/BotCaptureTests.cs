@@ -361,16 +361,54 @@ internal static class BotCaptureTests
         });
     }
 
-    internal static BotCaptureResult WriteFixture(string root, bool observeHacker = true)
+    internal static void TestSkillButtonsPreserveWireNamesAndEvidence()
+    {
+        WithLibrary(root =>
+        {
+            var verified = WriteFixture(root, skillControls: true);
+            var interrupted = WriteFixture(root, skillControls: true, interruptSkillControls: true);
+            var expected = new[] { "dash", "superDash", "quickCast", "dreamNail" };
+            foreach (var capture in verified.Published)
+            {
+                var folder = Path.Combine(root, BotCaptureSession.DirectoryName(capture.Id));
+                var (manifest, _, events) = BotCaptureSession.ReadReviewEvidence(folder, default);
+                Check(manifest.RecordedSkillControls == true, "Skill capability evidence is missing from the paired clip.");
+                foreach (var button in expected)
+                    Check(events.Where(item => item.Button == button).Select(item => item.IsPressed).SequenceEqual([true, false]),
+                        $"Missing original press/release or wrong wire case for {button}.");
+            }
+            Check(interrupted.Published.Count == 2 && interrupted.Published.All(clip => clip.RecordedSkillControls == false),
+                "An interrupted capability session may not train missing abilities as releases.");
+        });
+    }
+
+    internal static BotCaptureResult WriteFixture(string root, bool observeHacker = true,
+        bool skillControls = false, bool interruptSkillControls = false)
     {
         var id = Guid.NewGuid();
         var labels = Labels();
         var record = new InputPathRecorder();
-        record.Start(Start, id: id);
+        record.Start(Start, id: id, metadata: skillControls
+            ? new Dictionary<string, string> { [RecordedInputPath.SkillControlsMetadata] = "true" } : null);
         record.RecordInput(RecordedGameButton.Right, true, Start);
         record.RecordInput(RecordedGameButton.X, true, Start + .08);
+        if (skillControls)
+        {
+            record.RecordInput(RecordedGameButton.Dash, true, Start + .20);
+            record.RecordInput(RecordedGameButton.Dash, false, Start + .30);
+        }
         record.RecordInput(RecordedGameButton.X, false, Start + .36);
         record.RecordInput(RecordedGameButton.X, true, Start + .39);
+        if (skillControls)
+        {
+            record.RecordInput(RecordedGameButton.SuperDash, true, Start + .40);
+            record.RecordInput(RecordedGameButton.SuperDash, false, Start + .50);
+            record.RecordInput(RecordedGameButton.QuickCast, true, Start + .64);
+            record.RecordInput(RecordedGameButton.QuickCast, false, Start + .66);
+            record.RecordInput(RecordedGameButton.DreamNail, true, Start + .68);
+            record.RecordInput(RecordedGameButton.DreamNail, false, Start + .70);
+        }
+        if (interruptSkillControls) record.InvalidateSkillControls();
         var active = new BotCaptureSession(root, "modded", "visual", Generation, Start, labels, id, paired: true);
         for (var i = 0; i < 6; i++)
         {
@@ -380,6 +418,11 @@ internal static class BotCaptureTests
         // Keep attack held through stop and release right independently. The path recorder supplies the final releases.
         record.RecordInput(RecordedGameButton.Right, false, Start + .72);
         var path = record.Stop(Start + .9);
+        if (skillControls)
+        {
+            var wired = path!.StateChanges().Select(item => item.HeldButtons).Aggregate((a, b) => a | b);
+            Check((wired & InputButtons.SkillAbilities) == InputButtons.SkillAbilities, "Replay dropped the new receiver bits.");
+        }
         return active.FinishAsync(Start + .9, path, completed: true).GetAwaiter().GetResult();
     }
 

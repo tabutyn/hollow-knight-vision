@@ -27,6 +27,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
     private bool isEnabled;
     private bool awaitingFreshPress = true;
     private bool menuShortcutsAvailable;
+    private bool skillControlsAvailable;
     private bool pointerAvailable;
     private bool playerOpsAvailable;
     private bool roomResetAvailable;
@@ -51,6 +52,11 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
     internal bool MenuShortcutsAvailable
     {
         get { lock (stateLock) return menuShortcutsAvailable; }
+    }
+
+    internal bool SkillControlsAvailable
+    {
+        get { lock (stateLock) return skillControlsAvailable; }
     }
 
     internal bool PlayerOpsAvailable
@@ -110,7 +116,11 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
             {
                 if (!ReferenceEquals(active, receiver) || lifetime.IsCancellationRequested) return false;
                 return inputPathRecorder.Start(MonotonicSeconds(), DateTimeOffset.UtcNow, startCheckpoint: checkpoint,
-                    metadata: new Dictionary<string, string> { ["checkpointCapture"] = "receiver-acknowledged-v1", ["playbackMode"] = "recording" },
+                    metadata: new Dictionary<string, string>
+                    {
+                        ["checkpointCapture"] = "receiver-acknowledged-v1", ["playbackMode"] = "recording",
+                        [RecordedInputPath.SkillControlsMetadata] = skillControlsAvailable && menuShortcutsAvailable ? "true" : "false"
+                    },
                     visualArchiveRoot: visualArchiveRoot);
             }
         }
@@ -256,7 +266,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         {
             active = receiver;
             fault = connectionFault;
-            if (active is null || fault is null || (replayCancellation is not null || capturingCheckpoint) || roomResetPending || pause.BlocksInput) return;
+            if (active is null || fault is null || (replayCancellation is not null || capturingCheckpoint) || roomResetPending
+                || pause.BlocksInput || !skillControlsAvailable && (button & InputButtons.SkillAbilities) != 0) return;
             DropBotControlLocked();
             if (awaitingFreshPress)
             {
@@ -493,6 +504,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                     awaitingFreshPress = true;
                     menuShortcutsAvailable = capabilities.Capabilities.Contains(
                         ReceiverProtocol.MenuShortcutsCapability);
+                    skillControlsAvailable = capabilities.Capabilities.Contains(ReceiverProtocol.SkillControlsCapability);
                     pointerAvailable = capabilities.Capabilities.Contains(
                         ReceiverProtocol.PointerCapability);
                     checkpointAvailable = capabilities.Capabilities.Contains(ReceiverProtocol.PlayerCheckpointCapability);
@@ -549,6 +561,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                             isEnabled = false;
                             awaitingFreshPress = true;
                             menuShortcutsAvailable = false;
+                            skillControlsAvailable = false;
+                            inputPathRecorder.InvalidateSkillControls();
                             pointerAvailable = false;
                             playerOpsAvailable = false;
                             roomResetAvailable = false;

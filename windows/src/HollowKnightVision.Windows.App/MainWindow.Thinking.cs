@@ -171,7 +171,7 @@ public partial class MainWindow
             thinkingStatus = options.Model.Title + " returned a decision.";
             thinkingHandoff = !ReferenceEquals(frame, thinkingDisplayFrame) || BotCaptureClock() - sight.CapturedAt > 60
                 || profile != gameTextReader.Profile?.Id
-                || options.Model != thinkingModel ? "Decision expired or its save changed." : SubmitThinkingPlan(plan);
+                || options.Model != thinkingModel ? "Decision expired or its save changed." : await SubmitThinkingPlanAsync(plan, token);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception error) when (error is HttpRequestException or IOException or InvalidDataException

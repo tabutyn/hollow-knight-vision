@@ -44,7 +44,7 @@ public sealed class BotNativePolicy
     private sealed record RuntimeManifest(int SchemaVersion, string PolicyFile,
         [property: JsonPropertyName("policySHA256")] string PolicySha256,
         [property: JsonPropertyName("sourceCheckpointSHA256")] string SourceSha256);
-    private sealed record Layer(int InputSize, int OutputSize, string Activation, float[] Weights, float[] Biases);
+    internal sealed record Layer(int InputSize, int OutputSize, string Activation, float[] Weights, float[] Biases);
     private sealed record SecondaryPolicy(int SchemaVersion, Layer[] Layers,
         [property: JsonPropertyName("checkpointSHA256")] string CheckpointSha256);
     private sealed record Document(int SchemaVersion, int ObservationSchemaVersion, string ModelName, string[] FeatureNames,
@@ -72,7 +72,7 @@ public sealed class BotNativePolicy
             || document.ActionSizes is null || !document.ActionSizes.SequenceEqual(BotRecordingContract.ActionSizes)
             || document.HistoryLength != BotRecordingContract.HistoryLength || string.IsNullOrWhiteSpace(document.ModelName))
             throw new InvalidDataException("The bot policy uses an incompatible observation contract.");
-        var inputs = InputWidth(document, names.Count * document.HistoryLength);
+        var inputs = InputWidth(document.SchemaVersion, document.InputColumns, names.Count * document.HistoryLength);
         ValidateLayers(document.Layers, inputs, 10, document.ObservationSchemaVersion == BotPolicyContract.LandingVersion ? 518 : 512);
         if (document.PitPolicy is { } pit)
         {
@@ -127,7 +127,7 @@ public sealed class BotNativePolicy
         return mirrored && direction != 0 ? 3 - direction : direction;
     }
 
-    private static float[] Forward(float[] current, IReadOnlyList<Layer> layers)
+    internal static float[] Forward(float[] current, IReadOnlyList<Layer> layers)
     {
         foreach (var layer in layers)
         {
@@ -152,7 +152,7 @@ public sealed class BotNativePolicy
         return new(ArgMax(logits, 0, 3), ArgMax(logits, 3, 3), ArgMax(logits, 6, 2), ArgMax(logits, 8, 2));
     }
 
-    private static int ArgMax(IReadOnlyList<float> logits, int offset, int size)
+    internal static int ArgMax(IReadOnlyList<float> logits, int offset, int size)
     {
         var highest = 0;
         for (var index = 1; index < size; index++)
@@ -191,10 +191,10 @@ public sealed class BotNativePolicy
         return fixture.Inputs.Length;
     }
 
-    private static int InputWidth(Document policy, int observationWidth)
+    internal static int InputWidth(int version, int[]? inputColumns, int observationWidth)
     {
-        if (policy.SchemaVersion == 1 && policy.InputColumns is null) return observationWidth;
-        if (policy.SchemaVersion == 2 && policy.InputColumns is { Length: > 0 } columns
+        if (version == 1 && inputColumns is null) return observationWidth;
+        if (version == 2 && inputColumns is { Length: > 0 } columns
             && columns.All(index => index >= 0 && index < observationWidth)
             && columns.Zip(columns.Skip(1)).All(pair => pair.First < pair.Second))
         {
@@ -203,7 +203,7 @@ public sealed class BotNativePolicy
         throw new InvalidDataException("Invalid policy input layout.");
     }
 
-    private static void ValidateLayers(Layer[]? layers, int input, int output, int maximumWidth)
+    internal static void ValidateLayers(Layer[]? layers, int input, int output, int maximumWidth)
     {
         if (layers is not { Length: >= 1 and <= 4 }) throw new InvalidDataException("Invalid bot network depth.");
         var expected = input;
@@ -220,10 +220,10 @@ public sealed class BotNativePolicy
         if (expected != output) throw new InvalidDataException("The bot policy controls do not match the runtime.");
     }
 
-    private static T Decode<T>(byte[] data) => JsonSerializer.Deserialize<T>(data, Json)
+    internal static T Decode<T>(byte[] data) => JsonSerializer.Deserialize<T>(data, Json)
         ?? throw new InvalidDataException("Missing bot policy data.");
 
-    private static byte[] ReadBounded(string path, int limit)
+    internal static byte[] ReadBounded(string path, int limit)
     {
         using var file = File.OpenRead(path);
         if (file.Length > limit) throw new InvalidDataException("The bot policy file is too large.");

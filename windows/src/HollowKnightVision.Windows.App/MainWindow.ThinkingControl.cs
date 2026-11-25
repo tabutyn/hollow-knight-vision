@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using HollowKnightVision.Windows.Core;
 
@@ -7,8 +8,10 @@ public partial class MainWindow
 {
     private sealed record ThinkingFrame(BgraFrame Image, ThinkingSight Sight, GameTextReader.Reading? Reading);
     private sealed record ThinkingAuthored(int Epoch, GroundTruthLineDocument Labels);
-    private sealed record ThinkRequest(ThinkingPlan Plan, double Time);
-    private sealed record ThinkingLease(Guid Owner, BotRun? PriorRun, ThinkingManeuver Maneuver);
+    private sealed record ThinkingAbilityModel(BotLearnedSkill Skill, BotNativePolicy? Motor);
+    private sealed record ThinkRequest(ThinkingPlan Plan, double Time, IReadOnlyDictionary<string, ThinkingAbilityModel>? Models);
+    private sealed record ThinkingLease(Guid Owner, BotRun? PriorRun, ThinkingManeuver Maneuver, ThinkingAbilityDrive? Ability);
+    private sealed record ThinkingAbilityFrame(ThinkingLease Lease, ThinkingFrame Frame, InputButtons? Input, double Blockage);
 
     private ThinkingFrame? latestThinkingFrame;
     private GameTextReader.Reading? latestThinkingReading;
@@ -23,6 +26,7 @@ public partial class MainWindow
     private readonly object thinkingControlLock = new();
     private ThinkRequest? pendingThinkingControl;
     private ThinkingLease? thinkingLease;
+    private ThinkingAbilityFrame? thinkingAbilityFrame; // Analysis worker only.
     private long lastSubmittedThinkingDecision;
     private bool thinkingControlAvailable;
 
@@ -32,6 +36,7 @@ public partial class MainWindow
         long chartEpoch, string? menuContext, MenuStencilResult? menu, ReceiverGroundTruthSample? receiver,
         int? renderedFrame, GameplayPathView? paths, bool admitted, InputButtons? input, double blockage)
     {
+        thinkingAbilityFrame = null;
         if (!Volatile.Read(ref thinkingEnabled)) return false;
         var domain = workspace == "Hacker" ? BotCaptureDomain.Hacker : BotCaptureDomain.Gameplay;
         if (receiver is not null) thinkingReceiverSession = receiver.SessionId;
@@ -60,7 +65,8 @@ public partial class MainWindow
         var sight = new ThinkingSight(scope, capturedAt, gameplay, menu?.ContextIdentifier,
             menu is { IsMatch: true, SelectedPairAccepted: true } ? menu.SelectedOptionIdentifier : null,
             reading?.Cues ?? [], scene);
-        Volatile.Write(ref latestThinkingFrame, new(frame, sight, reading));
+        var publication = new ThinkingFrame(frame, sight, reading);
+        Volatile.Write(ref latestThinkingFrame, publication);
 
         lock (thinkingControlLock)
         {
@@ -75,45 +81,76 @@ public partial class MainWindow
                 pendingThinkingControl = null;
                 if (thinkingLease is null && now - request.Time <= .45
                     && request.Plan.Pick(sight, now) is { } candidate)
-                    StartThinkingControlLocked(candidate, sight, now);
+                    StartThinkingControlLocked(candidate, sight, now, request.Models?.GetValueOrDefault(candidate.Id));
                 else
                     PostThinkingHandoff("The offered target changed before controls were available.");
             }
 
             if (thinkingLease is not { } lease) return false;
-            if (!gameControls.OwnsBotControl(lease.Owner)
-                || lease.PriorRun is { } prior && !ReferenceEquals(prior, Volatile.Read(ref botPlayback)))
-            {
-                StopThinkingControlLocked("Policy input was interrupted.");
-                return true;
-            }
-            var passage = reading?.SatisfiedInspection == lease.Maneuver.StartedAt;
-            var motion = lease.Maneuver.Step(sight, now, input ?? InputButtons.None, passage, blockage);
-            if (motion.Finished)
-            {
-                StopThinkingControlLocked(motion.Status);
-                return true;
-            }
-            if (motion.Buttons == InputButtons.None)
-                gameControls.NeutralizeBotControl(lease.Owner);
-            else if (motion.Deadline <= now || !gameControls.RenewBotControl(lease.Owner, motion.Buttons, motion.Deadline))
-            {
-                StopThinkingControlLocked("Policy controls expired.");
-                return true;
-            }
-            if (motion.BeginReading)
-            {
-                var old = reading?.Lines ?? [];
-                _ = Dispatcher.InvokeAsync(() =>
-                {
-                    lock (thinkingControlLock)
-                    {
-                        if (thinkingLease == lease)
-                            gameTextReader.BeginInspection(context, lease.Maneuver.StartedAt, old);
-                    }
-                });
-            }
+            if (lease.Ability is not null && gameplay)
+                thinkingAbilityFrame = new(lease, publication, input, blockage);
+            else DriveThinkingMotionLocked(lease, publication, input, blockage, null);
             return true;
+        }
+    }
+
+    private void DriveThinkingAbility(ThinkingAbilityFrame frame, BotCaptureObservation? observation)
+    {
+        lock (thinkingControlLock)
+            if (ReferenceEquals(thinkingLease, frame.Lease))
+                DriveThinkingMotionLocked(frame.Lease, frame.Frame, frame.Input, frame.Blockage, observation);
+    }
+
+    private void DriveThinkingMotionLocked(ThinkingLease lease, ThinkingFrame frame, InputButtons? input, double blockage,
+        BotCaptureObservation? observation)
+    {
+        if (!gameControls.OwnsBotControl(lease.Owner)
+            || lease.PriorRun is { } prior && !ReferenceEquals(prior, Volatile.Read(ref botPlayback)))
+        {
+            StopThinkingControlLocked("Policy input was interrupted.");
+            return;
+        }
+        var now = BotCaptureClock();
+        var passage = frame.Reading?.SatisfiedInspection == lease.Maneuver.StartedAt;
+        var motion = lease.Maneuver.Step(frame.Sight, now, input ?? InputButtons.None, passage, blockage);
+        if (motion.Finished)
+        {
+            StopThinkingControlLocked(motion.Status);
+            return;
+        }
+        var buttons = motion.Buttons;
+        var deadline = motion.Deadline;
+        if (lease.Ability is { } ability)
+        {
+            try
+            {
+                buttons = ability.Apply(motion, frame.Sight, observation, input, now, gameControls.SkillControlsAvailable);
+                deadline = ability.Deadline(deadline, now);
+            }
+            catch (Exception error) when (error is InvalidDataException or InvalidOperationException)
+            {
+                StopThinkingControlLocked("Ability inference failed. " + error.Message);
+                return;
+            }
+        }
+        if (buttons == InputButtons.None)
+            gameControls.NeutralizeBotControl(lease.Owner);
+        else if (deadline <= now || !gameControls.RenewBotControl(lease.Owner, buttons, deadline))
+        {
+            StopThinkingControlLocked("Policy controls expired.");
+            return;
+        }
+        if (lease.PriorRun is { } run && observation is not null && input is { } applied)
+            Volatile.Read(ref run.Loaded)?.Evaluation?.RecordDecision(observation, buttons, applied, frame.Sight.Scope.Context);
+        if (motion.BeginReading)
+        {
+            var old = frame.Reading?.Lines ?? [];
+            _ = Dispatcher.InvokeAsync(() =>
+            {
+                lock (thinkingControlLock)
+                    if (ReferenceEquals(thinkingLease, lease))
+                        gameTextReader.BeginInspection(frame.Sight.Scope.Context, lease.Maneuver.StartedAt, old);
+            });
         }
     }
 
@@ -147,7 +184,7 @@ public partial class MainWindow
             route with { Chart = FormattableString.Invariant($"{route.Chart}/{authored.Epoch}") }).ToArray();
     }
 
-    private void StartThinkingControlLocked(ThinkingCandidate candidate, ThinkingSight sight, double now)
+    private void StartThinkingControlLocked(ThinkingCandidate candidate, ThinkingSight sight, double now, ThinkingAbilityModel? model)
     {
         var prior = Volatile.Read(ref botPlayback);
         Guid? owner;
@@ -161,6 +198,7 @@ public partial class MainWindow
             gameControls.NeutralizeBotControl(prior.Owner);
             policy.ResetHistory();
             owner = prior.Owner;
+            if (model is not null && !ReferenceEquals(model.Motor, Volatile.Read(ref prior.Loaded)?.Motor)) model = null;
         }
         else owner = gameControls.BeginBotControl();
 
@@ -169,18 +207,64 @@ public partial class MainWindow
             PostThinkingHandoff("Release the game controls before a policy can start.");
             return;
         }
-        thinkingLease = new(leaseOwner, prior, new(candidate, sight, now));
-        PostThinkingHandoff($"Dispatched · {candidate.Id} · {candidate.Action}");
+        var ability = model is null || !gameControls.SkillControlsAvailable ? null : new ThinkingAbilityDrive(model.Skill, model.Motor, candidate);
+        thinkingLease = new(leaseOwner, prior, new(candidate, sight, now), ability);
+        PostThinkingHandoff($"Dispatched · {candidate.Id} · {candidate.Action}" + (ability is null ? "" : " · learned abilities"));
     }
 
-    private string SubmitThinkingPlan(ThinkingPlan plan)
+    private async Task<string> SubmitThinkingPlanAsync(ThinkingPlan plan, CancellationToken token)
     {
         if (gameMode == GameRuntimeMode.Normal) return "Inspection only · Normal mode.";
         if (!thinkingAutomatic || !CanDispatchThinking()) return "Automatic policies are paused or controls are unavailable.";
-        return QueueThinkingPlan(plan);
+        var active = Volatile.Read(ref botPlayback);
+        var motor = active?.Domain == plan.Scope.Domain ? Volatile.Read(ref active.Loaded)?.Motor : null;
+        IReadOnlyDictionary<string, ThinkingAbilityModel>? models = null;
+        if (gameControls.SkillControlsAvailable && plan.Scores.Count > 0)
+        {
+            try
+            {
+                models = await Task.Run(() => LoadThinkingAbilityModels(plan, motor), token);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
+            {
+                return "Ability model unavailable. " + error.Message;
+            }
+        }
+        token.ThrowIfCancellationRequested();
+        if (!thinkingAutomatic || !CanDispatchThinking()) return "Automatic policies are paused or controls are unavailable.";
+        return QueueThinkingPlan(plan, models);
     }
 
-    private string QueueThinkingPlan(ThinkingPlan plan)
+    private Dictionary<string, ThinkingAbilityModel> LoadThinkingAbilityModels(ThinkingPlan plan, BotNativePolicy? motor)
+    {
+        var models = new Dictionary<string, ThinkingAbilityModel>(StringComparer.Ordinal);
+        var skills = new Dictionary<BotAbilitySkill, BotLearnedSkill?>();
+        foreach (var score in plan.Scores)
+        {
+            var candidate = score.Candidate;
+            var ability = candidate.Action switch
+            {
+                ThinkingAction.Traverse => Load(BotAbilitySkill.Traverse),
+                ThinkingAction.Fight => Load(BotAbilitySkill.Fight),
+                _ => null
+            };
+            if (ability is null) continue;
+            motor ??= new BotModelStore(BotRoot, plan.Scope.Domain).LoadPlayback()?.Policy;
+            if (motor is not null && motor.Version != ability.ObservationSchema)
+                throw new InvalidDataException("The ability model observation schema differs from the selected PPO checkpoint.");
+            models[candidate.Id] = new(ability, motor);
+        }
+        return models;
+
+        BotLearnedSkill? Load(BotAbilitySkill skill)
+        {
+            if (!skills.TryGetValue(skill, out var model))
+                skills[skill] = model = BotLearnedSkill.Load(BotRoot, plan.Scope.Domain, skill);
+            return model;
+        }
+    }
+
+    private string QueueThinkingPlan(ThinkingPlan plan, IReadOnlyDictionary<string, ThinkingAbilityModel>? models)
     {
         if (plan.Scores.Count == 0) return "Model abstained.";
         lock (thinkingControlLock)
@@ -192,7 +276,7 @@ public partial class MainWindow
                 return "A policy is already in progress.";
             if (Volatile.Read(ref latestThinkingFrame) is not { } current || plan.Pick(current.Sight, now) is null)
                 return "No eligible option on the fresh screen.";
-            pendingThinkingControl = new(plan, now);
+            pendingThinkingControl = new(plan, now, models);
             return "Validating the chosen target on the next frame…";
         }
     }

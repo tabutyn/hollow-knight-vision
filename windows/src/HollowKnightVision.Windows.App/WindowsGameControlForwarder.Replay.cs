@@ -53,6 +53,7 @@ internal sealed partial class WindowsGameControlForwarder
                 throw new InvalidOperationException("Replay needs a saved start checkpoint and a compatible receiver.");
             if (poses.Length > 0 && !posePlaybackAvailable)
                 throw new InvalidOperationException("Update the mod receiver: player-pose-playback-v1 is required for this recording.");
+            RequireReplaySkillControls(path);
             active = receiver;
             fault = connectionFault;
             replayCancellation = cancellation;
@@ -138,6 +139,12 @@ internal sealed partial class WindowsGameControlForwarder
                 finally { finished.TrySetResult(); }
             }
         }
+    }
+
+    private void RequireReplaySkillControls(RecordedInputPath path)
+    {
+        if (!skillControlsAvailable && path.Events.Any(item => (item.Button.ToInputButton() & InputButtons.SkillAbilities) != 0))
+            throw new InvalidOperationException("Update the mod receiver to replay dash, crystal dash, quick cast, or Dream Nail.");
     }
 
     private async Task SendReplayStateAsync(ReceiverClient active, TaskCompletionSource fault,
