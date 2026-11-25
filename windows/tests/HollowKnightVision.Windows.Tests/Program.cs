@@ -426,6 +426,8 @@ var tests = new List<(string Name, Action Run)>
     ("input player pose playback preserves recorded truth", InputBridgeParityTests.TestPlayerPosePlaybackEncodesRecordedGroundTruth),
     ("hacker atlas synchronizer requires matching Unity frame in either arrival order", TestSynchronizerRequiresMatchingUnityFrameInEitherArrivalOrder),
     ("hacker atlas direct camera placement uses independent XY projection scale", TestDirectCameraPlacementUsesIndependentXYProjectionScale),
+    ("Hacker live bounds cover fractional camera positions on both axes", HackerAtlasArchiveTests.TestLiveBoundsEncloseFractionalCameraPosition),
+    ("Hacker recording replay audits exact frames and grounded room alignment", HackerRecordingReplayAuditTests.TestRecordedHackerRoomLayoutWhenRequested),
     ("hacker atlas room layout keeps tree doorways rectilinear with a gap", TestRoomLayoutKeepsTreeDoorwaysRectilinearWithAGap),
     ("hacker atlas room layout leaves contradictory loop freeform", TestRoomLayoutLeavesContradictoryLoopAsFreeformConnection),
     ("Hacker Atlas extends overlapping horizontal branches without shifting the floor", TestRoomLayoutMovesOverlappingHorizontalBranchOutward),
