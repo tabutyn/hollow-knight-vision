@@ -18,7 +18,10 @@ public sealed record LabelingModelRestorePoint(string ClassIdentifier, LabelingM
         HashCode.Combine(ClassIdentifier, Version, SourceRunIdentifier, CreatedAt, ModelFilename, CheckpointFilename);
 }
 public sealed record LabelingActiveModelArtifact(string ClassIdentifier, LabelingModelSemanticVersion Version, string ModelPath,
-    IReadOnlySet<string>? TrainedClassIdentifiers = null);
+    IReadOnlySet<string>? TrainedClassIdentifiers = null)
+{
+    public Guid SourceRunIdentifier { get; init; }
+}
 
 public static class LabelingDevelopmentCandidatePolicy
 {
@@ -244,7 +247,8 @@ public sealed class LabelingModelVersionStore(string rootDirectory)
             var artifacts = Load().Objects.OrderBy(pair => pair.Key, StringComparer.Ordinal)
                 .Select(pair => pair.Value.RestorePoints.FirstOrDefault(point => point.Version.Major == pair.Value.ActiveMajorVersion))
                 .OfType<LabelingModelRestorePoint>().Select(point => new LabelingActiveModelArtifact(point.ClassIdentifier,
-                    point.Version, ModelStoreJson.Child(PointDirectory(point), point.ModelFilename), TrainedClasses(point))).ToArray();
+                    point.Version, ModelStoreJson.Child(PointDirectory(point), point.ModelFilename), TrainedClasses(point))
+                    { SourceRunIdentifier = point.SourceRunIdentifier }).ToArray();
             return artifacts.FirstOrDefault(artifact => artifact.ClassIdentifier == SharedObjectModel) is { } shared ? [shared] : artifacts;
         }
     }

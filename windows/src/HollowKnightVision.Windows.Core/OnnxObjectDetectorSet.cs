@@ -5,7 +5,8 @@ public sealed class OnnxObjectDetectorSet : IDisposable
 {
     private readonly List<OnnxObjectDetector> detectors = [];
     public bool HasModels => detectors.Count > 0;
-    public OnnxObjectDetectorSet(IEnumerable<string> runDirectories, IReadOnlyList<LabelingActiveModelArtifact>? artifacts = null)
+    public OnnxObjectDetectorSet(IEnumerable<string> runDirectories, IReadOnlyList<LabelingActiveModelArtifact>? artifacts = null,
+        bool useActorCalibrations = true)
     {
         try
         {
@@ -14,7 +15,8 @@ public sealed class OnnxObjectDetectorSet : IDisposable
                 var artifact = artifacts?.FirstOrDefault(item => string.Equals(
                     Path.GetDirectoryName(Path.GetFullPath(item.ModelPath)), directory, StringComparison.OrdinalIgnoreCase));
                 if (artifact?.TrainedClassIdentifiers is { Count: 0 }) continue;
-                var detector = new OnnxObjectDetector(directory, artifact?.Version, artifact?.TrainedClassIdentifiers);
+                var detector = new OnnxObjectDetector(directory, artifact?.Version, artifact?.TrainedClassIdentifiers,
+                    artifact?.SourceRunIdentifier, useActorCalibrations);
                 if (detector.TrainedClassIdentifiers.Count > 0) detectors.Add(detector);
                 else detector.Dispose();
             }

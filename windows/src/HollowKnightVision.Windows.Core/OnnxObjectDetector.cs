@@ -45,7 +45,8 @@ public static class DetectionDecoder
         int maximumPerClass = DefaultMaximumPerClass,
         int maximumDetections = DefaultMaximumDetections,
         bool useLivePolicy = false,
-        IReadOnlySet<string>? trainedClassIdentifiers = null)
+        IReadOnlySet<string>? trainedClassIdentifiers = null,
+        float? liveMinimumConfidence = null)
     {
         ArgumentNullException.ThrowIfNull(scoreShape);
         ArgumentNullException.ThrowIfNull(boxShape);
@@ -97,7 +98,7 @@ public static class DetectionDecoder
                     var candidate = new ObjectDetection(identifier, box, confidence);
                     if (useLivePolicy)
                     {
-                        if (LiveObjectDetectionPostprocessor.Prepare(candidate) is { } prepared) candidates.Add(prepared);
+                        if (LiveObjectDetectionPostprocessor.Prepare(candidate, liveMinimumConfidence) is { } prepared) candidates.Add(prepared);
                     }
                     else if (Valid(box)) candidates.Add(candidate);
                 }
@@ -192,9 +193,11 @@ public sealed class OnnxObjectDetector : IDisposable
     private const int InputWidth = FrameGeometry.ReferenceWidth;
     private const int InputHeight = FrameGeometry.ReferenceHeight;
     private readonly InferenceSession? session;
+    private readonly OnnxActorCalibration? calibration;
+    private static readonly IReadOnlySet<string> CrawlidClass = new HashSet<string>([LiveActorConfirmation.Crawlid]);
 
     public OnnxObjectDetector(string runDirectory, LabelingModelSemanticVersion? modelVersion = null,
-        IReadOnlySet<string>? trainedClassIdentifiers = null)
+        IReadOnlySet<string>? trainedClassIdentifiers = null, Guid? sourceRunIdentifier = null, bool useActorCalibrations = true)
     {
         if (string.IsNullOrWhiteSpace(runDirectory)) throw new ArgumentException("Run directory is required.", nameof(runDirectory));
         RunDirectory = Path.GetFullPath(runDirectory);
@@ -234,6 +237,10 @@ public sealed class OnnxObjectDetector : IDisposable
             session.Dispose();
             throw new InvalidDataException("ONNX model does not expose image, scores, and boxes.");
         }
+        var run = sourceRunIdentifier ?? (root.TryGetProperty("id", out var id)
+            && id.ValueKind == JsonValueKind.String && id.TryGetGuid(out var manifestRun) ? manifestRun : Guid.Empty);
+        if (useActorCalibrations && run != Guid.Empty)
+            calibration = OnnxActorCalibration.Load(RunDirectory, run, TrainedClassIdentifiers);
     }
 
     public string RunDirectory { get; }
@@ -274,22 +281,34 @@ public sealed class OnnxObjectDetector : IDisposable
         using var outputs = loaded.Run(runOptions, inputs, ["scores", "boxes"]);
         var scoreShape = outputs[0].GetTensorTypeAndShape().Shape;
         var boxShape = outputs[1].GetTensorTypeAndShape().Shape;
+        var scores = outputs[0].GetTensorDataAsSpan<float>();
+        var boxes = outputs[1].GetTensorDataAsSpan<float>();
         var detections = raw
             ? DetectionDecoder.DecodeRaw(
-                outputs[0].GetTensorDataAsSpan<float>(), scoreShape,
-                outputs[1].GetTensorDataAsSpan<float>(), boxShape,
-                ClassIdentifiers, trainedClassIdentifiers: TrainedClassIdentifiers)
+                scores, scoreShape, boxes, boxShape, ClassIdentifiers, trainedClassIdentifiers: TrainedClassIdentifiers)
             : DetectionDecoder.Decode(
-                outputs[0].GetTensorDataAsSpan<float>(), scoreShape,
-                outputs[1].GetTensorDataAsSpan<float>(), boxShape,
-                ClassIdentifiers, useLivePolicy: true, trainedClassIdentifiers: TrainedClassIdentifiers);
+                scores, scoreShape, boxes, boxShape, ClassIdentifiers, useLivePolicy: true,
+                trainedClassIdentifiers: TrainedClassIdentifiers);
+        if (!raw && calibration is not null)
+        {
+            var weakCrawlids = calibration.CrawlidWeakConfidence is { } floor
+                ? DetectionDecoder.Decode(scores, scoreShape, boxes, boxShape, ClassIdentifiers,
+                    confidenceFloor: floor, useLivePolicy: true, trainedClassIdentifiers: CrawlidClass,
+                    liveMinimumConfidence: floor)
+                : [];
+            detections = calibration.Apply(detections, weakCrawlids, inputs, runOptions);
+        }
         return detections.Select(item => item with
         {
             SourceFrameIdentifier = source.CaptureId, ModelVersion = ModelVersion
         }).ToArray();
     }
 
-    public void Dispose() => session?.Dispose();
+    public void Dispose()
+    {
+        calibration?.Dispose();
+        session?.Dispose();
+    }
 
     private static float[] ToRgbTensor(BgraFrame frame)
     {

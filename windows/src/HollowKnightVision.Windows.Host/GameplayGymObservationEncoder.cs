@@ -21,7 +21,8 @@ public static class GameplayGymObservationEncoder
         if (BotPolicyContract.Names(version) is null || localizerDirectories?.Count > LocalizerClasses.Length)
             throw new InvalidDataException("Unknown observation schema or visual model configuration.");
         var (directories, artifacts) = DetectorRuns(supportRoot, detectorDirectory);
-        using var detector = new OnnxObjectDetectorSet(directories, artifacts);
+        // Gym localizers are provided explicitly and bound to the training runtime configuration.
+        using var detector = new OnnxObjectDetectorSet(directories, artifacts, useActorCalibrations: false);
         if (!detector.HasModels) throw new InvalidDataException("Game Play Gym requires an ONNX detector with trained classes.");
         using var localizers = new Localizers(localizerDirectories);
         var stencils = AutoNavigationRunner.CreateGymStencilSource(supportRoot);
