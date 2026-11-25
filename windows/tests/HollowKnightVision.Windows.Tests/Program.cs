@@ -9583,6 +9583,39 @@ static void TestUserObjectCatalog()
         var loaded = new UserObjectCatalog(path).Load();
         Equal(2, loaded.Count);
         True(File.ReadAllText(path).Contains("\"schemaVersion\": 1", StringComparison.Ordinal));
+
+        const string imported = """
+            {
+              "schemaVersion": 1,
+              "objects": [
+                {"identifier":"enemies.moss-charger","name":"Moss Charger","group":"enemies"},
+                {"identifier":"enemies.moss-charger","name":"Moss-Charger","group":"enemies"},
+                {"identifier":"world.other","name":"Mismatched Gate","group":"world"},
+                {"identifier":"game.wrong","name":"Wrong","group":"unknown"},
+                {"identifier":"world.","name":"!!!","group":"world"},
+                null
+              ]
+            }
+            """;
+        File.WriteAllText(path, imported);
+        Equal(first, catalog.Load().Single());
+        Equal(imported, File.ReadAllText(path));
+        _ = catalog.Add("A Gate", "world");
+        True(catalog.Load().Select(item => item.Identifier).SequenceEqual(["world.a-gate", "enemies.moss-charger"]));
+
+        const string future = """{"schemaVersion":2,"objects":[]}""";
+        File.WriteAllText(path, future);
+        Equal(0, catalog.Load().Count);
+        try
+        {
+            _ = catalog.Add("New Enemy", "enemies");
+            throw new Exception("A future catalog schema should be preserved instead of replaced.");
+        }
+        catch (InvalidDataException) { }
+        Equal(future, File.ReadAllText(path));
+
+        File.WriteAllText(path, "{bad json");
+        Equal(0, catalog.Load().Count);
     }
     finally
     {
