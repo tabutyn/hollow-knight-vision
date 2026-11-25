@@ -3,6 +3,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -50,7 +51,9 @@ internal static class BotDesktopEvaluationTests
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening"), OpeningOutcome.Gameplay, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-timeout"), OpeningOutcome.HandoffTimeout, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-backup-failure"), OpeningOutcome.ArchiveFailure, timeout.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(30));
             await VerifyCheckpointControlsAsync(Path.Combine(temporary.FullName, "versions"), timeout.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(30));
             await TestSummaryAndQueuedCaptureUpdateWhileEventDecodeIsBlocked(Path.Combine(temporary.FullName, "summary"), timeout.Token);
             await VerifyThinkingLeaseAsync(Path.Combine(temporary.FullName, "thinking"), timeout.Token);
             await TestKRecordsBothDomainsFromEitherWorkspace(Path.Combine(temporary.FullName, "paired-shortcut"));
@@ -476,7 +479,8 @@ internal static class BotDesktopEvaluationTests
         server.Start();
         var port = ((IPEndPoint)server.LocalEndpoint).Port;
         var session = Guid.NewGuid();
-        var peer = ServeAsync(server, Channel.CreateUnbounded<ReceiverInputSnapshot>().Writer, token);
+        using var receiverLifetime = new CancellationTokenSource();
+        var peer = ServeAsync(server, Channel.CreateUnbounded<ReceiverInputSnapshot>().Writer, receiverLifetime.Token);
         var botRoot = Path.Combine(root, "bot-v1");
         var captures = Path.Combine(botRoot, "demonstrations");
         var created = new DateTimeOffset(2026, 11, 22, 12, 0, 0, TimeSpan.Zero);
@@ -546,17 +550,87 @@ internal static class BotDesktopEvaluationTests
             await WaitFor(() => pending.Text == "1 new run · Hacker 0 · Game Play 1");
             Check(versions.SelectedValue as string == "bot-trained", "New training must reduce the correct count while activating its policy.");
 
-            void Refresh() => Method("RefreshBotLibrary").Invoke(window, null);
-            async Task WaitFor(Func<bool> condition)
+            await WaitFor(() => !(bool)Field("refreshingBotLibrary").GetValue(window)!);
+            versions.SelectedValue = "bot-second";
+            Check(use.IsEnabled, "A verified rollback must remain available before starting training.");
+            use.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitFor(() => Field("botPlayback").GetValue(window) is null && !use.IsEnabled
+                && store.Catalog().ActiveId == "bot-second");
+            await window.StartBotPlaybackAsync().WaitAsync(token);
+            Check(Field("botPlayback").GetValue(window) is not null && store.LoadPlayback()?.Policy.Name == "Second Hacker",
+                "The explicitly restored checkpoint should run until the next training completes.");
+
+            var walk = PublishPair(created.AddMinutes(5));
+            var jump = PublishPair(created.AddMinutes(6));
+            Guid[] expectedClips = [initial.Hacker, fresh.Hacker, walk.Hacker, jump.Hacker];
+            const string buttonModel = "Trained with the Windows button";
+            var trainingFixture = Path.Combine(root, "completion-fixture");
+            WriteCheckpoint(trainingFixture, "hacker", buttonModel, "bot-result", created.AddMinutes(7), expectedClips);
+            var launcher = Path.Combine(root, "publish-training-fixture.ps1");
+            File.WriteAllText(launcher, TrainingCompletionFixture);
+            var train = (Button)window.FindName("BotTrainButton");
+            var trainingStatus = (TextBlock)window.FindName("BotTrainingStatus");
+            Refresh();
+            await WaitFor(() => train.IsEnabled && pending.Text == "3 new runs · Hacker 2 · Game Play 3");
+            var previousPython = Environment.GetEnvironmentVariable("HKV_BOT_PYTHON");
+            try
             {
-                while (!condition()) await Task.Delay(25, token);
+                // Exercise the shipped launcher and desktop completion path with a verified export.
+                Environment.SetEnvironmentVariable("HKV_BOT_PYTHON", launcher);
+                train.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Check(Field("botTrainingCancellation").GetValue(window) is CancellationTokenSource,
+                    "The Train button did not launch the training job.");
+                await WaitFor(() => Field("botTrainingCancellation").GetValue(window) is null);
+            }
+            finally { Environment.SetEnvironmentVariable("HKV_BOT_PYTHON", previousPython); }
+
+            var trainingRuns = Path.Combine(botRoot, "training-runs");
+            var trainingRun = Directory.Exists(trainingRuns) ? Directory.GetDirectories(trainingRuns).SingleOrDefault() : null;
+            var trainingLog = trainingRun is null ? null : Path.Combine(trainingRun, "training.log");
+            var trainingOutput = trainingLog is not null && File.Exists(trainingLog) ? File.ReadAllText(trainingLog) : "";
+            Check(trainingStatus.Text == $"Hacker is using {buttonModel}." && Field("botPlayback").GetValue(window) is null,
+                $"Training must adopt the verified result and return control from the older bot. {trainingStatus.Text}\n{trainingOutput}");
+            if (trainingRun is null) throw new InvalidOperationException("The desktop did not create a training run.");
+            var publishedId = "bot-" + Path.GetFileName(trainingRun);
+            Check(JsonSerializer.Deserialize<Guid[]>(File.ReadAllBytes(Path.Combine(trainingRun, "selection.json")), Json)!
+                    .ToHashSet().SetEquals(expectedClips)
+                && trainingOutput.Contains("Published synthetic verified checkpoint", StringComparison.Ordinal),
+                "The desktop job must pass the Hacker clips through the shipped launcher and retain its output.");
+            Console.WriteLine("PASS Desktop training completes through the packaged launcher with the selected Hacker clips");
+            await WaitFor(() => versions.SelectedValue as string == publishedId
+                && pending.Text == "3 new runs · Hacker 0 · Game Play 3");
+            Check(store.Catalog().PreviousId == "bot-second"
+                && new BotModelStore(botRoot, BotCaptureDomain.Gameplay).Catalog().ActiveId == "bot-gameplay",
+                "Completing Hacker training must retain rollback and preserve the other domain's selection.");
+            await window.StartBotPlaybackAsync().WaitAsync(token);
+            var renewed = Field("botPlayback").GetValue(window);
+            var renewedModel = renewed?.GetType().GetField("Loaded", Instance)?.GetValue(renewed);
+            Check(renewedModel?.GetType().GetProperty("ModelName")?.GetValue(renewedModel) as string == buttonModel,
+                "The next bot playback must run the model selected by training completion.");
+            Console.WriteLine("PASS Desktop Train button launches the shipped trainer and activates its verified checkpoint after rollback");
+
+            void Refresh() => Method("RefreshBotLibrary").Invoke(window, null);
+            async Task WaitFor(Func<bool> condition, [CallerArgumentExpression(nameof(condition))] string expectation = "")
+            {
+                try { while (!condition()) await Task.Delay(25, token); }
+                catch (OperationCanceledException error) when (token.IsCancellationRequested)
+                {
+                    var status = (TextBlock)window.FindName("BotTrainingStatus");
+                    throw new TimeoutException($"Timed out waiting for {expectation}. "
+                        + $"Training status {status.Text} | Version {versions.SelectedValue} | Captures {pending.Text}.", error);
+                }
             }
         }
         finally
         {
             Field("isClosing").SetValue(window, true);
-            await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
-            await peer.WaitAsync(TimeSpan.FromSeconds(5));
+            try { await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10)); }
+            finally
+            {
+                receiverLifetime.Cancel();
+                try { await peer.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (OperationCanceledException) when (receiverLifetime.IsCancellationRequested) { }
+            }
         }
         Console.WriteLine("PASS Desktop bot version controls restore and select each domain and follow new completed checkpoints");
         Console.WriteLine("PASS Desktop new capture counts publish before preview and follow training independently");
@@ -581,6 +655,38 @@ internal static class BotDesktopEvaluationTests
 
         string Events(Guid id) => Path.Combine(captures, BotCaptureSession.DirectoryName(id), "events.jsonl");
     }
+
+    private const string TrainingCompletionFixture = """
+        $ErrorActionPreference = 'Stop'
+        $options = @($args)
+        $rootIndex = [Array]::IndexOf($options, '--root')
+        $runIndex = [Array]::IndexOf($options, '--run-id')
+        $domainIndex = [Array]::IndexOf($options, '--domain')
+        $selectionIndex = [Array]::IndexOf($options, '--selection')
+        if ($rootIndex -lt 0 -or $runIndex -lt 0 -or $domainIndex -lt 0 -or $selectionIndex -lt 0) {
+          throw 'The desktop did not pass the required training arguments.'
+        }
+        if ($options[$domainIndex + 1] -ne 'hacker' -or '--follow-playback' -notin $options) {
+          throw 'The desktop did not launch the Hacker trainer in playback-following mode.'
+        }
+        if (-not (Test-Path -LiteralPath $options[$selectionIndex + 1] -PathType Leaf)) {
+          throw 'The desktop did not launch training with its domain and selected captures.'
+        }
+        $run = [guid]::Parse([string]$options[$runIndex + 1]).ToString('D')
+        $version = 'bot-' + $run
+        $source = Join-Path $PSScriptRoot 'completion-fixture/models/hacker/bot-result'
+        $target = Join-Path $options[$rootIndex + 1] ('models/hacker/' + $version)
+        $null = [IO.Directory]::CreateDirectory($target)
+        foreach ($name in @('model.zip', 'runtime-policy.json', 'runtime-manifest.json', 'manifest.json')) {
+          Copy-Item -LiteralPath (Join-Path $source $name) -Destination $target
+        }
+        $receipt = Get-Content -LiteralPath (Join-Path $source 'training-result.json') -Raw | ConvertFrom-Json
+        $receipt.modelDirectory = $version
+        $receipt | Add-Member -NotePropertyName id -NotePropertyValue $run
+        [IO.File]::WriteAllText((Join-Path $target 'training-result.json'), ($receipt | ConvertTo-Json -Compress))
+        Write-Output 'Published synthetic verified checkpoint'
+        exit 0
+        """;
 
     private static async Task VerifyOpeningWithoutCheckpointAsync(string root, OpeningOutcome outcome, CancellationToken token)
     {
