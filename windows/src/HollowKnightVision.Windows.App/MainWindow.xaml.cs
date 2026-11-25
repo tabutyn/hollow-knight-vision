@@ -3988,12 +3988,14 @@ public partial class MainWindow : Window
         if (!gameplayFrameRegistered || !result.AdmitsTracking) return;
         var drawsGround = GroundLinesCheck.IsChecked == true;
         if (!drawsGround && groundFeatureViewer is null) return;
-        var patches = drawsGround && GroundTrackingPatchesCheck.IsChecked == true ? AtlasGroundPatchesCanvas : null;
+        // With a durable world, raw bank anchors still belong to the local solver.
+        var patches = drawsGround && GroundTrackingPatchesCheck.IsChecked == true && result.WorldFrame is null
+            ? AtlasGroundPatchesCanvas : null;
         var drawing = GroundFeatureOverlayPresentation.DrawAtlas(drawsGround ? AtlasGroundLinesCanvas : null,
             patches, result.GroundDisplayCamera,
             new(result.Frame.Width, result.Frame.Height),
             new(Canvas.GetLeft(GameplayImage), Canvas.GetTop(GameplayImage), GameplayImage.Width, GameplayImage.Height),
-            result.GroundDisplayLines, result.GroundHypotheses.AtlasFeatures,
+            result.GroundDisplayLines, result.GroundHypotheses.AtlasFeatures, result.Ground,
             SavedGroundProjection, gameplaySavedWorld.DisplayLines, result.GroundDisplayKnight);
         if (drawing is not null)
             groundViewerFrame = new(result.CaptureGeneration, result.WorldFrame?.Room ?? result.ReceiverTelemetry?.SceneName,

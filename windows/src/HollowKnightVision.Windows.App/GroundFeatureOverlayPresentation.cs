@@ -38,18 +38,21 @@ internal static class GroundFeatureOverlayPresentation
         {
             if (feature.Classification == GroundHypothesisClassification.Candidate) continue;
             var observed = feature.ImageRect;
-            var floor = floors.Where(line => GroundPlatformPatches.Contains(line, observed.X, observed.Y))
-                .MinBy(line => Math.Abs(line.Row - observed.Y));
-            if (floor is null) continue;
+            if (SupportingFloor(observed) is not { } floor) continue;
             Append(observed with { Y = floor.Row }, Kind(feature.Classification),
                 $"ground feature {feature.Id} • {feature.Classification}", new(feature.SegmentId, feature.SequenceIndex));
         }
-        foreach (var box in measuredPatches)
+        foreach (var measured in measuredPatches)
         {
+            if (SupportingFloor(measured) is not { } floor) continue;
+            var box = measured with { Y = floor.Row };
             if (occupied.Any(prior => GroundPlatformPatches.Overlaps(prior, box))) continue;
             Append(box, DashboardFeatureReviewMarkerKind.CameraConsistentGround, "Measured platform patch");
         }
         return occupied.Count;
+
+        DetectedFloorLine? SupportingFloor(PixelRect box) => floors
+            .Where(line => GroundPlatformPatches.Contains(line, box.X, box.Y)).MinBy(line => Math.Abs(line.Row - box.Y));
 
         void Append(PixelRect box, DashboardFeatureReviewMarkerKind kind, string tooltip, FeatureKey? key = null)
         {
@@ -92,6 +95,7 @@ internal static class GroundFeatureOverlayPresentation
     internal static AtlasDrawing? DrawAtlas(Canvas? linesCanvas, Canvas? patchesCanvas,
         AtlasPoint camera, ViewportSize capture, ViewportRect live,
         IReadOnlyList<GroundHypothesisAtlasLine> lines, IReadOnlyList<GroundHypothesisAtlasFeature> features,
+        IReadOnlyList<DetectedFloorLine> currentFloors,
         AtlasProjection savedProjection = default, IReadOnlyList<GroundHypothesisAtlasLine>? saved = null,
         PixelRect? knight = null)
     {
@@ -116,6 +120,7 @@ internal static class GroundFeatureOverlayPresentation
             }).ToArray();
             lines = LiveWorldGroundOverlay.CombineWithLive(projected, lines, (int)capture.Height, knight);
         }
+        lines = GroundStrokeGeometry.ComposeDisplay(lines, currentFloors, camera, (int)capture.Width, (int)capture.Height, knight);
         if (linesCanvas is not null) DrawLines(linesCanvas, lines, Project);
         var drawing = new AtlasDrawing(lines, Project);
         if (patchesCanvas is null) return drawing;

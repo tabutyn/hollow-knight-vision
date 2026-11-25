@@ -402,7 +402,7 @@ internal static class AtlasWindowIntegrationTests
             Ground = [new(7, new(2, 24))],
             MeasuredPlatformPatches = [new(3, 7, 16, 12)],
             Terrain = new([], [new(0, 0, 20, 7, 24)]),
-            GroundDisplayLines = [new(WalkedGroundMemory.WalkedSegmentId, new(-22, 18), new(21, 18))],
+            GroundDisplayLines = [new(WalkedGroundMemory.WalkedSegmentId, new(-22, 18), new(25, 18))],
             GroundHypotheses = GroundHypothesisTrackingResult.Empty with
             {
                 AtlasFeatures = [new(1, 0, new(-8, 12), [], [])]
@@ -443,6 +443,14 @@ internal static class AtlasWindowIntegrationTests
         Check(patches.IsEnabled && livePatches.Children.Count == 1 && atlasPatches.Children.Count == 1
             && atlasLines.Children.OfType<Line>().Count() == 1,
             "The next gameplay analysis should restore the ground stroke and both patch layers.");
+
+        _ = Invoke(window, "DrawGroundHypothesisAtlasOverlay", analysis with
+        {
+            WorldFrame = new(5, "Tutorial_01", analysis.CaptureTimestamp, 4, 1, 1, false)
+        });
+        Check(livePatches.Children.Count == 1 && atlasPatches.Children.Count == 0
+            && atlasLines.Children.OfType<Line>().Count() == 1,
+            "World-owned ground should keep the live box and omit local solver anchors.");
     }
 
     private static void VerifyGroundDiagnostics(MainWindow window, MainWindow.VisionAnalysisResult gameplay)

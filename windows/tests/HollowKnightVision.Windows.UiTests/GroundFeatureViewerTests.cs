@@ -74,7 +74,7 @@ internal static class GroundFeatureViewerTests
         var feature = Feature(1, 100, 255) with { AtlasPosition = new(120, 40) };
         var floor = new GroundHypothesisAtlasLine(12, new(100, 46), new(140, 46));
         var drawing = GroundFeatureOverlayPresentation.DrawAtlas(null, atlas, new(0, 0), new(100, 60),
-            new(0, 0, 100, 60), [floor], [feature]);
+            new(0, 0, 100, 60), [floor], [feature], []);
         Check(drawing?.Project(feature.AtlasPosition) == new Point(120, 20)
             && MainWindow.GroundViewerKeyAt(atlas, new(120, 20)) == new GroundFeatureOverlayPresentation.FeatureKey(12, 1),
             "A retained patch must remain selectable in the same space as the merged terrain.");
@@ -147,7 +147,7 @@ internal static class GroundFeatureViewerTests
                 }, [new(20, new(0, 83))], []);
                 atlas.Children.Clear();
                 var drawing = GroundFeatureOverlayPresentation.DrawAtlas(null, atlas, new(0, 0), new(640, 360),
-                    new(0, 0, 640, 360), [new(12, new(30, floorY), new(720, floorY))], features)!;
+                    new(0, 0, 640, 360), [new(12, new(30, floorY), new(720, floorY))], features, [])!;
                 var frame = type.GetNestedType("GroundViewerFrame", BindingFlags.NonPublic)!;
                 Set("groundViewerFrame", Activator.CreateInstance(frame, 12L, room, null, features, drawing));
                 type.GetMethod("DrawGroundViewerHighlight", instance)!.Invoke(window, null);

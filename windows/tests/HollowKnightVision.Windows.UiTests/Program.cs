@@ -126,6 +126,7 @@ internal static class Program
         TestMainWindowHasProductTitle();
         TestGroundFeatureOverlayStartsVisible();
         TestGroundFeatureOverlayUsesMacReviewPalette();
+        TestLiveTrackingBoxesFollowCurrentFloorRows();
         TestSavedGroundOverlayAlignsWithAtlasWithoutALiveFrame();
         TestTerrainCornersKeepVerticalWallStrokesHidden();
         RuntimeModeTests.Run();
@@ -2198,7 +2199,7 @@ internal static class Program
         GroundFeatureOverlayPresentation.DrawAtlas(canvas, patches, camera, new(640, 360), new(17, -42, 1280, 1080),
             lines, [atlasFeature with { AtlasPosition = new(35, 238) },
                 atlasFeature with { AtlasPosition = new(80, 238) },
-                atlasFeature with { AtlasPosition = new(35, 180) }]);
+                atlasFeature with { AtlasPosition = new(35, 180) }], []);
         Check(canvas.Children.Count == 1 && patches.Children.Count == 1,
             "Walked floor replaced its duplicate and should keep its patch box.");
         var ground = canvas.Children.OfType<Line>().Single();
@@ -2211,28 +2212,46 @@ internal static class Program
         Console.WriteLine("PASS live and persistent ground boxes and walked floor use the atlas projection");
     }
 
+    private static void TestLiveTrackingBoxesFollowCurrentFloorRows()
+    {
+        var canvas = new Canvas();
+        var tracking = GroundHypothesisTrackingResult.Empty with
+        {
+            Features =
+            [
+                new(1, 1, 0, new(16, 50, 16, 12), GroundHypothesisClassification.GroundPlane, 0, 0),
+                new(2, 2, 0, new(48, 40, 16, 12), GroundHypothesisClassification.GroundPlane, 0, 0)
+            ]
+        };
+        var count = GroundFeatureOverlayPresentation.DrawLive(canvas, tracking, [new(50, new(8, 120))],
+            [new(16, 50, 16, 12), new(32, 51, 16, 12), new(48, 40, 16, 12)]);
+        Check(count == 2 && canvas.Children.OfType<Rectangle>()
+                .Select(box => (Canvas.GetLeft(box), Canvas.GetTop(box))).SequenceEqual([(16d, 50d), (32d, 50d)]),
+            "The live patch layer must keep the two supported boxes snapped to the current platform.");
+    }
+
     private static void TestSavedGroundOverlayAlignsWithAtlasWithoutALiveFrame()
     {
         var canvas = new Canvas();
         var projection = new GroundFeatureOverlayPresentation.AtlasProjection(2, -256, -512);
         var saved = new GroundHypothesisAtlasLine(7, new(-15, -12), new(80, -12));
         GroundFeatureOverlayPresentation.DrawSavedAtlas(canvas, projection, [saved]);
-        AssertStroke();
+        AssertStroke(536);
 
         canvas.Children.Clear();
         var localCamera = new AtlasPoint(10, 22);
         var live = new GroundHypothesisAtlasLine(12, new(315, 191), new(410, 191));
         GroundFeatureOverlayPresentation.DrawAtlas(canvas, null, localCamera, new(640, 360),
-            new(-384, 152, 1280, 720), [live], [], projection, [saved]);
-        AssertStroke();
-        Console.WriteLine("PASS saved green floor uses the atlas tile frame and replaces jittered live duplicates");
+            new(-384, 152, 1280, 720), [live], [], [new(192, new(305, 399))], projection, [saved]);
+        AssertStroke(537);
+        Console.WriteLine("PASS saved green floor follows the atlas tile frame and current ground follows the live image");
 
-        void AssertStroke()
+        void AssertStroke(double y)
         {
             var stroke = canvas.Children.OfType<Line>().Single();
-            Check(stroke.X1 == 226 && stroke.X2 == 416 && stroke.Y1 == 536 && stroke.Y2 == 536
+            Check(stroke.X1 == 226 && stroke.X2 == 416 && stroke.Y1 == y && stroke.Y2 == y
                 && stroke.Stroke is SolidColorBrush brush && brush.Color == Color.FromRgb(69, 255, 120),
-                "Saved floor must draw one green stroke in the tile frame before and after live placement.");
+                "Each ground source must draw one green stroke in its own coordinate frame.");
         }
     }
 
