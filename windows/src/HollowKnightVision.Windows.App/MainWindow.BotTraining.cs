@@ -193,7 +193,7 @@ public partial class MainWindow
                 return;
             }
             if (result.ExitCode != 0 && !result.Cancelled)
-                throw new InvalidOperationException(result.Output.LastMessage ?? $"Trainer exited with code {result.ExitCode}.");
+                throw new InvalidOperationException(result.FailureMessage);
             var selected = await Task.Run(() => BotTrainingJob.VerifyCompleted(root, domain, id));
             if (isClosing) return;
             StopBotForCheckpointChange(domain);

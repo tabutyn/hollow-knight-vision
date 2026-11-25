@@ -22,6 +22,7 @@ internal static class TrainingIntegrationTests
     public static void Run()
     {
         TestSharedDatasetExport(); TestPackagedTrainingEnvironment(); TestControlsAndLayout(); TestOutputGenerationsAndShutdown();
+        TestPowerShellFailureMessage();
         Console.WriteLine("PASS native training count/dot, Stop/progress states, narrow toolbar, coalesced output and nonblocking shutdown");
     }
     private static void TestSharedDatasetExport()
@@ -175,9 +176,7 @@ internal static class TrainingIntegrationTests
         Check(applied.Count == 2 && applied[^1].Text == "new run", "Output crossed run generations.");
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var start = new ProcessStartInfo("powershell.exe");
-        start.ArgumentList.Add("-NoProfile"); start.ArgumentList.Add("-Command");
-        start.ArgumentList.Add("$signal=[Threading.EventWaitHandle]::OpenExisting($env:HKV_TRAINER_START_SIGNAL); try { if (-not $signal.WaitOne(10000)) { throw 'Probe gate timeout' } } finally { $signal.Dispose() }; Write-Output 'HKV_STAGE name=training'; Start-Sleep -Seconds 60");
+        var start = ContainedTrainingCommand("Write-Output 'HKV_STAGE name=training'; Start-Sleep -Seconds 60");
         var token = updates.Begin();
         var task = WindowsTrainingProcess.RunAsync(start, cancellation.Token, value =>
         { updates.Post(token, value); if (value.ProgressText is not null) ready.TrySetResult(); });
@@ -191,5 +190,28 @@ internal static class TrainingIntegrationTests
             Pump(); Check(applied.Count == 2, "Queued shutdown output reached a closed context.");
         }
         finally { cancellation.Cancel(); task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult(); updates.Stop(); }
+    }
+
+    private static void TestPowerShellFailureMessage()
+    {
+        const string issue = "Training environment missing. Run setup-training-windows.ps1.";
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var result = WindowsTrainingProcess.RunAsync(ContainedTrainingCommand($"throw '{issue}'"), timeout.Token)
+            .WaitAsync(timeout.Token).GetAwaiter().GetResult();
+        Check(result.ExitCode != 0 && !result.Cancelled && result.FailureMessage.Contains(issue, StringComparison.Ordinal)
+            && !result.FailureMessage.Contains("FullyQualifiedErrorId", StringComparison.Ordinal)
+            && result.Output.Text.Contains(issue, StringComparison.Ordinal),
+            $"The native helper should report the diagnostic. Received {result.FailureMessage}\n{result.Output.Text}");
+        Console.WriteLine("PASS Windows training failure displays the PowerShell diagnostic and retains its log");
+    }
+
+    private static ProcessStartInfo ContainedTrainingCommand(string command)
+    {
+        var start = new ProcessStartInfo("powershell.exe");
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-Command");
+        start.ArgumentList.Add("$signal=[Threading.EventWaitHandle]::OpenExisting($env:HKV_TRAINER_START_SIGNAL); "
+            + "try { if (-not $signal.WaitOne(10000)) { throw 'Probe gate timeout' } } finally { $signal.Dispose() }; " + command);
+        return start;
     }
 }

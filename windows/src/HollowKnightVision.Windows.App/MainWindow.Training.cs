@@ -119,8 +119,7 @@ public partial class MainWindow
                 // Covers Stop arriving after the worker finished but before this dispatcher resumed.
                 trainingRunWorkspace?.ArchiveInterrupted(); SetStatus("Training stopped"); return;
             }
-            if (result.ExitCode != 0) throw new InvalidOperationException("Training failed: " +
-                (result.Output.LastMessage ?? $"Helper exited with code {result.ExitCode}"));
+            if (result.ExitCode != 0) throw new InvalidOperationException("Training failed. " + result.FailureMessage);
             trainingFinalizing = true; UpdateModelTrainingControls();
             if (!validateOnly) await ActivateCompletedModelAsync(output);
             if (!isClosing) SetStatus(validateOnly ? "Dataset validation passed." : "CPU training complete; durable model version activated for live Vision.");
