@@ -3347,7 +3347,7 @@ public partial class MainWindow : Window
             resetWorldCoordinatesForCorrection: usesDurableWorld,
             visualRoomObservationEnabled: recognition.GameplayEnabled,
             observeLoadingInKnownRoom: usesDurableWorld,
-            captureWorldEvidence: usesDurableWorld);
+            captureWorldEvidence: usesDurableWorld, coarseMotion: coarseMotion);
         var visualObservation = tracked.Observation;
         var ground = prepared.Terrain?.Floors ?? [];
         var groundAnalysis = prepared.Terrain?.Edges;

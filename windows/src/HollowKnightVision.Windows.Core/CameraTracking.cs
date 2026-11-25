@@ -60,6 +60,7 @@ public sealed class FreshAtlasBootstrapGate
     private AtlasPoint? stabilityOrigin;
     private AtlasPoint? previousPosition;
     private CameraVector? previousStep;
+    private (VisualRoomDirection Direction, AtlasPoint Position)? walkStart;
 
     public int StableSampleCount { get; private set; }
     public bool IsReady { get; private set; }
@@ -71,13 +72,15 @@ public sealed class FreshAtlasBootstrapGate
         stabilityOrigin = null;
         previousPosition = null;
         previousStep = null;
+        walkStart = null;
     }
 
     public bool AllowsFirstAtlasWrite(
         AtlasPoint? position,
         bool registrationAccepted,
         bool groundVerified,
-        bool hasCommittedEvidence)
+        bool hasCommittedEvidence,
+        VisualRoomDirection? verifiedWalk = null)
     {
         if (hasCommittedEvidence)
         {
@@ -106,6 +109,20 @@ public sealed class FreshAtlasBootstrapGate
             || CameraMath.Length(
                 step.X - previousStep.Value.X,
                 step.Y - previousStep.Value.Y) <= MaximumStepChange;
+        if (verifiedWalk is { } direction && continuousPose && continuousMotion
+            && step.X * (int)direction >= .25 && Math.Abs(step.Y) <= 1)
+        {
+            if (walkStart is { } start && start.Direction == direction && Math.Abs(start.Position.Y - position.Value.Y) <= 2.5)
+            {
+                if (Math.Abs(position.Value.X - start.Position.X) >= 16)
+                {
+                    IsReady = true;
+                    return true;
+                }
+            }
+            else walkStart = (direction, position.Value);
+        }
+        else walkStart = null;
         var stayedNearOrigin = stabilityOrigin is not null
             && CameraMath.Length(
                 position.Value.X - stabilityOrigin.Value.X,

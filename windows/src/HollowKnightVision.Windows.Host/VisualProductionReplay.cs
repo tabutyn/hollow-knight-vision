@@ -165,7 +165,7 @@ internal static class VisualProductionReplay
                     tuning: input?.Tuning, semanticTuning: input?.SemanticTuning);
                 var tracked = tracking.Track(frame, prepared, masks.GroundKnight, admission, signal, evidence.CaptureTimestamp,
                     captureGeneration, knownRoom: null, atlas.TileCount > 0, buttons,
-                    resetWorldCoordinatesForCorrection: true, captureWorldEvidence: true);
+                    resetWorldCoordinatesForCorrection: true, captureWorldEvidence: true, coarseMotion: coarse);
                 var observation = tracked.Observation;
                 var telemetry = observation.Telemetry;
                 var localCamera = new AtlasPoint(telemetry.CameraX, telemetry.CameraY);
@@ -238,6 +238,7 @@ internal static class VisualProductionReplay
                     evidence.Index, evidence.CaptureTimestamp, evidence.CaptureGeneration, evidence.RenderedGameFrame,
                     admission.AdmitsTracking, admission.Transition.ResumedAfterTransition, observation.Source,
                     observation.GroundVerified, tracked.AllowsAtlasWrite, tracked.HasMeasuredSceneryContinuity,
+                    tracked.AtlasBootstrapWalk, walkedFloor = tracked.Contact.Floor,
                     tracked.RequiresWorldRecovery,
                     observation.RecoveredAtlasReferenceTimestamp,
                     trackerState = camera.PlacementRecoveryState, localCamera, tracked.RoomId,
