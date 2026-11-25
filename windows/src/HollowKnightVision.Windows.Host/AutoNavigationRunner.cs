@@ -145,7 +145,7 @@ public static class AutoNavigationRunner
         }
     }
 
-    private static OnnxObjectDetectorSet? LoadStartupObjects(string supportRoot)
+    internal static OnnxObjectDetectorSet? LoadStartupObjects(string supportRoot)
     {
         try
         {
@@ -158,7 +158,8 @@ public static class AutoNavigationRunner
                 artifacts.Select(artifact => Path.GetDirectoryName(artifact.ModelPath)!), artifacts);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException
-            or InvalidDataException or Microsoft.ML.OnnxRuntime.OnnxRuntimeException)
+            or InvalidDataException or InvalidOperationException or KeyNotFoundException
+            or Microsoft.ML.OnnxRuntime.OnnxRuntimeException)
         {
             Console.Error.WriteLine($"Startup Knight detector unavailable: {error.Message}");
             return null;

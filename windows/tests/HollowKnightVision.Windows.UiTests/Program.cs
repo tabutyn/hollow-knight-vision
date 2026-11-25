@@ -86,6 +86,7 @@ internal static class Program
         TestGameKeyRelayForwardsSupportedPressAndRelease();
         TestModelReviewNavigationAndExitAreReservedFromGameRelay();
         TestAutoNavigationUsesStencilEvidenceBeforeReceiverAndTracksGameplayLatch();
+        TestAutoNavigationLoadsOnlyATrainedKnightModel();
         TestAutoNavigationEmptyStoreFallbackAndProductionPulses();
         TestFraming();
         TestLabelingViewportGeometry();
@@ -697,6 +698,75 @@ internal static class Program
         Check(visualStartup.Observe(frame, noReceiver).Decision.AdmitsWorldFrames && detections == 4,
             "Two stable joint observations did not establish visual gameplay.");
         Console.WriteLine("PASS startup uses current health and Knight together on each visual frame");
+    }
+
+    private static void TestAutoNavigationLoadsOnlyATrainedKnightModel()
+    {
+        const string knight = LiveObjectDetectionPostprocessor.Knight;
+        const string crawlid = "enemies.crawlid";
+        const string shared = LabelingModelVersionStore.SharedObjectModel;
+        const string modelFile = "Detector.onnx";
+        var root = Directory.CreateTempSubdirectory("hkv-startup-onnx-");
+        try
+        {
+            using (var empty = AutoNavigationRunner.LoadStartupObjects(root.FullName))
+                Check(empty is null, "An empty model store must allow startup without a detector.");
+
+            var candidateDirectory = root.CreateSubdirectory("candidate").FullName;
+            using (var asset = typeof(Program).Assembly.GetManifestResourceStream("actor-calibration-detector.onnx")
+                    ?? throw new InvalidOperationException("The startup model fixture is missing."))
+            using (var file = File.Create(System.IO.Path.Combine(candidateDirectory, modelFile)))
+                asset.CopyTo(file);
+
+            // The fixture has a confident response in output slot 1.
+            // The manifest assigns Knight to that slot.
+            var store = new LabelingModelVersionStore(System.IO.Path.Combine(root.FullName, "models-v1"));
+            var summary = new LabelingTrainingRunSummary
+            {
+                Id = Guid.NewGuid(),
+                DatasetIdentifier = Guid.NewGuid(),
+                ClassIdentifier = shared,
+                CompletedAt = DateTimeOffset.UnixEpoch,
+                ModelFilename = modelFile,
+                ModelFormat = "onnx",
+                ClassIdentifiers = [crawlid, knight, "world.geo-deposit", "enemies.shade"],
+                TrainedClassIdentifiers = [crawlid]
+            };
+            var candidate = new LabelingModelCandidate(candidateDirectory, candidateDirectory, summary, null);
+            store.SynchronizeCandidates([candidate]);
+            store.Promote(candidate);
+            using (var untrained = AutoNavigationRunner.LoadStartupObjects(root.FullName))
+                Check(untrained is null, "A declared but untrained Knight output must not supply startup evidence.");
+
+            var trained = candidate with
+                { Summary = summary with { Id = Guid.NewGuid(), TrainedClassIdentifiers = [knight] } };
+            store.SynchronizeCandidates([trained]);
+            var point = store.Promote(trained);
+            using (var detector = AutoNavigationRunner.LoadStartupObjects(root.FullName))
+            {
+                Check(detector is { HasModels: true }, "Startup did not use the active trained Knight.");
+                var frame = new BgraFrame(640, 360, 640 * 4, new byte[640 * 360 * 4], 47, DateTimeOffset.UnixEpoch);
+                Check(detector!.Detect(frame).Any(item => item.ClassIdentifier == knight
+                    && item.Confidence >= SceneRegions.DefaultKnightConfidence
+                    && item.SourceFrameIdentifier == frame.CaptureId && item.ModelVersion == point.Version),
+                    "The loaded startup detector must publish a current Knight from the promoted version.");
+            }
+
+            var modelPath = store.ActiveModelArtifacts().Single().ModelPath;
+            foreach (var badManifest in new[] { """{"modelFormat":"onnx"}""", "[]" })
+            {
+                File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(modelPath)!, "training.json"), badManifest);
+                using var malformed = AutoNavigationRunner.LoadStartupObjects(root.FullName);
+                Check(malformed is null, "Invalid model metadata must leave startup available through the receiver.");
+            }
+            File.Delete(modelPath);
+            using (var missing = AutoNavigationRunner.LoadStartupObjects(root.FullName))
+                Check(missing is null, "A missing trained model must leave startup available through the receiver.");
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
     }
 
     private static void TestAutoNavigationEmptyStoreFallbackAndProductionPulses()

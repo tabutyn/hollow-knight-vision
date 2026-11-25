@@ -8,7 +8,7 @@ internal static class LiveWorldGroundOverlayTests
         var observed = new DetectedFloorLine(600, new(32, 400), [new(32, 159), new(288, 400)]);
         var confirmed = new GroundLinePresenceReview(7, observed.ToSemanticLine(), GroundLinePresenceState.Confirmed, 2, 1);
         var evidence = LiveWorldCaptureEvidence.FromGround(1, width, height, solveWidth,
-            [observed], [confirmed], null, new AtlasPoint(108, 600), observedPlayerBounds: new(96, 552, 24, 42));
+            [observed], [confirmed], new AtlasPoint(108, 600), observedPlayerBounds: new(96, 552, 24, 42));
         var expected = new LiveGroundLineEvidence[]
         {
             new(7, new(16, 60), new(80, 60)),
@@ -22,21 +22,60 @@ internal static class LiveWorldGroundOverlayTests
             "Same-image recovery candidates and measured feet must use the same coordinate system.");
 
         var occluded = LiveWorldCaptureEvidence.FromGround(2, width, height, solveWidth,
-            [], [confirmed], null, null, supportedFloor: new CleanFloorLine(600, new(1240, 1300)));
+            [], [confirmed], supportedFloor: new CleanFloorLine(600, new(1240, 1300)));
         Check(occluded.FloorCandidates is null && occluded.GroundGeometry?.Lines.SequenceEqual(
             [new(long.MaxValue, new(620, 60), new(640, 60))]) == true,
             "An old detection cannot fill an occlusion, and independent foot contact is clipped to the image.");
+    }
+
+    internal static void TestSweptKnightMaskCannotBecomeContactEvidenceAndMeasuredBoundsScaleToSolvePixels()
+    {
+        const int width = 320, height = 180, solveWidth = 640;
+        const long generation = 4;
+        const string knight = LiveObjectDetectionPostprocessor.Knight;
+        var floor = new DetectedFloorLine(120, new(20, 220));
+        var review = new GroundLinePresenceReview(7, floor.ToSemanticLine(), GroundLinePresenceState.Confirmed, 2, 1);
+        var foot = new AtlasPoint(50, 120);
+        var swept = new ObjectDetection(knight, new(.0625, .375, .25, .4375), .9f);
+        var tracker = new LiveWorldTracker();
+
+        for (var index = 1; index <= 2; index++)
+        {
+            var frame = new BgraFrame(width, height, width * 4, new byte[width * height * 4],
+                index, DateTimeOffset.UnixEpoch.AddSeconds(index));
+            var sourceFrame = index == 1 ? 0 : index;
+            var body = new ObjectDetection(knight, new(.125, .5, .0625, .125), .9f)
+                { SourceFrameIdentifier = sourceFrame };
+            var detections = new LiveObjectDetectionSnapshot([body], [body], [swept], null)
+                { MeasuredBatch = new([body], sourceFrame, sourceFrame, generation, 0) };
+            var masks = GameplaySceneMasks.Create(frame, detections, hudStencil: null, generation);
+            Check(masks.GroundKnight is { } mask && mask.Width > 20
+                && (masks.ObservedPlayerBounds is not null) == (index == 2),
+                "The fallback movement mask and current detector bounds should be separate.");
+            var evidence = LiveWorldCaptureEvidence.FromGround(index, width, height, solveWidth, [floor], [review],
+                foot, observedPlayerBounds: masks.ObservedPlayerBounds);
+            tracker.Ingest(index, index, frame, default, solveWidth, captureGeneration: (ulong)generation,
+                searchForClosure: false, captureEvidence: evidence);
+        }
+
+        var saved = LiveWorldJson.ReadSnapshot(LiveWorldJson.WriteSnapshot(tracker.Snapshot));
+        Check(saved.Observations.Count == 2 && saved.Observations.All(frame => frame.GroundGeometry?.Lines.Count == 1),
+            "Confirmed ground should persist in both captures.");
+        Check(saved.Observations[0].ObservedPlayerBounds is null,
+            "A foot inferred against a movement mask cannot prove the player's position.");
+        Check(saved.Observations[1].ObservedPlayerBounds == new WorldRect(new(80, 120), new(40, 60)),
+            "A capture-matched body and its image-supported foot must persist in solve pixels.");
     }
 
     internal static void TestUnconfirmedGroundDoesNotBecomePersistentGeometry()
     {
         var observed = new DetectedFloorLine(300, new(10, 600));
         var review = new GroundLinePresenceReview(7, observed.ToSemanticLine(), GroundLinePresenceState.Observing, .1, 1);
-        var evidence = LiveWorldCaptureEvidence.FromGround(1, 640, 360, 640, [observed], [review], null, null);
+        var evidence = LiveWorldCaptureEvidence.FromGround(1, 640, 360, 640, [observed], [review]);
         Check(evidence.GroundGeometry is null && evidence.FloorCandidates?.Lines.SequenceEqual(
             [new(0, new(10, 60), new(601, 60))]) == true,
             "Unconfirmed evidence supplies an image recovery candidate without creating a floor.");
-        var invalid = LiveWorldCaptureEvidence.FromGround(2, 640, 360, double.NaN, [observed], [review], null, null);
+        var invalid = LiveWorldCaptureEvidence.FromGround(2, 640, 360, double.NaN, [observed], [review]);
         Check(invalid.GroundGeometry is null && invalid.FloorCandidates is null,
             "An invalid solve width cannot produce stored evidence.");
     }

@@ -19,8 +19,7 @@ public sealed record LiveWorldCaptureEvidence(
         double solveWidth,
         IReadOnlyList<DetectedFloorLine> detections,
         IReadOnlyList<GroundLinePresenceReview> reviews,
-        PixelRect? knight,
-        AtlasPoint? measuredFoot,
+        AtlasPoint? measuredFoot = null,
         CleanFloorLine? supportedFloor = null,
         StencilRect? observedPlayerBounds = null)
     {
@@ -49,19 +48,14 @@ public sealed record LiveWorldCaptureEvidence(
         WorldRect? player = null;
         if (observedPlayerBounds is { IsFinite: true, IsEmpty: false } bounds)
         {
-            // A body box can end above the feet. Keep its exact horizontal
-            // bounds and use the image-measured foot when the two agree.
+            // Only a capture-matched body can supply a saved position. Use
+            // its exact horizontal bounds and refine the bottom with an
+            // image-measured foot when the two agree.
             var bottom = measuredFoot is { } observedFoot && observedFoot.X >= bounds.X
                 && observedFoot.X <= bounds.Right && observedFoot.Y > bounds.Y && observedFoot.Y <= height
                 ? observedFoot.Y : bounds.Bottom;
             player = new WorldRect(new(bounds.X * scale, (height - bottom) * scale),
                 new(bounds.Width * scale, (bottom - bounds.Y) * scale));
-        }
-        else if (knight is { Width: > 0, Height: > 0 } box && measuredFoot is { } foot
-            && foot.X >= box.X && foot.X <= box.Right && foot.Y > box.Y && foot.Y <= height)
-        {
-            player = new WorldRect(new(box.X * scale, (height - foot.Y) * scale),
-                new(box.Width * scale, (foot.Y - box.Y) * scale));
         }
 
         return new LiveWorldCaptureEvidence(timestamp,
