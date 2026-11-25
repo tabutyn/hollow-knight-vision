@@ -226,6 +226,29 @@ internal static class Program
                 return Task.FromResult(1);
             }
         }
+        if (arguments.FirstOrDefault() == "--inspect-atlas-road")
+        {
+            var errors = standardError ?? Console.Error;
+            if (arguments is not [_, var archive])
+            {
+                errors.WriteLine("Expected --inspect-atlas-road HACKER_ARCHIVE.");
+                return Task.FromResult(64);
+            }
+            try
+            {
+                var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HollowKnightVision");
+                var road = AtlasRoadInspection.Inspect(archive, new GroundTruthLineStore().Load(),
+                    new AtlasPathLinkStore(Path.Combine(root, AtlasPathLinkStore.Filename)));
+                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(road, WorldReplayJsonOptions));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                or JsonException or ArgumentException or GroundTruthLineStoreException)
+            {
+                errors.WriteLine($"Hacker Atlas road inspection failed. {error.Message}");
+                return Task.FromResult(1);
+            }
+        }
         if (arguments.FirstOrDefault() == "--recover-bot-walls")
         {
             var errors = standardError ?? Console.Error;
@@ -819,6 +842,8 @@ internal static class Program
                                     Retain reported gaps and process the remaining images.
             --recover-bot-walls CLIP ARCHIVE
                                     Recover wall features from a clip's exact source frames and ground masks.
+            --inspect-atlas-road HACKER_ARCHIVE
+                                    List authored floors and directed paths in the rooms of a saved Hacker Atlas.
             --probe                 Locate the game window without capturing pixels.
             --receiver-probe        Verify the in-game receiver and print its capabilities.
             --ground-truth-once     Print one Hacker camera/hero telemetry sample.

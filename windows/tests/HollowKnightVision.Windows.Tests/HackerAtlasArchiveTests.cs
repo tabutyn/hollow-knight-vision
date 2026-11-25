@@ -1,10 +1,117 @@
+using System.Diagnostics;
 using System.IO.Compression;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 
 internal static class HackerAtlasArchiveTests
 {
+    public static void TestRoadInspectionUsesSavedRoomAndAuthoredGraph() => CheckRoadInspection();
+
+    public static void CheckRoadInspection(string? host = null)
+    {
+        using var workspace = new Fixture();
+        var pipeline = new HackerAtlasPipeline();
+        _ = Integrate(pipeline, "Room", -64, 1);
+        _ = Integrate(pipeline, "Unlabeled", 180, 2);
+        var archive = pipeline.CaptureArchive(new Dictionary<string, AtlasPoint>()).Archive;
+        var rooms = archive.Rooms.Select(room => room with { TerrainProjection = new(new(8, 7), new(17, 23)) }).ToArray();
+        archive = archive with { Rooms = rooms };
+        var labels = new GroundTruthLineDocument { Lines =
+        [
+            new("Room", -35, 35, -35, GroundTruthLineKind.Positive, false),
+            new("Room", -15, 4, -2, GroundTruthLineKind.Positive, false),
+            new("Room", 7, 18, 11, GroundTruthLineKind.Positive, false),
+            new("Room", 7, 18, 13, GroundTruthLineKind.Positive, true)
+        ] };
+        var profile = new SaveProfileAtlas(1, Guid.NewGuid());
+        workspace.Archives.Write(profile, archive);
+        var active = Path.Combine(workspace.ArchiveRoot, $"{profile.Id:N}.zip");
+        var state = workspace.Archives.SaveState("Road fixture", profile, archive);
+        var named = new AtlasStateStore(Path.Combine(workspace.ArchiveRoot, "states")).WorldPath(state);
+        var links = Path.Combine(workspace.Root, "links.json");
+        File.WriteAllText(links, JsonSerializer.Serialize(new
+        {
+            rooms = new Dictionary<string, object>(),
+            scenes = new Dictionary<string, object>
+            {
+                ["Room"] = new[] { new { id = Guid.NewGuid(), first = new { x = 4, y = -2 },
+                    second = new { x = 7, y = 11 }, doubleJump = true } }
+            }
+        }));
+        var connections = new AtlasPathLinkStore(links);
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+        var before = File.ReadAllBytes(active);
+        var linksBefore = File.ReadAllBytes(links);
+        var json = JsonSerializer.Serialize(AtlasRoadInspection.Inspect(active, labels, connections), options);
+        Check(json == JsonSerializer.Serialize(AtlasRoadInspection.Inspect(named, labels, connections), options),
+            "A named state and active ZIP with identical room geometry must report the same graph.");
+
+        using var result = JsonDocument.Parse(json);
+        var room = result.RootElement.EnumerateArray().Single(value => value.GetProperty("scene").GetString() == "Room");
+        var strokes = room.GetProperty("strokes").EnumerateArray().ToArray();
+        var nodes = room.GetProperty("nodes").EnumerateArray().ToDictionary(
+            node => node.GetProperty("point").GetRawText(),
+            node => node.GetProperty("neighbors").EnumerateArray().Select(point => point.GetRawText()).ToHashSet());
+        Check(room.GetProperty("roomID").GetGuid() == rooms.Single(item => item.SceneName == "Room").Id
+            && room.GetProperty("tileCount").GetInt32() > 0
+            && room.GetProperty("floors").GetRawText() == "[[[-280,-245],[280,-245]],[[-120,-14],[32,-14]],[[56,77],[144,77]]]"
+            && strokes.Any(stroke => stroke.GetProperty("kind").GetString() == "walk")
+            && strokes.Any(stroke => stroke.GetProperty("kind").GetString() == "doubleJump")
+            && nodes.Count > 2,
+            "Report must use the archived scale, ignore non-authored lines and include the saved jump and its graph.");
+        Check(strokes.Any(stroke =>
+        {
+            if (stroke.GetProperty("kind").GetString() != "drop") return false;
+            var forward = stroke.GetProperty("forward").GetBoolean();
+            var from = stroke.GetProperty(forward ? "from" : "to").GetRawText();
+            var to = stroke.GetProperty(forward ? "to" : "from").GetRawText();
+            return nodes.TryGetValue(from, out var down) && down.Contains(to)
+                && (!nodes.TryGetValue(to, out var up) || !up.Contains(from));
+        }), "A reported drop must have a forward neighbor with no reverse edge.");
+        var unmarked = result.RootElement.EnumerateArray().Single(value => value.GetProperty("scene").GetString() == "Unlabeled");
+        Check(unmarked.GetProperty("issue").GetString() == "No ground geometry is available." && unmarked.GetProperty("nodes").GetArrayLength() == 0,
+            "Report rooms whose saved pixels have never been labeled.");
+        Check(File.ReadAllBytes(active).SequenceEqual(before) && File.ReadAllBytes(links).SequenceEqual(linksBefore),
+            "Inspection must preserve the archive and connections.");
+        if (host is not null)
+        {
+            new GroundTruthLineStore(Path.Combine(workspace.Root, GroundTruthLineStore.Filename)).Save(labels);
+            using var commandResult = JsonDocument.Parse(RunHost(0, active));
+            var inspected = commandResult.RootElement.EnumerateArray().Single(value => value.GetProperty("scene").GetString() == "Room");
+            Check(inspected.GetProperty("floors").GetRawText().Where(character => !char.IsWhiteSpace(character))
+                .SequenceEqual(room.GetProperty("floors").GetRawText()), "The installed Host must use the same archived room graph.");
+            _ = RunHost(64);
+            _ = RunHost(1, Path.Combine(workspace.Root, "missing.zip"));
+        }
+        File.WriteAllText(links, "{");
+        Throws<InvalidDataException>(() => AtlasRoadInspection.Inspect(active, labels, new(links)));
+
+        string RunHost(int expectedCode, params string[] arguments)
+        {
+            var isAssembly = Path.HasExtension(host) && Path.GetExtension(host).Equals(".dll", StringComparison.OrdinalIgnoreCase);
+            var start = new ProcessStartInfo(isAssembly ? "dotnet" : host!)
+                { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            if (isAssembly) start.ArgumentList.Add(host!);
+            start.ArgumentList.Add("--inspect-atlas-road");
+            foreach (var argument in arguments) start.ArgumentList.Add(argument);
+            start.Environment["HKV_GROUND_LABEL_ROOT"] = workspace.Root;
+            using var process = Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEndAsync();
+            var errors = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(45_000))
+            {
+                process.Kill(entireProcessTree: true);
+                throw new InvalidOperationException("The Hacker Atlas road command timed out.");
+            }
+            Check(process.ExitCode == expectedCode, errors.GetAwaiter().GetResult());
+            return output.GetAwaiter().GetResult();
+        }
+    }
+
     public static void TestRestoresPlaythroughAndContinuesCompositing()
     {
         using var workspace = new Fixture();

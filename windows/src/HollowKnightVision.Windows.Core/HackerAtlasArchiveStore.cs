@@ -96,19 +96,33 @@ public sealed class HackerAtlasArchiveStore(string root)
         catch (DirectoryNotFoundException) { return null; }
     }
 
+    internal static IReadOnlyList<(AtlasPathCalibration Calibration, int TileCount)> ReadRoadRooms(string path)
+    {
+        var isNamedState = Directory.Exists(path);
+        var archive = isNamedState ? Path.Combine(path, NamedArchiveFilename) : path;
+        using var stream = File.OpenRead(archive);
+        using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
+        var entries = zip.Entries.ToLookup(entry => entry.FullName, StringComparer.Ordinal);
+        var manifest = ReadManifest(entries);
+        Validate(manifest, isNamedState ? SaveProfileAtlas.Read(path) : manifest.Profile);
+        var rooms = new List<(AtlasPathCalibration, int)>(manifest.Rooms.Length);
+        foreach (var room in manifest.Rooms.Where(room => room.Tiles.Length > 0))
+        {
+            foreach (var coordinate in room.Tiles) _ = ReadTile(entries, room.Id, coordinate);
+            rooms.Add((new(room.Id.ToString("D").ToUpperInvariant(), room.SceneName, default,
+                room.TerrainProjection.PixelsPerWorldUnit), room.Tiles.Length));
+        }
+        return rooms;
+    }
+
     private static HackerAtlasArchive ReadArchive(string path, SaveProfileAtlas? profile)
     {
         using var stream = File.OpenRead(path);
         using (var zip = new ZipArchive(stream, ZipArchiveMode.Read))
         {
             var entries = zip.Entries.ToLookup(entry => entry.FullName, StringComparer.Ordinal);
-            using var metadata = Entry(entries, "atlas.json").Open();
-            var manifest = JsonSerializer.Deserialize<Manifest>(metadata, ModelStoreJson.Options)
-                ?? throw new InvalidDataException("Missing Hacker Atlas manifest.");
+            var manifest = ReadManifest(entries);
             Validate(manifest, profile);
-            var expectedEntries = manifest.Rooms.Sum(room => (long)room.Tiles.Length) + 1;
-            if (expectedEntries != zip.Entries.Count)
-                throw new InvalidDataException("Unexpected tiles in the Hacker Atlas archive.");
 
             var rooms = new List<HackerAtlasArchivedRoom>(manifest.Rooms.Length);
             foreach (var room in manifest.Rooms)
@@ -116,9 +130,7 @@ public sealed class HackerAtlasArchiveStore(string root)
                 var tiles = new List<HackerAtlasArchivedTile>(room.Tiles.Length);
                 foreach (var coordinate in room.Tiles)
                 {
-                    var entry = Entry(entries, TilePath(room.Id, coordinate));
-                    if (entry.Length != TileBytes)
-                        throw new InvalidDataException("Invalid Hacker Atlas tile size.");
+                    var entry = ReadTile(entries, room.Id, coordinate);
                     var pixels = new byte[TileBytes];
                     using var tile = entry.Open();
                     tile.ReadExactly(pixels);
@@ -202,12 +214,29 @@ public sealed class HackerAtlasArchiveStore(string root)
         return group.Length == 1 ? group[0] : throw new InvalidDataException("Missing or repeated Hacker Atlas entry.");
     }
 
+    private static Manifest ReadManifest(ILookup<string, ZipArchiveEntry> entries)
+    {
+        using var metadata = Entry(entries, "atlas.json").Open();
+        var manifest = JsonSerializer.Deserialize<Manifest>(metadata, ModelStoreJson.Options)
+            ?? throw new InvalidDataException("Missing Hacker Atlas manifest.");
+        if (manifest.Rooms is null || manifest.Rooms.Any(room => room?.Tiles is null)
+            || manifest.Rooms.Sum(room => (long)room.Tiles.Length) + 1 != entries.Sum(group => group.LongCount()))
+            throw new InvalidDataException("Unexpected tiles in the Hacker Atlas archive.");
+        return manifest;
+    }
+
+    private static ZipArchiveEntry ReadTile(ILookup<string, ZipArchiveEntry> entries, Guid room, AtlasTileCoordinate coordinate)
+    {
+        var entry = Entry(entries, TilePath(room, coordinate));
+        return entry.Length == TileBytes ? entry : throw new InvalidDataException("Invalid Hacker Atlas tile size.");
+    }
+
     private static string TilePath(Guid room, AtlasTileCoordinate tile) =>
         FormattableString.Invariant($"{room:N}/{tile.X}_{tile.Y}.bgra");
 
     private static void Validate(Manifest manifest, SaveProfileAtlas? profile)
     {
-        if (manifest.Version != Version || manifest.Profile != profile || manifest.RegistrationCount < 0
+        if (manifest.Version != Version || manifest.Profile != profile || profile is { IsValid: false } || manifest.RegistrationCount < 0
             || manifest.Rooms is null || manifest.Connections is null)
             throw new InvalidDataException("Invalid Hacker Atlas manifest or save profile.");
 
