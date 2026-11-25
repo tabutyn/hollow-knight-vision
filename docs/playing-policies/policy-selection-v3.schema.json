@@ -1,191 +1,216 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Proposed policy selection v3",
-  "description": "Structural vocabulary. Vision must also constrain decisionId to the pending decision and selection to null or one complete action from its captured offer. Handles are unique within that decision and operand type.",
-  "type": "object",
-  "properties": {
-    "decisionId": {
-      "$ref": "#/$defs/id"
-    },
-    "selection": {
-      "oneOf": [
-        {
-          "type": "null"
-        },
-        {
-          "$ref": "#/$defs/traverse"
-        },
-        {
-          "$ref": "#/$defs/fight"
-        },
-        {
-          "$ref": "#/$defs/focus"
-        },
-        {
-          "$ref": "#/$defs/lifeblood"
-        },
-        {
-          "$ref": "#/$defs/inspect"
-        },
-        {
-          "$ref": "#/$defs/talk"
-        },
-        {
-          "$ref": "#/$defs/menu"
-        }
-      ]
-    }
-  },
-  "required": [
-    "decisionId",
-    "selection"
-  ],
-  "additionalProperties": false,
-  "$defs": {
-    "id": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "traverse": {
+  "title": "Hollow Knight Vision policy selection",
+  "description": "The reply and latest-policy.json contain exactly one policy with its parameters. At runtime Vision specializes this vocabulary to complete selections actually available for the captured event. Observe is offered only when there is no executable target.",
+  "oneOf": [
+    {
       "type": "object",
+      "required": [
+        "policy",
+        "parameters"
+      ],
       "properties": {
         "policy": {
           "const": "traverse"
         },
-        "waypointId": {
-          "$ref": "#/$defs/id"
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "waypointId": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "waypointId"
+          ],
+          "additionalProperties": false
         }
       },
-      "required": [
-        "policy",
-        "waypointId"
-      ],
       "additionalProperties": false
     },
-    "fight": {
+    {
       "type": "object",
+      "required": [
+        "policy",
+        "parameters"
+      ],
       "properties": {
         "policy": {
           "const": "fight"
         },
-        "enemyId": {
-          "$ref": "#/$defs/id"
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "enemyId": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "enemyId"
+          ],
+          "additionalProperties": false
         }
       },
-      "required": [
-        "policy",
-        "enemyId"
-      ],
       "additionalProperties": false
     },
-    "focus": {
+    {
       "type": "object",
+      "required": [
+        "policy",
+        "parameters"
+      ],
       "properties": {
         "policy": {
           "const": "recover"
         },
-        "method": {
-          "const": "focus"
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "const": "focus"
+            }
+          },
+          "required": [
+            "method"
+          ],
+          "additionalProperties": false
         }
       },
-      "required": [
-        "policy",
-        "method"
-      ],
       "additionalProperties": false
     },
-    "lifeblood": {
+    {
       "type": "object",
+      "required": [
+        "policy",
+        "parameters"
+      ],
       "properties": {
         "policy": {
           "const": "recover"
         },
-        "method": {
-          "const": "lifeblood"
-        },
-        "sourceId": {
-          "$ref": "#/$defs/id"
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "const": "lifeblood"
+            },
+            "sourceId": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "method",
+            "sourceId"
+          ],
+          "additionalProperties": false
         }
       },
-      "required": [
-        "policy",
-        "method",
-        "sourceId"
-      ],
       "additionalProperties": false
     },
-    "inspect": {
+    {
       "type": "object",
+      "required": [
+        "policy",
+        "parameters"
+      ],
       "properties": {
         "policy": {
           "const": "interact"
         },
-        "verb": {
-          "const": "inspect"
-        },
-        "targetId": {
-          "$ref": "#/$defs/id"
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "verb": {
+              "enum": [
+                "inspect",
+                "talk"
+              ]
+            },
+            "targetId": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "verb",
+            "targetId"
+          ],
+          "additionalProperties": false
         }
       },
-      "required": [
-        "policy",
-        "verb",
-        "targetId"
-      ],
       "additionalProperties": false
     },
-    "talk": {
+    {
       "type": "object",
-      "properties": {
-        "policy": {
-          "const": "interact"
-        },
-        "verb": {
-          "const": "talk"
-        },
-        "targetId": {
-          "$ref": "#/$defs/id"
-        }
-      },
       "required": [
         "policy",
-        "verb",
-        "targetId"
+        "parameters"
       ],
-      "additionalProperties": false
-    },
-    "menu": {
-      "type": "object",
       "properties": {
         "policy": {
           "const": "menu"
         },
-        "menuId": {
-          "$ref": "#/$defs/id"
-        },
-        "entryId": {
-          "$ref": "#/$defs/id"
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "menuId": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "entryId": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "menuId",
+            "entryId"
+          ],
+          "additionalProperties": false
         }
       },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
       "required": [
         "policy",
-        "menuId",
-        "entryId"
+        "parameters"
       ],
+      "properties": {
+        "policy": {
+          "const": "observe"
+        },
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
       "additionalProperties": false
     }
-  },
+  ],
   "examples": [
     {
-      "decisionId": 4,
-      "selection": {
-        "policy": "traverse",
+      "policy": "interact",
+      "parameters": {
+        "verb": "inspect",
+        "targetId": 0
+      }
+    },
+    {
+      "policy": "traverse",
+      "parameters": {
         "waypointId": 0
       }
     },
     {
-      "decisionId": 4,
-      "selection": null
+      "policy": "observe",
+      "parameters": {}
     }
   ]
 }

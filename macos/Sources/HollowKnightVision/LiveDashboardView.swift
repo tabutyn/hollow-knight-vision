@@ -118,13 +118,12 @@ enum DashboardWorkspace: String, CaseIterable, Identifiable {
     case stencils = "Stencil"
     case model = "Model"
     case bot = "Bot"
-    case thinking = "Thinking"
     case hacker = "Hacker"
     case ops = "Ops"
 
     var id: Self { self }
     var shortcutCharacter: Character { rawValue.lowercased().first! }
-    var supportsGameplayExitShortcut: Bool { self == .label || self == .model || self == .bot || self == .thinking || self == .stencils }
+    var supportsGameplayExitShortcut: Bool { self == .label || self == .model || self == .bot || self == .stencils }
 }
 
 enum DashboardControlVisibility {
@@ -137,12 +136,12 @@ enum DashboardControlVisibility {
                          recognizedContext: String?) -> Bool {
         workspace == .gameplay && mode == .modded && recognizedContext == "Gameplay"
     }
-    static func workspaces(thinkingEnabled: Bool) -> [DashboardWorkspace] {
-        DashboardWorkspace.allCases.filter { $0 != .ops && (thinkingEnabled || $0 != .thinking) }
+    static var workspaces: [DashboardWorkspace] {
+        DashboardWorkspace.allCases.filter { $0 != .ops }
     }
     // B is reserved for bot start/stop in Gameplay and Hacker.
-    static func shortcutWorkspaces(thinkingEnabled: Bool) -> [DashboardWorkspace] {
-        DashboardWorkspace.allCases.filter { $0 != .bot && (thinkingEnabled || $0 != .thinking) }
+    static var shortcutWorkspaces: [DashboardWorkspace] {
+        DashboardWorkspace.allCases.filter { $0 != .bot }
     }
 }
 
@@ -155,7 +154,6 @@ enum WorkspaceExitShortcutPolicy {
         isRepeat: Bool, isEditingText: Bool = false
     ) -> Bool {
         workspace.supportsGameplayExitShortcut
-            && (workspace != .thinking || !isEditingText)
             && eventType == .keyDown
             && (keyCode == 7 || (workspace == .label && keyCode == 37 && !isEditingText)) // X / L
             && !isRepeat
@@ -315,6 +313,7 @@ private struct DebugView: View {
 
     @ObservedObject var model: LiveCaptureModel
     let showsGroundTrackingTools: Bool
+    @Binding var showsThinkingContext: Bool
     @Binding var showsGameState: Bool
     @Binding var showsGroundTrackingPatches: Bool
     @Binding var showsRoad: Bool
@@ -326,6 +325,7 @@ private struct DebugView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Toggle("Thinking context", isOn: $showsThinkingContext)
             Toggle(visionText("Game State"), isOn: $showsGameState)
             Toggle(visionText("Stencil Detection"), isOn: $model.stencilDetectionEnabled)
                 .disabled(!stencilReady)
@@ -539,39 +539,42 @@ struct DashboardView: View {
     @State private var gameTextReader = GameTextReader()
     @StateObject private var thinkingInspector = ThinkingInspector()
     @ObservedObject var thinkingSession: ThinkingModelSession
-    private var proofreadingTarget: ThinkingModel? {
-        guard !thinkingSession.answering else { return nil }
-        switch thinkingSession.state {
-        case .ready(let target): return target
-        default: return nil
-        }
-    }
     @AppStorage("HollowKnightVision.readGameText") private var readGameText = true
+    @AppStorage("HollowKnightVision.debug.thinkingContext") private var showsThinkingContext = true
+    @State private var contextExpanded = false
     @State private var showingTextReader = false
 
     private var textReadingContext: String {
         model.readingOpeningCutscene ? RememberedGameText.openingContext : model.skillContext
     }
 
-    private func dispatchThinkingPolicy(_ output: ThinkingInspector.Output) -> String? {
+    private func dispatchThinkingPolicy(_ output: ThinkingInspector.Output) async -> ThinkingHandoff? {
         let frame = output.input.frame
-        guard let plan = output.plan, frame.profile == model.notebookProfile?.id,
+        guard output.validated, frame.profile == model.notebookProfile?.id,
               output.input.model == thinkingSession.model,
-              frame.mode == model.gameMode.rawValue, model.gameMode == .modded else {
-            return "Skipped · save, model or game mode changed."
+              frame.mode == model.gameMode.rawValue else {
+            return .status("Skipped · save, model or game mode changed.")
         }
+        guard model.gameMode == .modded else { return .status("Inspection only · Normal mode.") }
         let domain = frame.controlDomain
-        guard (domain == .gameplay && workspace == .gameplay || domain == .hacker && workspace == .hacker),
-              !showingSettings, !showingTextReader,
-              initialization.isFirstPhaseComplete, !labelingTrainer.isRunning, !botTrainer.isRunning else {
-            return "Skipped · gameplay controls unavailable."
+        func controlsAvailable() -> Bool {
+            (domain == .gameplay && workspace == .gameplay || domain == .hacker && workspace == .hacker)
+                && !showingSettings && !showingTextReader && initialization.isFirstPhaseComplete
+                && !labelingTrainer.isRunning && !botTrainer.isRunning
+                && frame.profile == model.notebookProfile?.id && output.input.model == thinkingSession.model
+                && (frame.stateVisit == nil || frame.stateVisit == model.thinkingStateVisit)
         }
-        return model.botPlayer.dispatch(plan, context: frame.context, generation: frame.generation,
-                                        domain: domain)
+        guard controlsAvailable() else { return .status("Skipped · gameplay controls unavailable.") }
+        if let script = output.script {
+            return await model.runThinkingMenu(script, generation: frame.generation, enabled: controlsAvailable)
+        }
+        guard let plan = output.plan else { return nil }
+        return .status(model.botPlayer.dispatch(plan, context: frame.context, generation: frame.generation,
+                                        domain: domain))
     }
 
-    private func thinkingFrame() -> ThinkingFrame? {
-        guard let image = model.thinkingScreenshot() else { return nil }
+    private func thinkingFrame(image source: CGImage? = nil) -> ThinkingFrame? {
+        guard let image = source ?? model.thinkingScreenshot() else { return nil }
         let atlas = model.liveWorldSnapshot.map {
             "Atlas observations: \($0.observations.count). Recorded transitions: \(model.transitionPortals.count)."
         } ?? ""
@@ -765,7 +768,16 @@ struct DashboardView: View {
             }
         }
         .task {
-            await thinkingInspector.monitor(reader: gameTextReader, session: thinkingSession, dispatch: dispatchThinkingPolicy, snapshot: thinkingFrame)
+            guard thinkingSession.isEnabled else { return }
+            model.onThinkingStateChange = { image in
+                guard let state = model.thinkingSignals(profile: model.notebookProfile?.id, readsText: readGameText) else { return }
+                thinkingInspector.observe(state, reader: gameTextReader, session: thinkingSession,
+                    dispatch: dispatchThinkingPolicy, snapshot: { thinkingFrame(image: image) })
+            }
+            defer { model.onThinkingStateChange = nil }
+            await thinkingInspector.monitor(reader: gameTextReader, session: thinkingSession,
+                signals: { model.thinkingSignals(profile: model.notebookProfile?.id, readsText: readGameText) },
+                dispatch: dispatchThinkingPolicy, snapshot: { thinkingFrame() })
         }
         .onChange(of: thinkingSession.model) { _, _ in
             thinkingInspector.reset(session: thinkingSession, keepFrame: true)
@@ -780,12 +792,6 @@ struct DashboardView: View {
             gameTextReader.selectProfile(model.notebookProfile)
             await gameTextReader.monitor(enabled: readGameText && model.isCapturing, language: initialization.language.rawValue) {
                 model.thinkingScreenshot().map { ($0, textReadingContext) }
-            }
-        }
-        .task(id: "\(model.notebookProfile?.id.uuidString ?? "")-\(readGameText)-\(String(describing: proofreadingTarget))") {
-            gameTextReader.selectProfile(model.notebookProfile)
-            if readGameText, let target = proofreadingTarget {
-                await gameTextReader.cleanReadings(preferred: target, updateQuestNotes: true)
             }
         }
         .onAppear { model.botPlayer.didInspect = { sight, start in gameTextReader.beginInspection(sight, at: start) } }
@@ -956,9 +962,6 @@ struct DashboardView: View {
                         } catch { labelingSaveError = error.localizedDescription }
                     }
                 )
-            } else if workspace == .thinking {
-                ThinkingWorkspaceView(session: thinkingSession, inspector: thinkingInspector,
-                                      player: model.botPlayer, openLog: { showingTextReader = true })
             } else if workspace == .bot {
                 BotModelWorkspaceView(controller: botTrainer, trainingAllowed: !labelingTrainer.isRunning,
                                       reloadModel: { model.botPlayer.reloadModel() })
@@ -1093,9 +1096,6 @@ struct DashboardView: View {
                             .padding(.vertical, 5)
                             .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 7))
                     }
-                    if thinkingSession.isEnabled {
-                        GameplayNotebookReadout(reader: gameTextReader, session: thinkingSession, enabled: readGameText)
-                    }
                 }.padding(8).allowsHitTesting(false)
             }
         }
@@ -1139,6 +1139,23 @@ struct DashboardView: View {
                     .allowsHitTesting(false)
             }
         }
+        .overlay(alignment: .bottomTrailing) {
+            if contextVisible {
+                GeometryReader { area in
+                    ThinkingContextPanel(reader: gameTextReader, session: thinkingSession, inspector: thinkingInspector,
+                        player: model.botPlayer, expanded: $contextExpanded, readsText: readGameText)
+                        .frame(width: min(max(0, area.size.width - 16), contextExpanded ? 1120 : 280),
+                               height: min(max(0, area.size.height - 16), contextExpanded ? 490 : 66))
+                        .padding(8)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                }
+            }
+        }
+    }
+
+    private var contextVisible: Bool {
+        showsThinkingContext && (workspace == .gameplay || workspace == .hacker)
+            && model.labelImage == nil && reviewingModelCandidate == nil
     }
 
     private var showsModelLoadingOverGame: Bool {
@@ -1884,7 +1901,7 @@ struct DashboardView: View {
                             DebugView(model: model,
                                 showsGroundTrackingTools: DebugViewAvailabilityPolicy.showsGroundTrackingTools(
                                     workspace: workspace, recognizedContext: model.liveGameStatus),
-                                showsGameState: $showsGameState, showsGroundTrackingPatches: $showsGroundTrackingPatches,
+                                showsThinkingContext: $showsThinkingContext, showsGameState: $showsGameState, showsGroundTrackingPatches: $showsGroundTrackingPatches,
                                 showsRoad: $showsRoad, showsEstimatedPlacement: $showsEstimatedPlacement,
                                 stencilReady: initialization.isFirstPhaseComplete,
                                 modelReady: initialization.isFirstPhaseComplete && trainedGameplayModelReady,
@@ -1930,7 +1947,7 @@ struct DashboardView: View {
     }
 
     private var visibleWorkspaces: [DashboardWorkspace] {
-        DashboardControlVisibility.workspaces(thinkingEnabled: thinkingSession.isEnabled).filter { destination in
+        DashboardControlVisibility.workspaces.filter { destination in
             if destination == .model || destination == .bot { return initialization.isFirstPhaseComplete }
             if destination == .hacker { return model.canUseHacker && model.liveGameStatus == "Gameplay" }
             return true
@@ -1962,7 +1979,10 @@ struct DashboardView: View {
 
     private var workspaceShortcuts: some View {
         ZStack {
-            ForEach(DashboardControlVisibility.shortcutWorkspaces(thinkingEnabled: thinkingSession.isEnabled)) { destination in
+            if contextVisible && !showingSettings {
+                Button("Toggle Thinking context") { contextExpanded.toggle() }.keyboardShortcut("t", modifiers: [])
+            }
+            ForEach(DashboardControlVisibility.shortcutWorkspaces) { destination in
                 Button("Open \(destination.rawValue)") { performWorkspaceShortcut(destination) }
                     .keyboardShortcut(KeyEquivalent(destination.shortcutCharacter), modifiers: [])
             }
@@ -2019,7 +2039,6 @@ struct DashboardView: View {
 
     private func selectWorkspace(_ destination: DashboardWorkspace) {
         guard !showingSettings, destination != workspace else { return }
-        guard destination != .thinking || thinkingSession.isEnabled else { return }
         guard (destination != .model && destination != .bot) || initialization.isFirstPhaseComplete else { return }
         if destination == .hacker && (!model.canUseHacker || model.liveGameStatus != "Gameplay") {
             lockedWorkspaceMessage = model.gameMode == .normal
@@ -2040,7 +2059,7 @@ struct DashboardView: View {
         }
 
 
-        if workspace == .model || workspace == .bot || workspace == .thinking || reviewingModelCandidate != nil {
+        if workspace == .model || workspace == .bot || reviewingModelCandidate != nil {
             closeModelReview()
         }
         if model.isLabelModeActive {
@@ -2072,9 +2091,6 @@ struct DashboardView: View {
                 ?? labelingContext.labels.first?.id ?? ""
             workspace = .label
             model.toggleLabelMode()
-        case .thinking:
-            workspace = .thinking
-            model.setModelReviewActive(true)
         case .bot:
             workspace = .bot
             model.setModelReviewActive(true)

@@ -59,20 +59,21 @@ def journal():
 
 
 def selector():
-    fig, ax = page("What Gemma sees before choosing a policy",
-                   "Vision assembles a fresh /api/chat request for each scheduled game capture.")
+    fig, ax = page("The running v2 policy request",
+                   "Vision takes the first available frame, then samples every minute. One policy request runs at a time.")
     rows = [
-        ("1", "Atlas objective and notebook", "Permanent goal first, then chronological source excerpts. A large log fits across update calls."),
-        ("2", "Current quest notes", "quests · destinations · unknowns. Each lead carries the source numbers behind it."),
-        ("3", "Current scene and decision spec", "Atlas goal, pinned frame, current OCR, Atlas and receiver state, bound candidates and score bounds."),
+        ("1", "messages[0].content", "The fixed Atlas objective and the instructions for scoring offered candidates."),
+        ("2", "messages[1].content", "Notebook excerpts, cited quest notes, live state, visible OCR and the offer of candidate IDs."),
+        ("3", "messages[1].images[0]", "One clean game screenshot encoded as a PNG."),
+        ("4", "format", "The reply schema allows only IDs from this offer, each scored from 1 to 100."),
     ]
     for i, (num, title, detail) in enumerate(rows):
-        y = 4.98 - .89*i
+        y = 5.18 - .80*i
         ax.text(.38, y, num, fontsize=21, weight="bold", color=TEAL, va="center")
         ax.text(.91, y+.11, title, fontsize=16, weight="bold", color=INK, va="center")
         ax.text(.92, y-.24, detail, fontsize=12.7, color=DIM, va="center")
     panel(ax, .35, .74, 5.90, 1.62, "Gemma returns JSON",
-          "One scores object. Each key is an offered ID.\nAn empty object abstains.", SAND)
+          "One scores object. Each key is an offered ID.\nAn empty scores object abstains.", SAND)
     panel(ax, 7.20, .74, 6.44, 1.62, "Vision chooses at playback",
           "Check the fresh screen and receiver when the reply arrives.\nDispatch one eligible maneuver automatically.")
     arrow(ax, (6.32, 1.56), (7.10, 1.56))

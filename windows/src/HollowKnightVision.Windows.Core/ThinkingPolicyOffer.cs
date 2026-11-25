@@ -144,7 +144,9 @@ public sealed class ThinkingPolicyOffer
         road_frontier marks an exploration target. Recover with focus heals a missing mask.
         """ + "\n" + JsonSerializer.Serialize(Wire);
 
-    public object Schema => new
+    public object Schema => ResponseSchema(Candidates.Select(candidate => candidate.Id));
+
+    public static object ResponseSchema(IEnumerable<string> ids) => new
     {
         type = "object", additionalProperties = false, required = new[] { "scores" },
         properties = new
@@ -152,7 +154,7 @@ public sealed class ThinkingPolicyOffer
             scores = new
             {
                 type = "object", additionalProperties = false,
-                properties = Candidates.ToDictionary(candidate => candidate.Id,
+                properties = ids.ToDictionary(id => id,
                     _ => new { type = "integer", minimum = 1, maximum = 100 })
             }
         }

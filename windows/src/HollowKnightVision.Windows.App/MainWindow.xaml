@@ -480,6 +480,11 @@
             </Grid>
         </Border>
 
+        <Grid x:Name="ThinkingBounds" Grid.Row="0" Margin="8" Panel.ZIndex="50">
+            <local:ThinkingContextPanel x:Name="ContextPanel" VerticalAlignment="Bottom" HorizontalAlignment="Right"
+                MaxWidth="{Binding ActualWidth, ElementName=ThinkingBounds}" MaxHeight="{Binding ActualHeight, ElementName=ThinkingBounds}"/>
+        </Grid>
+
         <!-- One bottom row; diagnostic and atlas settings live behind the gear. -->
         <Grid Grid.Row="1" MinHeight="32" Background="#03070A">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -505,8 +510,7 @@
                         </ContextMenu>
                     </Button.ContextMenu>
                 </Button>
-                <Button x:Name="ThinkingButton" Content="Thinking" Click="Thinking_Click" ToolTip="T to open Thinking"
-                        AutomationProperties.Name="Open Thinking inspector"/>
+
                 <Button x:Name="PathRecordingButton" Content="K" ToolTip="Start or stop a bot capture" Click="PathRecording_Click"/>
                 <Button x:Name="ReplayInputPathButton" Content="Replay" ToolTip="Replay a recorded input path"
                         Visibility="Collapsed" Click="ReplayInputPath_Click">
@@ -648,6 +652,8 @@
                                         <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="38"/></Grid.ColumnDefinitions><TextBlock Text="Detection Extend"/><Slider x:Name="DetectionExtendSlider" Grid.Column="1" Minimum="0" Maximum="50" Value="12" Margin="8,0" ValueChanged="DetectionExtendSlider_ValueChanged"/><TextBlock x:Name="DetectionExtendText" Grid.Column="2" Text="12%" FontFamily="Consolas" HorizontalAlignment="Right"/></Grid>
                                         <CheckBox x:Name="DetectionPixelsCheck" Content="Detection Pixels" Margin="0,0,0,10" Checked="DetectionPixelsCheck_Changed" Unchecked="DetectionPixelsCheck_Changed"/>
                                     </StackPanel>
+                                    <CheckBox x:Name="ShowThinkingContext" Content="Thinking context" IsChecked="True" Margin="0,0,0,8"
+                                              Checked="ContextVisibilityChanged" Unchecked="ContextVisibilityChanged"/>
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                                         <CheckBox x:Name="ReadGameTextCheck" Content="Read game text" IsChecked="True" VerticalAlignment="Center"
                                                   Checked="ReadGameTextCheck_Changed" Unchecked="ReadGameTextCheck_Changed"/>

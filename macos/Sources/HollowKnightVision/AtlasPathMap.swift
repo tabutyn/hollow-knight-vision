@@ -648,6 +648,9 @@ final class AtlasPathMap {
             revision: r.revision, registered: registered)
         if r.calibration != nil { row.pathAlignment = r.navigation.alignment }
         if var scene = row.policyScene {
+            if measured && trackPosition {
+                scene.navigationPosition = .init(chart: room, feet: feet, arrivalRadius: max(3, g.knightWidth / 2))
+            }
             func target(_ nav: AtlasPathNavigation, _ hint: BotRoadHint?) -> BotRouteTarget? {
                 guard let hint, let goal = nav.goal, let waypoint = nav.next,
                       hint.dx != 0 || hint.dy != 0 else { return nil }

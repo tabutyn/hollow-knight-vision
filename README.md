@@ -2,7 +2,7 @@
 
 Hollow Knight Vision is an MIT-licensed desktop vision and mapping tool for macOS and Windows. It captures a local Hollow Knight window, recognizes gameplay objects, builds room atlases, edits ground truth, records repeatable routes, and trains updated object detectors from labels made inside the app.
 
-The repository contains source code, contracts, calibration metadata, and a seven-class ONNX detector. It contains no gameplay screenshots, recordings, labels, or training dataset. Hollow Knight and its visual assets belong to Team Cherry and are not distributed here.
+The repository contains source code, contracts, calibration metadata, and a seven-class ONNX detector. The policy documentation includes a tablet screenshot and short decision traces. Full capture sessions, labels, and training datasets stay in local application data or ignored artifact directories. Hollow Knight and its visual assets belong to Team Cherry.
 
 ## Layout
 
@@ -44,7 +44,7 @@ The Hollow Knight Bot effort uses Stable-Baselines3. On macOS, **🤖 B** contro
 
 On every ordinary launch, choose **Normal Hollow Knight** or **Modded Hollow Knight**. Normal mode keeps menu recognition and the visual Gameplay atlas available without a game mod. Modded mode also connects to the local receiver; Hacker and Ops remain disabled until their advertised receiver capabilities arrive. Automated launches can use `--game-mode normal` or `--game-mode modded` to bypass the chooser. Pass `--game-path PATH` to select a separate stock or modded installation explicitly; explicit paths are checked against the selected mode.
 
-On macOS, select **Enable Thinking (load local model)** in the chooser or pass `--enable-thinking` to load Gemma for that session. Thinking defaults to off.
+On macOS, select **Enable Thinking (load local model)** in the chooser or pass `--enable-thinking` to load Gemma for that session. Thinking defaults to off. Press **T** to inspect the event screenshot, the gameplay or menu actions Vision offered, and the JSON returned by the local model. [Thinking data path and policy contract](docs/playing-policies/README.md#what-runs-today-on-macos)
 
 Vision scans for complete compatible installations before showing the chooser;
 an unavailable mode is disabled. Selecting an available mode gracefully closes

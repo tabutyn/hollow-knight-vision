@@ -23,26 +23,21 @@ struct GameTextDebugView: View {
             if showingMemory {
                 Text(reader.profile.map { "Save slot \($0.slot)" } ?? "Before save selection")
                     .font(.headline)
-                if enabled, let status = reader.cleanupStatus {
-                    Text(status).font(.caption).foregroundStyle(.secondary)
-                }
                 if reader.entries.isEmpty {
                     ContentUnavailableView("No text logged yet", systemImage: "book")
                 } else {
                     List(reader.entries) { record in
                         let entry = record.reading
                         VStack(alignment: .leading, spacing: 4) {
-                            if let interpretation = entry.interpretation {
-                                Text(interpretation.displayLabel).font(.headline)
-                                Text(entry.reading).textSelection(.enabled)
-                                DisclosureGroup("Original OCR") {
-                                    Text(entry.text).textSelection(.enabled)
-                                    Text(interpretation.label.title + " · " + interpretation.model)
-                                        .font(.caption).foregroundStyle(.secondary)
+                            Text(entry.isPassage == true ? "Recorded passage" : "Notebook text").font(.caption.bold())
+                            Text(entry.displayText).textSelection(.enabled)
+                            if entry.text != entry.displayText {
+                                DisclosureGroup("First OCR reading") { Text(entry.text).textSelection(.enabled) }
+                            }
+                            if let annotation = entry.interpretation {
+                                DisclosureGroup("Earlier model annotation") {
+                                    Text(annotation.displayLabel + " · " + annotation.text).textSelection(.enabled)
                                 }
-                            } else {
-                                Text("Awaiting review").font(.caption.bold())
-                                Text(entry.text).textSelection(.enabled)
                             }
                             Text("\(record.contexts.joined(separator: " · ")) · \(record.updated.formatted())")
                                 .font(.caption).foregroundStyle(.secondary)
@@ -51,9 +46,6 @@ struct GameTextDebugView: View {
                     }
                 }
             } else if enabled, let scan = reader.scan {
-                let readings = reader.memory.filter { $0.context == scan.context && $0.language == scan.language && $0.interpretation != nil }
-                let pageText = RememberedGameText.key(scan.lines.map(\.text).joined(separator: " "))
-                let page = readings.last { $0.isPassage == true && pageText.contains(RememberedGameText.key($0.text)) }
                 HStack(alignment: .top, spacing: 12) {
                     GeometryReader { area in
                         let scale = min(area.size.width / CGFloat(scan.image.width), area.size.height / CGFloat(scan.image.height))
@@ -78,21 +70,10 @@ struct GameTextDebugView: View {
                         if scan.lines.isEmpty { Text("No text detected in this frame.").foregroundStyle(.secondary) }
                         ScrollView {
                             VStack(alignment: .leading, spacing: 8) {
-                                if let page, let interpreted = page.interpretation {
-                                    Text(interpreted.displayLabel).font(.caption.bold())
-                                    Text(interpreted.text).textSelection(.enabled)
-                                    Divider()
-                                }
                                 ForEach(scan.lines) { line in
                                     HStack(alignment: .firstTextBaseline) {
                                         Button(String(line.id)) { selected = line.id }
-                                        VStack(alignment: .leading) {
-                                            if let value = readings.last(where: { $0.text == line.text })?.interpretation {
-                                                Text(value.displayLabel).font(.caption.bold())
-                                                Text(value.text).textSelection(.enabled)
-                                                if value.text != line.text { Text(line.text).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
-                                            } else { Text(line.text).textSelection(.enabled) }
-                                        }
+                                        Text(line.text).textSelection(.enabled)
                                         Spacer()
                                         Text("\(Int(line.confidence * 100))%").font(.caption).foregroundStyle(.secondary)
                                     }
@@ -108,35 +89,5 @@ struct GameTextDebugView: View {
         }
         .padding(18)
         .frame(minWidth: 720, idealWidth: 900, minHeight: 380, idealHeight: 520)
-    }
-}
-
-struct GameplayNotebookReadout: View {
-    @ObservedObject var reader: GameTextReader
-    @ObservedObject var session: ThinkingModelSession
-    let enabled: Bool
-
-    private var content: String {
-        if !reader.loggedText.isEmpty { return reader.loggedText.joined(separator: "\n") }
-        let status: String
-        if !enabled { status = "Text reading is off" }
-        else { status = reader.cleanupStatus ?? "Waiting for a corrected reading" }
-        var lines = ["Goal · " + reader.currentGoal, status]
-        if case .loading(let model) = session.state { lines.append(model.title + " · " + session.loadDetail) }
-        if case .failed(_, let reason) = session.state { lines.append(reason) }
-        return lines.joined(separator: "\n")
-    }
-
-    var body: some View {
-        Text(content)
-            .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-            .foregroundStyle(.orange)
-            .multilineTextAlignment(.leading)
-            .lineLimit(4, reservesSpace: true)
-            .frame(width: 320, alignment: .leading)
-            .padding(.horizontal, 7).padding(.vertical, 4)
-            .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 5))
-            .accessibilityLabel("Notebook")
-            .accessibilityValue(content)
     }
 }

@@ -1,0 +1,269 @@
+{
+  "decisions" : [
+    {
+      "buttons" : [
+        0,
+        2,
+        2
+      ],
+      "fromHealth" : 4,
+      "fromSoul" : 66,
+      "fromX" : 34.5,
+      "offer" : {
+        "candidates" : [
+          {
+            "evidence" : {
+              "road_distance" : 0.14999999999999999,
+              "road_dx" : 1,
+              "road_dy" : 0,
+              "road_frontier" : true,
+              "roomId" : 1000000
+            },
+            "selection" : {
+              "parameters" : {
+                "waypointId" : 0
+              },
+              "policy" : "traverse"
+            }
+          },
+          {
+            "evidence" : {
+              "road_distance" : 0.043359374999999999,
+              "road_dx" : -1,
+              "road_dy" : 0,
+              "road_frontier" : false,
+              "roomId" : 1000000
+            },
+            "selection" : {
+              "parameters" : {
+                "waypointId" : 1
+              },
+              "policy" : "traverse"
+            }
+          },
+          {
+            "evidence" : {
+
+            },
+            "selection" : {
+              "parameters" : {
+                "method" : "focus"
+              },
+              "policy" : "recover"
+            }
+          }
+        ],
+        "objective" : "expandAtlas"
+      },
+      "reply" : {
+        "parameters" : {
+          "waypointId" : 0
+        },
+        "policy" : "traverse"
+      },
+      "selector" : "explore",
+      "toHealth" : 4,
+      "toSoul" : 66,
+      "toX" : 36.114227294921875
+    },
+    {
+      "buttons" : [
+        0,
+        1
+      ],
+      "fromHealth" : 4,
+      "fromSoul" : 66,
+      "fromX" : 36.160003662109375,
+      "offer" : {
+        "candidates" : [
+          {
+            "evidence" : {
+              "road_distance" : 0.13554687500000001,
+              "road_dx" : 1,
+              "road_dy" : 0,
+              "road_frontier" : true,
+              "roomId" : 1000000
+            },
+            "selection" : {
+              "parameters" : {
+                "waypointId" : 0
+              },
+              "policy" : "traverse"
+            }
+          },
+          {
+            "evidence" : {
+              "road_distance" : 0.057812500000000003,
+              "road_dx" : -1,
+              "road_dy" : 0,
+              "road_frontier" : false,
+              "roomId" : 1000000
+            },
+            "selection" : {
+              "parameters" : {
+                "waypointId" : 1
+              },
+              "policy" : "traverse"
+            }
+          },
+          {
+            "evidence" : {
+
+            },
+            "selection" : {
+              "parameters" : {
+                "method" : "focus"
+              },
+              "policy" : "recover"
+            }
+          }
+        ],
+        "objective" : "expandAtlas"
+      },
+      "reply" : {
+        "parameters" : {
+          "waypointId" : 1
+        },
+        "policy" : "traverse"
+      },
+      "selector" : "progress",
+      "toHealth" : 4,
+      "toSoul" : 66,
+      "toX" : 35.375778198242188
+    },
+    {
+      "buttons" : [
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16
+      ],
+      "fromHealth" : 4,
+      "fromSoul" : 66,
+      "fromX" : 35.330001831054688,
+      "offer" : {
+        "candidates" : [
+          {
+            "evidence" : {
+              "road_distance" : 0.14296875000000001,
+              "road_dx" : 1,
+              "road_dy" : 0,
+              "road_frontier" : true,
+              "roomId" : 1000000
+            },
+            "selection" : {
+              "parameters" : {
+                "waypointId" : 0
+              },
+              "policy" : "traverse"
+            }
+          },
+          {
+            "evidence" : {
+              "road_distance" : 0.050390625000000001,
+              "road_dx" : -1,
+              "road_dy" : 0,
+              "road_frontier" : false,
+              "roomId" : 1000000
+            },
+            "selection" : {
+              "parameters" : {
+                "waypointId" : 1
+              },
+              "policy" : "traverse"
+            }
+          },
+          {
+            "evidence" : {
+
+            },
+            "selection" : {
+              "parameters" : {
+                "method" : "focus"
+              },
+              "policy" : "recover"
+            }
+          }
+        ],
+        "objective" : "expandAtlas"
+      },
+      "reply" : {
+        "parameters" : {
+          "method" : "focus"
+        },
+        "policy" : "recover"
+      },
+      "selector" : "recover",
+      "toHealth" : 5,
+      "toSoul" : 33,
+      "toX" : 35.330001831054688
+    },
+    {
+      "buttons" : [
+        0,
+        1,
+        1
+      ],
+      "fromX" : 35.330001831054688,
+      "model" : "gemma3:4b",
+      "offer" : {
+        "candidates" : [
+          {
+            "evidence" : {
+              "road_distance" : 0.14296875000000001,
+              "road_dx" : 1,
+              "road_dy" : 0,
+              "road_frontier" : true,
+              "roomId" : 1000000
+            },
+            "selection" : {
+              "parameters" : {
+                "waypointId" : 0
+              },
+              "policy" : "traverse"
+            }
+          },
+          {
+            "evidence" : {
+              "road_distance" : 0.050390625000000001,
+              "road_dx" : -1,
+              "road_dy" : 0,
+              "road_frontier" : false,
+              "roomId" : 1000000
+            },
+            "selection" : {
+              "parameters" : {
+                "waypointId" : 1
+              },
+              "policy" : "traverse"
+            }
+          }
+        ],
+        "objective" : "expandAtlas"
+      },
+      "reply" : {
+        "parameters" : {
+          "waypointId" : 1
+        },
+        "policy" : "traverse"
+      },
+      "selected" : "c1",
+      "selector" : "gemma",
+      "toX" : 33.715766906738281
+    }
+  ],
+  "saveDisabled" : true,
+  "scene" : "Tutorial_01",
+  "seed" : 441,
+  "selectionSource" : "fixed choices for controller cases; local model for gemma case"
+}

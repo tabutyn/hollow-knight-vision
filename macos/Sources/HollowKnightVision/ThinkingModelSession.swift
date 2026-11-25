@@ -82,7 +82,7 @@ final class ThinkingModelSession: ObservableObject {
     func checkResidency(of target: ThinkingModel) async {
         guard state == .ready(target), !answering else { return }
         do {
-            let found = try await GameTextCleanup.resident(preferred: target)
+            let found = try await ThinkingInventory.resident(preferred: target)
             guard !Task.isCancelled, state == .ready(target), !answering else { return }
             if found?.model != target { state = .unloaded(target) }
         } catch { /* A failed poll gives no evidence that the loaded model stopped. */ }
@@ -135,10 +135,10 @@ final class ThinkingModelSession: ObservableObject {
         guard isReady else { throw ThinkingClient.Failure.unavailable }
     }
 
-    func answer(model requested: ThinkingModel, image: CGImage, context: ThinkingContext) async throws -> String {
+    func answer(model requested: ThinkingModel, context: ThinkingContext) async throws -> String {
         guard isEnabled else { throw CancellationError() }
         func submit() async throws -> String {
-            try await ThinkingClient.answer(model: requested, image: image, context: context)
+            try await ThinkingClient.answer(model: requested, context: context)
         }
         do { return try await submit() }
         catch let failure as ThinkingClient.Failure where failure.shouldReload {

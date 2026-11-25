@@ -828,11 +828,15 @@ public partial class MainWindow : Window
         gameTextReader = new(IOPath.Combine(root, "Notebooks"));
         gameTextPreference = IOPath.Combine(root, "read-game-text.txt");
         gameTextReviewPreference = IOPath.Combine(root, "game-text-review.json");
-        gameTextReview = new(gameTextReader, new LocalThinkingClient());
+        var reviewClient = new LocalThinkingClient();
+        gameTextReview = new(gameTextReader, reviewClient);
+        thinkingPanelPreference = IOPath.Combine(root, "show-thinking-context.txt");
         thinkingClient = policyClient ?? new LocalThinkingClient();
         thinkingEnabled = enableThinking;
         InitializeComponent();
-        ThinkingButton.Visibility = thinkingEnabled ? Visibility.Visible : Visibility.Collapsed;
+        InitializeThinkingPanel();
+        reviewClient.RequestPrepared += RecordThinkingRequest;
+        thinkingClient.RequestPrepared += RecordThinkingRequest;
         InitializeGameText();
         InitializeGameTextReview();
         OpsRandomizeAfterLabelCheck.IsChecked = playerOpsPreferences.LoadRandomizeAfterLabel();
@@ -1477,7 +1481,7 @@ public partial class MainWindow : Window
             return true;
         }
         var showingSettings = SettingsOverlay.Visibility == Visibility.Visible;
-        if (key == Key.T && modifiers == ModifierKeys.None && !showingSettings && thinkingEnabled)
+        if (key == Key.T && modifiers == ModifierKeys.None && !showingSettings && ContextPanelAvailable)
         {
             if (!isRepeat) OpenThinkingInspector();
             return true;
@@ -1980,6 +1984,7 @@ public partial class MainWindow : Window
 
     private void RefreshWorkspaceSelection()
     {
+        UpdateThinkingPanelVisibility();
         GameplayWorkspaceButton.IsChecked = workspace == "Gameplay";
         LabelWorkspaceButton.IsChecked = workspace == "Label";
         ModelWorkspaceButton.IsChecked = workspace == "Model";

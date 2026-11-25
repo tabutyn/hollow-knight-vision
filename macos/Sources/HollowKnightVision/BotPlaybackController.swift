@@ -41,6 +41,10 @@ final class BotPlaybackController: ObservableObject {
     private var startingMenuManeuver = false
     private var skillDecisionCount = 0
     private var maneuver: Maneuver?
+    var activeRoute: BotRouteTarget? {
+        guard case .traverse(let route)? = maneuver?.choice.binding?.target else { return nil }
+        return route
+    }
     private var learnedSkill: BotLearnedSkill?
     private var starter: BotSkillInputLayout?
     private var starterHistory = BotObservationHistory()
@@ -332,6 +336,17 @@ final class BotPlaybackController: ObservableObject {
         var boundWaypoint: BotRoadHint?
         if let maneuver {
             guard maneuver.choice.control == .native else { return }
+            if case .traverse(let target) = maneuver.choice.binding?.target,
+               observation.generation == maneuver.sight.generation, observation.roomID == maneuver.choice.binding?.room,
+               observation.isUsable, (0...BotObservationContract.maximumCaptureAge).contains(now() - observation.capturedAt),
+               let position = observation.policyScene?.navigationPosition, position.chart == target.chart {
+                if position.feet.distance(target.goal) <= position.arrivalRadius {
+                    finishManeuver(target.hint.frontier ? "Explore destination reached" : "Target reached", id: id); return
+                }
+                if position.feet.distance(target.waypoint) <= position.arrivalRadius {
+                    finishManeuver("Waypoint reached", id: id); return
+                }
+            }
             guard let sight = skillSight(), sight.generation == maneuver.sight.generation,
                   sight.context == maneuver.sight.context, (0...0.45).contains(now() - sight.capturedAt),
                   sight.allows(maneuver.choice) else {

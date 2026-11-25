@@ -25,6 +25,12 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     @Published private(set) var gameLostCountdown: Int?
     @Published private(set) var inputControlStatus = "Controls unavailable"
     @Published private(set) var gameMode: HollowKnightRuntimeMode
+    private var thinkingMenuLease: UUID?
+    private var thinkingScreens = ThinkingScreenHistory()
+    var thinkingStateVisit: UInt64? { thinkingScreens.latest == nil ? nil : thinkingScreens.visit }
+    var onThinkingStateChange: ((CGImage) -> Void)? {
+        didSet { if onThinkingStateChange == nil { thinkingScreens.lostState() } }
+    }
     private var latestSkillFrame: BotDemoMenuObservation?
     @Published private(set) var notebookProfile: SaveProfileAtlas?
     private var pendingNotebookProfile: SaveProfileAtlas?
@@ -33,6 +39,65 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     var skillReading: SkillReading?
     var skillContext: String { liveGameStatus == "Gameplay" ? activeRoomStatus : (liveGameStatus ?? "Game capture") }
     var skillGeneration: UInt64 { currentStatusGeneration }
+
+    private var thinkingOutcome: (generation: UInt64, sequence: Int, text: String)?
+
+    func thinkingSignals(profile: UUID?, readsText: Bool) -> ThinkingSignals? {
+        guard isCapturing else { return nil }
+        let screen = thinkingScreens.latest.flatMap { $0.generation == skillGeneration ? $0 : nil }
+        if let screen, let page = screen.page {
+            return ThinkingSignals(profile: profile, generation: skillGeneration, room: page.stateID, mode: gameMode.rawValue,
+                selectedMenu: page.selected, menuImage: screen.image, menuPage: page, stateID: screen.id, stateVisit: thinkingStateVisit,
+                previousStateID: thinkingScreens.previousStateID, previousConfirmedElement: thinkingScreens.previousConfirmedElement)
+        }
+        let sight = currentSkillSight()
+        let lines = readsText ? (sight?.lines ?? []).map(RememberedGameText.key) : []
+        let (batch, signObservation) = objectInferenceStateLock.withLock { (latestObjectDetectionBatch, latestSignObservation) }
+        let objects: [LiveObjectDetection]
+        if sight?.gameplay == true, let batch, batch.captureGeneration == skillGeneration,
+           (0...1.5).contains(ProcessInfo.processInfo.systemUptime - batch.sourceTimestamp) {
+            objects = batch.detections.filter { $0.sourceFrameIdentifier == batch.sourceFrameIdentifier }
+        } else { objects = [] }
+        let sign = signObservation.flatMap { observation in
+            sight?.gameplay == true && observation.generation == skillGeneration && observation.room == skillContext
+                && (0...1.5).contains(ProcessInfo.processInfo.systemUptime - observation.capturedAt) ? observation : nil
+        }
+        let signs = Set((sign?.detections ?? []).compactMap(\.trackIdentifier))
+        let npcs = Set(objects.filter { $0.classIdentifier.split { $0 == "." || $0 == "-" }.contains("npc") }.compactMap(\.trackIdentifier))
+        let outcome = thinkingOutcome.flatMap { $0.generation == skillGeneration ? $0 : nil }
+        return ThinkingSignals(profile: profile, generation: skillGeneration, room: skillContext, mode: gameMode.rawValue,
+            sign: lines.contains("inspect"), npc: lines.contains("listen"), signTracks: signs, npcTracks: npcs, scene: sight?.scene, activeRoute: botPlayer.activeRoute, blocked: sight?.scene != nil && skillObservation?.blockade?.mark.crossed == false,
+            outcomeID: outcome?.sequence, outcome: outcome?.text,
+            signImage: sign?.image, signBounds: sign?.detections.map(\.normalizedRect) ?? [], signSourceID: sign?.sourceID,
+            recognizedGameplay: screen?.id == LabelingContext.game.storageIdentifier,
+            stateID: screen?.id, stateVisit: thinkingStateVisit, awaitingRecognition: screen == nil)
+    }
+
+    private func publishThinkingScreen(status: LiveGameStatus?, recognition: LiveGameStatus?,
+                                       page: ThinkingMenuPage?, stencilImage: CGImage?, frame: CGImage, generation: UInt64) {
+        guard let onThinkingStateChange else { return }
+        let id: String
+        let menu: ThinkingMenuPage?
+        let image: CGImage
+        if readingOpeningCutscene, page == nil, recognition == nil {
+            id = "opening-cutscene"
+            menu = ThinkingMenuPage(stateID: id)
+            image = frame
+        } else {
+            guard let status, let context = status.context.labelingContext else {
+                thinkingScreens.lostState()
+                return
+            }
+            // A tracker hold may outlast the pixels that established this state.
+            guard status.context == recognition?.context else { return }
+            id = context.storageIdentifier
+            menu = status.context.isGameplay ? nil : (page ?? ThinkingMenuPage(stateID: id))
+            image = stencilImage ?? frame
+        }
+        if thinkingScreens.record(.init(id: id, generation: generation, page: menu, image: image)) {
+            onThinkingStateChange(image)
+        }
+    }
 
     func currentSkillSight() -> SkillSight? {
         let now = ProcessInfo.processInfo.systemUptime
@@ -50,7 +115,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         return SkillSight(context: skillContext, capturedAt: frame.capturedAt, generation: frame.generation,
                           gameplay: liveGameStatus == "Gameplay" && frame.context == nil,
                           menu: frame.context, selected: frame.selectedIdentifier, lines: reading?.visible ?? [],
-                          hasAbilityControls: receiverCapabilities.contains("skill-controls-v1"), reading: reading, scene: scene)
+                          hasAbilityControls: receiverCapabilities.contains("skill-controls-v1"), reading: reading, scene: scene, menuPage: frame.menuPage)
     }
 
     @Published private(set) var receiverCapabilities = Set<String>()
@@ -570,6 +635,14 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     private var objectModelConfigurationID: UInt64 = 0
     private var objectModelsLoaded = false
     private var objectInferenceSuspended = false
+    private struct SignObservation {
+        let image: CGImage
+        let detections: [LiveObjectDetection]
+        let room: String
+        let capturedAt: Double
+        let generation, sourceID: UInt64
+    }
+    private var latestSignObservation: SignObservation?
     private var latestObjectDetectionBatch: LiveObjectDetectionBatch?
     private var latestRawObjectDetectionBatch: LiveObjectDetectionBatch?
     private var latestMaskDetectionBatch: LiveObjectDetectionBatch?
@@ -710,6 +783,8 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     private struct ObjectInferenceFrame {
+        let room: String
+        let capturedAt: Double
         /// Untouched presentation capture. Ground-only intensity correction
         /// is created later on the vision queue and must never enter models.
         let rawImage: CGImage
@@ -782,6 +857,11 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         }
         botPlayer.onSkillEvent = { [weak self] plan, choice, context, event, time in
             self?.botEvaluation.recordSkill(plan, choice: choice, context: context, event: event, at: time)
+            if let self, plan.decisionID != nil, (["Policy window ended", "Bound target expired", "Policy context changed",
+                "Target reached", "Explore destination reached", "Waypoint reached", "Focus restored a mask",
+                "Focus opening closed"].contains(event) || event.hasPrefix("Remembered ·") || event.hasPrefix("Atlas updated ·") || event.hasSuffix(" · maneuver finished") || event.hasSuffix(" verified")) {
+                self.thinkingOutcome = (self.skillGeneration, (self.thinkingOutcome?.sequence ?? 0) + 1, event)
+            }
         }
         botPlayer.onActionApplied = { [weak self] action, time in self?.botEvaluation.action(action, at: time) }
         botPlayer.onStopped = { [weak self] in
@@ -899,6 +979,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         objectInferenceEpoch &+= 1
         let epoch = objectInferenceEpoch
         objectModelsLoaded = false
+        latestSignObservation = nil
         latestObjectDetectionBatch = nil
         latestRawObjectDetectionBatch = nil
         latestMaskDetectionBatch = nil
@@ -1875,7 +1956,38 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
             && (!botDemo.isActive || botDemo.isHandingOff || botDemo.isPlaying)
     }
 
+    @MainActor
+    func runThinkingMenu(_ script: ThinkingMenuScript, generation: UInt64,
+                         enabled: () -> Bool) async -> ThinkingHandoff {
+        func ready() -> Bool {
+            enabled() && skillGeneration == generation && botPlayer.automaticPoliciesEnabled && canStartBotDemo &&
+                !botPlayer.isActive && !botDemo.isActive && NSApp.isActive && NSApp.keyWindow != nil
+        }
+        if script.request == .wait { return .status("Waiting for new menu evidence.") }
+        guard ready(), let lease = gameControlForwarder.beginBotControl() else {
+            return .status("Skipped · menu controls unavailable.")
+        }
+        thinkingMenuLease = lease
+        defer {
+            gameControlForwarder.endBotControl(sessionID: lease)
+            if thinkingMenuLease == lease { thinkingMenuLease = nil }
+        }
+        return await script.run(current: { ready() ? self.currentSkillSight()?.menuPage : nil }, press: { input in
+            guard ready(), self.gameControlForwarder.pulseBotDemoButton(input.hollowKnightButton, sessionID: lease) else { return false }
+            if input == .confirm, case .select(let element) = script.request {
+                self.thinkingScreens.confirmed(element, on: script.page.stateID)
+            }
+            return true
+        })
+    }
+
     func toggleBotPlayback() {
+        if let lease = thinkingMenuLease {
+            botPlayer.automaticPoliciesEnabled = false
+            gameControlForwarder.endBotControl(sessionID: lease)
+            thinkingMenuLease = nil
+            return
+        }
         if botDemo.isActive { botPlayer.automaticPoliciesEnabled = false; stopBotDemo(reason: "Stopped with B") }
         else if botPlayer.isActive { botPlayer.automaticPoliciesEnabled = false; botPlayer.stop() }
         else if canStartBotPlayback { botPlayer.automaticPoliciesEnabled = true; botPlayer.start(domain: isHackerWorkspaceActive() ? .hacker : .gameplay) }
@@ -3744,6 +3856,7 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.skillReading = nil
+            self.thinkingScreens.lostState()
             self.latestSkillFrame = nil
             self.currentStatusGeneration = generation
             self.updateAtlasPathEvidence { $0.resetVisualFrames() }
@@ -4372,7 +4485,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
         ),
            sampleFrameCount.isMultiple(of: HollowKnightCaptureConfiguration.objectInferenceStride) {
             enqueueObjectInference(ObjectInferenceFrame(
-                rawImage: frame,
+                room: room.statusText, capturedAt: capturedAt, rawImage: frame,
                 sourceFrameIdentifier: objectSourceFrameIdentifier,
                 timestamp: timestamp,
                 captureGeneration: captureGeneration,
@@ -4457,6 +4570,9 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                 self.liveMenuStencilDiagnostic = "raw=none admitted=false"
             }
             if self.hasGameplayStarted != gameplay { self.hasGameplayStarted = gameplay }
+            self.publishThinkingScreen(status: status, recognition: recognizedGameStatus, page: menuInput.menuPage,
+                                       stencilImage: menuStencil?.isMatch == true ? menuObservation?.image : nil,
+                                       frame: frame, generation: captureGeneration)
         }
         if labelPauseState == .ready {
             capturedFrameStateLock.lock()
@@ -5798,6 +5914,15 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
                     detections: refinement.detections,
                     captureGeneration: frame.captureGeneration
                 )
+                let signs = publishedDetections.filter {
+                    $0.classIdentifier == "world.sign" && $0.sourceFrameIdentifier == frame.sourceFrameIdentifier
+                }
+                if !signs.isEmpty {
+                    latestSignObservation = SignObservation(image: frame.rawImage, detections: signs, room: frame.room,
+                        capturedAt: frame.capturedAt, generation: frame.captureGeneration, sourceID: frame.sourceFrameIdentifier)
+                } else if let prior = latestSignObservation, frame.capturedAt - prior.capturedAt > 1.5 {
+                    latestSignObservation = nil
+                }
                 latestObjectDetectionBatch = LiveObjectDetectionBatch(
                     detections: publishedDetections,
                     sourceFrameIdentifier: frame.sourceFrameIdentifier,
@@ -5921,6 +6046,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
         objectInferenceStateLock.lock()
         objectInferenceEpoch &+= 1
         let epoch = objectInferenceEpoch
+        latestSignObservation = nil
         latestObjectDetectionBatch = nil
         latestRawObjectDetectionBatch = nil
         latestMaskDetectionBatch = nil
@@ -5945,6 +6071,7 @@ extension LiveCaptureModel: SCStreamOutput, SCStreamDelegate {
         objectInferenceSuspended = suspended
         objectInferenceEpoch &+= 1
         let epoch = objectInferenceEpoch
+        latestSignObservation = nil
         latestObjectDetectionBatch = nil
         latestRawObjectDetectionBatch = nil
         latestMaskDetectionBatch = nil

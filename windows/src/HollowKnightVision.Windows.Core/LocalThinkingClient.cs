@@ -16,6 +16,9 @@ public sealed record ResidentThinkingModel(LocalThinkingModel Model, int? Contex
 public sealed record LocalThinkingMessage(string Role, string Content,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Images = null);
 
+public enum ThinkingRequestKind { Policy, Transcription, QuestNotes }
+public sealed record ThinkingRequestView(ThinkingRequestKind Kind, string System, string User, string ResponseSchema);
+
 public sealed class LocalThinkingClient
 {
     private static readonly Uri Primary = new("http://127.0.0.1:11434/api/");
@@ -26,6 +29,7 @@ public sealed class LocalThinkingClient
         AllowAutoRedirect = false, UseProxy = false, UseCookies = false
     });
 
+    public event Action<ThinkingRequestView, CancellationToken>? RequestPrepared;
     private readonly HttpClient http;
     private readonly Func<bool, string?>? serverLog;
     private sealed record Inventory(InventoryItem[]? Models);
@@ -86,24 +90,30 @@ public sealed class LocalThinkingClient
     }
 
     public async Task<T> ChatAsync<T>(ResidentThinkingModel resident, IReadOnlyList<LocalThinkingMessage> messages,
-        object schema, int outputTokens, bool keepResident, CancellationToken cancellationToken)
+        object schema, int outputTokens, bool keepResident, CancellationToken cancellationToken, ThinkingRequestKind kind = ThinkingRequestKind.Policy)
     {
-        var text = await ChatTextAsync(resident, messages, schema, outputTokens, keepResident, cancellationToken).ConfigureAwait(false);
+        var text = await ChatTextAsync(resident, messages, schema, outputTokens, keepResident, cancellationToken, kind).ConfigureAwait(false);
         return JsonSerializer.Deserialize<T>(text, Json)
             ?? throw new InvalidDataException("Local Ollama returned empty JSON.");
     }
 
     public async Task<string> ChatTextAsync(ResidentThinkingModel resident, IReadOnlyList<LocalThinkingMessage> messages,
-        object schema, int outputTokens, bool keepResident, CancellationToken cancellationToken)
+        object schema, int outputTokens, bool keepResident, CancellationToken cancellationToken, ThinkingRequestKind kind = ThinkingRequestKind.Policy)
     {
         var options = new Dictionary<string, int> { ["temperature"] = 0, ["num_predict"] = outputTokens };
         if (resident.ContextLength is > 0 and var context) options["num_ctx"] = context;
         else if (keepResident) options["num_ctx"] = 4096;
         var url = new Uri(resident.OnCompatibilityService ? Compatible : Primary, "chat");
+        var schemaText = JsonSerializer.Serialize(schema);
+        var outbound = messages.Select(message => message.Role == "system"
+            ? message with { Content = message.Content + "\nExpected response schema\n" + schemaText } : message).ToArray();
+        RequestPrepared?.Invoke(new(kind, string.Join('\n', outbound.Where(m => m.Role == "system").Select(m => m.Content)),
+            string.Join('\n', outbound.Where(m => m.Role == "user").Select(m => m.Content)),
+            JsonSerializer.Serialize(schema, new JsonSerializerOptions { WriteIndented = true })), cancellationToken);
         var request = new Dictionary<string, object>
         {
             ["model"] = resident.Model.Identifier, ["stream"] = false, ["format"] = schema,
-            ["options"] = options, ["messages"] = messages
+            ["options"] = options, ["messages"] = outbound
         };
         if (keepResident) request["keep_alive"] = "30m";
         var data = await PostAsync(url, request, TimeSpan.FromMinutes(3), cancellationToken).ConfigureAwait(false);

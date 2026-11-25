@@ -94,7 +94,7 @@ struct LiveObjectDetectionTracker {
             // candidates must agree with the next inference before publishing.
             guard track.hits >= 2 || track.confidence >= 0.88 else { return nil }
             return LiveObjectDetection(
-                classIdentifier: track.classIdentifier,
+                trackIdentifier: track.identifier, classIdentifier: track.classIdentifier,
                 normalizedRect: track.rect,
                 confidence: track.confidence,
                 sourceFrameIdentifier: track.sourceFrameIdentifier,

@@ -71,6 +71,8 @@ icon_digest=${icon_digest%% *}
 icon_filename="HollowKnightVision-$build_version-${icon_digest[1,12]}.icns"
 cp "$scratch_dir/release/HollowKnightVision" "$contents_dir/MacOS/HollowKnightVision"
 cp "$scratch_dir/release/HollowKnightVisionTrainer" "$contents_dir/Helpers/HollowKnightVisionTrainer"
+cp "$script_dir/Sources/HollowKnightVision/Resources"/notebook-{english,english-NOTICE,hallownest}.txt "$contents_dir/Resources/"
+cp "$script_dir/Sources/HollowKnightVision/Resources"/thinking-{policy,menu}.schema.json "$contents_dir/Resources/"
 cp "$script_dir/Sources/HollowKnightVision/Resources/playing-policy-inputs.json" "$contents_dir/Resources/"
 cp "$script_dir/Sources/HollowKnightVision/Resources/labeling-contracts.json" \
   "$contents_dir/Resources/labeling-contracts.json"
