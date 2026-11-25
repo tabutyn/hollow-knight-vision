@@ -62,6 +62,10 @@ internal static class VisualProductionReplayTests
             var trace = new RecordedInputPathStore().Load(first.GetProperty("outputPath").GetString()!);
             Check(trace.SourcePathId == pathId && trace.TrackingSamples.Count == 74 && trace.GroundTruthTrace.Count == 0,
                 "The replay output is not an independent visual trace.");
+            Check(trace.CoarseMotionTrace.Count == 74 && trace.CoarseMotionTrace.All(row => row.CoarsePoseRevision is not null)
+                && trace.CoarseMotionTrace.Any(row => row.Input is
+                    { GameplayEnabled: true, GroundTrackingReliable: true, HorizontalInput: 1, MotionGridAvailable: true }),
+                "Visual replay must record its own solver inputs and revision on the replayed frames.");
             var rows = File.ReadLines(first.GetProperty("diagnosticsPath").GetString()!).ToArray();
             Check(rows.Length == 74 && rows.Sum(line =>
             {

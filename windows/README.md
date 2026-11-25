@@ -791,6 +791,12 @@ atlas. Use `--visual-replay-frame-limit 600` to cap the run. An incomplete archi
 requires `--visual-replay-allow-incomplete` and reports the original missing
 frame indices.
 
+New recordings and visual replays include each sampled floorless tracker's
+input pose, ground reliability, steering, and velocity seed. The trace also
+records the coarse candidate and whether it drove the display. The offline
+low-resolution report joins the inputs by exact frame, capture time, and
+room. Older recordings still use their existing evidence.
+
 ### Record live ground-tracking diagnostics
 
 Launch the installed desktop app with

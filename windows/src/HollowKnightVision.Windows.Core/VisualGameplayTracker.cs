@@ -37,6 +37,12 @@ public sealed record VisualGameplayObservation(
     public double? RecoveredAtlasReferenceTimestamp { get; init; }
     public double? MotionBridgeConfidence { get; init; }
     public double? SceneMotionMilliseconds { get; init; }
+    public RecordedCoarseMotionInput? CoarseMotionInput { get; init; }
+    public AtlasPoint? CoarseCameraCandidate => FloorlessEvidence?.Place?.CameraPosition ?? FloorlessEvidence?.CoarsePosition;
+    public InputPathPlaceMatch? CoarsePlaceMatch => FloorlessEvidence?.Place is { } place
+        ? new(place.KeyframeID, place.CameraPosition, place.Score, place.Margin) : null;
+    public bool CoarseControlsPresentation => FloorlessEvidence?.SelectedSource is
+        FloorlessPoseCandidateSource.CoarseCaptureRate or FloorlessPoseCandidateSource.RoomPlaceMatch;
 }
 
 /// <summary>
@@ -59,6 +65,7 @@ public sealed class VisualGameplayTracker
     public string PlacementRecoveryState => placement.State;
     internal bool AllowsAtlasPlacement => placement.AllowsAtlasWrite;
     public AtlasPoint Position => new(camera.Position.X, -camera.Position.Y);
+    public ulong CoarsePoseRevision => floorless.Revision;
     private readonly FreshAtlasBootstrapGate bootstrap = new();
     private readonly TransitionMotionBridge transition = new();
     private readonly GroundPlacementRecovery placement = new();
@@ -147,6 +154,7 @@ public sealed class VisualGameplayTracker
         CameraUpdate? update;
         TransitionMotionBridgeResult? bridged = null;
         FloorlessCameraEvidence? floorlessEvidence = null;
+        RecordedCoarseMotionInput? coarseInput = null;
         var selectedCoarse = false;
         var selectedScene = false;
         var selectedPlace = false;
@@ -156,7 +164,7 @@ public sealed class VisualGameplayTracker
             _ = observeRoomPlace?.Invoke(pose, true);
             update = ApplyPose(pose);
             transition.Anchor(pose, movingForeground);
-            floorless.Observe(sceneGrid, timestamp, frame.Width, pose, true, expectedDirection, null);
+            ObserveCoarse(pose, true, null);
             if (groundMeasured)
             {
                 groundVelocity = measuredGround is { } previous
@@ -176,7 +184,7 @@ public sealed class VisualGameplayTracker
             if (sceneGrid is not null && transition.IsAnchored && !resumedAfterTransition)
             {
                 var velocity = FloorlessMotionHandoff.Seed(groundVelocity, measuredGround?.Timestamp, timestamp);
-                floorless.Observe(sceneGrid, timestamp, frame.Width, current, false, expectedDirection, velocity);
+                ObserveCoarse(current, false, velocity);
                 // Both Windows matchers use the same grid resolution. A valid
                 // registration with foreground and HUD removed owns the pose.
                 // The broader scene can fill lost or skipped registrations.
@@ -262,6 +270,7 @@ public sealed class VisualGameplayTracker
         {
             GroundTracking = tracking,
             FloorlessEvidence = floorlessEvidence,
+            CoarseMotionInput = coarseInput,
             RecoveredAtlasReferenceTimestamp = bridged?.ReferenceTimestamp,
             // Ground validation can pause writes while independent registration
             // continues to carry the existing coordinate basis on each capture.
@@ -274,6 +283,13 @@ public sealed class VisualGameplayTracker
                     / (frame.Width / 640d))
                 : bridged?.Confidence
         };
+
+        void ObserveCoarse(AtlasPoint pose, bool reliable, LowResolutionCameraVelocitySeed? seed)
+        {
+            coarseInput = new(true, reliable, pose.X, pose.Y, seed?.Velocity.X, seed?.Velocity.Y,
+                seed?.Timestamp, (int?)expectedDirection, MotionGridAvailable: sceneGrid is not null);
+            floorless.Observe(sceneGrid, timestamp, frame.Width, pose, reliable, expectedDirection, seed);
+        }
     }
 
     internal static FloorlessPoseCandidate? SelectFloorlessPose(AtlasPoint current,

@@ -190,7 +190,8 @@ public static class LowResolutionTraceEvaluator
         AtlasPoint TruthPosition,
         AtlasPoint? ObservedVisionPosition,
         double PixelScale,
-        VisualRoomDirection? ExpectedDirection);
+        VisualRoomDirection? ExpectedDirection,
+        RecordedCoarseMotionInput? CoarseInput);
 
     private sealed class RejectedTravelAccumulator
     {
@@ -482,15 +483,15 @@ public static class LowResolutionTraceEvaluator
         var groundByFrame = new Dictionary<int, bool>();
         foreach (var tracking in path.TrackingSamples)
             if (tracking.RenderedGameFrame is { } frame) groundByFrame[frame] = IsMeasured(tracking);
-        var orderedFrames = frames.Select(frame =>
-            frame.GroundTrackingReliable
-                && frame.RenderedGameFrame is { } rendered
-                && groundByFrame.TryGetValue(rendered, out var measured)
-                && !measured
-                    ? frame with { GroundTrackingReliable = false }
-                    : frame)
-            .OrderBy(frame => frame.Offset)
-            .ToArray();
+        var coarseInputs = new Dictionary<(double CaptureTimestamp, int Frame, int Room), RecordedCoarseMotionInput?>();
+        foreach (var sample in path.CoarseMotionTrace.Where(sample => sample.Input is not null))
+        {
+            if (sample.RenderedGameFrame is not { } frame || !double.IsFinite(sample.CaptureTimestamp)) continue;
+            var key = (sample.CaptureTimestamp, frame, sample.RoomId);
+            // A conflicting capture identity cannot authorize using either solver input.
+            if (!coarseInputs.TryAdd(key, sample.Input)) coarseInputs[key] = null;
+        }
+        var orderedFrames = frames.OrderBy(frame => frame.Offset).ToArray();
         var solveWidth = 640d;
         if (path.RuntimeMetadata?.TryGetValue("captureWidth", out var widthText) == true
             && double.TryParse(widthText, System.Globalization.NumberStyles.Float,
@@ -546,14 +547,28 @@ public static class LowResolutionTraceEvaluator
                 || !truthByFrame.TryGetValue(rendered, out var truth)
                 || TruthPosition(truth, solveWidth,
                     solveWidth * frame.Height / (double)frame.Width) is not { } position) continue;
+            var input = coarseInputs.GetValueOrDefault((frame.CaptureTimestamp, rendered, frame.RoomId));
+            if (input is not { GameplayEnabled: true, MotionGridAvailable: not false }
+                || !double.IsFinite(input.CameraX) || !double.IsFinite(input.CameraY))
+                input = null;
+            if (input is not null)
+                direction = input.HorizontalInput switch
+                {
+                    (int)VisualRoomDirection.Left => VisualRoomDirection.Left,
+                    (int)VisualRoomDirection.Right => VisualRoomDirection.Right,
+                    _ => null
+                };
+            var reliable = input?.GroundTrackingReliable
+                ?? (frame.GroundTrackingReliable && groundByFrame.GetValueOrDefault(rendered, true));
             comparable.Add(new ComparableFrame(
-                frame,
+                frame.GroundTrackingReliable == reliable ? frame : frame with { GroundTrackingReliable = reliable },
                 new LowResolutionMotionGrid(frame.Width, frame.Height, frame.Luma.ToArray()),
                 truth,
                 position,
                 observedByFrame.GetValueOrDefault(rendered),
                 solveWidth / frame.Width,
-                direction));
+                direction,
+                input));
         }
 
         var allMotion = new MotionAccumulator();
@@ -625,7 +640,13 @@ public static class LowResolutionTraceEvaluator
                     groundLossMotion.ResetIntegration();
                     bridgedMotion.ResetIntegration();
                     odometry.Arm(reference.Grid, reference.Recorded.CaptureTimestamp);
-                    odometry.PrimeHorizontalVelocity(latestSeed, current.ExpectedDirection);
+                    var input = current.CoarseInput;
+                    var seed = input is null ? latestSeed
+                        : input.VelocityX is { } x && input.VelocityY is { } y
+                            ? FloorlessMotionHandoff.Seed(new CameraVector(x, y), input.VelocityTimestamp,
+                                current.Recorded.CaptureTimestamp)
+                            : null;
+                    odometry.PrimeHorizontalVelocity(seed, current.ExpectedDirection);
                 }
                 groundLossMotion.Append(current, expectedDx, expectedDy, motion, representable,
                     directionRejected, diagnostic.FinalRejection);
@@ -709,7 +730,9 @@ public static class LowResolutionTraceEvaluator
                 "Place memory is seeded with Hacker camera poses on frames marked ground-reliable.",
                 "Connected-camera error keeps one route-start baseline across scene changes.",
                 "connectedCamera is capture-rate presentation; connectedTrackingCamera is the atlas-producing Vision stream."
-            }.Concat(additionalNotes).ToArray());
+            }.Concat(comparable.Any(frame => frame.CoarseInput is not null)
+                ? ["Exact recorded solver inputs supply ground reliability, direction and velocity where available."]
+                : Array.Empty<string>()).Concat(additionalNotes).ToArray());
     }
 
     private static IReadOnlyList<LowResolutionCameraVelocitySeed> VelocitySeeds(

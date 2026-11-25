@@ -215,9 +215,11 @@ internal static class VisualProductionReplay
                 // Match live capture's publication order so the tracking result
                 // can mark the corresponding low-resolution frame as reliable.
                 replayTrace.RecordCoarseMotion(evidence.CaptureTimestamp, evidence.RenderedGameFrame, publishedCamera,
-                    tracked.MotionBridgeActive ? publishedCamera : null, coarse, tracked.MotionBridgeActive,
+                    observation.CoarseCameraCandidate, coarse, observation.CoarseControlsPresentation,
                     !admission.AdmitsTracking, roomId, revision, signal.MeanPeak, signal.VisibleFraction,
-                    motionGrid: signal.MotionGrid, observedAt: evidence.CapturedAt);
+                    placeMatch: observation.CoarsePlaceMatch, motionGrid: signal.MotionGrid,
+                    coarsePoseRevision: camera.CoarsePoseRevision, observedAt: evidence.CapturedAt,
+                    input: observation.CoarseMotionInput);
                 replayTrace.RecordTracking(InputPathTrackingObservation.FromGround(tracked.Ground), evidence.CaptureTimestamp,
                     publishedCameraPosition: publishedCamera, poseSource: observation.Source,
                     motionBridgeConfidence: observation.MotionBridgeConfidence,

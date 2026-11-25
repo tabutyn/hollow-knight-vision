@@ -157,7 +157,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         bool isControlling,
         bool isTransitioning,
         double signalMeanPeak,
-        double signalVisibleFraction, int roomId = 0, ulong roomRevision = 0)
+        double signalVisibleFraction, int roomId, ulong roomRevision, ulong coarsePoseRevision,
+        InputPathPlaceMatch? placeMatch, RecordedCoarseMotionInput? input)
     {
         lock (stateLock)
         {
@@ -173,8 +174,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                 roomRevision: roomRevision,
                 signalMeanPeak,
                 signalVisibleFraction,
-                motionGrid: motionGrid,
-                observedAt: MonotonicSeconds());
+                placeMatch: placeMatch, motionGrid: motionGrid, coarsePoseRevision: coarsePoseRevision,
+                observedAt: captureTimestamp, input: input);
         }
     }
 

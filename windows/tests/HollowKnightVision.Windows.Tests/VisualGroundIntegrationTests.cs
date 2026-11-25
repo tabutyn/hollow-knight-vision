@@ -108,6 +108,9 @@ internal static class VisualGroundIntegrationTests
             verified = visual.ObserveGroundAnchored(Frame(index, index * .05), null, texture, Lines(),
                 [], true, groundTracker: ground, captureTimestamp: index * .05, sceneGrid: reference);
         Check(verified!.GroundVerified, "Ground did not establish a trusted camera.");
+        Check(verified.CoarseMotionInput is { GameplayEnabled: true, GroundTrackingReliable: true, MotionGridAvailable: true },
+            "A grounded observation should identify the pose supplied to the coarse tracker.");
+        var groundedRevision = visual.CoarsePoseRevision;
         var stoppedMasked = new LowResolutionTranslationDiagnostic(null, null, null, ExactIdentity: true);
         var floorlessTexture = Texture(seed: 123);
         var fallback = visual.ObserveGroundAnchored(Frame(21, 1.05), null, floorlessTexture, [],
@@ -117,6 +120,11 @@ internal static class VisualGroundIntegrationTests
             $"Expected presentation-only coarse motion, got {fallback.Source} with {fallback.FloorlessEvidence}.");
         Check(fallback.FloorlessEvidence is { CoarseMeasured: true, CoarseReferenceTimestamp: 1,
             SelectedSource: FloorlessPoseCandidateSource.CoarseCaptureRate }, "Missing measured coarse lineage.");
+        Check(fallback.CoarseMotionInput is { GroundTrackingReliable: false, HorizontalInput: (int)VisualRoomDirection.Right,
+            VelocityTimestamp: 1, MotionGridAvailable: true } input && fallback.CoarseControlsPresentation
+            && input.CameraX == verified.Telemetry.CameraX && input.CameraY == verified.Telemetry.CameraY
+            && visual.CoarsePoseRevision > groundedRevision,
+            "Record the actual camera, steering and seed before the fallback changes the pose.");
         Near(verified.Telemetry.CameraX + 10, fallback.Telemetry.CameraX, .5);
 
         visual.PauseGroundVerification();
@@ -124,6 +132,7 @@ internal static class VisualGroundIntegrationTests
             [], true, groundTracker: ground, captureTimestamp: 1.10, sceneGrid: Scene(-4),
             expectedDirection: VisualRoomDirection.Right);
         Check(!resumed.AllowsAtlasWrite && resumed.FloorlessEvidence is null, "Coarse reference crossed a blackout.");
+        Check(resumed.CoarseMotionInput is null, "The trace must not fabricate an input for a suspended fallback.");
         Near(fallback.Telemetry.CameraX, resumed.Telemetry.CameraX, .01);
 
         _ = visual.ObserveGroundAnchored(Frame(23, 1.15), stoppedMasked, floorlessTexture, [],
@@ -135,6 +144,9 @@ internal static class VisualGroundIntegrationTests
         Check(stopped.FloorlessEvidence is { CoarsePosition: { }, CoarseMeasured: true,
             SelectedSource: FloorlessPoseCandidateSource.MaskedRegistration },
             "The coarse estimate displaced strong masked evidence.");
+        Check(!stopped.CoarseControlsPresentation && stopped.CoarseCameraCandidate is { } coarse
+            && Math.Abs(coarse.X - stopped.Telemetry.CameraX) > 1,
+            "Save the independent coarse candidate even when masked registration wins.");
         Near(resumed.Telemetry.CameraX, stopped.Telemetry.CameraX, .01);
         var gap = visual.ObserveGroundAnchored(Frame(25, 1.25), null, floorlessTexture, [],
             [], true, groundTracker: ground, captureTimestamp: 1.25, sceneGrid: Scene(-6),

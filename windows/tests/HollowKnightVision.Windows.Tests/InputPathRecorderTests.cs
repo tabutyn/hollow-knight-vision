@@ -71,13 +71,15 @@ internal static class InputPathRecorderTests
             sceneMotionMilliseconds: 2.75, recoveredAtlasReferenceTimestamp: 7_776.94);
         var truth = MakeGroundTruth(7);
         recorder.RecordGroundTruth(truth, 101.3);
+        var input = new RecordedCoarseMotionInput(true, false, 41, -8, 17, -2, 101.2, 1,
+            new(101.1, new(39, -9)), MotionGridAvailable: true);
         recorder.RecordCoarseMotion(7_778, 88, new AtlasPoint(44, -6),
             new AtlasPoint(43.5, -6.5),
             new LowResolutionRoomMotionEstimate(VisualRoomDirection.Right, .8, -1),
             true, false, 2, 3, 12, .2,
             placeMatch: new InputPathPlaceMatch(4, new AtlasPoint(43.5, -6.5), .12, .19),
             motionGrid: new LowResolutionMotionGrid(2, 2, [1, 2, 3, 4]),
-            coarsePoseRevision: 42, observedAt: 101.35);
+            coarsePoseRevision: 42, observedAt: 101.35, input: input);
 
         var path = recorder.Stop(102) ?? throw new Exception("Recorder did not stop.");
         Check(!recorder.IsRecording);
@@ -136,6 +138,7 @@ internal static class InputPathRecorderTests
         Check(coarse.IsControlling);
         Check(coarse.RoomId == 2);
         Check(coarse.CoarsePoseRevision == 42);
+        Check(coarse.Input == input);
         var lowResolution = path.LowResolutionFrameTrace.Single();
         Close(1.35, lowResolution.Offset);
         Check(lowResolution.RenderedGameFrame == 88);
@@ -149,6 +152,7 @@ internal static class InputPathRecorderTests
             ?? throw new Exception("Path did not decode.");
         var decodedLowResolution = decodedPath.LowResolutionFrameTrace.Single();
         CheckLowResolution(lowResolution, decodedLowResolution);
+        Check(decodedPath.CoarseMotionTrace.Single() == coarse);
         var scene = decodedPath.TrackingSamples.Single();
         Check(scene is { SceneMotionSupport: 12, SceneMotionMeasuredX: true, SceneMotionMeasuredY: false });
         Close(.3, scene.SceneMotionResidualX ?? double.NaN);
@@ -223,12 +227,14 @@ internal static class InputPathRecorderTests
         legacy.Remove("placeMatchScore");
         legacy.Remove("placeMatchMargin");
         legacy.Remove("coarsePoseRevision");
+        legacy.Remove("input");
         var decoded = legacy.Deserialize<RecordedCoarseMotionSample>(JsonOptions)
             ?? throw new Exception("Legacy coarse sample did not decode.");
         Check(decoded.PlaceMatchKeyframeId is null);
         Check(decoded.PlaceMatchScore is null);
         Check(decoded.PlaceMatchMargin is null);
         Check(decoded.CoarsePoseRevision is null);
+        Check(decoded.Input is null);
     }
 
     public static void TestRecordsUnverifiedTrackingForLaterFailureAnalysis()
