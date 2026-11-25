@@ -426,6 +426,7 @@ var tests = new List<(string Name, Action Run)>
     ("paired captures publish immediate evidence while invalid clips are discarded", BotCaptureTests.TestPairedEvidencePublishesOnceAndHazardClipsAreDiscarded),
     ("native controls produce edges and interrupted bot captures are discarded", BotCaptureTests.TestNativeControlsAndInterruptedCapture),
     ("an interrupted pair is discarded and a valid hidden Knight keeps only Game Play", BotCaptureTests.TestPairedCaptureRetainsOnlyEligibleOccludedGameplay),
+    ("paired recording keeps exact Hacker frames without visual analysis", BotCaptureTests.TestPairedCaptureKeepsMatchedHackerFramesWithoutVisualAnalysis),
     ("bot recordings require at least one complete compatible action window", BotCaptureTests.TestCaptureRequiresACompleteCompatibleActionWindow),
     ("Game Play bot floors bridge measured seams and keep pits and walls open", BotCaptureTests.TestGameplayFloorsStitchOnlyAcrossTheSameSurface),
     ("bot clip preview uses the saved image and domain", BotCaptureTests.TestReviewUsesTheSavedDomainAndSafeLocalImage),

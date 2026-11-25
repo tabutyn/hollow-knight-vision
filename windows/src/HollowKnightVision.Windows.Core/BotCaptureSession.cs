@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -56,6 +57,9 @@ public sealed record BotCaptureReviewFrame(string? ImageFile, double Offset, Bot
 public sealed record BotCaptureResult(IReadOnlyList<BotCaptureManifest> Published, int Discarded);
 public sealed record BotCaptureLibraryEntry(string Folder, BotCaptureManifest Manifest);
 
+public sealed record BotHackerCaptureFrame(HackerMatchedFrame Match, long Generation, int RoomId, string RoomKey,
+    BotAtlasObjective? Objective = null, bool AutomaticObjective = false, HackerAtlasRoom? RegisteredRoom = null);
+
 /// <summary>Streams a single run into separate camera domains. An eight-frame queue bounds pending image memory.</summary>
 public sealed class BotCaptureSession
 {
@@ -77,7 +81,8 @@ public sealed class BotCaptureSession
         new HashSet<string>(["left", "right", "up", "down", "z", "x"], StringComparer.Ordinal);
     private static readonly IReadOnlySet<string> SkillTrainingButtons =
         Enum.GetValues<RecordedGameButton>().Select(button => button.WireName()).ToHashSet(StringComparer.Ordinal);
-    private readonly record struct Sample(BgraFrame Image, BotCaptureObservation Gameplay, BotCaptureObservation? Hacker);
+    private readonly record struct Sample(BgraFrame Image, BotCaptureObservation? Gameplay, BotCaptureObservation? Hacker,
+        BotHackerCaptureFrame? MatchedHacker = null);
 
     private readonly object gate = new();
     private readonly string root;
@@ -95,9 +100,12 @@ public sealed class BotCaptureSession
     });
     private readonly Clip gameplay;
     private readonly Clip? hacker;
+    private readonly BotHackerVisit? hackerVisit;
+    private readonly Func<double> observationClock;
     private readonly Task writer;
     private readonly List<BotCaptureInput> nativeInput = [];
     private double lastSample = double.NegativeInfinity;
+    private double lastHackerSample = double.NegativeInfinity;
     private double lastAvailable = double.NegativeInfinity;
     private InputButtons held;
     private bool finished;
@@ -107,7 +115,8 @@ public sealed class BotCaptureSession
     public bool CapturesHacker => hacker is not null;
 
     public BotCaptureSession(string root, string mode, string detectorVersion, long generation, double startedAt,
-        GroundTruthLineDocument authored, Guid? replayId = null, bool paired = false, string? replayRoot = null)
+        GroundTruthLineDocument authored, Guid? replayId = null, bool paired = false, string? replayRoot = null,
+        AtlasPathLinkStore? hackerPathLinks = null, Func<double>? observationClock = null)
     {
         if (!double.IsFinite(startedAt) || startedAt < 0) throw new ArgumentOutOfRangeException(nameof(startedAt));
         if (paired && replayId is null) throw new ArgumentException("Paired observations require the matching input path.");
@@ -119,6 +128,8 @@ public sealed class BotCaptureSession
         replay = replayId;
         this.replayRoot = replayRoot is null ? null : Path.GetFullPath(replayRoot);
         Authored = authored.Clone();
+        hackerVisit = paired ? new(Authored, hackerPathLinks) : null;
+        this.observationClock = observationClock ?? (() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency);
         created = DateTimeOffset.UtcNow;
         staging = Path.Combine(this.root, $".pending-demo-{Guid.NewGuid():N}");
 
@@ -145,20 +156,37 @@ public sealed class BotCaptureSession
 
     public bool WantsFrame(long captureGeneration, double timestamp)
     {
-        lock (gate) return CanTake(captureGeneration, timestamp);
+        lock (gate) return CanTake(captureGeneration, timestamp, lastSample);
+    }
+
+    public bool TryQueueHacker(BotHackerCaptureFrame frame)
+    {
+        var match = frame.Match;
+        var timestamp = match.Capture.CapturedAt;
+        lock (gate)
+        {
+            if (hacker is null || match.Sample.AtlasGameplayActive != true
+                || match.Capture.UnityFrame != HackerFrameSynchronizer.Key(match.Sample.UnityFrame)
+                || !CanTake(frame.Generation, timestamp, lastHackerSample)
+                || !pending.Writer.TryWrite(new(match.Capture.Image, null, null, frame))) return false;
+            lastHackerSample = timestamp;
+            return true;
+        }
     }
 
     public bool TryRecord(BgraFrame image, BotCaptureObservation visual, BotCaptureObservation? exact)
     {
         lock (gate)
         {
-            if (!CanTake(visual.Generation, visual.CaptureTimestamp)
+            if (!CanTake(visual.Generation, visual.CaptureTimestamp, lastSample)
                 || visual.TerrainSource != "detected"
                 || exact is not null && (hacker is null || exact.TerrainSource != "human-authored"
                     || exact.CaptureTimestamp != visual.CaptureTimestamp || exact.Generation != visual.Generation
-                    || exact.AvailableAt != visual.AvailableAt)) return false;
+                    || exact.AvailableAt != visual.AvailableAt
+                    || !CanTake(exact.Generation, exact.CaptureTimestamp, lastHackerSample))) return false;
             if (!pending.Writer.TryWrite(new(image, visual, exact))) return false;
             lastSample = visual.CaptureTimestamp;
+            if (exact is not null) lastHackerSample = exact.CaptureTimestamp;
             if (double.IsFinite(visual.AvailableAt)) lastAvailable = Math.Max(lastAvailable, visual.AvailableAt);
             return true;
         }
@@ -181,13 +209,13 @@ public sealed class BotCaptureSession
         {
             if (finished) throw new InvalidOperationException("This capture has already ended.");
             finished = true;
-            if (double.IsFinite(stoppedAt)) stoppedAt = Math.Max(stoppedAt, lastAvailable);
             pending.Writer.TryComplete();
         }
         var moved = new List<string>();
         try
         {
             await writer.ConfigureAwait(false);
+            if (double.IsFinite(stoppedAt)) stoppedAt = Math.Max(stoppedAt, lastAvailable);
             if (!completed || !double.IsFinite(stoppedAt) || stoppedAt < StartedAt
                 || replay is { } expected && path?.Id != expected)
                 return new([], hacker is null ? 1 : 2);
@@ -395,9 +423,9 @@ public sealed class BotCaptureSession
         }
     }
 
-    private bool CanTake(long captureGeneration, double timestamp) => !finished && !writer.IsCompleted
+    private bool CanTake(long captureGeneration, double timestamp, double previous) => !finished && !writer.IsCompleted
         && generation == captureGeneration && double.IsFinite(timestamp) && timestamp >= StartedAt
-        && timestamp - lastSample >= BotRecordingContract.SampleInterval - SamplingTolerance;
+        && timestamp - previous >= BotRecordingContract.SampleInterval - SamplingTolerance;
 
     private async Task WriteAsync()
     {
@@ -406,8 +434,14 @@ public sealed class BotCaptureSession
             await foreach (var sample in pending.Reader.ReadAllAsync().ConfigureAwait(false))
             {
                 // Both domains archive the same pixels. Reuse the already encoded PNG when their sampling coincides.
-                var preview = gameplay.Record(sample.Gameplay, sample.Image);
-                if (sample.Hacker is { } exact) hacker!.Record(exact, sample.Image, preview);
+                var preview = sample.Gameplay is { } visual ? gameplay.Record(visual, sample.Image) : null;
+                var exact = sample.MatchedHacker is { } matched ? ProjectMatchedHacker(matched) : sample.Hacker;
+                if (exact is null) continue;
+                hacker!.Record(exact, sample.Image, preview);
+                if (sample.MatchedHacker is not null && double.IsFinite(exact.AvailableAt))
+                {
+                    lock (gate) lastAvailable = Math.Max(lastAvailable, exact.AvailableAt);
+                }
             }
         }
         catch (Exception error)
@@ -415,6 +449,20 @@ public sealed class BotCaptureSession
             pending.Writer.TryComplete(error);
             throw;
         }
+    }
+
+    private BotCaptureObservation? ProjectMatchedHacker(BotHackerCaptureFrame frame)
+    {
+        var match = frame.Match;
+        var capture = match.Capture;
+        var size = new WorldSize(capture.Image.Width, capture.Image.Height);
+        var timing = new BotCaptureTiming(capture.CapturedAt, observationClock(), frame.Generation, frame.RoomId, 0);
+        var row = hackerVisit!.Observe(size, capture.UnityFrame, match.Sample, timing, capture.MovementButtons, 0,
+            objective: frame.Objective, roomKey: frame.RoomKey, automaticObjective: frame.AutomaticObjective,
+            registeredRoom: frame.RegisteredRoom);
+        if (row is null) return null;
+        var camera = GroundTruthCameraTransform.FromSample(match.Sample, match.SampleObservedAt, size);
+        return row with { AtlasView = camera is null ? null : frame.RegisteredRoom?.BotView(camera, row.MeasuredHealth) };
     }
 
     internal static void AppendInputEdges(List<BotCaptureInput> inputs, InputButtons prior, InputButtons current, double time)
