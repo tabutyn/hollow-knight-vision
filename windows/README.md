@@ -112,6 +112,11 @@ Play or Hacker. It waits for admitted gameplay and fresh movement observations.
 After a verified checkpoint is available for that domain, **B** uses the
 selected trained policy.
 
+Bot evaluations record the built-in, trained, or Thinking policy that ran.
+When Thinking takes control, `skill-events.jsonl` records the original
+scores, selected target, and outcome beside the captured frames and receiver
+button events. These archives are stored under **Evaluations**.
+
 ### Repeat a bot trial
 
 Launch the installed desktop with `--game-mode modded --enable-automation-control`

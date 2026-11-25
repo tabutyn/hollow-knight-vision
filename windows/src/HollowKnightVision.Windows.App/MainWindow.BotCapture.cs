@@ -46,7 +46,7 @@ public partial class MainWindow
         BotRun? run, long walkedCoordinateEpoch, GroundHypothesisTrackingResult ground,
         bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions, GameplaySceneMasks? auditMasks,
         bool usesDurableWorld, CommittedBotFrame? committedAtlas, IReadOnlyList<GroundHypothesisAtlasLine> walked,
-        AtlasPoint? measuredSceneryCamera, long? wallLineage, ThinkingAbilityFrame? skillFrame)
+        AtlasPoint? measuredSceneryCamera, long? wallLineage, ThinkingPlaybackFrame? skillFrame)
     {
         var capture = Volatile.Read(ref botCapture);
         var playbackRun = run ?? skillFrame?.Lease.PriorRun;
@@ -56,8 +56,7 @@ public partial class MainWindow
         {
             botRouteOwner = owner;
             activeBotRouteEpoch = epoch;
-            var labels = capture is { CapturesHacker: true } ? capture.Authored : playbackRun?.Authored
-                ?? (skillFrame is not null ? Volatile.Read(ref thinkingAuthored)?.Labels : null);
+            var labels = capture is { CapturesHacker: true } ? capture.Authored : playbackRun?.Authored ?? skillFrame?.Lease.Authored;
             botRouteVisit = labels is null ? null : new(labels, hackerPathLinks);
             botVisualCoverage.Reset();
             botCommittedCoverage.Reset();
@@ -155,14 +154,16 @@ public partial class MainWindow
         }
         if (capture is not null) capture.TryRecord(frame, visual!, exact);
         var row = policyDomain == BotCaptureDomain.Hacker ? exact : visual;
-        if ((playback is not null || skillFrame is not null) && playbackRun is not null
-            && Volatile.Read(ref playbackRun.Loaded)?.Evaluation is { } evaluation)
+        var evaluation = skillFrame?.Lease.Evaluation;
+        if (evaluation is null && playback is not null && playbackRun is not null)
+            evaluation = Volatile.Read(ref playbackRun.Loaded)?.Evaluation;
+        if (evaluation is not null)
             evaluation.RecordFrame(frame, time, row, receiverTelemetry?.SceneName,
                 visual?.DetectedTerrain?.Floors ?? BotObservationBuilder.ProjectDetectedFloors(frame, visualFloors),
                 exact?.AuthoredTerrain, auditMasks is null ? null : VisualReplayGroundInput.FromTracking(
-                    timestamp, (ulong)generation, frame.Height, auditMasks, input), renderedFrame);
+                    timestamp, (ulong)generation, frame.Height, auditMasks, input), renderedFrame, skill: skillFrame is not null);
         if (skillFrame is not null)
-            DriveThinkingAbility(skillFrame, row);
+            DriveThinkingFrame(skillFrame, row);
         else if (run is not null && playback is not null)
             DriveBotFrame(run, playback, row, input, receiverTelemetry?.SceneName);
     }
@@ -170,7 +171,7 @@ public partial class MainWindow
     private async void PathRecording_Click(object sender, RoutedEventArgs e)
     {
         if (changingBotCapture || deletingBotClip || gameControls.IsReplaying) return;
-        if (Volatile.Read(ref botPlayback) is not null)
+        if (Volatile.Read(ref botPlayback) is not null || Volatile.Read(ref thinkingLease) is not null)
         {
             SetStatus("Stop the bot with B before recording a demonstration.");
             return;

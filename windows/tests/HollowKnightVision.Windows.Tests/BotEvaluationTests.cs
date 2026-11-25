@@ -140,6 +140,59 @@ internal static class BotEvaluationTests
         finally { temporary.Delete(recursive: true); }
     }
 
+    internal static void TestSkillEvaluationKeepsChoicesAndOutcome()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-skill-evaluation-");
+        try
+        {
+            var scope = new ThinkingScope(Generation, BotCaptureDomain.Hacker, "Tutorial_01", Guid.NewGuid());
+            var sight = new ThinkingSight(scope, 1.05, true, null, null, [new("inspect", 1.01)],
+                new(42, true, null, [new(-78, .1, .04)], [], []));
+            var offer = new ThinkingPolicyOffer(sight);
+            using var json = JsonDocument.Parse("""{"scores":{"c0":94,"c1":72}}""");
+            var plan = offer.Resolve(json.RootElement);
+            var winner = plan.Pick(sight, 1.10)!;
+            var evaluation = new BotEvaluationRecorder(temporary.FullName, BotCaptureDomain.Hacker,
+                "Built-in playing policies", null, new(), Generation, 1);
+            var image = new BgraFrame(32, 16, 128, new byte[32 * 16 * 4], 8, DateTimeOffset.UnixEpoch);
+            evaluation.RecordSkill(plan, winner, scope.Context, "selected", 1.10);
+            Check(evaluation.WantsSkillSample(1.05), "Capture the exact frame that admitted the selection.");
+            evaluation.RecordFrame(image, new(1.05, 1.11, Generation, 42, 0), null, scope.Context, [], null, null, 8, skill: true);
+            Check(!evaluation.WantsSkillSample(1.08) && evaluation.WantsSkillSample(1.14),
+                "Intervening control frames do not require another image and terrain analysis.");
+            evaluation.RecordFrame(image, new(1.08, 1.12, Generation, 42, 0), null, scope.Context, [], null, null, 9, skill: true);
+            evaluation.RecordSkill(plan with { Scope = scope with { Generation = 1 } }, winner, scope.Context, "wrong generation", 1.13);
+            evaluation.RecordControls(InputButtons.ActionX, 1.12);
+            evaluation.RecordSkill(plan, winner, scope.Context, "Bound target expired.", 1.25);
+            var saved = evaluation.FinishAsync(1.20, "skill-finished").GetAwaiter().GetResult()!;
+            evaluation.RecordSkill(plan, winner, scope.Context, "after stop", 1.26);
+            var metadata = Load<JsonElement>(saved, "evaluation.json");
+            Check(metadata.GetProperty("actionSource").GetString() == "skill-plan"
+                && metadata.GetProperty("skillEvents").GetString() == "skill-events.jsonl"
+                && !metadata.TryGetProperty("modelSHA256", out _),
+                "Only a real checkpoint may be named as the motor and the evaluation must link its skill sidecar.");
+            var events = File.ReadLines(Path.Combine(saved, "skill-events.jsonl"))
+                .Select(line => JsonSerializer.Deserialize<JsonElement>(line, Json)).ToArray();
+            var selection = events[0].GetProperty("choice");
+            var choices = events[0].GetProperty("plan").GetProperty("choices");
+            Check(events.Length == 2 && events[0].GetProperty("event").GetString() == "selected"
+                && events[1].GetProperty("event").GetString() == "Bound target expired."
+                && events.All(row => row.GetProperty("context").GetString() == scope.Context)
+                && events[0].GetProperty("plan").GetProperty("decisionID").GetInt64() == plan.DecisionId
+                && selection.GetProperty("candidateID").GetString() == winner.Id
+                && selection.GetProperty("policy").GetString() == "fight" && selection.GetProperty("points").GetInt32() == 94
+                && selection.GetProperty("binding").GetProperty("target").GetProperty("fight").GetProperty("_0").GetInt32() == -78
+                && choices[1].GetProperty("control").GetString() == "inspect"
+                && choices[1].GetProperty("promptFirstSeen").GetDouble() == 1.01,
+                "Retain the winning and alternative scores, bound actor, prompt evidence, and actual outcome.");
+            var manifest = Load<BotCaptureManifest>(saved, "manifest.json");
+            Check(manifest is { ExpertDemonstration: false, Status: "completed", InputEventCount: 2, TerrainAuditCount: 1 }
+                && Math.Abs(manifest.Duration - .25) < 1e-10 && BotCaptureSession.Library(Path.GetDirectoryName(saved)!).Count == 0,
+                "A skill evaluation must sample frames, finalize neutral controls, and stay outside training.");
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
     private static T Load<T>(string directory, string name) => JsonSerializer.Deserialize<T>(
         File.ReadAllBytes(Path.Combine(directory, name)), BotCaptureSession.Json)!;
 

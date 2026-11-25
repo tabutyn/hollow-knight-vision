@@ -9,15 +9,19 @@ namespace HollowKnightVision.Windows.Core;
 public sealed class BotEvaluationRecorder
 {
     private const string Kind = "bot-evaluation";
+    private const string SkillEventFile = "skill-events.jsonl";
+    private const double SkillSampleInterval = .075;
     private const int MaximumPendingFrames = 8;
     private sealed record TerrainAuditFrame(double CaptureTimestamp, double CapturedAt, ulong CaptureGeneration,
         int Width, int Height, string? SceneName, bool ReferenceAvailable,
         IReadOnlyList<BotFloor> Detected, IReadOnlyList<BotFloor> Authored);
     private sealed record Sample(BgraFrame Image, BotCaptureObservation? Observation, TerrainAuditFrame Audit,
         VisualReplayGroundInput? GroundInput, int? RenderedFrame);
+    private sealed record SkillEvent(ThinkingPlan Plan, ThinkingCandidate Choice, string Context, string Event, double Timestamp);
 
     private readonly object gate = new();
-    private readonly string root, domain, modelName, modelSha256;
+    private readonly string root, domain, modelName;
+    private readonly string? modelSha256;
     private readonly Guid id = Guid.NewGuid();
     private readonly DateTimeOffset createdAt = DateTimeOffset.UtcNow;
     private readonly GroundTruthLineDocument reference;
@@ -29,23 +33,25 @@ public sealed class BotEvaluationRecorder
         SingleReader = true, FullMode = BoundedChannelFullMode.Wait
     });
     private readonly List<BotCaptureInput> controls = [];
+    private readonly List<SkillEvent> skillEvents = [];
     private readonly BotAtlasRun atlasRun = new();
     private readonly Task<string?> writer;
     private InputButtons held;
     private (double Time, string Reason)? stop;
     private double lastCapture = double.NegativeInfinity;
     private double lastControl = double.NegativeInfinity;
+    private double lastSkillSample = double.NegativeInfinity;
     private double lastAvailable;
     private int droppedSamples;
 
-    public BotEvaluationRecorder(string root, BotCaptureDomain domain, string modelName, string modelSha256,
+    public BotEvaluationRecorder(string root, BotCaptureDomain domain, string modelName, string? modelSha256,
         GroundTruthLineDocument reference, long generation, double startedAt)
     {
         if (!double.IsFinite(startedAt) || startedAt < 0) throw new ArgumentOutOfRangeException(nameof(startedAt));
         this.root = Path.Combine(Path.GetFullPath(root), domain == BotCaptureDomain.Hacker ? "hacker" : "gameplay");
         this.domain = domain == BotCaptureDomain.Hacker ? "hacker" : "gameplay";
         this.modelName = modelName;
-        this.modelSha256 = modelSha256;
+        this.modelSha256 = string.IsNullOrEmpty(modelSha256) ? null : modelSha256;
         this.reference = reference.Clone();
         this.generation = generation;
         this.startedAt = lastAvailable = startedAt;
@@ -54,15 +60,23 @@ public sealed class BotEvaluationRecorder
         writer = Task.Run(WriteAsync);
     }
 
+    public bool WantsSkillSample(double capturedAt)
+    {
+        lock (gate) return stop is null && capturedAt > lastCapture
+            && capturedAt - lastSkillSample >= SkillSampleInterval;
+    }
+
     public void RecordFrame(BgraFrame image, BotCaptureTiming timing, BotCaptureObservation? observation, string? scene,
-        IReadOnlyList<BotFloor> detected, BotScreenTerrain? authored, VisualReplayGroundInput? groundInput, int? renderedFrame)
+        IReadOnlyList<BotFloor> detected, BotScreenTerrain? authored, VisualReplayGroundInput? groundInput, int? renderedFrame,
+        bool skill = false)
     {
         lock (gate)
         {
             if (stop is not null || writer.IsCompleted || timing.Generation != generation
                 || !double.IsFinite(timing.CaptureTimestamp) || timing.CaptureTimestamp < startedAt
                 || timing.CaptureTimestamp <= lastCapture || !double.IsFinite(timing.AvailableAt)
-                || timing.AvailableAt < timing.CaptureTimestamp)
+                || timing.AvailableAt < timing.CaptureTimestamp
+                || skill && timing.CaptureTimestamp - lastSkillSample < SkillSampleInterval)
                 return;
             var paired = authored is not null && scene is not null && labelledScenes.Contains(scene);
             var audit = new TerrainAuditFrame(timing.CaptureTimestamp, timing.CaptureTimestamp, (ulong)generation,
@@ -75,6 +89,7 @@ public sealed class BotEvaluationRecorder
                 || groundInput.CaptureGeneration != (ulong)generation))
                 groundInput = null;
             lastCapture = timing.CaptureTimestamp;
+            if (skill) lastSkillSample = lastCapture;
             lastAvailable = Math.Max(lastAvailable, timing.AvailableAt);
             if (!samples.Writer.TryWrite(new(image, observation, audit, groundInput, renderedFrame))) droppedSamples++;
         }
@@ -100,12 +115,25 @@ public sealed class BotEvaluationRecorder
         }
     }
 
+    public void RecordSkill(ThinkingPlan plan, ThinkingCandidate choice, string context, string outcome, double time)
+    {
+        lock (gate)
+        {
+            if (stop is not null || writer.IsCompleted || plan.Scope.Generation != generation
+                || !double.IsFinite(time) || time < startedAt
+                || skillEvents.Count > 0 && time < skillEvents[^1].Timestamp) return;
+            skillEvents.Add(new(plan, choice, context, outcome, time));
+            if (outcome == "selected") lastSkillSample = double.NegativeInfinity;
+        }
+    }
+
     public Task<string?> FinishAsync(double stoppedAt, string reason)
     {
         lock (gate)
         {
             if (stop is not null) return writer;
             var time = Math.Max(double.IsFinite(stoppedAt) ? stoppedAt : startedAt, Math.Max(lastAvailable, lastControl));
+            if (skillEvents.Count > 0) time = Math.Max(time, skillEvents[^1].Timestamp);
             BotCaptureSession.AppendInputEdges(controls, held, InputButtons.None, time);
             stop = (time, reason);
             samples.Writer.TryComplete();
@@ -167,10 +195,11 @@ public sealed class BotEvaluationRecorder
             var (stoppedAt, reason) = stop!.Value;
             foreach (var input in controls) clip.Append(input);
             clip.Close();
+            if (skillEvents.Count > 0) WriteSkillEvents(clip.Directory);
             WriteJson(clip.Directory, "atlas-score.json", atlasRun.Score);
             WriteJson(clip.Directory, "manifest.json", new BotCaptureManifest(BotRecordingContract.SchemaVersion, id,
                 createdAt, startedAt, "modded", modelName, "receiver-sent",
-                reason is "user-stop" or "local-control" ? "completed" : "interrupted", stoppedAt - startedAt,
+                reason is "user-stop" or "local-control" or "skill-finished" ? "completed" : "interrupted", stoppedAt - startedAt,
                 clip.Count, clip.UsableCount, controls.Count, clip.ImageCount, domain, null, null)
             {
                 StopReason = reason, ExpertDemonstration = false,
@@ -178,7 +207,9 @@ public sealed class BotEvaluationRecorder
             });
             WriteJson(clip.Directory, "evaluation.json", new
             {
-                kind = Kind, domain, modelName, modelSHA256 = modelSha256, actionSource = "general-policy",
+                kind = Kind, domain, modelName, modelSHA256 = modelSha256,
+                actionSource = skillEvents.Count > 0 ? "skill-plan" : modelSha256 is null ? "starter-policy" : "general-policy",
+                skillEvents = skillEvents.Count > 0 ? SkillEventFile : null,
                 expertDemonstration = false, droppedSamples, visualFrameArchive = source
             });
             var destination = Path.Combine(root, BotCaptureSession.DirectoryName(id));
@@ -190,6 +221,51 @@ public sealed class BotEvaluationRecorder
             samples.Writer.TryComplete();
             if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
         }
+    }
+
+    private void WriteSkillEvents(string directory)
+    {
+        using var log = new StreamWriter(Path.Combine(directory, SkillEventFile), append: false, new UTF8Encoding(false))
+            { NewLine = "\n" };
+        foreach (var entry in skillEvents)
+        {
+            var choices = entry.Plan.Scores.Select(score => SkillChoice(score.Candidate, score.Points)).ToArray();
+            var points = entry.Plan.Scores.FirstOrDefault(score => score.Candidate.Id == entry.Choice.Id)?.Points ?? 0;
+            log.WriteLine(JsonSerializer.Serialize(new
+            {
+                plan = new { objective = "expandAtlas", success = "Record the policy outcome.", choices,
+                    shopping = Array.Empty<object>(), decisionID = entry.Plan.DecisionId },
+                choice = SkillChoice(entry.Choice, points), entry.Context, entry.Event, entry.Timestamp
+            }, BotCaptureSession.Json));
+        }
+    }
+
+    private static object SkillChoice(ThinkingCandidate candidate, int points)
+    {
+        var (policy, control, cue) = candidate.Action switch
+        {
+            ThinkingAction.Focus => (candidate.Policy, "focus", ""),
+            ThinkingAction.Inspect => (candidate.Policy, "inspect", "Inspect"),
+            ThinkingAction.Listen => (candidate.Policy, "inspect", "Listen"),
+            ThinkingAction.Continue => ("interact", "confirm", "pause.continue"),
+            _ => (candidate.Policy, "native", "")
+        };
+        object? target = candidate.Action switch
+        {
+            ThinkingAction.Traverse when candidate.Route is { } route => new
+            {
+                traverse = new { _0 = new { route.Chart, goal = route.Objective, route.Waypoint, hint = route.Road } }
+            },
+            ThinkingAction.Fight => new { fight = new { _0 = candidate.ActorId } },
+            ThinkingAction.Lifeblood => new { lifeblood = new { _0 = candidate.ActorId } },
+            ThinkingAction.Focus => new { focus = new Dictionary<string, int>() },
+            _ => null
+        };
+        return new
+        {
+            policy, control, cue, points, candidateID = candidate.Id, promptFirstSeen = candidate.PromptStart,
+            binding = target is null ? null : new { room = candidate.Room, target }
+        };
     }
 
     private static void WriteJson<T>(string directory, string name, T value) =>
