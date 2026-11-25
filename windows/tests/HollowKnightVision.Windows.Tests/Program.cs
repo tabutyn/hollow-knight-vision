@@ -534,6 +534,8 @@ var tests = new List<(string Name, Action Run)>
     ("ground long rows reject unsafe alternatives", GroundLongRowParityTests.TestLongRowRejectsWrongTextureWrongRowNarrowMaskedAndOversized),
     ("ground broad texture recovers noisy landing", GroundLongRowParityTests.TestManyIndependentPatchesRecoverModeratelyNoisyLanding),
     ("ground repeated texture cannot choose an ambiguous phase", GroundLongRowParityTests.TestRepeatedTextureCannotChooseAnAmbiguousLongRowPhase),
+    ("ground tracking recovers new platforms when the old floor is occluded", GroundReferenceAdmissionTests.TestNewPlatformsRemainRecoverableWhenPreferredOldFloorIsOccluded),
+    ("stationary overlays cannot outvote an established moving floor", GroundReferenceAdmissionTests.TestStationaryNewOverlayRowsCannotOutvotePreviouslyEstablishedMovingFloor),
     ("ground edge masks match the pixel oracle", GroundDetectionEfficiencyTests.TestRasterizedMasksArePixelExactIncludingClippedAndOffscreenRectangles),
     ("ground mask retains HUD and recovers room inside the atlas shield", GroundDetectionEfficiencyTests.TestGroundMaskKeepsHudAndRecoversRoomInsideAtlasShield),
     ("ground paired kernel matches the pixel oracle", GroundDetectionEfficiencyTests.TestPairedKernelIsPixelExactForNoiseAndBorders),

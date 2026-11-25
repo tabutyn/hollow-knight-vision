@@ -173,7 +173,10 @@ public sealed partial class GroundCameraSolver
         public CameraVector? ProjectedImageDisplacement { get; init; }
     }
     private sealed record Reference(byte[] Pixels, GroundTextureLine[] Lines, StencilRect[] Exclusions,
-        double Timestamp, CameraVector Position, bool PoseTrusted = true);
+        double Timestamp, CameraVector Position, bool PoseTrusted = true)
+    {
+        public GroundTextureLine[] PreferredLines { get; init; } = [];
+    }
     private Reference? reference, recentReference, provisionalReference, latestVerifiedReference;
     private List<Reference> spatialReferences = [];
     private CameraVector velocity, imagePosition;
@@ -283,6 +286,25 @@ public sealed partial class GroundCameraSolver
         if (lastAttempt is not { } attempt || Math.Abs(attempt.Timestamp - timestamp) >= .000001) return;
         reference = attempt.State.Anchor; recentReference = attempt.State.Recent; provisionalReference = attempt.State.Provisional;
         spatialReferences = [.. attempt.State.Spatial]; latestVerifiedReference = attempt.State.LatestVerified;
+    }
+
+    internal void PrioritizeAdmittedReferenceRows(double timestamp, IReadOnlyList<DetectedFloorLine> admitted)
+    {
+        reference = Prioritize(reference);
+        recentReference = Prioritize(recentReference);
+        latestVerifiedReference = Prioritize(latestVerifiedReference);
+        for (var index = 0; index < spatialReferences.Count; index++)
+            spatialReferences[index] = Prioritize(spatialReferences[index])!;
+
+        Reference? Prioritize(Reference? value)
+        {
+            if (value is not { PoseTrusted: true } || value.Timestamp != timestamp) return value;
+            var preferred = value.Lines.Where(line => admitted.Any(allowed =>
+                Math.Abs((long)allowed.Row - line.Row) <= 3
+                && Math.Min(allowed.XSpan.EndInclusive, line.EndX)
+                    - (long)Math.Max(allowed.XSpan.Start, line.StartX) + 1 >= 16)).ToArray();
+            return value with { PreferredLines = preferred.Length < value.Lines.Length ? preferred : [] };
+        }
     }
 
     public Solution? Solve(byte[] pixels, int width, int height, IReadOnlyList<GroundTextureLine> lines,

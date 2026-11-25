@@ -24,6 +24,27 @@ public sealed partial class GroundCameraSolver
     private Solution? SolveReference(byte[] pixels, int width, int height, GroundTextureLine[] lines,
         double timestamp, StencilRect[] exclusions, string matchSource, bool textureFallback = false)
     {
+        if (!textureFallback && reference is { PreferredLines.Length: > 0 } original)
+        {
+            // Admitted floor rows get the first match. If those rows leave the
+            // image, retry against every retained row from the same capture.
+            var before = CurrentState;
+            var preferred = original with { Lines = original.PreferredLines };
+            reference = preferred;
+            var result = SolveReferenceRows(pixels, width, height, lines, timestamp, exclusions, matchSource, textureFallback);
+            if (result is not null)
+            {
+                if (ReferenceEquals(reference, preferred)) reference = original;
+                return result;
+            }
+            CurrentState = before;
+        }
+        return SolveReferenceRows(pixels, width, height, lines, timestamp, exclusions, matchSource, textureFallback);
+    }
+
+    private Solution? SolveReferenceRows(byte[] pixels, int width, int height, GroundTextureLine[] lines,
+        double timestamp, StencilRect[] exclusions, string matchSource, bool textureFallback)
+    {
         if (!Valid(pixels, width, height, timestamp)) return null;
         if (frameWidth != width || frameHeight != height) Reset();
         frameWidth = width; frameHeight = height; Seeded = false;
