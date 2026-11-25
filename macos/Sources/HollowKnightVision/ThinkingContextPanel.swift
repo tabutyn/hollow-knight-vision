@@ -62,7 +62,19 @@ struct ThinkingContextPanel: View {
                     }
                     Divider()
                     column("Game information", width: max(177, area.size.width * 0.24)) {
-                        scrollText(inspector.input?.liveEvidence, empty: "Waiting for game evidence.")
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 8) {
+                                if let input = inspector.input {
+                                    block(input.liveEvidence)
+                                    DisclosureGroup("Offered actions and targets") {
+                                        if let data = try? JSONSerialization.data(withJSONObject: input.context.contract.offer,
+                                                                                  options: [.prettyPrinted, .sortedKeys]) {
+                                            block(String(decoding: data, as: UTF8.self))
+                                        }
+                                    }
+                                } else { block("Waiting for game evidence.") }
+                            }
+                        }
                     }
                     Divider()
                     column("Reasoning", width: max(170, area.size.width * 0.23)) {

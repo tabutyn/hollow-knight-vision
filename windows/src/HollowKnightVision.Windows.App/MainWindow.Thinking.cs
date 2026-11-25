@@ -129,7 +129,7 @@ public partial class MainWindow
         ContextPanel.Present(CurrentThinkingOptions, thinkingEnabled, ThinkingStatusText(), thinkingEvidence, thinkingBrief,
             thinkingScreenshot, thinkingDisplayFrame is { } frame ? $"Captured frame {frame.Image.CaptureId}" : null,
             ReferenceEquals(thinkingDisplayFrame, thinkingAttachedFrame) ? null : thinkingAttachment,
-            thinkingReply, thinkingHandoff);
+            thinkingReply, thinkingAttachedFrame is { } answered ? $"Reply for frame {answered.Image.CaptureId} · {thinkingHandoff}" : null);
     }
 
     private string DecisionBrief(ThinkingSight sight, string goal)
@@ -267,6 +267,7 @@ public partial class MainWindow
         string language, bool readText, string memory, string goal, CancellationTokenSource source)
     {
         var token = source.Token;
+        var receivedReply = false;
         try
         {
             thinkingStatus = "Preparing the captured frame…";
@@ -298,6 +299,8 @@ public partial class MainWindow
             thinkingBrief = DecisionBrief(sight, goal);
             var user = memory + "\nLive decision evidence\n" + thinkingEvidence + "\nDecision brief\n" + thinkingBrief
                 + "\n\nPolicy selection specification\n" + offer.SelectionSpecification;
+            thinkingEvidence += "\nOffered actions and targets\n" + JsonSerializer.Serialize(offer.Wire,
+                new JsonSerializerOptions { WriteIndented = true });
             var schema = offer.Schema;
             thinkingRows = Rows(offer, null);
             var resident = await LocateThinkingModelAsync(options, token);
@@ -310,6 +313,7 @@ public partial class MainWindow
             thinkingAttachedFrame = frame;
             thinkingAttachment = attachment;
             thinkingHandoff = null;
+            receivedReply = true;
             thinkingReply = reply;
             using var document = JsonDocument.Parse(reply);
             thinkingReply = JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions { WriteIndented = true });
@@ -326,7 +330,7 @@ public partial class MainWindow
         {
             if (!token.IsCancellationRequested)
                 thinkingStatus = error is OperationCanceledException ? "The local model timed out." : error.Message;
-            if (!token.IsCancellationRequested && thinkingReply.Length > 0)
+            if (!token.IsCancellationRequested && receivedReply)
                 thinkingHandoff = "Reply rejected.";
         }
         finally
