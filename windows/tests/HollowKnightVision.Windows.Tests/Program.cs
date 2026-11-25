@@ -249,6 +249,7 @@ var tests = new List<(string Name, Action Run)>
     ("recorded ground pairs preserve frame identity, masks, and solver evidence", GroundPairReplayAuditTests.TestGroundPairReplayKeepsExactFramesAndMaskOwnership),
     ("recorded doorway floor evidence uses exact owned masks and reports black edges", LoadingGapReplayAuditTests.TestDoorwayFloorReplayNeedsExactOwnedMasks),
     ("recorded Atlas reopens with the same masked pixels and owned ground", LiveIslandReplayAuditTests.TestWorldReopenPreservesMaskedPixelsAndSavedGround),
+    ("room image replay requires both separated views before reusing a room", RoomReturnReplayAuditTests.TestRoomImageAuditConfirmsTwoSeparatedViews),
     ("ground scene labeled gameplay reports detection cost and evidence", GroundSceneAuditParityTests.TestLabeledGameplayGroundDetectionCostAndEvidence),
     ("ground scene captured platform audit runs masked and unmasked", GroundSceneAuditParityTests.TestCapturedPlatformScene),
     ("ground scene audit converts coordinates and alpha", GroundSceneAuditParityTests.TestSceneAuditCoordinateAndAlphaConversion),
@@ -1665,6 +1666,10 @@ if (Environment.GetEnvironmentVariable("HKV_WORLD_REOPEN_AUDIT_INPUT") is not nu
     tests.Add(("archived Atlas world reopens with identical pixels", LiveIslandReplayAuditTests.TestRecordedOwnedWorldReopensWithIdenticalPixels));
 if (Environment.GetEnvironmentVariable("HKV_GROUND_OVERLAY_AUDIT_WORLD") is not null)
     tests.Add(("archived Atlas shows one stroke for a dense group of floor measurements", LiveWorldGroundOverlayTests.TestSavedOverlayMeasurementsWhenRequested));
+if (Environment.GetEnvironmentVariable("HKV_ROOM_VIEW_AUDIT_INPUT") is not null)
+    tests.Add(("recorded room-return image audit", RoomReturnReplayAuditTests.TestRecordedRoomReturnImagesWhenRequested));
+if (Environment.GetEnvironmentVariable("HKV_ROOM_FEATURE_AUDIT_INPUT") is not null)
+    tests.Add(("recorded room-return feature audit", RoomReturnReplayAuditTests.TestRecordedRoomReturnFeaturesWhenRequested));
 
 foreach (var test in tests)
 {
