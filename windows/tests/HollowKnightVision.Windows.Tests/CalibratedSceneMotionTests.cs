@@ -244,7 +244,7 @@ internal static class CalibratedSceneMotionTests
         GameplayTrackedFrame Observe(int index, int dx, int dy, bool floorVisible, bool hasCommitted,
             bool resumed = false, InputButtons? input = null, LowResolutionRoomMotionEstimate? coarse = null)
         {
-            var time = index * .05;
+            var time = GroundSceneryCaptureTime(index);
             var frame = new BgraFrame(width, height, width * 4, new byte[width * height * 4],
                 index, DateTimeOffset.UnixEpoch.AddSeconds(time));
             var pixels = Grid(dx, dy).Pixels;
@@ -354,7 +354,7 @@ internal static class CalibratedSceneMotionTests
                     darkFloor.MeasuredSceneryCamera, width, height, null).Single();
                 Check(visible.Row == 140 && visible.XSpan.Start <= 196 && visible.XSpan.EndInclusive >= 232,
                     "A late Atlas sample must retain the confirmed span still visible behind the Knight.");
-                CheckWorldPersistence(walkSeed, darkFloor, 32, 1.6, expectWalked: true);
+                CheckWorldPersistence(walkSeed, darkFloor, 32, expectWalked: true);
             }
 
             var dropping = Observe(33, 19, -18, false, hasCommitted, input: InputButtons.Left);
@@ -363,17 +363,20 @@ internal static class CalibratedSceneMotionTests
         }
     }
 
+    private static double GroundSceneryCaptureTime(int index) => index * .05;
+
     private static void CheckWorldPersistence(GameplayTrackedFrame seed, GameplayTrackedFrame continued,
-        int finalId = 25, double finalTime = 1.25, bool expectWalked = false)
+        int finalId = 25, bool expectWalked = false)
     {
         const int width = 640, height = 360;
         var path = Path.Combine(Path.GetTempPath(), $"hkv-calibrated-scene-world-{Guid.NewGuid():N}");
         try
         {
             var world = new WindowsLiveWorldPipeline(path);
-            WindowsLiveWorldPipelineResult Write(GameplayTrackedFrame tracked, int id, double timestamp)
+            WindowsLiveWorldPipelineResult Write(GameplayTrackedFrame tracked, int id)
             {
                 Check(tracked.AllowsAtlasWrite, "The production tracking pipeline must admit the frame.");
+                var timestamp = GroundSceneryCaptureTime(id);
                 var frame = new BgraFrame(width, height, width * 4, new byte[width * height * 4],
                     id, DateTimeOffset.UnixEpoch.AddSeconds(timestamp));
                 return world.Process(new WindowsLiveWorldFrame(frame, frame, timestamp, timestamp, tracked.DisplayCamera, width, [],
@@ -385,9 +388,9 @@ internal static class CalibratedSceneMotionTests
                     WorldEvidence = tracked.WorldEvidence
                 });
             }
-            var ground = Write(seed, 19, .95);
+            var ground = Write(seed, 19);
             Check(ground.AllowsAtlasWrite, ground.Diagnostic);
-            var scenery = Write(continued, finalId, finalTime);
+            var scenery = Write(continued, finalId);
             Check(scenery.AllowsAtlasWrite, scenery.Diagnostic);
             var saved = new LiveWorldSessionStore(path).Load().Snapshot;
             Check(saved.Observations.Count == 2 && saved.Observations[^1].RawPose == continued.DisplayCamera,
