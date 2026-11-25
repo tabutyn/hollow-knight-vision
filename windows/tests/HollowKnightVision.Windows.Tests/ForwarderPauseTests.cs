@@ -17,6 +17,58 @@ internal static class ForwarderPauseTests
         while (!condition()) await Task.Delay(10, deadline.Token);
     }
     public static void TestLeaseTransport() => LeaseTransport().GetAwaiter().GetResult();
+
+    internal static void TestTrialCheckpointUsesTheOwnedReceiver() => TrialCheckpoint().GetAwaiter().GetResult();
+
+    private static async Task TrialCheckpoint()
+    {
+        await using var fixture = new Fixture(pauseSupported: true);
+        var forwarder = fixture.Forwarder;
+        await Until(() => forwarder.PauseState == GamePauseState.Ready);
+        var initial = ReceiverWireCodec.DecodeLine<ReceiverInputSnapshot>(await fixture.Next("state"));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var token = timeout.Token;
+        var pose = ReceiverWireCodec.DecodeLine<ReceiverGroundTruthSample>(
+            """{"version":2,"type":"groundTruth","sequence":1,"unityFrame":1,"sceneName":"Tutorial_01","cameraAvailable":true,"atlasGameplayActive":true,"heroAvailable":true}""")
+            with { SessionId = initial.SessionId };
+        Check(!forwarder.CanUseTrialCheckpoint, "Trial checkpoint requires measured gameplay.");
+        await fixture.SendGroundTruth(pose);
+        await Until(() => forwarder.CanUseTrialCheckpoint);
+        var owner = forwarder.BeginBotControl();
+        Check(owner is not null && !forwarder.CanUseTrialCheckpoint, "Trial checkpoints must not interrupt an active bot.");
+        forwarder.EndBotControl(owner!.Value);
+        var point = await forwarder.UseTrialCheckpointAsync(null, null, token);
+        Check(point.Session == initial.SessionId && point.Checkpoint.SceneName == "Tutorial_01",
+            "Capture the return point through the live receiver connection.");
+        _ = await fixture.Next("captureCheckpoint");
+        await fixture.SendGroundTruth(pose with { Sequence = 2, UnityFrame = 2 });
+        await Until(() => forwarder.CanUseTrialCheckpoint);
+        try
+        {
+            _ = await forwarder.UseTrialCheckpointAsync(point.Checkpoint, Guid.NewGuid(), token);
+            Check(false, "An earlier receiver session should not authorize a restore.");
+        }
+        catch (InvalidOperationException error)
+        {
+            Check(error.Message.Contains("previous receiver session", StringComparison.Ordinal));
+        }
+        var restore = forwarder.UseTrialCheckpointAsync(point.Checkpoint, point.Session, token);
+        Check(!forwarder.CanUseTrialCheckpoint && forwarder.BeginBotControl() is null, "Hold the control lease through the restore receipt.");
+        var command = ReceiverWireCodec.DecodeLine<ReceiverCheckpointCommand>(await fixture.Next("restoreCheckpoint"));
+        Check(command.Checkpoint == point.Checkpoint && command.SessionId == point.Session,
+            "Restore the original checkpoint in the same session.");
+        await fixture.AcknowledgeTrialCheckpoint(command, accepted: true);
+        Check((await restore).Checkpoint == point.Checkpoint, "Acknowledge the exact original checkpoint.");
+        await fixture.SendGroundTruth(pose with { Sequence = 3, UnityFrame = 3 });
+        await Until(() => forwarder.CanUseTrialCheckpoint);
+        var refused = forwarder.UseTrialCheckpointAsync(point.Checkpoint, point.Session, token);
+        var rejected = ReceiverWireCodec.DecodeLine<ReceiverCheckpointCommand>(await fixture.Next("restoreCheckpoint"));
+        await fixture.AcknowledgeTrialCheckpoint(rejected, accepted: false);
+        try { _ = await refused; }
+        catch (InvalidOperationException error) when (error.Message.Contains("test rejection", StringComparison.Ordinal)) { return; }
+        throw new InvalidOperationException("A rejected restore must report the receiver failure.");
+    }
+
     private static async Task LeaseTransport()
     {
         await using var fixture = new Fixture(pauseSupported: true);
@@ -433,6 +485,10 @@ internal static class ForwarderPauseTests
                 2, "playerOpsAck", command.SessionId, command.CommandId, true, null, null, null, scene)));
         internal Task SendGroundTruth(ReceiverGroundTruthSample sample) =>
             writer!.WriteAsync(ReceiverWireCodec.EncodeLine(sample));
+        internal Task AcknowledgeTrialCheckpoint(ReceiverCheckpointCommand command, bool accepted) =>
+            writer!.WriteAsync(ReceiverWireCodec.EncodeLine(new ReceiverCheckpointAcknowledgement(2,
+                "restoreCheckpointAck", command.SessionId, command.CommandId, accepted, command.Checkpoint,
+                accepted ? null : "test rejection")));
         internal Task CloseForwarder() => closeTask ??= Forwarder.DisposeAsync().AsTask();
         internal void Disconnect() { peer?.Close(); listener.Stop(); }
         public async ValueTask DisposeAsync()

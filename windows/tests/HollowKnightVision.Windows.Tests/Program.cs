@@ -73,6 +73,13 @@ if (args is ["--inspect-atlas-road-host-probe", var atlasHost])
     return;
 }
 
+if (args is ["--trial-control-host-probe", var trialHost])
+{
+    await BotTrialControlTests.TestHostExecutable(trialHost);
+    Console.WriteLine("PASS installed Host sends opted-in Windows trial commands and preserves status and rejections.");
+    return;
+}
+
 if (args is ["--recorded-blockade-host-probe", _] or ["--recorded-blockade-host-probe", _, _])
 {
     BotBlockadeReplayTests.TestHostExecutable(args[1], args.Length == 3 ? args[2] : null);
@@ -713,6 +720,8 @@ var tests = new List<(string Name, Action Run)>
     ("Windows releases stale bot inputs and drops ownership on manual control or focus loss", ForwarderPauseTests.TestBotOwnershipAndExpiration),
     ("Windows retains bot input on delayed evidence and waits on fresh invalid evidence", ForwarderPauseTests.TestBotPlaybackWaitsAndIgnoresDelayedEvidence),
     ("Windows bridge renews pause leases blocks input and resumes on close", ForwarderPauseTests.TestLeaseTransport),
+    ("Windows trial control allows only bounded opted-in messages", BotTrialControlTests.TestOptedInLocalTrialCommandsAndFraming),
+    ("Windows trial checkpoints use only the active idle receiver", ForwarderPauseTests.TestTrialCheckpointUsesTheOwnedReceiver),
     ("room reset stays capability-gated and waits for its scene acknowledgement", ForwarderPauseTests.TestRoomResetTransport),
     ("Atlas overlays clear on real receiver messages without a camera", ForwarderPauseTests.TestAtlasPathsUseReceiverMenuWithoutCamera),
     ("pause capability and receiver disconnect gate labeling without breaking controls", ForwarderPauseTests.TestUnsupportedAndDisconnectedReceiver),

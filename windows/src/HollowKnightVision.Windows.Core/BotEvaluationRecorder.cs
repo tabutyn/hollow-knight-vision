@@ -170,7 +170,7 @@ public sealed class BotEvaluationRecorder
             WriteJson(clip.Directory, "atlas-score.json", atlasRun.Score);
             WriteJson(clip.Directory, "manifest.json", new BotCaptureManifest(BotRecordingContract.SchemaVersion, id,
                 createdAt, startedAt, "modded", modelName, "receiver-sent",
-                reason == "user-stop" ? "completed" : "interrupted", stoppedAt - startedAt,
+                reason is "user-stop" or "local-control" ? "completed" : "interrupted", stoppedAt - startedAt,
                 clip.Count, clip.UsableCount, controls.Count, clip.ImageCount, domain, null, null)
             {
                 StopReason = reason, ExpertDemonstration = false,

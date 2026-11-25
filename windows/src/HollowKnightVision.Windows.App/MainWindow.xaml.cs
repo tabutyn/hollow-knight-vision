@@ -880,6 +880,7 @@ public partial class MainWindow : Window
         PreviewGotKeyboardFocus += MainWindow_PreviewGotKeyboardFocus;
         Deactivated += (_, _) =>
         {
+            trialCheckpointCancellation?.Cancel();
             ReleaseForwardedInput();
             viewportPanStart = null;
             CancelGroundTruthGesture();
@@ -1000,6 +1001,11 @@ public partial class MainWindow : Window
 
     private async Task PrepareShutdownAsync()
     {
+        if (botTrialControl is { } trialControl)
+        {
+            botTrialControl = null;
+            await trialControl.DisposeAsync();
+        }
         thinkingPreloadCancellation?.Cancel();
         ResetBotClipPreview();
         if (deletingBotClip)
@@ -3889,6 +3895,7 @@ public partial class MainWindow : Window
 
     private void StopVision()
     {
+        trialCheckpointCancellation?.Cancel();
         StopBotPlayback();
         CancelGroundTruthGesture();
         prepareLabelWhenPaused = false;

@@ -107,6 +107,26 @@ Play or Hacker. It waits for admitted gameplay and fresh movement observations.
 After a verified checkpoint is available for that domain, **B** uses the
 selected trained policy.
 
+### Repeat a bot trial
+
+Launch the installed desktop with `--game-mode modded --enable-automation-control`
+to enable its local trial commands. In PowerShell, use the installed Host:
+
+```powershell
+$visionHost = "$env:LOCALAPPDATA\Programs\Hollow Knight Vision\HollowKnightVision.Windows.Host.exe"
+& $visionHost --bot-demo-control status --enable-automation-control
+& $visionHost --bot-demo-control stop --enable-automation-control
+```
+
+Use `mark-return` to capture the current player checkpoint and `return` to
+restore it after the trial. Use `restore-start:path-….json` with a recording's
+filename to restore its start checkpoint from Vision's input-path library.
+Checkpoint commands require a focused Vision window in Modded Gameplay and
+idle controls. When invoking them from PowerShell, add a short delay before
+the Host call and switch to Vision during the delay. Restoring a saved
+recording's start requires the Game Play workspace. Vision uses a same-user
+named pipe with a separate name for each Windows session.
+
 With a compatible mod receiver, **C** sends Dash, **E** sends Crystal Dash,
 **F** sends Quick Cast, and **D** sends Dream Nail. A **K** recording saves these
 presses and releases for both camera domains. The ability exporter uses clips

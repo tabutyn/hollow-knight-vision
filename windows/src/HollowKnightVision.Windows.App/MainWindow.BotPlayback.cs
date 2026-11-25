@@ -37,6 +37,7 @@ public partial class MainWindow
         internal bool Playing;
         internal string? ReportedDemoStatus;
         internal BotDemoSaveBackup? ReportedBackup;
+        internal TrialDecision? TrialDiagnostics;
     }
 
     private BotRun? botPlayback;
@@ -298,8 +299,14 @@ public partial class MainWindow
                 gameControls.NeutralizeBotControl(run.Owner);
                 update = new(BotPlaybackUpdate.WaitingForFrame);
             }
-            else if (update?.Decision is { } decision && row is not null && previous is { } applied)
-                Volatile.Read(ref run.Loaded)?.Evaluation?.RecordDecision(row, decision.Action.Buttons, applied, scene);
+            else if (update?.Decision is { } decision && row is not null)
+            {
+                if (previous is { } applied)
+                    Volatile.Read(ref run.Loaded)?.Evaluation?.RecordDecision(row, decision.Action.Buttons, applied, scene);
+                if (Volatile.Read(ref botTrialControl) is not null)
+                    Volatile.Write(ref run.TrialDiagnostics, new((run.TrialDiagnostics?.Count ?? 0) + 1,
+                        row.TerrainSource, row.HumanTerrainCount, decision.Action));
+            }
             if (update is not null) Volatile.Write(ref run.PlaybackUpdate, update);
         }
         catch (Exception error) when (error is InvalidDataException or InvalidOperationException)

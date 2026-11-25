@@ -29,6 +29,8 @@ try {
   $env:HKV_TRAINER_PYTHON = $Python
   & $Dotnet $tests --recorded-path-host-probe $NativeVerifier
   if ($LASTEXITCODE -ne 0) { throw 'Native recorded-path command fixtures failed.' }
+  & $Dotnet $tests --trial-control-host-probe $NativeVerifier
+  if ($LASTEXITCODE -ne 0) { throw 'Native bot trial commands failed.' }
   & $Dotnet $tests --inspect-atlas-road-host-probe $NativeVerifier
   if ($LASTEXITCODE -ne 0) { throw 'Native Hacker Atlas road inspection failed.' }
   & $Python -B -m unittest discover -s $trainerRoot -p test_incremental_trainer.py

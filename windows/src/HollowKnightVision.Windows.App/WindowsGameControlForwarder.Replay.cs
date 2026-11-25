@@ -12,6 +12,51 @@ internal sealed partial class WindowsGameControlForwarder
     internal bool IsReplaying { get { lock (stateLock) return replayCancellation is not null; } }
     internal void CancelReplay() { lock (stateLock) replayCancellation?.Cancel(); }
 
+    internal bool CanUseTrialCheckpoint { get { lock (stateLock) return CanUseTrialCheckpointLocked(); } }
+
+    private bool CanUseTrialCheckpointLocked() => checkpointAvailable && CanDriveBotLocked && botOwner is null
+        && heldButtons == InputButtons.None && pendingPlayerOps.Count == 0
+        && latestGroundTruth is { Value: { HeroAvailable: true, AtlasGameplayActive: not false } sample } truth
+        && sample.SessionId == receiver?.SessionId && IsFresh(truth.ReceivedAt, TimeSpan.FromSeconds(.5));
+
+    internal async Task<(Guid Session, RecordedGameCheckpoint Checkpoint)> UseTrialCheckpointAsync(
+        RecordedGameCheckpoint? restore, Guid? expectedSession, CancellationToken token)
+    {
+        ReceiverClient active;
+        TaskCompletionSource fault;
+        long epoch;
+        lock (stateLock)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!CanUseTrialCheckpointLocked() || receiver is null || connectionFault is null)
+                throw new InvalidOperationException("Finish the current controls and wait for a fresh modded gameplay frame.");
+            active = receiver;
+            if (expectedSession is { } session && session != active.SessionId)
+                throw new InvalidOperationException("The marked point belongs to a previous receiver session.");
+            fault = connectionFault;
+            capturingCheckpoint = true;
+            isEnabled = false;
+            awaitingFreshPress = true;
+            epoch = ++inputEpoch;
+        }
+        try
+        {
+            await SendStateOrderedAsync(active, fault, false, InputButtons.None, token, epoch).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            var command = restore is null ? ReceiverCheckpointCommand.Capture(active.SessionId)
+                : ReceiverCheckpointCommand.Restore(active.SessionId, restore);
+            lock (stateLock)
+                if (!ReferenceEquals(receiver, active) || fault.Task.IsCompleted || epoch != inputEpoch)
+                    throw new InvalidOperationException("The receiver changed before the checkpoint command.");
+            var checkpoint = await CheckpointAsync(active, command, token).ConfigureAwait(false);
+            lock (stateLock)
+                if (!ReferenceEquals(receiver, active) || fault.Task.IsCompleted)
+                    throw new InvalidOperationException("The receiver changed while handling the checkpoint.");
+            return (active.SessionId, checkpoint);
+        }
+        finally { lock (stateLock) capturingCheckpoint = false; }
+    }
+
     private async Task<RecordedGameCheckpoint> CheckpointAsync(ReceiverClient active,
         ReceiverCheckpointCommand command, CancellationToken token)
     {
@@ -24,7 +69,8 @@ internal sealed partial class WindowsGameControlForwarder
             try { await active.SendCheckpointCommandAsync(command, cancellation.Token).ConfigureAwait(false); }
             finally { outboundGate.Release(); }
             var ack = await completion.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellation.Token).ConfigureAwait(false);
-            if (!ack.Accepted || ack.Checkpoint is not { } checkpoint || !checkpoint.HasFiniteCoordinates())
+            if (ack.Type != command.Type + "Ack" || !ack.Accepted
+                || ack.Checkpoint is not { } checkpoint || !checkpoint.HasFiniteCoordinates())
                 throw new InvalidOperationException($"Checkpoint rejected: {ack.Failure ?? "missing or invalid state"}");
             return checkpoint;
         }
