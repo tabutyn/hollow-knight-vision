@@ -8,6 +8,29 @@ using HollowKnightVision.Windows.Core;
 
 internal static class HackerAtlasArchiveTests
 {
+    public static void TestLiveBoundsEncloseFractionalCameraPosition()
+    {
+        var image = new BgraFrame(8, 6, 32, new byte[192], 1, DateTimeOffset.UnixEpoch);
+        var anchor = new AtlasPoint(4, 2);
+        var fractional = HackerAtlasCameraPlacement.LiveBounds(image, new(7.25, 0.75), anchor);
+        Check(fractional == new HackerAtlasRect(3, -2, 9, 7),
+            "A fractional camera footprint must enclose its positive and negative edges.");
+        Check(HackerAtlasCameraPlacement.LiveBounds(image, new(7, 1), anchor)
+            == new HackerAtlasRect(3, -1, 8, 6),
+            "An integral camera footprint must retain its original dimensions.");
+        Check(HackerAtlasCameraPlacement.LiveBounds(image, new(7, 1.75), anchor)
+            == new HackerAtlasRect(3, -1, 8, 7),
+            "Only the axis with a fractional camera displacement should grow.");
+
+        var rawCamera = new GroundTruthCameraTransform("Room", new(7.25, .75), 1, 1, new(8, 6));
+        var prepared = Prepare("Room", 0, 1, new HackerFramePreparer()) with
+        {
+            LiveImage = image, LiveBounds = fractional, AnchorPosition = anchor, CameraTransform = rawCamera
+        };
+        Check(HackerTerrainProjection.FromFrame(prepared, new(3, -2)).LocalOrigin == new AtlasPoint(-3.25, 2.25),
+            "Terrain calibration must still be centered on the captured pixels.");
+    }
+
     public static void TestRoadInspectionUsesSavedRoomAndAuthoredGraph() => CheckRoadInspection();
 
     public static void CheckRoadInspection(string? host = null)

@@ -215,8 +215,8 @@ public sealed record HackerTerrainProjection(AtlasPoint PixelsPerWorldUnit, Atla
         var bounds = frame.LiveBounds;
         var projected = HackerAtlasCameraPlacement.CameraPosition(camera);
         return new(new(camera.PixelsPerWorldUnitX, camera.PixelsPerWorldUnitY),
-            new(bounds.MinX + bounds.Width / 2 - atlasOrigin.X - projected.X,
-                bounds.MinY + bounds.Height / 2 - atlasOrigin.Y - projected.Y));
+            new(bounds.MinX + frame.LiveImage.Width / 2.0 - atlasOrigin.X - projected.X,
+                bounds.MinY + frame.LiveImage.Height / 2.0 - atlasOrigin.Y - projected.Y));
     }
 
     [System.Text.Json.Serialization.JsonIgnore]
@@ -497,11 +497,17 @@ public static class HackerAtlasCameraPlacement
         AtlasPoint anchor)
     {
         ArgumentNullException.ThrowIfNull(image);
+        var left = position.X - anchor.X;
+        var bottom = position.Y - anchor.Y;
+        var minimumX = Math.Floor(left);
+        var minimumY = Math.Floor(bottom);
+        // Enclose both edges as on macOS. Flooring only the origin shortens
+        // a fractional footprint and changes the projected doorway height.
         return new HackerAtlasRect(
-            Math.Floor(position.X - anchor.X),
-            Math.Floor(position.Y - anchor.Y),
-            image.Width,
-            image.Height);
+            minimumX,
+            minimumY,
+            Math.Ceiling(left + image.Width) - minimumX,
+            Math.Ceiling(bottom + image.Height) - minimumY);
     }
 }
 
