@@ -3,6 +3,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -50,7 +51,9 @@ internal static class BotDesktopEvaluationTests
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening"), OpeningOutcome.Gameplay, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-timeout"), OpeningOutcome.HandoffTimeout, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-backup-failure"), OpeningOutcome.ArchiveFailure, timeout.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(30));
             await VerifyCheckpointControlsAsync(Path.Combine(temporary.FullName, "versions"), timeout.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(30));
             await TestSummaryAndQueuedCaptureUpdateWhileEventDecodeIsBlocked(Path.Combine(temporary.FullName, "summary"), timeout.Token);
             await VerifyThinkingLeaseAsync(Path.Combine(temporary.FullName, "thinking"), timeout.Token);
             await TestKRecordsBothDomainsFromEitherWorkspace(Path.Combine(temporary.FullName, "paired-shortcut"));
@@ -476,7 +479,8 @@ internal static class BotDesktopEvaluationTests
         server.Start();
         var port = ((IPEndPoint)server.LocalEndpoint).Port;
         var session = Guid.NewGuid();
-        var peer = ServeAsync(server, Channel.CreateUnbounded<ReceiverInputSnapshot>().Writer, token);
+        using var receiverLifetime = new CancellationTokenSource();
+        var peer = ServeAsync(server, Channel.CreateUnbounded<ReceiverInputSnapshot>().Writer, receiverLifetime.Token);
         var botRoot = Path.Combine(root, "bot-v1");
         var captures = Path.Combine(botRoot, "demonstrations");
         var created = new DateTimeOffset(2026, 11, 22, 12, 0, 0, TimeSpan.Zero);
@@ -592,6 +596,7 @@ internal static class BotDesktopEvaluationTests
                     .ToHashSet().SetEquals(expectedClips)
                 && trainingOutput.Contains("Published synthetic verified checkpoint", StringComparison.Ordinal),
                 "The desktop job must pass the Hacker clips through the shipped launcher and retain its output.");
+            Console.WriteLine("PASS Desktop training completes through the packaged launcher with the selected Hacker clips");
             await WaitFor(() => versions.SelectedValue as string == publishedId
                 && pending.Text == "3 new runs · Hacker 0 · Game Play 3");
             Check(store.Catalog().PreviousId == "bot-second"
@@ -605,16 +610,27 @@ internal static class BotDesktopEvaluationTests
             Console.WriteLine("PASS Desktop Train button launches the shipped trainer and activates its verified checkpoint after rollback");
 
             void Refresh() => Method("RefreshBotLibrary").Invoke(window, null);
-            async Task WaitFor(Func<bool> condition)
+            async Task WaitFor(Func<bool> condition, [CallerArgumentExpression(nameof(condition))] string expectation = "")
             {
-                while (!condition()) await Task.Delay(25, token);
+                try { while (!condition()) await Task.Delay(25, token); }
+                catch (OperationCanceledException error) when (token.IsCancellationRequested)
+                {
+                    var status = (TextBlock)window.FindName("BotTrainingStatus");
+                    throw new TimeoutException($"Timed out waiting for {expectation}. "
+                        + $"Training status {status.Text} | Version {versions.SelectedValue} | Captures {pending.Text}.", error);
+                }
             }
         }
         finally
         {
             Field("isClosing").SetValue(window, true);
-            await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
-            await peer.WaitAsync(TimeSpan.FromSeconds(5));
+            try { await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10)); }
+            finally
+            {
+                receiverLifetime.Cancel();
+                try { await peer.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (OperationCanceledException) when (receiverLifetime.IsCancellationRequested) { }
+            }
         }
         Console.WriteLine("PASS Desktop bot version controls restore and select each domain and follow new completed checkpoints");
         Console.WriteLine("PASS Desktop new capture counts publish before preview and follow training independently");
