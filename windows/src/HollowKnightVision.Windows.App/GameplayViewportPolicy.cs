@@ -500,6 +500,13 @@ internal sealed class GameplayViewportController
 
 internal static class GameplayViewportPolicy
 {
+    internal static ViewportRect? HackerFitBounds(ViewportRect? mapped, ViewportRect? live, ViewportRect? paths)
+    {
+        var bounds = mapped ?? live;
+        if (bounds is { IsUsable: false }) bounds = null;
+        return paths is { IsUsable: true } path ? bounds?.Union(path) ?? path : bounds;
+    }
+
     internal static double CurrentZoom(double zoom, double wheelDelta)
     {
         if (!double.IsFinite(zoom) || zoom <= 0) zoom = 1;
