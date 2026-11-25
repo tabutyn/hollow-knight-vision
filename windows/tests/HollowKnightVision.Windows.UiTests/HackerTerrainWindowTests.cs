@@ -88,6 +88,7 @@ internal static class HackerTerrainWindowTests
             var framing = viewport.Transform.Scale;
             TestDoorDragUsesPathBeyondCapturedTiles();
             TestEndpointHandlesFollowVisibleLinesAndRemainReadableWhenZoomed();
+            TestOverlappingRoomEditsKeepTheirOwner();
             Choose("Door");
             SetMode(add);
             Check(controller.Tool == GroundTruthTerrainTool.Door && controller.Mode == GroundTruthEditingMode.Add
@@ -241,6 +242,78 @@ internal static class HackerTerrainWindowTests
 
                 static Point Center(Rectangle handle) =>
                     new(Canvas.GetLeft(handle) + handle.Width / 2, Canvas.GetTop(handle) + handle.Height / 2);
+            }
+
+            void TestOverlappingRoomEditsKeepTheirOwner()
+            {
+                const string otherScene = "Tutorial_02";
+                var savedOutput = (HackerAtlasOutput)Field(window, "hackerAtlasOutput").GetValue(window)!;
+                var firstRoom = savedOutput.Rooms.Single();
+                var otherProjection = new HackerTerrainProjection(new(2, 4), new(12, 10));
+                var secondRoom = new HackerAtlasRoom(Guid.NewGuid(), otherScene, default, new(0, 0, 140, 120))
+                {
+                    TerrainProjection = otherProjection
+                };
+                // The larger room is topmost, with its floor body under the other room's endpoint.
+                var overlapping = savedOutput with { Rooms = [secondRoom, firstRoom] };
+                var before = viewport.Transform;
+                var edits = (IDictionary)Field(window, "rooms").GetValue(window)!;
+                try
+                {
+                    Field(window, "hackerAtlasOutput").SetValue(window, overlapping);
+                    Invoke(window, "SynchronizeHackerRoomEdits", overlapping);
+                    var firstPosition = (AtlasPoint)Invoke(window, "HackerScenePosition", Room)!;
+                    var otherPosition = (AtlasPoint)Invoke(window, "HackerScenePosition", otherScene)!;
+                    var edit = edits[otherScene]!;
+                    edit.GetType().GetProperty("OffsetX")!.SetValue(edit, firstPosition.X + 20 - otherPosition.X);
+                    edit.GetType().GetProperty("OffsetY")!.SetValue(edit, otherPosition.Y - firstPosition.Y - 10);
+                    Invoke(window, "RenderHackerAtlasLayout");
+
+                    Choose("Ground");
+                    SetMode(add);
+                    AddFloor(Room, 17, 55, projection);
+                    AddFloor(otherScene, 50, 70, otherProjection);
+                    var firstFloor = store.Load().Lines.Single(line => line.SceneName == Room);
+                    SetMode(modify);
+                    Drag(new(27, 16), new(28.5, 18));
+                    var modified = store.Load().Lines.Single(line => line.SceneName == otherScene);
+                    Check(modified.Start.X is > 52.5 and < 53.5 && modified.Start.Y == 16
+                        && store.Load().Lines.Single(line => line.SceneName == Room) == firstFloor,
+                        "The smaller room's endpoint should win over the overlapping room's line body.");
+
+                    Choose("Wall");
+                    SetMode(add);
+                    Drag(new(28.5, 16), new(28.5, 26));
+                    var wall = store.Load().Walls!.Single();
+                    Check(wall.SceneName == otherScene && wall.Start == modified.Start && wall.StartCornerId is not null,
+                        "Wall Add should choose the room that owns the corner under the pointer.");
+
+                    Choose("Ground");
+                    Drag(new(14, 8), new(56, 8));
+                    var reopened = new GroundTruthLabelController(store).Document;
+                    var crossed = reopened.Lines.Single(line => line.Id != firstFloor.Id && line.Id != modified.Id);
+                    Check(crossed.SceneName == otherScene && crossed.End.X is > 107.5 and < 108.5
+                        && reopened.Lines.Single(line => line.SceneName == Room) == firstFloor,
+                        "Empty overlap should start in the smaller room and keep its owner across the drag and reload.");
+                    for (var i = 0; i < 5; i++) undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Check(store.Load().Lines.Count == 0 && store.Load().Walls is null or { Count: 0 },
+                        "Undo did not restore both rooms' terrain.");
+                    Console.WriteLine("PASS Hacker terrain edits select the authored room through overlaps and retain ownership after reload");
+                }
+                finally
+                {
+                    Field(window, "hackerAtlasOutput").SetValue(window, savedOutput);
+                    edits.Remove(otherScene);
+                    Invoke(window, "SynchronizeHackerRoomEdits", savedOutput);
+                    Invoke(window, "RenderHackerAtlasLayout");
+                    Invoke(window, "ApplySettledViewportTransform", atlas, viewport.SetFreeFlyTransform(before));
+                }
+
+                void AddFloor(string scene, double start, double end, HackerTerrainProjection roomProjection)
+                {
+                    controller.HandleWorld(GroundTruthPointerPhase.Began, new(start, 16), 8, scene, roomProjection.PixelsPerWorldUnit);
+                    controller.HandleWorld(GroundTruthPointerPhase.Ended, new(end, 16), 8, scene, roomProjection.PixelsPerWorldUnit);
+                }
             }
 
             List<GroundTruthWorldLine> ReadDoors() => store.Load().Doors ?? [];
