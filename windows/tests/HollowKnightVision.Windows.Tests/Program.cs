@@ -245,6 +245,7 @@ var tests = new List<(string Name, Action Run)>
     ("ground unrelated view cannot match frozen cohort", GroundBootstrapMaskCohortParityTests.TestUnrelatedViewCannotUseTheFrozenPopulationAsAFalseMatch),
     ("ground scene recorded return relocalizes from drifted pose", GroundSceneAuditParityTests.TestRecordedReturnFrameRelocalizesFromDriftedPose),
     ("all-frame ground replay retains original indices without changing worker replay selection", GroundDetectionReplayAuditTests.TestAllFrameReplayKeepsCapturedIndicesAndOrdinaryWorkerSelection),
+    ("recorded ground detection keeps requested frames and rejects stale or foreign masks", RecordedTerrainDetectionAuditTests.TestGroundAuditKeepsSelectedFramesAndRejectsStaleMasks),
     ("ground scene labeled gameplay reports detection cost and evidence", GroundSceneAuditParityTests.TestLabeledGameplayGroundDetectionCostAndEvidence),
     ("ground scene captured platform audit runs masked and unmasked", GroundSceneAuditParityTests.TestCapturedPlatformScene),
     ("ground scene audit converts coordinates and alpha", GroundSceneAuditParityTests.TestSceneAuditCoordinateAndAlphaConversion),
@@ -1642,6 +1643,8 @@ if (Environment.GetEnvironmentVariable("HKV_LOADING_GAP_AUDIT_INPUT") is not nul
     tests.Add(("archived loading-gap arrivals meet recorded time windows", LoadingGapReplayAuditTests.TestArchivedLoadingGapsWhenRequested));
 if (Environment.GetEnvironmentVariable("HKV_PATCH_REPLAY_INPUT") is not null)
     tests.Add(("platform patch replay processes every captured frame", GroundDetectionReplayAuditTests.TestPlatformPatchTrackingOnRecordedGameplayWhenRequested));
+if (Environment.GetEnvironmentVariable("HKV_GROUND_DETECTION_RECORDING") is not null)
+    tests.Add(("recorded terrain detection audits pixel evidence and verified contacts", RecordedTerrainDetectionAuditTests.TestRecordedGroundDetectionsWhenRequested));
 
 foreach (var test in tests)
 {
