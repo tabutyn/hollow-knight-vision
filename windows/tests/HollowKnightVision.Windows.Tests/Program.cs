@@ -413,6 +413,7 @@ var tests = new List<(string Name, Action Run)>
     ("bot runtime keeps four fresh history frames and expires stale input", BotPolicyTests.TestObservationHistoryRejectsStaleFramesAndResetsAtDiscontinuities),
     ("bot checkpoint selection finds the latest native export independently for each domain", BotPolicyTests.TestNewestNativeModelIsSelectedWithinEachDomain),
     ("bot checkpoint catalog excludes partial and foreign versions", BotPolicyTests.TestCatalogHidesPartialAndForeignVersionsAndRejectsInvalidPaths),
+    ("bot checkpoint catalog shows available validation scores without affecting selection", BotPolicyTests.TestCheckpointCatalogDisplaysAvailableValidationScores),
     ("completed training activates the latest checkpoint despite a manual rollback", BotPolicyTests.TestTrainingCompletionActivatesNewestDespiteRollback),
     ("bot actor payload and exact camera separate paired domains", BotCaptureTests.TestExactHackerSourcesStaySeparateFromVisualSources),
     ("Game Play bot receives visible doors only from its measured room", BotCaptureTests.TestVisualPortalProjectionReachesGameplayPolicyOnlyInItsRoom),

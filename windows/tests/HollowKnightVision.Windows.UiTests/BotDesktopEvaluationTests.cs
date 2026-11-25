@@ -491,8 +491,10 @@ internal static class BotDesktopEvaluationTests
         var initial = PublishPair(created);
         WriteCheckpoint(botRoot, "hacker", "First Hacker", "bot-first", created);
         _ = store.LoadPlayback();
-        WriteCheckpoint(botRoot, "hacker", "Second Hacker", "bot-second", created.AddMinutes(1), [initial.Hacker]);
-        WriteCheckpoint(botRoot, "gameplay", "Game Play actor", "bot-gameplay", created, [initial.Gameplay]);
+        WriteCheckpoint(botRoot, "hacker", "Second Hacker", "bot-second", created.AddMinutes(1), [initial.Hacker],
+            candidate: new { exactActionAccuracy = .72, heads = new[] { new { name = "jump", balancedAccuracy = .65 } } });
+        WriteCheckpoint(botRoot, "gameplay", "Game Play actor", "bot-gameplay", created, [initial.Gameplay],
+            candidate: new { exactActionAccuracy = .81 });
         var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
         try
         {
@@ -501,13 +503,16 @@ internal static class BotDesktopEvaluationTests
             var use = (Button)window.FindName("BotUseVersion");
             var restore = (Button)window.FindName("BotRestorePrevious");
             var pending = (TextBlock)window.FindName("BotNewCaptureSummary");
+            var scores = (ItemsControl)window.FindName("BotCheckpointScores");
             Refresh();
             await WaitFor(() => versions.SelectedValue as string == "bot-gameplay");
             Check(versions.Items.Count == 1 && !restore.IsEnabled, "Game Play must show only its own verified checkpoint.");
+            await WaitFor(() => scores.Items.OfType<BotCheckpointScore>().Select(item => item.DisplayValue).SequenceEqual(["81%"]));
 
             domain.SelectedIndex = 1;
             Check(versions.SelectedValue as string == "bot-second" && versions.Items.Count == 2 && restore.IsEnabled,
                 "Hacker must show its newest checkpoint and offer the previously used version.");
+            await WaitFor(() => scores.Items.OfType<BotCheckpointScore>().Select(item => item.DisplayValue).SequenceEqual(["72%", "65%"]));
             Field("recentCaptureGeneration").SetValue(window, Generation);
             Field("workspace").SetValue(window, "Hacker");
             Field("recognizedMenuContext").SetValue(window, "game");
@@ -521,6 +526,7 @@ internal static class BotDesktopEvaluationTests
             await WaitFor(() => versions.SelectedValue as string == "bot-first" && restore.IsEnabled);
             Check(Field("botPlayback").GetValue(window) is null && store.Catalog().ActiveId == "bot-first",
                 "Rollback must release the previous actor and persist the new selection.");
+            await WaitFor(() => scores.Items.Count == 0);
             Check(pending.Text == "0 new runs · Hacker 0 · Game Play 0", "Rollback must preserve completed clip counts.");
 
             WriteCheckpoint(botRoot, "hacker", "Third Hacker", "bot-third", created.AddMinutes(2), [initial.Hacker]);
@@ -528,6 +534,7 @@ internal static class BotDesktopEvaluationTests
             await WaitFor(() => versions.SelectedValue as string == "bot-third");
             versions.SelectedValue = "bot-second";
             Check(use.IsEnabled, "An earlier verified checkpoint should be available for explicit selection.");
+            await WaitFor(() => scores.Items.OfType<BotCheckpointScore>().Select(item => item.DisplayValue).SequenceEqual(["72%", "65%"]));
             use.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await WaitFor(() => !use.IsEnabled && restore.IsEnabled);
             Check(store.LoadPlayback()?.Policy.Name == "Second Hacker"
@@ -1194,7 +1201,7 @@ internal static class BotDesktopEvaluationTests
     };
 
     private static string WriteCheckpoint(string root, string domain, string modelName,
-        string version = "verified-fixture", DateTimeOffset? createdAt = null, Guid[]? included = null)
+        string version = "verified-fixture", DateTimeOffset? createdAt = null, Guid[]? included = null, object? candidate = null)
     {
         var directory = Directory.CreateDirectory(Path.Combine(root, "models", domain, version)).FullName;
         var checkpoint = Path.Combine(directory, "model.zip");
@@ -1218,7 +1225,7 @@ internal static class BotDesktopEvaluationTests
             policySHA256 = Hash(policy), sourceCheckpointSHA256 });
         Write("manifest.json", new { botDomain = domain, name = modelName, trainingSessions = included });
         Write("training-result.json", new { nativeParity = true, botDomain = domain, modelDirectory = version,
-            createdAt = createdAt ?? DateTimeOffset.UtcNow });
+            createdAt = createdAt ?? DateTimeOffset.UtcNow, candidate });
         return sourceCheckpointSHA256;
 
         void Write(string name, object value) => File.WriteAllText(Path.Combine(directory, name), JsonSerializer.Serialize(value, Json));

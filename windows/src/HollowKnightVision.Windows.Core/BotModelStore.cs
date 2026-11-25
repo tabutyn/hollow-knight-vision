@@ -3,9 +3,16 @@ using System.Text.Json;
 namespace HollowKnightVision.Windows.Core;
 
 public sealed record BotPlaybackModel(string Directory, BotNativePolicy Policy);
+public sealed record BotCheckpointScore(string Label, double Value, double? Baseline)
+{
+    public string DisplayValue => Baseline is { } baseline
+        ? $"{baseline * 100:F0}% → {Value * 100:F0}%" : $"{Value * 100:F0}%";
+}
+
 public sealed record BotCheckpointVersion(string Id, string Name, DateTimeOffset? CreatedAt)
 {
     public string DisplayName => CreatedAt is { } created ? $"{Name} · {created.LocalDateTime:g}" : Name;
+    public IReadOnlyList<BotCheckpointScore> Scores { get; init; } = [];
 }
 
 public sealed record BotCheckpointCatalog(IReadOnlyList<BotCheckpointVersion> Versions, string? ActiveId, string? PreviousId);
@@ -21,9 +28,10 @@ public sealed class BotModelStore(string root, BotCaptureDomain domain)
     private string SelectionPath => Path.Combine(Models, "active.json");
 
     private sealed record Selection(string Directory, string? PreviousDirectory, string? ManualChoiceThrough = null);
-    private sealed record Result(bool NativeParity, string? ModelDirectory, string? BotDomain, DateTimeOffset CreatedAt);
+    private sealed record Result(bool NativeParity, string? ModelDirectory, string? BotDomain, DateTimeOffset CreatedAt,
+        JsonElement Candidate, JsonElement Baseline, JsonElement CandidateSequential, JsonElement BaselineSequential);
     private sealed record Manifest(string? BotDomain, string? Name);
-    private sealed record Candidate(string Directory, DateTimeOffset CreatedAt, string? Name);
+    private sealed record Candidate(string Directory, string? Name, Result TrainingResult);
 
     public BotPlaybackModel? LoadPlayback() => LoadPlayback(out _);
 
@@ -60,7 +68,10 @@ public sealed class BotModelStore(string root, BotCaptureDomain domain)
             var versions = Candidates().Where(item => HasNativeExport(item.Directory)).Select(item =>
             {
                 var id = Path.GetFileName(item.Directory);
-                return new BotCheckpointVersion(id, item.Name ?? id, item.CreatedAt);
+                return new BotCheckpointVersion(id, item.Name ?? id, item.TrainingResult.CreatedAt)
+                {
+                    Scores = ReadScores(item.TrainingResult)
+                };
             }).ToList();
             if (FindDirectory("v1") is { } baseVersion && HasNativeExport(baseVersion)
                 && ReadManifestForDomain(baseVersion) is { } manifest && !versions.Any(item => SameName(item.Id, "v1")))
@@ -116,7 +127,7 @@ public sealed class BotModelStore(string root, BotCaptureDomain domain)
     private IEnumerable<Candidate> Candidates() => ListDirectories(Models)
         .Concat(ListDirectories(legacyModels).Where(directory => !Directory.Exists(Path.Combine(Models, Path.GetFileName(directory)))))
         .Select(ReadCandidate).OfType<Candidate>()
-        .OrderByDescending(candidate => candidate.CreatedAt)
+        .OrderByDescending(candidate => candidate.TrainingResult.CreatedAt)
         .ThenByDescending(candidate => Path.GetFileName(candidate.Directory), StringComparer.OrdinalIgnoreCase);
 
     private Candidate? ReadCandidate(string directory)
@@ -127,7 +138,46 @@ public sealed class BotModelStore(string root, BotCaptureDomain domain)
         if (result is null || !result.NativeParity || result.CreatedAt == default || !SameName(result.ModelDirectory, name)
             || result.BotDomain is not null && result.BotDomain != domainName)
             return null;
-        return new(directory, result.CreatedAt, manifest.Name);
+        return new(directory, manifest.Name, result);
+    }
+
+    private static IReadOnlyList<BotCheckpointScore> ReadScores(Result result)
+    {
+        var scores = new List<BotCheckpointScore>(3);
+        Add("Action agreement", Accuracy(result.Candidate, "exactActionAccuracy"),
+            Accuracy(result.Baseline, "exactActionAccuracy"));
+        Add("Jump balanced accuracy", JumpAccuracy(result.Candidate), JumpAccuracy(result.Baseline));
+        Add("Own-action agreement", Accuracy(result.CandidateSequential, "exactActionAccuracy"),
+            Accuracy(result.BaselineSequential, "exactActionAccuracy"));
+        return scores.AsReadOnly();
+
+        void Add(string label, double? value, double? baseline)
+        {
+            if (value is { } measured) scores.Add(new(label, measured, baseline));
+        }
+
+        static double? JumpAccuracy(JsonElement score)
+        {
+            var heads = Field(score, "heads");
+            if (heads.ValueKind != JsonValueKind.Array) return null;
+            foreach (var head in heads.EnumerateArray())
+            {
+                var name = Field(head, "name");
+                if (name.ValueKind == JsonValueKind.String && name.ValueEquals("jump"))
+                    return Accuracy(head, "balancedAccuracy");
+            }
+            return null;
+        }
+
+        static double? Accuracy(JsonElement score, string name)
+        {
+            var value = Field(score, name);
+            return value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var measured)
+                && measured is >= 0 and <= 1 ? measured : null;
+        }
+
+        static JsonElement Field(JsonElement element, string name) =>
+            element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var field) ? field : default;
     }
 
     private BotPlaybackModel? TryLoadSelected(string? directory)
