@@ -247,6 +247,7 @@ var tests = new List<(string Name, Action Run)>
     ("all-frame ground replay retains original indices without changing worker replay selection", GroundDetectionReplayAuditTests.TestAllFrameReplayKeepsCapturedIndicesAndOrdinaryWorkerSelection),
     ("recorded ground detection keeps requested frames and rejects stale or foreign masks", RecordedTerrainDetectionAuditTests.TestGroundAuditKeepsSelectedFramesAndRejectsStaleMasks),
     ("recorded ground pairs preserve frame identity, masks, and solver evidence", GroundPairReplayAuditTests.TestGroundPairReplayKeepsExactFramesAndMaskOwnership),
+    ("recorded doorway floor evidence uses exact owned masks and reports black edges", LoadingGapReplayAuditTests.TestDoorwayFloorReplayNeedsExactOwnedMasks),
     ("ground scene labeled gameplay reports detection cost and evidence", GroundSceneAuditParityTests.TestLabeledGameplayGroundDetectionCostAndEvidence),
     ("ground scene captured platform audit runs masked and unmasked", GroundSceneAuditParityTests.TestCapturedPlatformScene),
     ("ground scene audit converts coordinates and alpha", GroundSceneAuditParityTests.TestSceneAuditCoordinateAndAlphaConversion),
@@ -1657,6 +1658,8 @@ if (Environment.GetEnvironmentVariable("HKV_CALIBRATED_SCENE_AUDIT_INPUT") is no
     tests.Add(("archived fall replays calibrated scenery after ground loss", CalibratedSceneReplayAuditTests.TestArchivedFallWhenRequested));
 if (Environment.GetEnvironmentVariable("HKV_REPLAY_GEO_LABELS") == "1")
     tests.Add(("active ONNX detector replays labeled Geo deposits through Game Play capture", GeoCacheReplayAuditTests.TestActiveDetectorFeedsLabeledGeoDepositsIntoGamePlayCapture));
+if (Environment.GetEnvironmentVariable("HKV_DOOR_FLOOR_AUDIT_INPUT") is not null)
+    tests.Add(("archived doorway floor and black-edge candidates use recorded pixels", LoadingGapReplayAuditTests.TestArchivedDoorwayFloorCandidates));
 
 foreach (var test in tests)
 {
