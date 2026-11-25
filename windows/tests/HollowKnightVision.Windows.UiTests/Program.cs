@@ -175,6 +175,10 @@ internal static class Program
             KeyInterop.VirtualKeyFromKey(Key.A),
             KeyInterop.VirtualKeyFromKey(Key.Z),
             KeyInterop.VirtualKeyFromKey(Key.X),
+            KeyInterop.VirtualKeyFromKey(Key.C),
+            KeyInterop.VirtualKeyFromKey(Key.E),
+            KeyInterop.VirtualKeyFromKey(Key.F),
+            KeyInterop.VirtualKeyFromKey(Key.D),
             KeyInterop.VirtualKeyFromKey(Key.I),
             KeyInterop.VirtualKeyFromKey(Key.P),
             KeyInterop.VirtualKeyFromKey(Key.Left),
@@ -183,7 +187,7 @@ internal static class Program
             KeyInterop.VirtualKeyFromKey(Key.Up)
         };
         Check(GameControlKeyPolicy.ReceiverSupportedVirtualKeys.SetEquals(expectedReceiverKeys),
-            "The mod receiver key policy did not expose exactly A/Z/X/I/P plus the four arrows.");
+            "The mod receiver key policy did not expose the four ability mappings plus the existing controls.");
         Check(GameControlKeyPolicy.TryMapReceiverButton(Key.A, out var actionA)
                 && actionA == InputButtons.ActionA
                 && GameControlKeyPolicy.TryMapReceiverButton(Key.I, out var inventory)
@@ -194,6 +198,11 @@ internal static class Program
         Check(!GameControlKeyPolicy.TryMapReceiverButton(Key.Space, out _)
                 && !GameControlKeyPolicy.TryMapReceiverButton(Key.B, out _),
             "The mod receiver accepted Space or an unrelated letter.");
+        var abilities = new[] { (Key.C, InputButtons.Dash), (Key.E, InputButtons.SuperDash),
+            (Key.F, InputButtons.QuickCast), (Key.D, InputButtons.DreamNail) };
+        Check(abilities.All(item => GameControlKeyPolicy.TryMapReceiverButton("Hacker", item.Item1, out var mapped)
+            && mapped == item.Item2 && !GameControlKeyPolicy.TryMapReceiverButton("Model", item.Item1, out _)),
+            "The four ability mappings should be available in Hacker while Model owns its keys.");
 
         var normalBroadKeys = new[] { Key.A, Key.I, Key.P, Key.Space, Key.B };
         Check(normalBroadKeys.All(key =>

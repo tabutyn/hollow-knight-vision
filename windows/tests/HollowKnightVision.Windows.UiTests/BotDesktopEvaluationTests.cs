@@ -66,7 +66,7 @@ internal static class BotDesktopEvaluationTests
         var port = ((IPEndPoint)server.LocalEndpoint).Port;
         var session = Guid.NewGuid();
         var states = Channel.CreateUnbounded<ReceiverInputSnapshot>();
-        var peer = ServeAsync(server, states.Writer, token);
+        var peer = ServeAsync(server, states.Writer, token, skills: true);
         var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
         try
         {
@@ -78,6 +78,11 @@ internal static class BotDesktopEvaluationTests
             var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
             bridge.Start();
             while (bridge.PauseState != GamePauseState.Ready) await Task.Delay(15, token);
+            Check(bridge.SkillControlsAvailable, "The Windows bridge did not negotiate the shared skill capability.");
+            bridge.Press(InputButtons.SuperDash);
+            await ExpectWireState(InputButtons.SuperDash);
+            bridge.ReleaseAll();
+            await ExpectWireState(InputButtons.None);
             WriteCheckpoint(Path.Combine(root, "bot-v1"), "hacker", "Skill handoff actor", "bot-thinking",
                 new DateTimeOffset(2026, 11, 22, 12, 0, 0, TimeSpan.Zero));
             await window.StartBotPlaybackAsync().WaitAsync(token);
@@ -95,7 +100,7 @@ internal static class BotDesktopEvaluationTests
             Check(ReferenceEquals(ready, run), "The starter requires live gameplay before passing the PPO lease to Thinking.");
             Observe(first);
             var plan = OfferFocus();
-            Check(((string)Method("QueueThinkingPlan").Invoke(window, [plan])!).Contains("next frame", StringComparison.Ordinal),
+            Check(((string)Method("QueueThinkingPlan").Invoke(window, [plan, null])!).Contains("next frame", StringComparison.Ordinal),
                 "A matching score must wait for a fresh analysis frame.");
             Check(Observe(first), "The native maneuver did not consume the chosen offer.");
             await ExpectWireState(InputButtons.ActionA);
@@ -103,12 +108,12 @@ internal static class BotDesktopEvaluationTests
             await ExpectWireState(InputButtons.None);
             Check(bridge.OwnsBotControl(owner) && ReferenceEquals(Field("botPlayback").GetValue(window), run),
                 "The PPO lease should resume after a Thinking maneuver completes.");
-            Check((string?)Method("QueueThinkingPlan").Invoke(window, [plan]) == "Decision already consumed.",
+            Check((string?)Method("QueueThinkingPlan").Invoke(window, [plan, null]) == "Decision already consumed.",
                 "One model reply may only drive one maneuver.");
 
             Observe(first);
             var stale = OfferFocus();
-            _ = Method("QueueThinkingPlan").Invoke(window, [stale]);
+            _ = Method("QueueThinkingPlan").Invoke(window, [stale, null]);
             Check(!Observe(WithRecovery(3, Guid.NewGuid())), "A score from an old receiver must not drive Focus.");
             Check(Field("thinkingLease").GetValue(window) is null && bridge.OwnsBotControl(owner),
                 "Stale Thinking replies should leave ordinary playback ownership intact.");
@@ -121,12 +126,38 @@ internal static class BotDesktopEvaluationTests
             var gameplay = OfferFocus();
             Check(gameplay.Scope.Domain == BotCaptureDomain.Gameplay,
                 "Game Play v2 must bind the same exact receiver actors without changing the playback observation domain.");
-            _ = Method("QueueThinkingPlan").Invoke(window, [gameplay]);
+            _ = Method("QueueThinkingPlan").Invoke(window, [gameplay, null]);
             Check(Observe(first), "A fresh Game Play policy should use the receiver lease without a PPO checkpoint.");
             await ExpectWireState(InputButtons.ActionA);
             Check((bool)Method("StopThinkingControl").Invoke(window, ["Paused."])!,
                 "An interrupted standalone Thinking maneuver must release its lease.");
             await ExpectWireState(InputButtons.None);
+
+            Field("workspace").SetValue(window, "Hacker");
+            var labels = new GroundTruthLineDocument
+            {
+                Lines = [new(Scene, -3, 5, 0, GroundTruthLineKind.Positive, false)]
+            };
+            var authored = Field("thinkingAuthored");
+            authored.SetValue(window, Activator.CreateInstance(authored.FieldType, 1, labels));
+            var modelFolder = Directory.CreateDirectory(Path.Combine(root, "bot-v1", "skill-actors", "hacker"));
+            File.WriteAllText(Path.Combine(modelFolder.FullName, "fight.json"), JsonSerializer.Serialize(new
+            {
+                version = 2, domain = "hacker", skill = "fight", observationSchema = BotPolicyContract.LandingVersion,
+                historyLength = BotRecordingContract.HistoryLength, labels = new[] { "none", "dash" }, inputColumns = new[] { 0 },
+                layers = new[] { new { inputSize = 1, outputSize = 2, activation = "linear", weights = new[] { 0, 0 }, biases = new[] { 0, 1 } } }
+            }, Json));
+            var target = first with { Actors = first.Actors! with { Enemies = [new(3, "Crawlid", 109, 49.6, 12, 12)] } };
+            Observe(target);
+            var combat = Offer(ThinkingAction.Fight);
+            var abilityModels = Method("LoadThinkingAbilityModels").Invoke(window, [combat, null]);
+            Check(((string)Method("QueueThinkingPlan").Invoke(window, [combat, abilityModels])!).Contains("next frame", StringComparison.Ordinal),
+                "The learned fight ability did not enter the regular Thinking handoff.");
+            Check(Observe(target), "A fresh exact observation must reach the learned fight model.");
+            await ExpectWireState(InputButtons.Right | InputButtons.ActionX | InputButtons.Dash);
+            Check(Observe(first), "A disappeared bound actor must release the learned ability.");
+            await ExpectWireState(InputButtons.None);
+            Check(Field("thinkingLease").GetValue(window) is null, "The lost actor retained its learned ability lease.");
 
             (BgraFrame Image, double Time) Frame()
             {
@@ -145,16 +176,25 @@ internal static class BotDesktopEvaluationTests
             bool Observe(ReceiverGroundTruthSample truth)
             {
                 var current = Frame();
-                return (bool)Method("ObserveThinkingFrame").Invoke(window,
-                    [current.Image, Generation, current.Time, 1, 1L, "game", null, truth, 42, null, true, null, 0d])!;
+                var handled = (bool)Method("ObserveThinkingFrame").Invoke(window,
+                    [current.Image, Generation, current.Time, 1, 1L, "game", null, truth, 42, null, true, InputButtons.None, 0d])!;
+                if (Field("thinkingAbilityFrame").GetValue(window) is { } skillFrame)
+                    _ = Method("CaptureBotObservations").Invoke(window, [
+                        current.Image, Generation, Generation, current.Time, 1, 1UL, 42, truth, null,
+                        Array.Empty<DetectedFloorLine>(), TerrainWallDetection.Empty, true, null, null, null, InputButtons.None,
+                        null, 1L, GroundHypothesisTrackingResult.Empty, true, Array.Empty<PixelRect>(), null, false,
+                        null, Array.Empty<GroundHypothesisAtlasLine>(), null, null, skillFrame
+                    ]);
+                return handled;
             }
-            ThinkingPlan OfferFocus()
+            ThinkingPlan OfferFocus() => Offer(ThinkingAction.Focus);
+            ThinkingPlan Offer(ThinkingAction action)
             {
                 var publication = Field("latestThinkingFrame").GetValue(window)!;
                 var sight = (ThinkingSight)publication.GetType().GetProperty("Sight")!.GetValue(publication)!;
                 var offer = new ThinkingPolicyOffer(sight);
-                var focus = offer.Candidates.Single(item => item.Action == ThinkingAction.Focus);
-                using var response = JsonDocument.Parse(JsonSerializer.Serialize(new { scores = new Dictionary<string, int> { [focus.Id] = 98 } }));
+                var candidate = offer.Candidates.Single(item => item.Action == action);
+                using var response = JsonDocument.Parse(JsonSerializer.Serialize(new { scores = new Dictionary<string, int> { [candidate.Id] = 98 } }));
                 return offer.Resolve(response.RootElement);
             }
         }
@@ -164,7 +204,7 @@ internal static class BotDesktopEvaluationTests
             await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
             await peer.WaitAsync(TimeSpan.FromSeconds(5));
         }
-        Console.WriteLine("PASS Thinking score uses Windows receiver lease and releases it on stale or completed control");
+        Console.WriteLine("PASS Thinking Focus and learned Dash use Windows receiver leases and release on expired bounds");
 
         async Task ExpectWireState(InputButtons buttons)
         {
@@ -433,6 +473,10 @@ internal static class BotDesktopEvaluationTests
             };
             bridge.Start();
             while (bridge.PauseState != GamePauseState.Ready) await Task.Delay(10, token);
+            var guardLease = bridge.BeginBotControl()!.Value;
+            Check(!bridge.SkillControlsAvailable && !bridge.RenewBotControl(guardLease, InputButtons.Dash, Clock() + .12),
+                "A receiver without the skill capability must reject a learned ability snapshot.");
+            bridge.EndBotControl(guardLease);
             await window.StartBotPlaybackAsync().WaitAsync(token);
 
             // The running policy and its audit must retain the labels present when B started playback.
@@ -514,7 +558,7 @@ internal static class BotDesktopEvaluationTests
                     batch, new[] { new DetectedFloorLine(100, new(20, 170)) }, TerrainWallDetection.Empty,
                     true, new AtlasPoint(0, 0), null, new AtlasPoint(96, 100), previous,
                     run, 1L, GroundHypothesisTrackingResult.Empty, true, masks.AtlasExclusions, masks, true, null,
-                    Array.Empty<GroundHypothesisAtlasLine>(), null, null
+                    Array.Empty<GroundHypothesisAtlasLine>(), null, null, null
                 ]);
                 return now;
             }
@@ -537,14 +581,17 @@ internal static class BotDesktopEvaluationTests
     }
 
     private static async Task ServeAsync(TcpListener listener, ChannelWriter<ReceiverInputSnapshot> states,
-        CancellationToken token)
+        CancellationToken token, bool skills = false)
     {
         using var client = await listener.AcceptTcpClientAsync(token);
         using var reader = new StreamReader(client.GetStream());
         using var writer = new StreamWriter(client.GetStream()) { AutoFlush = true };
         var hello = ReceiverWireCodec.DecodeLine<ReceiverCapabilityRequest>((await reader.ReadLineAsync(token))!);
+        string[] capabilities = skills
+            ? ["input-state-v1", ReceiverProtocol.PauseCapability, ReceiverProtocol.SkillControlsCapability]
+            : ["input-state-v1", ReceiverProtocol.PauseCapability];
         await writer.WriteAsync(ReceiverWireCodec.EncodeLine(new ReceiverCapabilitiesAcknowledgement(
-            2, "capabilitiesAck", hello.SessionId, ["input-state-v1", ReceiverProtocol.PauseCapability], 2000)));
+            2, "capabilitiesAck", hello.SessionId, capabilities, 2000)));
         while (await reader.ReadLineAsync(token) is { } line)
             if (ReceiverWireCodec.MessageType(line) == "state")
                 states.TryWrite(ReceiverWireCodec.DecodeLine<ReceiverInputSnapshot>(line));

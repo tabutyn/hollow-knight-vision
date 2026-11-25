@@ -33,6 +33,20 @@ if (args is ["--export-bot-capture-probe", var captureRoot])
     return;
 }
 
+if (args is ["--export-skill-capture-probe", var skillCaptureRoot])
+{
+    for (var index = 0; index < 2; index++)
+        if (BotCaptureTests.WriteFixture(skillCaptureRoot, skillControls: true).Published.Count != 2)
+            throw new InvalidOperationException("The ability capture probe did not publish both camera domains.");
+    return;
+}
+
+if (args is ["--verify-skill-actor-probe", var actorRoot, var actorFixture])
+{
+    BotLearnedSkillTests.VerifyTrainedActor(actorRoot, actorFixture);
+    return;
+}
+
 if (args is ["--export-hacker-gym-probe", var gymRoot])
 {
     HackerGymObservationTests.Export(gymRoot);
@@ -57,6 +71,8 @@ var tests = new List<(string Name, Action Run)>
     ("bot training admits separate published clips in the selected domain", BotTrainingTests.TestTrainingPlanSeparatesDomains),
     ("new bot captures follow completed training independently of playback", BotTrainingTests.TestNewCaptureCountsTrackCompletionAndIgnoreRollback),
     ("bot capture dates round-trip with macOS and earlier Windows clips", BotCaptureTests.TestReadsMacAndPreviousWindowsCaptureDates),
+    ("Windows captures preserve extended ability edges and verified receiver evidence", BotCaptureTests.TestSkillButtonsPreserveWireNamesAndEvidence),
+    ("native ability models use the validated compact and legacy observation layouts", BotLearnedSkillTests.TestAbilityModelsAndBoundInference),
     ("bot clip timeline uses the original timestamped frames and matching terrain", BotCaptureTests.TestClipTimelineUsesExactSourceRowsAndFallsBackToStills),
     ("bot clip route evidence verifies clip, replay, checksum and frame identity", BotClipAnnotationTests.TestSidecarRequiresMatchingClipChecksumAndFrameIdentity),
     ("bot clip deletion keeps shared replay until the last domain is deleted", BotCaptureTests.TestDeletionKeepsSharedReplayUntilLastClipInEitherOrder),

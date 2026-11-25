@@ -23,6 +23,7 @@ from hacker_gym import EpisodeScore, save_json
 from hkv_bot_dataset import ACTION_SIZES, HELD_ATTACK_COST, HISTORY_LENGTH, LANDING_GEOMETRY_POLICY_VERSION, SCHEMAS
 from train_atlas_policy import AtlasCorridor, export_atlas
 from train_hacker_gym import publish, sha, windows_gym_identity
+from train_skill_controls import fit as fit_ability
 
 
 class ReplayRoom(gym.Env):
@@ -208,9 +209,47 @@ def verify_atlas_direction(work, vision, checkpoint):
     print(f"PASS installed Windows runtime matched {len(inputs)} Stable-Baselines3 Atlas directions.")
 
 
+def verify_ability_training(root, native_tests):
+    captures = root / "Windows ability captures"
+    subprocess.run(["dotnet", native_tests, "--export-skill-capture-probe", captures], check=True, timeout=45)
+    for domain in ("gameplay", "hacker"):
+        curated = root / (domain + " clips")
+        curated.mkdir()
+        for clip in captures.iterdir():
+            manifest = json.loads((clip / "manifest.json").read_text())
+            if manifest["botDomain"] == domain:
+                assert manifest["recordedSkillControls"] is True
+                shutil.copytree(clip, curated / clip.name)
+        dataset = root / (domain + ".npz")
+        exporter = install / "training/BotPython/hkv_bot_dataset.py"
+        subprocess.run([sys.executable, "-B", exporter, "export", curated, "--policy-version", "16",
+                        "--skill-controls", "--output", dataset], check=True, timeout=45, capture_output=True, text=True)
+        report = json.loads(dataset.with_suffix(".json").read_text())
+        actor = fit_ability(dataset, domain, "traverse", [report["sessions"][0]["id"]], epochs=2)
+        assert actor["labels"] == ["none", "dash", "superDash"]
+        folder = root / "skill-actors" / domain
+        folder.mkdir(parents=True)
+        (folder / "traverse.json").write_text(json.dumps(actor))
+        with np.load(dataset, allow_pickle=False) as rows:
+            source = rows["observations"]
+        values = source[:, actor["inputColumns"]]
+        for layer in actor["layers"]:
+            weights = np.asarray(layer["weights"]).reshape(layer["outputSize"], layer["inputSize"])
+            values = values @ weights.T + layer["biases"]
+            if layer["activation"] == "tanh":
+                values = np.tanh(values)
+            values = values.astype(np.float32)
+        expected = [0, 1 << 10, 1 << 11]
+        fixture = root / (domain + "-native-abilities.json")
+        fixture.write_text(json.dumps(dict(domain=domain, observations=source.tolist(),
+                                           buttons=[expected[index] for index in values.argmax(axis=1)])))
+        subprocess.run(["dotnet", native_tests, "--verify-skill-actor-probe", root, fixture], check=True, timeout=45)
+
+
 if __name__ == "__main__":
     program = install / ("HollowKnightVision.Windows.Host.exe" if os.name == "nt" else "HollowKnightVision.Windows.Host")
     with tempfile.TemporaryDirectory(prefix="hkv-gym-trainer-") as directory:
         root = Path(directory)
         verify_installed_runtime(root, program, Path(sys.argv[2]))
         verify_ppo_publication(root, program)
+        verify_ability_training(root, Path(sys.argv[3]).resolve())

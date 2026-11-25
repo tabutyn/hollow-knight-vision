@@ -7,11 +7,12 @@ using System.Threading.Channels;
 namespace HollowKnightVision.Windows.Core;
 
 public sealed record BotCaptureManifest(
-    int SchemaVersion, Guid Id, DateTimeOffset CreatedAt, double StartedAt, string GameMode, string DetectorVersion,
+    int SchemaVersion, [property: JsonConverter(typeof(CaptureIdConverter))] Guid Id,
+    DateTimeOffset CreatedAt, double StartedAt, string GameMode, string DetectorVersion,
     string InputSource, string Status, double Duration, int ObservationCount, int UsableObservationCount,
     int InputEventCount, int ImageCount, string BotDomain,
-    [property: JsonPropertyName("replayID")] Guid? ReplayId,
-    [property: JsonPropertyName("pairedClipID")] Guid? PairedClipId)
+    [property: JsonPropertyName("replayID"), JsonConverter(typeof(CaptureIdConverter))] Guid? ReplayId,
+    [property: JsonPropertyName("pairedClipID"), JsonConverter(typeof(CaptureIdConverter))] Guid? PairedClipId)
 {
     public IReadOnlyList<string> FeatureNames => BotRecordingContract.FeatureNames;
     public IReadOnlyList<int> ActionSizes => BotRecordingContract.ActionSizes;
@@ -19,8 +20,19 @@ public sealed record BotCaptureManifest(
     public double SampleInterval => BotRecordingContract.SampleInterval;
     public string StopReason { get; init; } = "user-stop";
     public bool? ExpertDemonstration { get; init; }
+    public bool? RecordedSkillControls { get; init; }
     public int? TerrainAuditCount { get; init; }
     public int? TerrainPairedFrameCount { get; init; }
+}
+
+// The shared exporter uses the macOS UUID spelling as its observation session key.
+internal sealed class CaptureIdConverter : JsonConverter<Guid>
+{
+    public CaptureIdConverter() { }
+    public override Guid Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+        reader.TokenType == JsonTokenType.String && reader.TryGetGuid(out var id) ? id : throw new JsonException("Invalid capture ID.");
+    public override void Write(Utf8JsonWriter writer, Guid value, JsonSerializerOptions options) =>
+        writer.WriteStringValue(value.ToString("D").ToUpperInvariant());
 }
 
 public sealed record BotCaptureInput(double Timestamp, string Button, bool IsPressed)
@@ -55,7 +67,8 @@ public sealed class BotCaptureSession
     private static readonly InputButtons[] ButtonBits =
     [
         InputButtons.Left, InputButtons.Right, InputButtons.Up, InputButtons.Down,
-        InputButtons.ActionA, InputButtons.ActionZ, InputButtons.ActionX, InputButtons.Inventory, InputButtons.PauseMenu
+        InputButtons.ActionA, InputButtons.ActionZ, InputButtons.ActionX, InputButtons.Inventory, InputButtons.PauseMenu,
+        InputButtons.QuickCast, InputButtons.Dash, InputButtons.SuperDash, InputButtons.DreamNail
     ];
     private readonly record struct Sample(BgraFrame Image, BotCaptureObservation Gameplay, BotCaptureObservation? Hacker);
 
@@ -170,7 +183,7 @@ public sealed class BotCaptureSession
                 || replay is { } expected && path?.Id != expected)
                 return new([], hacker is null ? 1 : 2);
             var events = path is null ? nativeInput.Where(e => e.Timestamp <= stoppedAt).ToArray()
-                : path.Events.Select(e => new BotCaptureInput(StartedAt + e.Offset, Name(e.Button),
+                : path.Events.Select(e => new BotCaptureInput(StartedAt + e.Offset, e.Button.WireName(),
                     e.Transition == RecordedInputTransition.Pressed)).Where(e => e.Timestamp <= stoppedAt + .001).ToArray();
             var clips = new[] { gameplay, hacker }.OfType<Clip>().ToArray();
             // A training decision requires one full subsequent action window.
@@ -186,7 +199,10 @@ public sealed class BotCaptureSession
                     clip.Id, created, StartedAt, gameMode, clip.Domain == "hacker" ? "receiver-actors-v1" : detector,
                     replay is null ? "native-posted" : "receiver-sent", "completed",
                     stoppedAt - StartedAt, clip.Count, clip.UsableCount, events.Length, clip.ImageCount, clip.Domain,
-                    replay, other?.Id);
+                    replay, other?.Id)
+                {
+                    RecordedSkillControls = path?.RuntimeMetadata?.GetValueOrDefault(RecordedInputPath.SkillControlsMetadata) == "true"
+                };
                 AtomicFile.Write(Path.Combine(clip.Directory, "manifest.json"), JsonSerializer.SerializeToUtf8Bytes(manifest, Json));
                 manifests.Add(manifest);
             }
@@ -352,14 +368,12 @@ public sealed class BotCaptureSession
         }
     }
 
-    private static string Name(RecordedGameButton button) => button.ToString().ToLowerInvariant();
-
     internal static void AppendInputEdges(List<BotCaptureInput> inputs, InputButtons prior, InputButtons current, double time)
     {
         var changed = current ^ prior;
         foreach (var bit in ButtonBits)
             if ((changed & bit) != 0 && bit.ToRecordedGameButton() is { } button)
-                inputs.Add(new(time, Name(button), (current & bit) != 0));
+                inputs.Add(new(time, button.WireName(), (current & bit) != 0));
     }
 
     private sealed class CaptureDateConverter : JsonConverter<DateTimeOffset>

@@ -95,6 +95,21 @@ has focus. Both workspaces use the shared registered routes and frame-matched
 receiver actors for Thinking decisions. Vision rechecks the target before
 using the same input lease as PPO. Press **B** to stop. Normal mode is for inspection.
 
+With a compatible mod receiver, **C** sends Dash, **E** sends Crystal Dash,
+**F** sends Quick Cast, and **D** sends Dream Nail. A **K** recording saves these
+presses and releases for both camera domains. The ability exporter uses clips
+whose receiver supported the full controls through the recording.
+
+The installed `training\BotPython` directory includes the shared ability
+trainer. Export curated clips from one domain with `hkv_bot_dataset.py export`
+and `--skill-controls`, then use `train_skill_controls.py` with a validation
+clip from a separate run. To activate a trained traversal or combat model for
+Thinking, save its JSON under
+`%LOCALAPPDATA%\HollowKnightVision\bot-v1\skill-actors\gameplay` or
+`skill-actors\hacker` as `traverse.json` or `fight.json`. Use the same
+observation schema as the selected PPO checkpoint. A selected Thinking
+candidate still needs a fresh bound route or actor and current game observations.
+
 Parity verification is tracked in `mac-parity-audit.json`. Run
 `./Test-MacParity.ps1` for the complete Mac source/test inventory and remaining
 verification counts (`-Json` gives individual obligations; `-RequireComplete`

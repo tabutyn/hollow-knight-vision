@@ -69,6 +69,7 @@ internal sealed partial class WindowsGameControlForwarder
             if (receiver is null || connectionFault is null || replayCancellation is not null || capturingCheckpoint || inputPathRecorder.IsRecording
                 || !controlledFramesAvailable || !checkpointAvailable || !posePlaybackAvailable || pause.State == GamePauseState.Unavailable)
                 throw new InvalidOperationException("Step replay requires receiver 0.9.4 or newer with controlled-frame, checkpoint and pause support.");
+            RequireReplaySkillControls(path);
             active = receiver; fault = connectionFault; replayCancellation = cancellation; replayFinished = finished;
             stepPauseOwned = true;
             DropBotControlLocked();

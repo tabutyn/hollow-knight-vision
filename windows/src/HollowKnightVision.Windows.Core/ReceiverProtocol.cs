@@ -15,7 +15,12 @@ public enum InputButtons : ushort
     ActionZ = 1 << 5,
     ActionX = 1 << 6,
     Inventory = 1 << 7,
-    PauseMenu = 1 << 8
+    PauseMenu = 1 << 8,
+    QuickCast = 1 << 9,
+    Dash = 1 << 10,
+    SuperDash = 1 << 11,
+    DreamNail = 1 << 12,
+    SkillAbilities = QuickCast | Dash | SuperDash | DreamNail
 }
 
 public static class ReceiverProtocol
@@ -27,6 +32,7 @@ public static class ReceiverProtocol
 
     public const string PauseCapability = "pause-lease-v1";
     public const string MenuShortcutsCapability = "menu-shortcuts-v1";
+    public const string SkillControlsCapability = "skill-controls-v1";
     public const string PointerCapability = "pointer-events-v1";
     public const string PlayerCheckpointCapability = "player-checkpoint-v1";
     public const string PlayerPosePlaybackCapability = "player-pose-playback-v1";

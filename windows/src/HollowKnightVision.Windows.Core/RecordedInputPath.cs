@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 
 namespace HollowKnightVision.Windows.Core;
 
-public enum RecordedGameButton { Left, Right, Down, Up, A, Z, X, Inventory, Pause }
+public enum RecordedGameButton { Left, Right, Down, Up, A, Z, X, Inventory, Pause, QuickCast, Dash, SuperDash, DreamNail }
 public enum RecordedInputTransition { Pressed, Released }
 
 public sealed record RecordedInputPathEvent(
@@ -119,6 +119,7 @@ public sealed record RecordedLowResolutionFrame
 public sealed record RecordedInputPath
 {
     public const int CurrentSchemaVersion = 1;
+    public const string SkillControlsMetadata = "recordedSkillControls";
 
     public RecordedInputPath(
         int schemaVersion,
@@ -320,7 +321,7 @@ public sealed class InputPathRecorder
         public required Guid Id { get; init; }
         public required DateTimeOffset CreatedAt { get; init; }
         public required double StartedAt { get; init; }
-        public IReadOnlyDictionary<string, string>? Metadata { get; init; }
+        public Dictionary<string, string>? Metadata { get; init; }
         public Guid? SourcePathId { get; init; }
         public int? ReplayIteration { get; init; }
         public RecordedGameCheckpoint? StartCheckpoint { get; init; }
@@ -371,7 +372,8 @@ public sealed class InputPathRecorder
             {
                 Id = pathId, CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
                 StartedAt = startedAt, SourcePathId = sourcePathId,
-                ReplayIteration = replayIteration, StartCheckpoint = startCheckpoint, Metadata = metadata,
+                ReplayIteration = replayIteration, StartCheckpoint = startCheckpoint,
+                Metadata = metadata is null ? null : new(metadata),
                 VisualArchive = visualArchiveRoot is null ? null
                     : new VisualReplayArchiveWriter(visualArchiveRoot, pathId,
                         new Dictionary<string, string>(MergedMetadata(metadata))
@@ -416,6 +418,13 @@ public sealed class InputPathRecorder
                 Offset(timestamp ?? MonotonicSeconds(), current.StartedAt), button,
                 isPressed ? RecordedInputTransition.Pressed : RecordedInputTransition.Released));
         }
+    }
+
+    public void InvalidateSkillControls()
+    {
+        lock (gate)
+            if (session?.Metadata is { } metadata && metadata.ContainsKey(RecordedInputPath.SkillControlsMetadata))
+                metadata[RecordedInputPath.SkillControlsMetadata] = "false";
     }
 
     public void RecordTracking(InputPathTrackingObservation result, double captureTimestamp,
@@ -575,7 +584,7 @@ public sealed class InputPathRecorder
         }
         if (current is null) return null;
         var duration = Offset(timestamp ?? MonotonicSeconds(), current.StartedAt);
-        foreach (var button in current.HeldButtons.OrderBy(ButtonWireName))
+        foreach (var button in current.HeldButtons.OrderBy(button => button.WireName()))
             current.Events.Add(new RecordedInputPathEvent(duration, button, RecordedInputTransition.Released));
         var archive = current.VisualArchive is { } writer
             ? await writer.FinishAsync(cancelled).ConfigureAwait(false) : null;
@@ -603,20 +612,15 @@ public sealed class InputPathRecorder
     private static double MonotonicSeconds() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
     private static double Offset(double timestamp, double start) =>
         double.IsFinite(timestamp) && double.IsFinite(start) ? Math.Max(0, timestamp - start) : 0;
-    private static string ButtonWireName(RecordedGameButton button) => button switch
-    {
-        RecordedGameButton.Left => "left", RecordedGameButton.Right => "right",
-        RecordedGameButton.Down => "down", RecordedGameButton.Up => "up",
-        RecordedGameButton.A => "a", RecordedGameButton.Z => "z", RecordedGameButton.X => "x",
-        RecordedGameButton.Inventory => "inventory", RecordedGameButton.Pause => "pause",
-        _ => throw new ArgumentOutOfRangeException(nameof(button))
-    };
 }
 
 public readonly record struct InputPathStateChange(double Offset, InputButtons HeldButtons);
 
 public static class RecordedInputPathExtensions
 {
+    internal static string WireName(this RecordedGameButton button) =>
+        JsonNamingPolicy.CamelCase.ConvertName(button.ToString());
+
     public static InputButtons ToInputButton(this RecordedGameButton button) => button switch
     {
         RecordedGameButton.Left => InputButtons.Left, RecordedGameButton.Right => InputButtons.Right,
@@ -624,6 +628,8 @@ public static class RecordedInputPathExtensions
         RecordedGameButton.A => InputButtons.ActionA, RecordedGameButton.Z => InputButtons.ActionZ,
         RecordedGameButton.X => InputButtons.ActionX, RecordedGameButton.Inventory => InputButtons.Inventory,
         RecordedGameButton.Pause => InputButtons.PauseMenu,
+        RecordedGameButton.QuickCast => InputButtons.QuickCast, RecordedGameButton.Dash => InputButtons.Dash,
+        RecordedGameButton.SuperDash => InputButtons.SuperDash, RecordedGameButton.DreamNail => InputButtons.DreamNail,
         _ => throw new ArgumentOutOfRangeException(nameof(button))
     };
 
@@ -633,7 +639,10 @@ public static class RecordedInputPathExtensions
         InputButtons.Down => RecordedGameButton.Down, InputButtons.Up => RecordedGameButton.Up,
         InputButtons.ActionA => RecordedGameButton.A, InputButtons.ActionZ => RecordedGameButton.Z,
         InputButtons.ActionX => RecordedGameButton.X, InputButtons.Inventory => RecordedGameButton.Inventory,
-        InputButtons.PauseMenu => RecordedGameButton.Pause, _ => null
+        InputButtons.PauseMenu => RecordedGameButton.Pause,
+        InputButtons.QuickCast => RecordedGameButton.QuickCast, InputButtons.Dash => RecordedGameButton.Dash,
+        InputButtons.SuperDash => RecordedGameButton.SuperDash, InputButtons.DreamNail => RecordedGameButton.DreamNail,
+        _ => null
     };
 
     /// <summary>Keep the receiver's 250ms input lease alive between recorded transitions.</summary>

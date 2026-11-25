@@ -13,6 +13,7 @@ public partial class MainWindow
 
     private sealed record LoadedBot(BotPolicyPlayback? Policy, string? ModelName, string? Issue)
     {
+        public BotNativePolicy? Motor { get; init; }
         public string? ModelHash { get; init; }
         public BotEvaluationRecorder? Evaluation { get; init; }
     }
@@ -122,6 +123,7 @@ public partial class MainWindow
             loaded = selected is null ? new(null, null, $"Train or select a {name} checkpoint before bot gameplay.")
                 : new(new BotPolicyPlayback(selected.Policy, domain), selected.Policy.Name, null)
                 {
+                    Motor = selected.Policy,
                     ModelHash = selected.Policy.SourceCheckpointSha256
                 };
         }
