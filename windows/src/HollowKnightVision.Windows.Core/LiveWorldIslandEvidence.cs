@@ -59,7 +59,9 @@ public sealed record LiveIslandCapture(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public LiveWalkedGroundSource? UnplacedSource { get; init; }
 
-    internal bool IsValid => Measured && Id >= 0 && RoomId >= 0 && double.IsFinite(StartedAt)
+    internal bool IsValid => Measured && HasValidGeometry;
+
+    internal bool HasValidGeometry => Id >= 0 && RoomId >= 0 && double.IsFinite(StartedAt)
         && LiveWorldSnapshot.Finite(WorldFromLocal) && LiveWorldSnapshot.Finite(LocalPose)
         && Enum.IsDefined(Placement) && Uncertainty.IsValid && BreakReason is not null
         && (UnplacedSource is null || UnplacedSource.Lineage > 0);

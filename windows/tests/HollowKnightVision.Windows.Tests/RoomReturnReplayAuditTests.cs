@@ -15,6 +15,12 @@ internal static class RoomReturnReplayAuditTests
         double Residual, double Ambiguity, AtlasPoint Translation);
     private sealed record FeatureQuery(double Seconds, FeatureMatch[] Ranked);
     private sealed record FeatureDecision(double ArrivalSeconds, double DecisionSeconds, int SourceRoom, FeatureQuery[] Queries);
+    private sealed record FloorReference(LiveWorldObservation Observation, GlobalFeatureReference Features);
+    private sealed record FloorMatch(int ReferenceRoom, int ReferenceObservation, double ReferenceTimestamp,
+        double AppearanceConfidence, int AppearanceInliers, int FloorPatches, double FloorCorrelation,
+        double FloorSpan, AtlasPoint MeasuredDisplacement);
+    private sealed record FloorQuery(int Room, int Observation, double Timestamp, int SourceFrame,
+        int SearchedReferences, FloorMatch[] Candidates);
 
     internal static void TestRecordedRoomReturnImagesWhenRequested()
     {
@@ -130,6 +136,91 @@ internal static class RoomReturnReplayAuditTests
             var regions = VisualReplayGroundInput.RestoreMasks(ownedInput, image);
             return [new(0, 0, image.Width, image.Height * .24), .. regions.GroundRegions.OmittedRects];
         }
+    }
+
+    internal static void TestEarlierRoomGroundClosuresWhenRequested()
+    {
+        var input = Path.GetFullPath(Setting("HKV_CROSS_ROOM_AUDIT_INPUT"));
+        var source = ReadSource(input);
+        var worldPath = Path.GetFullPath(Setting("HKV_CROSS_ROOM_AUDIT_WORLD"));
+        var snapshotBytes = File.ReadAllBytes(worldPath);
+        var world = LiveWorldJson.ReadSnapshot(snapshotBytes);
+        if (source.VisualFrameArchive is not { } archive)
+            throw new InvalidDataException("The cross-room audit requires saved source images.");
+        var reader = new VisualReplayArchiveReader(Path.GetDirectoryName(input)!, archive, source.Id, requireComplete: false);
+        var frames = reader.Manifest.Frames.Where(frame => frame.FileName is not null)
+            .GroupBy(frame => frame.CaptureTimestamp).Where(group => group.Count() == 1)
+            .ToDictionary(group => group.Key, group => group.Single());
+        var visits = world.Observations.Where(observation => observation.GroundGeometry is { Lines.Count: > 0 }
+                && observation.CaptureTimestamp is { } time && frames.ContainsKey(time))
+            .OrderBy(observation => observation.CaptureTimestamp).GroupBy(observation => observation.RoomId).ToArray();
+        var matcher = new GlobalFeatureMatcher();
+        var bank = new List<FloorReference>();
+        var results = new List<FloorQuery>();
+        var images = new Dictionary<int, BgraFrame>();
+        var imageOrder = new Queue<int>();
+        foreach (var visit in visits)
+        {
+            var reconstructed = visit.ToArray();
+            var start = reconstructed[0].CaptureTimestamp!.Value;
+            var queried = new HashSet<int>();
+            foreach (var delay in new[] { .25, .5, .75, 1, 1.5, 2, 3 })
+            {
+                var current = reconstructed.MinBy(observation => Math.Abs(observation.CaptureTimestamp!.Value - start - delay))!;
+                var time = current.CaptureTimestamp!.Value;
+                if (Math.Abs(time - start - delay) > .25 || !queried.Add(current.Id)) continue;
+                var currentImage = Image(current);
+                var exclusions = FeatureMasks(current);
+                var candidates = new List<FloorMatch>();
+                var searched = 0;
+                foreach (var reference in bank)
+                {
+                    var prior = reference.Observation;
+                    if (prior.CaptureTimestamp >= start || prior.SolveWidth != current.SolveWidth) continue;
+                    searched++;
+                    if (matcher.Match(currentImage, [reference.Features], currentSolveWidth: current.SolveWidth,
+                            excluding: exclusions) is not { } proposal
+                        || GroundPlaneClosureVerifier.Verify(Image(prior), prior.GroundGeometry!.Lines, default, currentImage,
+                            current.GroundGeometry!.Lines, proposal.ProposedCameraPose, current.SolveWidth) is not { } floor)
+                        continue;
+                    candidates.Add(new(prior.RoomId, prior.Id, prior.CaptureTimestamp!.Value, proposal.Confidence,
+                        proposal.InlierReferenceFeatureIds.Count, floor.SupportedPatches, floor.MeanCorrelation,
+                        floor.HorizontalSpan, floor.CameraPose));
+                }
+                results.Add(new(visit.Key, current.Id, time, frames[time].Index, searched,
+                    candidates.OrderByDescending(candidate => candidate.AppearanceConfidence)
+                        .ThenBy(candidate => candidate.ReferenceObservation).Take(12).ToArray()));
+            }
+            var count = Math.Min(32, reconstructed.Length);
+            for (var index = 0; index < count; index++)
+            {
+                var observation = reconstructed[index * (reconstructed.Length - 1) / Math.Max(1, count - 1)];
+                if (matcher.MakeReference(Image(observation), default, observation.SolveWidth,
+                        excluding: FeatureMasks(observation)) is { } reference)
+                    bank.Add(new(observation, reference));
+            }
+        }
+        var searches = results.Sum(result => result.SearchedReferences);
+        if (searches == 0)
+            throw new InvalidDataException("No ground-owned departure and earlier-room images were available for comparison.");
+        if (!File.ReadAllBytes(worldPath).AsSpan().SequenceEqual(snapshotBytes))
+            throw new InvalidDataException("The cross-room diagnostics must preserve the source world.");
+        WriteReport("HKV_CROSS_ROOM_AUDIT_OUTPUT", results);
+        Console.WriteLine($"Cross-room floor audit: {visits.Length} rooms, {results.Count} queries, {searches} references tested, "
+            + $"{results.Sum(result => result.Candidates.Length)} candidates supported by floor texture.");
+
+        BgraFrame Image(LiveWorldObservation observation)
+        {
+            if (images.TryGetValue(observation.Id, out var stored)) return stored;
+            var frame = reader.ReadImage(frames[observation.CaptureTimestamp!.Value]);
+            if (imageOrder.Count == 12) images.Remove(imageOrder.Dequeue());
+            imageOrder.Enqueue(observation.Id);
+            images.Add(observation.Id, frame);
+            return frame;
+        }
+
+        StencilRect[] FeatureMasks(LiveWorldObservation observation) => world.CompositionMasks(observation)
+            .Select(mask => LiveWorldJson.FlipMask(mask, observation.SourceHeight)).ToArray();
     }
 
     private static ImageDecision[] ReplayImages(ImageView[] frames, LoadingGapReplayAuditTests.MeasuredCut[] cuts, bool stable)

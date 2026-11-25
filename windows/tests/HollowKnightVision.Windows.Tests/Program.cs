@@ -249,6 +249,7 @@ var tests = new List<(string Name, Action Run)>
     ("recorded ground pairs preserve frame identity, masks, and solver evidence", GroundPairReplayAuditTests.TestGroundPairReplayKeepsExactFramesAndMaskOwnership),
     ("recorded doorway floor evidence uses exact owned masks and reports black edges", LoadingGapReplayAuditTests.TestDoorwayFloorReplayNeedsExactOwnedMasks),
     ("recorded Atlas reopens with the same masked pixels and owned ground", LiveIslandReplayAuditTests.TestWorldReopenPreservesMaskedPixelsAndSavedGround),
+    ("recorded unmeasured Atlas frames retain ownership without becoming keyframes", RecordedIslandClosureAuditTests.TestRecordedUnmeasuredIslandMemberDoesNotCreateKeyframe),
     ("room image replay requires both separated views before reusing a room", RoomReturnReplayAuditTests.TestRoomImageAuditConfirmsTwoSeparatedViews),
     ("ground scene labeled gameplay reports detection cost and evidence", GroundSceneAuditParityTests.TestLabeledGameplayGroundDetectionCostAndEvidence),
     ("ground scene captured platform audit runs masked and unmasked", GroundSceneAuditParityTests.TestCapturedPlatformScene),
@@ -1664,6 +1665,8 @@ if (Environment.GetEnvironmentVariable("HKV_DOOR_FLOOR_AUDIT_INPUT") is not null
     tests.Add(("archived doorway floor and black-edge candidates use recorded pixels", LoadingGapReplayAuditTests.TestArchivedDoorwayFloorCandidates));
 if (Environment.GetEnvironmentVariable("HKV_WORLD_REOPEN_AUDIT_INPUT") is not null)
     tests.Add(("archived Atlas world reopens with identical pixels", LiveIslandReplayAuditTests.TestRecordedOwnedWorldReopensWithIdenticalPixels));
+if (Environment.GetEnvironmentVariable("HKV_ISLAND_AUDIT_INPUT") is not null)
+    tests.Add(("archived Atlas islands replay with their measured camera evidence", RecordedIslandClosureAuditTests.TestRecordedWorldIslandClosures));
 if (Environment.GetEnvironmentVariable("HKV_SAME_VIEW_AUDIT_INPUT") is not null)
     tests.Add(("recorded return places an island after two fresh floor votes", LiveIslandReplayAuditTests.TestRecordedReturnUsesTwoFreshFloorVotes));
 if (Environment.GetEnvironmentVariable("HKV_SAME_VIEW_AUDIT_OUTPUT") is not null)
@@ -1676,6 +1679,8 @@ if (Environment.GetEnvironmentVariable("HKV_ROOM_VIEW_AUDIT_INPUT") is not null)
     tests.Add(("recorded room-return image audit", RoomReturnReplayAuditTests.TestRecordedRoomReturnImagesWhenRequested));
 if (Environment.GetEnvironmentVariable("HKV_ROOM_FEATURE_AUDIT_INPUT") is not null)
     tests.Add(("recorded room-return feature audit", RoomReturnReplayAuditTests.TestRecordedRoomReturnFeaturesWhenRequested));
+if (Environment.GetEnvironmentVariable("HKV_CROSS_ROOM_AUDIT_INPUT") is not null)
+    tests.Add(("recorded cross-room proposals require matching floor texture", RoomReturnReplayAuditTests.TestEarlierRoomGroundClosuresWhenRequested));
 
 foreach (var test in tests)
 {
