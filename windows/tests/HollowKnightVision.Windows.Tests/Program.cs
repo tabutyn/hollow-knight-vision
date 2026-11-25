@@ -575,6 +575,8 @@ var tests = new List<(string Name, Action Run)>
     ("same-room recovery verifies broad scenery matches against saved floor texture", NativeAtlasImportTests.TestSameRoomRecoveryVerifiesBroadMatchesWithFloorTexture),
     ("inconclusive early floor probes preserve scheduled recovery confirmation", NativeAtlasImportTests.TestInconclusiveEarlyProbesDoNotCancelOrPostponeScheduledConfirmation),
     ("measured Atlas closures reject wrong-floor scenery before rebuilding", NativeAtlasImportTests.TestMeasuredAtlasClosureRequiresFloorEvidence),
+    ("moving Atlas floor votes require consistent views of the same reference island", NativeAtlasImportTests.TestFloorVotesMayUseDifferentViewsOnlyWithinSameRigidReferenceIsland),
+    ("Atlas floor confirmation cannot reuse a scenery-only vote", NativeAtlasImportTests.TestFloorClosureDoesNotReuseAnUnverifiedSceneryVote),
     ("reopened Atlas recovers from saved floor imagery without narrow landmarks", NativeAtlasImportTests.TestReopenedAtlasRecoversFromFloorWithoutNarrowLandmarks),
     ("floor-only recovery rejects competing rooms and stale votes", NativeAtlasImportTests.TestFloorOnlyRecoveryRejectsCompetingRoomsAndStaleVotes),
     ("measured Atlas sections keep their relative link until the group is placed", NativeAtlasImportTests.TestMeasuredAtlasLinksSurviveUntilTheirGroupIsPlaced),

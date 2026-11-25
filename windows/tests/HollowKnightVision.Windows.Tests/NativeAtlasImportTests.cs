@@ -1269,6 +1269,113 @@ internal static class NativeAtlasImportTests
         }
     }
 
+    internal static void TestFloorVotesMayUseDifferentViewsOnlyWithinSameRigidReferenceIsland()
+    {
+        foreach (var (sharedReference, longExcursion, agrees) in new[]
+        {
+            (true, true, true),
+            (true, false, true),
+            (false, false, true),
+            (true, false, false)
+        })
+        {
+            var root = Directory.CreateTempSubdirectory("hkv-atlas-moving-floor-votes-");
+            try
+            {
+                var pipeline = new WindowsLiveWorldPipeline(root.FullName);
+                var store = new LiveWorldSessionStore(root.FullName);
+                var first = Scan(1, .5, 71, 0, 1);
+                var second = Scan(2, .8, 191, 100, sharedReference ? 1 : 2);
+                Check(pipeline.Process(first).AllowsAtlasComposition && pipeline.Process(second).AllowsAtlasComposition,
+                    "save the two distinct views of the room");
+                var references = store.Load().Snapshot;
+                Check(references.Keyframes.Count == 2 && references.TrackingIslands.Count == (sharedReference ? 1 : 2),
+                    "both reference views must have known keyframes and ownership");
+
+                if (longExcursion)
+                    Check(pipeline.Process(Scan(3, 1.1, 901, 440, 3)).AllowsAtlasComposition,
+                        "seed the measured return island after leaving the reference images");
+
+                var firstVote = pipeline.Process(Scan(4, 1.4, 191, 108, 3));
+                Check(firstVote.AllowsAtlasComposition && firstVote.AcceptedClosure is null,
+                    "the first floor-verified view must wait for an independent confirmation");
+                var secondVoteX = agrees ? 8 : 20;
+                var next = pipeline.Process(Scan(5, 1.7, 71, secondVoteX, 3));
+                var saved = store.Load().Snapshot;
+                if (sharedReference && agrees)
+                {
+                    Check(next is { AcceptedClosure: not null, RebuiltAtlas.TileCount: > 0 }
+                        && next.CameraPose == new AtlasPoint(0, 20)
+                        && saved.Keyframes.Single(key => key.Id == next.AcceptedClosure.FromKeyframeId)
+                            .ObservationId == references.Observations[0].Id
+                        && saved.Observations.Take(2).Select(item => item.OptimizedPose)
+                            .SequenceEqual(references.Observations.Select(item => item.OptimizedPose))
+                        && saved.Observations.Skip(2).All(item => item.OptimizedPose == new AtlasPoint(item.RawPose.X - 8, 20)),
+                        $"a moving camera may confirm with an agreeing second view of the same measured island ({next.Diagnostic})");
+                    if (!longExcursion)
+                    {
+                        var newIslandVote = pipeline.Process(Scan(6, 2, 71, 14, 4));
+                        Check(newIslandVote.AcceptedClosure is null, "a newly measured island requires its own two votes");
+                        var reused = pipeline.Process(Scan(7, 2.3, 71, 14, 4));
+                        Check(reused.AcceptedClosure is not null && reused.CameraPose == new AtlasPoint(0, 20),
+                            "the earlier island's travel cooldown must allow independent confirmation of a new island");
+                    }
+                }
+                else
+                {
+                    Check(next.AcceptedClosure is null && saved.LoopClosureEdges.Count == 0,
+                        "views with separate owners or inconsistent displacement must not confirm");
+                    var repeated = pipeline.Process(Scan(6, 2, 71, secondVoteX, 3));
+                    Check(repeated is { AcceptedClosure: not null, RebuiltAtlas.TileCount: > 0 }
+                        && repeated.CameraPose == new AtlasPoint(0, 20),
+                        "the latest verified view can still be confirmed by the next independent capture");
+                }
+            }
+            finally { root.Delete(recursive: true); }
+        }
+
+        static WindowsLiveWorldFrame Scan(long id, double time, int seed, double x, long lineage)
+        {
+            var frame = FloorFrame(id, seed, rightSide: true, 135, airborne: false, competing: false);
+            return frame with
+            {
+                Timestamp = time, MonotonicTimestamp = time, LocalPose = new(x, 20),
+                WorldEvidence = frame.WorldEvidence! with { CaptureTimestamp = time, MeasuredLineage = lineage }
+            };
+        }
+    }
+
+    internal static void TestFloorClosureDoesNotReuseAnUnverifiedSceneryVote()
+    {
+        var world = new LiveWorldTracker();
+        var images = new Dictionary<int, BgraFrame>();
+        _ = Ingest(0, default, 1, verify: false);
+        var scenery = Ingest(1, new(270, 0), 2, verify: false);
+        Check(scenery.AcceptedClosure is null
+            && scenery.Review.Rejections.Contains(LiveWorldTrackerRejection.ConfirmationRequired),
+            "an appearance-only proposal must be tentative");
+        var verified = Ingest(2, new(270, 0), 2, verify: true);
+        Check(verified.AcceptedClosure is null
+            && verified.Review.Rejections.Contains(LiveWorldTrackerRejection.InconsistentConfirmation),
+            "a floor-verified result cannot corroborate a scenery-only vote");
+        var confirmed = Ingest(3, new(270, 0), 2, verify: true);
+        Check(confirmed.AcceptedClosure is not null && confirmed.Snapshot.Observations[^1].OptimizedPose == default,
+            "two independent floor-verified captures can close");
+
+        LiveWorldTrackerUpdate Ingest(int id, AtlasPoint pose, long lineage, bool verify)
+        {
+            var image = RecoveryTexture(71, id);
+            var time = .5 + id * .3;
+            images.Add(id, image);
+            var evidence = new LiveWorldCaptureEvidence(time, new([new(0, new(0, 45), new(image.Width, 45))]))
+            {
+                MeasuredLineage = lineage
+            };
+            return world.Ingest(id, time, image, pose, image.Width, captureEvidence: evidence,
+                loadGroundSource: verify ? source => (images[source], []) : null);
+        }
+    }
+
     internal static void TestDoorwaySpacingUsesOnlyPlacedImages()
     {
         var root = Directory.CreateTempSubdirectory("hkv-local-recovery-doorway-");
