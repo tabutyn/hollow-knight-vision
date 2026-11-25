@@ -74,15 +74,16 @@ internal static class HackerTerrainWindowTests
             var target = Control<ComboBox>(window, "HackerTerrainTarget");
             Check(target.SelectedItem is ComboBoxItem { Content: "Objective" }, "Hacker should open with Objective selected.");
 
-            var sample = ReceiverWireCodec.DecodeLine<ReceiverGroundTruthSample>(
-                """
-                {"version":2,"type":"groundTruth","sceneName":"Tutorial_01","unityFrame":1,
-                 "heroAvailable":true,"heroX":5,"heroY":0.64,"grounded":true,
-                 "cameraAvailable":true,"cameraX":5,"cameraY":5,"pixelsPerWorldUnitX":10,"pixelsPerWorldUnitY":10,
-                 "screenWidth":100,"screenHeight":100,"projectionPixelWidth":100,"projectionPixelHeight":100,
-                 "atlasGameplayActive":true}
-                """)
-                with { SessionId = Guid.NewGuid() };
+            var sample = new ReceiverGroundTruthSample(
+                Version: 2, Type: "groundTruth", SessionId: Guid.NewGuid(), Sequence: 1,
+                UnityFrame: 1, UnityRealtime: capturedAt, SceneName: Room,
+                HeroAvailable: true, HeroX: 5, HeroY: 0.64, HeroZ: 0,
+                VelocityX: 0, VelocityY: 0, FacingRight: true, Grounded: true,
+                CameraAvailable: true, CameraX: 5, CameraY: 5, CameraZ: 0,
+                CameraTargetX: 5, CameraTargetY: 5, CameraTargetZ: 0, OrthographicSize: 5,
+                PixelsPerWorldUnitX: 10, PixelsPerWorldUnitY: 10, HeroScreenX: null, HeroScreenY: null,
+                ProjectionPixelWidth: size, ProjectionPixelHeight: size, ScreenWidth: size, ScreenHeight: size)
+            { AtlasGameplayActive = true };
             var image = new BgraFrame(size, size, size * 4, new byte[size * size * 4], 1, DateTimeOffset.UnixEpoch);
             var bitmap = typeof(MainWindow).GetMethod("FrameBitmap", BindingFlags.Static | BindingFlags.NonPublic)!
                 .Invoke(null, [image]);
