@@ -1444,19 +1444,20 @@ var tests = new List<(string Name, Action Run)>
     ("startup gameplay gate closes when title is recognized", GameStartupDetectorTests.TestGameplayGateClosesWhenTitleIsRecognized),
     ("startup capture reset preserves gameplay", GameStartupDetectorTests.TestCaptureEpochResetPreservesEstablishedGameplay),
     ("startup checkpoint restore reopens gameplay", GameStartupDetectorTests.TestConfirmedCheckpointRestoreReopensGameplayGate),
-    ("startup bright HUD art establishes gameplay", GameStartupDetectorTests.TestBrightHudArtEstablishesGameplay),
+    ("startup bright HUD art cannot establish gameplay", GameStartupDetectorTests.TestBrightHudArtCannotEstablishGameplay),
     ("startup detector uses menu stencil", TestDetectorUsesMenuStencil),
     ("startup detector preserves stencil selection", TestDetectorPreservesStencilSelectionForNavigation),
     ("startup pixel lookalike is rejected and stencil releases gameplay latch", TestPixelMenuLookalikeIsRejectedAndStencilReleasesGameplayLatch),
     ("startup detector finds profile one geometry", TestDetectorFindsSelectedProfileOne),
     ("startup detector uses generic stencil for both startup screens", TestDetectorUsesGenericMenuStencilForBothStartupScreens),
-    ("startup verified health releases stale profile stencil without Soul", TestVerifiedHealthReleasesStaleProfileStencilWithoutSoul),
-    ("startup HUD pair beats title-like scenery", GameStartupDetectorTests.TestHudPairWinsWhenGameplaySceneryResemblesTitle),
-    ("startup gameplay requires both HUD elements", GameStartupDetectorTests.TestGameplayNeedsBothHudElementsButNotKnight),
+    ("startup verified health and Knight release stale profile stencil without Soul", TestVerifiedHealthAndKnightReleaseStaleProfileStencilWithoutSoul),
+    ("startup health and Knight beat title-like scenery", GameStartupDetectorTests.TestHudAndKnightWinWhenGameplaySceneryResemblesTitle),
+    ("startup gameplay requires verified masks and Knight", GameStartupDetectorTests.TestGameplayNeedsVerifiedMasksAndKnight),
+    ("startup cutscene waits for eight consecutive joint observations", GameStartupDetectorTests.TestCutsceneCannotOpenWorldWritesBeforeBothSourcesRemainStable),
     ("startup coordinator closes gameplay gate on menu", TestStartupCoordinatorClosesGate),
     ("startup detector title selection", TestStartupDetectorTitleSelection),
     ("startup detector profile selection", TestStartupDetectorProfileSelection),
-    ("startup detector gameplay hud", TestStartupDetectorGameplayHud),
+    ("startup rejects small bright HUD lookalikes", TestSmallBrightHudLookalikesDoNotEstablishGameplay),
     ("detection decoder local maximum", TestDetectionDecoderLocalMaximum),
     ("detection decoder classwise nms", TestDetectionDecoderClasswiseNms),
     ("detection decoder exposes raw candidates", TestDetectionDecoderRaw),
@@ -9157,13 +9158,13 @@ static void TestStartupDetectorProfileSelection()
     Equal("2.", evidence.SelectedOption!);
 }
 
-static void TestStartupDetectorGameplayHud()
+static void TestSmallBrightHudLookalikesDoNotEstablishGameplay()
 {
     var frame = BlankFrame();
     Paint(frame, 30, 15, 10, 10);
     Paint(frame, 80, 20, 10, 10);
     var evidence = new GameStartupDetector().Detect(frame);
-    True(evidence.GameplayLikely);
+    True(!evidence.GameplayLikely);
     True(evidence.Screen is null);
 }
 
@@ -9235,25 +9236,35 @@ static void TestDetectorUsesGenericMenuStencilForBothStartupScreens()
         gameplayIsLatched: true).Screen is null);
 }
 
-static void TestVerifiedHealthReleasesStaleProfileStencilWithoutSoul()
+static void TestVerifiedHealthAndKnightReleaseStaleProfileStencilWithoutSoul()
 {
     var blank = StartupDetectorFrame();
     var staleProfile = MatchedStartupMenuStencil("select-profile", "1.");
     var detector = new GameStartupDetector();
+    var knight = new ObjectDetection(LiveObjectDetectionPostprocessor.Knight, new(.5, .4, .05, .1), .9f);
+
+    var profile = detector.Detect(blank, staleProfile, MatchedStartupHudStencil(includesMana: false));
+    Equal(GameStartupScreen.ProfileOne, profile.Screen!.Value);
 
     var gameplay = detector.Detect(
         blank,
         menuStencil: staleProfile,
-        hudStencil: MatchedStartupHudStencil(includesMana: true));
+        hudStencil: MatchedStartupHudStencil(includesMana: true),
+        objectDetections: [knight]);
     True(gameplay.GameplayLikely);
     True(gameplay.Screen is null);
 
     var healthOnlyGameplay = detector.Detect(
         blank,
         menuStencil: staleProfile,
-        hudStencil: MatchedStartupHudStencil(includesMana: false));
+        hudStencil: MatchedStartupHudStencil(includesMana: false),
+        objectDetections: [knight]);
     True(healthOnlyGameplay.GameplayLikely);
     True(healthOnlyGameplay.Screen is null);
+
+    var latchedMenu = detector.Detect(blank, staleProfile, MatchedStartupHudStencil(includesMana: false),
+        gameplayIsLatched: true, objectDetections: [knight]);
+    Equal(GameStartupScreen.ProfileOne, latchedMenu.Screen!.Value);
 }
 
 static MenuStencilResult MatchedStartupMenuStencil(
