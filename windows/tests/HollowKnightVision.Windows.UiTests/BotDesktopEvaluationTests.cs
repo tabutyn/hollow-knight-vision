@@ -352,9 +352,13 @@ internal static class BotDesktopEvaluationTests
         {
             var capture = new BotCaptureSession(library, "normal", "fixture", Generation, 1, new());
             var frame = new BgraFrame(16, 16, 16 * 4, new byte[16 * 16 * 4], 1, DateTimeOffset.UtcNow);
-            var row = new BotCaptureObservation(1, 1, 1, Generation, 1, 1,
-                new double[BotRecordingContract.FeatureNames.Count], [], "detected")
+            var features = new double[BotRecordingContract.FeatureNames.Count];
+            features[4] = .9;
+            features[6] = 1;
+            var row = new BotCaptureObservation(1, 1, 1, Generation, 1, 1, features, [], "detected")
             {
+                DetectionTimestamp = 1,
+                KnightSource = "visual",
                 AtlasPathVersion = 1,
                 DriveDirection = 0,
                 BlockadeVersion = 1

@@ -488,6 +488,7 @@ public sealed class BotCaptureSession
         internal int ImageCount { get; private set; }
         private readonly List<double>? trainingCandidateTimes;
         private readonly StreamWriter stream;
+        private (long Generation, int Room, double SeenAt)? trainingVisualAnchor;
         private double lastImage = double.NegativeInfinity;
         private double lastAvailable = double.NegativeInfinity;
         private bool closed;
@@ -507,6 +508,11 @@ public sealed class BotCaptureSession
         {
             if (!double.IsFinite(observation.AvailableAt) || observation.AvailableAt < observation.CapturedAt
                 || observation.AvailableAt <= lastAvailable) return null;
+            // The trainer validates the recording as a whole before selecting examples.
+            if (trainingCandidateTimes is not null && (!double.IsFinite(observation.CapturedAt)
+                || observation.Generation < 0 || observation.RoomId < 0
+                || observation.Features.Count != BotRecordingContract.FeatureNames.Count
+                || observation.Features.Any(value => !double.IsFinite(value) || Math.Abs(value) > 4))) return null;
             string? path = null;
             if (observation.AvailableAt - lastImage >= 1)
             {
@@ -526,9 +532,27 @@ public sealed class BotCaptureSession
             lastAvailable = observation.AvailableAt;
             Count++;
             if (observation.Issues.Count == 0) UsableCount++;
-            if (trainingCandidateTimes is not null && observation.CanTrain)
+            if (trainingCandidateTimes is not null && HasTrainablePerception(observation))
                 trainingCandidateTimes.Add(observation.AvailableAt);
             return path;
+        }
+
+        private bool HasTrainablePerception(BotCaptureObservation observation)
+        {
+            var masked = Domain == "gameplay" && observation.HasMaskedKnightEvidence;
+            var predicted = observation.KnightSource == "visual-predicted";
+            var valid = observation.CanTrain && BotObservationHistory.IsFresh(observation, observation.AvailableAt)
+                && observation.Features[6] == 1 && (masked || observation.Features[4] >= (predicted ? .2 : .5))
+                && (!predicted || observation.KnightPrediction is { } estimate && trainingVisualAnchor is { } anchor
+                    && anchor.Generation == observation.Generation && anchor.Room == observation.RoomId
+                    && Math.Abs(anchor.SeenAt - estimate.LastSeenAt) <= 1e-6);
+
+            // A live prediction may refer to an image captured before K was pressed.
+            // The exporter requires that measurement to be present in this clip.
+            if (!valid || masked) trainingVisualAnchor = null;
+            else if (observation.KnightSource == "visual" && observation.DetectionTimestamp is { } seenAt)
+                trainingVisualAnchor = (observation.Generation, observation.RoomId, seenAt);
+            return valid;
         }
 
         internal bool HasTrainableActionWindow(IReadOnlyList<BotCaptureInput> inputs, IReadOnlySet<string> supported,
