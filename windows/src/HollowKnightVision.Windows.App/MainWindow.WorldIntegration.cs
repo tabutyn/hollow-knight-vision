@@ -9,30 +9,22 @@ public partial class MainWindow
     private CompletedWorld? completedWorld;
     private long pendingWorldTrackingLoss = -1;
 
-    private void QueueWorldFrame(WindowsLiveWorldFrame frame, ReceiverGroundTruthSample telemetry,
-        IReadOnlyList<PixelRect> exclusions, string roomId, string captureIdentity)
+    private void QueueWorldFrame(WindowsLiveWorldFrame frame)
     {
         var pipeline = liveWorldPipeline;
         if (pipeline is null) return;
         worldWorker.Submit(() => {
             var lostGeneration = Interlocked.Exchange(ref pendingWorldTrackingLoss, -1);
             if (lostGeneration >= 0) pipeline.NotifyTrackingLoss((ulong)lostGeneration);
-            var result = pipeline.Process(frame);
+            var result = pipeline.Process(frame, Volatile.Read(ref gameplayAtlas));
             if (result.Discarded || result.CaptureGeneration != (ulong)Interlocked.Read(ref recentCaptureGeneration)) return;
-            if (result.AllowsAtlasComposition)
+            if (result.AllowsAtlasComposition && result.RebuiltAtlas is { } replacement)
             {
-                if (result.RebuiltAtlas is { } replacement)
-                {
-                    Interlocked.Exchange(ref gameplayAtlas, replacement);
-                    Interlocked.Exchange(ref gameplayPersistedRevision, -1);
-                    Interlocked.Exchange(ref gameplayRenderedRevision, -1);
-                    Volatile.Write(ref gameplayAtlasRequiresFullRewrite, true);
-                    Interlocked.Exchange(ref gameplayAtlasPresentationPending, replacement);
-                }
-                else gameplayAtlas.AddFrame(frame.Frame, telemetry with {
-                    CameraX = result.CameraPose.X, CameraY = result.CameraPose.Y,
-                    CameraTargetX = result.CameraPose.X, CameraTargetY = result.CameraPose.Y
-                }, exclusions, roomId: roomId, captureGeneration: frame.CaptureGeneration, captureIdentity: captureIdentity);
+                Interlocked.Exchange(ref gameplayAtlas, replacement);
+                Interlocked.Exchange(ref gameplayPersistedRevision, -1);
+                Interlocked.Exchange(ref gameplayRenderedRevision, -1);
+                Volatile.Write(ref gameplayAtlasRequiresFullRewrite, true);
+                Interlocked.Exchange(ref gameplayAtlasPresentationPending, replacement);
             }
             if (result.AcceptedClosure is { } closure)
                 gameControls.RecordLoopClosure(frame.Timestamp, result.Revision, result.AppliedCorrection, closure);

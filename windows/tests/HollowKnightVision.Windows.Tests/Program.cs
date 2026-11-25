@@ -1507,6 +1507,8 @@ var tests = new List<(string Name, Action Run)>
     ("LiveAtlasPipelineTests.testDelayedExactPoseFrameCannotReplaceNewerLiveWindowOrEnterAtlas", LiveAtlasPipelineRemainingParityTests.TestDelayedExactPoseFrameCannotReplaceNewerLiveWindowOrEnterAtlas),
     ("robustness: rejected atlas submissions cannot poison cadence or anchor", LiveAtlasPipelineRemainingParityTests.TestRejectedAtlasSubmissionsCannotPoisonCadenceOrAnchor),
     ("LiveAtlasPipelineTests.testSlowAtlasWorkerDoesNotDelayLatestLivePresentation", LiveAtlasPipelineRemainingParityTests.TestSlowAtlasWorkerDoesNotDelayLatestLivePresentation),
+    ("Atlas composition and durable graph commit roll back together", LiveAtlasPipelineRemainingParityTests.TestFailedCompositionCannotCommitGraphAndLaterFrameCanRecover),
+    ("Atlas readers observe the last committed revision during world writes", LiveAtlasPipelineRemainingParityTests.TestAtlasReadersKeepCommittedTilesDuringWorldWrite),
     ("LiveAtlasPipelineTests.testResetInvalidatesActiveTicketBeforeItCanPersistOrPublish", LiveAtlasPipelineRemainingParityTests.TestResetInvalidatesActiveTicketBeforeItCanPersistOrPublish),
     ("LiveAtlasPipelineTests.testResetCancelsPersistedAtlasRestoration", LiveAtlasPipelineRemainingParityTests.TestResetCancelsPersistedAtlasRestoration),
     ("live atlas gameplay uses newest pixel immediately", LiveAtlasPipelineRemainingParityTests.TestGameplayAtlasUsesNewestPixelImmediately),

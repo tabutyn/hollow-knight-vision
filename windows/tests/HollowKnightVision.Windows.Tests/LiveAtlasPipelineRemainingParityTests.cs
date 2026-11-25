@@ -343,6 +343,118 @@ internal static class LiveAtlasPipelineRemainingParityTests
         }
     }
 
+    public static void TestFailedCompositionCannotCommitGraphAndLaterFrameCanRecover()
+    {
+        var directory = Directory.CreateTempSubdirectory("hkv-atlas-composition-");
+        try
+        {
+            var rejectPixels = false;
+            var rejectCommit = false;
+            var stages = new List<string>();
+            var mosaic = new GroundTruthAtlasMosaic(1, 64, sourceTopInsetFraction: 0,
+                temporalCommitCheckpoint: () =>
+                {
+                    if (rejectPixels) throw new IOException("Test compositor failure.");
+                });
+            var pipeline = new WindowsLiveWorldPipeline(directory.FullName, stages.Add,
+                stage => rejectCommit && stage == "commit");
+            var store = new LiveWorldSessionStore(directory.FullName);
+            var striped = Solid(40, 20, red: 255);
+            for (var index = 0; index < striped.Stride * (striped.Height / 2); index += 4)
+            {
+                striped.Pixels[index + 1] = 255;
+                striped.Pixels[index + 2] = 0;
+            }
+            var blue = Solid(40, 20, blue: 255);
+            var basePose = new AtlasPoint(6, 30);
+
+            WindowsLiveWorldPipelineResult Submit(long id, AtlasPoint pose, BgraFrame image)
+            {
+                var frame = new BgraFrame(image.Width, image.Height, image.Stride, image.Pixels, id, image.ObservedAt);
+                return pipeline.Process(new WindowsLiveWorldFrame(
+                    frame, frame, id, id, pose, 40, [], [], 1, "room", 1, 64), mosaic);
+            }
+
+            var invalid = Submit(1, new AtlasPoint(int.MaxValue, 0), blue);
+            Check(invalid.State == WindowsLiveWorldPipelineState.Failed
+                && store.Load().Snapshot.Observations.Count == 0 && mosaic.AcceptedFrameCount == 0,
+                "A projection failure on the first frame left committed graph or tile evidence.");
+            var first = Submit(2, basePose, striped);
+            Check(first.AllowsAtlasComposition && first.CameraPose == basePose,
+                "A failed first frame changed the placement of the first successful frame.");
+            CheckStripe(mosaic);
+
+            rejectPixels = true;
+            var failedDraw = Submit(3, basePose, blue);
+            rejectPixels = false;
+            Check(failedDraw.State == WindowsLiveWorldPipelineState.Failed
+                && failedDraw.Diagnostic.Contains("Test compositor failure", StringComparison.Ordinal),
+                "The pipeline did not surface the failed tile staging.");
+            rejectCommit = true;
+            var failedSave = Submit(4, basePose, blue);
+            rejectCommit = false;
+            Check(failedSave.State == WindowsLiveWorldPipelineState.Failed,
+                "The test store did not reject the staged frame.");
+            Check(store.Load().Snapshot.MapRevision == first.Revision && mosaic.AcceptedFrameCount == 1
+                && stages.Count(stage => stage == "commit") == 1 && stages.Count(stage => stage == "publish") == 1,
+                "A rejected draw or save published a new graph or tile revision.");
+            CheckStripe(mosaic);
+
+            var recovered = Submit(5, new AtlasPoint(60, 30), blue);
+            var saved = store.Load().Snapshot;
+            Check(recovered.AllowsAtlasComposition && saved.Observations.Select(frame => frame.Timestamp).SequenceEqual([2d, 5d])
+                && mosaic.AcceptedFrameCount == 2,
+                "Recovery replayed an observation from a failed transaction.");
+            CheckStripe(mosaic);
+            CheckStripe(WindowsLiveWorldPipeline.RebuildAtlas(saved, store.Source, 1, 64));
+
+            static void CheckStripe(GroundTruthAtlasMosaic atlas)
+            {
+                Check(atlas.TryReadPixel(6, -35, out var topBlue, out var green, out var topRed, out _)
+                    && (topBlue, green, topRed) == (0, 255, 0),
+                    "The top half lost its captured vertical placement.");
+                Check(atlas.TryReadPixel(6, -25, out var bottomBlue, out var bottomGreen, out var red, out _)
+                    && (bottomBlue, bottomGreen, red) == (0, 0, 255),
+                    "The bottom half lost its captured vertical placement.");
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    public static void TestAtlasReadersKeepCommittedTilesDuringWorldWrite()
+    {
+        var atlas = new GroundTruthAtlasMosaic(1, 64, sourceTopInsetFraction: 0);
+        var first = Solid(20, 20, red: 255);
+        var next = Solid(20, 20, blue: 255);
+        Check(atlas.AddFrame(first, Telemetry(first, timestamp: 1)));
+        var revision = atlas.Revision;
+        using var commitEntered = new ManualResetEventSlim();
+        using var releaseCommit = new ManualResetEventSlim();
+        var writer = Task.Run(() => atlas.AddFrameAndCommit(next, Telemetry(next, timestamp: 2), [], () =>
+        {
+            commitEntered.Set();
+            return releaseCommit.Wait(TimeSpan.FromSeconds(5));
+        }));
+        try
+        {
+            Check(commitEntered.Wait(TimeSpan.FromSeconds(3)), "The write did not stage its pixels.");
+            var read = Task.Run(() => (atlas.Revision, atlas.TryReadPixel(0, 0, out _, out _, out var red, out _) ? red : 0));
+            Check(read.Wait(TimeSpan.FromSeconds(2)) && read.Result == (revision, 255),
+                "Readers must see the last committed pixels while persistence is busy.");
+        }
+        finally
+        {
+            releaseCommit.Set();
+            writer.GetAwaiter().GetResult();
+        }
+        Check(writer.Result && atlas.Revision == revision + 1
+            && atlas.TryReadPixel(0, 0, out var blue, out _, out _, out _) && blue == 255,
+            "Successful persistence did not publish the staged pixels.");
+    }
+
     public static void TestResetInvalidatesActiveTicketBeforeItCanPersistOrPublish()
     {
         var workspace = Path.Combine(
