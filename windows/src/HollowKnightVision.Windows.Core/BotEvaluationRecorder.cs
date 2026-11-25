@@ -45,7 +45,7 @@ public sealed class BotEvaluationRecorder
     private int droppedSamples;
 
     public BotEvaluationRecorder(string root, BotCaptureDomain domain, string modelName, string? modelSha256,
-        GroundTruthLineDocument reference, long generation, double startedAt)
+        GroundTruthLineDocument reference, long generation, double startedAt, bool prepareImmediately = false)
     {
         if (!double.IsFinite(startedAt) || startedAt < 0) throw new ArgumentOutOfRangeException(nameof(startedAt));
         this.root = Path.Combine(Path.GetFullPath(root), domain == BotCaptureDomain.Hacker ? "hacker" : "gameplay");
@@ -57,7 +57,18 @@ public sealed class BotEvaluationRecorder
         this.startedAt = lastAvailable = startedAt;
         labelledScenes = this.reference.AuthoredLines.Where(line => line.Kind == GroundTruthLineKind.Positive)
             .Select(line => line.SceneName).ToHashSet(StringComparer.Ordinal);
-        writer = Task.Run(WriteAsync);
+        var ready = prepareImmediately ? new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously) : null;
+        writer = Task.Run(() => WriteAsync(ready));
+        Preparation = ready is null ? Task.CompletedTask : WaitForPreparationAsync(ready.Task, writer);
+    }
+
+    /// <summary>Completes when immediate preparation opens the archive, or fails if the writer cannot open it.</summary>
+    public Task Preparation { get; }
+
+    private static async Task WaitForPreparationAsync(Task ready, Task writer)
+    {
+        var setup = await Task.WhenAny(ready, writer).ConfigureAwait(false);
+        await setup.ConfigureAwait(false);
     }
 
     public bool WantsSkillSample(double capturedAt)
@@ -141,9 +152,9 @@ public sealed class BotEvaluationRecorder
         }
     }
 
-    private async Task<string?> WriteAsync()
+    private async Task<string?> WriteAsync(TaskCompletionSource? ready)
     {
-        if (!await samples.Reader.WaitToReadAsync().ConfigureAwait(false)) return null;
+        if (ready is null && !await samples.Reader.WaitToReadAsync().ConfigureAwait(false)) return null;
         var staging = Path.Combine(root, $".pending-evaluation-{id:N}");
         try
         {
@@ -169,6 +180,7 @@ public sealed class BotEvaluationRecorder
                 using (var auditLog = new StreamWriter(Path.Combine(clip.Directory, "terrain-audit.jsonl"),
                     append: false, new UTF8Encoding(false)) { NewLine = "\n" })
                 {
+                    ready?.SetResult();
                     await foreach (var sample in samples.Reader.ReadAllAsync().ConfigureAwait(false))
                     {
                         if (sample.Observation is { } row) _ = clip.Record(row, sample.Image);
@@ -182,6 +194,11 @@ public sealed class BotEvaluationRecorder
                         archive.RecordStage(new("visionCompleted", stamp.CaptureTimestamp, stamp.CaptureGeneration));
                         if (sample.GroundInput is { } input) archive.RecordGroundInput(input);
                     }
+                }
+                if (auditCount == 0)
+                {
+                    await archive.FinishAsync(cancelled: true).ConfigureAwait(false);
+                    return null;
                 }
                 source = await archive.FinishAsync(incompleteReason: droppedSamples > 0 ? "evaluationBackpressure" : null)
                     .ConfigureAwait(false);

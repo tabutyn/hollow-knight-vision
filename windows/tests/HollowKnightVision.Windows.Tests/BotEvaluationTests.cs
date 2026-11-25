@@ -115,6 +115,43 @@ internal static class BotEvaluationTests
         finally { temporary.Delete(recursive: true); }
     }
 
+    internal static async Task TestEvaluationPreparationVerifiesDestinationBeforeFrames()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-prepared-evaluation-");
+        try
+        {
+            var root = temporary.FullName;
+            var prepared = new BotEvaluationRecorder(root, BotCaptureDomain.Gameplay,
+                "Prepared", null, new(), Generation, 1, prepareImmediately: true);
+            await prepared.Preparation;
+            var domain = Path.Combine(root, "gameplay");
+            Check(Directory.GetDirectories(domain, ".pending-evaluation-*").Length == 1,
+                "Readiness must wait for the actual staging directory to open.");
+            Check(await prepared.FinishAsync(2, "interrupted") is null && !Directory.EnumerateDirectories(domain).Any(),
+                "Stopping before the first frame must clean up the prepared archive without publishing it.");
+
+            var stopped = new BotEvaluationRecorder(root, BotCaptureDomain.Gameplay,
+                "Stopped while preparing", null, new(), Generation, 1, prepareImmediately: true);
+            var closing = stopped.FinishAsync(1.01, "interrupted");
+            await stopped.Preparation;
+            Check(await closing is null && !Directory.EnumerateDirectories(domain).Any(),
+                "Stopping while the evaluation is opening must also remove its staging directory.");
+
+            var blocked = Path.Combine(root, "blocked-evaluation");
+            File.WriteAllText(blocked, "preserve");
+            try
+            {
+                var failed = new BotEvaluationRecorder(blocked, BotCaptureDomain.Hacker,
+                    "Failed", null, new(), Generation, 1, prepareImmediately: true);
+                await failed.Preparation;
+                throw new InvalidOperationException("Expected evaluation preparation to fail before playback.");
+            }
+            catch (IOException) { }
+            Check(File.ReadAllText(blocked) == "preserve", "The failed preparation must preserve existing data.");
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
     internal static void TestEvaluationBackpressureMarksArchiveIncomplete()
     {
         var temporary = Directory.CreateTempSubdirectory("hkv-overloaded-evaluation-");

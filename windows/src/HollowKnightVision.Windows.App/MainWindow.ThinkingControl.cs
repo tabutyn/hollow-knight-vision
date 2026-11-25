@@ -221,7 +221,7 @@ public partial class MainWindow
         var evaluation = prior is null
             ? new BotEvaluationRecorder(BotEvaluationRoot, sight.Scope.Domain, motor?.Name ?? "Built-in playing policies",
                 motor?.SourceCheckpointSha256, authored, sight.Scope.Generation, sight.CapturedAt)
-            : Volatile.Read(ref prior.Loaded)?.Evaluation;
+            : Volatile.Read(ref prior.Evaluation);
         evaluation?.RecordSkill(plan, candidate, plan.Scope.Context, "selected", now);
         Volatile.Write(ref thinkingLease, new(leaseOwner, prior, new(candidate, sight, now), ability, plan, authored, evaluation));
         PostThinkingHandoff($"Dispatched · {candidate.Id} · {candidate.Action}" + (ability is null ? "" : " · learned abilities"));

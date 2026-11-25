@@ -91,6 +91,70 @@ internal static class BotDemoTests
             BotDemoPhase.LeavingProfile, InputButtons.ActionZ);
     }
 
+    public static void TestFullNewSaveRouteWaitsForArchiveAndFreshGameplay()
+    {
+        var nav = new BotDemoNavigation(0);
+        var time = 0d;
+        BotDemoDecision At(double delay, string? context, string? selection, int occupied = 8, bool active = true, bool gameplay = false)
+        {
+            time += delay;
+            return nav.Observe(new(time, gameplay, context, selection, context is null ? null : time,
+                15, occupied, InputButtons.Up), time, active);
+        }
+        BotDemoDecision Stable(string context, string selection, bool occupied = true)
+        {
+            _ = At(.8, context, selection, occupied ? 8 : 0, occupied);
+            return At(.35, context, selection, occupied ? 8 : 0, occupied);
+        }
+
+        Expect(Stable("main-title", "main-title.options"), BotDemoPhase.Navigating, InputButtons.Up);
+        Expect(Stable("main-title", "main-title.start-game"), BotDemoPhase.Navigating, InputButtons.ActionZ);
+        for (var slot = 1; slot < 4; slot++)
+            Expect(Stable("select-profile", $"select-profile.slot-{slot}"), BotDemoPhase.Navigating, InputButtons.Down);
+        Expect(Stable("select-profile", "select-profile.slot-4"), BotDemoPhase.Archiving, action: BotDemoSaveAction.Archive);
+        Expect(Stable("select-profile", "select-profile.clear-save-4"), BotDemoPhase.Archiving);
+        nav.ArchiveCompleted(true, time);
+        Expect(Stable("select-profile", "select-profile.slot-4"), BotDemoPhase.SelectingClear, InputButtons.Right);
+        Expect(Stable("select-profile", "select-profile.clear-save-4"), BotDemoPhase.ConfirmingClear, InputButtons.ActionZ);
+        Expect(Stable("clear-save", "shared.no"), BotDemoPhase.ConfirmingClear, InputButtons.Up);
+        Expect(Stable("clear-save", "shared.yes"), BotDemoPhase.WaitingForEmptySlot,
+            InputButtons.ActionZ, BotDemoSaveAction.VerifyClear);
+        Expect(Stable("select-profile", "select-profile.slot-4", occupied: false), BotDemoPhase.StartingSave);
+        Expect(Stable("select-profile", "select-profile.slot-4", occupied: false), BotDemoPhase.LeavingProfile, InputButtons.ActionZ);
+        Expect(At(.8, "clear-save", "shared.yes"), BotDemoPhase.Opening, InputButtons.ActionX);
+        Expect(At(.8, "brightness", "shared.no"), BotDemoPhase.Opening, InputButtons.ActionZ);
+        Expect(At(.8, null, null, gameplay: true), BotDemoPhase.Opening);
+        Expect(At(.15, null, null, gameplay: true), BotDemoPhase.Opening);
+        Expect(At(.15, null, null, gameplay: true), BotDemoPhase.Gameplay);
+    }
+
+    public static void TestGameplayAndNestedMenusReturnToTitle()
+    {
+        var nav = new BotDemoNavigation(0);
+        var time = 0d;
+        BotDemoDecision Stable(string? context, string? selection, bool gameplay = false)
+        {
+            time += .8;
+            _ = nav.Observe(Frame(), time, null);
+            time += .35;
+            return nav.Observe(Frame(), time, null);
+            BotDemoFrame Frame() => new(time, gameplay, context, selection, context is null ? null : time, 0, 0, InputButtons.Up);
+        }
+
+        Expect(Stable(null, null, gameplay: true), BotDemoPhase.Navigating, InputButtons.PauseMenu);
+        Expect(Stable("pause", "pause.continue"), BotDemoPhase.Navigating, InputButtons.Down);
+        Expect(Stable("pause", "shared.quit-to-menu"), BotDemoPhase.Navigating, InputButtons.ActionZ);
+        Expect(Stable("quit-to-menu", "shared.no"), BotDemoPhase.Navigating, InputButtons.Up);
+        Expect(Stable("quit-to-menu", "shared.yes"), BotDemoPhase.Navigating, InputButtons.ActionZ);
+        Expect(Stable(null, null), BotDemoPhase.Navigating);
+        Expect(Stable("main-title", "main-title.start-game"), BotDemoPhase.Navigating, InputButtons.ActionZ);
+
+        nav = new BotDemoNavigation(time);
+        foreach (var context in new[] { "audio", "options", "inventory", "credits", "clear-save", "quit-game" })
+            Expect(Stable(context, "shared.no"), BotDemoPhase.Navigating,
+                context == "inventory" ? InputButtons.Inventory : InputButtons.ActionA);
+    }
+
     public static void TestEmptySlotSkipsOpeningAndRequiresFreshHud()
     {
         var nav = new BotDemoNavigation(0);
@@ -302,11 +366,14 @@ internal static class BotDemoTests
             OccupiedProfileSlots = [4]
         };
         var available = BotDemoFrame.FromVision(3, 1.2, false, menu);
-        Check(available.ProfilesMeasured && available.Slot4Occupied
+        Check(available.ProfilesMeasured && available.OccupiedSlots == 8 && available.CapturedAt == 3 && available.MenuTimestamp == 1
             && available.Selection == "select-profile.clear-save-4" && available.DirectionToYes == InputButtons.Down,
             "Visual observations must carry exact profile and dialog evidence.");
-        var stale = BotDemoFrame.FromVision(4, 1.31, true, menu);
-        Check(stale.Context is null && stale.FreshGameplay, "Stale menus must not replace fresh Gameplay evidence.");
+        foreach (var ignored in new[] { BotDemoFrame.FromVision(4, 1.31, true, menu),
+                     BotDemoFrame.FromVision(4, .99, true, menu),
+                     BotDemoFrame.FromVision(4, 1.1, true, menu with { IsMatch = false }) })
+            Check(ignored.Context is null && ignored.Selection is null && ignored.OccupiedSlots == 0 && ignored.FreshGameplay,
+                "Stale, future, or rejected menus must not supply selection or occupancy.");
         var guard = new BotDemoNavigation(0);
         _ = guard.Observe(available with { Context = "pause", Selection = "quit-to-menu.quit-to-menu" }, 3, null);
         var pause = available with { CapturedAt = 3.4, MenuTimestamp = 1.4, Context = "pause", Selection = "quit-to-menu.quit-to-menu" };
@@ -317,6 +384,29 @@ internal static class BotDemoTests
         Expect(guard.Observe(after with { CapturedAt = 4.3, MenuTimestamp = 2.3 }, 4.3, null),
             BotDemoPhase.Navigating, InputButtons.Down);
         Expect(guard.Observe(after, 95, null), BotDemoPhase.Stopped);
+    }
+
+    public static void TestConfirmationFollowsMatchedAnchorGeometry()
+    {
+        (StencilRect Yes, InputButtons Direction)[] layouts =
+        [
+            (new(40, 20, 20, 10), InputButtons.Up),
+            (new(40, 100, 20, 10), InputButtons.Down),
+            (new(20, 60, 20, 10), InputButtons.Left),
+            (new(80, 60, 20, 10), InputButtons.Right)
+        ];
+        foreach (var (yes, direction) in layouts)
+        {
+            MenuStencilMatch[] anchors =
+            [
+                new("shared.yes", "Yes", yes, 1, null),
+                new("shared.no", "No", new(40, 60, 20, 10), 1, null)
+            ];
+            var menu = new MenuStencilResult("quit-to-menu", true, 1, "No", anchors, [], [],
+                0, 0, 1, MenuStencilPhase.Tracking, 1, 1, "en");
+            Check(BotDemoFrame.FromVision(2, 1.1, false, menu).DirectionToYes == direction,
+                "The confirmation direction must follow the label geometry in Windows image coordinates.");
+        }
     }
 
     private static void Expect(BotDemoDecision decision, BotDemoPhase phase, InputButtons buttons = InputButtons.None,
