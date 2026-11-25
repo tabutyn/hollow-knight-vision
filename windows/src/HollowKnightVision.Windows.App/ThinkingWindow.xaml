@@ -5,8 +5,6 @@
         WindowStartupLocation="CenterOwner">
     <DockPanel Margin="12">
         <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,5">
-            <CheckBox x:Name="EnabledCheck" Content="Enable Thinking" Foreground="#E6EDF3"
-                      Margin="5,0,14,0" VerticalAlignment="Center" Checked="OptionsChanged" Unchecked="OptionsChanged"/>
             <ComboBox x:Name="ModelCombo" MinWidth="175" DisplayMemberPath="Title"
                       SelectionChanged="OptionsChanged" AutomationProperties.Name="Thinking model"/>
             <CheckBox x:Name="AutomaticCheck" Content="Automatic policies" Foreground="#E6EDF3"

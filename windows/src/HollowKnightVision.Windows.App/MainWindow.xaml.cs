@@ -805,15 +805,15 @@ public partial class MainWindow : Window
     {
     }
 
-    public MainWindow(GameRuntimeMode gameMode, string? gamePath = null)
+    public MainWindow(GameRuntimeMode gameMode, string? gamePath = null, bool enableThinking = false)
         : this(gameMode, gamePath,
             IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HollowKnightVision"),
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments))
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), enableThinking: enableThinking)
     {
     }
 
     internal MainWindow(GameRuntimeMode gameMode, string? gamePath, string root, string documents,
-        Func<ReceiverClient>? createReceiver = null, LocalThinkingClient? policyClient = null)
+        Func<ReceiverClient>? createReceiver = null, LocalThinkingClient? policyClient = null, bool enableThinking = false)
     {
         this.gameMode = gameMode;
         this.gamePath = gamePath;
@@ -826,7 +826,9 @@ public partial class MainWindow : Window
         gameTextReviewPreference = IOPath.Combine(root, "game-text-review.json");
         gameTextReview = new(gameTextReader, new LocalThinkingClient());
         thinkingClient = policyClient ?? new LocalThinkingClient();
+        thinkingEnabled = enableThinking;
         InitializeComponent();
+        ThinkingButton.Visibility = thinkingEnabled ? Visibility.Visible : Visibility.Collapsed;
         InitializeGameText();
         InitializeGameTextReview();
         OpsRandomizeAfterLabelCheck.IsChecked = playerOpsPreferences.LoadRandomizeAfterLabel();
@@ -941,6 +943,7 @@ public partial class MainWindow : Window
         gameControls.BotInputSent += ObserveBotInputSent;
         Loaded += async (_, _) =>
         {
+            StartThinkingPreload();
             atlasOperationInProgress = true;
             AtlasManager.IsEnabled = false;
             try
@@ -994,6 +997,7 @@ public partial class MainWindow : Window
 
     private async Task PrepareShutdownAsync()
     {
+        thinkingPreloadCancellation?.Cancel();
         ResetBotClipPreview();
         if (deletingBotClip)
         {
@@ -1029,6 +1033,7 @@ public partial class MainWindow : Window
             if (gameTextTask is { } reading) await reading;
             if (gameTextReviewTask is { } proofreading) await proofreading;
             if (thinkingQuestionTask is { } answer) await answer;
+            if (thinkingPreloadTask is { } preload) await preload;
             gameTextRecognition.Dispose();
             await botEvaluationWrites;
             if (replayUiFinished is { } replayUi) await replayUi.Task;
@@ -1460,6 +1465,11 @@ public partial class MainWindow : Window
             return true;
         }
         var showingSettings = SettingsOverlay.Visibility == Visibility.Visible;
+        if (key == Key.T && modifiers == ModifierKeys.None && !showingSettings && thinkingEnabled)
+        {
+            if (!isRepeat) OpenThinkingInspector();
+            return true;
+        }
         if (key == Key.B && modifiers == ModifierKeys.None && !showingSettings && workspace is "Gameplay" or "Hacker")
         {
             if (!isRepeat) _ = ToggleBotPlaybackAsync();
@@ -3440,7 +3450,7 @@ public partial class MainWindow : Window
         if (workspace == "Gameplay" && admission.AdmitsTracking && tracked.RoomAllowsAtlasWrite
             && atlasPathState != AtlasPathFrameState.Hidden && receiverTelemetry?.AtlasGameplayActive != false
             && recognition.GameplayEnabled && (Volatile.Read(ref atlasPathsEnabled)
-                || gameMode == GameRuntimeMode.Normal && Volatile.Read(ref thinkingEnabled)))
+                || gameMode == GameRuntimeMode.Normal && thinkingEnabled))
         {
             var pathCamera = visualObservation.GroundVerified ? groundHypotheses.CameraPosition : tracked.MeasuredSceneryCamera;
             var registeredPath = worldPlacement is { IsPlaced: true } placement

@@ -86,9 +86,11 @@ shows numbered passages, derived notes with citations, and the current
 playthrough goal. Raw OCR remains in the log and corrections and goals stay
 with their save.
 
-Open **Thinking** from the dashboard and enable it to inspect an Ollama
-decision. The inspector shows the sampled frame, the exact model messages
-and schema, the offered targets, and the reply. It keeps the model's image
+Choose **Enable Thinking** in the launch chooser or pass `--enable-thinking`
+to load the local Ollama model at startup. Open **Thinking** from the dashboard
+or press **T** to inspect an Ollama decision. The inspector shows the sampled
+frame, the exact model messages and schema, the offered targets, and the reply.
+It keeps the model's image
 available when a newer frame appears. A scored offer can drive a short
 maneuver when automatic policies are enabled and Modded Gameplay or Hacker
 has focus. Both workspaces use the shared registered routes and frame-matched

@@ -67,13 +67,13 @@ internal static class BotDesktopEvaluationTests
         var session = Guid.NewGuid();
         var states = Channel.CreateUnbounded<ReceiverInputSnapshot>();
         var peer = ServeAsync(server, states.Writer, token, skills: true);
-        var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
+        var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port),
+            enableThinking: true);
         try
         {
             Field("recentCaptureGeneration").SetValue(window, Generation);
             Field("workspace").SetValue(window, "Hacker");
             Field("recognizedMenuContext").SetValue(window, "game");
-            Field("thinkingEnabled").SetValue(window, true);
             Field("thinkingControlAvailable").SetValue(window, true);
             var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
             bridge.Start();

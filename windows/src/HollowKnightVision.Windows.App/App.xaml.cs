@@ -28,17 +28,20 @@ public partial class App : Application
                 options.GamePath,
                 runningExecutables);
             var mode = options.Mode;
+            var thinkingEnabled = options.ThinkingEnabled;
             if (GameRuntimeModeLaunchPolicy.RequiresChoice(mode))
             {
                 var chooser = new GameRuntimeModeWindow(
                     normalExecutable is not null,
-                    moddedExecutable is not null);
+                    moddedExecutable is not null,
+                    thinkingEnabled);
                 if (chooser.ShowDialog() != true || chooser.Selection is null)
                 {
                     Shutdown(0);
                     return;
                 }
                 mode = chooser.Selection.Value;
+                thinkingEnabled = chooser.ThinkingEnabled;
             }
             var selectedMode = mode
                 ?? throw new InvalidOperationException("A Hollow Knight mode was not selected.");
@@ -50,7 +53,7 @@ public partial class App : Application
                 throw new FileNotFoundException(
                     $"A compatible {selectedMode} Hollow Knight installation was not found.");
             }
-            var window = new MainWindow(selectedMode, selectedExecutable);
+            var window = new MainWindow(selectedMode, selectedExecutable, thinkingEnabled);
             MainWindow = window;
             ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose;
             window.Show();

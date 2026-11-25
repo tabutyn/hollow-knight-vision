@@ -4,7 +4,7 @@ using HollowKnightVision.Windows.Core;
 
 namespace HollowKnightVision.Windows.App;
 
-internal sealed record ThinkingOptions(bool Enabled, bool Automatic, LocalThinkingModel Model, bool SeparateLlama);
+internal sealed record ThinkingOptions(bool Automatic, LocalThinkingModel Model, bool SeparateLlama);
 internal sealed record ThinkingCandidateRow(string Id, string Policy, string Target, int? Score);
 
 public partial class ThinkingWindow : Window
@@ -25,7 +25,6 @@ public partial class ThinkingWindow : Window
         IReadOnlyList<ThinkingCandidateRow> candidates, string reply, string? handoff)
     {
         updating = true;
-        EnabledCheck.IsChecked = options.Enabled;
         AutomaticCheck.IsChecked = options.Automatic;
         CompatibilityCheck.IsChecked = options.SeparateLlama;
         ModelCombo.SelectedItem = options.Model;
@@ -43,8 +42,7 @@ public partial class ThinkingWindow : Window
     private void OptionsChanged(object sender, RoutedEventArgs e)
     {
         if (updating || !IsLoaded || ModelCombo.SelectedItem is not LocalThinkingModel model) return;
-        changeOptions(new(EnabledCheck.IsChecked == true, AutomaticCheck.IsChecked == true,
-            model, CompatibilityCheck.IsChecked == true));
+        changeOptions(new(AutomaticCheck.IsChecked == true, model, CompatibilityCheck.IsChecked == true));
     }
 
     private void OpenLogClicked(object sender, RoutedEventArgs e) => openLog();

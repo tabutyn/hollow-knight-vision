@@ -37,7 +37,7 @@ public partial class MainWindow
         int? renderedFrame, GameplayPathView? paths, bool admitted, InputButtons? input, double blockage)
     {
         thinkingAbilityFrame = null;
-        if (!Volatile.Read(ref thinkingEnabled)) return false;
+        if (!thinkingEnabled) return false;
         var domain = workspace == "Hacker" ? BotCaptureDomain.Hacker : BotCaptureDomain.Gameplay;
         if (receiver is not null) thinkingReceiverSession = receiver.SessionId;
         var gameplay = admitted && menu is not { IsMatch: true };
