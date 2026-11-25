@@ -41,9 +41,13 @@ public sealed class GroundCudaPatchMatcher : IDisposable
     private Sample[] hostSamples = [];
     private Score[] hostOutput = [];
     private long dispatchCount;
+    private long sceneDispatchCount;
+    private ScenePatchAccelerator? sceneScorer;
     public string? DeviceName { get; private set; }
     public string? Failure { get; private set; }
+    internal string? SceneFailure { get; private set; }
     public long DispatchCount => Interlocked.Read(ref dispatchCount);
+    internal long SceneDispatchCount => Interlocked.Read(ref sceneDispatchCount);
     public bool Available => Volatile.Read(ref accelerator) is not null;
 
     public GroundCudaPatchMatcher()
@@ -92,6 +96,30 @@ public sealed class GroundCudaPatchMatcher : IDisposable
             Host(ref hostCandidates, candidates);
             Host(ref hostSamples, checked(sources * candidates));
             Host(ref hostOutput, candidates);
+        }
+    }
+
+    internal bool TryScoreScene(CalibratedSceneMotionTracker.Grid source, CalibratedSceneMotionTracker.Grid target,
+        IReadOnlyList<AtlasPoint> points, ScenePatchAccelerator.Search search, Span<double> scores)
+    {
+        lock (gate)
+        {
+            if (accelerator is null || SceneFailure is not null) return false;
+            try
+            {
+                sceneScorer ??= new(accelerator);
+                sceneScorer.Score(source, target, points, search, scores);
+                Interlocked.Increment(ref sceneDispatchCount);
+                return true;
+            }
+            catch (Exception error)
+            {
+                SceneFailure = error.Message;
+                try { sceneScorer?.Dispose(); }
+                catch (Exception) { }
+                sceneScorer = null;
+                return false;
+            }
         }
     }
 
@@ -348,13 +376,14 @@ public sealed class GroundCudaPatchMatcher : IDisposable
         lock (gate)
         {
             // A lost device must not turn cleanup into a second fatal exception.
-            IDisposable?[] resources = [lumaBuffer, sourcePixelBuffer, sourceBuffer,
+            IDisposable?[] resources = [sceneScorer, lumaBuffer, sourcePixelBuffer, sourceBuffer,
                 candidateBuffer, sampleBuffer, outputBuffer, rowMomentBuffer, patchMomentBuffer, accelerator, context];
             lumaBuffer = sourcePixelBuffer = null;
             sourceBuffer = null; candidateBuffer = null; sampleBuffer = null; outputBuffer = null;
             accelerator = null; context = null;
             kernel = null; rowKernel = null; momentKernel = null;
             rowMomentBuffer = null; patchMomentBuffer = null;
+            sceneScorer = null;
             hostSourcePixels = []; hostSources = []; hostCandidates = []; hostSamples = []; hostOutput = [];
             foreach (var resource in resources)
             {
