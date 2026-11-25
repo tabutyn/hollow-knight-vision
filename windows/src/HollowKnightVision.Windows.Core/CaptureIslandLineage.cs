@@ -22,9 +22,7 @@ internal sealed class CaptureIslandLineage
         long referenceKey = 0;
         var hasEarlierReference = !discontinuity && referenceTimestamp is { } reference
             && reference < timestamp && TryTimestampKey(reference, out referenceKey);
-        if (hasEarlierReference && (references.TryGetValue(referenceKey, out var owner)
-            || references.TryGetValue(referenceKey - 1, out owner)
-            || references.TryGetValue(referenceKey + 1, out owner)))
+        if (hasEarlierReference && OwnerAt(referenceKey) is { } owner)
         {
             Record(current, owner);
             return owner;
@@ -37,6 +35,15 @@ internal sealed class CaptureIslandLineage
         if (hasEarlierReference) Record(referenceKey, lineage);
         return lineage;
     }
+
+    internal long? MeasuredOwner(long generation, string room, double timestamp) =>
+        lastCapture is { } last && last.Generation == generation && last.Room == room
+        && TryTimestampKey(timestamp, out var reference) && reference < last.Timestamp
+            ? OwnerAt(reference) : null;
+
+    private long? OwnerAt(long reference) =>
+        references.TryGetValue(reference, out var owner) || references.TryGetValue(reference - 1, out owner)
+            || references.TryGetValue(reference + 1, out owner) ? owner : null;
 
     internal void Reset()
     {

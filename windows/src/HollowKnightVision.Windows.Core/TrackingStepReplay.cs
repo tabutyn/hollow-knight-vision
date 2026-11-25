@@ -2,12 +2,17 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace HollowKnightVision.Windows.Core;
 
 // Truth is deliberately outside the input accepted by the tracking algorithm.
 public sealed record TrackingStepInput(BgraFrame Frame, double Timestamp, string Scene,
-    PixelRect[] GroundExclusions, StencilRect[] MotionExclusions, PixelRect? Knight, bool Admitted);
+    PixelRect[] GroundExclusions, StencilRect[] MotionExclusions, PixelRect? Knight, bool Admitted)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public StencilRect? MeasuredKnight { get; init; }
+}
 public sealed record TrackingStepEvidence(TrackingStepInput Input, int GameFrame, AtlasPoint Truth);
 public sealed record TrackingStepScore(int Frame, int GameFrame, double ErrorPixels,
     double ProcessingMilliseconds, string PoseSource, AtlasPoint Estimated, TrackingStepProfile? Profile = null);
@@ -70,7 +75,8 @@ public sealed class TrackingStepProcessor
         var motionMs = Stopwatch.GetElapsedTime(timing).TotalMilliseconds;
         timing = Stopwatch.GetTimestamp();
         var result = visual.ObserveGroundAnchored(frame, movement,
-            analysis.SourceLuma!, lines, exclusions, committed, input.Knight, ground, input.Timestamp);
+            analysis.SourceLuma!, lines, exclusions, committed, input.Knight, ground, input.Timestamp,
+            measuredKnight: input.MeasuredKnight);
         var visualMs = Stopwatch.GetElapsedTime(timing).TotalMilliseconds;
         if (WarmsFeatureRecovery)
             ground.WarmFeatureRecovery(analysis.SourceLuma!, frame.Width, frame.Height, lines, exclusions);
@@ -175,7 +181,7 @@ public static class TrackingStepWarmup
                 }
                 var moved = new BgraFrame(frame.Width, frame.Height, frame.Stride, pixels, i + 1,
                     DateTimeOffset.UnixEpoch.AddSeconds(i / 30.0));
-                _ = throwaway.Process(seed with { Frame = moved, Timestamp = i / 30.0, Admitted = true });
+                _ = throwaway.Process(seed with { Frame = moved, Timestamp = i / 30.0, Admitted = true, MeasuredKnight = null });
             }
             var textureWarmup = new GroundCameraSolver(matcherBackend: GroundComputeBackend.Cuda,
                 maximumLocalSearchRadius: 192, broadSearchEveryFrame: true);

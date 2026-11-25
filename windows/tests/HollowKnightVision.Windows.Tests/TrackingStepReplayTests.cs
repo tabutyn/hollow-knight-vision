@@ -141,7 +141,12 @@ internal static class TrackingStepReplayTests
         {
             var store=new TrackingStepStore(root);
             var cp=JsonSerializer.Deserialize<RecordedGameCheckpoint>("{\"SceneName\":\"room\"}")!;
-            var m=store.Initialize("source","conditions",cp,[Evidence(0)]);
+            var seed = Evidence(0);
+            var measuredKnight = new StencilRect(25, 14, 4, 7);
+            seed = seed with { Input = seed.Input with { MeasuredKnight = measuredKnight } };
+            var m=store.Initialize("source","conditions",cp,[seed]);
+            Check(store.ReadEvidence(m.SeedFile, m.SeedSha256).Single().Input.MeasuredKnight == measuredKnight,
+                "The journal did not retain the capture-matched Knight used by the fall estimator.");
             var restored=store.Rehydrate(m);
             Check(restored.Alignment==new AtlasPoint(0,0),"Initial alignment incorrect.");
             var bad=Evidence(1,9);

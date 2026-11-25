@@ -99,7 +99,7 @@ public sealed class BotVisualGymObservationSource
                 room = ObserveRoom(pose, verified);
                 return room.RoomID == activeRoom && !room.IsTransitioning && !admitted.Transition.ResumedAfterTransition
                     ? room.CoarsePlaceMatch : null;
-            });
+            }, measuredKnight: masks.ObservedPlayerBounds);
         var placement = observed.GroundVerified ? observed.GroundTracking.CameraPosition : null;
         var roomState = room!;
         if (roomState.IsTransitioning || admitted.Transition.ResumedAfterTransition && activeRoom == roomState.RoomID)

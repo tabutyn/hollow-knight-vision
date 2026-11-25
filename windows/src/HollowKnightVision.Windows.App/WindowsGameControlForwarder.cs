@@ -214,6 +214,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                 floorlessSelectionSource: floorless?.SelectionName,
                 sceneMotion: floorless?.Scene, sceneMotionMilliseconds: sceneMotionMilliseconds,
                 recoveredAtlasReferenceTimestamp: recoveredAtlasReferenceTimestamp,
+                fallPrediction: floorless?.FallPrediction,
                 publishedCameraPosition: publishedCameraPosition,
                 poseSource: poseSource,
                 motionBridgeConfidence: motionBridgeConfidence,

@@ -64,6 +64,9 @@ public sealed record RecordedTrackingSample
     public double? SceneMotionResidualY { get; init; }
     public double? SceneMotionReferenceTimestamp { get; init; }
     public double? SceneMotionMilliseconds { get; init; }
+    public double? FallPredictionMinimumY { get; init; }
+    public double? FallPredictionMaximumY { get; init; }
+    public double? FallPredictionAge { get; init; }
 }
 
 public sealed record RecordedLoopClosureEvent(
@@ -358,6 +361,7 @@ public sealed class InputPathRecorder
         metadata["recorder"] = "HollowKnightVision";
         metadata["groundRelocalization"] = "floorless-background-search-continuity-v1";
         metadata["lowResolutionMotionBridge"] = "tentative-transition-handoff-v14";
+        metadata["fallPrior"] = "separate-oct30-player-calibration-visible-knight-80ms-v1";
         metadata["lowResolutionFrameTrace"] = "64x36-20hz-measured-ground-reliability-v3";
         metadata["pathPlaybackPreparation"] = "none";
         metadata.TryAdd("captureWidth", FrameGeometry.ReferenceWidth.ToString(CultureInfo.InvariantCulture));
@@ -446,7 +450,7 @@ public sealed class InputPathRecorder
         VisualRoomDirection? floorlessExpectedDirection = null,
         string? floorlessSelectionSource = null, double? observedAt = null,
         CalibratedSceneMotionEvidence? sceneMotion = null, double? sceneMotionMilliseconds = null,
-        double? recoveredAtlasReferenceTimestamp = null)
+        double? recoveredAtlasReferenceTimestamp = null, VisualFallPrediction? fallPrediction = null)
     {
         ArgumentNullException.ThrowIfNull(result);
         lock (gate)
@@ -487,7 +491,10 @@ public sealed class InputPathRecorder
                 SceneMotionMeasuredX = sceneMotion?.HorizontalMeasured, SceneMotionMeasuredY = sceneMotion?.VerticalMeasured,
                 SceneMotionResidualX = sceneMotion?.ResidualX, SceneMotionResidualY = sceneMotion?.ResidualY,
                 SceneMotionReferenceTimestamp = sceneMotion?.ReferenceTimestamp,
-                SceneMotionMilliseconds = sceneMotionMilliseconds
+                SceneMotionMilliseconds = sceneMotionMilliseconds,
+                FallPredictionMinimumY = fallPrediction?.MinimumY,
+                FallPredictionMaximumY = fallPrediction?.MaximumY,
+                FallPredictionAge = fallPrediction?.Age
             });
             if (current.LowResolutionFrameIndices.TryGetValue(captureTimestamp, out var index))
             {
