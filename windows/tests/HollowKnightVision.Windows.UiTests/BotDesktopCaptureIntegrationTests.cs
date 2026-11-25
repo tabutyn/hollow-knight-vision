@@ -393,6 +393,13 @@ internal static class BotDesktopCaptureIntegrationTests
     private static void VerifyGameplayAdmission(MainWindow window, BotCaptureSession capture, BgraFrame hudFrame)
     {
         var pixels = FrameWithScenery(hudFrame);
+        var recognizer = (WindowsMenuStencilRecognizer)Field("menuStencilRecognizer").GetValue(window)!;
+        var firstFrame = new BgraFrame(hudFrame.Width, hudFrame.Height, hudFrame.Stride, pixels, 0,
+            DateTimeOffset.UnixEpoch.AddSeconds(1));
+        var initial = recognizer.Analyze(firstFrame, false,
+            () => [new ObjectDetection("game.playable-knight", new(.48, .62, .04, .16), .95f)]);
+        Check(initial.HasFreshGameplayEvidence, "The captured HUD and the fixture's Knight must establish Gameplay.");
+
         var admission = new GameplayFrameAdmission();
         var tracking = (GameplayTrackingPipeline)Method("CreateLiveTrackingPipeline").Invoke(window, null)!;
         for (var index = 1; index <= 6; index++)
@@ -405,7 +412,7 @@ internal static class BotDesktopCaptureIntegrationTests
             ]);
             if (ReferenceEquals(Field("botRouteOwner").GetValue(window), capture)) return;
         }
-        throw new InvalidOperationException("A game frame with its captured HUD did not reach the desktop bot capture path.");
+        throw new InvalidOperationException("Established Gameplay did not reach the desktop bot capture path.");
     }
 
     private static byte[] FrameWithScenery(BgraFrame hudFrame)
