@@ -348,6 +348,8 @@ internal sealed class WindowsLiveWorldPipeline
                     if (request.MonotonicTimestamp <= latest.Timestamp) return Discard("stale world timestamp");
                 }
             }
+            if (request.WorldEvidence is { } captured && captured.CaptureTimestamp != request.MonotonicTimestamp)
+                return Discard("ground evidence does not match capture timestamp");
             int requestedRoomId;
             try
             {

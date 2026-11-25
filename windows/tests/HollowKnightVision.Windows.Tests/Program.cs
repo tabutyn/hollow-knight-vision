@@ -549,6 +549,8 @@ var tests = new List<(string Name, Action Run)>
     ("imported Atlas holds identical scenery shared by different rooms", NativeAtlasImportTests.TestImportedAtlasRejectsIdenticalSceneryAcrossRooms),
     ("delayed frames leave an in-progress saved-room match intact", NativeAtlasImportTests.TestLateFramesCannotInterruptSavedRoomRecovery),
     ("Atlas frame order survives throttled writes and rollback", NativeAtlasImportTests.TestAtlasOrderingSurvivesThrottlingAndRollback),
+    ("desktop Atlas rejects terrain evidence from a different capture", NativeAtlasImportTests.TestAtlasRejectsGroundEvidenceFromAnotherCapture),
+    ("Game Play Gym rejects terrain evidence from a different capture", NativeAtlasImportTests.TestGymAtlasRejectsGroundEvidenceFromAnotherCapture),
     ("a confirmed doorway extends a restored Atlas without overwriting old rooms", NativeAtlasImportTests.TestImportedAtlasExtendsThroughAConfirmedDoorway),
     ("a tentative doorway match prevents duplication of a saved room", NativeAtlasImportTests.TestImportedAtlasKeepsSearchingForAKnownDoorwayArrival),
     ("measured walks retain ground beneath a hidden edge in the saved Atlas", NativeAtlasImportTests.TestMeasuredWalkSavesFloorUnderAHiddenEdge),

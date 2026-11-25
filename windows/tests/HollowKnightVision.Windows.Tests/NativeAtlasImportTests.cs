@@ -334,6 +334,76 @@ internal static class NativeAtlasImportTests
         finally { root.Delete(recursive: true); }
     }
 
+    internal static void TestAtlasRejectsGroundEvidenceFromAnotherCapture()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-mismatched-ground-capture-");
+        try
+        {
+            var stages = new List<string>();
+            var pipeline = new WindowsLiveWorldPipeline(root.FullName, transactionObserver: stages.Add);
+            var first = FloorFrame(1, 71, true, 135, false, false);
+            var baseline = pipeline.Process(first);
+            Check(baseline.AllowsAtlasComposition && baseline.CommittedGraph?.Observations.Count == 1,
+                "the fixture must begin with a committed floor image");
+            var stagesBefore = stages.Count;
+
+            var next = FloorFrame(2, 71, true, 139, false, false) with { Timestamp = 1_700_000_000 };
+            foreach (var time in new[] { first.MonotonicTimestamp, next.MonotonicTimestamp + .1, double.NaN })
+            {
+                var unrelated = next with
+                {
+                    WorldEvidence = next.WorldEvidence! with { CaptureTimestamp = time }
+                };
+                CheckDiscarded(pipeline.Process(unrelated), "ground evidence does not match capture timestamp",
+                    "a newer image must not inherit older, future or invalid terrain evidence");
+            }
+            var store = new LiveWorldSessionStore(root.FullName);
+            var rejected = store.Load().Snapshot;
+            Check(rejected.MapRevision == baseline.CommittedGraph!.MapRevision && rejected.Observations.Count == 1
+                && stages.Count == stagesBefore,
+                "mismatched terrain must not be written or advance Atlas publication");
+
+            var accepted = pipeline.Process(next);
+            var captured = store.Load().Snapshot.Observations[^1];
+            Check(accepted.AllowsAtlasComposition && accepted.CommittedGraph?.Observations.Count == 2
+                && captured.CaptureTimestamp == next.MonotonicTimestamp
+                && captured.GroundGeometry?.Lines.SequenceEqual(next.WorldEvidence!.GroundGeometry!.Lines) == true
+                && captured.ObservedFloorCandidates?.Lines.SequenceEqual(next.WorldEvidence.FloorCandidates!.Lines) == true,
+                "the same frame ID can retry with exact observed geometry and floor candidates");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    internal static void TestGymAtlasRejectsGroundEvidenceFromAnotherCapture()
+    {
+        var atlas = new BotGymAtlasCoverage();
+        var tracking = GroundHypothesisTrackingResult.Empty with
+        {
+            PoseVerified = true, HasConfirmedGround = true, LocalTextureSupport = 8
+        };
+        atlas.EnterRoom(0);
+        var first = FloorFrame(1, 71, true, 135, false, false);
+        atlas.Observe(first.Frame, default(AtlasPoint), first.MonotonicTimestamp, [], default, tracking,
+            admitsPlacement: true, captureEvidence: first.WorldEvidence);
+        var baseline = atlas.Snapshot;
+        Check(atlas.HasPlacedRoom && baseline.Observations.Count == 1, "the fixture must begin in a placed room");
+
+        var next = FloorFrame(2, 71, true, 139, false, false);
+        atlas.Observe(next.Frame, new AtlasPoint(5, 0), next.MonotonicTimestamp, [], default,
+            tracking with { GlobalCorrection = new(8, 0) }, admitsPlacement: true,
+            captureEvidence: first.WorldEvidence);
+        Check(ReferenceEquals(baseline, atlas.Snapshot) && !atlas.PlacementPending,
+            "mismatched ground evidence must not change Gym placement or its graph");
+
+        atlas.Observe(next.Frame, new AtlasPoint(5, 0), next.MonotonicTimestamp, [], default, tracking,
+            admitsPlacement: true, captureEvidence: next.WorldEvidence);
+        var accepted = atlas.Snapshot.Observations[^1];
+        Check(atlas.Snapshot.Observations.Count == 2
+            && accepted.CaptureTimestamp == next.MonotonicTimestamp
+            && accepted.GroundGeometry?.Lines.SequenceEqual(next.WorldEvidence!.GroundGeometry!.Lines) == true,
+            "Gym must accept a retry with the exact frame evidence");
+    }
+
     internal static void TestReopenedAtlasRecoversFromFloorWithoutNarrowLandmarks()
     {
         foreach (var visual in new[] { true, false })
