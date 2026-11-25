@@ -16,6 +16,7 @@ public sealed record LiveWorldCaptureEvidence(
         double timestamp,
         int width,
         int height,
+        double solveWidth,
         IReadOnlyList<DetectedFloorLine> detections,
         IReadOnlyList<GroundLinePresenceReview> reviews,
         PixelRect? knight,
@@ -23,6 +24,9 @@ public sealed record LiveWorldCaptureEvidence(
         CleanFloorLine? supportedFloor = null,
         StencilRect? observedPlayerBounds = null)
     {
+        if (width <= 0 || height <= 0 || !double.IsFinite(solveWidth) || solveWidth <= 0)
+            return new(timestamp);
+        var scale = solveWidth / width;
         var imageSpan = new PixelSpan(0, width - 1);
         var candidates = detections.SelectMany((floor, index) => Capture(floor, index, imageSpan))
             .Take(128).ToArray();
@@ -37,9 +41,9 @@ public sealed record LiveWorldCaptureEvidence(
             var right = Math.Min(floor.XSpan.EndInclusive, width - 1);
             if (floor.XSpan.Start < right)
             {
-                var y = height - floor.Row;
+                var y = (height - floor.Row) * scale;
                 observed.Add(new LiveGroundLineEvidence(long.MaxValue,
-                    new(floor.XSpan.Start, y), new(right + 1, y)));
+                    new(floor.XSpan.Start * scale, y), new((right + 1) * scale, y)));
             }
         }
         WorldRect? player = null;
@@ -50,12 +54,14 @@ public sealed record LiveWorldCaptureEvidence(
             var bottom = measuredFoot is { } observedFoot && observedFoot.X >= bounds.X
                 && observedFoot.X <= bounds.Right && observedFoot.Y > bounds.Y && observedFoot.Y <= height
                 ? observedFoot.Y : bounds.Bottom;
-            player = new WorldRect(new(bounds.X, height - bottom), new(bounds.Width, bottom - bounds.Y));
+            player = new WorldRect(new(bounds.X * scale, (height - bottom) * scale),
+                new(bounds.Width * scale, (bottom - bounds.Y) * scale));
         }
         else if (knight is { Width: > 0, Height: > 0 } box && measuredFoot is { } foot
             && foot.X >= box.X && foot.X <= box.Right && foot.Y > box.Y && foot.Y <= height)
         {
-            player = new WorldRect(new(box.X, height - foot.Y), new(box.Width, foot.Y - box.Y));
+            player = new WorldRect(new(box.X * scale, (height - foot.Y) * scale),
+                new(box.Width * scale, (foot.Y - box.Y) * scale));
         }
 
         return new LiveWorldCaptureEvidence(timestamp,
@@ -65,13 +71,13 @@ public sealed record LiveWorldCaptureEvidence(
         IEnumerable<LiveGroundLineEvidence> Capture(DetectedFloorLine floor, int segment, PixelSpan range)
         {
             if (floor.Row >= height) yield break;
-            var y = height - floor.Row;
+            var y = (height - floor.Row) * scale;
             foreach (var span in floor.EvidenceSpans)
             {
                 var start = Math.Max(span.Start, range.Start);
                 var end = Math.Min(Math.Min(span.EndInclusive, range.EndInclusive), width - 1);
                 if (end - start >= 16)
-                    yield return new LiveGroundLineEvidence(segment, new(start, y), new(end + 1, y));
+                    yield return new LiveGroundLineEvidence(segment, new(start * scale, y), new((end + 1) * scale, y));
             }
         }
     }

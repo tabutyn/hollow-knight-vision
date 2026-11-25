@@ -242,7 +242,8 @@ internal static class CalibratedSceneMotionTests
         var signal = new FrameSignalProfile(64 * 36, 64 * 36, 64 * 36, 100, stationaryScene);
         var identity = new LowResolutionTranslationDiagnostic(null, null, null, ExactIdentity: true);
         GameplayTrackedFrame Observe(int index, int dx, int dy, bool floorVisible, bool hasCommitted,
-            bool resumed = false, InputButtons? input = null, LowResolutionRoomMotionEstimate? coarse = null)
+            bool resumed = false, InputButtons? input = null, LowResolutionRoomMotionEstimate? coarse = null,
+            IReadOnlyList<DetectedFloorLine>? semanticFloors = null)
         {
             var time = GroundSceneryCaptureTime(index);
             var frame = new BgraFrame(width, height, width * 4, new byte[width * height * 4],
@@ -270,7 +271,7 @@ internal static class CalibratedSceneMotionTests
             var edges = new GroundEdgeAnalysis(width, height, edgePixels, luma);
             var comparison = new GroundComparisonAnalysis(width, height, edgePixels, luma);
             var theory = new GroundTheoryAnalysis(comparison, GroundTheoryTuning.Default, [], floors);
-            var prepared = new GameplayTrackingPreparation(new GameplayTerrainAnalysis(edges, theory, floors, floors),
+            var prepared = new GameplayTrackingPreparation(new GameplayTerrainAnalysis(edges, theory, semanticFloors ?? floors, floors),
                 identity, knight is { } actor ? [actor] : [], []);
             return pipeline.Track(frame, prepared, knight, new(true, !resumed, resumed, new(true, resumed)),
                 signal, time, 1, "entrance", hasCommitted, input, false, captureWorldEvidence: true, coarseMotion: coarse);
@@ -312,7 +313,8 @@ internal static class CalibratedSceneMotionTests
             var measured = Observe(24, 10, -15, true, hasCommitted).Observation;
             Check(measured.GroundVerified && measured.GroundTracking.LocalMatchedImageDisplacement is not null,
                 "Ground must measure the first camera step.");
-            var falling = Observe(25, 11, -17, false, hasCommitted);
+            var falling = Observe(25, 11, -17, false, hasCommitted,
+                semanticFloors: [new(230, new(96, 160), [new(96, 118), new(134, 160)])]);
             var motion = falling.Observation;
             Check(motion.Source == "calibrated-scene"
                 && motion.FloorlessEvidence?.Scene is { VerticalMeasured: true, HorizontalMeasured: true },
@@ -325,7 +327,10 @@ internal static class CalibratedSceneMotionTests
             Check(!motion.AllowsAtlasWrite && falling.AllowsAtlasWrite == hasCommitted
                 && falling.HasMeasuredSceneryContinuity == hasCommitted,
                 "Calibrated scenery may continue an existing Atlas and cannot bootstrap a new one.");
-            if (hasCommitted) CheckWorldPersistence(groundSeed, falling);
+            if (hasCommitted)
+                CheckWorldPersistence(groundSeed, falling, expectedCandidates:
+                    [new(0, new(96, 130), new(119, 130)), new(0, new(134, 130), new(161, 130))]);
+            else Check(falling.WorldEvidence is null, "Scenery without a placed Atlas must not publish floor observations.");
 
             pipeline.ResetMotionReference();
             visual.PauseGroundVerification();
@@ -366,7 +371,7 @@ internal static class CalibratedSceneMotionTests
     private static double GroundSceneryCaptureTime(int index) => index * .05;
 
     private static void CheckWorldPersistence(GameplayTrackedFrame seed, GameplayTrackedFrame continued,
-        int finalId = 25, bool expectWalked = false)
+        int finalId = 25, bool expectWalked = false, IReadOnlyList<LiveGroundLineEvidence>? expectedCandidates = null)
     {
         const int width = 640, height = 360;
         var path = Path.Combine(Path.GetTempPath(), $"hkv-calibrated-scene-world-{Guid.NewGuid():N}");
@@ -401,8 +406,11 @@ internal static class CalibratedSceneMotionTests
                 "Measured ground and scenery must share their owner through the captures skipped by persistence.");
             var last = saved.Observations[^1];
             Check(saved.Landmarks.Count == 0 && saved.Keyframes.All(frame => frame.ObservationId != last.Id)
-                && last.GroundGeometry is null && last.ObservedFloorCandidates is null,
-                "A scenery-only frame cannot provide ground landmarks or unconfirmed edges.");
+                && last.GroundGeometry is null, "Unconfirmed edges cannot provide ground landmarks or persistent ground.");
+            Check(expectedCandidates is { } expected
+                    ? last.ObservedFloorCandidates?.Lines.SequenceEqual(expected) == true
+                    : last.ObservedFloorCandidates is null,
+                "A measured scenery pose must retain the current floor spans for independent recovery, preserving the occluded gap.");
             Check((last.WalkedGround is { Count: > 0 }) == expectWalked
                 && LiveWorldWalkedGround.ProjectRoom(saved, last.RoomId).SequenceEqual(continued.WalkedGround),
                 "The reopened room must project the walked floor from the same measured image pose.");
