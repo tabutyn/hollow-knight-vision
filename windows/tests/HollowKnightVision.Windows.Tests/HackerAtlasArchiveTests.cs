@@ -457,23 +457,25 @@ internal static class HackerAtlasArchiveTests
         var active = Directory.CreateDirectory(Path.Combine(workspace.Root, "active")).FullName;
         VisionResetController.WritePersistedAtlasMetadata(active, new(0, DateTimeOffset.UtcNow, 32, 1));
         var adopted = VisionResetController.ActivateProfileAtlas(states, active, new(1, false), 32, 1,
-            prepareProfile: (profile, adopt) =>
+            prepareProfile: (previous, profile, adopt) =>
             {
-                Check(adopt && SaveProfileAtlas.Read(active) is null, "Legacy adoption must be staged before either active writer changes.");
+                Check(adopt && previous is null && SaveProfileAtlas.Read(active) is null,
+                    "Legacy adoption must be staged before either active writer changes.");
                 workspace.Archives.Write(profile, legacy);
             });
         Check(adopted.Replacement is null && SaveProfileAtlas.Read(active) == adopted.Profile,
             "Adoption should keep the previous Gameplay Atlas in place.");
         byte[] priorArchive = File.ReadAllBytes(Path.Combine(workspace.ArchiveRoot, $"{adopted.Profile.Id:N}.zip"));
         Throws<IOException>(() => VisionResetController.ActivateProfileAtlas(states, active, new(2, true), 32, 1,
-            prepareProfile: (_, _) => throw new IOException("Fixture Hacker archive unavailable.")));
+            prepareProfile: (_, _, _) => throw new IOException("Fixture Hacker archive unavailable.")));
         Check(SaveProfileAtlas.Read(active) == adopted.Profile
             && File.ReadAllBytes(Path.Combine(workspace.ArchiveRoot, $"{adopted.Profile.Id:N}.zip")).SequenceEqual(priorArchive),
             "A failed Hacker preflight must preserve the previously selected save in both writers.");
         var changed = VisionResetController.ActivateProfileAtlas(states, active, new(2, true), 32, 1,
-            prepareProfile: (profile, adopt) =>
+            prepareProfile: (previous, profile, adopt) =>
             {
-                Check(!adopt && workspace.Archives.Read(profile) is null, "A fresh profile needs an empty Hacker map.");
+                Check(!adopt && previous == adopted.Profile && workspace.Archives.Read(profile) is null,
+                    "A fresh profile needs an empty Hacker map and the stable departing owner.");
             });
         Check(changed.Profile.Slot == 2 && changed.Replacement?.ValidatedWorld.Metadata.RegistrationCount == 0
             && Read(workspace.Archives, adopted.Profile).Rooms.Count == 1,

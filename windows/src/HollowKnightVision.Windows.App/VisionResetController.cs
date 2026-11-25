@@ -53,7 +53,7 @@ internal static class VisionResetController
         int tileSize,
         double pixelsPerWorldUnit,
         Action<string>? activateWorld = null,
-        Action<SaveProfileAtlas, bool>? prepareProfile = null)
+        Action<SaveProfileAtlas?, SaveProfileAtlas, bool>? prepareProfile = null)
     {
         if (launch.Slot is < 1 or > 4) throw new ArgumentOutOfRangeException(nameof(launch));
         var active = ValidatedActiveAtlasPath(states, activeDirectory);
@@ -63,16 +63,16 @@ internal static class VisionResetController
         var profile = SaveProfileAtlas.Target(launch, previous, saved);
         if (previous == profile)
         {
-            prepareProfile?.Invoke(profile, false);
+            prepareProfile?.Invoke(previous, profile, false);
             return new(profile, null);
         }
         var restore = saved.FirstOrDefault(state => state.Profile == profile);
         var adoptUnassigned = restore is null && previous is null && !launch.IsNew
             && File.Exists(Path.Combine(active, "atlas.json"));
-        prepareProfile?.Invoke(profile, adoptUnassigned);
+        if (adoptUnassigned) _ = ReadPersistedAtlas(active);
+        prepareProfile?.Invoke(previous, profile, adoptUnassigned);
         if (adoptUnassigned)
         {
-            _ = ReadPersistedAtlas(active);
             profile.Write(active);
             return new(profile, null);
         }

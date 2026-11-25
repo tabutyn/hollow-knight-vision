@@ -27,6 +27,7 @@ internal static class AtlasWindowIntegrationTests
         try
         {
             VerifyWorkspaceOperations(temporary.FullName);
+            VerifyUnloadedHackerAutosaveSurvivesProfileSwitch(Path.Combine(temporary.FullName, "unloaded-profile"));
             VerifyRoomReset(Directory.CreateDirectory(Path.Combine(temporary.FullName, "room-reset")).FullName);
             VerifyRestoredPassageAlignment(Directory.CreateDirectory(Path.Combine(temporary.FullName, "passages")).FullName);
             VerifyGameplayWorldHandoff(Directory.CreateDirectory(Path.Combine(temporary.FullName, "handoff")).FullName);
@@ -36,6 +37,7 @@ internal static class AtlasWindowIntegrationTests
             temporary.Delete(recursive: true);
         }
         Console.WriteLine("PASS Atlas window saves, restores and deletes scoped snapshots and switches both playthroughs");
+        Console.WriteLine("PASS Profile switching adopts and archives unloaded Hacker autosaves from disk");
         Console.WriteLine("PASS Windows Reset Room handles local and game-focused R, protects capture, and clears both atlases only after confirmation");
         Console.WriteLine("PASS Windows Player Ops serializes requests, applies invincibility, and persists Label randomization");
         Console.WriteLine("PASS Hacker Atlas draws restored rooms at the measured passage elevation");
@@ -932,6 +934,65 @@ internal static class AtlasWindowIntegrationTests
         {
             SetField(window, "isClosing", true);
             Wait(InvokeTask(window, "PrepareShutdownAsync"));
+        }
+    }
+
+    private static void VerifyUnloadedHackerAutosaveSurvivesProfileSwitch(string root)
+    {
+        var activeWorld = Directory.CreateDirectory(Path.Combine(root, "atlas-v1", "active")).FullName;
+        var gameplayStates = new AtlasStateStore(Path.Combine(root, "atlas-v1", "states"));
+        var hackerStates = new HackerAtlasArchiveStore(Path.Combine(root, "hacker-atlas-v1"));
+        VisionResetController.WritePersistedAtlasMetadata(activeWorld, new(7, DateTimeOffset.UtcNow, 256, 1));
+        var legacy = SampleHackerArchive();
+        hackerStates.Write(null, legacy);
+
+        var adopted = SwitchFromDisk(2, occupied: [2]);
+        Check(adopted.Slot == 2 && VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7,
+            "Resuming an occupied save must preserve the legacy Game Play Atlas.");
+        CheckArchive(hackerStates.Read(adopted));
+        Check(gameplayStates.List().Count == 0 && hackerStates.ListStates().Count == 0,
+            "Adopting the legacy maps must keep them active without creating named backups.");
+
+        var fresh = SwitchFromDisk(4, occupied: [2]);
+        Check(fresh.Slot == 4 && VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 0
+            && hackerStates.Read(fresh) is null, "A fresh save must start with empty atlases.");
+        var saved = hackerStates.ListStates().Single();
+        Check(saved.Profile == adopted && saved.Name == "Atlas2", "A fresh save must archive the unloaded departing map under its owner.");
+        CheckArchive(hackerStates.LoadState(saved));
+        CheckArchive(hackerStates.Read(adopted));
+
+        SaveProfileAtlas SwitchFromDisk(int slot, int[] occupied)
+        {
+            var window = new MainWindow(GameRuntimeMode.Modded, gamePath: null, root: root, documents: root);
+            try
+            {
+                // Restore the visual writer while leaving the Hacker archive on disk.
+                Wait(InvokeTask(window, "InitializePersistentWorldAsync"));
+                var launch = ConfirmLaunch(window, slot, occupied);
+                Check((bool)Wait(InvokeTask(window, "ActivateGameplayProfileAtlasAsync", launch))!,
+                    "The paired Atlas switch with an unloaded Hacker archive failed.");
+                var profile = SaveProfileAtlas.Read(activeWorld)!;
+                Check(Equals(typeof(MainWindow).GetField("hackerArchiveProfile", InstanceMembers)!.GetValue(window), profile),
+                    "Both active writers must use the selected playthrough.");
+                return profile;
+            }
+            finally
+            {
+                SetField(window, "isClosing", true);
+                Wait(InvokeTask(window, "PrepareShutdownAsync"));
+            }
+        }
+
+        void CheckArchive(HackerAtlasArchive? archive)
+        {
+            Check(archive is not null && archive.CreatedAt == legacy.CreatedAt
+                && archive.RegistrationCount == legacy.RegistrationCount
+                && archive.RoomOffsets["Tutorial_01"] == legacy.RoomOffsets["Tutorial_01"],
+                "The unloaded archive must retain its registration history and room placement.");
+            var room = archive!.Rooms.Single();
+            Check(room.Id == legacy.Rooms.Single().Id && room.Tiles.Single().Image.Row(0)
+                .SequenceEqual(legacy.Rooms.Single().Tiles.Single().Image.Row(0)),
+                "The unloaded archive must retain its registered room pixels.");
         }
     }
 
