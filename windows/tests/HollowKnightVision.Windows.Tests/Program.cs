@@ -1098,6 +1098,8 @@ var tests = new List<(string Name, Action Run)>
     ("atlas parity legacy trash purge preserves active named states", AtlasStateStoreParityTests.TestPurgingLegacyTrashDoesNotTouchActiveOrNamedStates),
     ("atlas parity disk usage counts registered image storage", AtlasStateStoreParityTests.TestAtlasDiskUsageCountsRegisteredImageStorage),
     ("profile Atlas requires stable selected card and fresh Gameplay HUD", ProfileAtlasTests.TestRequiresStableProfileAndGameplay),
+    ("browsing profile cards activates the final empty slot only once", ProfileAtlasTests.TestBrowsingCreatesExactlyOneLaunchForTheLastSlot),
+    ("measured profile stencils lead to one Atlas launch after fresh HUD evidence", MenuCatalogTests.TestProfileStencilThroughGameplay),
     ("profile Atlas cancels on menu exit, capture reset and unconfirmed selection", ProfileAtlasTests.TestAbandonedSelectionsCannotSwitchAtlases),
     ("profile Atlas adopts, switches and restores real raster tiles", ProfileAtlasTests.TestProfileAtlasRoundTrip),
     ("profile Atlas keeps previous tiles when a saved profile is invalid or activation fails", ProfileAtlasTests.TestProfileAtlasRollback),

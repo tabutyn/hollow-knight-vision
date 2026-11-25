@@ -25,6 +25,8 @@
              Link="training/playing-policy-inputs.json" CopyToOutputDirectory="PreserveNewest" />
     <EmbeddedResource Include="../../../macos/Tests/HollowKnightVisionTests/compact-markings-cases.json"
                       LogicalName="compact-markings-cases.json" />
+    <EmbeddedResource Include="../../../macos/Tests/HollowKnightVisionTests/hud-stencil-cases.json;../../../macos/Tests/HollowKnightVisionTests/hud-stencil-reference.json"
+                      LogicalName="%(Filename)%(Extension)" />
     <EmbeddedResource Include="Fixtures/actor-calibration-*.onnx" LogicalName="%(Filename)%(Extension)" />
     <ProjectReference Include="../../src/HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
     <ProjectReference Include="../../src/HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj"

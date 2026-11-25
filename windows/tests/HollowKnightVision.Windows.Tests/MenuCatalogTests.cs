@@ -1,3 +1,4 @@
+using System.Text.Json;
 using HollowKnightVision.Windows.Core;
 using HollowKnightVision.Windows.App;
 using static HollowKnightVision.Windows.Core.MenuStencilCatalog;
@@ -190,6 +191,67 @@ internal static class MenuCatalogTests
         var changed = tracker.Observe(fixture.Images[twoRows.ImagePath], 1.0 / 30)!;
         Equal(2, changed.Anchors.Count(match => match.ClassIdentifier == clear));
         Check(changed.OccupiedProfileSlots.SequenceEqual([2, 4]), "The tracked pass must refresh occupancy.");
+    }
+
+    internal static void TestProfileStencilThroughGameplay()
+    {
+        var fixture = new Fixture();
+        (string Id, StencilRect Bounds)[] labels =
+        [
+            ("select-profile.heading", new(50, 10, 30, 8)),
+            ("select-profile.slot-1", new(50, 30, 30, 8)),
+            ("select-profile.slot-2", new(50, 50, 30, 8)),
+            ("select-profile.slot-3", new(50, 70, 30, 8)),
+            ("select-profile.slot-4", new(50, 90, 30, 8)),
+            ("shared.back", new(55, 105, 20, 8)),
+            ("select-profile.clear-save", new(118, 32, 16, 6))
+        ];
+        var first = fixture.Example("select-profile", WithSelection(labels, 1));
+        var fourth = fixture.Example("select-profile", WithSelection(labels, 4));
+        var catalog = fixture.Builder(Context("select-profile", labels)).Build([first], null);
+        var menu = new MenuStencilTracker(catalog);
+        var profile = new ProfileLaunchDetector();
+        foreach (var (time, slot, source) in
+            new[] { (1d, 1, first), (1.25, 1, first), (1.5, 4, fourth), (1.75, 4, fourth), (2d, 4, fourth) })
+        {
+            var result = menu.Observe(fixture.Images[source.ImagePath], time);
+            Check(result is { IsMatch: true, SelectedPairAccepted: true }
+                && result.SelectedOptionIdentifier == $"select-profile.slot-{slot}"
+                && result.CheckedProfileSlots.SequenceEqual([1, 2, 3, 4])
+                && result.OccupiedProfileSlots.SequenceEqual([1]),
+                $"The profile stencil must measure the selector and card occupancy at slot {slot}.");
+            Check(profile.Observe(result, false, time, 1) is null, "A visible profile menu cannot switch the Atlas.");
+        }
+        Check(profile.AwaitingGameplay && profile.Observe(null, false, 30, 1) is null,
+            "Gameplay evidence is required after the selected empty card fades.");
+
+        var assembly = typeof(MenuCatalogTests).Assembly;
+        using var reference = assembly.GetManifestResourceStream("hud-stencil-reference.json")!;
+        var template = JsonSerializer.Deserialize<HudStencilTemplate>(reference,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        using var samples = assembly.GetManifestResourceStream("hud-stencil-cases.json")!;
+        using var fixtures = JsonDocument.Parse(samples);
+        var sample = fixtures.RootElement.EnumerateArray()
+            .Single(fixture => fixture.GetProperty("id").GetString() == "992a0aa1-243b-4139-9ca9-a04da738dec4");
+        using var png = new MemoryStream(sample.GetProperty("hudPNG").GetBytesFromBase64());
+        var crop = BgraPngReader.Read(png);
+        var width = sample.GetProperty("width").GetInt32();
+        var height = sample.GetProperty("height").GetInt32();
+        var pixels = new byte[width * height * 4];
+        for (var row = 0; row < crop.Height; row++)
+            crop.Pixels.AsSpan(row * crop.Stride, crop.Width * 4).CopyTo(pixels.AsSpan(row * width * 4));
+        var gameplay = new BgraFrame(width, height, width * 4, pixels, 1, Now);
+        var hud = new HudStencilTracker(template);
+        ObjectDetection[] detections = [new("game.playable-knight", new(.5, .4, .05, .1), .9f)];
+        foreach (var time in new[] { 70d, 70.2, 70.4 })
+        {
+            var read = hud.Observe(gameplay, true, time, 1);
+            var recognized = LiveGameStatusResolver.Resolve(detections, hudStencil: read);
+            var freshGameplay = read is { EstablishesGameplay: true, HoldsHealthMask: false } && recognized?.IsGameplay == true;
+            Check(freshGameplay, "Fresh health stencils and a Knight detection must establish Gameplay.");
+            Equal(time == 70.2 ? new ProfileLaunch(4, true) : (ProfileLaunch?)null,
+                profile.Observe(null, freshGameplay, time, 1));
+        }
     }
 
     internal static void TestClearSaveMovesBetweenSlots()
