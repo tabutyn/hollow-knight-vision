@@ -32,7 +32,7 @@ public static class BotClipDeletion
         var clip = Path.Combine(library, BotCaptureSession.DirectoryName(selected.Id));
         EnsureOwnedEntry(clip, directory: true);
         var current = ReadManifest(clip);
-        if (current is not { Status: "completed", SchemaVersion: BotRecordingContract.SchemaVersion }
+        if (current is not { Status: "completed", SchemaVersion: 1 or BotRecordingContract.SchemaVersion }
             || current.Id != selected.Id || current.CreatedAt.ToUnixTimeSeconds() != selected.CreatedAt.ToUnixTimeSeconds()
             || current.ReplayId != selected.ReplayId || current.PairedClipId != selected.PairedClipId)
             throw new InvalidDataException("Only an unchanged, completed capture can be deleted.");

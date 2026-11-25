@@ -34,6 +34,23 @@ try {
   & $Python -B -m unittest discover -s $trainerRoot -p test_incremental_trainer.py
   if ($LASTEXITCODE -ne 0) { throw 'Shared trainer unit tests failed.' }
   $null = New-Item -ItemType Directory -Path $fixtureRoot
+  $blockadeFixture = Join-Path $fixtureRoot 'recorded-blockades'
+  & $Dotnet $tests --recorded-blockade-host-probe $NativeVerifier $blockadeFixture
+  if ($LASTEXITCODE -ne 0) { throw 'Native recorded blockade fixtures failed.' }
+  $blockadeValidation = @'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from hkv_bot_dataset import collect
+root = Path(sys.argv[2])
+for domain in ("visual", "hacker"):
+    _, report = collect(root / domain, compact=True, blockade_evidence=root / "sidecars")
+    assert not report["skipped"], report
+    assert report["sessions"][0]["blockadeExamples"] == 2, report
+print("PASS shared trainer imports native blockade observations from both legacy domains")
+'@
+  & $Python -B -c $blockadeValidation (Join-Path $repositoryRoot 'macos\BotPython') $blockadeFixture
+  if ($LASTEXITCODE -ne 0) { throw 'Shared training could not read native legacy blockade evidence.' }
   $dataset = & $Dotnet $tests --export-dataset-probe $fixtureRoot
   if ($LASTEXITCODE -ne 0) { throw 'Synthetic Windows export failed.' }
   $dataset = [IO.Path]::GetFullPath(($dataset | Out-String).Trim())

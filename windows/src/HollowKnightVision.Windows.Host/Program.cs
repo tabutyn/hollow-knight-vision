@@ -211,18 +211,30 @@ internal static class Program
                 return Task.FromResult(1);
             }
         }
-        if (arguments is ["--recover-bot-blockades", var capturePath])
+        if (arguments.FirstOrDefault() == "--recover-bot-blockades")
         {
+            var errors = standardError ?? Console.Error;
+            if (arguments is not [_, _] and not [_, _, "--register-crossed"])
+            {
+                errors.WriteLine("Expected --recover-bot-blockades CLIP [--register-crossed].");
+                return Task.FromResult(64);
+            }
             try
             {
-                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(
-                    BotBlockadeReplay.Recover(capturePath), WorldReplayJsonOptions));
+                var recovered = BotBlockadeReplay.Recover(arguments[1]);
+                if (arguments.Length == 3)
+                {
+                    var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "HollowKnightVision", "bot-v1");
+                    BotBlockadeReplay.WriteCrossed(recovered, root);
+                }
+                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(recovered, WorldReplayJsonOptions));
                 return Task.FromResult(0);
             }
             catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
-                or JsonException or InvalidOperationException or KeyNotFoundException)
+                or JsonException or ArgumentException or InvalidOperationException or KeyNotFoundException)
             {
-                (standardError ?? Console.Error).WriteLine(error.Message);
+                errors.WriteLine(error.Message);
                 return Task.FromResult(1);
             }
         }
@@ -842,6 +854,8 @@ internal static class Program
                                     Retain reported gaps and process the remaining images.
             --recover-bot-walls CLIP ARCHIVE
                                     Recover wall features from a clip's exact source frames and ground masks.
+            --recover-bot-blockades CLIP [--register-crossed]
+                                    Replay wall contacts and optionally store verified crossings for diagnostics.
             --inspect-atlas-road HACKER_ARCHIVE
                                     List authored floors and directed paths in the rooms of a saved Hacker Atlas.
             --probe                 Locate the game window without capturing pixels.

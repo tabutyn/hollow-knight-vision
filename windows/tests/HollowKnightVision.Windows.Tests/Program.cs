@@ -73,6 +73,13 @@ if (args is ["--inspect-atlas-road-host-probe", var atlasHost])
     return;
 }
 
+if (args is ["--recorded-blockade-host-probe", _] or ["--recorded-blockade-host-probe", _, _])
+{
+    BotBlockadeReplayTests.TestHostExecutable(args[1], args.Length == 3 ? args[2] : null);
+    Console.WriteLine("PASS installed Host recovers legacy blockade evidence in both camera domains.");
+    return;
+}
+
 if (args is ["--train-bot-probe", var installedVision])
 {
     await BotTrainingTests.TrainFromWindowsCaptures(installedVision);
@@ -108,6 +115,8 @@ var tests = new List<(string Name, Action Run)>
     ("Atlas wall contacts wait for shared placement and stay scoped to one visit", BotBlockadeTests.TestWallContactWaitsForVerifiedIslandAndScope),
     ("Atlas cadence binds an already measured wall push to its own island", BotBlockadeTests.TestMeasuredPushSurvivesAtlasAdmissionCadence),
     ("saved clips recover only causal legacy blockade evidence", BotBlockadeTests.TestLegacyReplayUsesOnlyPriorInputAndLeavesRecordedRowsIntact),
+    ("legacy visual replay projects wall contact through measured island placements", BotBlockadeReplayTests.TestVisualReplayProjectsContactsThroughMeasuredIslands),
+    ("legacy Hacker replay requires exact receiver frames and corroborated grounding", BotBlockadeReplayTests.TestHackerReplayUsesUniqueReceiverFrameAndGrounding),
     ("bot evaluations preserve source images, applied controls, and paired terrain outside training", BotEvaluationTests.TestBotEvaluationPreservesFramesControlsAndPairedAuditOutsideExpertData),
     ("empty and failed bot evaluations do not publish archives", BotEvaluationTests.TestEmptyAndFailedEvaluationsDoNotPublish),
     ("overloaded bot evaluations mark the source archive incomplete", BotEvaluationTests.TestEvaluationBackpressureMarksArchiveIncomplete),

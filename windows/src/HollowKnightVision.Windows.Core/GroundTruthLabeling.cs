@@ -172,14 +172,14 @@ public sealed record GroundTruthRoomProjection(
     [property: JsonPropertyName("roomID"), JsonRequired] Guid RoomId,
     [property: JsonRequired] double PixelsPerWorldUnitX,
     [property: JsonRequired] double PixelsPerWorldUnitY,
-    [property: JsonRequired, JsonConverter(typeof(GroundTruthLocalOriginConverter))] AtlasPoint LocalOrigin)
+    [property: JsonRequired, JsonConverter(typeof(SwiftPointConverter))] AtlasPoint LocalOrigin)
 {
     internal bool IsValid => double.IsFinite(PixelsPerWorldUnitX) && PixelsPerWorldUnitX > 0
         && double.IsFinite(PixelsPerWorldUnitY) && PixelsPerWorldUnitY > 0
         && double.IsFinite(LocalOrigin.X) && double.IsFinite(LocalOrigin.Y);
 }
 
-internal sealed class GroundTruthLocalOriginConverter : JsonConverter<AtlasPoint>
+internal sealed class SwiftPointConverter : JsonConverter<AtlasPoint>
 {
     public override AtlasPoint Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
@@ -188,7 +188,7 @@ internal sealed class GroundTruthLocalOriginConverter : JsonConverter<AtlasPoint
             || !reader.Read() || reader.TokenType != JsonTokenType.Number || !reader.TryGetDouble(out var x)
             || !reader.Read() || reader.TokenType != JsonTokenType.Number || !reader.TryGetDouble(out var y)
             || !reader.Read() || reader.TokenType != JsonTokenType.EndArray)
-            throw new JsonException("Invalid ground-truth room origin");
+            throw new JsonException("Invalid Swift point");
         return new(x, y);
     }
 
