@@ -48,6 +48,7 @@ internal static class BotDesktopEvaluationTests
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             foreach (var domain in new[] { "gameplay", "hacker" })
                 await VerifyDomainAsync(temporary.FullName, domain, label, timeout.Token);
+            await VerifyHackerWithoutVisualAnalysisAsync(Path.Combine(temporary.FullName, "receiver-playback"), timeout.Token);
             await VerifyPlaybackCaptureFailureAsync(Path.Combine(temporary.FullName, "blocked-evaluation"), timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening"), OpeningOutcome.Gameplay, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-timeout"), OpeningOutcome.HandoffTimeout, timeout.Token);
@@ -65,6 +66,98 @@ internal static class BotDesktopEvaluationTests
         {
             Environment.SetEnvironmentVariable(labelsEnvironment, previousLabels);
             temporary.Delete(recursive: true);
+        }
+    }
+
+    private static async Task VerifyHackerWithoutVisualAnalysisAsync(string root, CancellationToken token)
+    {
+        using var server = new TcpListener(IPAddress.Loopback, 0);
+        server.Start();
+        var port = ((IPEndPoint)server.LocalEndpoint).Port;
+        var session = Guid.NewGuid();
+        var states = Channel.CreateUnbounded<ReceiverInputSnapshot>();
+        var peer = ServeAsync(server, states.Writer, token);
+        var botRoot = Path.Combine(root, "bot-v1");
+        _ = WriteCheckpoint(botRoot, "hacker", "Receiver only");
+        var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
+        try
+        {
+            Field("recentCaptureGeneration").SetValue(window, Generation);
+            Field("workspace").SetValue(window, "Hacker");
+            Field("recognizedMenuContext").SetValue(window, null);
+            var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
+            bridge.Start();
+            while (bridge.PauseState != GamePauseState.Ready) await Task.Delay(10, token);
+            var marker = 610;
+            NotifyReceiver(gameplay: true);
+            await window.StartBotPlaybackAsync().WaitAsync(token);
+            var run = Field("botPlayback").GetValue(window)!;
+            Check(run.GetType().GetProperty("StartedInGameplay", Instance)!.GetValue(run) is true,
+                "A recent receiver gameplay sample should start Hacker without the visual menu context.");
+
+            var playing = run.GetType().GetField("Playing", Instance)!;
+            for (var attempt = 0; attempt < 10 && playing.GetValue(run) is false; attempt++)
+            {
+                SubmitFrame();
+                await Task.Delay(95, token);
+            }
+            await Expect(InputButtons.Right | InputButtons.ActionX);
+            var update = run.GetType().GetField("PlaybackUpdate", Instance)!;
+            Check(((BotPlaybackUpdate)update.GetValue(run)!).Decision is { Action.Buttons: Action },
+                "An exact receiver frame must produce a native policy decision without Game Play analysis.");
+
+            var late = Frame(++marker);
+            _ = Method("ObserveBotStartup").Invoke(window, [late, Generation, Clock(), false, false, null, null, null]);
+            Check(((BotPlaybackUpdate)update.GetValue(run)!).Decision is { Action.Buttons: Action },
+                "A failed visual analysis result must leave the current receiver action intact.");
+            NotifyReceiver(gameplay: false);
+            await Expect(InputButtons.None);
+            Check(((BotPlaybackUpdate)update.GetValue(run)!).Status == "Bot waiting for gameplay",
+                "A receiver menu event must release the active action without a visual frame.");
+            SubmitFrame(Clock() - 1);
+            await Task.Delay(30, token);
+            Check(((BotPlaybackUpdate)update.GetValue(run)!).Decision is null,
+                "A stale exact frame must not re-enable controls after receiver gameplay ends.");
+
+            NotifyReceiver(gameplay: true);
+            await Task.Delay(100, token);
+            SubmitFrame();
+            await Expect(Action);
+            _ = Method("StopBotPlayback").Invoke(window, [null, "user-stop"]);
+            await Expect(InputButtons.None);
+            await ((Task)Field("botEvaluationWrites").GetValue(window)!).WaitAsync(token);
+            var directory = Directory.GetDirectories(Path.Combine(botRoot, "evaluations", "hacker")).Single();
+            var manifest = Read<BotCaptureManifest>(directory, "manifest.json");
+            Check(manifest is { ObservationCount: >= 2, TerrainPairedFrameCount: 0, ExpertDemonstration: false }
+                && BotRecordedAtlasPath.ReadCapture(directory).Observations.All(row =>
+                    row is { TerrainSource: "human-authored", AuthoredTerrain.Floors.Count: 1, DetectedTerrain: null }),
+                "An exact Hacker run without visual analysis must retain its own raw evaluation evidence.");
+            Console.WriteLine("PASS Desktop Hacker playback drives from exact receiver frames and releases on receiver menus without visual analysis");
+
+            void NotifyReceiver(bool gameplay)
+            {
+                var sample = Telemetry(session, ++marker) with { AtlasGameplayActive = gameplay };
+                _ = Method("OnReceiverGroundTruth").Invoke(window, [sample, Clock()]);
+            }
+            void SubmitFrame(double? time = null)
+            {
+                var frame = Frame(++marker);
+                var timestamp = time ?? Clock();
+                BotDesktopCaptureIntegrationTests.SubmitReceiverMatch(window, Generation,
+                    new(new(marker, frame, timestamp, IntegratesAtlas: false, MovementButtons: bridge.CaptureMovement()),
+                        Telemetry(session, marker), Clock()));
+            }
+            static BgraFrame Frame(int id) => new(Width, Height, Width * 4, new byte[Width * Height * 4], id, DateTimeOffset.UtcNow);
+            async Task Expect(InputButtons buttons)
+            {
+                while ((await states.Reader.ReadAsync(token)).HeldButtons != buttons) { }
+            }
+        }
+        finally
+        {
+            Field("isClosing").SetValue(window, true);
+            await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
+            await peer.WaitAsync(TimeSpan.FromSeconds(5));
         }
     }
 

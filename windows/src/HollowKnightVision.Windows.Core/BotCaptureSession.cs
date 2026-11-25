@@ -435,7 +435,8 @@ public sealed class BotCaptureSession
             {
                 // Both domains archive the same pixels. Reuse the already encoded PNG when their sampling coincides.
                 var preview = sample.Gameplay is { } visual ? gameplay.Record(visual, sample.Image) : null;
-                var exact = sample.MatchedHacker is { } matched ? ProjectMatchedHacker(matched) : sample.Hacker;
+                var exact = sample.MatchedHacker is { } matched
+                    ? hackerVisit!.ObserveMatched(matched, observationClock()) : sample.Hacker;
                 if (exact is null) continue;
                 hacker!.Record(exact, sample.Image, preview);
                 if (sample.MatchedHacker is not null && double.IsFinite(exact.AvailableAt))
@@ -449,20 +450,6 @@ public sealed class BotCaptureSession
             pending.Writer.TryComplete(error);
             throw;
         }
-    }
-
-    private BotCaptureObservation? ProjectMatchedHacker(BotHackerCaptureFrame frame)
-    {
-        var match = frame.Match;
-        var capture = match.Capture;
-        var size = new WorldSize(capture.Image.Width, capture.Image.Height);
-        var timing = new BotCaptureTiming(capture.CapturedAt, observationClock(), frame.Generation, frame.RoomId, 0);
-        var row = hackerVisit!.Observe(size, capture.UnityFrame, match.Sample, timing, capture.MovementButtons, 0,
-            objective: frame.Objective, roomKey: frame.RoomKey, automaticObjective: frame.AutomaticObjective,
-            registeredRoom: frame.RegisteredRoom);
-        if (row is null) return null;
-        var camera = GroundTruthCameraTransform.FromSample(match.Sample, match.SampleObservedAt, size);
-        return row with { AtlasView = camera is null ? null : frame.RegisteredRoom?.BotView(camera, row.MeasuredHealth) };
     }
 
     internal static void AppendInputEdges(List<BotCaptureInput> inputs, InputButtons prior, InputButtons current, double time)

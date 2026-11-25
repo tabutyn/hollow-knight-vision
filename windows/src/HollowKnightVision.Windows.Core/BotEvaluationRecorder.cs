@@ -12,11 +12,12 @@ public sealed class BotEvaluationRecorder
     private const string SkillEventFile = "skill-events.jsonl";
     private const double SkillSampleInterval = .075;
     private const int MaximumPendingFrames = 8;
+    private const int MaximumUnpairedHackerFrames = 3;
     private sealed record TerrainAuditFrame(double CaptureTimestamp, double CapturedAt, ulong CaptureGeneration,
         int Width, int Height, string? SceneName, bool ReferenceAvailable,
         IReadOnlyList<BotFloor> Detected, IReadOnlyList<BotFloor> Authored);
     private sealed record Sample(BgraFrame Image, BotCaptureObservation? Observation, TerrainAuditFrame Audit,
-        VisualReplayGroundInput? GroundInput, int? RenderedFrame);
+        VisualReplayGroundInput? GroundInput, int? RenderedFrame, bool ReceiverMatched);
     private sealed record SkillEvent(ThinkingPlan Plan, ThinkingCandidate Choice, string Context, string Event, double Timestamp);
 
     private readonly object gate = new();
@@ -33,12 +34,15 @@ public sealed class BotEvaluationRecorder
         SingleReader = true, FullMode = BoundedChannelFullMode.Wait
     });
     private readonly List<BotCaptureInput> controls = [];
+    private readonly Queue<Sample> unmatchedHackerFrames = new();
+    private readonly SortedDictionary<double, (IReadOnlyList<BotFloor> Floors, VisualReplayGroundInput Input)> hackerVisual = new();
     private readonly List<SkillEvent> skillEvents = [];
     private readonly BotAtlasRun atlasRun = new();
     private readonly Task<string?> writer;
     private InputButtons held;
     private (double Time, string Reason)? stop;
     private double lastCapture = double.NegativeInfinity;
+    private double lastWrittenCapture = double.NegativeInfinity;
     private double lastControl = double.NegativeInfinity;
     private double lastSkillSample = double.NegativeInfinity;
     private double lastAvailable;
@@ -79,7 +83,7 @@ public sealed class BotEvaluationRecorder
 
     public void RecordFrame(BgraFrame image, BotCaptureTiming timing, BotCaptureObservation? observation, string? scene,
         IReadOnlyList<BotFloor> detected, BotScreenTerrain? authored, VisualReplayGroundInput? groundInput, int? renderedFrame,
-        bool skill = false)
+        bool skill = false, bool awaitHackerVisual = false)
     {
         lock (gate)
         {
@@ -102,8 +106,54 @@ public sealed class BotEvaluationRecorder
             lastCapture = timing.CaptureTimestamp;
             if (skill) lastSkillSample = lastCapture;
             lastAvailable = Math.Max(lastAvailable, timing.AvailableAt);
-            if (!samples.Writer.TryWrite(new(image, observation, audit, groundInput, renderedFrame))) droppedSamples++;
+            var sample = new Sample(image, observation, audit, groundInput, renderedFrame, awaitHackerVisual);
+            if (awaitHackerVisual)
+            {
+                unmatchedHackerFrames.Enqueue(sample);
+                FlushHackerFrames(force: false);
+            }
+            else
+            {
+                FlushHackerFrames(force: true);
+                WriteSample(sample);
+            }
         }
+    }
+
+    public void RecordHackerVisualEvidence(VisualReplayGroundInput input, IReadOnlyList<BotFloor> detected)
+    {
+        lock (gate)
+        {
+            if (domain != "hacker" || stop is not null || writer.IsCompleted || input.CaptureGeneration != (ulong)generation
+                || !double.IsFinite(input.CaptureTimestamp) || input.CaptureTimestamp < startedAt
+                || input.CaptureTimestamp <= lastWrittenCapture) return;
+            hackerVisual[input.CaptureTimestamp] = (detected, input);
+            FlushHackerFrames(force: false);
+            // At most a few frames can arrive while the other worker is busy.
+            while (hackerVisual.Count > MaximumPendingFrames)
+                hackerVisual.Remove(hackerVisual.First().Key);
+        }
+    }
+
+    private void FlushHackerFrames(bool force)
+    {
+        while (unmatchedHackerFrames.TryPeek(out var sample))
+        {
+            var hasVisual = hackerVisual.TryGetValue(sample.Audit.CaptureTimestamp, out var visual);
+            if (!hasVisual && !force && unmatchedHackerFrames.Count <= MaximumUnpairedHackerFrames) break;
+            unmatchedHackerFrames.Dequeue();
+            WriteSample(hasVisual
+                ? sample with { Audit = sample.Audit with { Detected = visual.Floors }, GroundInput = visual.Input }
+                : sample with { Audit = sample.Audit with { ReferenceAvailable = false } });
+        }
+    }
+
+    private void WriteSample(Sample sample)
+    {
+        lastWrittenCapture = sample.Audit.CaptureTimestamp;
+        while (hackerVisual.Count > 0 && hackerVisual.First().Key <= lastWrittenCapture)
+            hackerVisual.Remove(hackerVisual.First().Key);
+        if (!samples.Writer.TryWrite(sample)) droppedSamples++;
     }
 
     public void RecordControls(InputButtons buttons, double time)
@@ -146,6 +196,7 @@ public sealed class BotEvaluationRecorder
             var time = Math.Max(double.IsFinite(stoppedAt) ? stoppedAt : startedAt, Math.Max(lastAvailable, lastControl));
             if (skillEvents.Count > 0) time = Math.Max(time, skillEvents[^1].Timestamp);
             BotCaptureSession.AppendInputEdges(controls, held, InputButtons.None, time);
+            FlushHackerFrames(force: true);
             stop = (time, reason);
             samples.Writer.TryComplete();
             return writer;
@@ -190,8 +241,13 @@ public sealed class BotEvaluationRecorder
                         var stamp = sample.Audit;
                         archive.Append(sample.Image, stamp.CaptureTimestamp, stamp.CapturedAt, stamp.CaptureGeneration,
                             stamp.Width, sample.RenderedFrame);
-                        archive.RecordStage(new("visionStarted", stamp.CaptureTimestamp, stamp.CaptureGeneration));
-                        archive.RecordStage(new("visionCompleted", stamp.CaptureTimestamp, stamp.CaptureGeneration));
+                        if (sample.ReceiverMatched)
+                            archive.RecordStage(new("receiverMatched", stamp.CaptureTimestamp, stamp.CaptureGeneration));
+                        if (!sample.ReceiverMatched || sample.GroundInput is not null)
+                        {
+                            archive.RecordStage(new("visionStarted", stamp.CaptureTimestamp, stamp.CaptureGeneration));
+                            archive.RecordStage(new("visionCompleted", stamp.CaptureTimestamp, stamp.CaptureGeneration));
+                        }
                         if (sample.GroundInput is { } input) archive.RecordGroundInput(input);
                     }
                 }

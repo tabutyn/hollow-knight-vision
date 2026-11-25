@@ -106,6 +106,23 @@ internal static class AtlasPathFrameEvidenceTests
         Require(state.AdmitsGameplay(1, 13, modded: false));
     }
 
+    internal static void TestReceiverGameplayStartRequiresFreshPositiveEvidence()
+    {
+        var state = new AtlasPathFrameEvidence();
+        var session = Guid.NewGuid();
+        Require(!state.ReceiverConfirmsGameplay(10));
+        state.ObserveReceiver(session, true, 10);
+        Require(!state.ReceiverConfirmsGameplay(9.99) && state.ReceiverConfirmsGameplay(10.25));
+        state.ObserveReceiver(session, null, 10.3);
+        Require(!state.ReceiverConfirmsGameplay(10.3), "A payload without gameplay status must not renew the old proof.");
+        state.ObserveReceiver(session, true, 11);
+        Require(state.ReceiverConfirmsGameplay(11.1));
+        state.ObserveReceiver(session, false, 11.15);
+        Require(!state.ReceiverConfirmsGameplay(11.15), "Receiver menu evidence must immediately veto a gameplay start.");
+        state.ObserveReceiver(Guid.NewGuid(), null, 12);
+        Require(!state.ReceiverConfirmsGameplay(12));
+    }
+
     internal static void TestPreviewSignalMatchesTheFullTrackingProfile()
     {
         const int width = 64, height = 36;
