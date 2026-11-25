@@ -47,12 +47,12 @@ public static class GroundStrokeGeometry
         internal GroundHypothesisAtlasLine Line =>
             new(Representative.SegmentId, new(Left, Representative.AtlasStart.Y), new(Right, Representative.AtlasStart.Y));
 
-        internal bool Overlaps(Stroke other, int rowTolerance)
+        internal bool Overlaps(Stroke other, double rowTolerance, double minimumOverlap)
         {
             if (Math.Max(High, other.High) - Math.Min(Low, other.Low) > rowTolerance) return false;
             var overlap = Math.Min(Right, other.Right) - Math.Max(Left, other.Left);
             return Representative.AtlasStart.Y == other.Representative.AtlasStart.Y
-                ? overlap >= 0 : overlap >= Math.Min(3, Math.Min(Right - Left, other.Right - other.Left));
+                ? overlap >= 0 : overlap >= Math.Min(minimumOverlap, Math.Min(Right - Left, other.Right - other.Left));
         }
 
         internal void Absorb(Stroke other)
@@ -70,7 +70,8 @@ public static class GroundStrokeGeometry
 
     public static GroundHypothesisAtlasLine[] Coalesce(IEnumerable<GroundHypothesisAtlasLine> lines) => Coalesce(lines, 3);
 
-    private static GroundHypothesisAtlasLine[] Coalesce(IEnumerable<GroundHypothesisAtlasLine> lines, int rowTolerance)
+    private static GroundHypothesisAtlasLine[] Coalesce(IEnumerable<GroundHypothesisAtlasLine> lines,
+        double rowTolerance, double minimumOverlap = 3)
     {
         var ordered = lines.Where(line => double.IsFinite(line.AtlasStart.X)
                 && double.IsFinite(line.AtlasStart.Y) && double.IsFinite(line.AtlasEnd.X)
@@ -89,7 +90,7 @@ public static class GroundStrokeGeometry
                     result.Add(prior.Line);
                     return true;
                 }
-                if (!next.Overlaps(prior, rowTolerance)) return false;
+                if (!next.Overlaps(prior, rowTolerance, minimumOverlap)) return false;
                 next.Absorb(prior);
                 return true;
             });
@@ -97,6 +98,17 @@ public static class GroundStrokeGeometry
         }
         result.AddRange(active.Select(stroke => stroke.Line));
         return result.ToArray();
+    }
+
+    private static GroundHypothesisAtlasLine[] CoalesceObservedFloors(
+        IReadOnlyList<DetectedFloorLine> floors, int width, int height)
+    {
+        var scale = Math.Max(1, width / 640d);
+        var spans = floors.Where(floor => floor.Row < height).SelectMany((floor, index) =>
+            floor.EvidenceSpans.Select(span => new GroundHypothesisAtlasLine(index,
+                new(Math.Min(span.Start, width), floor.Row),
+                new(Math.Min((long)span.EndInclusive + 1, width), floor.Row))));
+        return Coalesce(spans, 3 * scale, 3 * scale);
     }
 
     public static GroundHypothesisAtlasLine[] VisibleLines(
@@ -128,13 +140,12 @@ public static class GroundStrokeGeometry
     {
         var right = camera.X + width;
         var top = camera.Y + height;
-        var edges = Coalesce(currentFloors.Where(floor => floor.Row < height).Select((floor, index) =>
+        var edges = CoalesceObservedFloors(currentFloors, width, height).Select(line =>
         {
-            var y = top - floor.Row - .5;
-            return new GroundHypothesisAtlasLine(index,
-                new(camera.X + Math.Clamp(floor.XSpan.Start, 0, width), y),
-                new(camera.X + Math.Clamp((long)floor.XSpan.EndInclusive + 1, 0, width), y));
-        }));
+            var y = top - line.AtlasStart.Y - .5;
+            return new GroundHypothesisAtlasLine(line.SegmentId,
+                new(camera.X + line.AtlasStart.X, y), new(camera.X + line.AtlasEnd.X, y));
+        });
         var walked = history.Where(IsWalked).OrderBy(line => line.AtlasStart.X).ToArray();
         var clearance = GroundClearance.KnightHeight(height, knight);
         return [.. history.SelectMany(KeepVisibleHistory), .. edges.SelectMany(edge => ExcludeColumns(edge, walked, clearance))];
