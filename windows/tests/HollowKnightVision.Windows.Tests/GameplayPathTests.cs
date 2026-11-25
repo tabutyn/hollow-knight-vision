@@ -371,6 +371,77 @@ internal static class GameplayPathTests
         static int Walks(GameplayPathView? view) => view?.Strokes.Count(stroke => stroke.Kind == Walk) ?? 0;
     }
 
+    internal static void TestRegisteredObjectiveSurvivesUnplacedHandoffAndSuspension()
+    {
+        var tracker = new GameplayPathTracker();
+        var target = new AtlasPathPoint(20, 40);
+        var registered = new GameplayPathFrame("room", 1, Width, Height, default(AtlasPoint),
+            [], [], TerrainWallDetection.Empty, new(80, Height - 20), new(75, Height - 40, 10, 20), null)
+        { CaptureGeneration = 7, Atlas = new(new(1, [Floor(0, 200, 20)], []), new(320, 180), 1) };
+        var view = tracker.Observe(registered)!;
+        Require(tracker.SelectObjective(view, new(20, 40), 2)?.SelectedObjective == target,
+            "The registered destination should be selected before the capture is interrupted.");
+        tracker.Suspend();
+
+        var unplaced = tracker.Observe(registered with
+        {
+            Time = 1.1, VerifiedCamera = null, Atlas = null, VisibleFloors = [Line(0, 200, 20)],
+            LocalCamera = new(1, new(400, 0))
+        });
+        Require(unplaced is { Camera: null, SelectedObjective: null },
+            "An unplaced successor should find its own route without adopting the registered point.");
+
+        var restored = tracker.Observe(registered with { Time = 1.2 });
+        Require(restored?.SelectedObjective == target && restored.SelectedRoute.LastOrDefault() == target,
+            "An interruption before the next capture dropped the registered destination.");
+        Require(tracker.SelectObjective(restored!, new(20, 40), 2) is { SelectedObjective: null },
+            "Clicking the destination again should clear it.");
+        tracker.Suspend();
+        Require(tracker.Observe(registered with { Time = 1.3 }) is { SelectedObjective: null },
+            "An interruption before the next capture dropped the clear action.");
+    }
+
+    internal static void TestMeasuredRecoveryRetainsOnlyTheSameRegisteredObjective()
+    {
+        var target = new AtlasPathPoint(20, 40);
+        var registered = new GameplayPathFrame("room", 1, Width, Height, default(AtlasPoint),
+            [], [Line(0, 200, 20)], TerrainWallDetection.Empty, new(80, Height - 20),
+            new(75, Height - 40, 10, 20), null)
+        { CaptureGeneration = 7, Atlas = new(new(1, [Floor(0, 200, 20)], []), new(320, 180), 4),
+            LocalCamera = new(4, default) };
+        var correction = GroundHypothesisTrackingResult.Empty with
+        {
+            LocalTextureSupport = 4, LocalReferenceTimestamp = 1, LocalReferencePosition = default(CameraVector),
+            LocalMatchedImageDisplacement = new(-30, 0), GlobalCorrection = new(30, 0)
+        };
+        var recovered = registered with
+        {
+            Time = 1.1, VerifiedCamera = new(30, 0), LocalCamera = new(5, new(30, 0)),
+            Atlas = registered.Atlas! with { WorldFromLocal = new(290, 180), GeometryEpoch = 5 }
+        };
+        Require(Recover(recovered) is { SelectedObjective: { } selected, SelectedRoute: { } route }
+            && selected == target && route.LastOrDefault() == target,
+            "A local camera correction should preserve the destination on the same registered Atlas room.");
+        foreach (var unrelated in new[]
+        {
+            recovered with { Room = "other" },
+            recovered with { CaptureGeneration = 8 },
+            recovered with { Atlas = recovered.Atlas! with { Room = new(2, [Floor(0, 200, 20)], []) } },
+        })
+            Require(Recover(unrelated) is { SelectedObjective: null },
+                "A different room, capture, or registration inherited the last room's objective.");
+
+        GameplayPathView? Recover(GameplayPathFrame sample)
+        {
+            var tracker = new GameplayPathTracker();
+            var view = tracker.Observe(registered)!;
+            Require(tracker.SelectObjective(view, new(20, 40), 2)?.SelectedObjective == target,
+                "The registered destination should be selected before the correction.");
+            tracker.RecoverMeasuredBasis("room", 7, 4, 5, 1.05, correction);
+            return tracker.Observe(sample);
+        }
+    }
+
     internal static void TestPromotionCarriesMeasuredFloorAndSurvivesNextRegisteredFrame()
     {
         var tracker = new GameplayPathTracker();

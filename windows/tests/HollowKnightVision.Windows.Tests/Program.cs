@@ -1340,6 +1340,8 @@ var tests = new List<(string Name, Action Run)>
     ("a blackout retires a registered Game Play route until a fresh one arrives", AtlasPathFrameEvidenceTests.TestBlackoutRetiresThePreviousRegisteredPath),
     ("fast preview signal agrees with the full vision analysis", AtlasPathFrameEvidenceTests.TestPreviewSignalMatchesTheFullTrackingProfile),
     ("measured camera recovery keeps a temporarily occluded floor continuous", GameplayPathTests.TestReacquiredCameraCanVerifyBothSidesOfAMaskedFloor),
+    ("an unplaced handoff preserves the registered route selection", GameplayPathTests.TestRegisteredObjectiveSurvivesUnplacedHandoffAndSuspension),
+    ("measured recovery preserves the objective only in the same registered room", GameplayPathTests.TestMeasuredRecoveryRetainsOnlyTheSameRegisteredObjective),
     ("visual registration promotes measured ground from the same epoch", GameplayPathTests.TestPromotionCarriesMeasuredFloorAndSurvivesNextRegisteredFrame),
     ("visual registration projects explicit goals through the measured basis", GameplayPathTests.TestPromotionProjectsExplicitGoalOntoRegisteredGround),
     ("visual registration preserves the current registered goal during promotion", GameplayPathTests.TestPromotionKeepsAnExistingManualGoalAndDoesNotRepeat),
