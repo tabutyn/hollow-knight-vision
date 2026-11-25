@@ -224,6 +224,56 @@ internal static class WalkedGroundTests
                 generation: 1, coordinateEpoch: 7, measuredLineage: lineage);
     }
 
+    public static void TestCameraReferencesTrimFalseLedgesThroughWalkedColumns()
+    {
+        var tracker = new WalkedGroundTracker();
+        const int steps = 35;
+        var priorCamera = new AtlasPoint(steps * 3, 0);
+        var priorTime = steps * .03;
+        for (var index = 0; index <= steps; index++)
+            tracker.Observe("room", Mask(200), Knight, new(index * 3, 0), InputButtons.Right, index * .03, [],
+                generation: 1, measuredLineage: 2);
+
+        var walked = tracker.InRoom("room").Single();
+        var left = (int)Math.Ceiling(walked.AtlasStart.X - priorCamera.X) + 2;
+        var right = (int)Math.Floor(walked.AtlasEnd.X - priorCamera.X) - 2;
+        var row = (int)(Height - walked.AtlasStart.Y);
+        var across = new PixelSpan(left - 12, right + 10);
+        var ledge = new DetectedFloorLine(row - 19, across,
+            [new(left - 9, left + 3), new(left + 8, right - 5), new(right - 3, right + 8)]);
+        var hiddenEnd = new DetectedFloorLine(row - 20, new(left - 6, left + 12), [new(left + 1, left + 10)]);
+        var higher = new DetectedFloorLine(row - 40, across);
+        var textured = new DetectedFloorLine(row - 4, across);
+        DetectedFloorLine[] references = [ledge, hiddenEnd, higher, textured];
+        var clearance = Knight with { Height = 40 };
+        var filtered = Filter(priorTime + .002);
+        Check(filtered.Select(line => line.ToSemanticLine()).SequenceEqual(
+            [new(ledge.Row, new(across.Start, left - 1)), new(ledge.Row, new(right, across.EndInclusive)),
+                higher.ToSemanticLine(), textured.ToSemanticLine()]),
+            "Walked columns should clip a false ledge while preserving ground texture and a separate high ledge.");
+        Check(filtered[0].EvidenceSpans.SequenceEqual([new(left - 9, left - 1)])
+            && filtered[1].EvidenceSpans.SequenceEqual([new(right, right + 8)]),
+            "Unmeasured columns must not become camera evidence after clipping.");
+
+        var later = Filter(priorTime + .05);
+        Check(later[0].XSpan.EndInclusive >= filtered[0].XSpan.EndInclusive + 20
+            && later[1].XSpan.Start <= filtered[1].XSpan.Start - 20,
+            "The uncertain ends must widen as the measured pose ages.");
+        Check(ReferenceEquals(Filter(priorTime + .16), references)
+            && ReferenceEquals(Filter(priorTime - .01), references)
+            && ReferenceEquals(Filter(priorTime + .002, "next"), references)
+            && ReferenceEquals(Filter(priorTime + .002, generation: 2), references),
+            "A stale pose or a different room or capture cannot invalidate a reference.");
+
+        tracker.Observe("room", Hidden, Knight, null, InputButtons.Right, priorTime + .03, [],
+            generation: 1);
+        Check(ReferenceEquals(Filter(priorTime + .032), references),
+            "A prediction must release the previous camera's filtering authority.");
+
+        IReadOnlyList<DetectedFloorLine> Filter(double timestamp, string room = "room", long generation = 1) =>
+            tracker.CameraReferences(references, room, generation, timestamp, Width, Height, clearance);
+    }
+
     public static void TestBotFloorsUseTheWalkedRowAndKeepOnlySupportedExtensions()
     {
         var pose = new AtlasPoint(20, 10);
