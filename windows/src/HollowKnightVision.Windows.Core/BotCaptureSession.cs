@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -78,6 +79,7 @@ public sealed class BotCaptureSession
     private readonly string gameMode;
     private readonly string detector;
     private readonly Guid? replay;
+    private readonly string? replayRoot;
     private readonly long generation;
     private readonly DateTimeOffset created;
     private readonly Channel<Sample> pending = Channel.CreateBounded<Sample>(new BoundedChannelOptions(8)
@@ -99,7 +101,7 @@ public sealed class BotCaptureSession
     public bool CapturesHacker => hacker is not null;
 
     public BotCaptureSession(string root, string mode, string detectorVersion, long generation, double startedAt,
-        GroundTruthLineDocument authored, Guid? replayId = null, bool paired = false)
+        GroundTruthLineDocument authored, Guid? replayId = null, bool paired = false, string? replayRoot = null)
     {
         if (!double.IsFinite(startedAt) || startedAt < 0) throw new ArgumentOutOfRangeException(nameof(startedAt));
         if (paired && replayId is null) throw new ArgumentException("Paired observations require the matching input path.");
@@ -109,6 +111,7 @@ public sealed class BotCaptureSession
         gameMode = mode;
         detector = detectorVersion;
         replay = replayId;
+        this.replayRoot = replayRoot is null ? null : Path.GetFullPath(replayRoot);
         Authored = authored.Clone();
         created = DateTimeOffset.UtcNow;
         staging = Path.Combine(this.root, $".pending-demo-{Guid.NewGuid():N}");
@@ -204,6 +207,18 @@ public sealed class BotCaptureSession
                     RecordedSkillControls = path?.RuntimeMetadata?.GetValueOrDefault(RecordedInputPath.SkillControlsMetadata) == "true"
                 };
                 AtomicFile.Write(Path.Combine(clip.Directory, "manifest.json"), JsonSerializer.SerializeToUtf8Bytes(manifest, Json));
+                if (path?.VisualFrameArchive is not null && replayRoot is not null)
+                {
+                    var reference = Path.Combine(clip.Directory, "authored-ground.json");
+                    if (clip.Domain == "gameplay") new GroundTruthLineStore(reference).Save(Authored);
+                    var referenceHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(reference))).ToLowerInvariant();
+                    AtomicFile.Write(Path.Combine(clip.Directory, "audit-context.json"), JsonSerializer.SerializeToUtf8Bytes(
+                        new
+                        {
+                            schemaVersion = 1, kind = "human-demonstration", domain = clip.Domain, pathID = path.Id,
+                            replayRoot, referenceCoverage = "positive-authored-segments-only", authoredGroundSHA256 = referenceHash
+                        }, Json));
+                }
                 manifests.Add(manifest);
             }
             foreach (var clip in eligible)

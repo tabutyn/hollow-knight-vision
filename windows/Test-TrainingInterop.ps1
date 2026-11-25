@@ -219,6 +219,13 @@ for version in (bot.SCHEMA_VERSION, bot.GROUND_CONTACT_POLICY_VERSION, bot.LANDI
   & $Python -B (Join-Path $PSScriptRoot 'tests\gameplay_gym_interop.py') $botSource $gymProbe $nativeVerifier
   if ($LASTEXITCODE -ne 0) { throw 'Game Play Gym observation transport leaked telemetry into visual inputs or rejected pixel evidence.' }
 
+  $wallProbe = Join-Path $fixtureRoot 'wall-replay'
+  $wallFixture = & $Dotnet $tests --export-wall-replay-probe $wallProbe
+  if ($LASTEXITCODE -ne 0) { throw 'Could not export the legacy wall replay archive.' }
+  Set-Content -LiteralPath (Join-Path $wallProbe 'probe.json') -Value $wallFixture -Encoding utf8
+  & $Python -B (Join-Path $PSScriptRoot 'tests\bot_wall_replay_interop.py') $botSource $wallProbe $nativeVerifier
+  if ($LASTEXITCODE -ne 0) { throw 'Windows wall replay evidence did not match the shared bot exporter.' }
+
 } finally {
   foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
   if (Test-Path -LiteralPath $fixtureRoot) {

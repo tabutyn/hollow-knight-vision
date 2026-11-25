@@ -231,7 +231,7 @@ public partial class MainWindow
             Volatile.Write(ref botCapture, new BotCaptureSession(BotCaptureRoot,
                 gameMode == GameRuntimeMode.Modded ? "modded" : "normal", "visual",
                 Interlocked.Read(ref recentCaptureGeneration), recording?.StartedAt ?? BotCaptureClock(),
-                groundTruthLabels.Document, recording?.Id, paired));
+                groundTruthLabels.Document, recording?.Id, paired, replayRoot: InputPathRoot));
             PathRecordingButton.Background = Brushes.Firebrick;
             SetStatus(paired ? "Recording Hacker and Game Play. Press K to stop." : "Recording Game Play. Press K to stop.");
         }

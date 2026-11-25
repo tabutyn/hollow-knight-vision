@@ -808,6 +808,12 @@ export through the installed native policy host before selecting the newest
 checkpoint. A routine update uses at least two new clips so the active policy
 can be compared on recordings it has never trained on.
 
+Game Play training can recover legacy wall features if the original visual
+archive is available. For diagnostics, run the installed Host with
+`--recover-bot-walls CLIP_DIRECTORY FRAME_ARCHIVE`. It emits JSON only for
+observations with a verified source image and the original masking inputs at
+the same capture timestamp and generation.
+
 ### Live Gym PPO from an installed build
 
 Run the launcher against a modded Hollow Knight executable and a verified bot

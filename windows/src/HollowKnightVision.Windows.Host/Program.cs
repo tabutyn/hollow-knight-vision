@@ -226,6 +226,26 @@ internal static class Program
                 return Task.FromResult(1);
             }
         }
+        if (arguments.FirstOrDefault() == "--recover-bot-walls")
+        {
+            var errors = standardError ?? Console.Error;
+            if (arguments is not [_, var clip, var archive])
+            {
+                errors.WriteLine("Expected --recover-bot-walls CLIP ARCHIVE.");
+                return Task.FromResult(64);
+            }
+            try
+            {
+                (standardOutput ?? Console.Out).WriteLine(JsonSerializer.Serialize(BotWallReplay.Recover(clip, archive), WorldReplayJsonOptions));
+                return Task.FromResult(0);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+                or JsonException or ArgumentException or InvalidOperationException or KeyNotFoundException)
+            {
+                errors.WriteLine($"Wall replay failed. {error.Message}");
+                return Task.FromResult(1);
+            }
+        }
         if (arguments.FirstOrDefault() is "--recover-bot-atlas-path" or "--recover-bot-exit-path")
         {
             var errors = standardError ?? Console.Error;
@@ -797,6 +817,8 @@ internal static class Program
                                     Consider only the first N original archive entries.
             --visual-replay-allow-incomplete
                                     Retain reported gaps and process the remaining images.
+            --recover-bot-walls CLIP ARCHIVE
+                                    Recover wall features from a clip's exact source frames and ground masks.
             --probe                 Locate the game window without capturing pixels.
             --receiver-probe        Verify the in-game receiver and print its capabilities.
             --ground-truth-once     Print one Hacker camera/hero telemetry sample.

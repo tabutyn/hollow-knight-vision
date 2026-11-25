@@ -32,6 +32,7 @@ if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw "Bot training 
 $trainerArguments = @('-X', 'utf8', '-u', '-B', $trainer,
   '--root', $BotRoot, '--selection', $Selection, '--run-id', $RunId.ToString('D'),
   '--domain', $Domain, '--epochs', [string]$Epochs, '--follow-playback', '--native-verifier', $Vision)
+if ($Domain -eq 'gameplay') { $trainerArguments += @('--wall-extractor', $Vision) }
 if ($UpgradeObservations) { $trainerArguments += '--upgrade-observations' }
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $env:OMP_NUM_THREADS = '2'
