@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -23,6 +24,11 @@ internal static class TrainingIntegrationTests
     {
         TestSharedDatasetExport(); TestPackagedTrainingEnvironment(); TestControlsAndLayout(); TestOutputGenerationsAndShutdown();
         TestPowerShellFailureMessage();
+        var scope = new DispatcherFrame();
+        var objectFailure = VerifyObjectTrainerFailureAsync();
+        objectFailure.GetAwaiter().OnCompleted(() => scope.Continue = false);
+        Dispatcher.PushFrame(scope);
+        objectFailure.GetAwaiter().GetResult();
         Console.WriteLine("PASS native training count/dot, Stop/progress states, narrow toolbar, coalesced output and nonblocking shutdown");
     }
     private static void TestSharedDatasetExport()
@@ -203,6 +209,55 @@ internal static class TrainingIntegrationTests
             && result.Output.Text.Contains(issue, StringComparison.Ordinal),
             $"The native helper should report the diagnostic. Received {result.FailureMessage}\n{result.Output.Text}");
         Console.WriteLine("PASS Windows training failure displays the PowerShell diagnostic and retains its log");
+    }
+
+    private static async Task VerifyObjectTrainerFailureAsync()
+    {
+        const string environment = "HKV_TRAINER_PYTHON";
+        const string diagnostic = "Fixture trainer rejected the exported examples.";
+        var previousPython = Environment.GetEnvironmentVariable(environment);
+        var root = Directory.CreateTempSubdirectory("hkv-object-train-failed-");
+        MainWindow? window = null;
+        try
+        {
+            var examples = new LabelingExampleStore(Path.Combine(root.FullName, "labeling-v1", "examples"));
+            var frame = new BgraFrame(64, 36, 256, new byte[64 * 36 * 4], 0, DateTimeOffset.UnixEpoch);
+            examples.Save(frame, "game", [new LabelingExampleAnnotation(Guid.NewGuid(), "world.sign", .1, .1, .2, .2)]);
+            // Run a native subprocess through the shipped script so its stderr and exit code cross the PowerShell boundary.
+            var worker = Path.Combine(root.FullName, "fixture-trainer.cmd");
+            File.WriteAllText(worker, $"@echo off\r\n>&2 echo {diagnostic}\r\nexit /b 23\r\n");
+            Environment.SetEnvironmentVariable(environment, worker);
+            window = new MainWindow(GameRuntimeMode.Modded, null, root.FullName, root.FullName);
+            var controls = (TrainingControlsPanel)window.FindName("TrainingControls");
+            var status = (TextBlock)window.FindName("StatusText");
+            var log = (TextBox)window.FindName("TrainingLogText");
+            Check(controls.TrainButton.IsEnabled, $"The saved Game Play label should enable model training. {status.Text}");
+            controls.TrainButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var process = typeof(MainWindow).GetField("trainingProcessTask", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.GetValue(window) as Task<TrainingProcessResult>
+                ?? throw new InvalidOperationException($"The Model Train button did not launch the packaged trainer. {status.Text}");
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            var result = await process.WaitAsync(deadline.Token);
+            while (controls.ProgressRow.Visibility == Visibility.Visible)
+                await Task.Delay(20, deadline.Token);
+            Check(result.ExitCode == 23 && !result.Cancelled && status.Text.StartsWith("Training failed.", StringComparison.Ordinal)
+                && status.Text.Contains(diagnostic, StringComparison.Ordinal) && controls.TrainButton.IsEnabled
+                && log.Text.Contains(diagnostic, StringComparison.Ordinal),
+                $"Object training must preserve the worker error and let the user retry. Exit {result.ExitCode}, status {status.Text}\n{log.Text}");
+            Console.WriteLine("PASS Model Train keeps the worker diagnostic, exit code, and log and allows retry");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(environment, previousPython);
+            if (window is not null)
+            {
+                var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                window.Closed += (_, _) => closed.TrySetResult();
+                window.Close();
+                await closed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            root.Delete(recursive: true);
+        }
     }
 
     private static ProcessStartInfo ContainedTrainingCommand(string command)

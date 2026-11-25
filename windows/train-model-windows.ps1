@@ -51,7 +51,7 @@ try {
   $env:CUDA_VISIBLE_DEVICES = "-1"
   $env:TORCH_HOME = $torchCache
   & $python @trainerArguments
-  if ($LASTEXITCODE -ne 0) { throw "Hollow Knight Vision training failed." }
+  $trainerExitCode = $LASTEXITCODE
 } finally {
   $env:CUDA_VISIBLE_DEVICES = $previousCudaDevices
   $env:TORCH_HOME = $previousTorchHome
@@ -59,3 +59,4 @@ try {
   $env:PYTHONUNBUFFERED = $previousPythonBuffering
   [Console]::OutputEncoding = $previousOutputEncoding
 }
+if ($trainerExitCode -ne 0) { exit $trainerExitCode }
