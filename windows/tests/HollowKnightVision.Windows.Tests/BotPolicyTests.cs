@@ -37,8 +37,73 @@ internal static class BotPolicyTests
             }));
             Reject(() => _ = policy.Verify(fixture));
             Reject(() => _ = policy.Logits(new float[3]));
+            var invalid = new float[width];
+            invalid[4] = float.NaN;
+            Reject(() => _ = policy.Logits(invalid));
             File.AppendAllText(checkpoint, "changed");
             Reject(() => _ = BotNativePolicy.Load(root));
+            WriteRuntime(root);
+            // Valid JSON with changed bytes must still fail the bound actor hash.
+            File.AppendAllText(Path.Combine(root, "runtime-policy.json"), Environment.NewLine);
+            Reject(() => _ = BotNativePolicy.Load(root));
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
+    internal static void TestNativeActionsMapEachHeadWithoutConflictingButtons()
+    {
+        InputButtons[] horizontal = [InputButtons.None, InputButtons.Left, InputButtons.Right];
+        InputButtons[] aim = [InputButtons.None, InputButtons.Up, InputButtons.Down];
+        InputButtons[] jump = [InputButtons.None, InputButtons.ActionZ];
+        InputButtons[] attack = [InputButtons.None, InputButtons.ActionX];
+        for (var h = 0; h < horizontal.Length; h++)
+        for (var a = 0; a < aim.Length; a++)
+        for (var j = 0; j < jump.Length; j++)
+        for (var x = 0; x < attack.Length; x++)
+        {
+            var scores = new float[10];
+            scores[h] = scores[3 + a] = scores[6 + j] = scores[8 + x] = 1;
+            var action = BotNativePolicy.Action(scores);
+            var expected = horizontal[h] | aim[a] | jump[j] | attack[x];
+            if (!action.Values.SequenceEqual([h, a, j, x]) || action.Buttons != expected
+                || BotPolicyAction.FromButtons(expected) != action)
+                throw new InvalidOperationException("The native policy must map each head to its own controls.");
+        }
+        if (BotNativePolicy.Action(new float[10]) != default)
+            throw new InvalidOperationException("Tied logits should choose neutral for every head.");
+        Reject(() => _ = BotNativePolicy.Action(new float[9]));
+        Reject(() => _ = BotNativePolicy.Action([float.PositiveInfinity, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+    }
+
+    internal static void TestNativePolicyRejectsMalformedModelParameters()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-invalid-policy-");
+        try
+        {
+            var root = temporary.FullName;
+            WriteRuntime(root);
+            var policyPath = Path.Combine(root, "runtime-policy.json");
+            var manifestPath = Path.Combine(root, "runtime-manifest.json");
+            var policy = File.ReadAllText(policyPath);
+            var manifest = JsonNode.Parse(File.ReadAllText(manifestPath))!.AsObject();
+            Action<JsonObject>[] corruptions =
+            [
+                model => model["schemaVersion"] = 2,
+                model => model["layers"]![0]!["inputSize"] = 0,
+                model => model["layers"]![0]!["weights"] = new JsonArray(0),
+                model => model["layers"]![1]!["activation"] = "tanh",
+                model => model["sourceCheckpointSHA256"] = new string('0', 64)
+            ];
+            foreach (var corrupt in corruptions)
+            {
+                var model = JsonNode.Parse(policy)!.AsObject();
+                corrupt(model);
+                var data = JsonSerializer.SerializeToUtf8Bytes(model);
+                File.WriteAllBytes(policyPath, data);
+                manifest["policySHA256"] = Hash(data);
+                File.WriteAllText(manifestPath, manifest.ToJsonString());
+                Reject(() => _ = BotNativePolicy.Load(root));
+            }
         }
         finally { temporary.Delete(recursive: true); }
     }
@@ -198,7 +263,36 @@ internal static class BotPolicyTests
                 || history.Append(masked, previous, 5.18, allowMaskedKnight: true) is not { } admitted
                 || admitted[3 * width + 8] != 1)
                 throw new InvalidOperationException("Masked Knight features require fresh terrain and an opted-in checkpoint.");
+            if (history.Append(masked with { AvailableAt = 5.20 }, previous, 5.20) is not null
+                || history.Append(changedRoom with { AvailableAt = 5.22 }, previous, 5.23) is not { } restored
+                || restored.Take(3 * width).Any(value => value != 0)
+                || !restored.AsSpan(3 * width + 8, 5).SequenceEqual([1f, 0f, 0f, 0f, 0f]))
+                throw new InvalidOperationException("An invalid observation must reset history before the next valid sample.");
         }
+    }
+
+    internal static void TestRoadInputPreservesOlderPolicyHistoryAndRoundTrips()
+    {
+        var features = new double[BotRecordingContract.FeatureNames.Count];
+        features[4] = .9;
+        features[6] = 1;
+        var input = new BotCaptureObservation(13, 13, 13.01, 1, 1, 0, features, [], "detected")
+        {
+            DetectionTimestamp = 13,
+            RoadHint = new(-1, 0, .1, .25, false),
+            AtlasPathVersion = 1
+        };
+        var data = JsonSerializer.SerializeToUtf8Bytes(input, BotCaptureSession.Json);
+        var row = JsonSerializer.Deserialize<BotCaptureObservation>(data, BotCaptureSession.Json)!;
+        var legacy = new BotObservationHistory(7).Append(row, default, 13.02)!;
+        var road = new BotObservationHistory(8).Append(row, default, 13.02)!;
+        var unmarked = new BotObservationHistory(8).Append(row with { AtlasPathVersion = null }, default, 13.02)!;
+        var legacyWidth = BotPolicyContract.Names(7)!.Count;
+        if (legacy.Length != 4 * legacyWidth || road.Length != 4 * (legacyWidth + 6)
+            || !road.AsSpan(road.Length - 6).SequenceEqual([1f, -1f, 0f, .1f, .25f, 0f])
+            || !road.AsSpan(road.Length - 6 - legacyWidth, legacyWidth).SequenceEqual(legacy.AsSpan(3 * legacyWidth))
+            || !unmarked.AsSpan(unmarked.Length - 6).SequenceEqual(new float[6]))
+            throw new InvalidOperationException("A stored route must add only its own features and require path provenance.");
     }
 
     internal static void TestStartupSkipIsLatchedUntilFreshGameplay()

@@ -251,6 +251,7 @@ internal static class ForwarderPauseTests
         Check(forwarder.OwnsBotControl(owner) && forwarder.BeginBotControl() is null);
         Check(!await forwarder.StartRecordingAsync(), "Bot input could enter a demonstration.");
         Check(!forwarder.RenewBotControl(owner, InputButtons.Left, Clock() - .1), "Expired evidence was authorized.");
+        Check(!forwarder.RenewBotControl(owner, InputButtons.Left, Clock() + 10), "An overlong decision was authorized.");
         var jumpingAttack = InputButtons.Right | InputButtons.ActionX | InputButtons.ActionZ;
         Check(forwarder.RenewBotControl(owner, jumpingAttack, Clock() + .26));
         await Expect(jumpingAttack);
@@ -276,6 +277,13 @@ internal static class ForwarderPauseTests
         forwarder.EndBotControl(owner);
         Check(forwarder.OwnsBotControl(next) && !forwarder.RenewBotControl(owner, InputButtons.Right, Clock() + .23),
             "An old controller cannot end or renew a newer session.");
+        Check(forwarder.RenewBotControl(next, InputButtons.ActionX, Clock() + .32));
+        await Expect(InputButtons.ActionX);
+        forwarder.NeutralizeBotControl(owner);
+        Check(forwarder.CaptureMovement() == InputButtons.ActionX,
+            "An old controller cannot clear the new session's decision.");
+        forwarder.NeutralizeBotControl(next);
+        await Expect(InputButtons.None);
         var gate = (SemaphoreSlim)typeof(WindowsGameControlForwarder).GetField("outboundGate", BindingFlags.NonPublic | BindingFlags.Instance)!
             .GetValue(forwarder)!;
         await gate.WaitAsync();
