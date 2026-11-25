@@ -340,6 +340,18 @@
                                       DisplayMemberPath="DisplayName" SelectedValuePath="Id" MaxDropDownHeight="320"
                                       SelectionChanged="BotPlaybackVersion_Changed" IsEnabled="False"/>
                         </DockPanel>
+                        <ItemsControl x:Name="BotCheckpointScores"
+                                      ItemsSource="{Binding SelectedItem.Scores, ElementName=BotPlaybackVersion}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <DockPanel Margin="0,4,0,0">
+                                        <TextBlock DockPanel.Dock="Right" Margin="12,0,0,0"
+                                                   Text="{Binding DisplayValue}"/>
+                                        <TextBlock Text="{Binding Label}" Foreground="#B5C2CC"/>
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                         <TextBlock x:Name="BotTrainingStatus" Margin="0,5,0,0" Foreground="#B5C2CC" TextWrapping="Wrap"/>
                     </StackPanel>
                     <Grid Grid.Row="2">

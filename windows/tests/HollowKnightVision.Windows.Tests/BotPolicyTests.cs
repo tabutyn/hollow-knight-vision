@@ -483,6 +483,51 @@ internal static class BotPolicyTests
         finally { temporary.Delete(recursive: true); }
     }
 
+    internal static void TestCheckpointCatalogDisplaysAvailableValidationScores()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-model-scores-");
+        try
+        {
+            var models = Path.Combine(temporary.FullName, "models", "gameplay");
+            var legacy = PublishModel(models, "v1", "gameplay", 0, publishResult: false);
+            var trained = PublishModel(models, "bot-trained", "gameplay", 1);
+            var resultPath = Path.Combine(trained, "training-result.json");
+            var result = JsonNode.Parse(File.ReadAllText(resultPath))!.AsObject();
+            result["candidate"] = JsonNode.Parse("""
+                {"exactActionAccuracy":0.72,"heads":[{"name":"attack","balancedAccuracy":0.95},
+                    {"name":"jump","accuracy":0.9,"balancedAccuracy":0.65}]}
+                """);
+            result["baseline"] = JsonNode.Parse("""
+                {"exactActionAccuracy":0.58,"heads":[{"name":"jump","balancedAccuracy":0.42}]}
+                """);
+            result["candidateSequential"] = JsonNode.Parse("""{"exactActionAccuracy":0.69}""");
+            result["baselineSequential"] = JsonNode.Parse("""{"exactActionAccuracy":0.53}""");
+            File.WriteAllText(resultPath, result.ToJsonString());
+
+            var store = new BotModelStore(temporary.FullName, BotCaptureDomain.Gameplay);
+            var versions = store.Catalog().Versions;
+            if (versions.Single(item => item.Id == Path.GetFileName(legacy)).Scores.Count != 0
+                || !versions.Single(item => item.Id == "bot-trained").Scores.SequenceEqual(new BotCheckpointScore[]
+                {
+                    new("Action agreement", .72, .58),
+                    new("Jump balanced accuracy", .65, .42),
+                    new("Own-action agreement", .69, .53)
+                }))
+                throw new InvalidOperationException("The validation display needs the candidate and baseline scores from this export.");
+
+            result["baseline"] = true;
+            result["candidateSequential"] = JsonNode.Parse("""{"exactActionAccuracy":"invalid"}""");
+            result["candidate"] = JsonNode.Parse("""
+                {"exactActionAccuracy":0.87,"heads":[null,{"name":"jump","balancedAccuracy":1.5}]}
+                """);
+            File.WriteAllText(resultPath, result.ToJsonString());
+            var retained = store.Catalog().Versions.Single(item => item.Id == "bot-trained").Scores;
+            if (retained.Single().DisplayValue != "87%" || store.LoadPlayback()?.Directory != trained)
+                throw new InvalidOperationException("Malformed optional validation fields must not invalidate the verified checkpoint.");
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
     private static string PublishModel(string models, string name, string? domain, int offset,
         bool nativeParity = true, bool publishResult = true, Guid? runId = null)
     {
