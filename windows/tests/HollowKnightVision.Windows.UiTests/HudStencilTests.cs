@@ -34,7 +34,8 @@ internal static class HudStencilTests
     // This fixture is copied only to the test output; production embeds no HUD pixels.
     private static HudStencilTemplate ReferenceTemplate() => JsonSerializer.Deserialize<HudStencilTemplate>(
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "hud-stencil-reference.json")),
-        new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+        ?? throw new InvalidDataException("The test HUD template is missing.");
 
     private static Fixture[] LoadFixtures() => JsonSerializer.Deserialize<Fixture[]>(
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "hud-stencil-cases.json")),
@@ -58,7 +59,7 @@ internal static class HudStencilTests
     {
         var fixtures = LoadFixtures();
         var template = ReferenceTemplate();
-        Check(template?.IsValid == true, "Test HUD reference missing or invalid.");
+        Check(template.IsValid, "Test HUD reference is invalid.");
         Check(!typeof(HudStencilTemplate).Assembly.GetManifestResourceNames().Contains("hud-stencil-template.json"),
             "Production assembly still ships reference pixels.");
         foreach (var fixture in fixtures)
@@ -97,7 +98,7 @@ internal static class HudStencilTests
         Check(tracker.Observe(first, false, 3.1, 2) is null, "Known menu retained HUD matches.");
         Check(tracker.Observe(blank, true, 3.2, 2)!.HealthMasks.Count == 0, "Menu exit retained old masks.");
         Console.WriteLine("PASS HUD mask hold expires and resets on menu/generation changes");
-        var annotations = TwoHealthLabels(template!);
+        var annotations = TwoHealthLabels(template);
         var nineFull = fixtures.Single(item => item.Health?.SequenceEqual(new[] { 9, 0, 0 }) == true);
         var capturedFrame = Frame(nineFull);
         TestHealthSurvivesChangingCaptureAspect(capturedFrame, template);
