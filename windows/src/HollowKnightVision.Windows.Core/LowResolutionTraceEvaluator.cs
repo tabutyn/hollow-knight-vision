@@ -141,7 +141,7 @@ public static class LowResolutionTraceEvaluator
     public static LowResolutionTraceEvaluationReport Run(IReadOnlyList<string> arguments)
     {
         ArgumentNullException.ThrowIfNull(arguments);
-        string? trace = null, report = null, world = null;
+        string? trace = null, report = null, world = null, reference = null;
         var improvement = LowResolutionRoomMotionTracker.MinimumImprovement;
         for (var index = 0; index < arguments.Count; index += 2)
         {
@@ -155,6 +155,7 @@ public static class LowResolutionTraceEvaluator
                 case CommandFlag: trace = value; break;
                 case "--low-resolution-report": report = value; break;
                 case "--low-resolution-world-evidence": world = value; break;
+                case "--low-resolution-reference": reference = value; break;
                 case "--low-resolution-minimum-improvement":
                     if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out improvement)
                         || !double.IsFinite(improvement) || improvement is < 0 or > 1)
@@ -165,19 +166,44 @@ public static class LowResolutionTraceEvaluator
         }
         if (trace is null)
             throw new LowResolutionTraceEvaluatorException(LowResolutionTraceEvaluatorError.MissingTracePath,
-                $"Usage: {CommandFlag} PATH [--low-resolution-report FILE] [--low-resolution-world-evidence DIRECTORY].");
+                $"Usage: {CommandFlag} PATH [--low-resolution-reference PATH] [--low-resolution-report FILE] [--low-resolution-world-evidence DIRECTORY].");
 
         var tracePath = Path.GetFullPath(trace);
         var reportPath = report is null ? null : Path.GetFullPath(report);
+        var referencePath = reference is null ? null : Path.GetFullPath(reference);
         var comparer = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        if (reportPath is not null && string.Equals(tracePath, reportPath, comparer))
-            throw InvalidArgument("Choose a report path different from the input recording.");
+        if (reportPath is not null && (string.Equals(tracePath, reportPath, comparer)
+            || string.Equals(referencePath, reportPath, comparer)))
+            throw InvalidArgument("Choose a report path different from the input and reference recordings.");
 
         var path = new RecordedInputPathStore(Path.GetDirectoryName(tracePath)).Load(tracePath);
+        if (referencePath is not null)
+        {
+            var source = new RecordedInputPathStore(Path.GetDirectoryName(referencePath)).Load(referencePath);
+            if (path.SourcePathId != source.Id)
+                throw InvalidArgument("The reference recording does not match the trace source path ID.");
+            path = path with { GroundTruthSamples = ReferenceTruth(path, source) };
+        }
         var result = world is null ? Evaluate(path, improvement) : EvaluatePersistedWorld(path, world, improvement);
         if (reportPath is not null)
             AtomicFile.Write(reportPath, JsonSerializer.SerializeToUtf8Bytes(result, LabelingExampleStore.CreateJsonOptions()));
         return result;
+    }
+
+    private static IReadOnlyList<RecordedGroundTruthSample> ReferenceTruth(RecordedInputPath path, RecordedInputPath source)
+    {
+        var rendered = path.TrackingSamples.Select(sample => sample.RenderedGameFrame)
+            .OfType<int>().Select(frame => (long)frame).ToHashSet();
+        // A rendered marker can be reused after the receiver restarts.
+        return source.GroundTruthTrace
+            .Where(truth => truth.Sample.CameraAvailable && truth.Sample.HasFiniteCoordinates()
+                && double.IsFinite(truth.Offset) && truth.Offset >= 0 && truth.Offset <= path.Duration
+                && rendered.Contains(truth.Sample.UnityFrame))
+            .GroupBy(truth => truth.Sample.UnityFrame)
+            .Where(group => group.Select(truth => truth.Sample.SessionId).Distinct().Take(2).Count() == 1)
+            .Select(group => group.MaxBy(truth => truth.Offset)!)
+            .OrderBy(truth => truth.Offset)
+            .ToArray();
     }
 
     private static LowResolutionTraceEvaluatorException InvalidArgument(string message) =>

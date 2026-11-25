@@ -270,7 +270,6 @@ internal static class VisualProductionReplay
         var snapshot = new LiveWorldSessionStore(worldDirectory).Load().Snapshot;
         var snapshotBytes = JsonSerializer.SerializeToUtf8Bytes(snapshot, Json);
         AtomicWrite(snapshotPath, snapshotBytes);
-        RecordSourceTruth(source, frames, timeBase.Start, replayTrace);
         var trace = replayTrace.Stop(frames[^1].CapturedAt)
             ?? throw new InvalidDataException("Visual replay lost its output input path.");
         var tracePath = new RecordedInputPathStore(output).Save(trace);
@@ -282,30 +281,12 @@ internal static class VisualProductionReplay
             tileDigest, worldDirectory, tracePath, snapshotPath, diagnosticsPath, "capture-uptime",
             [
                 "Tracking and world publication run serially using the Windows production ground, camera and atlas code.",
-                "Only archived images, visual masks, tuning and input transitions feed tracking. Room identity is derived from visual transitions.",
+                "Only archived images, visual masks, tuning and input transitions feed tracking. Room identity is derived from visual transitions. Score against the original recording for receiver truth.",
                 "Archives with vision-stage events replay the frames delivered to that worker. Missing images retain their original indices.",
                 timeBase.Note
             ]);
         AtomicWrite(Path.Combine(output, "report.json"), JsonSerializer.SerializeToUtf8Bytes(report, Json));
         return report;
-    }
-
-    private static void RecordSourceTruth(RecordedInputPath source, VisualReplayFrame[] frames,
-        double startedAt, InputPathRecorder recorder)
-    {
-        var rendered = frames.Where(frame => frame.RenderedGameFrame.HasValue)
-            .Select(frame => (long)frame.RenderedGameFrame!.Value).ToHashSet();
-        var duration = frames[^1].CapturedAt - startedAt;
-        var matching = source.GroundTruthTrace.Where(truth => truth.Sample is { CameraAvailable: true } sample
-            && double.IsFinite(truth.Offset) && truth.Offset >= 0 && truth.Offset <= duration
-            && rendered.Contains(sample.UnityFrame) && sample.HasFiniteCoordinates());
-        // A 24-bit marker can repeat after a receiver session restarts. If the
-        // source cannot disambiguate a frame, exclude it from diagnostic truth.
-        var unique = matching.GroupBy(truth => truth.Sample.UnityFrame)
-            .Where(group => group.Select(truth => truth.Sample.SessionId).Distinct().Take(2).Count() == 1)
-            .Select(group => group.MaxBy(truth => truth.Offset)!);
-        foreach (var truth in unique.OrderBy(truth => truth.Offset))
-            recorder.RecordGroundTruth(truth.Sample, startedAt + truth.Offset);
     }
 
     private static (double Start, double WorldSeconds, string Note) StartTimestamp(RecordedInputPath source, VisualReplayManifest manifest)

@@ -187,7 +187,7 @@ public sealed record RecordedInputPath
     public RecordedGameCheckpoint? StartCheckpoint { get; }
     public IReadOnlyList<RecordedInputPathEvent> Events { get; }
     public IReadOnlyList<RecordedTrackingSample> TrackingSamples { get; }
-    public IReadOnlyList<RecordedGroundTruthSample>? GroundTruthSamples { get; }
+    public IReadOnlyList<RecordedGroundTruthSample>? GroundTruthSamples { get; internal init; }
     public IReadOnlyList<RecordedCoarseMotionSample>? CoarseMotionSamples { get; }
     public IReadOnlyList<RecordedLowResolutionFrame>? LowResolutionFrames { get; }
     public IReadOnlyList<RecordedLoopClosureEvent>? LoopClosures { get; }
