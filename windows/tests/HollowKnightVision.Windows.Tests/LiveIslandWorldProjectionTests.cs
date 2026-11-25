@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 
@@ -129,6 +130,33 @@ internal static class LiveIslandWorldProjectionTests
         Check(LiveIslandWorldProjection.Resolve(world.Snapshot, SavedGeneration + 1, RoomId, LocalEpoch, 1, 2) is null
             && LiveIslandWorldProjection.Resolve(world.Snapshot, SavedGeneration, RoomId, LocalEpoch + 1, 1, 2) is null,
             "A persisted owner cannot cross a generation or graph epoch boundary.");
+    }
+
+    internal static void TestExactCaptureClockSurvivesCorrectionAndLegacyLoad()
+    {
+        var world = new LiveWorldTracker();
+        _ = world.Ingest(0, 1000, Frame, default, Frame.Width, captureEvidence: new(123.456) { MeasuredLineage = 1 });
+        var snapshot = world.Snapshot;
+        var moved = snapshot.ReplaceOptimizedPoses(new Dictionary<int, AtlasPoint> { [0] = new(12, 8) }, snapshot.MapRevision);
+        var bytes = LiveWorldJson.WriteSnapshot(moved);
+        var restored = LiveWorldJson.ReadSnapshot(bytes).Observations.Single();
+        Check(restored.CaptureTimestamp == 123.456 && restored.Timestamp == 1000 && restored.OptimizedPose == new AtlasPoint(12, 8),
+            "A corrected position must preserve the two original clocks.");
+        var older = JsonNode.Parse(bytes)!;
+        older["observations"]![0]!.AsObject().Remove("captureTimestamp");
+        var legacy = LiveWorldJson.ReadSnapshot(System.Text.Encoding.UTF8.GetBytes(older.ToJsonString())).Observations.Single();
+        Check(legacy.CaptureTimestamp is null && legacy.OptimizedPose == restored.OptimizedPose,
+            "A saved observation predating the capture clock must keep its geometry without inventing a timestamp.");
+        try
+        {
+            _ = world.Ingest(1, 1001, Frame, default, Frame.Width, captureEvidence: new(double.NaN) { MeasuredLineage = 2 });
+        }
+        catch (LiveWorldTrackerException error) when (error.Error == LiveWorldTrackerError.InvalidScan)
+        {
+            Check(ReferenceEquals(world.Snapshot, snapshot), "An invalid capture must keep the existing graph.");
+            return;
+        }
+        throw new InvalidOperationException("A nonfinite capture clock must be rejected as invalid input.");
     }
 
     private static void Admit(LiveWorldTracker world, int id, double time, AtlasPoint local, AtlasPoint placement,
