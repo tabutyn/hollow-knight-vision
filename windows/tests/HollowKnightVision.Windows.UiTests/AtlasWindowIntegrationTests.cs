@@ -13,7 +13,9 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
+using Key = System.Windows.Input.Key;
 using Line = System.Windows.Shapes.Line;
+using ModifierKeys = System.Windows.Input.ModifierKeys;
 using OverlayPath = System.Windows.Shapes.Path;
 using Rectangle = System.Windows.Shapes.Rectangle;
 using SerialWorldWorker = VisionApp::HollowKnightVision.Windows.App.SerialWorldWorker;
@@ -824,6 +826,11 @@ internal static class AtlasWindowIntegrationTests
             SetField(window, "botCapture", null!);
             Wait(capture.FinishAsync(2, null, completed: false));
 
+            foreach (var modifier in new[] { ModifierKeys.Shift, ModifierKeys.Control, ModifierKeys.Alt, ModifierKeys.Windows })
+                Check(!PressReset(modifiers: modifier), $"A desktop R with {modifier} must leave the room alone.");
+            Check(!PressReset(repeated: true) && !PressReset(Key.Q) && !commands.Reader.TryRead(out _),
+                "A repeated R or an unrelated desktop key must not send a room reset.");
+
             Check(PressReset(), "The Hacker R shortcut did not start room reset.");
             var unconfirmedReset = GetField<Task>(window, "atlasOperationCompletion");
             var first = ReadResetCommand();
@@ -860,6 +867,8 @@ internal static class AtlasWindowIntegrationTests
             Program.Pump();
             Check(focusedReset is null, "A modified game-focused R must leave the room alone.");
             focusedShortcut.ObserveR(down: false, modified: false);
+            Program.Pump();
+            Check(focusedReset is null, "A game-focused R release must leave the room alone.");
             focusedShortcut.ObserveR(down: true, modified: false);
             gameFocused = false;
             Program.Pump();
@@ -899,8 +908,8 @@ internal static class AtlasWindowIntegrationTests
             Wait(receiver);
         }
 
-        bool PressReset() => (bool)Invoke(window, "HandleLocalShortcut", System.Windows.Input.Key.R,
-            false, System.Windows.Input.ModifierKeys.None)!;
+        bool PressReset(Key key = Key.R, bool repeated = false, ModifierKeys modifiers = ModifierKeys.None) =>
+            (bool)Invoke(window, "HandleLocalShortcut", key, repeated, modifiers)!;
         bool MapsIntact() => VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7
             && hacker.Read(profile)?.RegistrationCount == room.RegistrationCount;
         ReceiverPlayerOpsCommand ReadResetCommand() => ReadOperation(ReceiverPlayerOpsCommand.ResetRoomOperation);

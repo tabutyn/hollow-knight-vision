@@ -198,6 +198,14 @@ internal static class LiveGameStatusTests
         gate.Reset(); Check(gate.Admits("main-title", false, 0, 1));
         Check(!gate.Admits("main-title", false, 0, double.NaN)); Check(!gate.Admits(null, false, 0, 1.1));
     }
+    public static void TestFreshHudBlocksFalseInventoryBeforeGameplayLatches()
+    {
+        var gate = new GameplayMenuEvidenceGate();
+        Check(!gate.Admits("inventory", false, 2, 1));
+        Check(!gate.Admits("inventory", false, 0, 1.1));
+        Check(!gate.Admits("pause", false, 0, 1.5));
+        Check(gate.Admits("pause", false, 0, 1.6));
+    }
     public static void TestPipelineHandoff()
     {
         var pipeline = new LiveGameStatusPipeline(); var calls = 0;

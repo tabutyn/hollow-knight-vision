@@ -104,6 +104,28 @@ internal static class BotAtlasRunTests
             "Restored Hacker tiles must be queried using their room-local camera basis.");
     }
 
+    internal static void TestAtlasMapAndHealthReachPolicyInputs()
+    {
+        const double time = 1;
+        var view = BotAtlasFrontiers.View(default, new(640, 360), revision: 1, health: 4,
+            covered: 20, earned: 0, contains: (x, _) => x is >= 0 and < 40);
+        Check(view.Left > view.Right && view.Missing is { Count: 15 } grid && grid[5] == 1 && grid[9] == 0,
+            "Known space to the right must bias the frontier left and populate the missing-area grid.");
+        var features = new double[BotRecordingContract.FeatureNames.Count];
+        features[4] = features[6] = 1;
+        var row = Row(time) with { Features = features, AtlasView = view, DetectionTimestamp = time };
+        float[] expected = [1, (float)view.Left, (float)view.Right, 1, .25f, 1, .. view.Missing!.Select(value => (float)value)];
+        foreach (var version in new[] { 7, BotPolicyContract.CurrentVersion, BotPolicyContract.LandingVersion })
+        {
+            var schema = BotPolicyContract.Names(version)!;
+            var start = schema.ToList().IndexOf("atlas_present");
+            var input = new BotObservationHistory(version).Append(row, default, time);
+            Check(input is not null && input.Length == BotRecordingContract.HistoryLength * schema.Count
+                && start >= 0 && input.AsSpan(input.Length - schema.Count + start, expected.Length).SequenceEqual(expected),
+                $"The v{version} actor must receive the frontier, normalized health, and complete missing-area grid.");
+        }
+    }
+
     private static BotCaptureObservation Row(double time) =>
         new(time, time, time, 1, 0, 1, new double[BotRecordingContract.LegacyWidth], [], "human-authored");
 
