@@ -157,7 +157,7 @@ public partial class MainWindow
         var row = policyDomain == BotCaptureDomain.Hacker ? exact : visual;
         var evaluation = skillFrame?.Lease.Evaluation;
         if (evaluation is null && playback is not null && playbackRun is not null)
-            evaluation = Volatile.Read(ref playbackRun.Loaded)?.Evaluation;
+            evaluation = Volatile.Read(ref playbackRun.Evaluation);
         if (evaluation is not null)
             evaluation.RecordFrame(frame, time, row, receiverTelemetry?.SceneName,
                 visual?.DetectedTerrain?.Floors ?? BotObservationBuilder.ProjectDetectedFloors(frame, visualFloors),

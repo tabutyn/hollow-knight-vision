@@ -126,6 +126,7 @@ var tests = new List<(string Name, Action Run)>
     ("legacy Hacker replay requires exact receiver frames and corroborated grounding", BotBlockadeReplayTests.TestHackerReplayUsesUniqueReceiverFrameAndGrounding),
     ("bot evaluations preserve source images, applied controls, and paired terrain outside training", BotEvaluationTests.TestBotEvaluationPreservesFramesControlsAndPairedAuditOutsideExpertData),
     ("empty and failed bot evaluations do not publish archives", BotEvaluationTests.TestEmptyAndFailedEvaluationsDoNotPublish),
+    ("bot evaluation preparation opens the archive before frames and cleans up empty starts", () => BotEvaluationTests.TestEvaluationPreparationVerifiesDestinationBeforeFrames().GetAwaiter().GetResult()),
     ("overloaded bot evaluations mark the source archive incomplete", BotEvaluationTests.TestEvaluationBackpressureMarksArchiveIncomplete),
     ("skill evaluations preserve winning and alternate scores and outcomes", BotEvaluationTests.TestSkillEvaluationKeepsChoicesAndOutcome),
     ("atlas score uses stable health and forward progress and penalizes dwelling", BotAtlasRunTests.TestDamageDwellAndPathProgress),

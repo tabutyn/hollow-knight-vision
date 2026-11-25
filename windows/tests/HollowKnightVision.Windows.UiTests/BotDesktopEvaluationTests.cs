@@ -48,6 +48,7 @@ internal static class BotDesktopEvaluationTests
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             foreach (var domain in new[] { "gameplay", "hacker" })
                 await VerifyDomainAsync(temporary.FullName, domain, label, timeout.Token);
+            await VerifyPlaybackCaptureFailureAsync(Path.Combine(temporary.FullName, "blocked-evaluation"), timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening"), OpeningOutcome.Gameplay, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-timeout"), OpeningOutcome.HandoffTimeout, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-backup-failure"), OpeningOutcome.ArchiveFailure, timeout.Token);
@@ -876,6 +877,57 @@ internal static class BotDesktopEvaluationTests
         }
         Console.WriteLine(outcome == OpeningOutcome.HandoffTimeout ? "PASS Desktop bot returns control when the Gameplay HUD handoff expires without new frames"
             : "PASS Desktop bot stops cutscene input at the Gameplay HUD, starts the built-in explorer, and releases with B");
+    }
+
+    private static async Task VerifyPlaybackCaptureFailureAsync(string root, CancellationToken token)
+    {
+        using var server = new TcpListener(IPAddress.Loopback, 0);
+        server.Start();
+        var port = ((IPEndPoint)server.LocalEndpoint).Port;
+        var session = Guid.NewGuid();
+        var states = Channel.CreateUnbounded<ReceiverInputSnapshot>();
+        using var receiverLifetime = new CancellationTokenSource();
+        var peer = ServeAsync(server, states.Writer, receiverLifetime.Token);
+        var botRoot = Path.Combine(root, "bot-v1");
+        _ = WriteCheckpoint(botRoot, "hacker", "Blocked archive fixture");
+        var blocked = Path.Combine(botRoot, "evaluations");
+        File.WriteAllText(blocked, "existing user file");
+        var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
+        try
+        {
+            Field("recentCaptureGeneration").SetValue(window, Generation);
+            Field("workspace").SetValue(window, "Hacker");
+            Field("recognizedMenuContext").SetValue(window, "game");
+            var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
+            var actionSent = 0;
+            bridge.BotInputSent += (_, buttons, _) =>
+            {
+                if (buttons != InputButtons.None) Interlocked.Exchange(ref actionSent, 1);
+            };
+            bridge.Start();
+            while (bridge.PauseState != GamePauseState.Ready) await Task.Delay(10, token);
+            await window.StartBotPlaybackAsync().WaitAsync(token);
+            var status = (TextBlock)window.FindName("StatusText");
+            Check(Field("botPlayback").GetValue(window) is null
+                && status.Text.StartsWith("Bot playback capture failed.", StringComparison.Ordinal) && Volatile.Read(ref actionSent) == 0,
+                $"An evaluation setup failure must release playback before any bot action. {status.Text}");
+            var available = bridge.BeginBotControl();
+            Check(available.HasValue && File.ReadAllText(blocked) == "existing user file",
+                "A failed start must leave control available and preserve the file that blocked capture.");
+            bridge.EndBotControl(available!.Value);
+            Console.WriteLine("PASS Windows returns control before bot playback when the evaluation destination cannot be opened");
+        }
+        finally
+        {
+            Field("isClosing").SetValue(window, true);
+            try { await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10)); }
+            finally
+            {
+                receiverLifetime.Cancel();
+                try { await peer.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (OperationCanceledException) when (receiverLifetime.IsCancellationRequested) { }
+            }
+        }
     }
 
     private static async Task VerifyDomainAsync(string root, string domain, GroundTruthWorldLine label,
