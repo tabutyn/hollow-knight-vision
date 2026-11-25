@@ -99,11 +99,11 @@ public sealed class BotDemoNavigation(double startedAt)
 
     public BotDemoDecision Observe(BotDemoFrame frame, double now, bool? activeSave)
     {
-        if (phase is BotDemoPhase.Gameplay or BotDemoPhase.Stopped) return new(phase);
+        if (phase is BotDemoPhase.Gameplay or BotDemoPhase.Stopped || !double.IsFinite(now)) return new(phase);
         if (now - phaseStartedAt > (phase == BotDemoPhase.Opening ? 300 : 90)
             || phase != BotDemoPhase.Opening && now - runStartedAt > 420)
             return Fail($"Bot timed out. {Status}");
-        if (!double.IsFinite(frame.CapturedAt) || !double.IsFinite(now) || frame.CapturedAt < runStartedAt
+        if (!double.IsFinite(frame.CapturedAt) || frame.CapturedAt < runStartedAt
             || frame.CapturedAt <= lastCapture || now - frame.CapturedAt is < 0 or > .5
             || phase == BotDemoPhase.Archiving) return new(phase);
         lastCapture = frame.CapturedAt;

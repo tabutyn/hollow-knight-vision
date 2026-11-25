@@ -1120,6 +1120,8 @@ var tests = new List<(string Name, Action Run)>
     ("Bot Demo aborts before confirmation when the save changes", BotDemoTests.TestSessionStopsIfGameSaveChangesBeforeConfirm),
     ("Bot Demo sends no clear commands when its archive cannot be published", BotDemoTests.TestSessionStopsWhenArchiveCannotBePublished),
     ("Bot Demo rechecks save evidence before starting or retrying the new save", BotDemoTests.TestSessionRechecksSaveBeforeStartingOrRetrying),
+    ("Bot Demo shelters a legacy save and waits for complete matching profile evidence", BotDemoTests.TestLegacySaveIsArchivedOnlyAfterFullMatchingProfileEvidence),
+    ("Bot Demo rejects nonfinite profile clocks before reading slot data", BotDemoTests.TestNonfiniteProfileClocksCannotCheckSlotFiles),
     ("Bot Demo uses fresh menu timing, selection and dialog geometry", BotDemoTests.TestVisionAdmitsOnlyFreshMeasuredEvidence),
     ("Bot Demo confirms in the direction of the matched Yes label", BotDemoTests.TestConfirmationFollowsMatchedAnchorGeometry),
     ("Bot Demo rejects stale, duplicate and pre-start evidence", BotDemoTests.TestStaleDuplicateAndPreStartFramesCannotAdvanceNavigation),

@@ -16,6 +16,7 @@ public sealed class BotDemoSession(BotDemoSaveArchive saves, double startedAt)
     public BotDemoDecision Observe(BotDemoFrame frame, double now)
     {
         if (failure is not null) return new(BotDemoPhase.Stopped, Issue: failure);
+        if (!double.IsFinite(now)) return new(navigation.Phase);
         try
         {
             if (archiveTask is { IsCompleted: true } finished)
@@ -46,7 +47,7 @@ public sealed class BotDemoSession(BotDemoSaveArchive saves, double startedAt)
 
     private bool? ObserveOccupancy(BotDemoFrame frame, double now)
     {
-        if (!frame.ProfilesMeasured || now - frame.CapturedAt is < 0 or > .5
+        if (!frame.ProfilesMeasured || now - frame.CapturedAt is not (>= 0 and <= .5)
             || navigation.Phase is BotDemoPhase.Archiving or BotDemoPhase.Opening or BotDemoPhase.Gameplay)
             return null;
         // The last profile image can outlive an on-disk save change. Use
