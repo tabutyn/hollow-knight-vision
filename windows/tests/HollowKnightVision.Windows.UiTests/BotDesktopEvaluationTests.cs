@@ -22,7 +22,7 @@ internal static class BotDesktopEvaluationTests
     private const int Width = 192, Height = 128;
     private const InputButtons Action = InputButtons.Right | InputButtons.ActionX;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-    private enum OpeningOutcome { Gameplay, HandoffTimeout, ArchiveFailure }
+    private enum OpeningOutcome { Gameplay, HandoffTimeout, ArchiveFailure, EvaluationFailure }
 
     internal static void Run()
     {
@@ -52,6 +52,8 @@ internal static class BotDesktopEvaluationTests
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening"), OpeningOutcome.Gameplay, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-timeout"), OpeningOutcome.HandoffTimeout, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-backup-failure"), OpeningOutcome.ArchiveFailure, timeout.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-evaluation-failure"), OpeningOutcome.EvaluationFailure, timeout.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
             await VerifyCheckpointControlsAsync(Path.Combine(temporary.FullName, "versions"), timeout.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
@@ -715,12 +717,18 @@ internal static class BotDesktopEvaluationTests
         var peer = ServeAsync(server, states.Writer, token);
         var saves = Directory.CreateDirectory(Path.Combine(root, "saves")).FullName;
         var archives = Path.Combine(root, "bot-v1", "save-archives");
+        var evaluationRoot = Path.Combine(root, "bot-v1", "evaluations");
         var slotFour = Path.Combine(saves, "user4.dat");
         if (outcome == OpeningOutcome.ArchiveFailure)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(archives)!);
             File.WriteAllText(archives, "archive destination is a file");
             File.WriteAllText(slotFour, "original save");
+        }
+        if (outcome == OpeningOutcome.EvaluationFailure)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(evaluationRoot)!);
+            File.WriteAllText(evaluationRoot, "existing user file");
         }
         var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
         try
@@ -798,6 +806,20 @@ internal static class BotDesktopEvaluationTests
                     && status.Text.Contains("Controls returned to you.", StringComparison.Ordinal),
                     "An expired gameplay handoff must release the receiver lease.");
             }
+            else if (outcome == OpeningOutcome.EvaluationFailure)
+            {
+                while (Field("botPlayback").GetValue(window) is not null)
+                {
+                    var observationOwner = Step(null, receiverGameplay: true, recognizedGameplay: true, admitGameplay: true, showHud: true);
+                    Check(observationOwner is null, "The bot received a playable frame before its evaluation opened.");
+                    await Task.Delay(40, token);
+                }
+                Check(!bridge.OwnsBotControl(owner) && status.Text.StartsWith("Bot playback capture failed.", StringComparison.Ordinal)
+                    && File.ReadAllText(evaluationRoot) == "existing user file",
+                    $"A blocked evaluation must stop the handoff and preserve the conflicting file. {status.Text}");
+                Console.WriteLine("PASS A blocked evaluation returns control at the Windows bot handoff");
+                return;
+            }
             else
             {
                 object? started = null;
@@ -822,7 +844,6 @@ internal static class BotDesktopEvaluationTests
                 while ((await states.Reader.ReadAsync(token)).Enabled) { }
             }
             await ((Task)Field("botEvaluationWrites").GetValue(window)!).WaitAsync(token);
-            var evaluationRoot = Path.Combine(root, "bot-v1", "evaluations");
             if (outcome == OpeningOutcome.HandoffTimeout)
                 Check(!Directory.Exists(evaluationRoot), "An opening without a playable frame must leave no evaluation.");
             else

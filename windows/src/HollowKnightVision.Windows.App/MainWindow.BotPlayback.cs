@@ -30,6 +30,7 @@ public partial class MainWindow
         internal BotStartupNavigation Startup { get; } = new(startedAt);
         internal LoadedBot? Loaded;
         internal BotEvaluationRecorder? Evaluation;
+        internal int EvaluationStartQueued;
         internal double HandoffDeadline = double.PositiveInfinity;
         internal BotPlaybackUpdate PlaybackUpdate = new(BotPlaybackUpdate.WaitingForFrame);
         internal string? DisplayedPlaybackStatus; // UI thread
@@ -133,31 +134,32 @@ public partial class MainWindow
             loaded = new(null, null, $"Bot checkpoint unavailable. {error.Message}");
         }
         if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
-        if (loaded is { Policy: not null, ModelName: { } modelName })
-        {
-            try
-            {
-                var evaluation = new BotEvaluationRecorder(BotEvaluationRoot, domain, modelName,
-                    loaded.ModelHash, run.Authored, run.Generation, run.StartedAt, prepareImmediately: true);
-                Volatile.Write(ref run.Evaluation, evaluation);
-                await evaluation.Preparation;
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException
-                or GroundTruthLineStoreException or JsonException)
-            {
-                if (ReferenceEquals(Volatile.Read(ref botPlayback), run))
-                {
-                    Volatile.Write(ref run.Evaluation, null);
-                    StopBotPlayback($"Bot playback capture failed. {error.Message}", reason: "evaluation-start-failed");
-                }
-                return;
-            }
-        }
+        if (run.StartedInGameplay && loaded is { Policy: not null, ModelName: { } modelName })
+            await PrepareBotEvaluationAsync(run, modelName, loaded.ModelHash);
         if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
         if (run.StartedInGameplay && loaded.Policy is null)
             StopBotPlayback(loaded.Issue);
         else
             Volatile.Write(ref run.Loaded, loaded);
+    }
+
+    private async Task PrepareBotEvaluationAsync(BotRun run, string modelName, string? modelHash)
+    {
+        if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
+        try
+        {
+            var evaluation = new BotEvaluationRecorder(BotEvaluationRoot, run.Domain, modelName,
+                modelHash, run.Authored, run.Generation, run.StartedAt, prepareImmediately: true);
+            Volatile.Write(ref run.Evaluation, evaluation);
+            await evaluation.Preparation;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException
+            or GroundTruthLineStoreException or JsonException)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
+            Volatile.Write(ref run.Evaluation, null);
+            StopBotPlayback($"Bot playback capture failed. {error.Message}", reason: "evaluation-start-failed");
+        }
     }
 
     private void StopBotPlayback(string? status = null, string reason = "interrupted")
@@ -292,6 +294,13 @@ public partial class MainWindow
                 if (decision.Phase != BotStartupPhase.Gameplay) return null;
             }
             if (!admitted || receiver?.AtlasGameplayActive == false) return null;
+            if (loaded is { Policy: not null, ModelName: { } modelName }
+                && Volatile.Read(ref run.Evaluation)?.Preparation.IsCompletedSuccessfully != true)
+            {
+                if (Interlocked.Exchange(ref run.EvaluationStartQueued, 1) == 0)
+                    _ = Dispatcher.InvokeAsync(() => PrepareBotEvaluationAsync(run, modelName, loaded.ModelHash)).Task.Unwrap();
+                return null;
+            }
             Volatile.Write(ref run.Playing, true);
             gameControls.NeutralizeBotControl(run.Owner);
         }
