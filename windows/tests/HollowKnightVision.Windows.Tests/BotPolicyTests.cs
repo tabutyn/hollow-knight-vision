@@ -392,6 +392,150 @@ internal static class BotPolicyTests
         finally { temporary.Delete(recursive: true); }
     }
 
+    internal static void TestPlaybackResetsHistoryWhenTheActionLeaseExpires()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-bot-lease-history-");
+        try
+        {
+            var root = temporary.FullName;
+            var width = WriteRuntime(root);
+            var policy = EditRuntime(root, model =>
+            {
+                var weights = model["layers"]![0]!["weights"]!.AsArray();
+                weights[0] = 0;
+                weights[3 * (width / BotRecordingContract.HistoryLength) + 8] = 1;
+            });
+            var playback = new BotPolicyPlayback(policy, BotCaptureDomain.Gameplay);
+            var initial = Decide(100);
+            var continuous = Decide(100.1);
+            var resumed = Decide(continuous.Deadline + .02);
+            if (initial.Action.Horizontal != 2 || continuous.Action.Horizontal != 0
+                || resumed.Action != initial.Action)
+                throw new InvalidOperationException("A new decision after its input lease expired must start with a fresh policy history.");
+
+            BotPlaybackDecision Decide(double capture) =>
+                playback.Decide(BotVisualKnightMemoryTests.Row(capture, .3), InputButtons.None, capture + .01)
+                ?? throw new InvalidOperationException("The test requires each frame to be fresh.");
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
+    internal static void TestGameplayPlaybackKeepsActorControlThroughSustainedOcclusion()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-bot-masked-playback-");
+        try
+        {
+            var root = temporary.FullName;
+            foreach (var action in new[] { new BotPolicyAction(1, 0, 1, 0), default })
+            {
+                var playback = new BotPolicyPlayback(ConstantActor(root, action, masked: true), BotCaptureDomain.Gameplay);
+                var previous = InputButtons.None;
+                BotPlaybackUpdate? last = null;
+                for (var tick = 0; tick < 54; tick++)
+                {
+                    var observed = MaskedRow(100 + tick * .1);
+                    last = playback.Evaluate(observed, previous, observed.AvailableAt);
+                    if (last is not { Decision: { } decision } || decision.Action != action
+                        || !last.Status.EndsWith(" · Knight occluded", StringComparison.Ordinal)
+                        || decision.Deadline > observed.CapturedAt + BotRecordingContract.MaximumCaptureAge)
+                        throw new InvalidOperationException("Every current masked frame should preserve the learned action, including neutral.");
+                    previous = decision.Action.Buttons;
+                }
+                var gap = last!.Decision!.Value.Deadline + .01;
+                if (last.StatusAt(gap) != BotPlaybackUpdate.WaitingForObservation)
+                    throw new InvalidOperationException("An expired stream must release its last decision.");
+                var emptyTerrain = MaskedRow(106);
+                var unsupported = emptyTerrain with { Features = emptyTerrain.Features.Select((value, index) => index == 20 ? 0 : value).ToArray() };
+                if (playback.Evaluate(unsupported, InputButtons.None, unsupported.AvailableAt)?.Decision is not null)
+                    throw new InvalidOperationException("A masked frame without terrain cannot authorize input.");
+                var visible = BotVisualKnightMemoryTests.Row(107, .3);
+                if (playback.Decide(visible, InputButtons.None, 107.01)?.Action != action)
+                    throw new InvalidOperationException("A fresh sighting must restore the same actor's decisions.");
+            }
+        }
+        finally { temporary.Delete(recursive: true); }
+
+        static BotCaptureObservation MaskedRow(double time)
+        {
+            var row = BotVisualKnightMemoryTests.Row(time, null);
+            var features = row.Features.ToArray();
+            features[20] = 1;
+            return row with
+            {
+                Features = features,
+                AvailableAt = time + .01,
+                AtlasView = new(.13, .56, [0, 0], 640, 10, 0, 1, 5)
+            };
+        }
+    }
+
+    internal static void TestPlaybackPreservesActorActionsAtEnemiesGeoAndFrontiers()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-bot-actor-actions-");
+        try
+        {
+            var action = new BotPolicyAction(1, 2, 1, 1);
+            var playback = new BotPolicyPlayback(ConstantActor(temporary.FullName, action, masked: false), BotCaptureDomain.Gameplay);
+            var previous = InputButtons.None;
+            for (var index = 0; index < 7; index++)
+            {
+                var row = BotVisualKnightMemoryTests.Row(100 + index * .1, .5);
+                var features = row.Features.ToArray();
+                features[96] = index % 2 == 0 ? -.04 : .04;
+                features[101] = index is 0 or 4 or 6 ? 0 : 1;
+                row = row with
+                {
+                    RoomId = index < 5 ? 1 : 2,
+                    Features = features,
+                    GeoCaches = index is 4 or 5 ? [new(.53, .3, .03, .03)] : null,
+                    AtlasView = new(1, 0, [0, 0], 640, 1, 0, 0, index > 5 ? 4 : 5)
+                };
+                if (playback.Decide(row, previous, row.CapturedAt + .01)?.Action != action)
+                    throw new InvalidOperationException("Playback must preserve all four learned heads through combat, pickups and exploration.");
+                previous = action.Buttons;
+            }
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
+    internal static void TestPlaybackOnRecordedEnemySightingsWhenRequested()
+    {
+        var model = Environment.GetEnvironmentVariable("HKV_COMBAT_GAMEPLAY_MODEL");
+        var clips = Environment.GetEnvironmentVariable("HKV_COMBAT_CLIP_DIRECTORY");
+        if (string.IsNullOrEmpty(model) || string.IsNullOrEmpty(clips))
+        {
+            Console.WriteLine("SKIP recorded enemy playback: set HKV_COMBAT_GAMEPLAY_MODEL and HKV_COMBAT_CLIP_DIRECTORY.");
+            return;
+        }
+
+        var policy = BotNativePolicy.Load(model);
+        var sightings = 0;
+        var attacks = 0;
+        foreach (var folder in Directory.EnumerateDirectories(clips, "demo-*"))
+        {
+            var playback = new BotPolicyPlayback(policy, BotCaptureDomain.Gameplay);
+            BotPlaybackDecision? held = null;
+            foreach (var line in File.ReadLines(Path.Combine(folder, "events.jsonl")))
+            {
+                using var item = JsonDocument.Parse(line);
+                var data = item.RootElement;
+                if (data.GetProperty("type").GetString() != "observation"
+                    || data.Deserialize<BotCaptureObservation>(BotCaptureSession.Json) is not { TerrainSource: "detected" } row)
+                    continue;
+                var previous = held is { } active && row.AvailableAt < active.Deadline
+                    ? active.Action.Buttons : InputButtons.None;
+                var update = playback.Evaluate(row, previous, row.AvailableAt);
+                if (update is null) continue;
+                held = update.Decision;
+                if (held is not { } chosen || row.Features[101] != 1) continue;
+                sightings++;
+                attacks += chosen.Action.Attack;
+            }
+        }
+        if (sightings == 0) throw new InvalidOperationException("The selected clips produced no accepted enemy observations.");
+        Console.WriteLine($"Recorded enemy sightings: {sightings} accepted frames, model chose attack on {attacks}.");
+    }
+
     internal static void TestPlaybackWaitingStatusNamesMissingEvidence()
     {
         var temporary = Directory.CreateTempSubdirectory("hkv-bot-playback-status-");
@@ -482,10 +626,12 @@ internal static class BotPolicyTests
             if (hacker.LoadPlayback() is not null || gameplay.LoadPlayback() is not null)
                 throw new InvalidOperationException("An empty store should have no model.");
 
-            var legacy = PublishModel(root, "v1", null, 0, publishResult: false);
-            Expect(gameplay, legacy);
             var first = PublishModel(Path.Combine(root, "hacker"), "bot-first", "hacker", 1);
             Expect(hacker, first);
+            if (gameplay.LoadPlayback() is not null)
+                throw new InvalidOperationException("A Hacker checkpoint must never load into Game Play.");
+            var legacy = PublishModel(root, "v1", null, 0, publishResult: false);
+            Expect(gameplay, legacy);
             var second = PublishModel(Path.Combine(root, "hacker"), "bot-second", "hacker", 2);
             Expect(hacker, second);
             var independent = PublishModel(Path.Combine(root, "gameplay"), "bot-own", "gameplay", 3);
@@ -677,6 +823,43 @@ internal static class BotPolicyTests
             policySHA256 = Hash(json), sourceCheckpointSHA256 = digest
         }));
         return width;
+    }
+
+    private static BotNativePolicy ConstantActor(string root, BotPolicyAction action, bool masked)
+    {
+        WriteRuntime(root);
+        return EditRuntime(root, model =>
+        {
+            var scores = new float[10];
+            scores[action.Horizontal] = scores[3 + action.Aim] = scores[6 + action.Jump] = scores[8 + action.Attack] = 1;
+            var final = model["layers"]![1]!.AsObject();
+            final["weights"] = JsonSerializer.SerializeToNode(new float[20]);
+            final["biases"] = JsonSerializer.SerializeToNode(scores);
+            model["supportsMaskedKnight"] = masked;
+            // The exported direction head deliberately disagrees with the actor.
+            var atlasCheckpoint = Path.Combine(root, "atlas-model.zip");
+            File.WriteAllText(atlasCheckpoint, "fixture Atlas checkpoint");
+            model["atlasPolicy"] = JsonSerializer.SerializeToNode(new
+            {
+                schemaVersion = 1, checkpointSHA256 = Hash(File.ReadAllBytes(atlasCheckpoint)),
+                layers = new[] { new { inputSize = 8, outputSize = 3, activation = "linear",
+                    weights = new float[24], biases = new[] { 0f, 0f, 1f } } }
+            });
+        });
+    }
+
+    private static BotNativePolicy EditRuntime(string root, Action<JsonObject> edit)
+    {
+        var path = Path.Combine(root, "runtime-policy.json");
+        var model = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        edit(model);
+        var data = JsonSerializer.SerializeToUtf8Bytes(model);
+        var manifestPath = Path.Combine(root, "runtime-manifest.json");
+        var manifest = JsonNode.Parse(File.ReadAllText(manifestPath))!.AsObject();
+        manifest["policySHA256"] = Hash(data);
+        File.WriteAllBytes(path, data);
+        File.WriteAllText(manifestPath, manifest.ToJsonString());
+        return BotNativePolicy.Load(root);
     }
 
     private static string Hash(byte[] data) => Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant();

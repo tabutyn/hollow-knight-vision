@@ -19,6 +19,7 @@ public sealed class BotPolicyPlayback
     private readonly bool supportsMaskedKnight;
     private readonly Func<float[], BotPolicyAction> decide;
     private double lastAttempt = double.NegativeInfinity;
+    private double? lastDecisionDeadline;
     private (long Generation, double Timestamp)? newestCapture;
 
     public BotPolicyPlayback(BotNativePolicy policy, BotCaptureDomain domain)
@@ -43,7 +44,11 @@ public sealed class BotPolicyPlayback
         return true;
     }
 
-    public void ResetHistory() => history.Reset();
+    public void ResetHistory()
+    {
+        history.Reset();
+        lastDecisionDeadline = null;
+    }
 
     public BotPlaybackDecision? Decide(BotCaptureObservation row, InputButtons previous, double now) =>
         Evaluate(row, previous, now)?.Decision;
@@ -68,6 +73,7 @@ public sealed class BotPolicyPlayback
             return WaitFor(domain == BotCaptureDomain.Hacker
                 ? "Bot waiting for authored terrain" : "Bot waiting for detected terrain");
 
+        if (lastDecisionDeadline is { } expired && now >= expired) ResetHistory();
         var features = history.Append(row, BotPolicyAction.FromButtons(previous.Value), now,
             allowMaskedKnight: domain == BotCaptureDomain.Gameplay && supportsMaskedKnight);
         if (features is null) return WaitFor(Reason(row, now));
@@ -76,6 +82,7 @@ public sealed class BotPolicyPlayback
                 Math.Min(row.CapturedAt + BotRecordingContract.MaximumCaptureAge, row.AvailableAt + .25)));
         if (now >= deadline) return WaitFor(Reason(row, now));
         var action = decide(features);
+        lastDecisionDeadline = deadline;
         var tracking = row.KnightPrediction is not null ? " · estimating Knight"
             : row.HasMaskedKnightEvidence ? " · Knight occluded" : "";
         return new($"Bot · {action.DisplayName}{tracking}", new(action, deadline));
@@ -83,7 +90,7 @@ public sealed class BotPolicyPlayback
 
     private BotPlaybackUpdate WaitFor(string status)
     {
-        history.Reset();
+        ResetHistory();
         return new(status);
     }
 
