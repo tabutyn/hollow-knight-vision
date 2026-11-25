@@ -322,7 +322,7 @@ public sealed class LiveWorldSessionStore
                 innerException: exception);
         }
 
-        var snapshot = DeserializeSnapshot(envelope.Data);
+        var snapshot = DeserializeSnapshot(envelope.Data, manifest.UsesSwiftWireFormat);
         if (snapshot.MapRevision != envelope.Revision)
         {
             throw Error(
@@ -349,7 +349,7 @@ public sealed class LiveWorldSessionStore
             return EmptyWorld(current.Manifest, current.SceneRevision);
         }
 
-        var snapshot = DeserializeSnapshot(data);
+        var snapshot = DeserializeSnapshot(data, current.Manifest.UsesSwiftWireFormat);
 
         if (snapshot.MapRevision != current.SceneRevision)
         {
@@ -519,11 +519,11 @@ public sealed class LiveWorldSessionStore
         }
     }
 
-    private static LiveWorldSnapshot DeserializeSnapshot(byte[] data)
+    private static LiveWorldSnapshot DeserializeSnapshot(byte[] data, bool swiftSession)
     {
         try
         {
-            var snapshot = LiveWorldJson.ReadSnapshot(data);
+            var snapshot = LiveWorldJson.ReadSnapshot(data, swiftSession);
             snapshot.Validate();
             return snapshot;
         }

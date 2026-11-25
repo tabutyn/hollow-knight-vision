@@ -118,6 +118,76 @@ internal static class NativeAtlasImportTests
         });
     }
 
+    internal static void TestLegacySwiftSnapshotsPreserveOnlySupportedPlacementEvidence()
+    {
+        WithFixture((root, store, payload) =>
+        {
+            var original = store.Load().Snapshot;
+            var scene = new SceneSessionStore(root);
+            foreach (var version in new[] { 1, 2 })
+            {
+                var legacy = JsonNode.Parse(payload)!.AsObject();
+                legacy["schemaVersion"] = version;
+                legacy["mapRevision"] = version + 1;
+                legacy.Remove("doorwayFloorConstraints");
+                var bytes = JsonSerializer.SerializeToUtf8Bytes(legacy);
+                Check(scene.SaveScene(bytes, expectedRevision: version, newRevision: version + 1),
+                    $"Write the v{version} Atlas envelope.");
+                var restored = LiveWorldSessionStore.ValidateExisting(root).Snapshot;
+                Check(restored.UsesSwiftWireFormat && restored.SchemaVersion == LiveWorldSnapshot.CurrentSchemaVersion
+                    && restored.DoorwayFloorConstraints.Count == 0,
+                    $"Swift v{version} should migrate without inventing a doorway.");
+                Check(restored.Observations.Select(frame => (frame.RawPose, frame.OptimizedPose, frame.ObservedPlayerBounds))
+                    .SequenceEqual(original.Observations.Select(frame => (frame.RawPose, frame.OptimizedPose, frame.ObservedPlayerBounds)))
+                    && restored.CompositionMasks(restored.Observations[0]).SequenceEqual([ForegroundMask]),
+                    $"Swift v{version} must preserve source geometry and convert mask coordinates once.");
+                if (version == 1)
+                {
+                    Check(restored.TrackingIslands.Count == restored.Observations.Count
+                        && restored.TrackingIslands.Zip(restored.Observations).All(pair =>
+                            pair.First.Placement == LiveIslandPlacement.LegacyUnknown && pair.First.Uncertainty == default
+                            && !pair.First.Members.Single().Measured
+                            && pair.First.WorldFromLocal == pair.Second.OptimizedPose),
+                        "Swift v1 must restore poses as independent unverified islands.");
+                }
+                else
+                {
+                    Check(restored.TrackingIslands.Count == original.TrackingIslands.Count
+                        && restored.TrackingIslands.Zip(original.TrackingIslands).All(pair =>
+                            pair.First.Id == pair.Second.Id && pair.First.RoomId == pair.Second.RoomId
+                            && pair.First.Placement == pair.Second.Placement
+                            && pair.First.WorldFromLocal == pair.Second.WorldFromLocal
+                            && pair.First.Members.SequenceEqual(pair.Second.Members)),
+                        "Swift v2 must retain its explicitly measured islands.");
+                }
+                var reopened = LiveWorldJson.ReadSnapshot(LiveWorldJson.WriteSnapshot(restored));
+                Check(reopened.DoorwayFloorConstraints.Count == 0
+                    && reopened.Observations.Select(frame => frame.OptimizedPose)
+                        .SequenceEqual(restored.Observations.Select(frame => frame.OptimizedPose)),
+                    "A migrated snapshot must round-trip without changing its display placement.");
+
+                legacy["doorwayFloorConstraints"] = JsonNode.Parse(payload)!["doorwayFloorConstraints"]!.DeepClone();
+                var withUnsupportedEdge = LiveWorldJson.ReadSnapshot(JsonSerializer.SerializeToUtf8Bytes(legacy));
+                Check(withUnsupportedEdge.DoorwayFloorConstraints.Count == 0,
+                    $"An unsupported doorway field in Swift v{version} must never define a connection.");
+            }
+
+            var emptyRoot = Path.Combine(root, "empty-v1");
+            Directory.CreateDirectory(emptyRoot);
+            WriteEmptySwiftManifest(emptyRoot);
+            var empty = new SceneSessionStore(emptyRoot);
+            var emptySnapshot = JsonSerializer.SerializeToUtf8Bytes(new { schemaVersion = 1, mapRevision = 1 });
+            Check(empty.SaveScene(emptySnapshot, expectedRevision: 0, newRevision: 1),
+                "Write the empty Swift v1 snapshot envelope.");
+            var migratedEmpty = new LiveWorldSessionStore(emptyRoot).Load().Snapshot;
+            Check(migratedEmpty.UsesSwiftWireFormat && migratedEmpty.SchemaVersion == LiveWorldSnapshot.CurrentSchemaVersion
+                && migratedEmpty.Observations.Count == 0 && migratedEmpty.DoorwayFloorConstraints.Count == 0,
+                "An empty snapshot must take its coordinate format from the session manifest.");
+            Check(!LiveWorldJson.ReadSnapshot(emptySnapshot).UsesSwiftWireFormat,
+                "An empty standalone Windows snapshot must still use its existing format.");
+        });
+    }
+
     internal static void TestNamedAtlasRestoreRebuildsTheWindowsMosaic()
     {
         WithFixture((root, store, payload) =>
