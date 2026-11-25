@@ -80,6 +80,14 @@ public sealed record RecordedLoopClosureEvent(
 public sealed record RecordedGroundTruthSample(
     double Offset, double ReceivedTimestamp, ReceiverGroundTruthSample Sample);
 
+public sealed record RecordedCoarseCameraPose(double Timestamp,
+    [property: JsonConverter(typeof(SwiftPointConverter))] AtlasPoint CameraPosition);
+
+/// <summary>The local camera state supplied to the floorless tracker for this exact capture.</summary>
+public sealed record RecordedCoarseMotionInput(bool GameplayEnabled, bool GroundTrackingReliable,
+    double CameraX, double CameraY, double? VelocityX, double? VelocityY, double? VelocityTimestamp,
+    int? HorizontalInput, RecordedCoarseCameraPose? CompletedPose = null, bool? MotionGridAvailable = null);
+
 public sealed record RecordedCoarseMotionSample
 {
     public double Offset { get; init; }
@@ -102,6 +110,7 @@ public sealed record RecordedCoarseMotionSample
     public double SignalMeanPeak { get; init; }
     public double SignalVisibleFraction { get; init; }
     public ulong? CoarsePoseRevision { get; init; }
+    public RecordedCoarseMotionInput? Input { get; init; }
 }
 
 public sealed record RecordedLowResolutionFrame
@@ -534,7 +543,7 @@ public sealed class InputPathRecorder
         LowResolutionRoomMotionEstimate? estimate, bool isControlling, bool isTransitioning,
         int roomId, ulong roomRevision, double signalMeanPeak, double signalVisibleFraction,
         InputPathPlaceMatch? placeMatch = null, LowResolutionMotionGrid? motionGrid = null,
-        ulong? coarsePoseRevision = null, double? observedAt = null)
+        ulong? coarsePoseRevision = null, double? observedAt = null, RecordedCoarseMotionInput? input = null)
     {
         lock (gate)
         {
@@ -552,7 +561,7 @@ public sealed class InputPathRecorder
                 PlaceMatchMargin = placeMatch?.Margin, IsControlling = isControlling,
                 IsTransitioning = isTransitioning, RoomId = roomId, RoomRevision = roomRevision,
                 SignalMeanPeak = signalMeanPeak, SignalVisibleFraction = signalVisibleFraction,
-                CoarsePoseRevision = coarsePoseRevision
+                CoarsePoseRevision = coarsePoseRevision, Input = input
             });
             if (motionGrid is not null && (current.LastLowResolutionFrameAt is null
                 || timestamp - current.LastLowResolutionFrameAt >= .045))

@@ -451,6 +451,7 @@ var tests = new List<(string Name, Action Run)>
     ("low-resolution trace evaluates exact-frame motion and place recognition", TestEvaluatesExactFrameMotionAndPlaceRecognition),
     ("low-resolution trace isolates camera warps and scene epochs", TestClassifiesCameraWarpOutsideSearchAndDoesNotCrossSceneEpoch),
     ("low-resolution trace applies production direction gate", TestEvaluatorAppliesProductionDirectionGate),
+    ("low-resolution trace prefers the exact steering and seed", TestEvaluatorUsesExactCoarseInputs),
     ("low-resolution trace records experimental motion threshold", TestEvaluatorRecordsExperimentalMotionThreshold),
     ("low-resolution trace reports hidden rejected travel by cause", TestRejectedMotionReportsHiddenHackerTravelByCause),
     ("low-resolution trace keeps connected baseline across scene join", TestConnectedCameraKeepsOneBaselineAcrossSceneJoin),
@@ -4261,6 +4262,39 @@ static void TestEvaluatorRecordsExperimentalMotionThreshold()
 {
     var report = LowResolutionTraceEvaluator.Evaluate(TracePath(), .025);
     Close(.025, report.MotionMinimumImprovement);
+}
+
+static void TestEvaluatorUsesExactCoarseInputs()
+{
+    var session = Guid.NewGuid();
+    var input = new RecordedCoarseMotionInput(true, false, 20, 25, null, null, null, -1);
+    var exact = TraceCoarse(2, .05, 20) with { Input = input };
+    var movement = new RecordedInputPathEvent(0, RecordedGameButton.Right, RecordedInputTransition.Pressed);
+    var frames = new[] { TraceFrame(FractionalMotionGrid(0), 1, 100, true),
+        TraceFrame(FractionalMotionGrid(2), 2, 100.05, true) };
+    var truth = new[] { TraceTruth(1, 0, session, 0), TraceTruth(2, -20, session, .05) };
+    LowResolutionTraceEvaluationReport Evaluate(params RecordedCoarseMotionSample[] coarse) =>
+        LowResolutionTraceEvaluator.Evaluate(TracePath(events: [movement], truth: truth, coarse: coarse, frames: frames));
+
+    var measured = Evaluate(exact, exact with { CaptureTimestamp = 100.049 }, exact with { RoomId = 1 });
+    Equal(1, measured.GroundLossMotion.AcceptedComparisons);
+    True(measured.GroundLossEvents.Single().ExpectedDirection == "left");
+    Equal(1, measured.GroundReliableFrames);
+    var neutral = Evaluate(exact with { Input = input with { HorizontalInput = null } });
+    Equal(1, neutral.GroundLossMotion.AcceptedComparisons);
+    True(neutral.GroundLossEvents.Single().ExpectedDirection is null);
+    var ambiguous = Evaluate(exact, exact with { Input = input with { HorizontalInput = 1 } });
+    Equal(1, ambiguous.AllMotion.DirectionGateRejections);
+    Equal(0, ambiguous.GroundLossMotion.Comparisons);
+    var missingGrid = Evaluate(exact with { Input = input with { MotionGridAvailable = false } });
+    Equal(1, missingGrid.AllMotion.DirectionGateRejections);
+
+    var suppliedSeed = input with { HorizontalInput = 1, VelocityX = 100, VelocityY = 0, VelocityTimestamp = 100 };
+    var seeded = Evaluate(exact with { Input = suppliedSeed });
+    Equal(1, seeded.GroundLossMotion.DirectionGateRejections);
+    Close(5, seeded.GroundLossEvents.Single().BridgedDx ?? double.NaN);
+    var stale = Evaluate(exact with { Input = suppliedSeed with { VelocityTimestamp = 98 } });
+    True(stale.GroundLossEvents.Single().BridgedDx is null);
 }
 
 static void TestRejectedMotionReportsHiddenHackerTravelByCause()

@@ -3559,13 +3559,14 @@ public partial class MainWindow : Window
             captureTimestamp,
             renderedGameFrame,
             publishedCameraPosition,
-            motionBridgeActive ? publishedCameraPosition : null,
+            visualObservation.CoarseCameraCandidate,
             coarseMotion,
             signal.MotionGrid,
-            motionBridgeActive,
+            visualObservation.CoarseControlsPresentation,
             !admission.AdmitsTracking,
             signal.MeanPeak,
-            signal.VisibleFraction, WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0));
+            signal.VisibleFraction, WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0),
+            visualGameplayTracker.CoarsePoseRevision, visualObservation.CoarsePlaceMatch, visualObservation.CoarseMotionInput);
         gameControls.RecordVisualTracking(
             captureTimestamp,
             InputPathTrackingObservation.FromGround(groundHypotheses),

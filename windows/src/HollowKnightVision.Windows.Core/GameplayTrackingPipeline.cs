@@ -145,7 +145,10 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
                 Paths.Reset();
                 camera.ResetFloorlessMotion();
             }
-            observation = new(observation.Telemetry, null, false, false, 0, null, "room-transition");
+            observation = new(observation.Telemetry, null, false, false, 0, null, "room-transition")
+            {
+                CoarseMotionInput = observation.CoarseMotionInput
+            };
         }
         if (!admission.AdmitsTracking) camera.PauseGroundVerification();
         var cameraMilliseconds = Stopwatch.GetElapsedTime(groundStarted).TotalMilliseconds;
