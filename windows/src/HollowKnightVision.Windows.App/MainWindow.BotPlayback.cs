@@ -15,7 +15,6 @@ public partial class MainWindow
     {
         public BotNativePolicy? Motor { get; init; }
         public string? ModelHash { get; init; }
-        public BotEvaluationRecorder? Evaluation { get; init; }
     }
 
     private sealed class BotRun(Guid owner, BotCaptureDomain domain, long generation, double startedAt,
@@ -30,6 +29,8 @@ public partial class MainWindow
         internal BotDemoSession? Demo { get; } = archive is null ? null : new(archive, startedAt);
         internal BotStartupNavigation Startup { get; } = new(startedAt);
         internal LoadedBot? Loaded;
+        internal BotEvaluationRecorder? Evaluation;
+        internal int EvaluationStartQueued;
         internal double HandoffDeadline = double.PositiveInfinity;
         internal BotPlaybackUpdate PlaybackUpdate = new(BotPlaybackUpdate.WaitingForFrame);
         internal string? DisplayedPlaybackStatus; // UI thread
@@ -133,15 +134,32 @@ public partial class MainWindow
             loaded = new(null, null, $"Bot checkpoint unavailable. {error.Message}");
         }
         if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
-        if (loaded is { Policy: not null, ModelName: { } modelName })
-            loaded = loaded with
-            {
-                Evaluation = new(BotEvaluationRoot, domain, modelName, loaded.ModelHash, run.Authored, run.Generation, run.StartedAt)
-            };
+        if (run.StartedInGameplay && loaded is { Policy: not null, ModelName: { } modelName })
+            await PrepareBotEvaluationAsync(run, modelName, loaded.ModelHash);
+        if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
         if (run.StartedInGameplay && loaded.Policy is null)
             StopBotPlayback(loaded.Issue);
         else
             Volatile.Write(ref run.Loaded, loaded);
+    }
+
+    private async Task PrepareBotEvaluationAsync(BotRun run, string modelName, string? modelHash)
+    {
+        if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
+        try
+        {
+            var evaluation = new BotEvaluationRecorder(BotEvaluationRoot, run.Domain, modelName,
+                modelHash, run.Authored, run.Generation, run.StartedAt, prepareImmediately: true);
+            Volatile.Write(ref run.Evaluation, evaluation);
+            await evaluation.Preparation;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException
+            or GroundTruthLineStoreException or JsonException)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
+            Volatile.Write(ref run.Evaluation, null);
+            StopBotPlayback($"Bot playback capture failed. {error.Message}", reason: "evaluation-start-failed");
+        }
     }
 
     private void StopBotPlayback(string? status = null, string reason = "interrupted")
@@ -161,14 +179,14 @@ public partial class MainWindow
     private void ObserveBotInputSent(Guid owner, InputButtons buttons, double time)
     {
         if (Volatile.Read(ref botPlayback) is { } run && run.Owner == owner && Volatile.Read(ref run.Playing))
-            Volatile.Read(ref run.Loaded)?.Evaluation?.RecordControls(buttons, time);
+            Volatile.Read(ref run.Evaluation)?.RecordControls(buttons, time);
         else if (Volatile.Read(ref thinkingLease) is { PriorRun: null } lease && lease.Owner == owner)
             lease.Evaluation?.RecordControls(buttons, time);
     }
 
     private void FinishBotEvaluation(BotRun run, string reason)
     {
-        if (Volatile.Read(ref run.Loaded)?.Evaluation is not { } evaluation) return;
+        if (Volatile.Read(ref run.Evaluation) is not { } evaluation) return;
         FinishEvaluation(evaluation, reason);
     }
 
@@ -220,7 +238,7 @@ public partial class MainWindow
     {
         var run = Volatile.Read(ref botPlayback);
         if (run is null || run.Generation != generation || capturedAt < run.StartedAt
-            || !gameControls.OwnsBotControl(run.Owner)) return null;
+            || !gameControls.OwnsBotControl(run.Owner) || Volatile.Read(ref run.Loaded) is not { } loaded) return null;
         if (!run.Playing)
         {
             var now = BotCaptureClock();
@@ -275,12 +293,18 @@ public partial class MainWindow
                 }
                 if (decision.Phase != BotStartupPhase.Gameplay) return null;
             }
-            if (!admitted || receiver?.AtlasGameplayActive == false || Volatile.Read(ref run.Loaded) is null) return null;
+            if (!admitted || receiver?.AtlasGameplayActive == false) return null;
+            if (loaded is { Policy: not null, ModelName: { } modelName }
+                && Volatile.Read(ref run.Evaluation)?.Preparation.IsCompletedSuccessfully != true)
+            {
+                if (Interlocked.Exchange(ref run.EvaluationStartQueued, 1) == 0)
+                    _ = Dispatcher.InvokeAsync(() => PrepareBotEvaluationAsync(run, modelName, loaded.ModelHash)).Task.Unwrap();
+                return null;
+            }
             Volatile.Write(ref run.Playing, true);
             gameControls.NeutralizeBotControl(run.Owner);
         }
 
-        if (Volatile.Read(ref run.Loaded) is not { } loaded) return null;
         if (loaded.Policy is null)
         {
             EndBotFromWorker(run, $"Gameplay reached. {loaded.Issue ?? "No verified checkpoint is available."} Controls returned to you.");
@@ -322,7 +346,7 @@ public partial class MainWindow
             else if (update?.Decision is { } decision && row is not null)
             {
                 if (previous is { } applied)
-                    Volatile.Read(ref run.Loaded)?.Evaluation?.RecordDecision(row, decision.Action.Buttons, applied, scene);
+                    Volatile.Read(ref run.Evaluation)?.RecordDecision(row, decision.Action.Buttons, applied, scene);
                 if (Volatile.Read(ref botTrialControl) is not null)
                     Volatile.Write(ref run.TrialDiagnostics, new((run.TrialDiagnostics?.Count ?? 0) + 1,
                         row.TerrainSource, row.HumanTerrainCount, decision.Action));
