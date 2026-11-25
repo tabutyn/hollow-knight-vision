@@ -185,6 +185,19 @@ internal static class LiveObjectDetectionTests
         Check(mask.Box.X < .15 && mask.Box.X + mask.Box.Width > .25);
         Check(mask.SourceFrameIdentifier == 2 && mask.Confidence == body.Confidence && mask.ModelVersion == body.ModelVersion);
         Near(.1435, mask.Box.X); Near(.113, mask.Box.Width);
+        var exactFrame = Frame(1.1, id: 2);
+        var exactBounds = LiveObjectDetectionFreshness.CaptureMatchedKnightBounds(current, 1, exactFrame);
+        Check(exactBounds is { X: 15, Width: > 4.99 and < 5.01 },
+            "The exact measured body used a swept or display-smoothed box.");
+        Check(LiveObjectDetectionFreshness.CaptureMatchedKnightBounds(current, 1, Frame(1.2, id: 2)) is null
+            && LiveObjectDetectionFreshness.CaptureMatchedKnightBounds(current, 1, Frame(1.1, id: 3)) is null
+            && LiveObjectDetectionFreshness.CaptureMatchedKnightBounds(current, 2, exactFrame) is null,
+            "A measured body cannot cross image or generation identity.");
+        var weak = current with { Detections = [current.Detections[0] with { Confidence = .05f }] };
+        var wrongFrame = current with { Detections = [body] };
+        Check(LiveObjectDetectionFreshness.CaptureMatchedKnightBounds(weak, 1, exactFrame) is null
+            && LiveObjectDetectionFreshness.CaptureMatchedKnightBounds(wrongFrame, 1, exactFrame) is null,
+            "A weak or wrong-image detection can mask pixels without supplying contact evidence.");
         var down = Batch(body with { Box = body.Box with { Y = .6 } }, 1.1);
         var vertical = MovingObjectMask.Detections([], down, prior, 1, 1.25).Single().Box;
         Near(.59225, vertical.Y); Near(.2155, vertical.Height);

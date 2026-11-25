@@ -48,7 +48,8 @@ public sealed class BotVisualGymObservationSource
         var observations = LiveObjectDetectionSnapshot.Empty;
         var presentation = status.Observe(menu, hud, time, inferObjects: signal.HasGameplaySignal ? Infer : null);
         var admitted = admission.Observe(signal, presentation.Status?.IsGameplay == true, Generation);
-        var masks = GameplaySceneMasks.Create(frame, observations.Tracked, hud, observations.Masks);
+        var masks = GameplaySceneMasks.Create(frame, observations, hud, Generation);
+        var contactKnight = masks.ContactKnight(frame.Width, frame.Height);
         var size = new WorldSize(frame.Width, frame.Height);
         var direction = KnightLevelWalk.Direction(controls) switch
         {
@@ -149,7 +150,7 @@ public sealed class BotVisualGymObservationSource
         var lineage = captureIslands.Observe(Generation, roomKey, time, measuredGround || continuesScenery,
             referenceTimestamp, relocalized);
         var contactCamera = lineage is null ? null : terrainCamera;
-        var contact = walked.Observe(roomKey, analysis.Edges, masks.GroundKnight,
+        var contact = walked.Observe(roomKey, analysis.Edges, contactKnight,
             contactCamera, controls, time, analysis.Floors, terrain.Walls, Generation, walkedEpoch, lineage, recentJump);
         terrain = TerrainWallDetector.ApplyContact(terrain, contact, analysis.Floors, analysis.Edges);
         LiveWorldCaptureEvidence? captureEvidence = null;
@@ -157,7 +158,8 @@ public sealed class BotVisualGymObservationSource
         {
             captureEvidence = measuredGround
                 ? LiveWorldCaptureEvidence.FromGround(time, frame.Width, frame.Height, analysis.Floors,
-                    observed.GroundTracking.LineReviews, masks.GroundKnight, contact.MeasuredFoot, contact.Floor)
+                    observed.GroundTracking.LineReviews, contactKnight, contact.MeasuredFoot, contact.Floor,
+                    masks.ObservedPlayerBounds)
                 : new LiveWorldCaptureEvidence(time) { HasMeasuredSceneryContinuity = true };
             captureEvidence = captureEvidence with
             {
@@ -172,7 +174,7 @@ public sealed class BotVisualGymObservationSource
             lineage is not null ? localWalk : null);
         var floors = GroundStrokeGeometry.MergeWalkedFloors(analysis.Floors,
             coverage.WalkedForPolicy(localWalk, lineage), contactCamera,
-            frame.Width, frame.Height, masks.GroundKnight);
+            frame.Width, frame.Height, contactKnight);
 
         var timing = new BotCaptureTiming(time, time, Generation, chart, roomState.Revision);
         var row = BotObservationBuilder.Gameplay(frame, timing, observations.MeasuredBatch, floors, terrain.Walls,

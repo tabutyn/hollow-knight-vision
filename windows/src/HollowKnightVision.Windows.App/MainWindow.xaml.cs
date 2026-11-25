@@ -3330,12 +3330,21 @@ public partial class MainWindow : Window
         var profileLaunch = ObserveProfileAtlas(profileMenu, freshProfileHud, captureTimestamp, captureGeneration);
         var readingOpening = profileLaunchDetector.AwaitingGameplay && profileMenu is not { IsMatch: true } && !freshProfileHud;
         var holdAtlas = Volatile.Read(ref profileAtlasHeld);
-        if (admission.AdmitsTracking)
-            gameControls.RecordVisualGroundInput(captureTimestamp, (ulong)captureGeneration, frame.Height, masks,
-                movementButtons, recentJump);
         var groundDiagnostics = workspace == "Gameplay" ? RequestedGroundDiagnostics : GroundDiagnosticLayers.None;
         var prepared = trackingPipeline.Prepare(frame, masks, admission.AdmitsTracking, exactReceiverTelemetry?.SceneName,
             includeSemanticRunEvidence: groundDiagnostics.HasFlag(GroundDiagnosticLayers.CandidateRuns));
+        if (admission.AdmitsTracking)
+        {
+            // Ground analysis overlaps the bounded inference worker. Use a
+            // completed result for this image without waiting for inference.
+            if (menuStencilRecognizer.CaptureMatchedKnightBounds(frame, recognition.Generation) is { } body)
+            {
+                masks = masks with { ObservedPlayerBounds = body };
+                prepared = prepared.WithPlayerBounds(masks, frame.Width, frame.Height);
+            }
+            gameControls.RecordVisualGroundInput(captureTimestamp, (ulong)captureGeneration, frame.Height, masks,
+                movementButtons, recentJump);
+        }
         var motion = prepared.Motion;
         latestMotion = motion;
         if (!labelCapture.CanProcess(labelRevision)) return null;
@@ -3462,7 +3471,7 @@ public partial class MainWindow : Window
         }
         IReadOnlyList<GroundHypothesisAtlasLine> groundDisplayLines = admission.AdmitsTracking
             ? GroundStrokeGeometry.VisibleLines(groundHypotheses.AtlasLines, groundHypotheses.LineReviews,
-                localWalkedGround, groundDisplayCamera, frame.Height, masks.GroundKnight)
+                localWalkedGround, groundDisplayCamera, frame.Height, prepared.ContactKnight ?? masks.GroundKnight)
             : [];
         var atlasPathState = AtlasPathFrameEvidence.Classify(signal.HasGameplaySignal && !holdAtlas,
             recognition.RecognizedStatus?.ContextIdentifier);
@@ -3482,7 +3491,8 @@ public partial class MainWindow : Window
                 && GroundMotionEvidence.IsMeasured(groundHypotheses.PoseVerified, groundHypotheses.HasConfirmedGround,
                     groundHypotheses.LocalTextureSupport, groundHypotheses.InlierCount, groundHypotheses.GlobalMatchCount);
             var observedPaths = trackingPipeline.Paths.Observe(new(atlasRoomId, captureTimestamp, frame.Width, frame.Height,
-                pathCamera, groundDisplayLines, ground, terrain, terrainContact.MeasuredFoot, masks.GroundKnight,
+                pathCamera, groundDisplayLines, ground, terrain, terrainContact.MeasuredFoot,
+                prepared.ContactKnight ?? masks.GroundKnight,
                 terrainContact.Wall)
             {
                 Atlas = registeredPath,

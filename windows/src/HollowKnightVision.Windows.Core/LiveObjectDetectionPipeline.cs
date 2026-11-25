@@ -16,6 +16,9 @@ public sealed class LiveObjectDetectionPipeline
     private BgraFrame? pixels;
     public void Reset() { tracker.Reset(); tracked = raw = measured = previous = null; pixels = null; }
 
+    internal StencilRect? CaptureMatchedKnightBounds(BgraFrame frame, long generation) =>
+        LiveObjectDetectionFreshness.CaptureMatchedKnightBounds(measured, generation, frame);
+
     public void Accept(IReadOnlyList<ObjectDetection> rawDetections, BgraFrame frame, long generation,
         double extensionFraction = .12, bool createsDiagnosticImage = false, double inferenceDuration = 0)
         => AcceptRefinement(rawDetections, LiveObjectPixelRefiner.Refine(rawDetections, frame,

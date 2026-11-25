@@ -81,6 +81,12 @@ public sealed class LiveObjectInferenceWorker
         lock (gate) return suspended || generation != captureGeneration ? LiveObjectDetectionSnapshot.Empty
             : pipeline.Snapshot(captureGeneration, timestamp);
     }
+
+    public StencilRect? CaptureMatchedKnightBounds(BgraFrame frame, long captureGeneration)
+    {
+        lock (gate) return suspended || generation != captureGeneration ? null
+            : pipeline.CaptureMatchedKnightBounds(frame, captureGeneration);
+    }
     public void Reset() { lock (gate) InvalidateLocked(); }
     public void SetSuspended(bool value)
     {
