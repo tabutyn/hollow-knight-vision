@@ -1004,6 +1004,7 @@ var tests = new List<(string Name, Action Run)>
     ("viewport Fit starts a smooth transition from Free Fly", LayerSceneViewportParityTests.TestFitButtonStartsSmoothTransitionFromFreeFly),
     ("viewport Fit follows growing bounds without stepping", LayerSceneViewportParityTests.TestFitFollowsGrowingAtlasBoundsWithoutStepping),
     ("viewport Fit reacts to exact occupied bounds within a tile", LayerSceneViewportParityTests.TestFitUsesExactContentBoundsBeforeStorageTileChanges),
+    ("Hacker Fit tracks mapped and path extents while the live preview moves", LayerSceneViewportParityTests.TestHackerFitTracksMappedExtentThroughPreviewMotionAndGrowth),
     ("viewport transition interruption starts at displayed transform", LayerSceneViewportParityTests.TestTransitionInterruptsAtDisplayedTransform),
     ("viewport Current follows with a small surrounding margin", LayerSceneViewportParityTests.TestFollowFrameCentersViewportWithSmallSurroundingMargin),
     ("viewport overlays use the canonical pan and zoom projection", LayerSceneViewportParityTests.TestFeatureOverlayUsesSamePanAndZoomProjection),

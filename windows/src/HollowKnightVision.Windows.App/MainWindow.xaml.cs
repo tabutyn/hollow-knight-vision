@@ -5292,11 +5292,9 @@ public partial class MainWindow : Window
                 global.Width, global.Height);
             union = union is { } current ? current.Union(local) : local;
         }
-        if (liveBounds is { } live)
-            union = union is { } current ? current.Union(live) : live;
-        if (ReferenceEquals(surface, AtlasCanvas) && ShowsHackerPaths && hackerPathFitBounds is { } paths)
-            union = union is { } current ? current.Union(paths) : paths;
-        return union;
+        if (ReferenceEquals(surface, AtlasCanvas))
+            return GameplayViewportPolicy.HackerFitBounds(union, liveBounds, ShowsHackerPaths ? hackerPathFitBounds : null);
+        return liveBounds is { } live ? union?.Union(live) ?? live : union;
     }
 
     private static ViewportRect? OccupiedBounds(

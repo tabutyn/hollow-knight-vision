@@ -33,6 +33,36 @@ internal static class LayerSceneViewportParityTests
         return controller.Configure("Fit", size, bounds, null, null, 0);
     }
 
+    public static void TestHackerFitTracksMappedExtentThroughPreviewMotionAndGrowth()
+    {
+        var preview = new ViewportRect(250, 40, 640, 360);
+        var mapped = new ViewportRect(0, -130, 3196, 514);
+        var paths = new ViewportRect(200, 60, 3250, 90);
+        Check(GameplayViewportPolicy.HackerFitBounds(null, default(ViewportRect), null) is null,
+            "Empty content should have no fit bounds.");
+        Check(GameplayViewportPolicy.HackerFitBounds(null, preview, null) == preview,
+            "The live image supplies initial fit bounds before any map is available.");
+        Check(GameplayViewportPolicy.HackerFitBounds(null, null, paths) == paths,
+            "A visible authored route can supply fit bounds on its own.");
+
+        var expected = mapped.Union(paths);
+        var viewport = new ViewportSize(1200, 800);
+        var initialFit = FitTarget(viewport, expected);
+        for (var x = -800; x <= 4000; x += 50)
+        {
+            var moved = preview with { X = preview.X + x, Y = preview.Y - x / 2 };
+            var bounds = GameplayViewportPolicy.HackerFitBounds(mapped, moved, paths);
+            Check(bounds == expected, "Moving the preview must keep fit centered on the map and visible routes.");
+            Equal(FitTarget(viewport, bounds!.Value), initialFit);
+        }
+
+        var expanded = mapped.Union(new(3800, 100, 100, 100));
+        Check(GameplayViewportPolicy.HackerFitBounds(expanded, preview, paths) == expanded,
+            "Fit must follow newly mapped room content.");
+        Check(GameplayViewportPolicy.HackerFitBounds(mapped, preview with { X = 4000 }, null) == mapped,
+            "Fit uses the mapped extent when paths are hidden.");
+    }
+
     public static void TestFreeFlyOwnsPointerDragInsteadOfForwardingItToGame()
     {
         Check(GameplayViewportPolicy.CanPan("Free Fly"),
