@@ -35,6 +35,29 @@ internal static class BotCaptureTests
         Check(Hacker(input, bad) is { CanTrain: false }, "Duplicate mod identities must not produce valid observations.");
     }
 
+    internal static void TestVisualWallSlotsSelectClosestSegmentOnEachSide()
+    {
+        const double timestamp = 100;
+        var frame = new BgraFrame(100, 80, 400, new byte[100 * 80 * 4], 7,
+            DateTimeOffset.UnixEpoch.AddSeconds(timestamp));
+        var timing = new BotCaptureTiming(timestamp, timestamp, Generation, 1, 0);
+        var knight = new ObjectDetection("game.playable-knight", new(.45, .4, .1, .2), .9f)
+            { SourceFrameIdentifier = frame.CaptureId };
+        var batch = new LiveObjectDetectionBatch([knight], frame.CaptureId, timestamp, Generation, 0);
+        DetectedWall[] walls = [new(49, 0, 5, true), new(60, 15, 65, true), new(45, 10, 70, false)];
+
+        var projected = Observe(walls, analyzed: true);
+        Check(projected.SequenceEqual([1, -.05, -.3, .3, -1, 1, .1, -.25, .25, 1, 1]),
+            "The visual wall slots must choose both near faces and reject the overhead edge.");
+        Check(Observe([], analyzed: true).SequenceEqual([1d, .. new double[10]])
+            && Observe([], analyzed: false).All(value => value == 0),
+            "An analyzed empty wall view and unavailable terrain must encode differently.");
+
+        IEnumerable<double> Observe(IReadOnlyList<DetectedWall> lines, bool analyzed) =>
+            BotObservationBuilder.Gameplay(frame, timing, batch, [], lines, analyzed, null, null, null, null)
+                .Features.Skip(BotRecordingContract.LegacyWidth);
+    }
+
     internal static void TestGameplayFloorsStitchOnlyAcrossTheSameSurface()
     {
         var frame = new BgraFrame(160, 100, 640, new byte[160 * 100 * 4], 1, DateTimeOffset.UnixEpoch);

@@ -50,6 +50,53 @@ internal static class BotPolicyTests
         finally { temporary.Delete(recursive: true); }
     }
 
+    internal static void TestWallFeatureChangesNativeJumpAndLegacyPreservesHistory()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-wall-policy-fixture-");
+        try
+        {
+            var root = temporary.FullName;
+            WriteRuntime(root);
+            var width = BotRecordingContract.FeatureNames.Count;
+            var legacy = BotRecordingContract.LegacyWidth;
+            var wallPolicy = Policy(2, 3 * width + 154);
+            var padded = new float[4 * width];
+            Check(wallPolicy.Logits(padded), default);
+            padded[3 * width + 154] = 1;
+            Check(wallPolicy.Logits(padded), new(0, 0, 1, 0));
+
+            var oldPolicy = Policy(1, 2 * legacy + 6);
+            Check(oldPolicy.Logits(padded), default);
+            padded[2 * width + 6] = 1;
+            var oldStack = new float[4 * legacy];
+            oldStack[2 * legacy + 6] = 1;
+            if (!oldPolicy.Logits(padded).SequenceEqual(oldPolicy.Logits(oldStack)))
+                throw new InvalidOperationException("Legacy projection must preserve every history step.");
+            Check(oldPolicy.Logits(padded), new(0, 0, 1, 0));
+
+            BotNativePolicy Policy(int version, int jumpIndex) => EditRuntime(root, model =>
+            {
+                var names = BotPolicyContract.Names(version)!;
+                var inputSize = names.Count * BotRecordingContract.HistoryLength;
+                var weights = new float[10 * inputSize];
+                weights[7 * inputSize + jumpIndex] = 2;
+                model["observationSchemaVersion"] = version;
+                model["featureNames"] = JsonSerializer.SerializeToNode(names);
+                model["layers"] = JsonSerializer.SerializeToNode(new[]
+                {
+                    new { inputSize, outputSize = 10, activation = "linear", weights, biases = new float[10] }
+                });
+            });
+
+            static void Check(float[] logits, BotPolicyAction expected)
+            {
+                if (BotNativePolicy.Action(logits) != expected)
+                    throw new InvalidOperationException("The native actor lost the expected jump input.");
+            }
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
     internal static void TestNativeActionsMapEachHeadWithoutConflictingButtons()
     {
         InputButtons[] horizontal = [InputButtons.None, InputButtons.Left, InputButtons.Right];
