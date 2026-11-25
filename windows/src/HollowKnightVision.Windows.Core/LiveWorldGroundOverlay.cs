@@ -23,7 +23,7 @@ public sealed record LiveWorldPlacementProjection(
 public static class LiveWorldGroundOverlay
 {
     private const double MaximumHeightSpread = 8;
-    private readonly record struct Span(int Observation, double Left, double Right, double Y);
+    internal readonly record struct Span(int Observation, double Left, double Right, double Y);
 
     public static IReadOnlyList<GroundHypothesisAtlasLine> Project(LiveWorldSnapshot snapshot) =>
         ProjectWorld(snapshot).DisplayLines;
@@ -184,7 +184,7 @@ public static class LiveWorldGroundOverlay
             observation.OptimizedPose.Y + offset.Y + line.Start.Y);
     }
 
-    private static IEnumerable<GroundHypothesisAtlasLine> Estimate(long segment, IEnumerable<Span> evidence)
+    internal static IEnumerable<GroundHypothesisAtlasLine> Estimate(long segment, IEnumerable<Span> evidence)
     {
         var cluster = new List<Span>();
         foreach (var span in evidence.OrderBy(span => span.Y))

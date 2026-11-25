@@ -104,6 +104,46 @@ internal static class LiveWorldWalkedGroundTests
         }
     }
 
+    public static void TestPredictionOnlyFramesCannotSaveGroundOrBecomeReferences()
+    {
+        using var directory = new TestDirectory();
+        var pipeline = new WindowsLiveWorldPipeline(directory.Path);
+        var store = new LiveWorldSessionStore(directory.Path);
+        var stroke = new LiveGroundLineEvidence(1, new(20, 60), new(120, 60));
+        var candidates = new LiveObservedFloorCandidates([stroke]);
+        Check(Submit(1, 1, verified: true, scenery: false, referenceTime: null).AllowsAtlasWrite);
+        var baseline = store.Load().Snapshot;
+
+        var predicted = Submit(2, 1.2, verified: false, scenery: false, referenceTime: null);
+        var stale = Submit(3, 1.4, verified: false, scenery: true, referenceTime: .4);
+        var afterRejection = store.Load().Snapshot;
+        if (!predicted.Discarded || !stale.Discarded
+            || afterRejection.Observations.Count != baseline.Observations.Count
+            || afterRejection.Keyframes.Count != baseline.Keyframes.Count)
+            throw new InvalidOperationException("A prediction or stale camera reference entered the world snapshot.");
+
+        var measured = Submit(4, 1.6, verified: false, scenery: true, referenceTime: 1.55);
+        var afterMeasurement = store.Load().Snapshot;
+        if (!measured.AllowsAtlasWrite || afterMeasurement.Observations.Count != baseline.Observations.Count + 1
+            || afterMeasurement.Observations[^1].GroundGeometry is not null
+            || afterMeasurement.Observations[^1].ObservedFloorCandidates?.Lines.SequenceEqual(candidates.Lines) != true
+            || afterMeasurement.Keyframes.Count != baseline.Keyframes.Count)
+            throw new InvalidOperationException("Current scenery motion should preserve candidates without creating confirmed ground or a keyframe.");
+
+        WindowsLiveWorldPipelineResult Submit(int id, double time, bool verified, bool scenery, double? referenceTime)
+        {
+            var frame = new BgraFrame(320, 180, 320 * 4, new byte[320 * 180 * 4], id, DateTimeOffset.UnixEpoch);
+            var evidence = new LiveWorldCaptureEvidence(time, scenery ? null : new([stroke]), candidates)
+            {
+                MeasuredLineage = verified || scenery ? 1 : null,
+                HasMeasuredSceneryContinuity = scenery,
+                LocalReferenceTimestamp = referenceTime
+            };
+            return pipeline.Process(new WindowsLiveWorldFrame(frame, frame, time, time, default, 320,
+                [], [], 1, "room", 1, 64, StableTrackingVerified: verified) { WorldEvidence = evidence });
+        }
+    }
+
     public static void TestPipelineCarriesAThrottledWalkUntilItsImageOwnerIsPlaced()
     {
         using var directory = new TestDirectory();

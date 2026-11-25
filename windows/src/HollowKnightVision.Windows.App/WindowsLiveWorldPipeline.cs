@@ -350,6 +350,9 @@ internal sealed class WindowsLiveWorldPipeline
             }
             if (request.WorldEvidence is { } captured && captured.CaptureTimestamp != request.MonotonicTimestamp)
                 return Discard("ground evidence does not match capture timestamp");
+            if (!request.StableTrackingVerified
+                && (request.WorldEvidence is not { HasMeasuredSceneryContinuity: true } || !HasMeasuredLocalReference(request)))
+                return Discard("camera motion is unmeasured");
             int requestedRoomId;
             try
             {

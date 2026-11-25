@@ -74,19 +74,20 @@ public static class LiveWorldWalkedGround
     internal static IReadOnlyList<GroundHypothesisAtlasLine> ProjectPlaced(
         IEnumerable<LiveWorldObservation> observations,
         IReadOnlyDictionary<int, LiveTrackingIsland> islands, IReadOnlySet<int> unplaced,
-        bool centered = false, bool includeImageContacts = true) =>
-        GroundStrokeGeometry.Coalesce(observations.SelectMany(observation =>
+        bool centered = false, bool includeImageContacts = true)
+    {
+        var measurements = observations.SelectMany(observation =>
         {
             var offset = centered ? LiveWorldGroundOverlay.ImageOriginOffset(observation) : default;
             var carrierPlaced = !unplaced.Contains(observation.Id);
             return (carrierPlaced ? ProjectObservation(observation) : [])
                 .Concat(ProjectIslandWalks(observation, islands, carrierPlaced, includeImageContacts))
-                .Select(line => line with
-                {
-                    AtlasStart = new(line.AtlasStart.X + offset.X, line.AtlasStart.Y + offset.Y),
-                    AtlasEnd = new(line.AtlasEnd.X + offset.X, line.AtlasEnd.Y + offset.Y),
-                });
-        }));
+                .Select(line => new LiveWorldGroundOverlay.Span(observation.Id,
+                    line.AtlasStart.X + offset.X, line.AtlasEnd.X + offset.X, line.AtlasStart.Y + offset.Y));
+        });
+        var strokes = LiveWorldGroundOverlay.Estimate(WalkedGroundMemory.WalkedSegmentId, measurements);
+        return GroundStrokeGeometry.Coalesce(strokes);
+    }
 
     private static IEnumerable<GroundHypothesisAtlasLine> ProjectIslandWalks(
         LiveWorldObservation observation,

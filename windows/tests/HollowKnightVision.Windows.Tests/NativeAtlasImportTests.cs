@@ -1438,6 +1438,7 @@ internal static class NativeAtlasImportTests
                 WorldEvidence = evidence with
                 {
                     CaptureTimestamp = time, MeasuredLineage = lineage, HasMeasuredSceneryContinuity = scenery,
+                    LocalReferenceTimestamp = scenery ? time - .05 : evidence.LocalReferenceTimestamp,
                     GroundGeometry = scenery ? null : evidence.GroundGeometry
                 }
             };
