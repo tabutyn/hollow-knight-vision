@@ -6,6 +6,7 @@
     <Compile Include="../../src/HollowKnightVision.Windows.App/WindowsGameControlForwarder*.cs" Link="%(Filename)%(Extension)" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/WindowsLiveWorldPipeline.cs" Link="WindowsLiveWorldPipeline.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/GameplayViewportPolicy.cs" Link="GameplayViewportPolicy.cs" />
+    <Compile Include="../../src/HollowKnightVision.Windows.App/GameplayPlacementGeometry.cs" Link="GameplayPlacementGeometry.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/AtlasPathFrameEvidence.cs" Link="AtlasPathFrameEvidence.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/StencilPreviewPresentation.cs" Link="StencilPreviewPresentation.cs" />
     <Compile Include="../../src/HollowKnightVision.Windows.App/LabelBoxBounds.cs" Link="LabelBoxBounds.cs" />
@@ -24,6 +25,8 @@
              Link="training/playing-policy-inputs.json" CopyToOutputDirectory="PreserveNewest" />
     <EmbeddedResource Include="../../../macos/Tests/HollowKnightVisionTests/compact-markings-cases.json"
                       LogicalName="compact-markings-cases.json" />
+    <EmbeddedResource Include="../../../macos/Tests/HollowKnightVisionTests/hud-stencil-cases.json;../../../macos/Tests/HollowKnightVisionTests/hud-stencil-reference.json"
+                      LogicalName="%(Filename)%(Extension)" />
     <EmbeddedResource Include="Fixtures/actor-calibration-*.onnx" LogicalName="%(Filename)%(Extension)" />
     <ProjectReference Include="../../src/HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
     <ProjectReference Include="../../src/HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj"

@@ -4,6 +4,25 @@ using HollowKnightVision.Windows.Host;
 
 internal static class ProfileAtlasTests
 {
+    public static void TestBrowsingCreatesExactlyOneLaunchForTheLastSlot()
+    {
+        for (var slot = 1; slot <= 4; slot++)
+        {
+            var detector = new ProfileLaunchDetector();
+            foreach (var (time, selected) in new[] { (1d, 1), (1.2, 1), (2d, slot), (2.2, slot) })
+            {
+                Check(detector.Observe(Card(time, selected, [1, 2, 3, 4], []), false, time, 1) is null,
+                    $"Browsing slot {selected} must never activate a profile Atlas.");
+            }
+            Check(detector.AwaitingGameplay && detector.Observe(null, false, 30, 1) is null,
+                "The opening movie must keep the most recent measured card armed.");
+            Check(detector.Observe(null, true, 60, 1) is null
+                && detector.Observe(null, true, 60.2, 1) == new ProfileLaunch(slot, true)
+                && detector.Observe(null, true, 61, 1) is null,
+                $"Sustained fresh Gameplay should activate empty slot {slot} exactly once.");
+        }
+    }
+
     public static void TestRequiresStableProfileAndGameplay()
     {
         var detector = new ProfileLaunchDetector();

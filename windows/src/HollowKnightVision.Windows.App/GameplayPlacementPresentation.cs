@@ -1,7 +1,8 @@
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Shapes;
 using HollowKnightVision.Windows.Core;
+using Path = System.Windows.Shapes.Path;
 
 namespace HollowKnightVision.Windows.App;
 
@@ -9,47 +10,53 @@ internal static class GameplayPlacementPresentation
 {
     private static readonly Brush MeasuredDoorway = Frozen(new SolidColorBrush(Color.FromArgb(242, 31, 230, 255)));
     private static readonly Brush EstimatedPlacement = Frozen(new SolidColorBrush(Color.FromArgb(179, 255, 179, 64)));
-    private static readonly DoubleCollection Dashes = Frozen(new DoubleCollection([6, 4]));
-
     internal static void Draw(Canvas canvas, LiveWorldPlacementProjection placement,
-        GroundFeatureOverlayPresentation.AtlasProjection projection, bool showsEstimatedOutlines)
+        GroundFeatureOverlayPresentation.AtlasProjection projection,
+        ViewportTransform transform, ViewportSize viewport, bool showsEstimatedOutlines)
     {
         canvas.Children.Clear();
-        if (!double.IsFinite(projection.Scale) || projection.Scale <= 0) return;
+        if (!double.IsFinite(projection.Scale) || projection.Scale <= 0 || !transform.IsUsable) return;
 
-        foreach (var doorway in placement.Doorways)
+        var dashes = GameplayPlacementGeometry.Build(placement, Project, viewport, showsEstimatedOutlines);
+        if (dashes.Count == 0) return;
+        // Keep the overlay in its Atlas layer while drawing measured screen-space dashes.
+        var inverseScale = 1 / transform.Scale;
+        canvas.RenderTransform = new MatrixTransform(new Matrix(
+            inverseScale, 0, 0, inverseScale,
+            -transform.OffsetX * inverseScale, -transform.OffsetY * inverseScale));
+        var measured = new StreamGeometry();
+        var estimated = new StreamGeometry();
+        using (var measuredPath = measured.Open())
+        using (var estimatedPath = estimated.Open())
         {
-            var start = projection.ToCanvas(doorway.Start);
-            var end = projection.ToCanvas(doorway.End);
-            if (!double.IsFinite(start.X) || !double.IsFinite(start.Y)
-                || !double.IsFinite(end.X) || !double.IsFinite(end.Y)
-                || Math.Abs(end.X - start.X) <= Math.Abs(end.Y - start.Y)) continue;
-            canvas.Children.Add(new Line
+            foreach (var dash in dashes)
             {
-                X1 = start.X, Y1 = start.Y, X2 = end.X, Y2 = end.Y,
-                Stroke = MeasuredDoorway, StrokeDashArray = Dashes, StrokeThickness = 1.5
-            });
+                var path = dash.Estimated ? estimatedPath : measuredPath;
+                path.BeginFigure(new(dash.Start.X, dash.Start.Y), isFilled: false, isClosed: false);
+                path.LineTo(new(dash.End.X, dash.End.Y), isStroked: true, isSmoothJoin: false);
+            }
+        }
+        AddPath(measured, MeasuredDoorway);
+        AddPath(estimated, EstimatedPlacement);
+
+        ViewportPoint Project(AtlasPoint point)
+        {
+            var local = projection.ToCanvas(point);
+            return new(local.X * transform.Scale + transform.OffsetX,
+                local.Y * transform.Scale + transform.OffsetY);
         }
 
-        if (!showsEstimatedOutlines) return;
-        foreach (var footprint in placement.EstimatedFootprints)
+        void AddPath(StreamGeometry geometry, Brush stroke)
         {
-            var topLeft = projection.ToCanvas(new(footprint.X, footprint.Y + footprint.Height));
-            var bounds = new ViewportRect(topLeft.X, topLeft.Y,
-                footprint.Width * projection.Scale, footprint.Height * projection.Scale);
-            if (!bounds.IsUsable) continue;
-            var outline = new Rectangle
+            if (geometry.IsEmpty()) return;
+            canvas.Children.Add(new Path
             {
-                Width = bounds.Width, Height = bounds.Height,
-                Stroke = EstimatedPlacement, StrokeDashArray = Dashes, StrokeThickness = 1
-            };
-            Canvas.SetLeft(outline, bounds.X);
-            Canvas.SetTop(outline, bounds.Y);
-            canvas.Children.Add(outline);
+                Data = Frozen(geometry), Stroke = stroke, StrokeThickness = GameplayPlacementGeometry.StrokeWidth
+            });
         }
     }
 
-    private static T Frozen<T>(T value) where T : System.Windows.Freezable
+    private static T Frozen<T>(T value) where T : Freezable
     {
         value.Freeze();
         return value;
