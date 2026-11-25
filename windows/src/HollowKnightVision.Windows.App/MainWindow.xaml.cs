@@ -2140,9 +2140,10 @@ public partial class MainWindow : Window
     private void RefreshGuidance()
     {
         if (StencilGuidanceText is null || initialization is null) return;
-        StencilGuidanceText.Text = (workspace == "Label" && CurrentContextName == "Gameplay" ? CampaignGuidance() : null) ?? initialization.ModelGuidance(workspace,
+        var editingImage = workspace == "Label" && currentFrame is not null;
+        StencilGuidanceText.Text = (editingImage && CurrentContextName == "Gameplay" ? CampaignGuidance() : null) ?? initialization.ModelGuidance(workspace,
             hasGameplayTrainingLabels, trainedGameplayModelReady, trainingInProgress, CampaignGuidance()) ?? initialization.Guidance(
-            workspace == "Label" ? StencilInitializationPolicy.NormalizeContext(CurrentContextName) : null,
+            editingImage ? StencilInitializationPolicy.NormalizeContext(CurrentContextName) : null,
             ClassIdentifierText.Text, initializationTargetContext) ?? "";
         StencilGuidanceText.Visibility = StencilGuidanceText.Text.Length == 0
             ? Visibility.Collapsed : Visibility.Visible;
@@ -4684,10 +4685,10 @@ public partial class MainWindow : Window
 
     private void DeleteExample_Click(object sender, RoutedEventArgs e)
     {
-        if (currentExample is null) return;
+        if (currentExample is not { } example) return;
         if (MessageBox.Show(
                 this,
-                $"Delete label example {currentExample.Id:D}?",
+                $"Delete label example {example.Id:D}?",
                 "Delete example",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning) != MessageBoxResult.Yes)
@@ -4696,21 +4697,34 @@ public partial class MainWindow : Window
         }
         try
         {
-            new LabelingExampleStore(ExamplesRootText.Text).Delete(currentExample);
-            currentExample = null;
-            currentFrame = null;
-            LabelImage.Source = null;
-            ResetLabelViewport();
-            boxes.Clear();
-            labelDraft.Reset();
-            RefreshExamples();
-            menuStencilRecognizer.Refresh(initialization.LanguageIdentifier);
-            RefreshInitializationStatus();
+            DeleteOpenedExample(example);
         }
         catch (Exception error)
         {
             ShowError(error);
         }
+    }
+
+    private void DeleteOpenedExample(SavedLabelingExample example)
+    {
+        new LabelingExampleStore(ExamplesRootText.Text).Delete(example);
+        currentExample = null;
+        currentFrame = null;
+        LabelImage.Source = null;
+        ResetLabelViewport();
+        boxes.Clear();
+        labelDraft.Reset();
+
+        var context = StencilInitializationPolicy.NormalizeContext(example.Manifest.ContextIdentifier);
+        if (initialization.Contexts.Any(screen => screen.Identifier == context)
+            && example.Manifest.ResolvedLanguageIdentifier == initialization.LanguageIdentifier)
+        {
+            initializationTargetContext = context;
+            stencilSelectedContext = context;
+        }
+        RefreshExamples();
+        menuStencilRecognizer.Refresh(initialization.LanguageIdentifier);
+        RefreshInitializationStatus();
     }
 
     private void LabelCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)

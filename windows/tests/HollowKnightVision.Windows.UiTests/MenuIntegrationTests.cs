@@ -16,8 +16,57 @@ internal static class MenuIntegrationTests
     private static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
     internal static void Run()
     {
-        TestSavedReferenceRecognition(); TestRenderer();
+        TestSavedReferenceRecognition(); TestEditorDeletionRestoresCaptureGuidance(); TestRenderer();
         Console.WriteLine("PASS Menu integration reads contract-valid PNG labels, invalidates old generations, and renders Mac diagnostic geometry");
+    }
+
+    private static void TestEditorDeletionRestoresCaptureGuidance()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-stencil-editor-deletion-");
+        try
+        {
+            var store = new LabelingExampleStore(System.IO.Path.Combine(root.FullName, "labeling-v1", "examples"));
+            var frame = new BgraFrame(640, 360, 640 * 4, new byte[640 * 360 * 4], 1, DateTimeOffset.UnixEpoch);
+            var requirements = StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal)
+                .Single(item => item.Identifier == "select-profile").Requirements;
+            var annotations = requirements.SelectMany(item => Enumerable.Range(0, item.Count).Select(index =>
+                new LabelingExampleAnnotation(Guid.NewGuid(), item.Identifier, .1 + index * .2, .1, .1, .1))).ToArray();
+            var example = store.Save(frame, "select-profile", annotations);
+            var window = new MainWindow(GameRuntimeMode.Normal, gamePath: null, root: root.FullName, documents: root.FullName);
+            try
+            {
+                const BindingFlags Instance = BindingFlags.Instance | BindingFlags.NonPublic;
+                var type = typeof(MainWindow);
+                var capture = (LabelCaptureSession)type.GetField("labelCapture", Instance)!.GetValue(window)!;
+                capture.Apply(GamePauseState.Ready);
+                Check(capture.Accept(frame, capture.Revision), "Could not seed a frame for the normal editor.");
+                var selected = type.GetMethod("SelectWorkspace", Instance)!.Invoke(window, ["Label", false]);
+                Check(selected is true, "Could not enter the label editor.");
+                type.GetMethod("ApplySavedLabelExample", Instance)!.Invoke(window, [example, null]);
+                type.GetField("initializationTargetContext", Instance)!.SetValue(window, "main-title");
+                type.GetMethod("DeleteOpenedExample", Instance)!.Invoke(window, [example]);
+                var guidance = (TextBlock)window.FindName("StencilGuidanceText");
+                Check(store.Load().Count == 0 && guidance.Visibility == Visibility.Visible
+                    && guidance.Text.Contains("Capture with L only when Clear Save is visible.", StringComparison.Ordinal),
+                    $"Deleting the Select Profile screenshot did not restore capture guidance. Blue text was {guidance.Text}");
+            }
+            finally
+            {
+                const BindingFlags Instance = BindingFlags.Instance | BindingFlags.NonPublic;
+                var type = typeof(MainWindow);
+                type.GetField("isClosing", Instance)!.SetValue(window, true);
+                var closing = (Task)type.GetMethod("PrepareShutdownAsync", Instance)!.Invoke(window, null)!;
+                var deadline = Stopwatch.StartNew();
+                while (!closing.IsCompleted && deadline.Elapsed < TimeSpan.FromSeconds(15))
+                {
+                    Program.Pump();
+                    Thread.Sleep(5);
+                }
+                Check(closing.IsCompleted, "The stencil editor fixture did not finish shutdown.");
+                closing.GetAwaiter().GetResult();
+            }
+        }
+        finally { root.Delete(recursive: true); }
     }
     private static void TestSavedReferenceRecognition()
     {

@@ -1,4 +1,5 @@
 using HollowKnightVision.Windows.Core;
+using HollowKnightVision.Windows.App;
 using static HollowKnightVision.Windows.Core.MenuStencilCatalog;
 
 internal static class MenuCatalogTests
@@ -7,6 +8,36 @@ internal static class MenuCatalogTests
     private static readonly (string Id, StencilRect Bounds)[] MainLabels =
     [ ("main-title.start-game", new(50, 40, 30, 8)), ("shared.options", new(55, 65, 20, 8)), ("quit-game.quit-game", new(53, 90, 24, 8)) ];
     private static readonly DateTimeOffset Now = new(2026, 10, 21, 20, 0, 0, TimeSpan.Zero);
+
+    internal static void TestCurrentUserMenuReferencesWhenRequested()
+    {
+        if (Environment.GetEnvironmentVariable("HKV_CURRENT_MENU_LOCALITY_ROOT") is not { Length: > 0 } root)
+        {
+            Console.WriteLine("SKIP current menu references require HKV_CURRENT_MENU_LOCALITY_ROOT.");
+            return;
+        }
+        var examples = new LabelingExampleStore(root).Load();
+        var contexts = new HashSet<string>(["brightness", "clear-save", "select-profile", "video"], StringComparer.Ordinal);
+        var catalog = new MenuStencilCatalogBuilder(LabelingContractCatalog.ScreenContexts,
+            path => BgraPngReader.Read(path), example => LabelingContractEvaluator.AcceptsMenuExample(example))
+            .Build(examples, MenuStencilCalibration.LoadBundled(),
+                new MenuStencilLiveCaptureStore(MenuStencilLiveCaptureStore.RootForExamples(root))
+                    .Load().Select(capture => capture.Source).ToArray(), includedContexts: contexts);
+        foreach (var context in contexts.Order(StringComparer.Ordinal))
+        {
+            var example = StencilInitializationPolicy.RepresentativeExample(examples, context, "en", GameRuntimeMode.Modded)
+                ?? throw new InvalidOperationException($"The requested corpus has no representative {context} screenshot.");
+            var frame = BgraPngReader.Read(example.ImagePath);
+            var tracker = new MenuStencilTracker(catalog.ContainingOnly(context));
+            for (var index = 0; index < 12; index++)
+            {
+                var result = tracker.Observe(frame, index / 10d);
+                if (result is not { IsMatch: true } || result.ContextIdentifier != context)
+                    throw new InvalidOperationException($"The {context} reference was rejected on frame {index}.");
+            }
+            Console.WriteLine($"Checked 12 repeated captures for {context}.");
+        }
+    }
 
     internal static void TestHumanCatalog()
     {
