@@ -42,7 +42,7 @@ public static class LiveWorldGroundOverlay
         var pathRooms = new Dictionary<int, GameplaySavedRoomPath>();
         foreach (var room in placed.GroupBy(observation => observation.RoomId))
         {
-            var walked = LiveWorldWalkedGround.ProjectPlaced(roomObservations[room.Key], islands, unplaced, centered: true)
+            var walked = LiveWorldWalkedGround.ProjectOverlay(roomObservations[room.Key], islands, unplaced)
                 .OrderBy(line => line.AtlasStart.X).ToArray();
             var pathFloors = new List<GroundHypothesisAtlasLine>(walked);
             var edges = room.Where(observation =>
