@@ -632,11 +632,14 @@ internal sealed class WindowsLiveWorldPipeline
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 transactionObserver?.Invoke("append");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
-                var searchForClosure = globalSearchDue;
-                if (searchForClosure) lastGlobalSearchAt = request.MonotonicTimestamp;
+                var measuredIsland = request.WorldEvidence is { MeasuredLineage: not null };
+                // Pending measured islands use the floor verifier and its independent confirmation cadence.
+                var searchForClosure = globalSearchDue && !(measuredIsland && placementPending);
+                if (globalSearchDue) lastGlobalSearchAt = request.MonotonicTimestamp;
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 LiveWorldRecoveryPlacement? restoredPlacement = null;
-                if (searchForClosure && placementPending && priorSnapshot.UsesSwiftWireFormat)
+                if (globalSearchDue && placementPending && priorSnapshot.UsesSwiftWireFormat
+                    && (!measuredIsland || !activeTracker.HasPlacedGroundReference(resolvedRoomId, request.SolveWidth)))
                 {
                     // The original Mac landmark IDs do not describe our regenerated
                     // features. Confirm placement without writing a fabricated edge.
@@ -662,7 +665,8 @@ internal sealed class WindowsLiveWorldPipeline
                     walkedGround: groundEvidence,
                     captureEvidence: request.WorldEvidence,
                     placementPending: placementPending,
-                    carriedWalks: carriedWalks);
+                    carriedWalks: carriedWalks,
+                    loadGroundImage: measuredIsland ? id => id == source.Id ? request.MaskedFrame : activeStore.Source(id) : null);
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 transactionObserver?.Invoke("ingest");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();

@@ -1183,6 +1183,92 @@ internal static class NativeAtlasImportTests
         finally { root.Delete(recursive: true); }
     }
 
+    internal static void TestMeasuredAtlasClosureRequiresFloorEvidence()
+    {
+        foreach (var recovery in new[] { true, false })
+        {
+            var root = Directory.CreateTempSubdirectory("hkv-measured-closure-floor-");
+            try
+            {
+                var stages = new List<string>();
+                var pipeline = new WindowsLiveWorldPipeline(root.FullName, stages.Add);
+                var store = new LiveWorldSessionStore(root.FullName);
+                var placed = new AtlasPoint(80, 0);
+                var drifted = new AtlasPoint(130, 0);
+                Check(pipeline.Process(Scan(1, .5, 71, placed, 1)).AllowsAtlasComposition, "save the placed floor and scenery");
+                if (recovery)
+                {
+                    pipeline.NotifyTrackingLoss(1);
+                    WindowsLiveWorldPipelineResult? warmingUp = null;
+                    foreach (var (id, time) in new[] { (2, .7), (3, .8), (4, .96) })
+                    {
+                        var sample = Scan(id, time, 901, drifted, 2);
+                        warmingUp = pipeline.Process(sample with
+                        {
+                            GroundAlignmentExclusions = [new(0, 0, sample.Frame.Width, sample.Frame.Height)]
+                        });
+                    }
+                    Check(warmingUp is { AllowsAtlasWrite: true, PlacementPending: true },
+                        $"start the recovery island ({warmingUp?.Diagnostic})");
+                }
+                else
+                    Check(pipeline.Process(Scan(4, .9, 901, new(400, 0), 2)).AllowsAtlasComposition,
+                        "an ordinary measured island can record a different part of the room");
+
+                foreach (var (id, time) in new[] { (5, 1.26), (6, 1.56) })
+                {
+                    var wrongFloor = pipeline.Process(Scan(id, time, 71, drifted, 2, row: 105));
+                    Check(wrongFloor.AllowsAtlasWrite && wrongFloor.PlacementPending == recovery
+                        && wrongFloor.AcceptedClosure is null && store.Load().Snapshot.LoopClosureEdges.Count == 0,
+                        $"matching scenery at the wrong floor height cannot move the Atlas ({wrongFloor.Diagnostic})");
+                }
+                var before = store.Load().Snapshot;
+                Check(pipeline.Process(Scan(7, 1.86, 71, drifted, 2)).AcceptedClosure is null,
+                    "a single floor match cannot validate the earlier scenery votes");
+                var returning = Scan(8, 2.16, 71, drifted, 2);
+                if (!recovery)
+                    returning = returning with
+                    {
+                        StableTrackingVerified = false,
+                        WorldEvidence = returning.WorldEvidence! with
+                        {
+                            GroundGeometry = null, HasMeasuredSceneryContinuity = true
+                        }
+                    };
+                var corrected = pipeline.Process(returning);
+                Check(corrected is { AllowsAtlasComposition: true, AcceptedClosure: not null, RebuiltAtlas.TileCount: > 0 }
+                    && corrected.CameraPose == placed,
+                    $"two independent floor confirmations must rebuild the corrected Atlas ({corrected.Diagnostic})");
+                var after = store.Load().Snapshot;
+                Check(after.LoopClosureEdges.Count == 1 && after.Observations[0].OptimizedPose == placed
+                    && after.Observations.Take(before.Observations.Count).Select(row => row.RawPose)
+                        .SequenceEqual(before.Observations.Select(row => row.RawPose))
+                    && after.Observations.Skip(1).All(row =>
+                        row.OptimizedPose == new AtlasPoint(row.RawPose.X - 50, row.RawPose.Y)),
+                    "correct the measured island rigidly while retaining the original capture poses");
+                var rebuildIndex = stages.LastIndexOf("closure-rebuild");
+                var commitIndex = stages.FindIndex(rebuildIndex + 1, stage => stage == "commit");
+                var publishIndex = stages.FindIndex(commitIndex + 1, stage => stage == "publish");
+                Check(rebuildIndex >= 0 && commitIndex > rebuildIndex && publishIndex > commitIndex,
+                    "rebuild, commit, and publish the verified correction in order");
+            }
+            finally { root.Delete(recursive: true); }
+        }
+
+        static WindowsLiveWorldFrame Scan(long id, double time, int seed, AtlasPoint pose, long lineage, int row = 135)
+        {
+            var frame = FloorFrame(id, seed, rightSide: true, row, airborne: false, competing: false);
+            return frame with
+            {
+                Timestamp = time, MonotonicTimestamp = time, LocalPose = pose,
+                WorldEvidence = frame.WorldEvidence! with
+                {
+                    CaptureTimestamp = time, LocalReferenceTimestamp = time - .05, MeasuredLineage = lineage
+                }
+            };
+        }
+    }
+
     internal static void TestDoorwaySpacingUsesOnlyPlacedImages()
     {
         var root = Directory.CreateTempSubdirectory("hkv-local-recovery-doorway-");

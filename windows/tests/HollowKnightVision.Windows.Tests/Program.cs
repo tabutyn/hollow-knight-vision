@@ -574,6 +574,7 @@ var tests = new List<(string Name, Action Run)>
     ("same-room recovery reconnects a Mac Atlas through rebuilt visual references", NativeAtlasImportTests.TestImportedWorldPlacesMeasuredRecoveryThroughRegeneratedFeatures),
     ("same-room recovery verifies broad scenery matches against saved floor texture", NativeAtlasImportTests.TestSameRoomRecoveryVerifiesBroadMatchesWithFloorTexture),
     ("inconclusive early floor probes preserve scheduled recovery confirmation", NativeAtlasImportTests.TestInconclusiveEarlyProbesDoNotCancelOrPostponeScheduledConfirmation),
+    ("measured Atlas closures reject wrong-floor scenery before rebuilding", NativeAtlasImportTests.TestMeasuredAtlasClosureRequiresFloorEvidence),
     ("reopened Atlas recovers from saved floor imagery without narrow landmarks", NativeAtlasImportTests.TestReopenedAtlasRecoversFromFloorWithoutNarrowLandmarks),
     ("floor-only recovery rejects competing rooms and stale votes", NativeAtlasImportTests.TestFloorOnlyRecoveryRejectsCompetingRoomsAndStaleVotes),
     ("measured Atlas sections keep their relative link until the group is placed", NativeAtlasImportTests.TestMeasuredAtlasLinksSurviveUntilTheirGroupIsPlaced),
@@ -9710,7 +9711,7 @@ static void TestLiveWorldWorkerRestoresReturningIslandBasis()
             var image = PipelineTextureFrameFromPixels(id, pixels);
             return new(image, image, time, time, pose, image.Width, [], [], 1, room, 1, 64)
             {
-                WorldEvidence = new(time) { MeasuredLineage = lineage },
+                WorldEvidence = new(time, new([new(0, new(0, 45), new(image.Width, 45))])) { MeasuredLineage = lineage },
                 WalkedGroundLineage = lineage
             };
         }
