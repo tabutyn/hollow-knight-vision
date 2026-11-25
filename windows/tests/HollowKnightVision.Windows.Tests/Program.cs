@@ -246,6 +246,7 @@ var tests = new List<(string Name, Action Run)>
     ("ground scene recorded return relocalizes from drifted pose", GroundSceneAuditParityTests.TestRecordedReturnFrameRelocalizesFromDriftedPose),
     ("all-frame ground replay retains original indices without changing worker replay selection", GroundDetectionReplayAuditTests.TestAllFrameReplayKeepsCapturedIndicesAndOrdinaryWorkerSelection),
     ("recorded ground detection keeps requested frames and rejects stale or foreign masks", RecordedTerrainDetectionAuditTests.TestGroundAuditKeepsSelectedFramesAndRejectsStaleMasks),
+    ("recorded ground pairs preserve frame identity, masks, and solver evidence", GroundPairReplayAuditTests.TestGroundPairReplayKeepsExactFramesAndMaskOwnership),
     ("ground scene labeled gameplay reports detection cost and evidence", GroundSceneAuditParityTests.TestLabeledGameplayGroundDetectionCostAndEvidence),
     ("ground scene captured platform audit runs masked and unmasked", GroundSceneAuditParityTests.TestCapturedPlatformScene),
     ("ground scene audit converts coordinates and alpha", GroundSceneAuditParityTests.TestSceneAuditCoordinateAndAlphaConversion),
@@ -1649,6 +1650,8 @@ if (Environment.GetEnvironmentVariable("HKV_GROUND_DETECTION_RECORDING") is not 
     tests.Add(("recorded terrain detection audits pixel evidence and verified contacts", RecordedTerrainDetectionAuditTests.TestRecordedGroundDetectionsWhenRequested));
 if (Environment.GetEnvironmentVariable("HKV_CURRENT_STENCIL_AUDIT") is not null)
     tests.Add(("current title, Extras, and Inventory captures keep local selector alignment", CurrentMenuReplayAuditTests.TestCurrentUserPlainMenuRowsWhenRequested));
+if (Environment.GetEnvironmentVariable("HKV_GROUND_PAIR_RECORDING") is not null)
+    tests.Add(("archived ground pairs and sequences replay the pixel solver", GroundPairReplayAuditTests.TestArchivedGroundPairsWhenRequested));
 
 foreach (var test in tests)
 {
