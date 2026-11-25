@@ -56,6 +56,51 @@ internal static class LiveIslandWorldProjectionTests
             "Held visual tracking can retain its display position without authorizing registered geometry.");
     }
 
+    internal static void TestRigidCorrectionMovesEveryMemberAndItsLandmarks()
+    {
+        var world = new LiveWorldTracker();
+        Admit(world, 0, 1, default, new(100, 10), 1);
+        Admit(world, 1, 2, new(10, 0), new(110, 10), 1);
+        Admit(world, 2, 3, default, new(300, 40), 2);
+        var tracked = world.Snapshot;
+        var source = tracked.Keyframes.Single(keyframe => keyframe.ObservationId == 0);
+        var landmark = new LiveWorldLandmark(0, source.Id, 0, new(4, 4),
+            new(104, 14), [1, 2, 3], Depth: 1, DepthConfidence: 1);
+        var before = new LiveWorldSnapshot(tracked.SchemaVersion, tracked.MapRevision,
+            tracked.AnchoredObservationId, tracked.Observations, tracked.Keyframes, [landmark],
+            tracked.RelativeMotionEdges, tracked.LoopClosureEdges, tracked.TrackingIslands);
+        var original = LiveWorldJson.WriteSnapshot(before);
+        var poses = before.Observations.ToDictionary(row => row.Id, row => row.OptimizedPose);
+        poses[0] = new(108, 7);
+
+        ExpectRejected(poses, before.MapRevision, LiveWorldModelError.InvalidIslandMembership);
+        poses[1] = new(118, 7);
+        ExpectRejected(poses, before.MapRevision - 1, LiveWorldModelError.StaleRevision);
+        Check(LiveWorldJson.WriteSnapshot(before).SequenceEqual(original),
+            "A rejected correction must leave the original graph immutable.");
+
+        var moved = before.ReplaceOptimizedPoses(poses, before.MapRevision);
+        var sameOwner = moved.TrackingIslands.Single(island => island.MeasuredLineage == 1);
+        Check(moved.MapRevision == before.MapRevision + 1
+            && moved.Observations.Select(row => row.OptimizedPose).SequenceEqual([new(108, 7), new(118, 7), new(300, 40)])
+            && moved.Observations.Select(row => row.RawPose).SequenceEqual(before.Observations.Select(row => row.RawPose))
+            && sameOwner.WorldFromLocal == new AtlasPoint(108, 7)
+            && sameOwner.Members.SequenceEqual(before.TrackingIslands[0].Members)
+            && moved.TrackingIslands[1] == before.TrackingIslands[1]
+            && moved.Landmarks.Single() == landmark with { WorldPoint = new(112, 11) },
+            "The rigid correction moves both members and their landmark by one common offset.");
+        var bytes = LiveWorldJson.WriteSnapshot(moved);
+        Check(LiveWorldJson.WriteSnapshot(LiveWorldJson.ReadSnapshot(bytes)).SequenceEqual(bytes),
+            "The rigid layout and measured data must survive save and reopen.");
+
+        void ExpectRejected(IReadOnlyDictionary<int, AtlasPoint> candidate, int revision, LiveWorldModelError error)
+        {
+            try { _ = before.ReplaceOptimizedPoses(candidate, revision); }
+            catch (LiveWorldModelException rejection) when (rejection.Error == error) { return; }
+            throw new InvalidOperationException($"The correction should fail with {error}.");
+        }
+    }
+
     internal static void TestWorldProjectionFencesCaptureRoomEpochAndRecovery()
     {
         var world = new LiveWorldTracker();

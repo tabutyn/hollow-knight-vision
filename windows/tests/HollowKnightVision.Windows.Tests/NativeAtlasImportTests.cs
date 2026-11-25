@@ -1189,6 +1189,22 @@ internal static class NativeAtlasImportTests
                 && confirmed.Observations[1].OptimizedPose == new AtlasPoint(76, 0)
                 && confirmed.Observations[2].OptimizedPose == new AtlasPoint(78, 0),
                 "reconnection moves only the measured island and retains its relative geometry");
+
+            var prediction = Measured(11, 1.69, placedTexture, 160) with { StableTrackingVerified = false };
+            CheckDiscarded(pipeline.Process(prediction), "camera motion is unmeasured",
+                "a prediction has no authority to append to the corrected island, even with current floor pixels");
+            var unprovedScenery = prediction with
+            {
+                WorldEvidence = prediction.WorldEvidence! with
+                {
+                    HasMeasuredSceneryContinuity = true,
+                    LocalReferenceTimestamp = prediction.MonotonicTimestamp
+                }
+            };
+            CheckDiscarded(pipeline.Process(unprovedScenery), "camera motion is unmeasured",
+                "scenery without a prior measured reference cannot place an image");
+            Check(LiveWorldJson.WriteSnapshot(store.Load().Snapshot).SequenceEqual(LiveWorldJson.WriteSnapshot(confirmed)),
+                "unmeasured frames must leave saved images, motion edges and recovery keyframes unchanged");
         }
         finally { root.Delete(recursive: true); }
     }

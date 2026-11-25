@@ -11,6 +11,8 @@ internal static class CaptureIslandLineageTests
             "An uncommitted measured frame needs the same owner as its reference.");
         Check(ledger.Observe(1, "room", 1.2, measured: false, 1.1) is null,
             "A predicted image cannot carry measured ownership.");
+        Check(ledger.Observe(1, "room", 1.25, measured: true, 1.1) == first,
+            "An exact measured reference must recover the original island across a prediction.");
         var second = ledger.Observe(1, "room", 1.3, measured: true, 1.2);
         Check(second is not null && second != first, "A prediction-only reference needs a different island.");
         Check(ledger.Observe(1, "room", 1.4, measured: true, 1.2) == second,
@@ -19,6 +21,20 @@ internal static class CaptureIslandLineageTests
             "An actual older reference must restore its island across a gap.");
         Check(ledger.Observe(1, "room", 2.21, measured: true, null) is { } missing && missing != first,
             "A short interval without a reference does not prove ownership.");
+    }
+
+    internal static void TestBootstrapAndResetRetainUniqueMeasuredOwners()
+    {
+        var ledger = new CaptureIslandLineage();
+        Check(ledger.Observe(1, "room", 0, measured: false, null) is null,
+            "The bootstrap image cannot acquire measured ownership.");
+        var established = ledger.Observe(1, "room", .02, measured: true, 0);
+        Check(established is not null && ledger.Observe(1, "room", .04, measured: true, 0) == established,
+            "The first actual measurement can use the bootstrap as a reference without changing its original admission.");
+        ledger.Reset();
+        var reopened = ledger.Observe(1, "room", 1, measured: true, .02);
+        Check(reopened is { } newOwner && newOwner > established!.Value,
+            "A capture reset must fence out old references and advance the measurement identity.");
     }
 
     internal static void TestDiscontinuitiesFenceOldImageReferences()
