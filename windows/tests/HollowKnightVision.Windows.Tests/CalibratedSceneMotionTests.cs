@@ -242,7 +242,7 @@ internal static class CalibratedSceneMotionTests
         var signal = new FrameSignalProfile(64 * 36, 64 * 36, 64 * 36, 100, stationaryScene);
         var identity = new LowResolutionTranslationDiagnostic(null, null, null, ExactIdentity: true);
         GameplayTrackedFrame Observe(int index, int dx, int dy, bool floorVisible, bool hasCommitted,
-            bool resumed = false, InputButtons? input = null)
+            bool resumed = false, InputButtons? input = null, LowResolutionRoomMotionEstimate? coarse = null)
         {
             var time = index * .05;
             var frame = new BgraFrame(width, height, width * 4, new byte[width * height * 4],
@@ -273,7 +273,32 @@ internal static class CalibratedSceneMotionTests
             var prepared = new GameplayTrackingPreparation(new GameplayTerrainAnalysis(edges, theory, floors, floors),
                 identity, knight is { } actor ? [actor] : [], []);
             return pipeline.Track(frame, prepared, knight, new(true, !resumed, resumed, new(true, resumed)),
-                signal, time, 1, "entrance", hasCommitted, input, false, captureWorldEvidence: true);
+                signal, time, 1, "entrance", hasCommitted, input, false, captureWorldEvidence: true, coarseMotion: coarse);
+        }
+
+        var sceneryWalk = new LowResolutionRoomMotionEstimate(VisualRoomDirection.Right, .85, -1);
+        Check(RunInitialWalk(InputButtons.Right, sceneryWalk), "The normal tracking pipeline must write during a corroborated level walk.");
+        Check(!RunInitialWalk(InputButtons.Right, sceneryWalk with { Confidence = .79 }),
+            "Uncertain scenery may not authorize a moving initial Atlas.");
+        Check(!RunInitialWalk(InputButtons.Right | InputButtons.ActionZ, sceneryWalk),
+            "Jump input must withhold the walked-contact evidence.");
+
+        bool RunInitialWalk(InputButtons buttons, LowResolutionRoomMotionEstimate coarse)
+        {
+            pipeline.Reset();
+            visual.Reset();
+            for (var index = 0; index < 16; index++)
+                _ = Observe(index, 0, 0, true, false, input: InputButtons.None);
+            for (var index = 16; index < 42; index++)
+            {
+                var tracked = Observe(index, 15 - index, 0, true, false, input: buttons, coarse: coarse);
+                if (!tracked.AllowsAtlasWrite) continue;
+                Check(tracked.AtlasBootstrapWalk == VisualRoomDirection.Right && tracked.Contact.Floor.HasValue
+                    && tracked.Observation.GroundVerified && tracked.WorldEvidence is not null,
+                    "A moving initial write requires measured support and world evidence from the same frame.");
+                return true;
+            }
+            return false;
         }
 
         foreach (var hasCommitted in new[] { false, true })

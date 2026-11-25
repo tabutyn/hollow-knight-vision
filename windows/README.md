@@ -791,6 +791,10 @@ atlas. Use `--visual-replay-frame-limit 600` to cap the run. An incomplete archi
 requires `--visual-replay-allow-incomplete` and reports the original missing
 frame indices.
 
+The desktop and offline replay can start a fresh Atlas during level walking
+when tracked foot contact and independent scene motion agree with the held
+movement input.
+
 New recordings and visual replays include each sampled floorless tracker's
 input pose, ground reliability, steering, and velocity seed. The trace also
 records the coarse candidate and whether it drove the display. The offline

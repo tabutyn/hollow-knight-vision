@@ -31,6 +31,7 @@ public sealed record GameplayTrackedFrame(
     public VisualSceneDiscontinuityTracker.Cut? SceneCut { get; init; }
     public VisualSceneDiscontinuityTracker.Cut? RecentDoorwayCut { get; init; }
     public LiveWorldCaptureEvidence? WorldEvidence { get; init; }
+    public VisualRoomDirection? AtlasBootstrapWalk { get; init; }
 }
 
 /// <summary>Ground, camera and terrain state shared by the capture worker and offline archive replay.</summary>
@@ -100,7 +101,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         GameplayFrameDecision admission, FrameSignalProfile signal, double timestamp, long generation, string? knownRoom,
         bool hasCommittedAtlas, InputButtons? buttons, bool resetWorldCoordinatesForCorrection,
         bool visualRoomObservationEnabled = true, bool observeLoadingInKnownRoom = false,
-        bool captureWorldEvidence = false)
+        bool captureWorldEvidence = false, LowResolutionRoomMotionEstimate? coarseMotion = null)
     {
         var groundStarted = Stopwatch.GetTimestamp();
         var terrainAnalysis = prepared.Terrain;
@@ -122,7 +123,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         {
             observation = camera.ObserveGroundAnchored(frame, prepared.Motion, sourceLuma,
                 terrainAnalysis.CameraReferences, prepared.ProtectedOcclusions, hasCommittedAtlas, knight, tracker, timestamp,
-                sceneGrid, direction, skippedCaptureRegistration, ObserveRoomPlace);
+                sceneGrid, direction, skippedCaptureRegistration, ObserveRoomPlace, deferFreshAtlasBootstrap: true);
         }
         else
         {
@@ -235,6 +236,13 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
                 groundAudits.Record(frame, timestamp, generation, luma, floors, prepared.ProtectedOcclusions,
                     terrainAnalysis.SemanticTheory.Tuning, ground, platformPatches, tracker);
         }
+        VisualRoomDirection? bootstrapWalk = null;
+        if (!hasCommittedAtlas && terrainAnalysis?.Edges.SourceLuma is not null)
+        {
+            if (measuredGround && admission.AllowsAtlasWrite && visualRoom.AllowsAtlasWrite && !groundAdjusted)
+                bootstrapWalk = CorroboratedBootstrapWalk(contact.Floor, frame.Height, knight, direction, coarseMotion);
+            observation = camera.CompleteFreshAtlasBootstrap(observation, bootstrapWalk);
+        }
         LiveWorldCaptureEvidence? worldEvidence = null;
         if (captureWorldEvidence && admission.AllowsAtlasWrite && visualRoom.AllowsAtlasWrite)
         {
@@ -266,7 +274,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             CaptureGap = captureGap,
             SceneCut = visualRoom.Cut,
             RecentDoorwayCut = roomIdentity.RecentDoorwayCut(timestamp),
-            WorldEvidence = worldEvidence
+            WorldEvidence = worldEvidence,
+            AtlasBootstrapWalk = bootstrapWalk
         };
 
         LowResolutionPlaceMatch? ObserveRoomPlace(AtlasPoint pose, bool groundVerified)
@@ -289,6 +298,14 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             placeMemory.ClearPending();
             return null;
         }
+    }
+
+    internal static VisualRoomDirection? CorroboratedBootstrapWalk(CleanFloorLine? floor, int imageHeight, PixelRect? knight,
+        VisualRoomDirection? direction, LowResolutionRoomMotionEstimate? scenery)
+    {
+        return direction is { } drive && floor is { } walk && scenery is { Confidence: >= .8 } estimate
+            && (long)walk.XSpan.EndInclusive - walk.XSpan.Start + 1 >= GroundClearance.KnightHeight(imageHeight, knight)
+            && estimate.Direction == drive && (long)estimate.ScreenShift * (int)drive < 0 ? drive : null;
     }
 
     public void Reset(bool preserveWalkedGround = false) =>

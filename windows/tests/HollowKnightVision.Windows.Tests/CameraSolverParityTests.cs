@@ -91,6 +91,31 @@ internal static class CameraSolverParityTests
             hasCommittedEvidence: true));
     }
 
+    public static void TestOnlyCorroboratedLevelWalkingCanBootstrapAMovingAtlas()
+    {
+        static bool Admits(VisualRoomDirection? direction, double slope = 0, bool verified = true, int sign = 1)
+        {
+            var gate = new FreshAtlasBootstrapGate();
+            for (var index = 0; index < 40; index++)
+                _ = gate.AllowsFirstAtlasWrite(new(sign * index * 2, index * slope), true, verified, false, direction);
+            return gate.IsReady;
+        }
+
+        Check(Admits(VisualRoomDirection.Right));
+        Check(Admits(VisualRoomDirection.Left, sign: -1));
+        Check(!Admits(null));
+        Check(!Admits(VisualRoomDirection.Left));
+        Check(!Admits(VisualRoomDirection.Right, slope: 1));
+        Check(!Admits(VisualRoomDirection.Right, verified: false));
+
+        var gate = new FreshAtlasBootstrapGate();
+        for (var index = 0; index <= 7; index++)
+            Check(!gate.AllowsFirstAtlasWrite(new(index * 2, 0), true, true, false, VisualRoomDirection.Right));
+        gate.Reset();
+        for (var index = 8; index <= 12; index++)
+            Check(!gate.AllowsFirstAtlasWrite(new(index * 2, 0), true, true, false, VisualRoomDirection.Right));
+    }
+
     public static void TestRejectsCutSizedJumpWithoutMovingPath()
     {
         var accumulator = new CameraAccumulator();

@@ -1047,6 +1047,7 @@ var tests = new List<(string Name, Action Run)>
     ("label dataset rejects negative-only corpus", TestLabelDatasetNeedsPositive),
     ("camera continuity delays soft recovery", TestCameraContinuity),
     ("fresh atlas waits for stable pose", TestFreshAtlasBootstrap),
+    ("only corroborated level walking can bootstrap a moving atlas", CameraSolverParityTests.TestOnlyCorroboratedLevelWalkingCanBootstrapAMovingAtlas),
     ("camera accumulator smooths and rejects jumps", TestCameraAccumulator),
     ("camera continuity preserves verified placement across isolated weak results", CameraSolverParityTests.TestIsolatedWeakRegistrationDoesNotDiscardVerifiedAtlasPlacement),
     ("camera continuity enters recovery immediately for a hard scene jump", CameraSolverParityTests.TestHardSceneJumpStillEntersRecoveryImmediately),

@@ -37,6 +37,7 @@ public sealed record VisualGameplayObservation(
     public double? RecoveredAtlasReferenceTimestamp { get; init; }
     public double? MotionBridgeConfidence { get; init; }
     public double? SceneMotionMilliseconds { get; init; }
+    internal bool CanWriteAfterBootstrap { get; init; }
     public RecordedCoarseMotionInput? CoarseMotionInput { get; init; }
     public AtlasPoint? CoarseCameraCandidate => FloorlessEvidence?.Place?.CameraPosition ?? FloorlessEvidence?.CoarsePosition;
     public InputPathPlaceMatch? CoarsePlaceMatch => FloorlessEvidence?.Place is { } place
@@ -106,7 +107,8 @@ public sealed class VisualGameplayTracker
         LowResolutionMotionGrid? sceneGrid = null,
         VisualRoomDirection? expectedDirection = null,
         TransitionMotionBridgeResult? skippedCaptureRegistration = null,
-        Func<AtlasPoint, bool, LowResolutionPlaceMatch?>? observeRoomPlace = null)
+        Func<AtlasPoint, bool, LowResolutionPlaceMatch?>? observeRoomPlace = null,
+        bool deferFreshAtlasBootstrap = false)
     {
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(sourceLuma);
@@ -251,13 +253,13 @@ public sealed class VisualGameplayTracker
             floorless.RecordPublishedPose(timestamp, Position);
         }
         var position = camera.Position;
-        var bootstrapReady = bootstrap.AllowsFirstAtlasWrite(
+        var bootstrapReady = (!deferFreshAtlasBootstrap || hasCommittedEvidence) && bootstrap.AllowsFirstAtlasWrite(
             new AtlasPoint(position.X, -position.Y),
             registrationAccepted: verified || bridged is not null,
             groundVerified: verified,
             hasCommittedEvidence: hasCommittedEvidence);
-        return new(BuildSample(frame), update, verified,
-            (verified || bridged is not null) && bootstrapReady && placement.AllowsAtlasWrite,
+        var canWriteAfterBootstrap = (verified || bridged is not null) && placement.AllowsAtlasWrite;
+        return new(BuildSample(frame), update, verified, bootstrapReady && canWriteAfterBootstrap,
             tracking.LocalTextureSupport, tracking.LocalTextureError,
             verified ? "ground" : bridged is not null ? "transition-bridge"
                 : selectedPlace ? "coarse-place-match"
@@ -269,6 +271,7 @@ public sealed class VisualGameplayTracker
                 : update is null ? "held" : "coarse-presentation")
         {
             GroundTracking = tracking,
+            CanWriteAfterBootstrap = canWriteAfterBootstrap,
             FloorlessEvidence = floorlessEvidence,
             CoarseMotionInput = coarseInput,
             RecoveredAtlasReferenceTimestamp = bridged?.ReferenceTimestamp,
@@ -290,6 +293,15 @@ public sealed class VisualGameplayTracker
                 seed?.Timestamp, (int?)expectedDirection, MotionGridAvailable: sceneGrid is not null);
             floorless.Observe(sceneGrid, timestamp, frame.Width, pose, reliable, expectedDirection, seed);
         }
+    }
+
+    internal VisualGameplayObservation CompleteFreshAtlasBootstrap(VisualGameplayObservation observation,
+        VisualRoomDirection? verifiedWalk)
+    {
+        var pose = new AtlasPoint(observation.Telemetry.CameraX, observation.Telemetry.CameraY);
+        var ready = bootstrap.AllowsFirstAtlasWrite(pose, observation.Registration?.State == CameraUpdateState.Accepted,
+            observation.GroundVerified, hasCommittedEvidence: false, verifiedWalk: verifiedWalk);
+        return ready && observation.CanWriteAfterBootstrap ? observation with { AllowsAtlasWrite = true } : observation;
     }
 
     internal static FloorlessPoseCandidate? SelectFloorlessPose(AtlasPoint current,
