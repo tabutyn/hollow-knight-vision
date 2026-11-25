@@ -170,7 +170,9 @@ internal static class HudStencilTests
                 DateTimeOffset.UnixEpoch.AddSeconds(step));
             var presented = CpuBgraNormalizer.Normalize(raw);
             var hud = Require(tracker.Observe(presented, true, step, 1));
-            Check(hud.EstablishesGameplay && (scale < 1 || Counts(hud).SequenceEqual(new[] { 9, 0, 0 })),
+            Check(presented.Width == 640 && presented.Height == 360 && hud.EstablishesGameplay
+                && (scale < 1 || Counts(hud).SequenceEqual(new[] { 9, 0, 0 }))
+                && LiveGameStatusResolver.Resolve([], hudStencil: hud) is null,
                 $"Changing capture size to {raw.Width}×{raw.Height} lost the health row.");
         }
     }
@@ -182,7 +184,10 @@ internal static class HudStencilTests
         var original = Require(tracker.Observe(reference, true, 0, 1));
         var inset = LayoutHud(reference, scale, 0);
         var recovered = Require(tracker.Observe(inset, true, 1, 1));
-        Check(Counts(recovered).SequenceEqual(new[] { 9, 0, 0 }), "The inset lost health icons.");
+        Check(Counts(recovered).SequenceEqual(new[] { 9, 0, 0 })
+            && recovered.Health.Select(match => match.Index).SequenceEqual(Enumerable.Range(0, 9))
+            && LiveGameStatusResolver.Resolve([], hudStencil: recovered) is null,
+            "The inset lost health icons or established Game Play without the Knight.");
         var cached = Require(tracker.Observe(inset, true, 1.05, 1));
         Check(recovered.Health.SequenceEqual(cached.Health), "The cached scale did not follow the inset.");
         for (var index = 0; index < recovered.Health.Count; index++)
@@ -207,10 +212,12 @@ internal static class HudStencilTests
         var insetTemplate = Require(HudStencilTemplate.Captured(inset, boxes, "inset-reference"));
         var insetTracker = new HudStencilTracker(insetTemplate);
         var fromInset = Require(insetTracker.Observe(reference, true, 1, 1));
-        Check(fromInset.Health.Select(match => match.Index).SequenceEqual(Enumerable.Range(0, 9)),
+        Check(fromInset.Health.Select(match => match.Index).SequenceEqual(Enumerable.Range(0, 9))
+            && Math.Abs(fromInset.Health[0].Rect.MidX - original.Health[0].Rect.MidX) <= 2,
             "A stencil captured in the inset layout skipped the real first icon.");
         var moved = Require(insetTracker.Observe(LayoutHud(reference, 1, -21), true, 2, 1));
-        Check(moved.Health.Count == 9, "A new display moved the health row outside its previous band.");
+        Check(moved.Health.Select(match => match.Index).SequenceEqual(Enumerable.Range(0, 9)),
+            "A new display moved the health row outside its previous band.");
     }
 
     private static void TestSingleDisplacedIconCannotEstablishNewRow(BgraFrame reference, HudStencilTemplate template)
@@ -284,6 +291,7 @@ internal static class HudStencilTests
             Check(uncapturedGameplay.Context is null && uncapturedGameplay.Hud is null
                     && !uncapturedGameplay.HasFreshGameplayEvidence && !recognizer.HasGameplayReference,
                 "Empty label store bypassed stencil setup.");
+            SavedLabelingExample? profile = null;
             foreach (var contextIdentifier in new[] { "main-title", "select-profile" })
             {
                 var context = StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal)
@@ -293,7 +301,8 @@ internal static class HudStencilTests
                     .SelectMany(requirement => Enumerable.Range(0, requirement.Count).Select(_ =>
                         new LabelingExampleAnnotation(Guid.NewGuid(), requirement.Identifier, .1, .2, .1, .04)))
                     .ToArray();
-                _ = store.Save(image, context.Identifier, boxes, languageIdentifier: "en");
+                var example = store.Save(image, context.Identifier, boxes, languageIdentifier: "en");
+                if (contextIdentifier == "select-profile") profile = example;
             }
 
             Refresh();
@@ -305,6 +314,15 @@ internal static class HudStencilTests
                 "Gameplay HUD navigation guidance differs from Mac.");
             Check(coordinator.Guidance("select-profile", null)?.Contains("Select Profile", StringComparison.Ordinal) == true,
                 "Completed Select Profile guidance lost its screen name.");
+
+            var completedProfile = profile ?? throw new InvalidOperationException("The profile fixture was not saved.");
+            var profileWithoutClear = store.Update(completedProfile, "select-profile", completedProfile.Manifest.Annotations
+                .Where(box => box.ClassIdentifier != StencilInitializationPolicy.ProfileClearSaveClass).ToArray());
+            Refresh();
+            Check(coordinator.Steps.FirstOrDefault()?.ClassIdentifier == StencilInitializationPolicy.ProfileClearSaveClass,
+                "Clear Save should stay the next step until it has been labeled on Select Profile.");
+            Check(coordinator.Guidance("select-profile", null)?.Contains("create a save", StringComparison.OrdinalIgnoreCase) == true,
+                "Missing Clear Save should explain how to capture an occupied profile.");
 
             var health = Enumerable.Range(0, 2).Select(offset =>
                 new LabelingExampleAnnotation(Guid.NewGuid(), "game.health",
@@ -325,6 +343,10 @@ internal static class HudStencilTests
             }
 
             Refresh();
+            Check(coordinator.HasUsableHUD && !coordinator.IsFirstPhaseComplete,
+                "A recognized HUD cannot bypass the missing Clear Save label.");
+            _ = store.Update(profileWithoutClear, "select-profile", completedProfile.Manifest.Annotations);
+            Refresh();
             Check(coordinator.IsFirstPhaseComplete,
                 "A valid captured HUD did not unlock the first stencil campaign.");
             Check(!coordinator.IsComplete,
@@ -334,7 +356,7 @@ internal static class HudStencilTests
             Refresh(coordinator.LanguageIdentifier);
             Check(!coordinator.IsFirstPhaseComplete && !coordinator.HasUsableHUD,
                 "A language change must relock incomplete references.");
-            Console.WriteLine("PASS Captured HUD unlocks Phase 1 after the profile stencil is complete");
+            Console.WriteLine("PASS Captured HUD unlocks Windows Phase 1 only after Clear Save is labeled");
         }
         finally
         {
