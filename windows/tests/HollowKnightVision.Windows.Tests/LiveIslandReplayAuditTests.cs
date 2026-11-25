@@ -62,6 +62,80 @@ internal static class LiveIslandReplayAuditTests
         finally { root.Delete(recursive: true); }
     }
 
+    internal static void TestRecordedReturnUsesTwoFreshFloorVotes()
+    {
+        var root = Path.GetFullPath(Required("HKV_SAME_VIEW_AUDIT_INPUT"));
+        var savedRoot = Path.Combine(root, "world");
+        var scenePath = Path.Combine(savedRoot, "scene.snapshot");
+        var sceneBytes = File.ReadAllBytes(scenePath);
+        var original = LiveWorldSessionStore.ValidateExisting(savedRoot).Snapshot;
+        using var saved = SceneSessionStore.OpenReadOnly(savedRoot);
+        var manifest = saved.Manifest.Observations.ToDictionary(observation => observation.Id);
+        var frames = new[] { 0, 46, 47 }.Select(id =>
+        {
+            var source = original.Observations.Single(observation => observation.Id == id);
+            return (Source: source, Image: saved.Source(manifest[source.SourceObservationId]),
+                Exclusions: original.CompositionMasks(source));
+        }).ToArray();
+        Check(frames[0].Source.GroundGeometry is { Lines.Count: > 0 }
+            && frames.Skip(1).All(frame => frame.Source.GroundGeometry is null
+                && frame.Source.ObservedFloorCandidates is { Lines.Count: > 0 }),
+            "The saved frames must preserve the confirmed anchor and two candidate-only return captures.");
+
+        foreach (var includeCandidates in new[] { false, true })
+        {
+            var workspace = Directory.CreateTempSubdirectory("hkv-recorded-floor-return-");
+            try
+            {
+                var tracker = new LiveWorldTracker();
+                var store = new LiveWorldSessionStore(workspace.FullName);
+                var anchor = frames[0].Source.OptimizedPose;
+                var drifted = new AtlasPoint(anchor.X + 15, anchor.Y + 6);
+                LiveWorldLoopClosureEdge? closure = null;
+                for (var index = 0; index < frames.Length; index++)
+                {
+                    var (source, image, exclusions) = frames[index];
+                    var captureTimestamp = source.CaptureTimestamp
+                        ?? throw new InvalidDataException("The return frame has no recorded capture timestamp.");
+                    var pose = index == 0 ? anchor : drifted;
+                    var stored = store.Append(image, source.Timestamp, pose, source.SolveWidth, exclusions);
+                    var evidence = new LiveWorldCaptureEvidence(captureTimestamp, source.GroundGeometry,
+                        includeCandidates ? source.ObservedFloorCandidates : null) { MeasuredLineage = index == 0 ? 1 : 2 };
+                    var baseline = tracker.Snapshot.MapRevision;
+                    tracker.Ingest(stored.Id, source.Timestamp, image, pose, source.SolveWidth, exclusions: exclusions,
+                        searchForClosure: false, captureGeneration: 1, captureEvidence: evidence, placementPending: index != 0);
+                    LiveWorldLoopClosureEdge? CheckFloor() => tracker.LinkGroundRecovery(image, exclusions, store.Source,
+                        id => tracker.Snapshot.Observations.Single(observation => observation.SourceObservationId == id).ExcludedRects);
+                    if (index != 0) closure = CheckFloor();
+                    if (index == 1)
+                        Check(closure is null && CheckFloor() is null, "Repeating one recorded frame cannot correct the island.");
+                    Check(store.Commit(tracker.Snapshot, baseline, tracker.Snapshot.MapRevision), "Commit the replay revision.");
+                }
+                var result = LiveWorldSessionStore.ValidateExisting(workspace.FullName).Snapshot;
+                Console.WriteLine($"Floor candidates supplied: {includeCandidates}. Closures: {result.LoopClosureEdges.Count}. "
+                    + $"Unplaced images: {result.UnplacedObservationIds().Count}.");
+                Check(result.Observations.Count == 3 && result.TrackingIslands.Count == 2
+                    && result.LoopClosureEdges.Count == (includeCandidates ? 1 : 0)
+                    && (closure is not null) == includeCandidates,
+                    "Only two recorded captures with fresh floor evidence may reconnect the return.");
+                var rebuilt = WindowsLiveWorldPipeline.RebuildAtlas(result, store.Source, 1, LiveTiledAtlas.TileSize);
+                Console.WriteLine($"Composited {rebuilt.AcceptedFrameCount} images. Reopened return poses: "
+                    + string.Join(", ", result.Observations.Skip(1).Select(observation => observation.OptimizedPose)));
+                Check(rebuilt.AcceptedFrameCount == (includeCandidates ? 3 : 1)
+                    && result.Observations[0].OptimizedPose == anchor
+                    && result.Observations.Skip(1).All(observation => observation.RawPose == drifted
+                        && observation.GroundGeometry is null
+                        && (observation.ObservedFloorCandidates is not null) == includeCandidates
+                        && (includeCandidates ? Math.Abs(observation.OptimizedPose.X - anchor.X) <= 1
+                            && Math.Abs(observation.OptimizedPose.Y - anchor.Y) <= 1 : observation.OptimizedPose == drifted))
+                    && result.DoorwayFloorConstraints.Count == 0,
+                    "Reopening the correction must preserve the raw positions and exclude unconfirmed ground.");
+            }
+            finally { workspace.Delete(recursive: true); }
+        }
+        Check(File.ReadAllBytes(scenePath).AsSpan().SequenceEqual(sceneBytes), "Replay must preserve the archived graph.");
+    }
+
     private static ReopenReport VerifyReopen(string root, Action<GroundTruthAtlasMosaic>? inspect = null)
     {
         var worldRoot = Path.Combine(root, "world");
