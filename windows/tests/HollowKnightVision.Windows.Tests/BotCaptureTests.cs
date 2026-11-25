@@ -264,6 +264,79 @@ internal static class BotCaptureTests
         });
     }
 
+    internal static void TestCaptureRequiresItsOwnVisualAnchorForPredictedKnight()
+    {
+        WithLibrary(root =>
+        {
+            var first = Input(0);
+            var second = Input(1);
+            var third = Input(2);
+            var memory = new BotVisualKnightMemory();
+            var anchor = memory.Resolve(Visual(first));
+            var predicted = memory.Resolve(Hidden(second));
+            var laterPrediction = memory.Resolve(Hidden(third));
+            Check(predicted is { KnightSource: "visual-predicted", CanTrain: true }
+                && laterPrediction.KnightPrediction?.LastSeenAt == anchor.DetectionTimestamp,
+                "The fixture needs valid live predictions from the same measured Knight.");
+
+            Check(Finish((second, predicted)) is { Published.Count: 0, Discarded: 1 },
+                "A live prediction from before K cannot be the clip's only training example.");
+            Check(Finish((first, anchor), (second, predicted with { RoomId = 2 })) is { Published.Count: 0, Discarded: 1 },
+                "A prediction must refer to the same recorded room.");
+            Check(Finish((first, anchor), (second, Hidden(second) with { Issues = ["missing-terrain-analysis"] }),
+                (third, laterPrediction)) is { Published.Count: 0, Discarded: 1 },
+                "Invalid intervening perception must clear the trainer's Knight anchor.");
+
+            var admitted = Finish((first, anchor), (second, predicted));
+            Check(admitted is { Published.Count: 1, Discarded: 0 }
+                && admitted.Published[0].ObservationCount == 2,
+                "A visual frame with incompatible controls must still anchor a later trainable prediction.");
+            Check(BotCaptureSession.Library(root).Count == 1, "Discarded variants cannot appear in Bot Summary.");
+
+            BotCaptureResult Finish(params (Fixture Input, BotCaptureObservation Row)[] observations)
+            {
+                var capture = new BotCaptureSession(root, "normal", "visual", Generation, Start, Labels());
+                capture.ObserveNativeInput(InputButtons.Left | InputButtons.Right, Start);
+                capture.ObserveNativeInput(InputButtons.Left, Start + .11);
+                foreach (var (input, row) in observations)
+                    Check(capture.TryRecord(input.Frame, row, null), "The fixture must reach the capture writer.");
+                return capture.FinishAsync(Start + 1, null, completed: true).GetAwaiter().GetResult();
+            }
+        });
+
+        static BotCaptureObservation Hidden(Fixture fixture) =>
+            Visual(fixture with { Detections = fixture.Detections with { Detections = [] } });
+    }
+
+    internal static void TestCaptureSkipsMalformedRowsAndRequiresTrainablePerception()
+    {
+        WithLibrary(root =>
+        {
+            var first = Input(0);
+            var next = Input(1);
+            var valid = Visual(first);
+            var malformed = valid with { Features = valid.Features.Select((value, index) => index == 2 ? 5 : value).ToArray() };
+            var stale = valid with { DetectionTimestamp = valid.CaptureTimestamp - .21 };
+            var weak = valid with { Features = valid.Features.Select((value, index) => index == 4 ? .1 : value).ToArray() };
+            foreach (var invalid in new[] { stale, weak, malformed })
+                Check(Finish(invalid, addGoodRow: false) is { Published.Count: 0, Discarded: 1 },
+                    "Bot Summary should exclude a clip without any frame the trainer can use.");
+            var preserved = Finish(malformed, addGoodRow: true).Published.Single();
+            var rows = BotRecordedAtlasPath.ReadCapture(Path.Combine(root, BotCaptureSession.DirectoryName(preserved.Id))).Observations;
+            Check(preserved.ObservationCount == 1 && rows.Single().CaptureTimestamp == next.Time.CaptureTimestamp,
+                "An invalid vector should never poison a later valid training example.");
+
+            BotCaptureResult Finish(BotCaptureObservation bad, bool addGoodRow)
+            {
+                var capture = new BotCaptureSession(root, "normal", "visual", Generation, Start, Labels());
+                capture.ObserveNativeInput(InputButtons.Right, Start);
+                Check(capture.TryRecord(first.Frame, bad, null), "The fixture must reach the capture writer.");
+                if (addGoodRow) Check(capture.TryRecord(next.Frame, Visual(next), null), "The valid fixture should reach the writer.");
+                return capture.FinishAsync(Start + 1, null, completed: true).GetAwaiter().GetResult();
+            }
+        });
+    }
+
     internal static void TestPairedCaptureRetainsOnlyEligibleOccludedGameplay()
     {
         WithLibrary(root =>

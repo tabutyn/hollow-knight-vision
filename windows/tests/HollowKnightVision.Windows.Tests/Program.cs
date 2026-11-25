@@ -451,6 +451,8 @@ var tests = new List<(string Name, Action Run)>
     ("invalid Hacker cameras cannot project authored terrain", BotHumanGroundProjectionTests.TestInvalidCameraCannotProjectAuthoredGeometry),
     ("Hacker distinguishes malformed actors from missing receiver telemetry", BotHumanGroundProjectionTests.TestHackerDistinguishesMalformedActorsFromMissingTelemetry),
     ("native controls produce edges and interrupted bot captures are discarded", BotCaptureTests.TestNativeControlsAndInterruptedCapture),
+    ("training capture requires predictions to reference a measured Knight in that clip", BotCaptureTests.TestCaptureRequiresItsOwnVisualAnchorForPredictedKnight),
+    ("bot capture keeps valid examples when malformed or unusable frames arrive", BotCaptureTests.TestCaptureSkipsMalformedRowsAndRequiresTrainablePerception),
     ("an interrupted pair is discarded and a valid hidden Knight keeps only Game Play", BotCaptureTests.TestPairedCaptureRetainsOnlyEligibleOccludedGameplay),
     ("paired recording keeps exact Hacker frames without visual analysis", BotCaptureTests.TestPairedCaptureKeepsMatchedHackerFramesWithoutVisualAnalysis),
     ("bot recordings require at least one complete compatible action window", BotCaptureTests.TestCaptureRequiresACompleteCompatibleActionWindow),
