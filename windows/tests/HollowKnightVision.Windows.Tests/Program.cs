@@ -574,6 +574,7 @@ var tests = new List<(string Name, Action Run)>
     ("same-room recovery reconnects a Mac Atlas through rebuilt visual references", NativeAtlasImportTests.TestImportedWorldPlacesMeasuredRecoveryThroughRegeneratedFeatures),
     ("same-room recovery verifies broad scenery matches against saved floor texture", NativeAtlasImportTests.TestSameRoomRecoveryVerifiesBroadMatchesWithFloorTexture),
     ("inconclusive early floor probes preserve scheduled recovery confirmation", NativeAtlasImportTests.TestInconclusiveEarlyProbesDoNotCancelOrPostponeScheduledConfirmation),
+    ("placed Atlas floor confirmation survives inconclusive early probes", NativeAtlasImportTests.TestPlacedAtlasKeepsFloorConfirmationThroughEarlyProbes),
     ("measured Atlas closures reject wrong-floor scenery before rebuilding", NativeAtlasImportTests.TestMeasuredAtlasClosureRequiresFloorEvidence),
     ("moving Atlas floor votes require consistent views of the same reference island", NativeAtlasImportTests.TestFloorVotesMayUseDifferentViewsOnlyWithinSameRigidReferenceIsland),
     ("Atlas floor confirmation cannot reuse a scenery-only vote", NativeAtlasImportTests.TestFloorClosureDoesNotReuseAnUnverifiedSceneryVote),

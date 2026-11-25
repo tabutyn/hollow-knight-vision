@@ -113,7 +113,8 @@ public sealed class LiveWorldTracker
     private sealed record PendingClosure(
         int ReferenceKeyframeId,
         AtlasPoint Correction,
-        bool FloorVerified);
+        double? FloorVerifiedAt,
+        int? TargetIslandId);
 
     private sealed record PendingRecovery(
         int Epoch,
@@ -130,7 +131,7 @@ public sealed class LiveWorldTracker
     private const double MinimumClosureTravelFraction = 0.75;
     private const int MaximumMissedRecoveryFrames = 4;
     private const double MaximumGroundConfirmationAge = 1.25;
-    private const double GroundRecoverySearchInterval = .25;
+    private const double GroundSearchInterval = .25;
     private const double GroundConfirmationProbeWindow = .5;
 
     private readonly GlobalFeatureMatcher matcher = new();
@@ -145,7 +146,7 @@ public sealed class LiveWorldTracker
     private PendingRecovery? pendingRecovery;
     private PendingRecovery? pendingGroundPlacement;
     private GroundRecoveryVote? groundRecoveryVote;
-    private double lastGroundRecoverySearchAt = double.NegativeInfinity;
+    private double lastGroundSearchAt = double.NegativeInfinity;
     private int recoveryEpoch;
     private double? lastAcceptedClosureTravel;
     private int? lastAcceptedClosureIslandId;
@@ -179,12 +180,24 @@ public sealed class LiveWorldTracker
         && Snapshot.Observations.LastOrDefault() is { CaptureTimestamp: { } capturedAt } current
         && capturedAt == timestamp
         && (current.ObservedFloorCandidates?.Lines ?? current.GroundGeometry?.Lines) is { Count: > 0 }
-        && (timestamp - lastGroundRecoverySearchAt >= GroundRecoverySearchInterval
-            || IsGroundConfirmationProbe(target.Id, timestamp));
+        && (timestamp - lastGroundSearchAt >= GroundSearchInterval
+            || IsRecoveryConfirmationProbe(target.Id, timestamp));
 
-    private bool IsGroundConfirmationProbe(int islandId, double timestamp) =>
+    private bool IsRecoveryConfirmationProbe(int islandId, double timestamp) =>
         groundRecoveryVote is { } vote && vote.TargetIslandId == islandId
-        && timestamp - vote.Timestamp is > 0 and < GroundConfirmationProbeWindow;
+        && IsGroundConfirmationProbe(timestamp, vote.Timestamp);
+
+    private bool IsGroundConfirmationProbe(double timestamp, double votedAt) =>
+        timestamp - votedAt is > 0 and < GroundConfirmationProbeWindow
+        && timestamp - lastGroundSearchAt < GroundConfirmationProbeWindow;
+
+    private bool ScheduleGroundSearch(double timestamp, bool isConfirmationProbe)
+    {
+        if (isConfirmationProbe) return true;
+        if (timestamp - lastGroundSearchAt < GroundSearchInterval) return false;
+        lastGroundSearchAt = timestamp;
+        return true;
+    }
 
     public void BeginVisit()
     {
@@ -229,7 +242,7 @@ public sealed class LiveWorldTracker
         pendingRecovery = null;
         pendingGroundPlacement = null;
         groundRecoveryVote = null;
-        lastGroundRecoverySearchAt = double.NegativeInfinity;
+        lastGroundSearchAt = double.NegativeInfinity;
         pendingClosure = null;
     }
 
@@ -446,7 +459,14 @@ public sealed class LiveWorldTracker
         lastObservationId = observationId;
 
         var ground = observation.ObservedFloorCandidates?.Lines ?? observation.GroundGeometry?.Lines;
-        if (loadGroundSource is not null && ground is not { Count: > 0 }) searchForClosure = false;
+        var groundCaptureTime = loadGroundSource is not null ? observation.CaptureTimestamp : null;
+        var isConfirmationProbe = groundCaptureTime is { } probeAt
+            && pendingClosure is { FloorVerifiedAt: { } checkedAt } pending
+            && pending.TargetIslandId == activeIsland?.Id && IsGroundConfirmationProbe(probeAt, checkedAt);
+        if (loadGroundSource is not null)
+            searchForClosure = searchForClosure && groundCaptureTime is { } capturedAt && ground is { Count: > 0 }
+                && (pendingClosure?.FloorVerifiedAt is not { } previousVoteAt || capturedAt > previousVoteAt)
+                && ScheduleGroundSearch(capturedAt, isConfirmationProbe);
         var sceneryOnly = captureEvidence is { HasMeasuredSceneryContinuity: true };
         // Scenery can carry current floor evidence, but cannot seed the Atlas or an ordinary keyframe.
         if (sceneryOnly && (loadGroundSource is null || !searchForClosure || Snapshot.Keyframes.Count == 0))
@@ -510,7 +530,7 @@ public sealed class LiveWorldTracker
         {
             rejections.Add(LiveWorldTrackerRejection.MatcherRejected);
             if (!sceneryOnly && ShouldCreateKeyframe(observation, travel)) AddKeyframe(observation, frame);
-            pendingClosure = null;
+            if (!isConfirmationProbe) pendingClosure = null;
             return Update(new AtlasPoint(0, 0), null, rejections);
         }
 
@@ -523,7 +543,7 @@ public sealed class LiveWorldTracker
                 closurePose, solveWidth);
             if (verified is null)
             {
-                pendingClosure = null;
+                if (!isConfirmationProbe) pendingClosure = null;
                 if (!sceneryOnly && ShouldCreateKeyframe(observation, travel)) AddKeyframe(observation, frame);
                 return Update(default, null, [LiveWorldTrackerRejection.GroundPlaneVerificationRejected], reference, match);
             }
@@ -532,10 +552,9 @@ public sealed class LiveWorldTracker
 
         var proposedCorrection = Difference(closurePose, observation.RawPose);
         var consistency = Math.Max(solveWidth * 0.0125, 4);
-        var floorVerified = loadGroundSource is not null;
         if (pendingClosure is null)
         {
-            pendingClosure = new PendingClosure(reference.KeyframeId, proposedCorrection, floorVerified);
+            pendingClosure = new PendingClosure(reference.KeyframeId, proposedCorrection, groundCaptureTime, activeIsland?.Id);
             rejections.Add(LiveWorldTrackerRejection.ConfirmationRequired);
             if (!sceneryOnly && ShouldCreateKeyframe(observation, travel)) AddKeyframe(observation, frame);
             return Update(
@@ -545,13 +564,18 @@ public sealed class LiveWorldTracker
                 reference,
                 match);
         }
+        var currentFloorPair = groundCaptureTime is { } newVoteTime
+            && pendingClosure.FloorVerifiedAt is { } oldVoteTime
+            && pendingClosure.TargetIslandId == activeIsland?.Id
+            && newVoteTime - oldVoteTime <= MaximumGroundConfirmationAge;
+        var sameEvidence = currentFloorPair || groundCaptureTime is null && pendingClosure.FloorVerifiedAt is null;
         var sameReference = pendingClosure.ReferenceKeyframeId == reference.KeyframeId
-            || floorVerified && pendingClosure.FloorVerified
+            || currentFloorPair
                 && ReferenceViewsShareMeasuredIsland(pendingClosure.ReferenceKeyframeId, reference.ObservationId);
-        if (!sameReference || pendingClosure.FloorVerified != floorVerified
+        if (!sameReference || !sameEvidence
             || Distance(pendingClosure.Correction, proposedCorrection) > consistency)
         {
-            pendingClosure = new PendingClosure(reference.KeyframeId, proposedCorrection, floorVerified);
+            pendingClosure = new PendingClosure(reference.KeyframeId, proposedCorrection, groundCaptureTime, activeIsland?.Id);
             rejections.Add(LiveWorldTrackerRejection.InconsistentConfirmation);
             if (!sceneryOnly && ShouldCreateKeyframe(observation, travel)) AddKeyframe(observation, frame);
             return Update(
@@ -940,12 +964,8 @@ public sealed class LiveWorldTracker
             || (current.ObservedFloorCandidates?.Lines ?? current.GroundGeometry?.Lines) is not { Count: > 0 } ground)
             return null;
         if (groundRecoveryVote is { } previous && timestamp <= previous.Timestamp) return null;
-        var isConfirmationProbe = IsGroundConfirmationProbe(target.Id, timestamp);
-        if (!isConfirmationProbe)
-        {
-            if (timestamp - lastGroundRecoverySearchAt < GroundRecoverySearchInterval) return null;
-            lastGroundRecoverySearchAt = timestamp;
-        }
+        var isConfirmationProbe = IsRecoveryConfirmationProbe(target.Id, timestamp);
+        if (!ScheduleGroundSearch(timestamp, isConfirmationProbe)) return null;
 
         var components = new LiveIslandComponents(Snapshot);
         var observations = Snapshot.Observations.Where(observation => observation.RoomId == current.RoomId
