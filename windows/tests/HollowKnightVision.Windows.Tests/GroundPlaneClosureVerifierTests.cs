@@ -158,6 +158,106 @@ internal static class GroundPlaneClosureVerifierTests
         }
     }
 
+    internal static void TestPatchSearchRecoversDisplacementWithExposureAndOcclusion()
+    {
+        var saved = PatchImage();
+        var current = PatchImage(dx: 2, dy: -3, gain: .65, bias: 20, occlusion: true);
+        var source = PatchReference(saved, 0, new(100, 50));
+        var search = new LiveGroundClosureSearch();
+        var loads = 0;
+        var match = search.ProposePatchClosure([source], current, [], 640, Read);
+        Require(match is { InlierReferenceFeatureIds.Count: >= 6 and <= 80 }
+            && match.InlierReferenceFeatureIds.Count == match.InlierCurrentFeatureIndices.Count
+            && Math.Abs(match.ProposedCameraPose.X - 92) <= .3 && Math.Abs(match.ProposedCameraPose.Y - 38) <= .3,
+            $"Expected the measured two-axis displacement through exposure and occlusion, received {match?.ProposedCameraPose}.");
+        Require(loads == 1, "The first search must load its immutable source once.");
+        _ = search.ProposePatchClosure([source], current, [], 640, Read);
+        Require(loads == 1, "Repeated searches must use the source cache.");
+
+        (BgraFrame Image, IReadOnlyList<WorldRect> Exclusions) Read(int id)
+        {
+            Require(id == 0, "The search requested the wrong saved capture.");
+            loads++;
+            return (saved, []);
+        }
+    }
+
+    internal static void TestPatchSearchRejectsSeparateMatchesAndAcceptsCoincidentViews()
+    {
+        var source = PatchImage();
+        var first = PatchReference(source, 0, default);
+        var distant = PatchReference(source, 1, new(200, 0));
+        var agreeing = PatchReference(source, 2, new(.1, 0));
+        var search = new LiveGroundClosureSearch();
+        Require(search.ProposePatchClosure([first, distant], source, [], 640, _ => (source, [])) is null
+            && search.LastSearchWasAmbiguous, "Two equally strong placements far apart must be ambiguous.");
+        Require(search.ProposePatchClosure([first, agreeing], source, [], 640, _ => (source, [])) is
+            { AmbiguityRatio: 0 } && !search.LastSearchWasAmbiguous,
+            "Two views that agree on placement must not be treated as rivals.");
+    }
+
+    internal static void TestPatchSearchRejectsDarkMaskedRepeatedUnrelatedAndDistantViews()
+    {
+        var source = PatchImage();
+        var reference = PatchReference(source, 0, default);
+        var search = new LiveGroundClosureSearch();
+        Require(search.ProposePatchClosure([reference], source, [], 640, _ => (source, [])) is not null,
+            "The control image must match its reference before testing rejected evidence.");
+        foreach (var (image, description) in new[]
+        {
+            (PatchImage(gain: 0), "dark"),
+            (PatchImage(seed: 777), "unrelated"),
+            (PatchImage(dx: 8), "out of search range")
+        })
+            Require(search.ProposePatchClosure([reference], image, [], 640, _ => (source, [])) is null,
+                $"A {description} image must not propose a closure.");
+        Require(search.ProposePatchClosure([reference], source, [new(0, 0, 640, 360)], 640, _ => (source, [])) is null,
+            "A fully masked image must not propose a closure.");
+        var repeated = PatchImage(repeated: true);
+        var periodic = PatchReference(repeated, 1, default);
+        Require(search.ProposePatchClosure([periodic], repeated, [], 640, _ => (repeated, [])) is null,
+            "A repeating texture must not position the camera.");
+        Require(search.ProposePatchClosure([reference], source, [], 320, _ => (source, [])) is null,
+            "Incompatible solve widths cannot share the reference.");
+    }
+
+    private static (LiveGroundClosureSearch.Source Source, GlobalFeatureReference Features) PatchReference(
+        BgraFrame image, int id, AtlasPoint pose)
+    {
+        var reference = new GlobalFeatureMatcher().MakeReference(image, pose, 640, new Guid(id, 0, 0, new byte[8]))
+            ?? throw new InvalidOperationException("The patch fixture must provide a valid reference.");
+        var observation = LiveWorldObservation.Create(id, id, 0, image.Width, image.Height, 640, 160, [], pose, pose)
+            with { GroundGeometry = new(Ground(10, (0, 640))) };
+        return (new(id, observation), reference);
+    }
+
+    // Match the macOS patch fixture's quarter-resolution texture and foreground band.
+    private static BgraFrame PatchImage(int dx = 0, int dy = 0, double gain = 1, int bias = 0,
+        bool occlusion = false, bool repeated = false, ulong seed = 1)
+    {
+        const int width = 640;
+        const int height = 360;
+        var pixels = new byte[width * height * 4];
+        for (var y = 0; y < height; y++)
+        for (var x = 0; x < width; x++)
+        {
+            var sx = x / 4 - dx + 1000;
+            var sy = y / 4 - dy + 1000;
+            var hash = unchecked((ulong)sx * 0x9e3779b185ebca87);
+            hash ^= unchecked((ulong)sy * 0xc2b2ae3d27d4eb4f);
+            hash ^= unchecked(seed * 0x165667b19e3779f9);
+            hash ^= hash >> 33;
+            hash = unchecked(hash * 0xff51afd7ed558ccd);
+            var raw = repeated ? sx % 4 * 40 + sy % 4 * 20 : (byte)(hash >> 24);
+            var intensity = occlusion && x is >= 240 and < 400
+                ? (byte)0 : (byte)Math.Clamp(Math.Round(raw * gain + bias, MidpointRounding.AwayFromZero), 0, 255);
+            var index = (y * width + x) * 4;
+            pixels[index] = pixels[index + 1] = pixels[index + 2] = intensity;
+            pixels[index + 3] = byte.MaxValue;
+        }
+        return new(width, height, width * 4, pixels, 0, DateTimeOffset.UnixEpoch);
+    }
+
     private static GroundPlaneClosureVerifier.Measurement? Verify(AtlasPoint proposed) =>
         GroundPlaneClosureVerifier.Verify(Image(), Ground(30), default, Image(dx: 20, dy: 10), Ground(20), proposed, 320);
 
