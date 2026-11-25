@@ -218,17 +218,13 @@ internal static class VisualProductionReplay
                         RoomIdentityIsVisual = true,
                         DoorwayCut = tracked.RecentDoorwayCut,
                         WorldEvidence = tracked.WorldEvidence
-                    });
+                    }, atlas);
                     if (placement.State == WindowsLiveWorldPipelineState.Failed)
                         throw new IOException(placement.Diagnostic);
                     if (placement.AllowsAtlasWrite)
                     {
                         committed++;
                         if (placement.RebuiltAtlas is { } rebuilt) atlas = rebuilt;
-                        else if (placement.AllowsAtlasComposition) atlas.AddFrame(frame, telemetry with {
-                            CameraX = placement.CameraPose.X, CameraY = placement.CameraPose.Y,
-                            CameraTargetX = placement.CameraPose.X, CameraTargetY = placement.CameraPose.Y
-                        }, exclusions, roomId: tracked.RoomId, captureGeneration: evidence.CaptureGeneration);
                     }
                 }
 

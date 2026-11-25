@@ -292,7 +292,8 @@ internal sealed class WindowsLiveWorldPipeline
         }
     }
 
-    internal WindowsLiveWorldPipelineResult Process(WindowsLiveWorldFrame request)
+    internal WindowsLiveWorldPipelineResult Process(WindowsLiveWorldFrame request,
+        GroundTruthAtlasMosaic? incrementalAtlas = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Frame);
@@ -703,13 +704,34 @@ internal sealed class WindowsLiveWorldPipeline
                     if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 }
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
-                if (transactionFault?.Invoke("commit") == true || !activeStore.Commit(
-                        durableSnapshot,
-                        priorSnapshot.MapRevision,
-                        durableSnapshot.MapRevision))
+                var commitAttempted = false;
+                bool CommitSnapshot()
+                {
+                    commitAttempted = true;
+                    return transactionFault?.Invoke("commit") != true && IsWorkCurrent(processEpoch)
+                        && activeStore.Commit(durableSnapshot, priorSnapshot.MapRevision, durableSnapshot.MapRevision);
+                }
+
+                var committed = durableSnapshot.Observations[^1];
+                bool saved;
+                if (incrementalAtlas is not null && rebuiltAtlas is null && !placementPending)
+                {
+                    var frame = request.MaskedFrame;
+                    var masks = SceneRegions.PixelRectangles(frame.Width, frame.Height,
+                        durableSnapshot.CompositionMasks(committed));
+                    saved = incrementalAtlas.AddFrameAndCommit(frame, AtlasTelemetry(frame, committed), masks, CommitSnapshot);
+                }
+                else
+                {
+                    saved = CommitSnapshot();
+                }
+                if (!saved)
                 {
                     RollBackFailedFrame(activeStore, priorSnapshot, source);
-                    return Fail("live-world snapshot CAS was stale");
+                    if (!IsWorkCurrent(processEpoch)) return Cancelled();
+                    return Fail(commitAttempted
+                        ? "live-world snapshot CAS was stale"
+                        : "live-world Atlas composition rejected the frame");
                 }
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 transactionObserver?.Invoke("commit");
@@ -720,7 +742,6 @@ internal sealed class WindowsLiveWorldPipeline
                 if (requiresRebuild) projectedWalkedGround.Clear();
                 if (localRecoveryPlaced) placementPending = false;
                 placedRoomStartedAt ??= request.MonotonicTimestamp;
-                var committed = durableSnapshot.Observations[^1];
                 var changedWalkPlacement = carriedWalks.Count > 0
                     || LiveWorldWalkedGround.WasWalkedOwnerPlaced(priorSnapshot, durableSnapshot);
                 IReadOnlyList<GroundHypothesisAtlasLine> publishedGround = [];

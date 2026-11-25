@@ -3454,7 +3454,7 @@ public partial class MainWindow : Window
                     RoomIdentityIsVisual = gameMode == GameRuntimeMode.Normal,
                     DoorwayCut = tracked.RecentDoorwayCut,
                     WorldEvidence = tracked.WorldEvidence
-                }, visualTelemetry, atlasCompositionExclusions, atlasRoomId, atlasCaptureIdentity);
+                });
             }
             if (!string.IsNullOrWhiteSpace(worldRoom))
             {
