@@ -215,8 +215,8 @@ public sealed record HackerTerrainProjection(AtlasPoint PixelsPerWorldUnit, Atla
         var bounds = frame.LiveBounds;
         var projected = HackerAtlasCameraPlacement.CameraPosition(camera);
         return new(new(camera.PixelsPerWorldUnitX, camera.PixelsPerWorldUnitY),
-            new(bounds.MinX + frame.LiveImage.Width / 2.0 - atlasOrigin.X - projected.X,
-                bounds.MinY + frame.LiveImage.Height / 2.0 - atlasOrigin.Y - projected.Y));
+            new(bounds.MinX + camera.FrameSize.Width / 2 - atlasOrigin.X - projected.X,
+                bounds.MinY + camera.FrameSize.Height / 2 - atlasOrigin.Y - projected.Y));
     }
 
     [System.Text.Json.Serialization.JsonIgnore]
