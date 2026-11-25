@@ -179,7 +179,7 @@ public sealed class VisualSceneDiscontinuityTracker
         return count;
     }
 
-    private static bool HasRecoveredImage(LowResolutionMotionGrid grid)
+    internal static bool HasRecoveredImage(LowResolutionMotionGrid grid)
     {
         var header = grid.Luma.AsSpan(grid.Width, grid.Width * (Math.Max(2, grid.Height / 4) - 1));
         if (CountLit(header, 128) < 4) return false;
@@ -198,6 +198,9 @@ public sealed class VisualSceneDiscontinuityTracker
 
     private static bool BothSidesChanged(LowResolutionMotionGrid first, LowResolutionMotionGrid second) =>
         Similarity(first, second, ImageHalf.Left) < .70 && Similarity(first, second, ImageHalf.Right) < .70;
+
+    internal static double? Similarity(LowResolutionMotionGrid first, LowResolutionMotionGrid second) =>
+        Similarity(first, second, ImageHalf.Whole);
 
     // Compare intensity and edge structure across small offsets, independent of exposure.
     private static double? Similarity(LowResolutionMotionGrid first, LowResolutionMotionGrid second,
