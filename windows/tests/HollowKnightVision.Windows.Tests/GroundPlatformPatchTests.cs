@@ -38,6 +38,51 @@ internal static class GroundPlatformPatchTests
         Check(tracker.Observe(Textured, [Ledge], [], new(300, 0), .16).Count == 0);
     }
 
+    public static void TestGameplayShowsScrollingPlatformPatchesBeforeAtlasAdmission()
+    {
+        const int width = 160, height = 100;
+        var tracker = new GameplayTrackingPipeline(new VisualGameplayTracker(), new MaskedFrameMotionTracker(),
+            deterministicGlobalSearch: true);
+        var standing = new DetectedFloorLine(80, new(0, width - 1));
+        var rejected = new DetectedFloorLine(70, new(50, 100));
+        var knight = new PixelRect(0, 0, 10, 20);
+        var signal = new FrameSignalProfile(2304, 2304, 2304, 100);
+        var sawPlatform = false;
+        for (var index = 0; index < 12; index++)
+        {
+            var x = 60 - 2 * index;
+            var platform = new DetectedFloorLine(40, new(x, x + 39),
+                [new(x, x + 7), new(x + 16, x + 23), new(x + 32, x + 39)]);
+            var floors = GroundClearance.Filter([standing, platform, rejected], height, knight);
+            var luma = new byte[width * height];
+            for (var row = 0; row < height; row++)
+            for (var column = 0; column < width - 2 * index; column++)
+            {
+                var hash = (ulong)(column + 2 * index) * 73_856_093UL ^ (ulong)row * 19_349_663UL;
+                luma[row * width + column] = unchecked((byte)(((hash ^ (hash >> 13)) * 1_274_126_177UL) >> 11));
+            }
+            var zeros = new byte[luma.Length];
+            var edges = new GroundEdgeAnalysis(width, height, zeros, luma);
+            var comparison = new GroundComparisonAnalysis(width, height, zeros, luma);
+            var theory = new GroundTheoryAnalysis(comparison, GroundTheoryTuning.Default, [], floors);
+            var prepared = new GameplayTrackingPreparation(new(edges, theory, floors, [standing]), null, [], []);
+            var time = index / 60d;
+            var frame = new BgraFrame(width, height, width * 4, new byte[width * height * 4], index,
+                DateTimeOffset.UnixEpoch.AddSeconds(time));
+            var result = tracker.Track(frame, prepared, knight, new(true, true, false, new(true, false)),
+                signal, time, 1, "fixture", false, buttons: null, resetWorldCoordinatesForCorrection: false,
+                captureWorldEvidence: true);
+
+            Check(result.Ground.AtlasLines.Count == 0 && !result.AllowsAtlasWrite && result.WorldEvidence is null,
+                "A displayed texture match cannot add unconfirmed ground to the Atlas.");
+            Check(result.PlatformPatches.All(patch => patch.Y != rejected.Row
+                && floors.Any(floor => GroundPlatformPatches.Contains(floor, patch.X, patch.Y))),
+                "A tracking box must belong to an eligible floor.");
+            sawPlatform |= result.PlatformPatches.Any(patch => patch.Y == platform.Row);
+        }
+        Check(sawPlatform, "Expected the scrolling platform to show measured boxes before Atlas admission.");
+    }
+
     public static void TestCameraReferenceNeedsFloorSupportWithoutACompetingLongerRow()
     {
         var ground = new DetectedFloorLine(50, new(0, 100));
@@ -66,8 +111,8 @@ internal static class GroundPlatformPatchTests
         return new(width, height, new byte[pixels.Length], pixels);
     }
 
-    private static void Check(bool success)
+    private static void Check(bool success, string message = "Unexpected ground patch or camera reference.")
     {
-        if (!success) throw new InvalidOperationException("Unexpected ground patch or camera reference.");
+        if (!success) throw new InvalidOperationException(message);
     }
 }

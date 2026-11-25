@@ -256,7 +256,11 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
                 buttons, timestamp, floors, terrain.Walls,
                 generation, walkedCoordinateEpoch, lineage, recentJump);
             terrain = TerrainWallDetector.ApplyContact(terrain, contact, floors, edges);
-            platformPatches = patches.Observe(edges, floors, prepared.ProtectedOcclusions, verifiedCamera, timestamp);
+            // Two verified local images can agree on a platform patch before
+            // a floor has earned persistent Atlas membership.
+            var patchCamera = admission.AdmitsTracking && ground.PoseVerified && visualRoom.AllowsAtlasWrite
+                ? ground.CameraPosition : null;
+            platformPatches = patches.Observe(edges, floors, prepared.ProtectedOcclusions, patchCamera, timestamp);
             if (groundAudits is not null && !ReferenceEquals(observation.GroundTracking, GroundHypothesisTrackingResult.Empty)
                 && edges.SourceLuma is { } luma)
                 groundAudits.Record(frame, timestamp, generation, luma, floors, prepared.ProtectedOcclusions,

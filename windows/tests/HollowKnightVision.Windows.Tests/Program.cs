@@ -1376,6 +1376,7 @@ var tests = new List<(string Name, Action Run)>
     ("ground clearance drops nearby enclosed shorter floors", GroundClearanceTests.TestGroundClearanceRejectsOnlyEnclosedShorterFloors),
     ("a short platform needs two adjacent unmasked views", GroundPlatformPatchTests.TestShortLedgeRequiresAdjacentUnmaskedTextureAndFullWidth),
     ("platform texture follows the measured camera", GroundPlatformPatchTests.TestScrollingPlatformPatchesFollowTheCamera),
+    ("Game Play shows measured platform boxes before Atlas admission", GroundPlatformPatchTests.TestGameplayShowsScrollingPlatformPatchesBeforeAtlasAdmission),
     ("camera patches require a supporting floor", GroundPlatformPatchTests.TestCameraReferenceNeedsFloorSupportWithoutACompetingLongerRow),
     ("walked dark ground remains continuous across occlusion and reversal", WalkedGroundTests.TestWalkedDarkGroundSurvivesOcclusionAndReversal),
     ("walked ground survives an occlusion and never moves with an unsupported island switch", WalkedGroundTests.TestWalkUsesOnlyItsMeasuredIslandAndResumesKnownGround),
