@@ -387,6 +387,7 @@ public sealed class LiveWorldTracker
         var excluded = exclusions?.ToArray() ?? [];
         if (observationId < 0
             || !double.IsFinite(timestamp)
+            || captureEvidence is { CaptureTimestamp: var captureClock } && !double.IsFinite(captureClock)
             || frame.Width <= 0 || frame.Height <= 0
             || !Finite(proposedCameraPose)
             || placedCameraPose is { } placement && !Finite(placement)

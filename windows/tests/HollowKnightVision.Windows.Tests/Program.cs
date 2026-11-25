@@ -661,6 +661,9 @@ var tests = new List<(string Name, Action Run)>
     ("live world session durable publication does not overwrite and retries", TestDurablePublicationNoOverwriteFailureIsRetryable),
     ("live world tracker room boundaries isolate motion and appearance", TestRoomBoundaryPreventsCrossRoomMotionAndAppearanceEdges),
     ("live world tracker confirms outward loop and distributes drift", TestOutwardLoopNeedsTwoConfirmationsThenClosesAndDistributesDrift),
+    ("conflicting world loop cannot move its own rigid reference or drop its capture", TestConflictingLoopCannotMoveItsOwnIsland),
+    ("world loop votes cannot confirm across unrelated measured islands", TestLoopVotesStayOnTheirMeasuredIsland),
+    ("world capture timestamps survive correction and legacy loading", LiveIslandWorldProjectionTests.TestExactCaptureClockSurvivesCorrectionAndLegacyLoad),
     ("live world tracker rejects one-frame and unrelated closure evidence", TestOneFrameCandidateDoesNotCloseAndUnrelatedFramesAreRejected),
     ("live world tracker reload relocalizes against saved landmarks", TestReloadedSnapshotRelocalizesAgainstSavedLandmarks),
     ("live world tracker new visit searches saved features without motion edge", TestReloadedVisitSearchesSavedFeaturesImmediatelyWithoutCrossVisitMotionEdge),
@@ -6620,6 +6623,55 @@ static void TestOutwardLoopNeedsTwoConfirmationsThenClosesAndDistributesDrift()
         value.FromObservationId == 0 && value.ToObservationId == 5));
     var movedInterior = closed.Snapshot.Observations.Single(value => value.Id == 1);
     True(movedInterior.OptimizedPose != movedInterior.RawPose);
+}
+
+static void TestConflictingLoopCannotMoveItsOwnIsland()
+{
+    var tracker = new LiveWorldTracker();
+    AtlasPoint[] poses = [default, new(100, 0), new(100, 100), new(0, 100), new(20, 0), new(20, 0)];
+    LiveWorldTrackerUpdate? latest = null;
+    for (var id = 0; id < poses.Length; id++)
+    {
+        var frame = id is 0 or >= 4 ? GlobalFeatureTexture() : LiveWorldUnrelatedTexture(id);
+        latest = tracker.Ingest(id, id, frame, poses[id], 320,
+            captureEvidence: new(id) { MeasuredLineage = 1 });
+        if (id >= 4)
+            True(latest.Review.Rejections.Contains(LiveWorldTrackerRejection.RecentOrOverlappingReference));
+    }
+    True(latest is { AcceptedClosure: null });
+    Equal(0, tracker.Snapshot.LoopClosureEdges.Count);
+    Equal(poses.Length, tracker.Snapshot.TrackingIslands.Single().Members.Count);
+    True(tracker.Snapshot.Observations.Select(row => row.OptimizedPose).SequenceEqual(poses));
+    True(tracker.Snapshot.Observations.Select(row => row.RawPose).SequenceEqual(poses));
+}
+
+static void TestLoopVotesStayOnTheirMeasuredIsland()
+{
+    var tracker = new LiveWorldTracker();
+    _ = tracker.Ingest(0, 0, GlobalFeatureTexture(), default, 320,
+        captureEvidence: new(0) { MeasuredLineage = 1 });
+    var first = Candidate(1, 2);
+    True(first.Review.Rejections.Contains(LiveWorldTrackerRejection.ConfirmationRequired));
+    var unrelated = Candidate(2, 3);
+    True(unrelated.AcceptedClosure is null && unrelated.Snapshot.LoopClosureEdges.Count == 0);
+    True(unrelated.Review.Rejections.Contains(LiveWorldTrackerRejection.ConfirmationRequired));
+    var rejectedInvalidClock = false;
+    try
+    {
+        _ = tracker.Ingest(3, 3, GlobalFeatureTexture(), new(120, 0), 320, localPose: default(AtlasPoint),
+            captureEvidence: new(double.NaN) { MeasuredLineage = 4 }, placementPending: true);
+    }
+    catch (LiveWorldTrackerException error) when (error.Error == LiveWorldTrackerError.InvalidScan)
+    {
+        rejectedInvalidClock = true;
+    }
+    True(rejectedInvalidClock && ReferenceEquals(tracker.Snapshot, unrelated.Snapshot));
+    // The rejected input must also leave the original tentative vote intact.
+    True(Candidate(3, 3).AcceptedClosure is not null);
+
+    LiveWorldTrackerUpdate Candidate(int id, long lineage) =>
+        tracker.Ingest(id, id, GlobalFeatureTexture(), new(120, 0), 320, localPose: default(AtlasPoint),
+            captureEvidence: new(id) { MeasuredLineage = lineage }, placementPending: true);
 }
 
 static void TestOneFrameCandidateDoesNotCloseAndUnrelatedFramesAreRejected()
