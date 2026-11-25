@@ -275,6 +275,11 @@ internal static class GameTextWindowTests
                 var frame = RenderText("INSPECT");
                 var capturedAt = (double)Method("BotCaptureClock").Invoke(null, null)!;
                 reader.ResetFrame();
+                var prior = new BgraFrame(frame.Width, frame.Height, frame.Stride, frame.Pixels,
+                    frame.CaptureId - 1, frame.ObservedAt.AddSeconds(-1));
+                var first = reader.TryStart(prior, "en", context, capturedAt - 1)!;
+                Require(reader.Complete(first, [new(1, "INSPECT", new(.2, .3, .4, .1), .95)], 25, capturedAt - 1),
+                    "first OCR reading of the same prompt");
                 var work = reader.TryStart(frame, "en", context, capturedAt)!;
                 Require(reader.Complete(work, [new(1, "INSPECT", new(.2, .3, .4, .1), .95)], 25, capturedAt),
                     "publish the fixture OCR result on the captured frame");

@@ -75,25 +75,30 @@ struct ThinkingContextPanel: View {
                         }.labelsHidden()
                         ScrollView {
                             VStack(alignment: .leading, spacing: 8) {
-                                switch message {
-                                case .current:
-                                    if let input = inspector.input {
-                                        Text(input.frame.capturedAt.formatted(date: .omitted, time: .standard)).font(.caption2)
-                                        DisclosureGroup("System message") { block(input.context.system) }
-                                        DisclosureGroup("User message") { block(input.context.user) }
-                                        Text("Expected response schema").font(.caption.bold())
-                                        block(input.context.schemaText)
-                                    } else { block("Waiting for the first request.") }
-                                case .gameplay, .menu:
-                                    Text(message == .gameplay ? "Explore, Traverse or Interact" : "Select, more or wait").font(.caption)
-                                    let schema = message == .gameplay ? ThinkingPolicyContract.policySchemaText : ThinkingPolicyContract.menuSchemaText
-                                    block(Self.pretty(schema))
+                                if let kind = selectedKind, let sent = inspector.sentMessages[kind] {
+                                    Text(kind.rawValue + " · " + sent.capturedAt.formatted(date: .omitted, time: .standard)).font(.caption2)
+                                    DisclosureGroup("System message") { block(sent.system) }
+                                    DisclosureGroup("User message") { block(sent.user) }
+                                    Text("Expected response schema").font(.caption.bold())
+                                    block(sent.schema)
+                                } else { block("Waiting for the first request.") }
+                                if let kind = selectedKind {
+                                    Text("All " + kind.rawValue.lowercased() + " replies").font(.caption.bold())
+                                    block(Self.pretty(kind == .gameplay ? ThinkingPolicyContract.policySchemaText : ThinkingPolicyContract.menuSchemaText))
                                 }
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }.frame(height: area.size.height)
             }
+        }
+    }
+
+    private var selectedKind: ThinkingInspector.MessageKind? {
+        switch message {
+        case .current: inspector.latestMessageKind
+        case .gameplay: .gameplay
+        case .menu: .menu
         }
     }
 

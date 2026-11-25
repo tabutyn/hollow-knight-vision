@@ -270,6 +270,22 @@ final class ThinkingInspector: ObservableObject {
     private var pending = [ThinkingFrame]()
     private var worker: Task<Void, Never>?
     private var revision = 0
+    enum MessageKind: String { case gameplay = "Gameplay", menu = "Menu" }
+
+    struct SentMessage {
+        let kind: MessageKind
+        let capturedAt: Date
+        let system, user, schema: String
+        init(_ input: Input) {
+            kind = input.context.contract.menuPage == nil ? .gameplay : .menu
+            capturedAt = input.frame.capturedAt
+            system = input.context.system
+            user = input.context.user
+            schema = input.context.schemaText
+        }
+    }
+    @Published private(set) var sentMessages: [MessageKind: SentMessage] = [:]
+    @Published private(set) var latestMessageKind: MessageKind?
     @Published private(set) var reasoning = ""
     private var nextBriefUpdate = 0.0
     private var menuRunning = false
@@ -351,6 +367,8 @@ final class ThinkingInspector: ObservableObject {
         detector = ThinkingEventDetector()
         reasoning = ""
         nextBriefUpdate = 0
+        sentMessages.removeAll()
+        latestMessageKind = nil
         menuRunning = false
         menuAdvancedTo = nil
         browsed.removeAll()
@@ -407,6 +425,9 @@ final class ThinkingInspector: ObservableObject {
                     status = "Waiting for \(model.title)…"
                     try await session.waitUntilReady(for: model)
                     status = "Choosing an action…"
+                    let sent = SentMessage(prepared)
+                    sentMessages[sent.kind] = sent
+                    latestMessageKind = sent.kind
                     let reply = try await answer(session, model, context)
                     try Task.checkCancellation()
                     guard session.model == model, reader.profile?.id == sample.profile else { continue }

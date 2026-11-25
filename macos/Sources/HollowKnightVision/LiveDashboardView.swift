@@ -779,6 +779,7 @@ struct DashboardView: View {
                 signals: { model.thinkingSignals(profile: model.notebookProfile?.id, readsText: readGameText) },
                 dispatch: dispatchThinkingPolicy, snapshot: { thinkingFrame() })
         }
+        .onChange(of: showsThinkingContext) { _, visible in if !visible { contextExpanded = false } }
         .onChange(of: thinkingSession.model) { _, _ in
             thinkingInspector.reset(session: thinkingSession, keepFrame: true)
         }
