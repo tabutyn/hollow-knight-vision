@@ -256,26 +256,18 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             observation = camera.CompleteFreshAtlasBootstrap(observation, bootstrapWalk);
         }
         LiveWorldCaptureEvidence? worldEvidence = null;
-        if (captureWorldEvidence && admission.AllowsAtlasWrite && visualRoom.AllowsAtlasWrite)
+        if (captureWorldEvidence && admission.AllowsAtlasWrite && visualRoom.AllowsAtlasWrite
+            && (measuredGround || publishesScenery))
         {
-            if (measuredGround)
+            worldEvidence = LiveWorldCaptureEvidence.FromGround(timestamp, frame.Width, frame.Height, frame.Width,
+                floors, ground.LineReviews, contactKnight, contact.MeasuredFoot, measuredGround ? contact.Floor : null,
+                prepared.ObservedPlayerBounds) with
             {
-                worldEvidence = LiveWorldCaptureEvidence.FromGround(timestamp, frame.Width, frame.Height,
-                    floors, ground.LineReviews, contactKnight, contact.MeasuredFoot, contact.Floor,
-                    prepared.ObservedPlayerBounds) with
-                { LocalReferenceTimestamp = referenceTimestamp, MeasuredLineage = lineage };
-            }
-            else if (publishesScenery)
-            {
-                worldEvidence = new LiveWorldCaptureEvidence(timestamp)
-                {
-                    LocalReferenceTimestamp = referenceTimestamp,
-                    HasMeasuredSceneryContinuity = true,
-                    MeasuredLineage = lineage
-                };
-            }
-            if (worldEvidence is { MeasuredLineage: { } owner })
-                worldEvidence = worldEvidence with { OtherWalks = walked.OtherOwners(room, owner) };
+                LocalReferenceTimestamp = referenceTimestamp,
+                HasMeasuredSceneryContinuity = !measuredGround,
+                MeasuredLineage = lineage,
+                OtherWalks = lineage is { } owner ? walked.OtherOwners(room, owner) : []
+            };
         }
         return new(observation, ground, estimate, localCamera, room, terrain, contact,
             platformPatches, walked.InRoom(room), walkedCoordinateEpoch, cameraMilliseconds, atlasStarted)

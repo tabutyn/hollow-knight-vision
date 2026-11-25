@@ -157,14 +157,12 @@ public sealed class BotVisualGymObservationSource
         LiveWorldCaptureEvidence? captureEvidence = null;
         if (admitted.AllowsAtlasWrite && (measuredGround || continuesScenery))
         {
-            captureEvidence = measuredGround
-                ? LiveWorldCaptureEvidence.FromGround(time, frame.Width, frame.Height, analysis.Floors,
-                    observed.GroundTracking.LineReviews, contactKnight, contact.MeasuredFoot, contact.Floor,
-                    masks.ObservedPlayerBounds)
-                : new LiveWorldCaptureEvidence(time) { HasMeasuredSceneryContinuity = true };
-            captureEvidence = captureEvidence with
+            captureEvidence = LiveWorldCaptureEvidence.FromGround(time, frame.Width, frame.Height, frame.Width,
+                analysis.Floors, observed.GroundTracking.LineReviews, contactKnight, contact.MeasuredFoot,
+                measuredGround ? contact.Floor : null, masks.ObservedPlayerBounds) with
             {
                 LocalReferenceTimestamp = referenceTimestamp,
+                HasMeasuredSceneryContinuity = !measuredGround,
                 MeasuredLineage = lineage,
                 OtherWalks = lineage is { } owner ? walked.OtherOwners(roomKey, owner) : []
             };
