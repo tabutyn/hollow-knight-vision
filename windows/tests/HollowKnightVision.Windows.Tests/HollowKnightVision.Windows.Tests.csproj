@@ -22,6 +22,8 @@
     </Content>
     <Content Include="../../../macos/Sources/HollowKnightVision/Resources/playing-policy-inputs.json"
              Link="training/playing-policy-inputs.json" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="../../../macos/Tests/HollowKnightVisionTests/compact-markings-cases.json"
+                      LogicalName="compact-markings-cases.json" />
     <ProjectReference Include="../../src/HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
     <ProjectReference Include="../../src/HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj"
                       ReferenceOutputAssembly="false" />
