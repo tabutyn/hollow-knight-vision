@@ -81,6 +81,11 @@ public sealed class GroundPatchMatcher
 {
     private sealed record TargetPatch(byte[] Pixels, float Mean, float Energy);
     private static readonly Lazy<GroundCudaPatchMatcher> cuda = new(() => new());
+    internal static long CudaSceneDispatchCount => cuda.Value.SceneDispatchCount;
+    internal static string? CudaSceneFailure => cuda.Value.SceneFailure;
+    internal static bool TryScoreScene(CalibratedSceneMotionTracker.Grid source, CalibratedSceneMotionTracker.Grid target,
+        IReadOnlyList<AtlasPoint> points, ScenePatchAccelerator.Search search, Span<double> scores) =>
+        cuda.Value.TryScoreScene(source, target, points, search, scores);
     private readonly bool enableCuda;
     public GroundPatchMatcher(bool enableCuda = true) => this.enableCuda = enableCuda;
     public bool CudaAvailable => enableCuda && cuda.Value.Available;

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Numerics;
 
 namespace HollowKnightVision.Windows.Core;
@@ -8,11 +9,52 @@ internal sealed partial class CalibratedSceneMotionTracker
     internal readonly record struct PatchFit(CameraVector Motion, double Correlation);
     private readonly record struct Candidate(double Correlation, int X, int Y);
     private const int PatchWidth = 16, PatchHeight = 12, PatchSize = PatchWidth * PatchHeight;
+    private const double MinimumCorrelation = .88, MinimumAmbiguityGap = .02, ScoreTolerance = .002;
 
     internal static CameraVector? RegisterPatch(Grid source, Grid target, AtlasPoint point, CameraVector? expected = null) =>
         FitPatch(source, target, point, expected)?.Motion;
 
-    internal static PatchFit? FitPatch(Grid source, Grid target, AtlasPoint point, CameraVector? expected = null)
+    internal static PatchFit?[] FitBatch(Grid source, Grid target, IReadOnlyList<AtlasPoint> points,
+        CameraVector? expected = null, GroundComputeBackend backend = GroundComputeBackend.Automatic,
+        ScenePatchAccelerator? testAccelerator = null)
+    {
+        var fits = new PatchFit?[points.Count];
+        var candidatesPerPoint = expected is null ? 17 * 33 : 5 * 5;
+        var canAccelerate = points.Count is > 0 and <= 80 && source.Width == 160 && source.Height is >= 24 and <= 256
+            && target.Width == source.Width && target.Height == source.Height
+            && source.Pixels.Length == source.Width * source.Height && target.Pixels.Length == source.Pixels.Length
+            && source.Exclusions.Count <= 128 && target.Exclusions.Count <= 128
+            && points.All(point => point.X >= 0 && point.X < source.Width && point.Y >= 0 && point.Y < source.Height)
+            && (expected is null || Math.Abs(expected.Value.X) <= source.Width && Math.Abs(expected.Value.Y) <= source.Height);
+        var useCuda = backend == GroundComputeBackend.Cuda
+            || backend == GroundComputeBackend.Automatic && points.Count * candidatesPerPoint >= 4096;
+        if (canAccelerate && (testAccelerator is not null || useCuda && GroundPatchMatcher.Shared.CudaAvailable))
+        {
+            var count = points.Count * candidatesPerPoint;
+            var buffer = ArrayPool<double>.Shared.Rent(count);
+            try
+            {
+                var scores = buffer.AsSpan(0, count);
+                var search = new ScenePatchAccelerator.Search(source.Width, source.Height,
+                    Round(expected?.X ?? 0), Round(expected?.Y ?? 0), expected is null ? 8 : 2, expected is null ? 16 : 2);
+                if (testAccelerator is not null) testAccelerator.Score(source, target, points, search, scores);
+                if (testAccelerator is not null || GroundPatchMatcher.TryScoreScene(source, target, points, search, scores))
+                {
+                    for (var index = 0; index < points.Count; index++)
+                        fits[index] = FitPatch(source, target, points[index], expected,
+                            scores.Slice(index * candidatesPerPoint, candidatesPerPoint));
+                    return fits;
+                }
+            }
+            finally { ArrayPool<double>.Shared.Return(buffer); }
+        }
+        for (var index = 0; index < points.Count; index++)
+            fits[index] = FitPatch(source, target, points[index], expected);
+        return fits;
+    }
+
+    internal static PatchFit? FitPatch(Grid source, Grid target, AtlasPoint point, CameraVector? expected = null,
+        ReadOnlySpan<double> scores = default)
     {
         if (source.Width != target.Width || source.Height != target.Height || source.Width <= 0 || source.Height <= 0
             || source.Pixels.LongLength != (long)source.Width * source.Height
@@ -27,8 +69,8 @@ internal sealed partial class CalibratedSceneMotionTracker
 
         var width = source.Width;
         var height = source.Height;
-        var x = (int)Math.Round(point.X, MidpointRounding.AwayFromZero);
-        var y = (int)Math.Round(point.Y, MidpointRounding.AwayFromZero);
+        var x = Round(point.X);
+        var y = Round(point.Y);
         if (x < 9 || x >= width - 9 || y < 7 || y >= height - 7) return null;
         var bounds = new StencilRect(x - PatchWidth / 2, y - PatchHeight / 2, PatchWidth, PatchHeight);
         if (IsExcluded(source.Exclusions, bounds)) return null;
@@ -58,32 +100,58 @@ internal sealed partial class CalibratedSceneMotionTracker
         }
         if (sourceEnergy < PatchSize * 4) return null;
 
-        var centerX = expected is { } priorX ? (int)Math.Round(priorX.X, MidpointRounding.AwayFromZero) : 0;
-        var centerY = expected is { } priorY ? (int)Math.Round(priorY.Y, MidpointRounding.AwayFromZero) : 0;
+        var centerX = Round(expected?.X ?? 0);
+        var centerY = Round(expected?.Y ?? 0);
         var radiusX = expected is null ? 8 : 2;
         var radiusY = expected is null ? 16 : 2;
         Span<Candidate> candidates = stackalloc Candidate[(2 * radiusX + 1) * (2 * radiusY + 1)];
         var count = 0;
+        var scoreIndex = 0;
         var best = new Candidate(double.NegativeInfinity, 0, 0);
         for (var dy = centerY - radiusY; dy <= centerY + radiusY; dy++)
         for (var dx = centerX - radiusX; dx <= centerX + radiusX; dx++)
         {
-            if (x + dx < 8 || x + dx >= width - 8 || y + dy < 6 || y + dy >= height - 6
-                || IsExcluded(target.Exclusions, bounds.Offset(dx, dy))) continue;
-            var (cross, variance) = ComparePatch(normalized, target.Pixels,
-                (y - PatchHeight / 2 + dy) * width + x - PatchWidth / 2 + dx, width);
-            if (variance < PatchSize * 4) continue;
-            var correlation = cross / Math.Sqrt(sourceEnergy * variance);
+            double correlation;
+            if (!scores.IsEmpty)
+            {
+                correlation = scores[scoreIndex++];
+                if (correlation == ScenePatchAccelerator.RescoreOnCpu) return FitPatch(source, target, point, expected);
+                if (!double.IsFinite(correlation) || correlation < -1.1) continue;
+            }
+            else
+            {
+                if (x + dx < 8 || x + dx >= width - 8 || y + dy < 6 || y + dy >= height - 6
+                    || IsExcluded(target.Exclusions, bounds.Offset(dx, dy))) continue;
+                correlation = Correlation(normalized, target.Pixels, width, x + dx, y + dy, sourceEnergy);
+                if (double.IsNaN(correlation)) continue;
+            }
             var candidate = new Candidate(correlation, dx, dy);
             candidates[count++] = candidate;
             if (correlation > best.Correlation || correlation == best.Correlation
                 && (dx > best.X || dx == best.X && dy > best.Y)) best = candidate;
         }
-        if (best.Correlation < .88 || Math.Abs(best.X - centerX) >= radiusX || Math.Abs(best.Y - centerY) >= radiusY)
-            return null;
+        if (!scores.IsEmpty && Math.Abs(best.Correlation - MinimumCorrelation) <= ScoreTolerance)
+            return FitPatch(source, target, point, expected);
+        if (best.Correlation < MinimumCorrelation) return null;
         for (var index = 0; index < count; index++)
-            if (Math.Abs(candidates[index].X - best.X) + Math.Abs(candidates[index].Y - best.Y) >= 2
-                && best.Correlation - candidates[index].Correlation < .02) return null;
+        {
+            var rival = candidates[index];
+            var distance = Math.Abs(rival.X - best.X) + Math.Abs(rival.Y - best.Y);
+            if (distance == 0) continue;
+            var gap = best.Correlation - rival.Correlation;
+            if (!scores.IsEmpty && (gap <= ScoreTolerance || distance >= 2 && Math.Abs(gap - MinimumAmbiguityGap) <= ScoreTolerance))
+                return FitPatch(source, target, point, expected);
+            if (distance >= 2 && gap < MinimumAmbiguityGap) return null;
+        }
+        if (Math.Abs(best.X - centerX) >= radiusX || Math.Abs(best.Y - centerY) >= radiusY)
+            return null;
+        if (!scores.IsEmpty)
+        {
+            var exact = Correlation(normalized, target.Pixels, width, x + best.X, y + best.Y, sourceEnergy);
+            if (!double.IsFinite(exact) || Math.Abs(exact - best.Correlation) > ScoreTolerance)
+                return FitPatch(source, target, point, expected);
+            best = best with { Correlation = exact };
+        }
 
         Span<double> matched = stackalloc double[PatchSize];
         var matchedSum = 0d;
@@ -120,6 +188,16 @@ internal sealed partial class CalibratedSceneMotionTracker
         var refineX = Math.Clamp((yy * bx - xy * by) / determinant, -.5, .5);
         var refineY = Math.Clamp((xx * by - xy * bx) / determinant, -.5, .5);
         return new(new CameraVector(best.X + refineX, best.Y + refineY), best.Correlation);
+    }
+
+    private static int Round(double coordinate) => (int)Math.Round(coordinate, MidpointRounding.AwayFromZero);
+
+    private static double Correlation(ReadOnlySpan<float> normalized, ReadOnlySpan<float> target,
+        int width, int x, int y, double sourceEnergy)
+    {
+        var (cross, variance) = ComparePatch(normalized, target,
+            (y - PatchHeight / 2) * width + x - PatchWidth / 2, width);
+        return variance >= PatchSize * 4 ? cross / Math.Sqrt(sourceEnergy * variance) : double.NaN;
     }
 
     private static (double Cross, double Variance) ComparePatch(

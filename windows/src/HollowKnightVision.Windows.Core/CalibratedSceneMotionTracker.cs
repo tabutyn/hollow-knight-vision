@@ -107,8 +107,9 @@ internal sealed partial class CalibratedSceneMotionTracker
             return null;
         }
         var matches = new List<Match>(patches.Count);
-        foreach (var patch in patches)
-            if (RegisterPatch(source.Grid, grid, patch.Point) is { } fit) matches.Add(new(patch, fit));
+        var fits = FitBatch(source.Grid, grid, patches.Select(patch => patch.Point).ToArray());
+        for (var index = 0; index < patches.Count; index++)
+            if (fits[index] is { } fit) matches.Add(new(patches[index], fit.Motion));
         if (matches.Count < 3) return null;
         var medianX = Median(AxisMotions(matches, horizontal: true));
         var medianY = Median(AxisMotions(matches, horizontal: false));
@@ -140,15 +141,17 @@ internal sealed partial class CalibratedSceneMotionTracker
     {
         var expected = new CameraVector(ground.Displacement.X / scale, ground.Displacement.Y / scale);
         var calibrated = new List<Patch>(MaximumPatches);
-        foreach (var point in Candidates(grid))
+        var candidates = Candidates(grid).ToArray();
+        var fits = FitBatch(prior, grid, candidates, expected);
+        for (var index = 0; index < candidates.Length; index++)
         {
-            if (RegisterPatch(prior, grid, point, expected) is not { } fit
+            if (fits[index]?.Motion is not { } fit
                 || CameraMath.Length(fit.X - expected.X, fit.Y - expected.Y) >= .6) continue;
             var xKnown = Math.Abs(expected.X) >= 1.25;
             var yKnown = Math.Abs(expected.Y) >= 2;
             var gain = new CameraVector(xKnown ? fit.X / expected.X : 1, yKnown ? fit.Y / expected.Y : 1);
             if (gain.X is <= .8 or >= 1.4 || gain.Y is <= .8 or >= 1.4) continue;
-            calibrated.Add(new Patch(point, gain, xKnown, yKnown, 3).Move(fit));
+            calibrated.Add(new Patch(candidates[index], gain, xKnown, yKnown, 3).Move(fit));
             if (calibrated.Count == MaximumPatches) break;
         }
         if (calibrated.Count < 3) return false;
