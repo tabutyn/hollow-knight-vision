@@ -894,7 +894,7 @@ public sealed class HackerAtlasPipeline
         ArgumentNullException.ThrowIfNull(prepared);
         lock (gate)
         {
-            var profile = FrameRegionRenderer.SignalProfile(prepared.LiveImage);
+            var profile = FrameRegionRenderer.HackerFadeProfile(prepared.LiveImage);
             var position = HackerAtlasCameraPlacement.CameraPosition(
                 prepared.CameraTransform);
             RoomState state;
