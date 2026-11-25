@@ -44,7 +44,8 @@ internal static class DatasetExporterTests
         using var fixture = new Fixture();
         var example = fixture.Save(51, "main-title", [Box("main-title.select-decoration", .1, .1, .1, .1), Box("main-title.select-decoration", .3, .1, .1, .1), Box("main-title.start-game", .4, .5, .2, .1)]);
         var snapshot = fixture.Exporter.ExportSharedModel(Catalog, [example]);
-        Check(snapshot.Manifest.ClassIdentifier == "shared-object-model" && snapshot.Manifest.ClassIdentifiers!.SequenceEqual(Catalog));
+        Check(snapshot.Manifest.ClassIdentifier == "shared-object-model"
+            && snapshot.Manifest.ClassIdentifiers!.SequenceEqual(["main-title.start-game", "shared.select-decoration"]));
         Check(snapshot.Manifest.TrainingAnnotationCount == 3);
         Check(snapshot.Manifest.TrainingItems.Single().KnownClassIdentifiers!.SequenceEqual(new[] { "main-title.start-game", "shared.select-decoration" }));
         Check(Annotations(snapshot, "training").Single().Annotations.Select(box => box.Label).SequenceEqual(new[] { "shared.select-decoration", "shared.select-decoration", "main-title.start-game" }));
@@ -122,7 +123,7 @@ internal static class DatasetExporterTests
     public static void TestContextAndCustomAdmission()
     {
         using var fixture = new Fixture();
-        var positive = fixture.Save(10, "game", [Box("custom.bench")]);
+        var positive = fixture.Save(10, "game", [Box("custom.bench"), Box("game.playable-knight", negative: true)]);
         var emptyGame = fixture.Save(20, "game", []); var emptyMenu = fixture.Save(30, "main-title", []);
         var emptyUnknown = fixture.Save(40, "unknown", []); var unknownLabel = fixture.Save(50, "unknown", [Box("custom.bench")]);
         var all = new[] { positive, emptyGame, emptyMenu, emptyUnknown, unknownLabel };
@@ -130,7 +131,14 @@ internal static class DatasetExporterTests
         Check(onlyCustom.Manifest.Items.Select(item => item.Id).ToHashSet().SetEquals([positive.Id, unknownLabel.Id]),
             "Mac's context.labels guard must not invent built-in context membership for a custom-only export.");
         var shared = fixture.Exporter.ExportSharedModel(["custom.bench", "game.playable-knight"], all);
-        Check(shared.Manifest.Items.Select(item => item.Id).ToHashSet().SetEquals([positive.Id, emptyGame.Id, unknownLabel.Id]),
+        Check(shared.Manifest.ClassIdentifiers!.SequenceEqual(["custom.bench"])
+            && shared.Manifest.Items.Select(item => item.Id).ToHashSet().SetEquals([positive.Id, unknownLabel.Id]),
+            "An untrained built-in class must not supply context eligibility to a custom-only export.");
+        Check(AnnotationFor(shared, positive.Id).Annotations.Single().Label == "custom.bench",
+            "A negative-only class must not enter the training annotations.");
+        var knight = fixture.Save(55, "game", [Box("game.playable-knight")]);
+        var withKnight = fixture.Exporter.ExportSharedModel(["custom.bench", "game.playable-knight"], [.. all, knight]);
+        Check(withKnight.Manifest.Items.Select(item => item.Id).ToHashSet().SetEquals([positive.Id, emptyGame.Id, unknownLabel.Id, knight.Id]),
             "Shared gameplay vocabulary must admit known custom negatives but not menus or unknown empty contexts.");
         var menuPositive = fixture.Save(60, "main-title", [Box("main-title.options")]);
         var menuNegative = fixture.Save(70, "main-title", []);

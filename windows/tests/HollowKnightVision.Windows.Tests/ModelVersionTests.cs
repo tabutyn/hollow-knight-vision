@@ -277,6 +277,9 @@ internal static class ModelVersionTests
         var promotedCurrent = store.Promote(current);
         Check(store.ActiveModelArtifacts().Single().TrainedClassIdentifiers!.SetEquals([knight, enemy]));
         Equal(promotedCurrent, store.Promote(current));
+        Directory.Delete(current.RunDirectory, recursive: true);
+        Check(new LabelingModelVersionStore(store.RootDirectory).ActiveModelArtifacts().Single()
+            .TrainedClassIdentifiers!.SetEquals([knight, enemy]));
         Directory.Delete(outOfDate.DatasetDirectory, recursive: true);
         store.Activate(Shared, promotedLegacy.Version.Major);
         Check(new LabelingModelVersionStore(store.RootDirectory).ActiveModelArtifacts().Single()

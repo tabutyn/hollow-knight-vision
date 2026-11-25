@@ -64,6 +64,8 @@ public static class LabelingContractEvaluator
     public static IReadOnlyList<LabelingContractEvaluation> Evaluate(SavedLabelingExample example,
         LabelingContractCatalog? catalog = null, IReadOnlySet<string>? exemptions = null)
     {
+        if (example.Manifest.ContextIdentifier == "game") return [];
+
         catalog ??= LabelingContractCatalog.Bundled;
         var counts = PositiveCounts(example.Manifest.Annotations.Where(annotation =>
             LabelingHudStencilPolicy.IsLabelable(example.Manifest.ContextIdentifier, annotation.ClassIdentifier)));

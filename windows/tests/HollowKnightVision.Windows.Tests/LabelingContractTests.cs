@@ -53,6 +53,15 @@ internal static class LabelingContractTests
         Check(LabelingSharedModelPolicy.HasPositiveGameplayEvidence([knight], classes));
     }
 
+    public static void TestGameplayHasNoContracts()
+    {
+        string[][] labels = [[], ["world.sign"], ["enemies.crawlid", "enemies.crawlid"],
+            ["game.playable-knight", "game.playable-knight"], ["world.custom-object"]];
+        foreach (var annotations in labels)
+            Check(LabelingContractEvaluator.Evaluate(Example("game", annotations)).Count == 0);
+        Check(LabelingContractEvaluator.Evaluate(Example("main-title")).Any(item => item.IsBreach));
+    }
+
     public static void TestAdvanceAndExemptions()
     {
         Check(!LabelingContractEvaluator.ShouldAdvance("shared.select-decoration", "main-title", [Annotation("main-title.select-decoration")]));
