@@ -92,15 +92,7 @@ playthrough goal. Raw OCR remains in the log and corrections and goals stay
 with their save.
 
 Choose **Enable Thinking** in the launch chooser or pass `--enable-thinking`
-to load the local Ollama model at startup. Open **Thinking** from the dashboard
-or press **T** to inspect an Ollama decision. The inspector shows the sampled
-frame, the exact model messages and schema, the offered targets, and the reply.
-It keeps the model's image
-available when a newer frame appears. A scored offer can drive a short
-maneuver when automatic policies are enabled and Modded Gameplay or Hacker
-has focus. Both workspaces use the shared registered routes and frame-matched
-receiver actors for Thinking decisions. Vision rechecks the target before
-using the same input lease as PPO. Press **B** to stop. Normal mode is for inspection.
+to load the local Ollama model at startup. In Gameplay or Hacker, click the orange notebook at the bottom right or press **T**. The **Context** tab shows this save’s text log, captured game evidence, Vision’s five-second decision brief and a message/schema explorer. Choose Policy, OCR transcription or Quest notes to inspect the latest request of that kind and its expected response. **Screenshot** shows the most recently sampled frame. **JSON** shows the latest policy reply and its handoff. Settings → Debug View → Thinking context hides the panel across launches. The notebook also opens with inference disabled. Windows currently uses its scored policy offer. The explorer displays the exact Windows contract. With automatic policies enabled and Modded Gameplay or Hacker in focus, Vision rechecks the selected target against registered routes and frame-matched actors, then acquires the same input lease as PPO. **B** stops playback. Normal mode supports inspection.
 
 While a model is loading, Thinking shows elapsed time and the stages Ollama
 has logged for that model. Windows uses the local Ollama tray app's

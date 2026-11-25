@@ -14,14 +14,14 @@ final class ThinkingClientTests: XCTestCase {
         } catch is CancellationError {}
         let frame = try testFrame()
         do {
-            _ = try await session.answer(model: .gemma, image: frame,
-                context: ThinkingContext(evidence: "", hasImage: true))
+            _ = try await session.answer(model: .gemma,
+                context: ThinkingContext(evidence: "", image: frame))
             XCTFail("Disabled session requested inference")
         } catch is CancellationError {}
         let inspector = ThinkingInspector()
         let finished = expectation(description: "Disabled monitor returns immediately")
         let monitoring = Task {
-            await inspector.monitor(reader: GameTextReader(), session: session) {
+            await inspector.monitor(reader: GameTextReader(), session: session, signals: { XCTFail("Read event state"); return nil }) {
                 XCTFail("Thinking sampled a frame"); return nil
             }
             finished.fulfill()
@@ -73,8 +73,8 @@ final class ThinkingClientTests: XCTestCase {
         finish?.resume()
         try await policy.value
         XCTAssertEqual(session.state, .ready(.gemma))
-        let context = ThinkingContext(evidence: "Current goal: Find more unmapped territory for the Atlas", hasImage: false)
-        let request = try ThinkingClient.request(model: .gemma, image: nil, context: context)
+        let context = ThinkingContext(evidence: "Current goal: Find more unmapped territory for the Atlas", image: nil)
+        let request = try ThinkingClient.request(model: .gemma, context: context)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
         let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
         XCTAssertFalse(messages.contains { $0["images"] != nil })
@@ -128,12 +128,12 @@ final class ThinkingClientTests: XCTestCase {
         let frame = try testFrame()
         let sight = SkillSight(context: "King's Pass", capturedAt: 1, generation: 1, gameplay: true,
                               menu: nil, selected: nil, lines: [], hasAbilityControls: true)
-        let context = ThinkingContext(evidence: "Live decision evidence\nVisible OCR: INSPECT", hasImage: true,
+        let context = ThinkingContext(evidence: "Live decision evidence\nVisible OCR: INSPECT", image: frame,
                                       sight: sight, visible: ["INSPECT"])
         for model in ThinkingModel.allCases {
-            let request = try ThinkingClient.request(model: model, image: frame, context: context)
+            let request = try ThinkingClient.request(model: model, context: context)
             XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:11434/api/chat")
-            let configured = try ThinkingClient.request(model: model, image: frame, context: context,
+            let configured = try ThinkingClient.request(model: model, context: context,
                                                          useLlamaCompatibilityServer: true)
             XCTAssertEqual(configured.url?.host, "127.0.0.1")
             XCTAssertEqual(configured.url?.port, model == .llama ? 11435 : 11434)
@@ -143,52 +143,53 @@ final class ThinkingClientTests: XCTestCase {
             let displayed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(context.schemaText.utf8)) as? NSDictionary)
             XCTAssertEqual(format, displayed)
             let properties = try XCTUnwrap(format["properties"] as? [String: Any])
-            let scores = try XCTUnwrap(properties["scores"] as? [String: Any])
-            let fields = try XCTUnwrap(scores["properties"] as? [String: Any])
-            XCTAssertEqual(Set(fields.keys), ["c0"])
+            XCTAssertEqual(Set(properties.keys), ["policy", "parameters"])
             XCTAssertTrue(context.user.contains(#""objective":"expandAtlas""#))
             let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
             XCTAssertEqual(messages.compactMap { $0["role"] as? String }, ["system", "user"])
             XCTAssertEqual(messages.compactMap { $0["content"] as? String }, [context.system, context.user])
+            XCTAssertTrue(context.user.contains(ThinkingPolicyContract.policySchemaText))
+            XCTAssertTrue(context.user.contains(ThinkingPolicyContract.menuSchemaText))
             XCTAssertFalse(context.user.contains("wallJumpRight"))
+            XCTAssertTrue(context.image === frame)
+            XCTAssertFalse(context.system.contains("no attached screenshot"))
+            XCTAssertEqual((messages[1]["images"] as? [String])?.count, 1)
             XCTAssertEqual(messages.compactMap { $0["images"] }.count, 1)
             let image = try XCTUnwrap((messages[1]["images"] as? [String])?.first)
             XCTAssertEqual(Data(base64Encoded: image)?.prefix(8), Data([137, 80, 78, 71, 13, 10, 26, 10]))
         }
     }
 
-    func testModelRanksPoliciesWithoutControllingTheirInputs() throws {
-        let target = BotRouteTarget(chart: "room", goal: .init(20, 0), waypoint: .init(10, 0),
-            hint: .init(dx: 1, dy: 0, clearance: 0.1, distance: 0.3, frontier: true))
-        var sight = SkillSight(context: "Room", capturedAt: 1, generation: 1, gameplay: true, menu: nil,
-            selected: nil, lines: [], hasAbilityControls: true, scene: .init(room: 7, grounded: true,
-            recovery: .init(soul: 33, health: 3, maxHealth: 5, canFocus: true), enemies: [], cocoons: [], routes: [target]))
-        let contract = ThinkingPolicyContract(sight: sight, visible: [])
-        let plan = try contract.resolve(Data(#"{"scores":{"c0":90,"c1":90}}"#.utf8))
-        XCTAssertEqual(plan.objective, "expandAtlas")
-        XCTAssertEqual(plan.choose(sight)?.policy, .traverse)
-        sight.scene?.routes = []
-        XCTAssertEqual(plan.choose(sight)?.control, .focus)
-        for soul in [0,32] {
-            sight.scene = .init(room: 7, grounded: true, recovery: .init(soul: soul, health: 3, maxHealth: 5,
-                canFocus: true), enemies: [], cocoons: [])
-            XCTAssertNil(plan.choose(sight))
+    @MainActor
+    func testOnlyAnOfferedPolicyAndItsExactParametersCanBeSaved() throws {
+        let image = try testFrame()
+        let sight = SkillSight(context: "Pass", capturedAt: 1, generation: 1, gameplay: true,
+                              menu: nil, selected: nil, lines: ["Inspect"], hasAbilityControls: true)
+        let context = ThinkingContext(evidence: "", image: image, sight: sight, visible: sight.lines)
+        let sample = ThinkingFrame(image: image, profile: UUID(), generation: 1, context: "Pass",
+                                   mode: "modded", atlas: "", sight: sight, language: "en", readsText: true)
+        let input = ThinkingInspector.Input(frame: sample, model: .gemma, context: context)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let inspector = ThinkingInspector(directory: directory)
+        let reply = #"{"policy":"interact","parameters":{"targetId":0,"verb":"inspect"}}"#
+        let url = try inspector.save(.init(input: input, reply: reply))
+        let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? NSDictionary)
+        XCTAssertEqual(saved, try JSONSerialization.jsonObject(with: Data(reply.utf8)) as? NSDictionary)
+        for bad in [#"{"scores":{"c0":95}}"#, #"{"policy":"interact","parameters":{"targetId":false,"verb":"inspect"}}"#,
+                    #"{"policy":"interact","parameters":{"targetId":1,"verb":"inspect"}}"#,
+                    #"{"policy":"observe","parameters":{}}"#, #"{"policy":"interact","parameters":{},"reason":"go"}"#] {
+            XCTAssertThrowsError(try inspector.save(.init(input: input, reply: bad)), bad)
         }
-        sight.scene = nil
-        XCTAssertNil(plan.choose(sight))
-        for reply in [#"{"choices":[],"shopping":[]}"#, #"{"scores":{"c2":80}}"#, #"{"scores":{"c0":101}}"#,
-                      #"{"scores":{"c0":false}}"#, #"{"scores":{"c0":0}}"#, #"{"scores":{"c0":"99"}}"#,
-                      #"{"scores":{"c0":1.5}}"#, #"{"scores":{},"reason":"Explore"}"#] {
-            XCTAssertThrowsError(try contract.resolve(Data(reply.utf8)), reply)
-        }
+        XCTAssertEqual(saved, try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? NSDictionary)
     }
 
-    func testModelCanRankOnlyCapturedInteractionsAndVisionChecksThemAgain() throws {
+    func testModelCanPickOnlyCapturedInteractionsAndVisionChecksThemAgain() throws {
         func sight(gameplay: Bool, menu: LabelingContext? = nil, selection: String? = nil, lines: [String] = []) -> SkillSight {
             .init(context: "King's Pass", capturedAt: 1, generation: 1, gameplay: gameplay,
                   menu: menu, selected: selection, lines: lines, hasAbilityControls: false)
         }
-        let reading = Data(#"{"scores":{"c0":93}}"#.utf8)
+        let reading = Data(#"{"policy":"interact","parameters":{"verb":"inspect","targetId":0}}"#.utf8)
         let page = sight(gameplay: true, lines: ["INSPECT"])
         let read = try ThinkingPolicyContract(sight: page, visible: ["INSPECT"]).resolve(reading)
         XCTAssertEqual(read.choose(page)?.control, .inspect)
@@ -198,21 +199,16 @@ final class ThinkingClientTests: XCTestCase {
             promptStarts: [RememberedGameText.key("Inspect"): 12])
         XCTAssertNil(read.choose(differentPrompt))
 
-        let resume = Data(#"{"scores":{"c0":80}}"#.utf8)
-        let paused = sight(gameplay: false, menu: .pause, selection: "pause.continue")
-        let options = sight(gameplay: false, menu: .pause, selection: "pause.options")
-        let plan = try ThinkingPolicyContract(sight: paused, visible: []).resolve(resume)
-        XCTAssertEqual(plan.choose(paused)?.control, .confirm)
-        XCTAssertNil(plan.choose(options))
-        XCTAssertThrowsError(try ThinkingPolicyContract(sight: options, visible: []).resolve(resume))
-
         let unavailable = ThinkingPolicyContract(sight: nil, visible: ["INSPECT"])
+        XCTAssertFalse(unavailable.hasChoices)
         XCTAssertThrowsError(try unavailable.resolve(reading))
-        let idle = try unavailable.resolve(Data(#"{"scores":{}}"#.utf8))
-        XCTAssertTrue(idle.choices.isEmpty)
+        for retired in ["observe", "menu", "fight", "recover"] {
+            XCTAssertThrowsError(try unavailable.resolve(JSONSerialization.data(withJSONObject: ["policy": retired, "parameters": [:]])))
+        }
+
     }
 
-    func testScoredCandidateRunsItsBoundWaypointAndFallsBackOnlyToAnotherScoredTarget() throws {
+    func testSelectedWaypointRunsAndAnExpiredSelectionCannotFallBack() throws {
         func route(_ x: Int, frontier: Bool) -> BotRouteTarget {
             .init(chart: "Pass", goal: .init(x * 2, 0), waypoint: .init(x, 0),
                   hint: .init(dx: x < 0 ? -0.4 : 0.4, dy: 0, clearance: 0.1, distance: 0.4, frontier: frontier))
@@ -222,19 +218,19 @@ final class ThinkingClientTests: XCTestCase {
             selected: nil, lines: [], hasAbilityControls: false, scene: .init(room: 8, grounded: true,
             recovery: nil, enemies: [], cocoons: [], routes: [left, right]))
         let contract = ThinkingPolicyContract(sight: sight, visible: [])
-        let plan = try contract.resolve(Data(#"{"scores":{"c1":95,"c0":42}}"#.utf8))
-        let rows = contract.rows(scoredBy: plan)
-        XCTAssertEqual(rows.map(\.id), ["c0", "c1"])
-        XCTAssertEqual(rows.map(\.score), [42, 95])
-        XCTAssertTrue(rows[1].target.contains("(30, 0)"))
-        XCTAssertEqual(ThinkingPolicyContract(sight: sight, visible: []).rows(scoredBy: plan).map(\.score), [nil, nil])
-        let singlePick = try contract.resolve(Data(#"{"scores":{"c1":95}}"#.utf8))
-        XCTAssertEqual(contract.rows(scoredBy: singlePick).map(\.score), [nil, 95])
-        for (liveRoutes, expectedID, expectedTarget, expectedButtons) in [
-            ([left, right], "c1", right, InputBridgeButtons.right),
-            ([left], "c0", left, InputBridgeButtons.left)
+        XCTAssertEqual(Set(contract.rows().map(\.policy)), ["traverse", "explore"])
+        let explore = try contract.resolve(Data(#"{"policy":"explore","parameters":{}}"#.utf8))
+        XCTAssertEqual(explore.choose(sight)?.policy, .explore)
+        XCTAssertEqual(explore.choose(sight)?.binding, .init(room: 8, target: .traverse(left)))
+        let selectedRight = try contract.resolve(Data(#"{"policy":"traverse","parameters":{"waypointId":1}}"#.utf8))
+        XCTAssertEqual(contract.rows(selectedBy: selectedRight).map(\.selected), [false, true, false])
+        XCTAssertTrue(contract.rows()[1].target.contains("(30, 0)"))
+        for (index, expectedID, expectedTarget, expectedButtons) in [
+            (1, "c1", right, InputBridgeButtons.right), (0, "c0", left, InputBridgeButtons.left)
         ] {
-            sight.scene?.routes = liveRoutes
+            let plan = try contract.resolve(JSONSerialization.data(withJSONObject:
+                ["policy": "traverse", "parameters": ["waypointId": index]]))
+            sight.scene?.routes = [left, right]
             let bot = BotPlaybackController(loadModel: false, now: { 10 }, hasFocus: { true })
             bot.skillSight = { sight }
             var selected: BotSkillChoice?, pressed: [InputBridgeButtons] = []
@@ -262,13 +258,15 @@ final class ThinkingClientTests: XCTestCase {
             XCTAssertEqual(pressed.last, expectedButtons)
             bot.stop()
         }
-        XCTAssertNil(singlePick.choose(sight), "An unscored surviving target must stay unselected")
+        sight.scene?.routes = [left]
+        XCTAssertNil(selectedRight.choose(sight))
         sight.scene?.routes = [route(99, frontier: false)]
-        XCTAssertNil(plan.choose(sight), "A replacement waypoint cannot inherit the previous score")
+        XCTAssertNil(selectedRight.choose(sight))
+
     }
 
     @MainActor
-    func testMinuteSamplerKeepsCapturingWithOneModelRequestPending() async throws {
+    func testOnlyEventsCaptureScreenshotsWhileOneRequestIsPending() async throws {
         let inspector = ThinkingInspector()
         let session = ThinkingModelSession(isEnabled: true)
         let reader = GameTextReader()
@@ -280,16 +278,25 @@ final class ThinkingClientTests: XCTestCase {
 
         let secondCapture = expectation(description: "next scheduled frame")
         var ids = [UUID]()
+        let sight = SkillSight(context: "Pass", capturedAt: 1, generation: 0, gameplay: true, menu: nil,
+            selected: nil, lines: [], hasAbilityControls: false)
+        var polls = 0
         let monitor = Task {
-            await inspector.monitor(reader: reader, session: session, interval: .milliseconds(30)) {
-                let sample = ThinkingFrame(image: frame, profile: nil, generation: 0, context: "King's Pass",
-                    mode: "modded", atlas: "", sight: nil, language: "en", readsText: false)
+            await inspector.monitor(reader: reader, session: session, interval: .milliseconds(10), signals: {
+                polls += 1
+                return .init(profile: nil, generation: 0, room: "Pass", mode: "modded", npc: polls >= 5)
+            }) {
+                let sample = ThinkingFrame(image: frame, profile: nil, generation: 0, context: "Pass",
+                    mode: "modded", atlas: "", sight: sight, language: "en", readsText: false)
                 ids.append(sample.id)
                 if ids.count == 2 { secondCapture.fulfill() }
                 return sample
             }
         }
         await fulfillment(of: [secondCapture], timeout: 3)
+        XCTAssertEqual(ids.count, 2)
+        XCTAssertGreaterThanOrEqual(polls, 5)
+        XCTAssertEqual(inspector.frame?.event, "NPC visible")
         XCTAssertEqual(inspector.frame?.id, ids.last)
         XCTAssertTrue(session.answering)
         XCTAssertNil(inspector.output)
@@ -299,17 +306,170 @@ final class ThinkingClientTests: XCTestCase {
         XCTAssertFalse(session.answering)
     }
 
+    func testBackloggedScreenshotKeepsItsIdentityAndReleasesItsLocalFile() throws {
+        let frame = ThinkingFrame(image: try testFrame(), profile: nil, generation: 6, context: "Pass",
+            mode: "modded", atlas: "", sight: nil, language: "en", readsText: false, event: "NPC visible")
+        var queued: ThinkingFrame? = try frame.diskBacked()
+        let file = try XCTUnwrap(queued?.imageFile?.url)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertEqual(queued?.id, frame.id)
+        XCTAssertEqual(queued?.event, frame.event)
+        XCTAssertEqual(queued?.image.width, frame.image.width)
+        XCTAssertNotNil(queued?.image.dataProvider?.data)
+        queued = nil
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
     @MainActor
     func testInvalidJSONRemainsInspectableWithoutCreatingAPlan() throws {
         let frame = ThinkingFrame(image: try testFrame(), profile: nil, generation: 0, context: "King's Pass",
             mode: "modded", atlas: "", sight: nil, language: "en", readsText: false)
-        let context = ThinkingContext(evidence: frame.decisionEvidence(visible: []), hasImage: true)
+        let context = ThinkingContext(evidence: frame.decisionEvidence(visible: []), image: frame.image)
         let input = ThinkingInspector.Input(frame: frame, model: .gemma, context: context)
         let output = ThinkingInspector.Output(input: input, reply: #"{"choices":[]}"#)
         XCTAssertNil(output.plan)
         XCTAssertNotNil(output.issue)
         XCTAssertEqual(output.input.frame.id, frame.id)
         XCTAssertTrue(output.text.contains(#""choices""#))
+    }
+
+    @MainActor
+    func testMenuCommandsFollowVerifiedFocusAndRequestFreshPixelsOnlyAfterAdvance() async throws {
+        let ids = ["pause.continue", "shared.options", "quit-to-menu.quit-to-menu"]
+        let elements = ids.enumerated().map { ThinkingMenuPage.Element(id: $0.element, center: CGPoint(x: 50, y: 200 - 50 * $0.offset)) }
+        func page(_ selected: Int) -> ThinkingMenuPage {
+            ThinkingMenuPage(stateID: "pause", selected: ids[selected], elements: elements)
+        }
+        let image = try testFrame()
+        let sight = SkillSight(context: "Pause", capturedAt: 0, generation: 1, gameplay: false, menu: .pause,
+            selected: ids[0], lines: [], hasAbilityControls: false, menuPage: page(0))
+        let context = ThinkingContext(evidence: "", image: image, sight: sight)
+        let contract = context.contract
+        let frame = ThinkingFrame(image: image, profile: nil, generation: 1, context: "Pause", mode: "modded",
+            atlas: "", sight: sight, language: "en", readsText: false)
+        let reply = #"{"menu":"select","elementId":"quit-to-menu.quit-to-menu"}"#
+        let selection = ThinkingInspector.Output(input: .init(frame: frame, model: .gemma, context: context), reply: reply)
+        let select = try XCTUnwrap(selection.script)
+        XCTAssertNil(selection.plan)
+        XCTAssertThrowsError(try contract.resolve(Data(reply.utf8)))
+        let more = try contract.menuScript(Data(#"{"menu":"more"}"#.utf8))
+        var index = 0, pressed = [ThinkingMenuInput]()
+        func press(_ button: ThinkingMenuInput) -> Bool {
+            pressed.append(button)
+            if button == .down { index += 1 }
+            return true
+        }
+        let advanced = await more.run(current: { page(index) }, press: press, wait: {})
+        XCTAssertEqual(advanced, .menuAdvanced(ids[1]))
+        XCTAssertEqual(pressed, [.down])
+        let stale = await select.run(current: { page(index) }, press: press, wait: {})
+        XCTAssertTrue(stale.text.contains("Skipped"))
+        XCTAssertEqual(pressed, [.down])
+        index = 0; pressed = []
+        let confirmed = await select.run(current: { page(index) }, press: press, wait: {})
+        XCTAssertTrue(confirmed.text.contains(ids[2]))
+        XCTAssertEqual(pressed, [.down, .down, .confirm])
+        let stuck = await more.run(current: { page(0) }, press: { _ in true }, wait: {})
+        XCTAssertTrue(stuck.text.contains("no menu advance"))
+        for bad in [#"{"menu":"select","elementId":"unseen"}"#, #"{"menu":"more","elementId":"shared.options"}"#,
+                    #"{"policy":"menu","parameters":{}}"#, #"{"policy":"explore","parameters":{}}"#] {
+            XCTAssertThrowsError(try contract.menuScript(Data(bad.utf8)))
+        }
+        XCTAssertThrowsError(try ThinkingPolicyContract(sight: sight, visible: [], allowsMore: false)
+            .menuScript(Data(#"{"menu":"more"}"#.utf8)))
+    }
+
+    @MainActor
+    func testRecordedPauseMenuThroughLocalGemmaWhenRequested() async throws {
+        guard ProcessInfo.processInfo.environment["HKV_THINKING_PAUSE_TEST"] == "1" else {
+            throw XCTSkip("Requires a local labelled pause image and Ollama")
+        }
+        let store = LabelingExampleStore()
+        let fixture = try XCTUnwrap(try store.loadExamples().first {
+            $0.manifest.contextIdentifier == "pause" && $0.manifest.languageIdentifier == "en"
+        })
+        let image = try store.loadImage(for: fixture)
+        let catalog = try MenuStencilCatalog(examplesRootURL: store.rootURL, calibration: .loadDefault(), includedContexts: [.pause])
+        let stencil = MenuStencilTracker(catalog: catalog).observe(image, timestamp: 1)
+        let page = try XCTUnwrap(ThinkingMenuPage(stencil))
+        XCTAssertEqual(Set(page.elements.map(\.id)), ["pause.continue", LabelingClassIdentity.options, LabelingClassIdentity.quitToMenu])
+        let sight = SkillSight(context: "Pause", capturedAt: 1, generation: 1, gameplay: false,
+            menu: .pause, selected: page.selected, lines: [], hasAbilityControls: false, menuPage: page)
+        let context = ThinkingContext(evidence: "Current game menu: Pause", image: image, sight: sight)
+        let reply = try await ThinkingClient.answer(model: .gemma, context: context)
+        let script = try context.contract.menuScript(Data(reply.utf8))
+        XCTAssertEqual(script.page.selected, page.selected)
+        print("Recorded pause screenshot · highlighted \(page.selected ?? "unknown") · local Gemma reply \(reply)")
+    }
+
+    @MainActor
+    func testMoreResubmitsTheAdvancedScreenshotAndItsOwnMenuOffer() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let images = [try testFrame(), try testFrame()]
+        let elements = [ThinkingMenuPage.Element(id: "pause.continue", center: .init(x: 4, y: 40)),
+                        .init(id: "shared.options", center: .init(x: 4, y: 10))]
+        var index = 0, requests = 0
+        func page() -> ThinkingMenuPage {
+            ThinkingMenuPage(stateID: "pause", selected: elements[index].id, elements: elements)
+        }
+        let completed = expectation(description: "New menu screenshot received and verified")
+        let inspector = ThinkingInspector(directory: dir) { _, _, context in
+            requests += 1
+            XCTAssertTrue(context.image === images[index])
+            XCTAssertEqual(context.contract.menuPage?.selected, elements[index].id)
+            XCTAssertTrue(context.user.contains(ThinkingPolicyContract.policySchemaText))
+            XCTAssertTrue(context.user.contains(ThinkingPolicyContract.menuSchemaText))
+            if requests == 1 { return #"{"menu":"more"}"# }
+            XCTAssertTrue(context.user.contains("Menu advanced"))
+            return #"{"menu":"select","elementId":"shared.options"}"#
+        }
+        let session = ThinkingModelSession(isEnabled: true)
+        session.select(.gemma) { _ in }
+        let monitor = Task {
+            await inspector.monitor(reader: GameTextReader(), session: session, interval: .milliseconds(5), signals: {
+                ThinkingSignals(profile: nil, generation: 1, room: "Pause", mode: "modded",
+                    selectedMenu: page().selected, menuImage: images[index])
+            }, dispatch: { output in
+                guard let action = output.script else { XCTFail("Expected a validated menu command"); return nil }
+                let result = await action.run(current: page, press: { button in
+                    if button == .down { index = 1 }
+                    return true
+                }, wait: {})
+                if requests == 2 { completed.fulfill() }
+                return result
+            }, snapshot: {
+                let sight = SkillSight(context: "Pause", capturedAt: 1, generation: 1, gameplay: false,
+                    menu: .pause, selected: page().selected, lines: [], hasAbilityControls: false, menuPage: page())
+                return ThinkingFrame(image: images[0], profile: nil, generation: 1, context: "Pause",
+                    mode: "modded", atlas: "", sight: sight, language: "en", readsText: false)
+            })
+        }
+        await fulfillment(of: [completed], timeout: 5)
+        XCTAssertEqual(requests, 2)
+        monitor.cancel()
+        await monitor.value
+    }
+
+    func testTrackedSignUsesDetectorPixelsAndReportsBoundsWithoutAnInspectPrompt() throws {
+        let newer = try testFrame(), detected = try testFrame()
+        let sight = SkillSight(context: "Pass", capturedAt: 0, generation: 3, gameplay: true, menu: nil,
+            selected: nil, lines: [], hasAbilityControls: true)
+        let state = ThinkingSignals(profile: nil, generation: 3, room: "Pass", mode: "modded", signTracks: [5],
+            signImage: detected, signBounds: [CGRect(x: 0.2, y: 0.4, width: 0.15, height: 0.2)], signSourceID: 87)
+        var sample = ThinkingFrame(image: newer, profile: nil, generation: 3, context: "Pass", mode: "modded",
+            atlas: "", sight: sight, language: "en", readsText: false)
+        var detector = ThinkingEventDetector()
+        let reasons = detector.events(state, at: 1)
+        XCTAssertTrue(reasons.contains("Sign visible"))
+        state.attachEvidence(to: &sample, trackedSign: detector.newSignTrack)
+        let input = ThinkingContext(evidence: sample.decisionEvidence(visible: []), image: sample.image, sight: sight)
+        XCTAssertTrue(input.image === detected)
+        XCTAssertTrue(input.user.contains("world.sign, frame 87"))
+        XCTAssertTrue(input.user.contains(ThinkingPolicyContract.menuSchemaText))
+        XCTAssertEqual(input.contract.rows().map(\.policy), ["explore"])
+        XCTAssertThrowsError(try input.contract.resolve(Data(#"{"policy":"interact","parameters":{"verb":"inspect","targetId":0}}"#.utf8)))
+        XCTAssertEqual(detector.events(state, at: 2), [])
     }
 
     private func testFrame() throws -> CGImage {

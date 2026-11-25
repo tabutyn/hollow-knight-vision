@@ -27,6 +27,7 @@ public partial class MainWindow
             Trace.TraceWarning("Could not read the game text preference: " + error.Message);
         }
         ReadGameTextCheck.IsChecked = gameTextReader.Enabled;
+        PresentGameText();
     }
 
     private void ReadGameTextCheck_Changed(object sender, RoutedEventArgs e)

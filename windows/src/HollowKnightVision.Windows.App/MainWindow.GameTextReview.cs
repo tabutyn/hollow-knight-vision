@@ -50,8 +50,11 @@ public partial class MainWindow
         PresentGameText();
     }
 
-    private void PresentGameText() =>
+    private void PresentGameText()
+    {
+        ContextPanel.ShowNotebook(gameTextReader);
         gameTextWindow?.Present(gameTextReader, gameTextReviewOptions, gameTextReviewStatus);
+    }
 
     private void StartGameTextReview()
     {

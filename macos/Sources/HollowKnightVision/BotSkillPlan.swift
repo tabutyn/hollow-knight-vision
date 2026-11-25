@@ -192,6 +192,7 @@ struct SkillSight {
     let hasAbilityControls: Bool
     var reading: SkillReading? = nil
     var scene: BotPolicyScene? = nil
+    var menuPage: ThinkingMenuPage? = nil
 
     var inGameMenu: Bool { menu == .inventory || menu == .pause }
     func allows(_ choice: BotSkillChoice) -> Bool {

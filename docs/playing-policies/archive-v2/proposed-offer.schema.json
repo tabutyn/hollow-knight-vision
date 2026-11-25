@@ -1,5 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Historical v2 offer vocabulary",
+  "description": "Includes reserved candidates. The v2 runtime generated the subset Vision could bind on a capture. The example is decision 4 from the recorded King\u2019s Pass handoff.",
   "type": "object",
   "properties": {
     "version": {
@@ -194,30 +196,35 @@
   },
   "examples": [
     {
-      "version": 2,
-      "decisionId": 42,
-      "objective": "expandAtlas",
       "candidates": {
         "c0": {
-          "policy": "traverse",
           "params": {
-            "roomId": 7,
-            "routeId": 2,
-            "waypointId": 3,
-            "road_dx": 0.6,
-            "road_dy": 0.8,
-            "road_distance": 0.25,
-            "road_frontier": true
-          }
+            "road_distance": 0.14296875,
+            "road_dx": 1,
+            "road_dy": 0,
+            "road_frontier": true,
+            "roomId": 1000000,
+            "routeId": 0,
+            "waypointId": 0
+          },
+          "policy": "traverse"
         },
         "c1": {
-          "policy": "interact",
           "params": {
-            "verb": "inspect",
-            "targetId": 8
-          }
+            "road_distance": 0.050390625,
+            "road_dx": -1,
+            "road_dy": 0,
+            "road_frontier": false,
+            "roomId": 1000000,
+            "routeId": 1,
+            "waypointId": 1
+          },
+          "policy": "traverse"
         }
-      }
+      },
+      "decisionId": 4,
+      "objective": "expandAtlas",
+      "version": 2
     }
   ]
 }

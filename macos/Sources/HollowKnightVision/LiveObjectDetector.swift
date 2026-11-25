@@ -38,6 +38,7 @@ struct LiveTensor4D {
 }
 
 struct LiveObjectDetection: Equatable, Identifiable {
+    var trackIdentifier: UInt64? = nil
     let classIdentifier: String
     let normalizedRect: CGRect
     let confidence: Double

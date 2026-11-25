@@ -82,10 +82,11 @@ final class BotSkillTests: XCTestCase {
         let evidence = "Current goal: " + goal + "\nVisible OCR:\n" + visible.joined(separator: "\n")
         let sight = SkillSight(context: "King's Pass", capturedAt: scan.capturedAt, generation: 1, gameplay: true, menu: nil,
                               selected: nil, lines: visible, hasAbilityControls: true)
-        let context = ThinkingContext(evidence: evidence, hasImage: true, sight: sight, visible: visible)
-        let answer = try await ThinkingClient.answer(model: .gemma, image: image, context: context)
+        let context = ThinkingContext(evidence: evidence, image: image, sight: sight, visible: visible)
+        XCTAssertEqual(context.contract.rows().map(\.policy), ["interact"], "Tablet OCR: \(visible)")
+        let answer = try await ThinkingClient.answer(model: .gemma, context: context)
         let plan = try context.contract.resolve(Data(answer.utf8))
-        let row = try XCTUnwrap(context.contract.rows(scoredBy: plan).first { $0.score != nil })
+        let row = try XCTUnwrap(context.contract.rows(selectedBy: plan).first { $0.selected }, answer)
         let player = BotPlaybackController(loadModel: false, now: { scan.capturedAt }, hasFocus: { true })
         player.skillSight = { sight }
         var selected: BotSkillChoice?, applied: InputBridgeButtons?
@@ -168,11 +169,11 @@ final class BotSkillTests: XCTestCase {
         let plan: BotSkillPlan
         if ProcessInfo.processInfo.environment["HKV_TABLET_TEST_GEMMA"] == "1" {
             let request = ThinkingContext(evidence: "Room: \(room)\nVisible OCR: \(sight.lines.joined(separator: "\n"))",
-                hasImage: true, sight: sight, visible: sight.lines)
-            let reply = try await ThinkingClient.answer(model: .gemma, image: prompt.image, context: request)
+                image: prompt.image, sight: sight, visible: sight.lines)
+            let reply = try await ThinkingClient.answer(model: .gemma, context: request)
             plan = try request.contract.resolve(Data(reply.utf8))
             let choice = try XCTUnwrap(plan.choose(sight), reply)
-            let row = try XCTUnwrap(request.contract.rows(scoredBy: plan).first { $0.id == choice.candidateID })
+            let row = try XCTUnwrap(request.contract.rows(selectedBy: plan).first { $0.id == choice.candidateID })
             XCTAssertEqual(row.policy, "interact")
             print("Tutorial_01 · Gemma \(reply) · \(row.id) \(row.policy) \(row.target)")
         } else if let path = ProcessInfo.processInfo.environment["HKV_TABLET_TEST_REPLY"] {

@@ -5,7 +5,7 @@ import XCTest
 /// Opt-in because this launches the installed game and requires its authored King's Pass floors.
 final class PolicyHandoffGameTests: XCTestCase {
     @MainActor
-    func testPrivateGameExecutesFocusAndBothTraverseOffers() async throws {
+    func testPrivateGameExecutesExploreAndTraverseOffers() async throws {
         let env = ProcessInfo.processInfo.environment
         guard let executable = env["HKV_HANDOFF_GAME"], let labels = env["HKV_HANDOFF_LABELS"] else {
             throw XCTSkip("Set HKV_HANDOFF_GAME and HKV_HANDOFF_LABELS to run the save-disabled game")
@@ -76,52 +76,45 @@ final class PolicyHandoffGameTests: XCTestCase {
         }
         try await publish()
         var records = [[String: Any]]()
-        for role in ["explore", "progress", "recover"] {
+        for role in ["explore", "traverse"] {
             let before = frame
             let contract = ThinkingPolicyContract(sight: sight, visible: [])
-            let candidates = try XCTUnwrap(contract.offer["candidates"] as? [String: [String: Any]])
-            let handle = try XCTUnwrap(candidates.keys.sorted().first { key in
-                let entry = candidates[key]!, params = entry["params"] as? [String: Any]
-                if role == "recover" { return params?["method"] as? String == "focus" }
-                return entry["policy"] as? String == "traverse" && params?["road_frontier"] as? Bool == (role == "explore")
-            }, "Missing \(role) at \(frame.heroX), \(frame.heroY): \(contract.offer) recovery \(String(describing: sight.scene?.recovery))")
-            let scores = ["scores":[handle:99]]
-            let plan = try contract.resolve(JSONSerialization.data(withJSONObject: scores))
+            let candidates = try XCTUnwrap(contract.offer["candidates"] as? [[String: Any]])
+            let candidate = try XCTUnwrap(candidates.first { entry in
+                let selection = entry["selection"] as? [String: Any]
+                let evidence = entry["evidence"] as? [String: Any]
+                return selection?["policy"] as? String == role && (role == "explore" || evidence?["road_frontier"] as? Bool == false)
+            })
+            let selection = try XCTUnwrap(candidate["selection"] as? [String: Any])
+            let plan = try contract.resolve(JSONSerialization.data(withJSONObject: selection))
             let choice = try XCTUnwrap(plan.choose(sight))
             let result = bot.dispatch(plan, context: frame.sceneName, generation: 1, domain: .hacker)
             XCTAssertTrue(result.contains("Dispatched"), result)
             var buttons = [Int]()
-            for _ in 0..<(role == "recover" ? 20 : 7) {
+            for _ in 0..<7 {
                 buttons.append(Int(held.rawValue))
                 frame = try await sample(held)
                 try await publish()
                 if !bot.isActive { break }
             }
             let start = try XCTUnwrap(before.actors?.recovery), end = try XCTUnwrap(frame.actors?.recovery)
-            if role == "recover" {
-                XCTAssertTrue(buttons.contains(Int(InputBridgeButtons.actionA.rawValue)))
-                XCTAssertGreaterThan(end.health, start.health)
-                XCTAssertLessThan(end.soul, start.soul)
-            } else {
-                guard case .traverse(let target) = choice.binding?.target else { XCTFail("Lost target"); return }
-                let direction: InputBridgeButtons = target.hint.dx > 0 ? .right : .left
-                XCTAssertTrue(buttons.contains { $0 & Int(direction.rawValue) != 0 })
-                XCTAssertGreaterThan((frame.heroX - before.heroX) * target.hint.dx, 0.04)
-            }
-            records.append(["selector":role, "offer":contract.offer, "reply":scores, "buttons":buttons,
+            guard case .traverse(let target) = choice.binding?.target else { XCTFail("Lost target"); return }
+            let direction: InputBridgeButtons = target.hint.dx > 0 ? .right : .left
+            XCTAssertTrue(buttons.contains { $0 & Int(direction.rawValue) != 0 })
+            XCTAssertGreaterThan((frame.heroX - before.heroX) * target.hint.dx, 0.04)
+            records.append(["selector":role, "offer":contract.offer, "reply":selection, "buttons":buttons,
                             "fromX":before.heroX, "toX":frame.heroX, "fromHealth":start.health,"toHealth":end.health,
                             "fromSoul":start.soul,"toSoul":end.soul])
             bot.stop()
-            // Wait for the Knight to regain movement control after the Focus animation.
-            for _ in 0..<(role == "recover" ? 8 : 2) {
+            for _ in 0..<2 {
                 frame = try await sample([])
                 try await publish()
             }
         }
         if env["HKV_HANDOFF_GEMMA"] == "1" {
             let request = ThinkingContext(evidence: "King’s Pass, grounded on an authored platform. Continue mapping the Atlas.",
-                                          hasImage: false, sight: sight)
-            let answer = try await ThinkingClient.answer(model: .gemma, image: nil, context: request)
+                                          image: nil, sight: sight)
+            let answer = try await ThinkingClient.answer(model: .gemma, context: request)
             let plan = try request.contract.resolve(Data(answer.utf8))
             let choice = try XCTUnwrap(plan.choose(sight), answer)
             let result = bot.dispatch(plan, context: frame.sceneName, generation: 1, domain: .hacker)
@@ -143,7 +136,7 @@ final class PolicyHandoffGameTests: XCTestCase {
                             "selected":try XCTUnwrap(choice.candidateID), "buttons":buttons, "fromX":before.heroX, "toX":frame.heroX])
         }
         if let output = env["HKV_HANDOFF_TRACE"] {
-            let trace: [String: Any] = ["scene":frame.sceneName,"seed":441,"saveDisabled":true,"scoreSource":"fixed scores for controller cases; local model for gemma case",
+            let trace: [String: Any] = ["scene":frame.sceneName,"seed":441,"saveDisabled":true,"selectionSource":"fixed choices for controller cases; local model for gemma case",
                                         "decisions":records]
             try JSONSerialization.data(withJSONObject: trace, options: [.prettyPrinted,.sortedKeys])
                 .write(to: URL(fileURLWithPath: output), options: .atomic)

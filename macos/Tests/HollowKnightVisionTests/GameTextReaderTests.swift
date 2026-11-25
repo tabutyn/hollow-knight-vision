@@ -19,8 +19,33 @@ final class GameTextReaderTests: XCTestCase {
         XCTAssertEqual(remembered, ["[Room 1] Hold Focus to heal"])
     }
 
+    func testRepeatedOCRKeepsOneObservedReadingAcrossFramesRoomsAndReopen() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("save.json")
+        let book = GameTextNotebook(url: file)
+        func see(_ text: String, _ confidence: Float, _ room: String = "Pass", _ language: String = "en") async throws {
+            let line = GameTextLine(id: 1, text: text, bounds: .zero, confidence: confidence)
+            _ = try await book.remember([line], context: room, language: language, confirmed: [])
+        }
+        try await see("Collect SOUIL by striking enemnies.", 0.82)
+        try await see("Collect SOUL by striking enemies.", 0.98)
+        try await see("COLLECT SOUL  by striking enemies!", 0.91, "Crossroads")
+        try await see("Map costs 35 Geo", 1)
+        try await see("Map costs 36 Geo", 1)
+        try await see("Travel east", 1)
+        try await see("Travel west", 1)
+        try await see("Travel east", 1, "Pass", "fr")
+        let reopened = try await GameTextNotebook(url: file).entries()
+        XCTAssertEqual(reopened.count, 6)
+        XCTAssertEqual(reopened[0].text, "Collect SOUIL by striking enemnies.")
+        XCTAssertEqual(reopened[0].displayText, "Collect SOUL by striking enemies.")
+        XCTAssertEqual(reopened[0].otherContexts, ["Crossroads"])
+        XCTAssertFalse(NotebookTextMatch.same("Inspect", "Insect"))
+    }
+
     @MainActor
-    func testNotebookFollowsPlaythroughAndDropsLateProofreading() async throws {
+    func testNotebookFollowsPlaythroughAndCanOpenLegacyReadings() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let reader = GameTextReader(directory: directory)
@@ -41,23 +66,13 @@ final class GameTextReaderTests: XCTestCase {
         XCTAssertEqual(reader.memory.map(\.text), ["Title menu"])
         await reopen(a)
         try await see("Collect SOLIL")
-        let started = expectation(description: "proofreading began")
-        var release: CheckedContinuation<Void, Never>?
-        let cleanup = Task { @MainActor in
-            await reader.cleanReadings(preferred: .gemma, find: { model in
-                .init(model: model, server: ThinkingClient.primary, contextLength: nil)
-            }, correct: { batch, _ in
-                await withCheckedContinuation { release = $0; started.fulfill() }
-                return [batch[0].id: .init(text: "Collect SOUL", label: .tutorial, model: "test")]
-            })
-        }
-        await fulfillment(of: [started], timeout: 5)
         await reopen(b)
         XCTAssertTrue(reader.memory.isEmpty)
         try await see("Map Shop")
-        release?.resume()
-        await cleanup.value
-        XCTAssertEqual(reader.memory.map(\.reading), ["Map Shop"])
+        XCTAssertEqual(reader.memory.map(\.displayText), ["Map Shop"])
+        let otherSave = try await reader.policyContext()
+        XCTAssertTrue(otherSave.contains("Map Shop"))
+        XCTAssertFalse(otherSave.contains("Collect SOLIL"))
         await reopen(a)
         XCTAssertEqual(reader.memory.map(\.text), ["Collect SOLIL"])
         let store = GameTextNotebook(url: directory.appendingPathComponent(a.id.uuidString + ".json"))
@@ -66,10 +81,10 @@ final class GameTextReaderTests: XCTestCase {
         await reopen(a)
         XCTAssertEqual(reader.memory.first?.text, "Collect SOLIL")
         XCTAssertEqual(reader.memory.first?.interpretation?.label, .tutorial)
-        XCTAssertEqual(reader.memory.first?.reading, "Collect SOUL")
-        XCTAssertEqual(reader.loggedText, ["Tutorial · Collect SOUL"])
+        XCTAssertEqual(reader.memory.first?.displayText, "Collect SOLIL")
+        XCTAssertEqual(reader.loggedText, ["Collect SOLIL"])
         let evidence = await reader.evidence(image: image, context: "Elsewhere", language: "en", question: "SOUL?", enabled: false)
-        XCTAssertTrue(evidence.contains("[Room · Tutorial] Collect SOUL"))
+        XCTAssertTrue(evidence.contains("[Room] Collect SOLIL"))
         await reopen(SaveProfileAtlas.target(for: .init(slot: 1, isNew: true), active: a, saved: []))
         XCTAssertTrue(reader.memory.isEmpty)
         let newEvidence = await reader.evidence(image: image, context: "Room", language: "en", question: "SOUL?", enabled: false)
@@ -78,7 +93,7 @@ final class GameTextReaderTests: XCTestCase {
     }
 
     @MainActor
-    func testOpeningLinesFollowConfirmedSaveAndMergeRevisedCredits() async throws {
+    func testOpeningCreditsRemainDistinctDespiteALegacyModelAnnotation() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let reader = GameTextReader(directory: directory)
@@ -108,27 +123,9 @@ final class GameTextReaderTests: XCTestCase {
         reader.selectProfile(nil)
         reader.selectProfile(selected)
         await reader.monitor(enabled: false, language: "en") { nil }
-        XCTAssertEqual(reader.entries.count, 1)
-        XCTAssertEqual(reader.loggedText, ["Music and sound credit · " + revised])
+        XCTAssertEqual(reader.entries.count, 2)
+        XCTAssertEqual(Set(reader.loggedText), Set([initial, revised]))
         XCTAssertEqual(reader.memory.map(\.text), [initial, revised])
-    }
-
-    @MainActor
-    func testExplicitGoalBelongsToTheSaveAndCanReturnToExploration() throws {
-        let suite = "hkv-goal-tests-" + UUID().uuidString
-        let prefs = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { prefs.removePersistentDomain(forName: suite) }
-        let reader = GameTextReader(preferences: prefs)
-        let first = SaveProfileAtlas(slot: 1), next = SaveProfileAtlas(slot: 1)
-        reader.selectProfile(first)
-        XCTAssertEqual(reader.currentGoal, BotSkillPlan.defaultObjective)
-        reader.setGoal("Reach the next bench")
-        reader.selectProfile(next)
-        XCTAssertEqual(reader.currentGoal, BotSkillPlan.defaultObjective)
-        reader.selectProfile(first)
-        XCTAssertEqual(reader.currentGoal, "Reach the next bench")
-        reader.setGoal("")
-        XCTAssertEqual(reader.currentGoal, BotSkillPlan.defaultObjective)
     }
 
     @MainActor
@@ -144,7 +141,7 @@ final class GameTextReaderTests: XCTestCase {
             menu: nil, selected: nil, lines: ["INSPECT"], hasAbilityControls: true), at: 1)
         var previous = [GameTextLine]()
         for (i, text) in [["Collect"], ["Collect SOUIL", "to HEAL"], ["Collect SOUIL", "to HEAL"], ["Collect SOUIL", "to HEAL"]].enumerated() {
-            let lines = text.enumerated().map { GameTextLine(id: $0.offset, text: $0.element, bounds: .zero, confidence: 1) }
+            let lines = text.enumerated().map { GameTextLine(id: $0.offset, text: $0.element, bounds: .zero, confidence: 0.9) }
             try await reader.store(.init(image: image, language: "en", context: room, lines: lines, capturedAt: Double(i + 2), milliseconds: 0),
                                    previous: previous)
             previous = lines
@@ -152,42 +149,12 @@ final class GameTextReaderTests: XCTestCase {
         XCTAssertEqual(reader.memory.map(\.text), ["Collect SOUIL to HEAL"])
         XCTAssertEqual(reader.memory.first?.isPassage, true)
         XCTAssertEqual(reader.skillReading?.visible, ["Collect SOUIL", "to HEAL"])
-    }
-
-    func testProofreadKeepsPricesAndRejectsInventedText() {
-        let direction = "Travellers, I hold these memories close to my heart as you once did."
-        XCTAssertFalse(GameTextCleanup.hasControlInstruction(direction, passage: true, language: "en"))
-        XCTAssertFalse(GameTextCleanup.hasControlInstruction("PRESS A to start", passage: true, language: "en"))
-        XCTAssertEqual(GameTextCleanup.conservativeText("Map 35", raw: "Map 55"), "Map 55")
-        XCTAssertEqual(GameTextCleanup.conservativeText("Buy the map at Dirtmouth", raw: "Map"), "Map")
-        XCTAssertEqual(GameTextCleanup.conservativeText("Collect SOUL", raw: "Collect SOLIL"), "Collect SOUL")
-    }
-
-    func testLocalModelProofreadsRecordedTablet() async throws {
-        let env = ProcessInfo.processInfo.environment
-        guard let path = env["HKV_PROOFREAD_TABLET"] else { throw XCTSkip("Requires a local model and the recorded tablet OCR.") }
-        struct Recording: Decodable { let storedPassage: String }
-        let raw = try JSONDecoder().decode(Recording.self, from: Data(contentsOf: URL(fileURLWithPath: path))).storedPassage
-        let model = try XCTUnwrap(ThinkingModel(rawValue: env["HKV_TEST_OLLAMA_MODEL"] ?? ThinkingModel.gemma.rawValue))
-        try await ThinkingClient.load(model) { print("Load · " + $0) }
-        let found = try await GameTextCleanup.resident(preferred: model)
-        let resident = try XCTUnwrap(found)
-        XCTAssertEqual(resident.model, model)
-        let row = RememberedGameText(id: "tablet", text: raw, context: "King's Pass tablet", language: "en", date: Date(), isPassage: true)
-        let cleaned = try await GameTextCleanup.correct([row], with: resident)
-        let value = try XCTUnwrap(cleaned["tablet"])
-        print("Local tablet reading (\(value.model), \(value.label)): \(value.text)")
-        XCTAssertTrue(value.text.contains("dream"))
-        XCTAssertTrue(value.text.contains("SOUL"))
-        XCTAssertTrue(value.text.contains("enemies"))
-        XCTAssertEqual(value.label, .tutorial)
-        let credit = RememberedGameText(id: "credit", text: "Composer: Christopher Larkin",
-            context: "Credits", language: "en", date: Date())
-        let credits = try await GameTextCleanup.correct([credit], with: resident)
-        let composer = try XCTUnwrap(credits[credit.id])
-        print("Local credit heading: \(composer.displayLabel) · \(composer.text)")
-        XCTAssertEqual(composer.label, .credits)
-        XCTAssertTrue(composer.text.contains("Christopher Larkin"))
+        let corrected = ["Collect SOUL", "to HEAL"].enumerated().map {
+            GameTextLine(id: $0.offset, text: $0.element, bounds: .zero, confidence: 1)
+        }
+        try await reader.store(.init(image: image, language: "en", context: room, lines: corrected, capturedAt: 7, milliseconds: 0), previous: previous)
+        XCTAssertEqual(reader.memory.count, 1)
+        XCTAssertEqual(reader.memory[0].displayText, "Collect SOUL to HEAL")
     }
 
     func testVisionBoxMapsIntoDisplayedFrame() {

@@ -1,0 +1,36 @@
+{
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "menu": {
+          "const": "select"
+        },
+        "elementId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "menu",
+        "elementId"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "menu": {
+          "enum": [
+            "more",
+            "wait"
+          ]
+        }
+      },
+      "required": [
+        "menu"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

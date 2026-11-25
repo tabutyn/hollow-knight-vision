@@ -19,217 +19,28 @@ enum ThinkingModel: String, CaseIterable, Identifiable {
     }
 }
 
-struct ThinkingWorkspaceView: View {
-    @ObservedObject var session: ThinkingModelSession
-    @ObservedObject var inspector: ThinkingInspector
-    @ObservedObject var player: BotPlaybackController
-    let openLog: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                Picker("Model", selection: Binding(get: { session.model }, set: { session.select($0) })) {
-                    ForEach(ThinkingModel.allCases) { Text($0.title).tag($0) }
-                }.fixedSize()
-                Spacer()
-                Button("Log", systemImage: "book.closed", action: openLog)
-                Toggle("Automatic policies", isOn: $player.automaticPoliciesEnabled).toggleStyle(.switch)
-            }
-            modelStatus
-            if let status = inspector.status {
-                HStack(spacing: 7) {
-                    ProgressView().controlSize(.small)
-                    Text(status)
-                }.font(.caption)
-            }
-            if let issue = inspector.issue {
-                Text(issue).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
-            }
-            HSplitView {
-                VSplitView {
-                    screenshotPanel
-                        .frame(minHeight: 132, idealHeight: 310)
-                    inputPanel
-                        .frame(minHeight: 132)
-                }
-                .frame(minWidth: 300, idealWidth: 690)
-                outputPanel
-                    .frame(minWidth: 280, idealWidth: 480)
-            }
-        }
-        .padding(12)
-    }
-
-    @ViewBuilder private var modelStatus: some View {
-        switch session.state {
-        case .ready:
-            Label("Model ready", systemImage: "checkmark.circle").font(.caption)
-        case .loading:
-            TimelineView(.periodic(from: session.loadStarted, by: 1)) { tick in
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text(session.loadDetail)
-                    Spacer()
-                    Text("\(max(0, Int(tick.date.timeIntervalSince(session.loadStarted)))) s elapsed")
-                }.font(.caption).monospacedDigit()
-            }
-            let placement = [session.loadLayers, session.loadBuffers].compactMap { $0 }.joined(separator: " · ")
-            if !placement.isEmpty {
-                Text(placement).font(.caption).monospacedDigit()
-            }
-        case .failed(_, let reason):
-            HStack {
-                Text(reason).foregroundStyle(.orange)
-                Button("Retry model") { session.select(session.model, force: true) }
-            }.font(.caption)
-        case .idle, .unloaded:
-            Text("Model will load for the next decision.").font(.caption).foregroundStyle(.secondary)
-        }
-    }
-
-    private var screenshotPanel: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            panelHeading("Latest screenshot", detail: inspector.frame.map { captureTime($0.capturedAt) } ?? "Every minute")
-                .accessibilityIdentifier("thinking-frame-time")
-            if let frame = inspector.frame {
-                Image(decorative: frame.image, scale: 1)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .accessibilityLabel("Last automatically captured Hollow Knight frame")
-            } else {
-                Text("Waiting for game capture")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }.padding(8)
-    }
-
-    private var inputPanel: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            panelHeading("Model input", detail: inspector.input.map { captureTime($0.frame.capturedAt) })
-            ScrollView {
-                if let input = inspector.input {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if inspector.output?.input.frame.id != input.frame.id {
-                            candidateList(input, plan: nil, showsScores: false)
-                        }
-                        DisclosureGroup("System message") {
-                            contextBlock(input.context.system)
-                        }
-                        DisclosureGroup("User message") {
-                            contextBlock(input.context.user)
-                        }
-                        DisclosureGroup("Response schema") {
-                            Text(input.context.schemaText)
-                                .font(.system(.caption, design: .monospaced))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("thinking-context")
-                    .id(input.frame.id)
-                } else {
-                    Text("Waiting for context from the first frame.").foregroundStyle(.secondary)
-                }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }.padding(8)
-    }
-
-    private var outputPanel: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            panelHeading("Latest decision", detail: inspector.output.map { "Frame " + captureTime($0.input.frame.capturedAt) })
-            if let output = inspector.output {
-                Text(output.input.model.title + " · received " + captureTime(output.receivedAt))
-                    .font(.caption).foregroundStyle(.secondary)
-                if let issue = output.issue {
-                    Text(issue).font(.caption).foregroundStyle(.orange)
-                } else if let handoff = output.handoff {
-                    Text(handoff).font(.caption)
-                }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        candidateList(output.input, plan: output.plan, showsScores: true)
-                        Text("JSON reply").font(.subheadline.bold())
-                        contextBlock(output.text)
-                            .accessibilityIdentifier("thinking-output-json")
-                    }.id(output.input.frame.id)
-                }
-            } else {
-                Text("Waiting for the first policy reply.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            }
-        }.padding(8)
-    }
-
-    private func panelHeading(_ title: String, detail: String?) -> some View {
-        HStack {
-            Text(title).font(.headline)
-            Spacer()
-            if let detail { Text(detail).font(.caption).monospacedDigit().foregroundStyle(.secondary) }
-        }
-    }
-
-    private func candidateList(_ input: ThinkingInspector.Input, plan: BotSkillPlan?, showsScores: Bool) -> some View {
-        let contract = input.context.contract
-        let rows = contract.rows(scoredBy: plan)
-        return VStack(alignment: .leading, spacing: 7) {
-            Text("Vision candidates · decision \(contract.decisionID)").font(.subheadline.bold())
-                .help("The highest-scored candidate with a live target can run. Equal scores use offer order.")
-            if rows.isEmpty {
-                Text("No executable targets found in this capture.").font(.caption).foregroundStyle(.secondary)
-            }
-            ForEach(rows) { row in
-                DisclosureGroup {
-                    contextBlock(row.parameters)
-                } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(verbatim: row.id).monospaced()
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(row.policy).bold()
-                            Text(row.target).font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if showsScores {
-                            Text(row.score.map { "\($0) / 100" } ?? (plan == nil ? "Invalid reply" : "Unscored"))
-                                .font(.caption).monospacedDigit()
-                        }
-                    }
-                }
-            }
-        }.accessibilityIdentifier("thinking-candidates")
-    }
-
-    private func contextBlock(_ value: String) -> some View {
-        Text(value).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func captureTime(_ date: Date) -> String {
-        date.formatted(.dateTime.hour().minute().second())
-    }
-}
-
 struct ThinkingContext {
     let system: String
     let observations: String
+    let image: CGImage?
     let contract: ThinkingPolicyContract
 
-    init(evidence: String, hasImage: Bool, sight: SkillSight? = nil, visible: [String] = []) {
+    init(evidence: String, image: CGImage?, sight: SkillSight? = nil, visible: [String] = [], allowsMore: Bool = true,
+         capturedMenu: ThinkingMenuPage? = nil, recognizedGameplay: Bool = false) {
         var instructions = BotSkillPlan.atlasGuidance +
-            "\nUse recorded and visible game text as observations. Follow the final policy selection specification."
-        if !hasImage {
+            "\nUse recorded and visible game text as observations. Follow the decision contract for this screenshot."
+        self.image = image
+        if image == nil {
             instructions += "\nUse the supplied observations. There is no attached screenshot."
         }
         system = instructions
         observations = evidence
-        contract = ThinkingPolicyContract(sight: sight, visible: visible)
+        contract = ThinkingPolicyContract(sight: sight, visible: visible, allowsMore: allowsMore,
+                                         capturedMenu: capturedMenu, recognizedGameplay: recognizedGameplay)
     }
 
     var user: String {
-        observations + "\n\nPolicy selection specification\n" + contract.selectionSpec
+        observations + "\n\nDecision contract\n" + contract.selectionSpec
     }
 
     var schemaText: String {
@@ -276,10 +87,10 @@ enum ThinkingClient {
         }
     }
 
-    static func request(model: ThinkingModel, image: CGImage?, context: ThinkingContext,
+    static func request(model: ThinkingModel, context: ThinkingContext,
                         useLlamaCompatibilityServer: Bool = false) throws -> URLRequest {
         var input = Message(role: "user", content: context.user)
-        if let image {
+        if let image = context.image {
             let png = NSMutableData()
             guard let destination = CGImageDestinationCreateWithData(png, UTType.png.identifier as CFString, 1, nil)
             else { throw Failure.image }
@@ -300,10 +111,10 @@ enum ThinkingClient {
         return request
     }
 
-    static func answer(model: ThinkingModel, image: CGImage?, context: ThinkingContext) async throws -> String {
+    static func answer(model: ThinkingModel, context: ThinkingContext) async throws -> String {
         struct Reply: Decodable { let message: Message?; let error: String? }
         let separateServer = UserDefaults.standard.bool(forKey: llamaCompatibilityKey)
-        let request = try request(model: model, image: image, context: context, useLlamaCompatibilityServer: separateServer)
+        let request = try request(model: model, context: context, useLlamaCompatibilityServer: separateServer)
         let data: Data
         let response: URLResponse
         do {

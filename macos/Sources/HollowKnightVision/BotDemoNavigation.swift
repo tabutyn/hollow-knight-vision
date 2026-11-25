@@ -1,5 +1,41 @@
 import Foundation
 
+// Hollow Knight bindings for the game-independent menu observation and script.
+extension ThinkingMenuInput {
+    var hollowKnightButton: GameAutomationCommand.Button {
+        switch self {
+        case .up: return .up
+        case .down: return .down
+        case .left: return .left
+        case .right: return .right
+        case .confirm: return .z
+        }
+    }
+}
+
+extension ThinkingMenuPage {
+    // Only anchored items with a selector region are eligible. Headers and decorations
+    // may be recognized perfectly without being selectable menu elements.
+    init?(_ stencil: MenuStencilResult?) {
+        guard let stencil, stencil.isMatch else { return nil }
+        let id = stencil.context.storageIdentifier
+        let selected = stencil.selectorSearchRegions.first { $0.optionName == stencil.selectedOption && $0.isSolved }?.optionIdentifier
+        var seen = Set<String>()
+        let elements = stencil.selectorSearchRegions.compactMap { region -> Element? in
+            guard !seen.contains(region.optionIdentifier),
+                  let anchor = stencil.anchors.first(where: {
+                      $0.classIdentifier == region.optionIdentifier || $0.name == region.optionName
+                  }) else { return nil }
+            seen.insert(region.optionIdentifier)
+            let canSelect = !region.optionIdentifier.hasPrefix("select-profile.clear-save") &&
+                (stencil.context != .clearSave || [LabelingClassIdentity.no, LabelingClassIdentity.back].contains(region.optionIdentifier))
+            return Element(id: region.optionIdentifier, center: CGPoint(x: anchor.rect.midX, y: anchor.rect.midY),
+                           label: region.optionName, canSelect: canSelect)
+        }
+        self.init(stateID: id, selected: selected, elements: elements)
+    }
+}
+
 /// Menu automation uses fresh stencil identities. Gameplay handoff requires a
 /// new positive visual recognition, never the status tracker's gameplay latch.
 struct BotDemoMenuObservation {
@@ -12,6 +48,7 @@ struct BotDemoMenuObservation {
     let availableAt: Double
     let generation: UInt64
     var directionToYes: GameAutomationCommand.Button? = nil
+    var menuPage: ThinkingMenuPage?
     var menuTimestamp: Double? = nil
     var checkedProfileSlots = Set<Int>()
 
@@ -41,7 +78,7 @@ struct BotDemoMenuObservation {
         return Self(context: menu?.context, selectedIdentifier: selected, gameplay: freshGameplay,
                     occupiedSlots: occupied, frameTimestamp: frameTimestamp,
                     capturedAt: capturedAt, availableAt: availableAt, generation: generation,
-                    directionToYes: yesDirection, menuTimestamp: menu?.sourceTimestamp, checkedProfileSlots: menu?.checkedProfileSlots ?? [])
+                    directionToYes: yesDirection, menuPage: ThinkingMenuPage(menu), menuTimestamp: menu?.sourceTimestamp, checkedProfileSlots: menu?.checkedProfileSlots ?? [])
     }
 }
 

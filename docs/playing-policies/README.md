@@ -1,81 +1,83 @@
 # Playing policy architecture
 
-Explore and Progress choose reachable targets on the Atlas platform graph. Vision offers those targets to Gemma as Traverse candidates. The player dispatches the highest-scoring eligible candidate automatically in a ready macOS Gameplay or Hacker workspace. **T** opens Thinking and shows the captured offer, reply and dispatch result.
+## What runs today on macOS
 
-## Design review: one explicit selection per decision
+Vision watches gameplay for events. When an event occurs, it captures a clean game frame, attaches it to a local Ollama request, and asks the model to **return one gameplay selection or one menu command**. The fixed objective is to expand the Atlas. Thinking is optional at launch. OCR and Gymnasium run independently of it. [Earlier v3 presentation](playing-policies.pptx)
 
-The [policy deck](playing-policies.pptx) opens with the proposed input block, an audit of the current reply, and a worked response schema. Each target selector and policy then has its own slide. The installed app uses **v2**. The [v3 schema](policy-selection-v3.schema.json) is a design proposal.
+## Test the notebook first
 
-| Input to the local Gemma request | Source and refresh |
+Leave **Enable Thinking** unchecked. Open **Settings → Debug View → Text Reader**, enable **Read game text**, and open a tablet. Watch the boxes in **On screen**, then switch to **Log**. Hold the same page on screen. Repeated readings should leave the entry count unchanged. Resume the playthrough to see its saved text, or start a new one to see a fresh notebook. **Thinking → Log** opens the same reader.
+
+To run the same algorithm checks locally from the repository root, use the following command with Ollama stopped or running.
+
+```sh
+swift test --package-path macos --filter GameTextReaderTests
+```
+
+Apple Vision supplies raw text, confidence and line bounds. The notebook indexes normalized text within each language. Nearby scans can complete a clipped prefix or suffix and absorb several fragments into one entry. Matching uses time, room and line position when available. It protects quantities, directions and controls. The displayed English line prefers dictionary words before OCR confidence. If two aligned misspellings share exactly one single-edit dictionary correction, the notebook can use that word. The first OCR string remains inspectable. Other languages keep their observed spellings. The dictionary works with Thinking off. [Dictionary license](../../macos/Sources/HollowKnightVision/Resources/notebook-english-NOTICE.txt) · [Hallownest words](../../macos/Sources/HollowKnightVision/Resources/notebook-hallownest.txt)
+
+On this Mac, ten warm scans of each 640 × 360 recording took a median of 25 ms for the two-line Inspect prompt and 45 ms for the seven-line tablet. Those timings cover Apple Vision recognition only. The Text Reader displays the measured recognition time for each live scan.
+
+The policy request retrieves bounded excerpts from this save, newest first for selection and then in reading order for presentation. References and room names identify their sources. Stored text can inform a decision. A current interaction prompt must still be visible before playback presses Up. [Notebook](../../macos/Sources/HollowKnightVision/GameTextReader.swift) · [Offline OCR tests](../../macos/Tests/HollowKnightVisionTests/GameTextReaderTests.swift)
+
+### Live opening test on November 25
+
+On this Mac, a new slot-4 game reached King’s Pass with Thinking off. The reader collected 14 temporary poem entries and seven credit entries. A bright cinematic frame was classified as **Quit To Menu**. The profile detector clears the pending slot on that classification. The reader still displayed **Before save selection** after the credits. Hollow Knight saved slot 4, but Vision created no notebook file for it. Reopening synthetic save profiles in a unit test does not exercise this transition.
+
+For a local frame-by-frame audit, launch Vision with `--notebook-trace /absolute/output/directory`. Each successful scan writes the clean game image, raw OCR, match decisions, profile and temporary row snapshot under a unique run directory. Normal launches leave the trace disabled.
+
+## What causes a screenshot
+
+| Evidence | Capture event |
 | --- | --- |
-| **1. Remembered game text** | Apple Vision OCR supplies the raw text. The playthrough notebook preserves it alongside the corrected reading, label and room. Vision retrieves source-numbered excerpts for later decisions. |
-| **2. Current assessment** | Today the saved reasoning holds quests, destinations and unknowns with citations. The proposal adds a short working priority, the observation supporting it and when to reconsider it. Vision seeds the first request with the Atlas objective and asks the local model to refresh the assessment after a relevant reading, outcome or state change. |
-| **3. Game and policy state** | Vision captures the room, status, current OCR and available targets. The proposal also injects the controller’s active policy and bound target (or `null`), last observed outcome and capture identity. Vision takes these from playback and the observer. |
-| **4. Output contract** | Vision builds Ollama’s `format` schema for this decision. In v3 it fixes `decisionId` to the pending request and restricts `selection` to one complete offered action or `null`. The same legal choices appear in the prompt. The pinned screenshot accompanies the text. |
+| First recognized state, entry into a different state, or a return to an earlier state | Queue the image that established this visit. For menus, include the state ID, visible elements, their labels and the highlight when known. |
+| A room or save changes | Re-establish gameplay context. |
+| A new sign track or an INSPECT prompt | A tracked sign sends the detector frame and its normalized bounds. An OCR-only prompt sends the current game frame. |
+| A new NPC track or a LISTEN prompt | NPC visible. Visual detection requires a detector that recognizes that NPC class. LISTEN works without a trained NPC class. |
+| Measured Knight position reaches the bound chart waypoint or goal, or the default frontier while there is no active route | Waypoint reached, target reached or Explore destination reached. A route disappearing on its own is a separate outcome. |
+| Fresh measured graph state shows grounded Knight and no route | Dead end after 1.5 seconds of continuous evidence, or immediately with a confirmed uncrossed blockade. Missing telemetry alone supplies no dead-end evidence. |
+| A route becomes available, an enemy appears, Focus becomes available, the selected menu entry changes or a bound maneuver ends | Reconsider the action on a fresh frame. |
 
-**Why change the reply?** V2’s `{"scores":{"c0":85,"c1":30}}` lets Vision use a runner-up if the winner expires. To interpret it, a reader needs the original offer. V3 makes the policy and its operands explicit. For the two actual waypoints in King’s Pass decision 4, the frozen allowlist would contain `null`, `{"policy":"traverse","waypointId":0}`, and `{"policy":"traverse","waypointId":1}`. Room, direction, distance and frontier status stay in the input and bound target. Drop the decision and request fresh evidence if the selected waypoint expires. An abstention also leaves the controller without a new maneuver.
+With Thinking enabled, the capture path reports accepted state changes immediately, including transitions during a menu script. Lightweight gameplay observations also run every 200 ms. An unchanged menu costs no further model request. The bottom-right Thinking context opens with a click or **T**. Its Screenshot tab displays the latest event and its screenshot. Apple Vision OCR scans independently between events, waiting 450 ms between scans during the opening cutscene and 850 ms elsewhere. The image attached to a decision and its visible OCR share the same pixels. While the local model is busy, event frames queue in capture order. Older waiting images use temporary local PNG files. [Event detector](../../macos/Sources/HollowKnightVision/ThinkingInspector.swift) · [Navigation evidence](../../macos/Sources/HollowKnightVision/AtlasPathMap.swift)
 
-**Who writes the file?** Today `ThinkingClient.answer` reads Ollama’s HTTP `message.content` and `ThinkingInspector.Output` holds the JSON in memory. Under the proposal, **Vision** validates the returned JSON against the pending request and writes it atomically to `Thinking/<save>/<session>/latest-decision.v3.json` for inspection. Write only the latest validated decision in that save and session. Playback consumes the in-memory selection once and rechecks the bound target. Keep the captured offer and the dispatch or rejection outcome together under the same decision ID so the recorded target remains identifiable later. Opening an old file never moves the Knight. `{"decisionId":4,"selection":null}` records an explicit abstention.
+## One request and one reply
 
-Use the generic schema for type checks and an exact per-request `enum` of whole actions for authorization. This prevents mixing a policy with another candidate’s parameters. A purchase can enter that vocabulary once Vision can bind a live shop offer, check the wallet and spending limits, and verify checkout. The design keeps free-form reasoning and OCR in the input.
-
-## How Gemma uses the notebook
-
-One loaded model can handle OCR proofreading, a quest update and a policy request. Vision constructs the message list separately for each call. Keeping the model resident saves loading time. To reuse a clue after a restart, Vision stores it and includes it in a later request. Editing an earlier token changes the context on which later attention states depend. An inference engine may reuse an identical prefix and recompute the affected suffix. [Ollama chat API](https://docs.ollama.com/api/chat) · [Causal attention and the KV cache](https://huggingface.co/docs/transformers/cache_explanation)
-
-![The notebook feeds numbered evidence to Gemma and commits a replacement quest document](gemma-quest-memory.png)
-
-1. **Keep the source.** Each playthrough has a chronological notebook of accepted OCR readings. Each entry keeps its raw text, room, language and optional correction. R1 is its first row. The permanent objective is to complete the Atlas, including the progression needed to beat the game.
-2. **Update the quest notes on new text.** The selected local model, Gemma by default, reads the permanent goal, a page of new evidence, and the previous notes. It returns a replacement JSON document containing `quests`, `destinations` and `unknowns`. A bare INSPECT or LISTEN prompt and rows classified as credits, HUD, menu or prompt stay in the notebook. A page containing only those rows advances the checkpoint without calling Gemma. Each note cites one to three rows. A new or revised note must cite fresh evidence. Vision drops a destination that simply repeats the source room’s name unless the cited reading also mentions it. The reader verifies those references and atomically saves the notes and processed prefix in `Notebooks/QuestMemory/<playthrough>.json`. A failed batch keeps the last valid checkpoint. A changed earlier transcription causes a replay from the corrected text.
-3. **Ask for one decision.** The selector gets the Atlas objective and chronological evidence first, then the current quest notes, the pinned scene and the fixed Atlas objective. The available option IDs come last and appear in Ollama’s response schema. A remembered passage can justify revisiting a room. Vision uses current screen evidence to bind any interaction.
-
-![The decision request feeds log excerpts, quest notes and current evidence into an eligible policy choice](gemma-policy-request.png)
-
-The notebook can outgrow an inference window. Gemma’s warm-up, notebook update and policy selection all request the same 4,096-token context. The output ceilings are 420 tokens for an update and 640 for a decision. The updater accounts for every accepted reading across bounded pages. The selector includes the whole log if it fits its 1,250-byte excerpt budget. For longer logs it ranks excerpts by overlap with the Atlas objective, then by citation and recency, restores chronological order and reports the number included. Long readings are split at Unicode scalar boundaries. The notes may hold up to six leads, so the archive remains the source for omitted details. [Ollama context length](https://docs.ollama.com/context-length)
+Each decision sends both bundled schemas in the user message, alongside the screenshot, event, notebook excerpts and Vision’s legal selections. The message says which schema applies. Ollama’s `format` narrows the reply to the exact IDs and actions offered on this screenshot. Gemma returns one JSON object. A recognized menu with no selectable elements still reaches Gemma with a single legal reply, `{"menu":"wait"}`. [Gameplay reply schema](../../macos/Sources/HollowKnightVision/Resources/thinking-policy.schema.json) · [Menu reply schema](../../macos/Sources/HollowKnightVision/Resources/thinking-menu.schema.json)
 
 ### Decision contract and policy inputs
 
-The offer contains a version (2), a decision ID, the fixed objective `expandAtlas` and up to 12 candidate IDs. The [offer schema](proposed-offer.schema.json) defines the vocabulary. Swift generates a closed response schema from the IDs it offered. An example reply is `{"scores":{"c0":92,"c1":40}}`. An empty scores object abstains. Every score must be an integer from 1 through 100. Earlier candidates win ties. See the [two-candidate reply schema](proposed-reply.schema.json).
-
-| Role | Evidence used to make an offer | What the controller does |
+| Policy | Example Gemma reply | What Vision does |
 | --- | --- | --- |
-| Explore → Traverse | Reachable unvisited ground in registered Atlas coverage. The pathfinder selects a frontier and the next graph waypoint. | Offer a Traverse candidate with `road_frontier: true`. |
-| Progress → Traverse | The reachable path to the selected Atlas objective, including the graph's default upper-right objective. Quest notes can influence ranking. | Offer a second Traverse candidate with its own waypoint and `road_frontier: false` when available. |
-| Traverse | Room, route, waypoint, normalized direction, remaining distance and frontier flag. | Resolve the handle to its chart, goal and waypoint. Feed the fresh selected hint to both road input groups before evaluating the movement actor or starter. |
-| Fight | Nearest observed enemy with a stable receiver instance ID and a relative position. | Follow that actor and pulse attack within reach. |
-| Recover | Focus reads current main-vessel SOUL, red health, max red health, the game's Focus permission, ground contact and nearby enemies. Lifeblood uses the nearest observed cocoon. | Offer Focus with at least 33 SOUL, missing red health and a clear grounded opening. Hold A for up to 1.55 s and release on a gained mask, lost opening or expired evidence. Lifeblood approaches and strikes the bound cocoon. |
-| Interact / Menu | Exact INSPECT or LISTEN cue, or Continue selected in the pause menu. | Inspect and Talk press Up and watch the notebook. Menu confirms the selected entry. |
-| Buy and other verbs | The schema reserves Buy, Bench, Advance Dialogue, Activate and Collect. | The selector withholds them until it can bind the required state. |
+| Explore | `{"policy":"explore","parameters":{}}` | Runs the Explore motor. Vision binds the current frontier when available and measures new Atlas coverage. |
+| Traverse | `{"policy":"traverse","parameters":{"waypointId":1}}` | Resolves this offer’s waypoint to its room, chart and coordinates. Checks the route again before moving. |
+| Interact | `{"policy":"interact","parameters":{"verb":"inspect","targetId":0}}` | Checks that the same INSPECT prompt is still present, taps Up and verifies a new passage. A LISTEN prompt offers `talk` with its own handle. |
 
-Integer handles are local to the captured offer. An enemy ID in the offer indexes a binding to the real Unity instance. Route identity includes the goal, waypoint and chart. Gemma receives the numeric route values and an opaque handle. A response belongs to its original request. Capture generation, room, workspace, mode, profile, freshness and target eligibility are checked again before control. A newer pending capture supersedes an older request. If a native target disappears during execution, playback releases its controls.
+A detected sign triggers reasoning even before the Knight can read it. Vision sends the full clean game image with the sign’s top-left-origin bounds. If the sign is distant, Gemma can choose among the offered movement actions. A later INSPECT cue triggers a fresh offer with Interact.
 
-The selector and the movement actor have different inputs. The five legacy schema-16 numeric projections have widths **133 / 284 / 134 / 143 / 163** for Explore / Traverse / Fight / Recover / Progress. Traverse's 284 values are **149 current + 3 × 45 earlier**. Focus uses the six live conditions above independently of those historical columns. Missing receiver telemetry prevents a Focus offer and keeps older recordings and motor checkpoints readable. Automatic dispatch runs in modded mode. Both the Gameplay and Hacker workspaces use an exact matched receiver frame for route, actor and SOUL offers. Prompt and menu candidates use their own screen evidence.
-
-![Target generation and v2 candidate selection](policy-selection.png)
-
-![How the selected target controls input and verifies an outcome](policy-controls.png)
-
-### Passive observation and decision cadence
-
-Proposed. Keep the Atlas objective and source-cited quest notes across requests. Sample a screenshot around every 30 seconds and on room changes. Skip image inference when the scene and OCR are unchanged. Validate newly observed NPCs against the active save and room, then merge a description, last-seen timestamp and evidence reference into that room’s journal. Check live state every five seconds. Request a new proposal on a material change and keep one request in flight. The persistent Atlas objective supplies the default when no player goal is set.
-
-A local Gemma 3 4B check with a 4,096-token context used the recorded tablet evidence and two 640 × 360 frames. Cached text decisions took 3.55–3.73 s. Changing the visible cue took 10.54 s, with zero cached prompt tokens in that sample. Repeated-image decisions took 3.90–4.08 s. The two image evaluations without prompt-cache hits took 22.45–23.79 s. A separate short screenshot-only NPC probe took 12.99 s. Even five cached text decisions plus one new-image decision consumed an estimated 40–43 s of serial processing in a 30-second window. The five-second check can stay periodic while model requests follow changes. These timings cover model requests on a warm local runtime and use a small recorded sample.
-
-### In-game verification
-
-The [handoff trace](handoff-v2.json) records the exact offers, scores, applied button masks, horizontal position, red health and main-vessel SOUL from a save-disabled King’s Pass episode. The test exercises both target selectors and Recover through the production resolver and playback controller. The isolated episode starts one mask down with 66 SOUL and uses a measured local objective on an authored floor. The deterministic cases choose each offered target deliberately so a change in model preference cannot skip a controller.
-
-| King’s Pass check | Observed result |
+| Menu script reply | What Vision does |
 | --- | --- |
-| Explore → Traverse | Right input moved the Knight from x 34.50 to 36.15. |
-| Progress → Traverse | Left input moved the Knight from x 36.16 to 35.34 toward a different waypoint on the same floor. |
-| Recover → Focus | Four red masks became five. Main-vessel SOUL fell from 66 to 33. |
-| Local Gemma → Traverse | With both routes offered, Gemma 3 4B scored c0 at 85 and c1 at 30. The controller moved right from x 35.33 to 36.15. |
+| `{"menu":"select","elementId":"pause.continue"}` | Moves one step at a time toward the observed element, checks the highlight after each step, then confirms when the requested ID is highlighted. |
+| `{"menu":"more"}` | Pulses forward once. A verified change in highlight or visible elements triggers a new screenshot and a new offer. An unchanged screen ends the script. Returning to an already browsed page suppresses another forward request there. |
+| `{"menu":"wait"}` | Sends no input. When Vision identifies a selectable element or recognizes another state, it sends the new evidence. |
 
-The [v2 tablet replay](gemma-v2-tablet.json) records Gemma scoring the recorded Inspect offer at 95. In a separate save-disabled game, a fresh screenshot produced an Inspect score of 85. Vision pressed Up and the notebook reopened with the new passage. The [archived tablet replay](gemma-tablet-replay.json) preserves the earlier wire format and its actual OCR. Its stored passage, cited as R2 in the quest notes, describes Focus healing. The private tablet test checks that the passage can be retrieved after reopening the notebook.
+Gemma can select **Quit to Menu** on Pause. When Vision detects the confirmation screen it sends that screenshot, its own Yes and No element IDs, the preceding state, and the element Vision recently confirmed, if any. Gemma chooses again. The same sequence applies to Title, Options, their submenus and other recognized screens. Each visit has its own identity. A slow reply from an earlier visit cannot press a button on a later one.
 
-## Latest matched-start result
+The Hollow Knight detector obtains element IDs, labels and positions from menu stencils. Gemma can choose a visible target before the cursor is identified. The script waits for verified focus before moving and confirms only on the target. Screens such as a shop without mapped controls still reach Gemma, with `wait` as their available command. Another game can reuse the same state history, menu JSON and navigation script. Its integration must supply its objective, a detector that identifies its screens and elements, and bindings for the four directions and confirm. [Menu data and script](../../macos/Sources/HollowKnightVision/ThinkingMenuScript.swift) · [Hollow Knight input mapping](../../macos/Sources/HollowKnightVision/BotDemoNavigation.swift)
+
+In Gameplay or Hacker, click the orange notebook or press **T**. **Context** shows the full save log, evidence from the latest prepared request, Vision’s decision brief, and the schema explorer. The brief refreshes from observations every five seconds and on decision events. Each request includes its own copy. **Screenshot** shows the last event frame. **JSON** shows the actual reply and its dispatch outcome. Settings → Debug View → Thinking context controls panel visibility. The notebook works with Thinking off. **Show decision JSON in Finder** reveals the validated reply inside the session’s Thinking directory. Modded Gameplay and Hacker dispatch current replies after rechecking the save, model and live target. Normal mode supports inspection. A newer event supersedes an older reply before dispatch. [Request and resolver](../../macos/Sources/HollowKnightVision/ThinkingPolicyContract.swift) · [Menu script](../../macos/Sources/HollowKnightVision/ThinkingMenuScript.swift) · [Motor inputs](../../macos/BOT_SKILLS.md)
+
+## Verification
+
+The notebook tests exercise typos, repeat captures, distinct prices and directions, languages, and save isolation. The recorded-image test runs Apple Vision on the King’s Pass prompt and open tablet, repeats the page, and reopens its notebook without a language model. The selection tests check exact file contents, alternate routes, stale handles, event suppression and a real local Gemma tablet reply. [Recorded-image and event tests](../../macos/Tests/HollowKnightVisionTests/ThinkingEventTests.swift) · [Contract tests](../../macos/Tests/HollowKnightVisionTests/ThinkingClientTests.swift) · [Local model and playback tests](../../macos/Tests/HollowKnightVisionTests/BotSkillTests.swift)
+
+On November 25, local Gemma returned Interact/Inspect for the recorded King’s Pass sign. The playback test resolved the offered prompt and emitted Up on a test input bridge. On two requests with the same recorded Pause image and Continue highlighted, Gemma selected Continue once and Quit to Menu once. Both elements were offered in that test. The menu test validated the replies without pressing a button in the running game. A scripted-response test exercised the separate more path and checked the actual pixels and updated offer in the second request.
+
+A five-screen replay sent recorded English menu images through state recognition, the Thinking inspector and local Gemma 3 4B. Gemma chose Start Game on Title with Extras highlighted, Game on Options, Master Volume on Audio, slot 4 on Select Profile and No on Quit to Menu. The replay intercepted dispatch before game input. A separate input-bridge test chose Quit, confirmed Yes, reached Title and navigated through Settings to Audio. A return to a previously visited screen invalidated its earlier pending reply. [Replay and transition tests](../../macos/Tests/HollowKnightVisionTests/ThinkingMenuStateTests.swift)
+
+An earlier v3 [save-disabled King’s Pass run](handoff-v3.json) records the offered routes, actual replies, button inputs and measured outcomes. The fixed controller cases exercise both directions and Focus. In a separate text-only choice within the same run, local Gemma picked `waypointId: 1` from two routes. The offer bound that handle to the leftward route. The Knight moved from x = 35.33 to x = 33.72.
+
+The [v3 schema](policy-selection-v3.schema.json), [v2 handoff](handoff-v2.json), [v2 tablet trace](gemma-v2-tablet.json), and [earlier diagrams and experimental schemas](archive-v2/) are historical records of the retired scoring and quest-summary experiments.
+
+## November 23 motor comparison
 
 On November 23 the Hacker Gymnasium comparison gave each candidate 512 training decisions from the round-69 learner, then evaluated all three actors on the same three King’s Pass seeds. Mean path progress was 92.40 for the champion, 85.58 for the 820-input candidate and 82.69 for the 337-input candidate. All nine episodes stalled in the starting room. The champion retained its place. This experiment measured the shared motor. It leaves the performance of the six specialists open.
-
-The [playing policy guide](../../macos/BOT_SKILLS.md) covers controls, starter inputs and the comparison procedure. The [PowerPoint deck](playing-policies.pptx) covers the offer, selectors, controller inputs and in-game results. Regenerate the figures with `python draw_diagrams.py` and `python draw_quest_context.py` in an environment with Matplotlib.

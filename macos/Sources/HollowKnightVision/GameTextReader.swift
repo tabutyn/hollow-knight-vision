@@ -2,7 +2,7 @@ import SwiftUI
 
 struct RememberedGameText: Codable, Identifiable {
     static let openingContext = "Opening cutscene"
-    let id: String
+    var id: String
     let text: String
     let context: String
     let language: String
@@ -10,7 +10,11 @@ struct RememberedGameText: Codable, Identifiable {
     var isPassage: Bool? = nil
 
     var interpretation: GameTextInterpretation?
-    var reading: String { interpretation?.text ?? text }
+    var bestText: String?
+    var confidence: Float?
+    var matchingVersion: Int?
+    var otherContexts: [String]?
+    var displayText: String { bestText ?? text }
 
     static func key(_ text: String) -> String {
         text.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
@@ -21,6 +25,43 @@ struct RememberedGameText: Codable, Identifiable {
     }
 }
 
+/// Conservative matching for repeated OCR. Numbers and short control words must agree.
+enum NotebookTextMatch {
+    static func key(_ text: String) -> String {
+        RememberedGameText.logKey(text.precomposedStringWithCanonicalMapping)
+    }
+
+    static func same(_ lhs: String, _ rhs: String) -> Bool {
+        let a = key(lhs), b = key(rhs)
+        if a == b { return !a.isEmpty }
+        let left = a.split(separator: " "), right = b.split(separator: " ")
+        guard left.count == right.count, !left.isEmpty else { return false }
+        var differences = 0
+        let protected = NotebookLineMatch.protected
+        for (x, y) in zip(left, right) where x != y {
+            guard !x.contains(where: { $0.isNumber }), !y.contains(where: { $0.isNumber }),
+                  !protected.contains(x), !protected.contains(y),
+                  min(x.count, y.count) >= (left.count == 1 ? 7 : 4) else { return false }
+            // Accept a single OCR insertion, deletion, substitution or adjacent transposition.
+            let first = Array(x), second = Array(y)
+            let prefix = zip(first, second).prefix { $0 == $1 }.count
+            let u = first.dropFirst(prefix), v = second.dropFirst(prefix)
+            let close: Bool
+            switch first.count - second.count {
+            case 1: close = u.dropFirst().elementsEqual(v)
+            case -1: close = v.dropFirst().elementsEqual(u)
+            case 0: close = u.dropFirst().elementsEqual(v.dropFirst()) ||
+                (u.count >= 2 && u.prefix(2).elementsEqual(v.prefix(2).reversed()) && u.dropFirst(2).elementsEqual(v.dropFirst(2)))
+            default: close = false
+            }
+            guard close else { return false }
+            differences += 1
+            if differences > max(1, (left.count + 2) / 3) { return false }
+        }
+        return true
+    }
+}
+
 struct GameTextLogEntry: Identifiable {
     let id: String
     var reading: RememberedGameText
@@ -28,27 +69,9 @@ struct GameTextLogEntry: Identifiable {
     var updated: Date
 
     static func current(_ rows: [RememberedGameText]) -> [Self] {
-        var entries = [String: Self]()
-        var aliases = [String: String]()
-        var keys = [String: String]()
-        for row in rows {
-            let key = row.language + "|" + RememberedGameText.logKey(row.reading)
-            let id = row.interpretation?.sameAs.flatMap { aliases[$0] } ?? keys[key] ?? row.id
-            aliases[row.id] = id
-            keys[key] = id
-            if var entry = entries[id] {
-                if !entry.contexts.contains(row.context) { entry.contexts.append(row.context) }
-                if let edit = row.interpretation,
-                   (entry.reading.interpretation == nil || entry.reading.reading.count <= row.reading.count || edit.sameAs != nil) {
-                    entry.reading = row
-                }
-                entry.updated = max(entry.updated, row.date)
-                entries[id] = entry
-            } else {
-                entries[id] = Self(id: id, reading: row, contexts: [row.context], updated: row.date)
-            }
-        }
-        return entries.values.sorted { $0.updated == $1.updated ? $0.id < $1.id : $0.updated > $1.updated }
+        rows.map { row in
+            Self(id: row.id, reading: row, contexts: [row.context] + (row.otherContexts ?? []), updated: row.date)
+        }.sorted { $0.updated == $1.updated ? $0.id < $1.id : $0.updated > $1.updated }
     }
 }
 
@@ -57,7 +80,134 @@ actor GameTextNotebook {
         .appendingPathComponent("HollowKnightVision/Notebooks", isDirectory: true)
     let url: URL?
     private var contents: [RememberedGameText]?
-    private var ids = Set<String>()
+    private var exact = [String: Int]()
+    private var buckets = [String: [Int]]()
+
+    private struct Sighting {
+        let context: String
+        let date: Date
+        let bounds: CGRect?
+    }
+    private var recent = [String: Sighting]()
+    private var positions = [String: Int]()
+
+    private func index(_ row: RememberedGameText, at index: Int) {
+        let key = NotebookTextMatch.key(row.displayText)
+        exact[row.language + "|" + key] = index
+        buckets[row.language + "|" + String(key.split(separator: " ").count), default: []].append(index)
+        positions[row.id] = index
+    }
+
+    private func rebuild(_ rows: [RememberedGameText]) {
+        exact.removeAll(keepingCapacity: true)
+        buckets.removeAll(keepingCapacity: true)
+        positions.removeAll(keepingCapacity: true)
+        for (i, row) in rows.enumerated() { index(row, at: i) }
+    }
+
+    /// A fuller observation can explain several fragments left by earlier scans.
+    /// A later short observation can refer back to one full line, but cannot join two full lines.
+    private func merge(_ input: RememberedGameText, into rows: inout [RememberedGameText],
+                       bounds: CGRect? = nil, trace: GameTextScanTrace.Decisions? = nil) -> Bool {
+        let key = NotebookTextMatch.key(input.displayText)
+        let tokens = key.split(separator: " ")
+        let bucket = input.language + "|" + String(tokens.count)
+        let exactIndex = exact[input.language + "|" + key]
+        let strict = exactIndex ?? buckets[bucket]?.first { i in
+            let row = rows[i]
+            if let seen = recent[row.id], seen.date == input.date { return false }
+            return NotebookTextMatch.same(row.displayText, input.displayText)
+        }
+        var fragments = [Int](), variants = [Int](), complete = [Int]()
+        recent = recent.filter { input.date.timeIntervalSince($0.value.date) <= 30 }
+        for (id, seen) in recent {
+            let elapsed = input.date.timeIntervalSince(seen.date)
+            guard elapsed > 0, let i = positions[id], rows[i].language == input.language,
+                  NotebookLineMatch.scopeAllows(seen.bounds, bounds) else { continue }
+            let old = NotebookTextMatch.key(rows[i].displayText).split(separator: " ")
+            let located = seen.bounds.map { !$0.isEmpty } == true && bounds.map { !$0.isEmpty } == true
+            if located, elapsed <= 2, old.count != tokens.count, tokens.joined().count >= 6,
+               old.joined() == tokens.joined(), NotebookSpelling.usesEnglish(input.language),
+               !NotebookSpelling.known(tokens.joined()),
+               (old + tokens).allSatisfy({ $0.allSatisfy(\.isLetter) }) {
+                variants.append(i)
+                continue
+            }
+            guard seen.context == input.context else { continue }
+            if old.count == tokens.count && strict != nil { continue }
+            switch NotebookLineMatch.relation(old, tokens, allowFragments: elapsed <= 3, samePosition: located && elapsed <= 3) {
+            case .longer: fragments.append(i)
+            case .shorter: complete.append(i)
+            case .variant: variants.append(i)
+            case nil: break
+            }
+        }
+        let whole = strict ?? variants.min()
+        let matching = whole ?? fragments.min() ?? (complete.count == 1 ? complete.first : nil)
+        let sight = Sighting(context: input.context, date: input.date, bounds: bounds)
+        guard let i = matching else {
+            var row = input
+            row.matchingVersion = 2
+            // A short first reading may have become the stable ID of a longer, distinct line.
+            if positions[row.id] != nil { row.id = UUID().uuidString }
+            index(row, at: rows.count)
+            rows.append(row)
+            recent[row.id] = sight
+            trace?.matched(input: input.text, entryID: row.id, inserted: true, changed: true)
+            return true
+        }
+        var row = rows[i]
+        let previous = row.displayText
+        var changed = false
+        if whole != nil {
+            let (preferred, confidence) = NotebookSpelling.preferred(previous, confidence: row.confidence ?? 0,
+                over: input.displayText, confidence: input.confidence ?? 0, language: input.language)
+            if preferred != previous || confidence > (row.confidence ?? 0) {
+                row.bestText = preferred
+                row.confidence = confidence
+                changed = true
+            }
+        } else if fragments.contains(i) {
+            row.bestText = input.displayText
+            row.confidence = input.confidence
+            changed = true
+        }
+        let retired = fragments.filter { $0 != i }.sorted(by: >)
+        for source in [input] + retired.map({ rows[$0] }) {
+            for context in [source.context] + (source.otherContexts ?? []) where row.context != context && !(row.otherContexts ?? []).contains(context) {
+                row.otherContexts = (row.otherContexts ?? []) + [context]
+                changed = true
+            }
+            if source.isPassage == true && row.isPassage != true { row.isPassage = true; changed = true }
+        }
+        rows[i] = row
+        let retiredIDs = retired.map { rows[$0].id }
+        for j in retired {
+            recent[rows[j].id] = nil
+            rows.remove(at: j)
+        }
+        if !retired.isEmpty || NotebookTextMatch.key(previous) != NotebookTextMatch.key(row.displayText) {
+            rebuild(rows)
+        }
+        recent[row.id] = sight
+        changed = changed || !retired.isEmpty
+        trace?.matched(input: input.text, entryID: row.id, inserted: false, changed: changed, absorbed: retiredIDs)
+        return changed
+    }
+
+    private func saveMerged(_ observations: [RememberedGameText], bounds: [CGRect] = [],
+                            trace: GameTextScanTrace.Decisions? = nil) throws -> [RememberedGameText] {
+        var rows = try entries()
+        var changed = false
+        for (i, row) in observations.enumerated() {
+            if merge(row, into: &rows, bounds: bounds.isEmpty ? nil : bounds[i], trace: trace) { changed = true }
+        }
+        if changed {
+            do { try write(rows) }
+            catch { contents = nil; rebuild([]); recent = [:]; throw error }
+        }
+        return rows
+    }
 
     private var revision = 0
     init(url: URL? = nil) { self.url = url }
@@ -88,12 +238,7 @@ actor GameTextNotebook {
     }
 
     func importObservations(_ observations: [RememberedGameText]) throws {
-        let current = try entries()
-        let existing = ids
-        let added = observations.filter { !existing.contains($0.id) }
-        guard !added.isEmpty else { return }
-        try write(current + added)
-        ids.formUnion(added.map(\.id))
+        _ = try saveMerged(observations)
     }
 
     func entries() throws -> [RememberedGameText] {
@@ -102,28 +247,33 @@ actor GameTextNotebook {
         if let url, FileManager.default.fileExists(atPath: url.path) {
             rows = try JSONDecoder().decode([RememberedGameText].self, from: Data(contentsOf: url))
         } else { rows = [] }
-        contents = rows
-        ids = Set(rows.map(\.id))
-        return rows
+        if rows.allSatisfy({ $0.matchingVersion == 2 }) {
+            rebuild(rows)
+            contents = rows
+            return rows
+        }
+        rebuild([])
+        recent = [:]
+        var unique = [RememberedGameText]()
+        for row in rows { _ = merge(row, into: &unique) }
+        do { try write(unique) }
+        catch { rebuild([]); recent = [:]; throw error }
+        recent = [:]
+        return unique
     }
 
-    func remember(_ lines: [GameTextLine], context: String, language: String, confirmed: Set<String>, passage: Bool = false) throws -> [RememberedGameText] {
-        let current = try entries()
+    func remember(_ lines: [GameTextLine], context: String, language: String, confirmed: Set<String>, passage: Bool = false, date: Date = Date(), trace: GameTextScanTrace.Decisions? = nil) throws -> [RememberedGameText] {
         var added = [RememberedGameText]()
-        var newIDs = Set<String>()
+        var bounds = [CGRect]()
         for line in lines {
             let key = RememberedGameText.key(line.text)
             guard key.count >= 2, key.contains(where: { $0.isLetter }),
                   line.confidence >= 0.8 || (line.confidence >= 0.45 && confirmed.contains(key)) else { continue }
             let id = ([language, context, key] + (passage ? ["passage"] : [])).joined(separator: "\u{1f}")
-            guard !ids.contains(id), newIDs.insert(id).inserted else { continue }
-            added.append(.init(id: id, text: line.text, context: context, language: language, date: Date(), isPassage: passage ? true : nil))
+            added.append(.init(id: id, text: line.text, context: context, language: language, date: date, isPassage: passage ? true : nil, confidence: line.confidence))
+            bounds.append(line.bounds)
         }
-        guard !added.isEmpty else { return current }
-        let updated = current + added
-        try write(updated)
-        ids.formUnion(newIDs)
-        return updated
+        return try saveMerged(added, bounds: bounds, trace: trace)
     }
 
     static func recall(_ rows: [RememberedGameText], question: String, context: String,
@@ -131,17 +281,16 @@ actor GameTextNotebook {
         let words = Set(question.lowercased().components(separatedBy: CharacterSet.letters.inverted).filter { $0.count > 2 })
         let onScreen = Set(current.map(RememberedGameText.key))
         let matches = GameTextLogEntry.current(rows).map(\.reading).filter {
-            $0.language == language && !onScreen.contains(RememberedGameText.key($0.text))
+            $0.language == language && !onScreen.contains(RememberedGameText.key($0.displayText))
         }
         let scored: [(score: Int, rank: Int, entry: RememberedGameText)] = matches.enumerated().map { index, item in
-            let tokens = Set(item.reading.lowercased().components(separatedBy: CharacterSet.letters.inverted))
+            let tokens = Set(item.displayText.lowercased().components(separatedBy: CharacterSet.letters.inverted))
             return (words.intersection(tokens).count * 3 + (context == item.context ? 1 : 0) + (item.isPassage == true ? 2 : 0), index, item)
         }
         let ordered = scored.sorted { $0.score == $1.score ? $0.rank < $1.rank : $0.score > $1.score }
         return ordered.prefix(4).map {
             let entry = $0.entry
-            let label = entry.interpretation.map { " · " + $0.displayLabel } ?? ""
-            return "[" + entry.context + label + "] " + entry.reading
+            return "[" + entry.context + "] " + entry.displayText
         }
     }
 }
@@ -164,58 +313,38 @@ final class GameTextReader: ObservableObject {
     @Published private(set) var skillReading: SkillReading?
     private var inspection: (context: String, started: Double, old: Set<String>, candidate: String?)?
     func beginInspection(_ sight: SkillSight, at start: Double) {
+        settledPassage = nil
         inspection = (sight.context, start, Set(sight.lines.map(RememberedGameText.key)), nil)
     }
     @Published private(set) var profile: SaveProfileAtlas?
-    @Published private(set) var statedGoal = ""
-    var currentGoal: String { statedGoal.isEmpty ? BotSkillPlan.defaultObjective : statedGoal }
-    private let preferences: UserDefaults
-    private var goalKey: String? { profile.map { "HollowKnightVision.goal." + $0.id.uuidString } }
-
-    func setGoal(_ goal: String) {
-        statedGoal = String(goal.trimmingCharacters(in: .whitespacesAndNewlines).prefix(400))
-        if let goalKey { preferences.set(statedGoal, forKey: goalKey) }
-    }
-
     @Published private(set) var loggedText = [String]()
 
-    @Published private(set) var cleanupStatus: String?
     private let directory: URL
+    private let trace = GameTextScanTrace()
     private var notebook: GameTextNotebook
-    private var questContext: AtlasQuestContext
-    private var questLog: AtlasQuestLog?
-    private var summarizedRevision = -1
     private var openingSource: GameTextNotebook?
     private var revision = -1
-    private var passageLines = Set<String>()
+    private var settledPassage: (context: String, language: String, lines: [String])?
 
-    init(directory: URL = GameTextNotebook.directory, notebook: GameTextNotebook? = nil, preferences: UserDefaults = .standard) {
-        self.preferences = preferences
+    init(directory: URL = GameTextNotebook.directory, notebook: GameTextNotebook? = nil) {
         self.directory = directory
         self.notebook = notebook ?? GameTextNotebook()
-        self.questContext = AtlasQuestContext(notebookURL: notebook?.url)
     }
 
     func selectProfile(_ next: SaveProfileAtlas?) {
         guard next != profile else { return }
         openingSource = profile == nil && next != nil ? notebook : nil
         profile = next
-        statedGoal = goalKey.flatMap { preferences.string(forKey: $0) } ?? ""
         loggedText = []
         notebook = next.map { GameTextNotebook(url: directory.appendingPathComponent($0.id.uuidString + ".json")) } ?? GameTextNotebook()
-        questContext.invalidate()
-        questContext = AtlasQuestContext(notebookURL: notebook.url)
-        questLog = nil
-        summarizedRevision = -1
         revision = -1
         memory = []
         entries = []
         inspection = nil
-        passageLines = []
+        settledPassage = nil
         skillReading = nil
         scan = nil
         issue = nil
-        cleanupStatus = nil
     }
 
     private func refresh(_ source: GameTextNotebook) async throws {
@@ -229,20 +358,17 @@ final class GameTextReader: ObservableObject {
         guard !Task.isCancelled, notebook === source, snapshot.revision > revision else { return }
         revision = snapshot.revision
         memory = snapshot.rows
-        questLog = nil
         entries = GameTextLogEntry.current(memory)
-        let recent = entries.lazy.compactMap { entry in
-            entry.reading.interpretation.map { $0.displayLabel + " · " + $0.text }
-        }.prefix(4)
-        let lines = Array(recent)
+        let lines = entries.prefix(4).map { $0.reading.displayText }
         if lines != loggedText { loggedText = lines }
     }
 
     func store(_ next: GameTextScan, previous: [GameTextLine]) async throws {
         let source = notebook
-        let confirmed = Set(previous.map { RememberedGameText.key($0.text) })
+        let date = Date(timeIntervalSinceNow: next.capturedAt - ProcessInfo.processInfo.systemUptime)
+        let decisions = trace.map { _ in GameTextScanTrace.Decisions() }
+        let confirmed = Set(next.lines.filter { line in previous.contains { NotebookTextMatch.same($0.text, line.text) } }.map { RememberedGameText.key($0.text) })
         let visible = next.lines.filter { $0.confidence >= 0.45 }.map(\.text)
-        passageLines.formIntersection(visible.map(RememberedGameText.key))
         var passage: String?
         if let pending = inspection, next.context != pending.context || next.capturedAt - pending.started > 12 {
             inspection = nil
@@ -254,13 +380,13 @@ final class GameTextReader: ObservableObject {
                     return line.confidence >= 0.45 && !pending.old.contains(key) && key.filter(\.isLetter).count >= 4
                 }
                 let page = newLines.map(\.text).joined(separator: " ")
-                if !page.isEmpty && page == pending.candidate {
+                if !page.isEmpty && pending.candidate.map({ NotebookTextMatch.same(page, $0) }) == true {
                     passage = page
-                    passageLines.formUnion(newLines.map { RememberedGameText.key($0.text) })
+                    settledPassage = (next.context, next.language, newLines.map(\.text))
                     inspection = nil
-                    let entry = GameTextLine(id: 0, text: page, bounds: .zero, confidence: 1)
+                    let entry = GameTextLine(id: 0, text: page, bounds: .zero, confidence: newLines.map(\.confidence).min() ?? 0)
                     _ = try await source.remember([entry], context: next.context, language: next.language,
-                                                   confirmed: [], passage: true)
+                                                   confirmed: [RememberedGameText.key(page)], passage: true, date: date, trace: decisions)
                 } else {
                     pending.candidate = page
                     inspection = pending
@@ -269,11 +395,25 @@ final class GameTextReader: ObservableObject {
         } else {
             // A cutscene or scrolling credit can disappear before the next frame.
             let transient = ["Game capture", "Credits", RememberedGameText.openingContext].contains(next.context)
+            var pageIDs = Set<Int>()
+            if let settledPassage, settledPassage.context == next.context, settledPassage.language == next.language {
+                let lines = next.lines.filter { line in
+                    line.confidence >= 0.45 && settledPassage.lines.contains { NotebookTextMatch.same($0, line.text) }
+                }
+                pageIDs = Set(lines.map(\.id))
+                let page = lines.map(\.text).joined(separator: " ")
+                if lines.isEmpty { self.settledPassage = nil }
+                else if NotebookTextMatch.same(page, settledPassage.lines.joined(separator: " ")) {
+                    let entry = GameTextLine(id: 0, text: page, bounds: .zero, confidence: lines.map(\.confidence).min() ?? 0)
+                    _ = try await source.remember([entry], context: next.context, language: next.language,
+                                                  confirmed: [RememberedGameText.key(page)], passage: true, date: date, trace: decisions)
+                }
+            } else { settledPassage = nil }
             let stable = next.lines.filter {
                 let key = RememberedGameText.key($0.text)
-                return (confirmed.contains(key) || (transient && $0.confidence >= 0.8)) && !passageLines.contains(key)
+                return (confirmed.contains(key) || (transient && $0.confidence >= 0.8)) && !pageIDs.contains($0.id)
             }
-            _ = try await source.remember(stable, context: next.context, language: next.language, confirmed: confirmed)
+            _ = try await source.remember(stable, context: next.context, language: next.language, confirmed: confirmed, date: date, trace: decisions)
         }
         guard !Task.isCancelled, notebook === source else { return }
         // A cue that leaves and re-enters view can refer to another tablet or NPC in the same room.
@@ -287,95 +427,27 @@ final class GameTextReader: ObservableObject {
         }
         skillReading = reading
         try await refresh(source)
-    }
-
-    private func updatePolicyMemory(model: ThinkingModel) async throws {
-        let source = notebook
-        try await refresh(source)
-        try Task.checkCancellation()
-        guard source === notebook else { throw CancellationError() }
-        let context = questContext, currentRevision = revision
-        let log = questLog ?? AtlasQuestLog(memory)
-        questLog = log
-        _ = try await context.prepare(log) { notes, page in
-            try await AtlasQuestContext.revise(notes, page: page, model: model)
+        if let trace, let decisions, notebook === source, !Task.isCancelled {
+            do { try trace.write(scan: next, profile: profile, rows: memory, decisions: decisions) }
+            catch { NSLog("Notebook trace failed: %@", error.localizedDescription) }
         }
-        try Task.checkCancellation()
-        guard source === notebook else { throw CancellationError() }
-        summarizedRevision = currentRevision
     }
 
-    func policyContext(goal: String) async throws -> String {
+    func policyContext() async throws -> String {
         let source = notebook
         try await refresh(source)
         try Task.checkCancellation()
         guard source === notebook else { throw CancellationError() }
-        let log = questLog ?? AtlasQuestLog(memory)
-        questLog = log
-        return questContext.selectionEvidence(log, goal: goal)
-    }
-
-    func cleanReadings(preferred: ThinkingModel, updateQuestNotes: Bool = false,
-                       find: (ThinkingModel) async throws -> GameTextCleanup.Resident? = GameTextCleanup.resident,
-                       correct: (([RememberedGameText], GameTextCleanup.Resident) async throws -> [String: GameTextInterpretation])? = nil) async {
-        let source = notebook
-        var deferredIDs = Set<String>()
-        var batchSize = 4
-        while !Task.isCancelled, notebook === source {
-            var delay = 3
-            do {
-                try await refresh(source)
-                guard !Task.isCancelled, notebook === source else { return }
-                let pending = memory.filter { $0.interpretation == nil }
-                if pending.isEmpty {
-                    if cleanupStatus != nil { cleanupStatus = nil }
-                } else if let resident = try await find(preferred) {
-                    guard !Task.isCancelled, notebook === source else { return }
-                    var batch = [RememberedGameText]()
-                    var characters = 0
-                    for row in pending where !deferredIDs.contains(row.id) {
-                        if batch.count == batchSize || (!batch.isEmpty && characters + row.text.count > 1000) { break }
-                        batch.append(row)
-                        characters += row.text.count
-                    }
-                    if batch.isEmpty {
-                        deferredIDs = []
-                        delay = 30
-                    } else {
-                        cleanupStatus = "Proofreading with " + resident.model.title + "…"
-                        deferredIDs.formUnion(batch.map(\.id))
-                        let edits: [String: GameTextInterpretation]
-                        if let correct { edits = try await correct(batch, resident) }
-                        else {
-                            edits = try await GameTextCleanup.correct(batch, with: resident, existing: entries.map(\.reading))
-                        }
-                        guard !Task.isCancelled, notebook === source else { return }
-                        try await source.interpret(edits)
-                        try await refresh(source)
-                        delay = 1
-                    }
-                } else {
-                    guard !Task.isCancelled, notebook === source else { return }
-                    cleanupStatus = "OCR captured. Waiting for the selected model to review it."
-                    delay = 12
-                }
-                if updateQuestNotes && summarizedRevision != revision && notebook === source && !Task.isCancelled {
-                    do { try await updatePolicyMemory(model: preferred) }
-                    catch {
-                        guard !Task.isCancelled, notebook === source else { return }
-                        cleanupStatus = "Quest notes pending. " + error.localizedDescription
-                        delay = 20
-                    }
-                }
-            } catch {
-                guard !Task.isCancelled, notebook === source else { return }
-                // A failed multi-row reply can still be recovered one reading at a time.
-                batchSize = 1
-                cleanupStatus = "Proofreading paused. " + error.localizedDescription
-                delay = 20
+        var budget = 1250
+        var excerpts = [String]()
+        for (index, row) in memory.enumerated().reversed() {
+            let line = "[R\(index + 1) · \(row.context)] " + String(row.displayText.prefix(300))
+            if line.utf8.count + 1 <= budget {
+                excerpts.append(line)
+                budget -= line.utf8.count + 1
             }
-            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
         }
+        return "Unique OCR readings from this playthrough\n" + excerpts.reversed().joined(separator: "\n")
     }
 
     static func recognize(_ image: CGImage, language: String, context: String) async throws -> GameTextScan {

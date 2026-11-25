@@ -65,7 +65,7 @@ struct BotSkillInputLayout {
         case .interact:
             return .neutral // Interaction consumes screen cues through SkillSight.
         case .explore, .traverse, .progress:
-            if skill == .traverse, let waypoint {
+            if let waypoint, skill == .traverse || skill == .explore {
                 return move(Float(waypoint.dx), jump: waypoint.dy > 0.20 || abs(blocked) > 0.5)
             }
             if skill == .progress && value("geo_cache_present") > 0.5 {

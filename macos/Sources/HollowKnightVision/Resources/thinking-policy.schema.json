@@ -1,0 +1,82 @@
+{
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "policy": {
+          "const": "explore"
+        },
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "policy",
+        "parameters"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "policy": {
+          "const": "traverse"
+        },
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "waypointId": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "waypointId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "policy",
+        "parameters"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "policy": {
+          "const": "interact"
+        },
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "verb": {
+              "enum": [
+                "inspect",
+                "talk"
+              ]
+            },
+            "targetId": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "verb",
+            "targetId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "policy",
+        "parameters"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

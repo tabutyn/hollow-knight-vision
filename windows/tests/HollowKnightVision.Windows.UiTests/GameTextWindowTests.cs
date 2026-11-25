@@ -104,37 +104,35 @@ internal static class GameTextWindowTests
     internal static void TestThinkingInspectorShowsItsCapturedOffer()
     {
         var choices = new List<ThinkingOptions>();
-        var logs = 0;
-        var window = new ThinkingWindow(choices.Add, () => logs++)
-        {
-            ShowActivated = false, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual,
-            Left = -10000, Top = -10000
-        };
+        var panel = new ThinkingContextPanel();
+        panel.OptionsEdited += choices.Add;
+        var window = new Window { Content = panel, ShowActivated = false, ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000, Top = -10000 };
         var image = MainWindow.FrameBitmap(RenderText("INSPECT"));
-        var captured = new[] { new ThinkingCandidateRow("c0", "interact", "Inspect", 96) };
-        window.Present(new(true, LocalThinkingModel.Gemma, false), "Model ready", image, image,
-            "System message and captured evidence", captured, "{\"scores\":{\"c0\":96}}", "Dispatched");
+        panel.Present(new(true, LocalThinkingModel.Gemma, false), true, "Model ready", "captured evidence", "Reach the frontier",
+            image, "Captured frame 1", image, "{\"scores\":{\"c0\":96}}", "Dispatched");
+        panel.Record(new(ThinkingRequestKind.Policy, "system", "user", "{\"type\":\"object\"}"));
         window.Show();
         try
         {
-            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
-            var grid = (DataGrid)window.FindName("Candidates");
-            Require(ReferenceEquals(grid.ItemsSource, captured)
-                && ReferenceEquals(((Image)window.FindName("Screenshot")).Source, image)
-                && ((TextBox)window.FindName("InputText")).Text.Contains("captured evidence")
-                && ((TextBox)window.FindName("ReplyText")).Text.Contains("96")
-                && ((TextBlock)window.FindName("HandoffText")).Text == "Dispatched", "Thinking shows the offered action and its screenshot");
-            Require(choices.Count == 0, "opening Thinking must not start model work");
-            ((ComboBox)window.FindName("ModelCombo")).SelectedItem = LocalThinkingModel.Llama;
-            ((CheckBox)window.FindName("CompatibilityCheck")).IsChecked = true;
-            ((CheckBox)window.FindName("AutomaticCheck")).IsChecked = false;
+            Require(!panel.IsExpanded, "Thinking starts compact");
+            ((Button)panel.FindName("Compact")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(panel.IsExpanded && ((TabControl)panel.FindName("Tabs")).Items.Count == 3, "click to expand three tabs");
+            Require(ReferenceEquals(((Image)panel.FindName("Screenshot")).Source, image)
+                && ((TextBox)panel.FindName("LiveEvidence")).Text == "captured evidence"
+                && ((TextBox)panel.FindName("MessageDetails")).Text.Contains("{\"type\":\"object\"}")
+                && ((TextBox)panel.FindName("Reasoning")).Text == "Reach the frontier"
+                && ((TextBox)panel.FindName("ReplyText")).Text.Contains("96")
+                && ((TextBlock)panel.FindName("HandoffText")).Text == "Dispatched", "context uses the captured message, schema and reply");
+            Require(choices.Count == 0, "opening the context must not start model work");
+            ((ComboBox)panel.FindName("ModelCombo")).SelectedItem = LocalThinkingModel.Llama;
+            ((CheckBox)panel.FindName("CompatibilityCheck")).IsChecked = true;
+            ((CheckBox)panel.FindName("AutomaticCheck")).IsChecked = false;
             Require(choices.Last() is { Automatic: false, SeparateLlama: true, Model.Identifier: "llama3.2-vision:11b" },
-                "Thinking model choice, service and policy pause");
-            ((Button)window.FindName("OpenLog")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Require(logs == 1, "Thinking can open its notebook");
+                "model choice, service and policy pause");
         }
         finally { window.Close(); }
-        Console.WriteLine("PASS Thinking inspector presents the bound screenshot, request and scores");
+        Console.WriteLine("PASS collapsible Thinking context presents the captured request and reply");
     }
 
     internal static void TestDisabledThinkingLeavesModelIdleAndSkipsCaptureAndInference()
@@ -154,8 +152,7 @@ internal static class GameTextWindowTests
             Method("ObserveThinkingFrame").Invoke(window,
                 [RenderText("INSPECT"), 1L, capturedAt, 1, 1L, "game", null, null, null, null, true, null, 0d]);
             Method("StartThinkingQuestion").Invoke(window, null);
-            Require(((Button)window.FindName("ThinkingButton")).Visibility == Visibility.Collapsed
-                && shortcut is false && Field("thinkingWindow").GetValue(window) is null
+            Require(shortcut is true && !((ThinkingContextPanel)window.FindName("ContextPanel")).IsExpanded
                 && Field("latestThinkingFrame").GetValue(window) is null
                 && Field("thinkingPreloadTask").GetValue(window) is null
                 && Field("thinkingQuestionTask").GetValue(window) is null
@@ -193,10 +190,9 @@ internal static class GameTextWindowTests
         using var transport = new HttpClient(service);
         var owner = new MainWindow(GameRuntimeMode.Normal, null, root.FullName, root.FullName,
             policyClient: new(transport, _ => log), enableThinking: true);
-        var inspector = new ThinkingWindow(_ => { }, () => { });
+        var inspector = (ThinkingContextPanel)owner.FindName("ContextPanel");
         try
         {
-            Field("thinkingWindow").SetValue(owner, inspector);
             var label = (TextBlock)inspector.FindName("StatusText");
             Method("StartThinkingPreload").Invoke(owner, null);
             var preload = (Task)Field("thinkingPreloadTask").GetValue(owner)!;
@@ -219,8 +215,6 @@ internal static class GameTextWindowTests
         finally
         {
             confirm.TrySetResult();
-            Field("thinkingWindow").SetValue(owner, null);
-            inspector.Close();
             Field("isClosing").SetValue(owner, true);
             Await((Task)Method("PrepareShutdownAsync").Invoke(owner, null)!);
             root.Delete(recursive: true);
@@ -244,7 +238,7 @@ internal static class GameTextWindowTests
             reader.SetGoal("Read the King's Pass tablet");
             Invoke("StartThinkingPreload");
             Await((Task)Field("thinkingPreloadTask").GetValue(window)!);
-            Require(((Button)window.FindName("ThinkingButton")).Visibility == Visibility.Visible
+            Require(((Grid)window.FindName("ThinkingBounds")).Visibility == Visibility.Visible
                 && Method("HandleLocalShortcut").Invoke(window, [Key.T, true, ModifierKeys.None]) is true
                 && service.InventoryCount > 0 && service.LoadCount == 1 && service.RequestCount == 0
                 && Field("latestThinkingFrame").GetValue(window) is null,
@@ -254,6 +248,19 @@ internal static class GameTextWindowTests
             Require(service.RequestCount == 1 && rows is [{ Id: "c0", Target: "Inspect", Score: 96 }]
                 && (string?)Field("thinkingHandoff").GetValue(window) == "Inspection only · Normal mode.",
                 "the real request resolves into the scored inspector row without taking a Normal control lease");
+
+            var panel = (ThinkingContextPanel)window.FindName("ContextPanel");
+            Require(((TextBox)panel.FindName("FullLog")).Text.Contains("INSPECT")
+                && ((TextBlock)panel.FindName("CompactLog")).Text.Contains("INSPECT")
+                && ((TextBox)panel.FindName("MessageDetails")).Text.Contains("Expected response schema")
+                && ((TextBox)panel.FindName("LiveEvidence")).Text.Contains("INSPECT"),
+                "both log modes, captured evidence and the schema explorer use the actual request");
+            var showContext = (CheckBox)window.FindName("ShowThinkingContext");
+            showContext.IsChecked = false;
+            Require(((Grid)window.FindName("ThinkingBounds")).Visibility == Visibility.Collapsed
+                && Method("HandleLocalShortcut").Invoke(window, [Key.T, false, ModifierKeys.None]) is false,
+                "Debug View hides the entire context and its shortcut");
+            showContext.IsChecked = true;
 
             service.Reply = """{"scores":{"c7":96}}""";
             Field("nextThinkingQuestion").SetValue(window, 0d);
@@ -268,9 +275,15 @@ internal static class GameTextWindowTests
                 var frame = RenderText("INSPECT");
                 var capturedAt = (double)Method("BotCaptureClock").Invoke(null, null)!;
                 reader.ResetFrame();
+                var prior = new BgraFrame(frame.Width, frame.Height, frame.Stride, frame.Pixels,
+                    frame.CaptureId - 1, frame.ObservedAt.AddSeconds(-1));
+                var first = reader.TryStart(prior, "en", context, capturedAt - 1)!;
+                Require(reader.Complete(first, [new(1, "INSPECT", new(.2, .3, .4, .1), .95)], 25, capturedAt - 1),
+                    "first OCR reading of the same prompt");
                 var work = reader.TryStart(frame, "en", context, capturedAt)!;
                 Require(reader.Complete(work, [new(1, "INSPECT", new(.2, .3, .4, .1), .95)], 25, capturedAt),
                     "publish the fixture OCR result on the captured frame");
+                Invoke("PresentGameText");
                 Field("latestThinkingReading").SetValue(window, reader.LatestReading);
                 Invoke("ObserveThinkingFrame", frame, 1L, capturedAt, 1, 1L, "game", null, null, null, null, true, null, 0d);
                 Invoke("StartThinkingQuestion");

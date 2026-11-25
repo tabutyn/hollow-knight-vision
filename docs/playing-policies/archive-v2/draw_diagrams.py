@@ -49,8 +49,8 @@ def selection():
     arrow(ax,(10.77,3.05),(10.77,2.63))
     box(ax,8.79,.93,3.95,1.69,"4   Dispatch",
         "Recheck the room, waypoint, actor,\nrecovery state or cue. Run the highest\neligible score automatically.", "#faead7")
-    ax.text(.26,2.45,"One possible reply",fontsize=15,color=TEAL,weight="bold")
-    ax.text(.26,1.85,'{"scores":{"c0":85,"c1":40}}',family="monospace",fontsize=18,color=INK)
+    ax.text(.26,2.45,"Recorded King’s Pass reply",fontsize=15,color=TEAL,weight="bold")
+    ax.text(.26,1.85,'{"scores":{"c0":85,"c1":30}}',family="monospace",fontsize=18,color=INK)
     ax.text(.26,.54,"A changed target expires its binding. Every new decision gets its own candidate IDs.",color=MUTED,fontsize=13)
     save(fig, "policy-selection.png")
 

@@ -50,23 +50,11 @@ public sealed partial class GameTextCleanup(LocalThinkingClient client)
         if (!tutorials) instructions += "\nReturn detail as a short heading for the reading.";
         if (prior.Length != 0)
             instructions += "\nUse updates with an id from currentLog only when this reading retains or supersedes the same exact fact.";
-        var properties = new Dictionary<string, object>
-        {
-            ["id"] = new { type = "integer" }, ["text"] = new { type = "string" },
-            ["label"] = new Dictionary<string, object> { ["type"] = "string", ["enum"] = tutorials ? ["tutorial"] : Labels }
-        };
-        if (!tutorials) properties["detail"] = new { type = "string", maxLength = 90 };
-        if (prior.Length != 0) properties["updates"] = new { type = "integer" };
-        var items = new Dictionary<string, object>
-        {
-            ["type"] = "array", ["items"] = new { type = "object", required = new[] { "id", "text", "label" }, properties }
-        };
-        if (!tutorials || prior.Length != 0) items["minItems"] = items["maxItems"] = rows.Count;
-        var schema = new { type = "object", required = new[] { "readings" }, properties = new { readings = items } };
+        var schema = ResponseSchema(tutorials, prior.Length != 0, rows.Count);
         var evidence = prior.Length == 0 ? JsonSerializer.Serialize(inputs, Json)
             : JsonSerializer.Serialize(new { readings = inputs, currentLog = prior }, Json);
         var response = await client.ChatAsync<Result>(resident, [new("system", instructions), new("user", evidence)],
-            schema, 768, keepResident: false, cancellationToken).ConfigureAwait(false);
+            schema, 768, keepResident: false, cancellationToken, ThinkingRequestKind.Transcription).ConfigureAwait(false);
         if (response.Readings is not { } corrections || corrections.Length != rows.Count
             || corrections.Any(row => row is null || row.Text is null)
             || !corrections.Select(row => row.Id).Order().SequenceEqual(Enumerable.Range(0, rows.Count)))
@@ -93,6 +81,23 @@ public sealed partial class GameTextCleanup(LocalThinkingClient client)
                 string.IsNullOrEmpty(detail) ? null : GameTextObservation.Prefix(detail, 90), sameAs));
         }
         return edits;
+    }
+
+    public static object ResponseSchema(bool tutorials, bool hasPrior, int count)
+    {
+        var properties = new Dictionary<string, object>
+        {
+            ["id"] = new { type = "integer" }, ["text"] = new { type = "string" },
+            ["label"] = new Dictionary<string, object> { ["type"] = "string", ["enum"] = tutorials ? ["tutorial"] : Labels }
+        };
+        if (!tutorials) properties["detail"] = new { type = "string", maxLength = 90 };
+        if (hasPrior) properties["updates"] = new { type = "integer" };
+        var items = new Dictionary<string, object>
+        {
+            ["type"] = "array", ["items"] = new { type = "object", required = new[] { "id", "text", "label" }, properties }
+        };
+        if (!tutorials || hasPrior) items["minItems"] = items["maxItems"] = count;
+        return new { type = "object", required = new[] { "readings" }, properties = new { readings = items } };
     }
 
     internal static bool HasControlInstruction(string text, bool passage, string language) =>

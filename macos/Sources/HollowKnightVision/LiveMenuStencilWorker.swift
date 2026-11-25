@@ -13,6 +13,7 @@ final class LiveMenuStencilWorker: @unchecked Sendable {
 
     struct Snapshot {
         let observation: Observation
+        let image: CGImage?
         let timestamp: TimeInterval
     }
 
@@ -120,7 +121,7 @@ final class LiveMenuStencilWorker: @unchecked Sendable {
         let startedAt = ProcessInfo.processInfo.systemUptime
         let observation = recognize(frame.image, frame.timestamp)
         didProcess(ProcessInfo.processInfo.systemUptime - startedAt)
-        return Snapshot(observation: observation, timestamp: frame.timestamp)
+        return Snapshot(observation: observation, image: observation.result?.isMatch == true ? frame.image : nil, timestamp: frame.timestamp)
     }
 
     private func publish(_ result: Snapshot) {

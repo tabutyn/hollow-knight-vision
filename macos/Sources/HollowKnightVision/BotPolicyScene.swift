@@ -31,12 +31,19 @@ struct BotPolicyBinding: Codable, Equatable {
     let target: BotPolicyTarget
 }
 
+struct BotNavigationPosition: Codable, Equatable {
+    let chart: String
+    let feet: PathPoint
+    let arrivalRadius: Int
+}
+
 struct BotPolicyScene: Codable, Equatable {
     let room: Int
     let grounded: Bool
     let recovery: BotRecoveryInput?
     let enemies, cocoons: [BotSceneActor]
     var routes: [BotRouteTarget] = []
+    var navigationPosition: BotNavigationPosition?
 
     var focusOpening: Bool {
         grounded && !enemies.contains { abs($0.dx) < 0.20 && abs($0.dy) < 0.16 }

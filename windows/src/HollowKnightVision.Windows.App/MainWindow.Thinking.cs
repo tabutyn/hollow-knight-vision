@@ -17,7 +17,11 @@ public partial class MainWindow
     private bool thinkingAutomatic = true;
     private LocalThinkingModel thinkingModel = LocalThinkingModel.Gemma;
     private bool thinkingSeparateLlama;
-    private ThinkingWindow? thinkingWindow;
+    private readonly string thinkingPanelPreference;
+    private string thinkingEvidence = "";
+    private string thinkingBrief = "";
+    private double nextThinkingBrief;
+    private bool panelInitialized;
     private CancellationTokenSource? thinkingCancellation;
     private Task? thinkingQuestionTask;
     private CancellationTokenSource? thinkingPreloadCancellation;
@@ -27,7 +31,6 @@ public partial class MainWindow
     private TimeSpan? thinkingLastLoad;
     private double nextThinkingQuestion;
     private string thinkingStatus = "Waiting for the local model…";
-    private string thinkingInput = "";
     private string thinkingReply = "";
     private string? thinkingHandoff;
     private BitmapSource? thinkingScreenshot;
@@ -39,24 +42,50 @@ public partial class MainWindow
 
     private ThinkingOptions CurrentThinkingOptions => new(thinkingAutomatic, thinkingModel, thinkingSeparateLlama);
 
-    private void Thinking_Click(object sender, RoutedEventArgs e) => OpenThinkingInspector();
+    private bool ContextPanelAvailable => ShowThinkingContext.IsChecked == true && workspace is "Gameplay" or "Hacker";
+
+    private void InitializeThinkingPanel()
+    {
+        try
+        {
+            if (File.Exists(thinkingPanelPreference) && bool.TryParse(File.ReadAllText(thinkingPanelPreference), out var show))
+                ShowThinkingContext.IsChecked = show;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Trace.TraceWarning(error.Message); }
+        panelInitialized = true;
+        ContextPanel.OptionsEdited += SetThinkingOptions;
+        UpdateThinkingPanelVisibility();
+        PresentThinking();
+    }
+
+    private void ContextVisibilityChanged(object sender, RoutedEventArgs e)
+    {
+        if (!panelInitialized) return;
+        UpdateThinkingPanelVisibility();
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(thinkingPanelPreference)!);
+            File.WriteAllText(thinkingPanelPreference, (ShowThinkingContext.IsChecked == true).ToString());
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { ShowError(error); }
+    }
+
+    private void UpdateThinkingPanelVisibility()
+    {
+        if (!panelInitialized) return;
+        ThinkingBounds.Visibility = ContextPanelAvailable ? Visibility.Visible : Visibility.Collapsed;
+        if (!ContextPanelAvailable) ContextPanel.Expand(false);
+    }
+
+    private void RecordThinkingRequest(ThinkingRequestView request, CancellationToken token)
+    {
+        if (Dispatcher.CheckAccess()) { if (!token.IsCancellationRequested) ContextPanel.Record(request); }
+        else Dispatcher.InvokeAsync(() => { if (!token.IsCancellationRequested && !isClosing) ContextPanel.Record(request); });
+    }
 
     private void OpenThinkingInspector()
     {
-        if (!thinkingEnabled || isClosing) return;
-        if (thinkingWindow is not null)
-        {
-            thinkingWindow.Activate();
-            return;
-        }
-        var inspector = new ThinkingWindow(SetThinkingOptions, () => GameTextLog_Click(this, new RoutedEventArgs()))
-        {
-            Owner = this
-        };
-        thinkingWindow = inspector;
-        inspector.Closed += (_, _) => thinkingWindow = null;
-        PresentThinking();
-        inspector.Show();
+        if (!isClosing && ContextPanelAvailable) ContextPanel.Expand(!ContextPanel.IsExpanded);
     }
 
     private void SetThinkingOptions(ThinkingOptions next)
@@ -81,10 +110,12 @@ public partial class MainWindow
         thinkingCancellation?.Cancel();
         StopThinkingControl();
         Volatile.Write(ref latestThinkingFrame, null);
-        nextThinkingQuestion = 0;
+        nextThinkingQuestion = nextThinkingBrief = 0;
+        thinkingEvidence = thinkingBrief = "";
+        ContextPanel.ClearMessages();
         if (thinkingPreloadTask is not { IsCompleted: false })
             thinkingStatus = "Waiting for a game frame…";
-        thinkingInput = thinkingReply = "";
+        thinkingReply = "";
         thinkingHandoff = null;
         thinkingScreenshot = thinkingAttachment = null;
         thinkingDisplayFrame = pendingThinkingFrame = thinkingAttachedFrame = null;
@@ -92,9 +123,26 @@ public partial class MainWindow
         PresentThinking();
     }
 
-    private void PresentThinking() => thinkingWindow?.Present(CurrentThinkingOptions, ThinkingStatusText(),
-        thinkingScreenshot, ReferenceEquals(thinkingDisplayFrame, thinkingAttachedFrame) ? null : thinkingAttachment,
-        thinkingInput, thinkingRows, thinkingReply, thinkingHandoff);
+    private void PresentThinking()
+    {
+        if (!panelInitialized) return;
+        ContextPanel.Present(CurrentThinkingOptions, thinkingEnabled, ThinkingStatusText(), thinkingEvidence, thinkingBrief,
+            thinkingScreenshot, thinkingDisplayFrame is { } frame ? $"Captured frame {frame.Image.CaptureId}" : null,
+            ReferenceEquals(thinkingDisplayFrame, thinkingAttachedFrame) ? null : thinkingAttachment,
+            thinkingReply, thinkingAttachedFrame is { } answered ? $"Reply for frame {answered.Image.CaptureId} · {thinkingHandoff}" : null);
+    }
+
+    private string DecisionBrief(ThinkingSight sight, string goal)
+    {
+        var lines = new List<string> { "Objective · " + goal, "Location · " + sight.Scope.Context };
+        if (sight.Cues.Count > 0) lines.Add("Visible cues · " + string.Join(", ", sight.Cues.Select(c => c.Text)));
+        if (sight.Scene is { } scene) lines.Add($"Reachable routes · {scene.Routes.Count}");
+        if (sight.Selection is { } selected) lines.Add("Menu highlight · " + selected);
+        if (thinkingRows.Where(row => row.Score.HasValue).OrderByDescending(row => row.Score).FirstOrDefault() is { } row)
+            lines.Add($"Previous decision · {row.Policy} · {row.Target}");
+        if (thinkingHandoff is not null) lines.Add(thinkingHandoff);
+        return string.Join('\n', lines);
+    }
 
     private string ThinkingStatusText()
     {
@@ -193,6 +241,12 @@ public partial class MainWindow
         var now = BotCaptureClock();
         if (isClosing || !thinkingEnabled || thinkingPreloadTask is { IsCompleted: false }
             || visionCancellation is not { IsCancellationRequested: false }) return;
+        if (now >= nextThinkingBrief && Volatile.Read(ref latestThinkingFrame) is { } live && live.Sight.IsFresh(now))
+        {
+            nextThinkingBrief = now + 5;
+            thinkingBrief = DecisionBrief(live.Sight, gameTextReader.Goal.Length == 0 ? gameTextReader.DefaultGoal : gameTextReader.Goal);
+            PresentThinking();
+        }
         if (now >= nextThinkingQuestion && Volatile.Read(ref latestThinkingFrame) is { } latest && latest.Sight.IsFresh(now))
         {
             nextThinkingQuestion = now + 60;
@@ -213,14 +267,11 @@ public partial class MainWindow
         string language, bool readText, string memory, string goal, CancellationTokenSource source)
     {
         var token = source.Token;
+        var receivedReply = false;
         try
         {
             thinkingStatus = "Preparing the captured frame…";
-            thinkingAttachedFrame = frame;
-            thinkingAttachment = ReferenceEquals(thinkingDisplayFrame, frame) ? thinkingScreenshot : FrameBitmap(frame.Image);
-            thinkingInput = thinkingReply = "";
-            thinkingHandoff = null;
-            thinkingRows = [];
+            var attachment = ReferenceEquals(thinkingDisplayFrame, frame) ? thinkingScreenshot : FrameBitmap(frame.Image);
             StopGameTextReview();
             PresentThinking();
             if (gameTextReviewTask is { } proofreading) await proofreading;
@@ -241,14 +292,16 @@ public partial class MainWindow
                 """;
             var visible = new StringInfo(string.Join('\n', encoded.Lines));
             var visibleText = visible.LengthInTextElements <= 650 ? visible.String : visible.SubstringByTextElements(0, 650);
-            var user = memory + "\nLive decision evidence\nCurrent room or menu: " + sight.Scope.Context
+            thinkingEvidence = "Current room or menu: " + sight.Scope.Context
                 + "\nGame mode: " + gameMode + "\nCurrent goal: " + goal
                 + "\nGameplay recognized: " + sight.Gameplay + "\nSelected menu identifier: " + (sight.Selection ?? "")
-                + "\nVisible OCR on the captured frame:\n" + visibleText
+                + "\nVisible OCR on the captured frame:\n" + visibleText;
+            thinkingBrief = DecisionBrief(sight, goal);
+            var user = memory + "\nLive decision evidence\n" + thinkingEvidence + "\nDecision brief\n" + thinkingBrief
                 + "\n\nPolicy selection specification\n" + offer.SelectionSpecification;
+            thinkingEvidence += "\nOffered actions and targets\n" + JsonSerializer.Serialize(offer.Wire,
+                new JsonSerializerOptions { WriteIndented = true });
             var schema = offer.Schema;
-            thinkingInput = $"Captured frame {frame.Image.CaptureId}\n\nSystem message\n{system}\n\nUser message\n{user}\n\nResponse schema\n"
-                + JsonSerializer.Serialize(schema, new JsonSerializerOptions { WriteIndented = true });
             thinkingRows = Rows(offer, null);
             var resident = await LocateThinkingModelAsync(options, token);
 
@@ -257,6 +310,10 @@ public partial class MainWindow
             var messages = new LocalThinkingMessage[] { new("system", system), new("user", user, [encoded.Image]) };
             var reply = await thinkingClient.ChatTextAsync(resident, messages, schema, 640, keepResident: true, token);
             token.ThrowIfCancellationRequested();
+            thinkingAttachedFrame = frame;
+            thinkingAttachment = attachment;
+            thinkingHandoff = null;
+            receivedReply = true;
             thinkingReply = reply;
             using var document = JsonDocument.Parse(reply);
             thinkingReply = JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions { WriteIndented = true });
@@ -273,7 +330,7 @@ public partial class MainWindow
         {
             if (!token.IsCancellationRequested)
                 thinkingStatus = error is OperationCanceledException ? "The local model timed out." : error.Message;
-            if (!token.IsCancellationRequested && thinkingReply.Length > 0)
+            if (!token.IsCancellationRequested && receivedReply)
                 thinkingHandoff = "Reply rejected.";
         }
         finally

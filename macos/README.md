@@ -20,12 +20,7 @@ The checkbox starts unchecked on each ordinary launch. For a command-line
 dashboard, add `--enable-thinking` to opt in. Gymnasium observation workers
 run independently of Thinking.
 
-With Thinking enabled, click **Thinking** between Bot and Hacker, or press **T** in the dashboard.
-Vision samples the first available game frame and then a frame every minute.
-Thinking displays that screenshot, the exact system and user messages generated
-by Vision, and the latest JSON reply from the selected model. Each panel shows
-the capture time so a reply from an earlier frame is identifiable during the
-next review. The timer runs across dashboard workspaces.
+Click the orange log at the bottom right of Gameplay or Hacker, or press **T**, to expand the Thinking context. Context shows the current save log, game evidence, the five-second decision brief and the schema explorer. Screenshot and JSON show the event frame and actual model reply. Settings → Debug View → Thinking context hides the box. The notebook is available with Thinking off. The inspector shows the exact image attached to an earlier reply when a newer capture has arrived. **Show decision JSON in Finder** reveals the validated selection.
 
 Starting the dashboard with Thinking enabled loads Gemma in the background. Choosing another model
 immediately shows its load status and elapsed time. When the local Ollama log
@@ -43,47 +38,11 @@ and pull the model tags `gemma3:4b`, `qwen2.5vl:7b` and `llama3.2-vision:11b`.
 
 ### Reading signs and dialogue
 
-Open **Thinking → Log** for the latest corrected reading and its heading.
-The **On screen** tab shows the exact game frame that Apple Vision read, with
-numbered boxes and recognition confidence. **Read game text** enables background
-OCR. The selected Thinking model proofreads readings when available.
-
-Select a save in Hollow Knight with capture running. **Notebook** shows the
-recognized slot. Capture logs text as soon as frames arrive, including credits
-and opening narration. When a save is confirmed, its opening-cutscene readings
-move into its log. Starting a new game creates a fresh log even in a reused
-slot. Resuming a playthrough restores its readings. Each playthrough has a file under
-`~/Library/Application Support/HollowKnightVision/Notebooks/`. The old
-`game-text-v1.json` stays in place because its rows have no save identity.
-
-The reader accepts clear opening subtitles and credits from one sample. In
-ordinary gameplay it waits for stable lines. A bot-inspected sign is recorded as a single
-passage once its text settles. A separate background task sends small batches
-of saved text to the loaded local model. It stores the likely transcription, a
-category, and a short heading such as “Composer credit”. Duplicate readings and
-revisions of the same fact appear as one entry. An inspected English passage
-with an explicit press or hold instruction takes the Tutorial label. **Original OCR** reveals the
-source and the model used. When the model is unavailable, raw readings remain
-readable and pending work resumes when a model is available. Thinking can
-recall interpretations from the current playthrough. Gameplay and Hacker display
-recent corrected and saved entries in four small orange lines at the lower right.
-The Notebook keeps the complete passages. Bot action and price checks
-continue to use the visible OCR.
+**Settings → Debug View → Text Reader** works with Thinking off. **Read game text** enables Apple Vision OCR. **On screen** shows the captured lines, positions and confidence. **Log** stores unique observed readings for this playthrough. Case, punctuation, spacing and small recognition errors can match. Different numbers remain distinct. Fading fragments consolidate into a full line. A bundled English and Hallownest dictionary prefers correctly spelled readings and can reconcile two different misspellings. Resuming a save restores its notebook. **Thinking → Log** opens the same view.
 
 ### Policies for a first ending
 
-The long-term goal is to complete the Atlas and beat the game. With no stated
-goal, the planner seeks unmapped territory. Vision supplies the current goal
-and the available options for each timed frame. The model ranks those options
-using the screenshot, OCR, game state and playthrough notebook. The **Response
-schema** in Thinking shows the permitted option IDs. **Use Atlas goal** clears
-a previously saved objective. In Gameplay or Hacker, Vision automatically dispatches an eligible reply against a fresh live screen. Thinking shows the disposition of each reply. The **Automatic policies** switch pauses future dispatch.
-The six initialized policies cover exploration, traversal,
-interaction, combat, recovery and progression. The player can Focus, cast
-spells, use movement abilities, and operate dialogue and in-game menus. The
-guide and training workflow are in [Playing policies for a first ending](BOT_SKILLS.md).
-The [architecture diagrams and slides](../docs/playing-policies/README.md) show how the planner reaches game controls.
-The exploration and combat priorities draw on the [spoiler-free beginner guide](https://www.reddit.com/r/HollowKnight/comments/1ihu3q2/updated_hollow_knight_beginner_guide_spoiler_free/).
+Vision uses the Atlas objective, the event screenshot, notebook excerpts and current observations. Gemma returns an offered Explore, Traverse or Interact selection in gameplay. Each newly recognized menu or confirmation screen sends its own screenshot and visible elements to the local model. Gemma can select an element, including Quit, or request one navigation step with `more`. A screen with no mapped controls offers `wait` until new evidence arrives. **T** shows the screenshot, offer and JSON reply. **Automatic policies** controls dispatch in Modded Gameplay and Hacker. **B** can stop active playback. [Event triggers, exact JSON and replay tests](../docs/playing-policies/README.md) · [Motor training guide](BOT_SKILLS.md)
 
 ## Build, capture, and dashboard
 

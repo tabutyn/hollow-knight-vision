@@ -1,5 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Historical v2 reply for a two-candidate offer",
+  "description": "Archived score-based two-candidate format. Current replies use policy and parameters.",
   "type": "object",
   "properties": {
     "scores": {
@@ -24,8 +26,8 @@
   "examples": [
     {
       "scores": {
-        "c0": 90,
-        "c1": 35
+        "c0": 85,
+        "c1": 30
       }
     },
     {
