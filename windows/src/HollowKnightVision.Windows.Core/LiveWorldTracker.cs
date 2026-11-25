@@ -918,7 +918,8 @@ public sealed class LiveWorldTracker
         Snapshot.TrackingIslands.LastOrDefault(island => island.Members.Any(member => member.ObservationId == observationId));
 
     private LiveTrackingIsland? MeasuredOwner(int observationId) =>
-        OwnerOfObservation(observationId) is { MeasuredLineage: not null } owner ? owner : null;
+        OwnerOfObservation(observationId) is { Placement: not LiveIslandPlacement.LegacyUnknown } owner
+        && owner.Members.Any(member => member.ObservationId == observationId && member.Measured) ? owner : null;
 
     private LiveWorldKeyframe? PreviousLocalKeyframe(LiveWorldObservation observation, LiveTrackingIsland? measuredOwner)
     {
