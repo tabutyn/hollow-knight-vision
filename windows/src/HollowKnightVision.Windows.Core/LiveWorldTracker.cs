@@ -168,6 +168,10 @@ public sealed class LiveWorldTracker
 
     public LiveWorldSnapshot Snapshot { get; private set; }
     public bool LatestIslandAwaitsPlacement => Snapshot.TrackingIslands.LastOrDefault()?.RequiresPlacement == true;
+    internal bool HasPendingClosure => pendingClosure is not null;
+    // Recorded cadence comparisons supply their own schedule. Live capture uses ScheduleGroundSearch.
+    internal RecordedClosureScan? ClosureScanOverride { get; set; }
+    internal sealed record RecordedClosureScan(bool ConfirmationProbe, bool ConfirmedGroundFirst);
 
     public bool HasRecoveryReference(int roomId) =>
         RecoveryReferences().Any(reference => reference.RoomId == roomId);
@@ -485,13 +489,16 @@ public sealed class LiveWorldTracker
 
         var ground = observation.ObservedFloorCandidates?.Lines ?? observation.GroundGeometry?.Lines;
         var groundCaptureTime = loadGroundSource is not null ? observation.CaptureTimestamp : null;
+        var recordedScan = recordedIsland is null ? null : ClosureScanOverride;
         var isConfirmationProbe = groundCaptureTime is { } probeAt
             && pendingClosure is { FloorVerifiedAt: { } checkedAt } pending
-            && pending.TargetIslandId == activeIsland?.Id && IsGroundConfirmationProbe(probeAt, checkedAt);
+            && pending.TargetIslandId == activeIsland?.Id
+            && (recordedScan is null ? IsGroundConfirmationProbe(probeAt, checkedAt)
+                : recordedScan.ConfirmationProbe && probeAt - checkedAt is > 0 and < GroundConfirmationProbeWindow);
         if (loadGroundSource is not null)
             searchForClosure = searchForClosure && groundCaptureTime is { } capturedAt && ground is { Count: > 0 }
                 && (pendingClosure?.FloorVerifiedAt is not { } previousVoteAt || capturedAt > previousVoteAt)
-                && ScheduleGroundSearch(capturedAt, isConfirmationProbe);
+                && (recordedScan is not null || ScheduleGroundSearch(capturedAt, isConfirmationProbe));
         var sceneryOnly = captureEvidence is { HasMeasuredSceneryContinuity: true };
         // Scenery can carry current floor evidence, but cannot seed the Atlas or an ordinary keyframe.
         if (sceneryOnly && (loadGroundSource is null || !searchForClosure || Snapshot.Keyframes.Count == 0))
@@ -563,9 +570,12 @@ public sealed class LiveWorldTracker
         if (loadGroundSource is not null)
         {
             var saved = Snapshot.Observations.First(item => item.Id == reference.ObservationId);
-            var verified = GroundPlaneClosureVerifier.Verify(loadGroundSource(saved.SourceObservationId).Image,
-                saved.GroundGeometry!.Lines, saved.OptimizedPose, loadGroundSource(sourceId).Image, ground!,
-                closurePose, solveWidth);
+            var referenceImage = loadGroundSource(saved.SourceObservationId).Image;
+            var currentImage = loadGroundSource(sourceId).Image;
+            var verified = recordedScan is { ConfirmedGroundFirst: true }
+                && observation.ObservedFloorCandidates is not null && observation.GroundGeometry is { Lines.Count: > 0 } confirmed
+                ? Verify(confirmed.Lines) : null;
+            verified ??= Verify(ground!);
             if (verified is null)
             {
                 if (!isConfirmationProbe) pendingClosure = null;
@@ -573,6 +583,10 @@ public sealed class LiveWorldTracker
                 return Update(default, null, [LiveWorldTrackerRejection.GroundPlaneVerificationRejected], reference, match);
             }
             closurePose = verified.CameraPose;
+
+            GroundPlaneClosureVerifier.Measurement? Verify(IReadOnlyList<LiveGroundLineEvidence> lines) =>
+                GroundPlaneClosureVerifier.Verify(referenceImage, saved.GroundGeometry!.Lines,
+                    saved.OptimizedPose, currentImage, lines, closurePose, solveWidth);
         }
 
         var proposedCorrection = Difference(closurePose, observation.RawPose);

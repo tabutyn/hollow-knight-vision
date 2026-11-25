@@ -2142,8 +2142,8 @@ public partial class MainWindow : Window
     {
         if (StencilGuidanceText is null || initialization is null) return;
         var editingImage = workspace == "Label" && currentFrame is not null;
-        StencilGuidanceText.Text = (editingImage && CurrentContextName == "Gameplay" ? CampaignGuidance() : null) ?? initialization.ModelGuidance(workspace,
-            hasGameplayTrainingLabels, trainedGameplayModelReady, trainingInProgress, CampaignGuidance()) ?? initialization.Guidance(
+        StencilGuidanceText.Text = initialization.ModelGuidance(workspace,
+            hasGameplayTrainingLabels, trainedGameplayModelReady, trainingInProgress) ?? initialization.Guidance(
             editingImage ? StencilInitializationPolicy.NormalizeContext(CurrentContextName) : null,
             ClassIdentifierText.Text, initializationTargetContext) ?? "";
         StencilGuidanceText.Visibility = StencilGuidanceText.Text.Length == 0

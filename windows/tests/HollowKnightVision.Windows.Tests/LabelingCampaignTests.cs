@@ -2,15 +2,9 @@ using HollowKnightVision.Windows.Core;
 
 internal static class LabelingCampaignTests
 {
-    public static void TestBatchesAndValidationHistory()
+    public static void TestPlotRejectsTrainingOnlyAndInvalidMetricsButKeepsRealZero()
     {
         static void Check(bool condition) { if (!condition) throw new Exception("Campaign progress regression."); }
-        var first = new LabelingCampaignProgress("knight", 9, 0);
-        Check(first.Target == 10 && first.Remaining == 1 && !first.NeedsTraining);
-        var ready = new LabelingCampaignProgress("knight", 14, 2);
-        Check(ready.Target == 10 && ready.NeedsTraining && ready.GuidanceKey(false, true) == "campaignTrainHere");
-        var trained = new LabelingCampaignProgress("knight", 14, 14);
-        Check(trained.Target == 20 && trained.Remaining == 6 && trained.GuidanceKey(true, false) == "campaignDraw");
         LabelingModelCandidate Candidate(int index, int count, double? accuracy, bool valid = true) => new("unused", "unused", new()
         {
             Id = Guid.NewGuid(), DatasetIdentifier = Guid.NewGuid(), ClassIdentifier = LabelingSharedModelPolicy.ModelIdentifier,
@@ -24,7 +18,7 @@ internal static class LabelingCampaignTests
         Check(history.Select(point => point.Accuracy).SequenceEqual([0.0, .6]));
     }
 
-    public static void TestCaptureCountsAndTrainingSnapshot()
+    public static void TestCaptureCounts()
     {
         var root = Path.Combine(Path.GetTempPath(), "hkv-campaign-" + Guid.NewGuid().ToString("N"));
         try
@@ -42,10 +36,6 @@ internal static class LabelingCampaignTests
             var counts = LabelingCampaignPolicy.Counts(examples);
             if (counts.GetValueOrDefault("game.playable-knight") != 10 || counts.ContainsKey("enemies.crawlid"))
                 throw new Exception("Repeated and negative boxes inflated capture count.");
-            var snapshot = new LabelingDatasetExporter(Path.Combine(root, "datasets"))
-                .ExportSharedModel(["game.playable-knight", "enemies.crawlid"], examples, LabelingSharedModelPolicy.ModelIdentifier);
-            if (LabelingCampaignPolicy.CompletedCounts(snapshot.DirectoryPath).GetValueOrDefault("game.playable-knight") != 10)
-                throw new Exception("Immutable training snapshot count differs.");
             if (LabelingCampaignPolicy.Counts(examples.Take(2)).GetValueOrDefault("game.playable-knight") != 1)
                 throw new Exception("Repeated capture counted twice.");
         }

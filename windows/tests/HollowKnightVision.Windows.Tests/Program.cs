@@ -165,8 +165,8 @@ var tests = new List<(string Name, Action Run)>
     ("Knight predictions select current terrain near the estimate", BotVisualKnightMemoryTests.TestPredictionChoosesCurrentTerrainNearTheEstimatedKnight),
     ("Game Play policy input expires with the last measured Knight", BotPolicyTests.TestGamePlayInputExpiresWithLastMeasuredKnight),
     ("Game Play Gym exposes measured blockade inputs", GameplayGymVisualTests.TestGamePlayGymUsesVisualBlockadeEvidence),
-    ("labeling campaign batches and honest validation history", LabelingCampaignTests.TestBatchesAndValidationHistory),
-    ("labeling campaign counts distinct positive captures", LabelingCampaignTests.TestCaptureCountsAndTrainingSnapshot),
+    ("labeling campaign plot keeps measured validation including zero", LabelingCampaignTests.TestPlotRejectsTrainingOnlyAndInvalidMetricsButKeepsRealZero),
+    ("labeling campaign counts distinct positive captures", LabelingCampaignTests.TestCaptureCounts),
     ("warmed CUDA search reuses large host staging arrays", GroundComputeProcessingTests.TestCudaHostStagingAllocation),
     ("dense consensus preserves ground calibration across reference handoffs", GroundCameraSolverTests.TestConsensusReferenceCalibration),
     ("broad search preparation reuses candidate storage without per-candidate allocations", TrackingStepReplayTests.SearchCandidateAllocation),
@@ -1669,6 +1669,8 @@ if (Environment.GetEnvironmentVariable("HKV_WORLD_REOPEN_AUDIT_INPUT") is not nu
     tests.Add(("archived Atlas world reopens with identical pixels", LiveIslandReplayAuditTests.TestRecordedOwnedWorldReopensWithIdenticalPixels));
 if (Environment.GetEnvironmentVariable("HKV_ISLAND_AUDIT_INPUT") is not null)
     tests.Add(("archived Atlas islands replay with their measured camera evidence", RecordedIslandClosureAuditTests.TestRecordedWorldIslandClosures));
+if (Environment.GetEnvironmentVariable("HKV_CLOSURE_CADENCE_INPUT") is not null)
+    tests.Add(("archived closure cadence distinguishes scheduled searches and short confirmation probes", RecordedIslandClosureAuditTests.TestInspectRecordedClosureSearchCadenceWhenRequested));
 if (Environment.GetEnvironmentVariable("HKV_ISLAND_CANDIDATE_AUDIT_INPUT") is not null)
     tests.Add(("archived island comparison measures ambiguities in pooled and per-island searches", IslandCandidateAmbiguityAuditTests.TestInspectSavedIslandCandidateAmbiguity));
 if (Environment.GetEnvironmentVariable("HKV_SAME_VIEW_AUDIT_INPUT") is not null)

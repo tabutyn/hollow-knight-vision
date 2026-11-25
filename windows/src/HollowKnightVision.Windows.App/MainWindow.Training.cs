@@ -25,7 +25,6 @@ public partial class MainWindow
 
     private void RefreshTrainingNotification()
     {
-        RefreshCampaignProgress();
         hasGameplayTrainingLabels = LabelingSharedModelPolicy.HasPositiveGameplayEvidence(examples, GameplayTrainingClassIdentifiers());
         untrainedImageCount = LabelingTrainingNotificationPolicy.CountExamples(examples, modelLifecycle?.Latest(LabelingSharedModelPolicy.ModelIdentifier));
         UpdateModelTrainingControls();
