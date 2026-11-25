@@ -5,7 +5,10 @@ public sealed record HackerCapturedFrame(
     BgraFrame Image,
     double CapturedAt,
     bool IntegratesAtlas,
-    InputButtons? MovementButtons = null);
+    InputButtons? MovementButtons = null)
+{
+    public bool RecentJump { get; init; }
+}
 
 public sealed record HackerMatchedFrame(
     HackerCapturedFrame Capture,

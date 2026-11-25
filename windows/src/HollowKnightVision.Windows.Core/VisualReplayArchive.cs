@@ -40,7 +40,7 @@ public sealed record VisualReplayGroundInput(double CaptureTimestamp, ulong Capt
     }
 
     public static VisualReplayGroundInput FromTracking(double timestamp, ulong generation, int imageHeight,
-        GameplaySceneMasks masks, InputButtons? buttons)
+        GameplaySceneMasks masks, InputButtons? buttons, bool? recentJump = null)
     {
         // The shared archive uses CGRect coordinates. Convert once at the wire boundary.
         double[][] Rect(StencilRect rect) =>
@@ -49,6 +49,7 @@ public sealed record VisualReplayGroundInput(double CaptureTimestamp, ulong Capt
         return new(timestamp, generation, masks.GroundRegions.OmittedRects.Select(Rect).ToArray(), knight,
             GroundTheoryTuning.Default, GroundTheoryTuning.SemanticDefault, knight,
             buttons.HasValue ? KnightLevelWalk.Direction(buttons.Value) : null,
+            RecentJump: buttons.HasValue ? recentJump : null,
             WindowsMovementButtons: buttons, WindowsAtlasExcludingRects: masks.AtlasRegions.OmittedRects.Select(Rect).ToArray());
     }
 }

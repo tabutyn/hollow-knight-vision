@@ -91,7 +91,8 @@ internal static class VisualReplayArchiveTests
         recorder.RecordVisualGroundInput(99.9, 7, image.Height, masks, InputButtons.Left);
         recorder.RecordVisualFrame(image, 100.1, 100.103, 8, 391);
         recorder.RecordVisualStage("visionStarted", 100.1, 8);
-        recorder.RecordVisualGroundInput(100.1, 8, image.Height, masks, InputButtons.Right | InputButtons.ActionX);
+        recorder.RecordVisualGroundInput(100.1, 8, image.Height, masks, InputButtons.Right | InputButtons.ActionX,
+            recentJump: true);
         recorder.RecordVisualStage("visionCompleted", 100.1, 8);
         recorder.RecordInput(RecordedGameButton.Right, true, 100.15);
 
@@ -114,7 +115,8 @@ internal static class VisualReplayArchiveTests
         Check(ground.Tuning == GroundTheoryTuning.Default && ground.SemanticTuning == GroundTheoryTuning.SemanticDefault);
         var originalBounds = ground.ObservedPlayerBounds!;
         Check(originalBounds[0].SequenceEqual(new double[] { 1, 2 }) && originalBounds[1].SequenceEqual(new double[] { 1, 1 }));
-        Check(ground.HorizontalDrive == 1 && ground.WindowsMovementButtons == (InputButtons.Right | InputButtons.ActionX));
+        Check(ground.HorizontalDrive == 1 && ground.WindowsMovementButtons == (InputButtons.Right | InputButtons.ActionX)
+            && ground.RecentJump == true);
         Check(ground.ExcludingRects!.Single()[0][0] == 1 && ground.WindowsAtlasExcludingRects!.Single()[0][0] == 0);
         Check(archive.Manifest.StageEvents.Select(stage => stage.Stage).SequenceEqual(new[] { "visionStarted", "visionCompleted" }));
     }

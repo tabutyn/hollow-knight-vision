@@ -205,7 +205,7 @@ public sealed class WalkedGroundTracker
 
     public KnightTerrainContact Observe(string room, GroundEdgeAnalysis frame, PixelRect? knight, AtlasPoint? measuredCamera,
         InputButtons? buttons, double time, IReadOnlyList<DetectedFloorLine> detected, IReadOnlyList<DetectedWall>? walls = null,
-        long generation = 0, long coordinateEpoch = 0, long? measuredLineage = null)
+        long generation = 0, long coordinateEpoch = 0, long? measuredLineage = null, bool recentJump = false)
     {
         var nextOwner = (generation, frame.Width, frame.Height);
         var hasPose = measuredCamera is { } camera && double.IsFinite(camera.X) && double.IsFinite(camera.Y);
@@ -225,7 +225,7 @@ public sealed class WalkedGroundTracker
         var actor = locator.Locate(frame, knight, direction, time);
         var wall = wallContact.Observe(actor, measuredCamera, direction, time, frame.Width, frame.Height, walls ?? []);
         var foot = actor is { Partial: false } observed ? observed.Foot : (AtlasPoint?)null;
-        if (walk.Observe(foot, measuredCamera, buttons, time, frame.Width, frame.Height) is not { } floor
+        if (walk.Observe(foot, measuredCamera, buttons, time, frame.Width, frame.Height, recentJump) is not { } floor
             || measuredCamera is not { } pose) return new(null, wall) { MeasuredFoot = foot };
 
         // Keep the walked extent and use a matching visible edge for elevation.

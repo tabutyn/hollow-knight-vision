@@ -24,6 +24,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
     private ReceiverClient? receiver;
     private TaskCompletionSource? connectionFault;
     private InputButtons heldButtons;
+    private readonly JumpContactGate jumpContact = new();
     private bool isEnabled;
     private bool awaitingFreshPress = true;
     private bool menuShortcutsAvailable;
@@ -39,13 +40,21 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
 
     internal event Action<ReceiverGroundTruthSample, double>? GroundTruthReceived;
 
-    internal InputButtons? CaptureMovement()
+    internal InputButtons? CaptureMovement() => CaptureMovement(out _);
+
+    internal InputButtons? CaptureMovement(out bool recentJump)
     {
         lock (stateLock)
         {
+            recentJump = false;
             if (receiver is null || replayCancellation is not null || pause.BlocksInput || roomResetPending)
                 return null;
-            return botOwner.HasValue ? (MonotonicSeconds() < botDeadline ? botApplied : InputButtons.None) : heldButtons;
+            var now = MonotonicSeconds();
+            var buttons = botOwner.HasValue ? (now < botDeadline ? botApplied : InputButtons.None) : heldButtons;
+            if (botOwner.HasValue && botDeadline > 0 && now >= botDeadline && (botApplied & InputButtons.ActionZ) != 0)
+                jumpContact.Record(botDeadline);
+            recentJump = jumpContact.Observe((buttons & InputButtons.ActionZ) != 0, now);
+            return buttons;
         }
     }
 
@@ -144,8 +153,8 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         inputPathRecorder.RecordVisualStage(stage, timestamp, generation);
 
     internal void RecordVisualGroundInput(double timestamp, ulong generation, int imageHeight,
-        GameplaySceneMasks masks, InputButtons? buttons) =>
-        inputPathRecorder.RecordVisualGroundInput(timestamp, generation, imageHeight, masks, buttons);
+        GameplaySceneMasks masks, InputButtons? buttons, bool? recentJump = null) =>
+        inputPathRecorder.RecordVisualGroundInput(timestamp, generation, imageHeight, masks, buttons, recentJump);
 
     internal void RecordCoarseMotion(
         double captureTimestamp,
@@ -339,6 +348,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
         {
             DropBotControlLocked();
             heldButtons = InputButtons.None;
+            jumpContact.Reset();
             isEnabled = false;
             awaitingFreshPress = true;
             if (receiver is { } active && connectionFault is { } fault)
@@ -501,6 +511,7 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
                     receiver = pending;
                     connectionFault = fault;
                     heldButtons = InputButtons.None;
+                    jumpContact.Reset();
                     isEnabled = false;
                     awaitingFreshPress = true;
                     menuShortcutsAvailable = capabilities.Capabilities.Contains(
@@ -698,11 +709,13 @@ internal sealed partial class WindowsGameControlForwarder : IAsyncDisposable
 
     private void RecordTransition(InputButtons button, RecordedInputTransition transition)
     {
+        var now = MonotonicSeconds();
+        if ((button & InputButtons.ActionZ) != 0) jumpContact.Record(now);
         if (button.ToRecordedGameButton() is not { } recorded) return;
         inputPathRecorder.RecordInput(
             recorded,
             transition == RecordedInputTransition.Pressed,
-            MonotonicSeconds());
+            now);
     }
 
     private void QueueState(

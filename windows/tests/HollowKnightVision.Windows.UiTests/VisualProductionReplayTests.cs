@@ -29,7 +29,8 @@ internal static class VisualProductionReplayTests
                 writer.RecordStage(new("visionStarted", time, generation));
                 if (index is not (0 or 3 or 4 or 5 or 70))
                     writer.RecordGroundInput(new(time, generation, ExcludingRects: [[[0, 150], [50, 30]]],
-                        HorizontalDrive: index == 6 ? -1 : null, RecentJump: index == 6 ? false : null,
+                        HorizontalDrive: index == 6 ? -1 : null,
+                        RecentJump: index is 6 or 9 ? false : index == 20 ? true : null,
                         WindowsMovementButtons: index is 6 or 7 or 14 ? null : InputButtons.Right));
                 writer.RecordStage(new("visionCompleted", time, generation));
             }
@@ -94,6 +95,13 @@ internal static class VisualProductionReplayTests
             Check(Movement(6) == InputButtons.Left && Movement(7) == InputButtons.ActionZ
                 && Movement(14) == InputButtons.None,
                 "Exact legacy input must override the jump fallback and the fallback must expire.");
+            Check(Movement(20) == InputButtons.Right
+                && byIndex[20].GetProperty("suppressesWalkedGroundForJump").GetBoolean(),
+                "Exact Windows evidence must restore the cooldown separately from the held buttons.");
+            Check(Movement(8) == InputButtons.Right
+                && byIndex[8].GetProperty("suppressesWalkedGroundForJump").GetBoolean()
+                && !byIndex[9].GetProperty("suppressesWalkedGroundForJump").GetBoolean(),
+                "Older Windows samples need the event fallback until an exact cooldown state is available.");
 
             var altered = Path.Combine(root, "path-altered-receiver.json");
             var data = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(source))!.AsObject();

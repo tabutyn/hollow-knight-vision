@@ -87,6 +87,8 @@ internal sealed partial class WindowsGameControlForwarder
     private void DropBotControlLocked()
     {
         if (!botOwner.HasValue) return;
+        if ((botApplied & InputButtons.ActionZ) != 0 && botDeadline > 0)
+            jumpContact.Record(Math.Min(MonotonicSeconds(), botDeadline));
         botOwner = null;
         botDeadline = 0;
         botRequested = botApplied = InputButtons.None;
@@ -124,8 +126,10 @@ internal sealed partial class WindowsGameControlForwarder
                 {
                     if (botOwner == owner && ReferenceEquals(active, receiver) && botApplied != buttons)
                     {
+                        var now = MonotonicSeconds();
+                        if (((botApplied | buttons) & InputButtons.ActionZ) != 0) jumpContact.Record(now);
                         botApplied = buttons;
-                        BotInputSent?.Invoke(owner, buttons, MonotonicSeconds());
+                        BotInputSent?.Invoke(owner, buttons, now);
                     }
                 }
             }

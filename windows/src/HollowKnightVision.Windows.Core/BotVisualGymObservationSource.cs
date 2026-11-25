@@ -27,6 +27,7 @@ public sealed class BotVisualGymObservationSource
     private readonly GroundHypothesisTracker ground = new(.2, backgroundGlobalSearch: true, confirmedLossGraceSeconds: 3,
         productionCameraSolver: true, deterministicGlobalSearch: true);
     private readonly WalkedGroundTracker walked = new();
+    private readonly JumpContactGate jumpContact = new();
     private readonly MeasuredAtlasPoseLineage measuredAtlasPose = new();
     private readonly CaptureIslandLineage captureIslands = new();
     private readonly BotGymAtlasMotion atlasMotion = new();
@@ -41,6 +42,7 @@ public sealed class BotVisualGymObservationSource
     public BotVisualGymReading Observe(BgraFrame frame, double time, InputButtons controls,
         Func<BgraFrame, IReadOnlyList<ObjectDetection>> detect, HudStencilResult? hud, MenuStencilResult? menu = null)
     {
+        var recentJump = jumpContact.Observe((controls & InputButtons.ActionZ) != 0, time);
         var signal = FrameRegionRenderer.SignalProfile(frame);
         var frameTime = (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds;
         var observations = LiveObjectDetectionSnapshot.Empty;
@@ -148,7 +150,7 @@ public sealed class BotVisualGymObservationSource
             referenceTimestamp, relocalized);
         var contactCamera = lineage is null ? null : terrainCamera;
         var contact = walked.Observe(roomKey, analysis.Edges, masks.GroundKnight,
-            contactCamera, controls, time, analysis.Floors, terrain.Walls, Generation, walkedEpoch, lineage);
+            contactCamera, controls, time, analysis.Floors, terrain.Walls, Generation, walkedEpoch, lineage, recentJump);
         terrain = TerrainWallDetector.ApplyContact(terrain, contact, analysis.Floors, analysis.Edges);
         LiveWorldCaptureEvidence? captureEvidence = null;
         if (admitted.AllowsAtlasWrite && (measuredGround || continuesScenery))
