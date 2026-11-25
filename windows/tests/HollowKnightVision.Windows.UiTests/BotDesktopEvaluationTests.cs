@@ -93,10 +93,9 @@ internal static class BotDesktopEvaluationTests
             Field("recentCaptureGeneration").SetValue(window, Generation);
             Field("recognizedMenuContext").SetValue(window, "game");
             var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
-            bridge.Start();
-            await WaitFor(() => bridge.PauseState == GamePauseState.Ready);
             var button = (Button)window.FindName("BotPlaybackButton");
             var settings = (FrameworkElement)window.FindName("SettingsOverlay");
+            var status = (TextBlock)window.FindName("StatusText");
             var text = new TextBox { Width = 100, Height = 25, HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top };
             Panel.SetZIndex(text, 100);
@@ -118,13 +117,17 @@ internal static class BotDesktopEvaluationTests
             Field("recognizedMenuContext").SetValue(window, "game");
 
             var modal = new Window { Owner = window, Width = 220, Height = 100, Content = new TextBox(), ShowInTaskbar = false };
+            var inactiveStartRejected = false;
             modal.ContentRendered += (_, _) =>
             {
                 PressB((UIElement)modal.Content);
+                inactiveStartRejected = !window.IsActive && LocalB()
+                    && Field("botPlayback").GetValue(window) is null
+                    && status.Text == "Bot playback requires an active modded game capture.";
                 modal.Close();
             };
             _ = modal.ShowDialog();
-            Check(Field("botPlayback").GetValue(window) is null, "A modal dialog must keep the owner's B shortcut idle.");
+            Check(inactiveStartRejected, "Trying to start from an inactive window must report the reason and leave controls untouched.");
             _ = window.Activate();
             await WaitFor(() => window.IsActive);
             Keyboard.Focus(text);
@@ -139,6 +142,15 @@ internal static class BotDesktopEvaluationTests
             _ = LocalB();
             Check(Field("botPlayback").GetValue(window) is null, "B must leave bot control alone while settings is open.");
             settings.Visibility = Visibility.Collapsed;
+
+            Keyboard.Focus(button);
+            await WaitFor(() => button.IsKeyboardFocused);
+            Check(PressB(button) && Field("botPlayback").GetValue(window) is null
+                && !Directory.Exists(Path.Combine(root, "bot-v1", "evaluations"))
+                && status.Text == "Release the controls and finish the current recording or replay before starting the bot.",
+                "An unavailable receiver must report the failure and remain outside playback.");
+            bridge.Start();
+            await WaitFor(() => bridge.PauseState == GamePauseState.Ready);
 
             foreach (var (workspace, domain) in new[] { ("Gameplay", BotCaptureDomain.Gameplay), ("Hacker", BotCaptureDomain.Hacker) })
             {
@@ -1093,6 +1105,11 @@ internal static class BotDesktopEvaluationTests
             }
             else
             {
+                var queue = run.GetType().GetField("EvaluationStartQueued", Instance)!;
+                Check(Step(null, receiverGameplay: true, recognizedGameplay: true,
+                        admitGameplay: true, showHud: true, generation: Generation + 1) is null
+                    && queue.GetValue(run) is 0 && bridge.OwnsBotControl(owner),
+                    "A mismatched capture generation must leave the opening handoff and its evaluation untouched.");
                 object? started = null;
                 while (started is null)
                 {
@@ -1113,6 +1130,9 @@ internal static class BotDesktopEvaluationTests
                 Check((bool)Method("HandleLocalShortcut").Invoke(window, [Key.B, false, ModifierKeys.None])!
                     && !bridge.OwnsBotControl(owner), "B must stop the built-in policy and return controls.");
                 while ((await states.Reader.ReadAsync(token)).Enabled) { }
+                Check(Step(null, receiverGameplay: true, recognizedGameplay: true, admitGameplay: true, showHud: true) is null
+                    && Field("botPlayback").GetValue(window) is null && !bridge.OwnsBotControl(owner),
+                    "A late startup update cannot reacquire the released bot lease.");
             }
             await ((Task)Field("botEvaluationWrites").GetValue(window)!).WaitAsync(token);
             if (outcome == OpeningOutcome.HandoffTimeout)
@@ -1139,7 +1159,7 @@ internal static class BotDesktopEvaluationTests
             }
 
             object? Step(string? context, bool receiverGameplay, bool recognizedGameplay, bool admitGameplay, bool showHud,
-                bool holdsHealthMask = false)
+                bool holdsHealthMask = false, long generation = Generation)
             {
                 ++index;
                 var observed = DateTimeOffset.UtcNow;
@@ -1157,7 +1177,7 @@ internal static class BotDesktopEvaluationTests
                         null, [], [], [], default, holdsHealthMask, timestamp)
                     : null;
                 return Method("ObserveBotStartup").Invoke(window,
-                    [image, Generation, Clock(), admitGameplay, recognizedGameplay,
+                    [image, generation, Clock(), admitGameplay, recognizedGameplay,
                         Telemetry(session, index) with { AtlasGameplayActive = receiverGameplay }, menu, hud]);
             }
         }

@@ -279,6 +279,59 @@ internal static class BotDemoTests
         }
     }
 
+    public static void TestLegacySaveIsArchivedOnlyAfterFullMatchingProfileEvidence()
+    {
+        using var fixture = new Fixture();
+        const string foreign = "user4_1.5.12620.dat";
+        fixture.Write("user1.dat", "current slot one");
+        fixture.Write(foreign, "different game version");
+        var session = new BotDemoSession(fixture.Store, 0);
+
+        foreach (var time in new[] { .1, .4 })
+            Expect(session.Observe(SlotFour(time, 0) with { CheckedSlots = 7 }, time), BotDemoPhase.Navigating);
+        foreach (var time in new[] { .7, 1.0 })
+            Expect(session.Observe(SlotFour(time, 0), time), BotDemoPhase.Navigating);
+        Check(session.Backup is null && !Directory.Exists(fixture.Archives),
+            "Incomplete or mismatched profile observations cannot archive or select slot 4.");
+        Expect(session.Observe(SlotFour(1.3, 1), 1.3), BotDemoPhase.Navigating);
+        var measured = SlotFour(1.6, 1);
+        Expect(session.Observe(measured, 1.6), BotDemoPhase.Archiving, action: BotDemoSaveAction.Archive);
+        Expect(session.Observe(measured, double.PositiveInfinity), BotDemoPhase.Archiving);
+        Check(session.Backup is null, "An invalid observation clock cannot finalize a pending archive.");
+        Expect(WaitForArchive(session, measured), BotDemoPhase.StartingSave);
+        var backup = session.Backup;
+        Check(backup is { HadActiveSave: false } && Directory.GetFiles(backup.Directory).Select(Path.GetFileName).Order()
+            .SequenceEqual(new[] { "manifest.json", foreign }.Order())
+            && File.ReadAllText(Path.Combine(backup.Directory, foreign)) == "different game version",
+            "A foreign slot-four file belongs in the backup while the matching current slot remains empty.");
+        Throws<IOException>(() => fixture.Store.VerifyBeforeClear(backup!));
+        Expect(session.Observe(SlotFour(1.9, 1), 1.9), BotDemoPhase.StartingSave);
+        Expect(session.Observe(SlotFour(2.2, 1), 2.2), BotDemoPhase.LeavingProfile, InputButtons.ActionZ);
+        Check(File.ReadAllText(Path.Combine(fixture.Saves, "user1.dat")) == "current slot one"
+            && File.ReadAllText(Path.Combine(fixture.Saves, foreign)) == "different game version"
+            && !File.Exists(Path.Combine(fixture.Saves, "user4.dat")),
+            "Starting the empty slot must preserve the current and foreign save files.");
+    }
+
+    public static void TestNonfiniteProfileClocksCannotCheckSlotFiles()
+    {
+        var navigation = new BotDemoNavigation(0);
+        Expect(navigation.Observe(SlotFour(.1, 8), double.PositiveInfinity, true), BotDemoPhase.Navigating);
+        foreach (var (capture, observed) in new[] { (double.NaN, .1), (.1, double.NaN), (.1, double.PositiveInfinity) })
+        {
+            using var fixture = new Fixture();
+            Directory.CreateDirectory(Path.Combine(fixture.Saves, "user4_unsafe.dat"));
+            var session = new BotDemoSession(fixture.Store, 0);
+            Expect(session.Observe(SlotFour(capture, 8), observed), BotDemoPhase.Navigating);
+            Check(session.Backup is null && !Directory.Exists(fixture.Archives),
+                "A nonfinite profile clock must have no filesystem consequences.");
+            var admitted = session.Observe(SlotFour(.4, 8), .4);
+            Expect(admitted, BotDemoPhase.Stopped);
+            Check(admitted.Issue is not null && session.Backup is null,
+                "Fresh evidence must still reject an unsafe profile file.");
+        }
+    }
+
     private static BotDemoFrame SlotFour(double time, int occupied) =>
         new(time, false, "select-profile", "select-profile.slot-4", time, 15, occupied, InputButtons.None);
 
