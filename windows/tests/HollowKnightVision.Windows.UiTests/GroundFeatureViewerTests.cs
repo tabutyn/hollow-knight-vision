@@ -89,6 +89,7 @@ internal static class GroundFeatureViewerTests
         { Topmost = true };
         const BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
         var type = typeof(MainWindow);
+        var highlightTag = type.GetField("GroundViewerHighlight", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null);
         var hasCursor = GetCursorPos(out var originalCursor);
         try
         {
@@ -107,7 +108,8 @@ internal static class GroundFeatureViewerTests
             var viewport = (Grid)window.FindName("GameplayPanel");
             var open = (Button)window.FindName("GroundViewerButton");
             var first = Feature(1, 130, 255);
-            var second = Feature(3, 150, 255);
+            var second = Feature(3, 150, 255) with { AtlasPosition = new(680, 50) };
+            var floorY = first.AtlasPosition.Y + GroundHypothesisTracker.FeatureHeight / 2d;
             Publish("Room_A", first, second);
             window.UpdateLayout();
             var point = live.PointToScreen(new(18, 26));
@@ -118,12 +120,12 @@ internal static class GroundFeatureViewerTests
             viewport.RaiseEvent(click);
             var viewer = type.GetField("groundFeatureViewer", instance)!.GetValue(window) as GroundFeatureViewer
                 ?? throw new InvalidOperationException("The viewport patch click did not open Ground Viewer.");
-            Check(click.Handled && viewer.Selected == first && Highlights(live) == 1 && Highlights(atlas) == 1,
-                "Selecting a live patch must highlight that feature in the live view and the Atlas.");
+            Check(click.Handled && viewer.Selected == first && Highlights(live) == 1 && Highlights(atlas) == 0,
+                "Selecting a patch inside the live image must outline its current tracking box.");
             viewer.MovePatch(1);
-            Check(viewer.Selected == second && Highlights(live) == 1 && Highlights(atlas) == 1,
-                "Moving to another patch must replace both selection outlines.");
-            var refreshed = Feature(3, 175, 128);
+            Check(viewer.Selected == second && Highlights(live) == 0 && Highlights(atlas) == 1,
+                "Moving to a retained patch outside the image must transfer the outline to the Atlas.");
+            var refreshed = Feature(3, 175, 128) with { AtlasPosition = second.AtlasPosition };
             Publish("Room_A", first, refreshed);
             WaitFor(() => viewer.Selected == refreshed, "The viewer did not refresh the selected patch from the active room.");
             Publish("Room_B", first, refreshed);
@@ -141,12 +143,11 @@ internal static class GroundFeatureViewerTests
                 live.Children.Clear();
                 GroundFeatureOverlayPresentation.DrawLive(live, GroundHypothesisTrackingResult.Empty with
                 {
-                    Features = [new(4, 12, 1, new(12, 20, 16, 12), GroundHypothesisClassification.GroundPlane, 0, 0),
-                        new(5, 12, 3, new(44, 20, 16, 12), GroundHypothesisClassification.GroundPlane, 0, 0)]
+                    Features = [new(4, 12, 1, new(12, 20, 16, 12), GroundHypothesisClassification.GroundPlane, 0, 0)]
                 }, [new(20, new(0, 83))], []);
                 atlas.Children.Clear();
                 var drawing = GroundFeatureOverlayPresentation.DrawAtlas(null, atlas, new(0, 0), new(640, 360),
-                    new(0, 0, 640, 360), [new(12, new(30, 50), new(155, 50))], features)!;
+                    new(0, 0, 640, 360), [new(12, new(30, floorY), new(720, floorY))], features)!;
                 var frame = type.GetNestedType("GroundViewerFrame", BindingFlags.NonPublic)!;
                 Set("groundViewerFrame", Activator.CreateInstance(frame, 12L, room, null, features, drawing));
                 type.GetMethod("DrawGroundViewerHighlight", instance)!.Invoke(window, null);
@@ -166,7 +167,7 @@ internal static class GroundFeatureViewerTests
         Console.WriteLine("PASS MainWindow selects, refreshes and clears live Ground Viewer patches");
 
         void Set(string name, object? value) => type.GetField(name, instance)!.SetValue(window, value);
-        static int Highlights(Canvas canvas) => canvas.Children.OfType<Rectangle>().Count(marker => marker.StrokeThickness == 3);
+        int Highlights(Canvas canvas) => canvas.Children.OfType<Rectangle>().Count(marker => ReferenceEquals(marker.Tag, highlightTag));
     }
 
     private static void WaitFor(Func<bool> check, string reason)
