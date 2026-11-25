@@ -580,13 +580,17 @@ internal static class BotDesktopEvaluationTests
             }
             finally { Environment.SetEnvironmentVariable("HKV_BOT_PYTHON", previousPython); }
 
+            var trainingRuns = Path.Combine(botRoot, "training-runs");
+            var trainingRun = Directory.Exists(trainingRuns) ? Directory.GetDirectories(trainingRuns).SingleOrDefault() : null;
+            var trainingLog = trainingRun is null ? null : Path.Combine(trainingRun, "training.log");
+            var trainingOutput = trainingLog is not null && File.Exists(trainingLog) ? File.ReadAllText(trainingLog) : "";
             Check(trainingStatus.Text == $"Hacker is using {buttonModel}." && Field("botPlayback").GetValue(window) is null,
-                $"Training must adopt the verified result and return control from the older bot. {trainingStatus.Text}");
-            var trainingRun = Directory.GetDirectories(Path.Combine(botRoot, "training-runs")).Single();
+                $"Training must adopt the verified result and return control from the older bot. {trainingStatus.Text}\n{trainingOutput}");
+            if (trainingRun is null) throw new InvalidOperationException("The desktop did not create a training run.");
             var publishedId = "bot-" + Path.GetFileName(trainingRun);
             Check(JsonSerializer.Deserialize<Guid[]>(File.ReadAllBytes(Path.Combine(trainingRun, "selection.json")), Json)!
                     .ToHashSet().SetEquals(expectedClips)
-                && File.ReadAllText(Path.Combine(trainingRun, "training.log")).Contains("Published synthetic verified checkpoint", StringComparison.Ordinal),
+                && trainingOutput.Contains("Published synthetic verified checkpoint", StringComparison.Ordinal),
                 "The desktop job must pass the Hacker clips through the shipped launcher and retain its output.");
             await WaitFor(() => versions.SelectedValue as string == publishedId
                 && pending.Text == "3 new runs · Hacker 0 · Game Play 3");
@@ -643,9 +647,13 @@ internal static class BotDesktopEvaluationTests
         $runIndex = [Array]::IndexOf($options, '--run-id')
         $domainIndex = [Array]::IndexOf($options, '--domain')
         $selectionIndex = [Array]::IndexOf($options, '--selection')
-        if ($rootIndex -lt 0 -or $runIndex -lt 0 -or $domainIndex -lt 0 -or $selectionIndex -lt 0
-          -or $options[$domainIndex + 1] -ne 'hacker' -or '--follow-playback' -notin $options
-          -or -not (Test-Path -LiteralPath $options[$selectionIndex + 1] -PathType Leaf)) {
+        if ($rootIndex -lt 0 -or $runIndex -lt 0 -or $domainIndex -lt 0 -or $selectionIndex -lt 0) {
+          throw 'The desktop did not pass the required training arguments.'
+        }
+        if ($options[$domainIndex + 1] -ne 'hacker' -or '--follow-playback' -notin $options) {
+          throw 'The desktop did not launch the Hacker trainer in playback-following mode.'
+        }
+        if (-not (Test-Path -LiteralPath $options[$selectionIndex + 1] -PathType Leaf)) {
           throw 'The desktop did not launch training with its domain and selected captures.'
         }
         $run = [guid]::Parse([string]$options[$runIndex + 1]).ToString('D')
@@ -661,6 +669,7 @@ internal static class BotDesktopEvaluationTests
         $receipt | Add-Member -NotePropertyName id -NotePropertyValue $run
         [IO.File]::WriteAllText((Join-Path $target 'training-result.json'), ($receipt | ConvertTo-Json -Compress))
         Write-Output 'Published synthetic verified checkpoint'
+        exit 0
         """;
 
     private static async Task VerifyOpeningWithoutCheckpointAsync(string root, OpeningOutcome outcome, CancellationToken token)
