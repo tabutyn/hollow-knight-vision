@@ -1635,6 +1635,11 @@ if (Environment.GetEnvironmentVariable("HKV_RUN_ATLAS_BENCHMARKS") == "1")
         LiveAtlasPipelineRemainingParityTests.TestTemporalAgreementFullResolutionFiveRunBenchmark));
 }
 
+if (Environment.GetEnvironmentVariable("HKV_SCENE_CUT_AUDIT_INPUT") is not null)
+    tests.Add(("archived first-bench images contain one complete loading cut", LoadingGapReplayAuditTests.TestArchivedVisualCuts));
+if (Environment.GetEnvironmentVariable("HKV_LOADING_GAP_AUDIT_INPUT") is not null)
+    tests.Add(("archived loading-gap arrivals meet recorded time windows", LoadingGapReplayAuditTests.TestArchivedLoadingGapsWhenRequested));
+
 foreach (var test in tests)
 {
     test.Run();
