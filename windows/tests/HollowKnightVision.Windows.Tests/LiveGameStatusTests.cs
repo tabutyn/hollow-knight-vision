@@ -10,7 +10,7 @@ internal static class LiveGameStatusTests
     private static MenuStencilResult Menu(string context, string? selected = null) => new(context, true, .9, selected, [], [], [], 0, 0, 1, MenuStencilPhase.Tracking, 1, 1, null);
     private static HudStencilResult Hud(bool mana = true) => new([new(0, "full", default, .9), new(1, "full", default, .9)],
         mana ? new(0, "main", new(40, 20, 58, 40), .9) : null, [], [], [], default, false, 1);
-    private static LiveGameStatus Game() => LiveGameStatusResolver.Resolve([], hudStencil: Hud())!;
+    private static LiveGameStatus Game() => LiveGameStatusResolver.Resolve([Detection("game.playable-knight")], hudStencil: Hud())!;
     private static LiveGameStatus MenuStatus(string context, string? selected = null) => LiveGameStatusResolver.Resolve([], Menu(context, selected))!;
 
     public static void TestIgnoresMenuModelObjects()
@@ -41,17 +41,55 @@ internal static class LiveGameStatusTests
     }
     public static void TestGameplayObjectEvidence()
     {
-        Check(LiveGameStatusResolver.Resolve([], hudStencil: Hud(false))?.IsGameplay == true);
         var health = Detection("game.health"); var mana = Detection("game.mana");
         Check(LiveGameStatusResolver.Resolve([health]) is null && LiveGameStatusResolver.Resolve([health, mana]) is null);
-        Check(LiveGameStatusResolver.Resolve([health, mana], hudStencil: Hud())?.IsGameplay == true);
+        Check(LiveGameStatusResolver.Resolve([health, mana], hudStencil: Hud()) is null);
         Check(SceneRegions.FromObjectDetections([health, mana], new(0, 0, 1000, 562)).Geo.IsEmpty);
         foreach (var pair in new[] { new[] { "game.playable-knight", "enemies.crawlid" }, new[] { "enemies.crawlid", "world.geo-deposit" }, new[] { "enemies.vengfly", "world.sign" } })
-            Check(LiveGameStatusResolver.Resolve(pair.Select(id => Detection(id)).ToArray())?.IsGameplay == true);
-        Check(LiveGameStatusResolver.Resolve([Detection("game.playable-knight")]) is null);
-        Check(LiveGameStatusResolver.Resolve([Detection("game.playable-knight", .49f), Detection("enemies.crawlid", .49f)]) is null);
-        Check(LiveGameStatusResolver.Resolve([Detection("game.playable-knight", .5f), Detection("enemies.crawlid", .5f)])?.IsGameplay == true);
+        {
+            var detections = pair.Select(id => Detection(id)).ToArray();
+            Check(LiveGameStatusResolver.Resolve(detections) is null);
+            Check((LiveGameStatusResolver.Resolve(detections, hudStencil: Hud())?.IsGameplay == true)
+                == pair.Contains("game.playable-knight"));
+        }
         Check(LiveGameStatusResolver.Resolve([Detection("world.unknown"), Detection("world.unknown")]) is null);
+    }
+
+    public static void TestGameplayNeedsFreshHealthAndConfidentKnight()
+    {
+        var hud = Hud(mana: false);
+        var knight = Detection("game.playable-knight", .5f);
+        Check(LiveGameStatusResolver.Resolve([], hudStencil: hud) is null);
+        Check(LiveGameStatusResolver.Resolve([knight]) is null);
+        Check(LiveGameStatusResolver.Resolve([], Menu("game")) is null);
+        Check(LiveGameStatusResolver.Resolve([knight], hudStencil: hud with { Health = [hud.Health[0]] }) is null);
+        Check(LiveGameStatusResolver.Resolve([knight], hudStencil: hud with { Health = [], HoldsHealthMask = true }) is null);
+        foreach (var confidence in new[] { .05f, .49f, float.NaN, float.PositiveInfinity })
+            Check(LiveGameStatusResolver.Resolve([knight with { Confidence = confidence }], hudStencil: hud) is null);
+        Check(LiveGameStatusResolver.Resolve([knight], hudStencil: hud)?.IsGameplay == true,
+            "Two current health matches and a confident Knight must establish Gameplay without mana.");
+
+        var batch = new LiveObjectDetectionBatch([knight], 1, 1, 1, .01);
+        foreach (var (generation, timestamp) in new[] { (1L, 2.0), (2L, 1.0), (1L, .5) })
+            Check(LiveGameStatusResolver.Resolve(LiveObjectDetectionFreshness.Detections(batch, generation, timestamp),
+                hudStencil: hud) is null, "Only current-generation and non-stale Knight detections may establish Gameplay.");
+    }
+
+    public static void TestCutsceneWaitsForBothGameplayCues()
+    {
+        var pipeline = new LiveGameStatusPipeline();
+        Check(pipeline.Observe(Menu("select-profile", "Slot 1"), null, 1).Status?.ContextIdentifier == "select-profile");
+        for (var i = 0; i < 3; i++)
+        {
+            var opening = pipeline.Observe(null, Hud(), 1.2 + i * .4,
+                inferObjects: () => [Detection("enemies.crawlid"), Detection("world.geo-deposit")]);
+            Check(opening.RecognizedStatus is null && opening.Status?.IsGameplay != true);
+        }
+        var ready = pipeline.Observe(null, Hud(), 3, inferObjects: () => [Detection("game.playable-knight")]);
+        Check(ready.RecognizedStatus?.IsGameplay == true && ready.Status?.IsGameplay == true);
+        var occluded = pipeline.Observe(null, Hud(), 3.1, inferObjects: () => []);
+        Check(occluded.RecognizedStatus is null && occluded.Status?.IsGameplay == true,
+            "An established Gameplay session must survive a brief loss of the Knight.");
     }
     public static void TestMissingCueGrace()
     {
@@ -163,12 +201,14 @@ internal static class LiveGameStatusTests
     public static void TestPipelineHandoff()
     {
         var pipeline = new LiveGameStatusPipeline(); var calls = 0;
-        IReadOnlyList<ObjectDetection> Inference() { calls++; return []; }
+        var knightVisible = true;
+        IReadOnlyList<ObjectDetection> Inference() { calls++; return knightVisible ? [Detection("game.playable-knight")] : []; }
         var first = pipeline.Observe(Menu("quit-game", "Yes"), Hud(), 1, inferObjects: Inference);
         Check(first.Menu is null && first.Status?.IsGameplay == true
             && first.RecognizedStatus?.IsGameplay == true && first.RanObjectInference);
+        knightVisible = false;
         var flash = pipeline.Observe(Menu("keyboard"), Hud(), 1.1, inferObjects: Inference);
-        Check(flash.Menu is null && flash.Status?.IsGameplay == true && flash.RanObjectInference);
+        Check(flash.Menu is null && flash.RecognizedStatus is null && flash.Status?.IsGameplay == true && flash.RanObjectInference);
         var missing = pipeline.Observe(null, null, 1.2, inferObjects: Inference);
         Check(missing.Status?.IsGameplay == true && missing.RecognizedStatus is null && missing.Menu is null);
         Check(pipeline.Observe(Menu("pause"), null, 1.5, inferObjects: Inference).Status?.IsGameplay == true);
@@ -177,7 +217,8 @@ internal static class LiveGameStatusTests
         var grace = pipeline.Observe(null, null, 1.7, inferObjects: Inference);
         Check(grace.Status?.SelectedMenuOption == "Options" && grace.RecognizedStatus is null && grace.Menu is null && grace.RanObjectInference);
         Check(pipeline.Observe(null, null, 2.5).Status is null);
-        pipeline.Observe(null, Hud(), 3); pipeline.Reset(true);
+        knightVisible = true;
+        pipeline.Observe(null, Hud(), 3, inferObjects: Inference); pipeline.Reset(true);
         Check(pipeline.Observe(null, null, 0).Status?.IsGameplay == true);
         pipeline.Reset(); Check(pipeline.Observe(null, null, 0).Status is null);
         Check(pipeline.Observe(Menu("main-title"), null, 1).Status?.ContextIdentifier == "main-title");
@@ -188,7 +229,7 @@ internal static class LiveGameStatusTests
         pipeline.Observe(Menu("extras"), null, 1);
         var credits = pipeline.Observe(null, null, 2, creditsLikely: true, inferObjects: () => []);
         Check(credits.Status?.ContextIdentifier == "credits" && credits.RanObjectInference);
-        var gameplay = pipeline.Observe(null, null, 3, creditsLikely: true,
+        var gameplay = pipeline.Observe(null, Hud(), 3, creditsLikely: true,
             inferObjects: () => [Detection("game.playable-knight"), Detection("enemies.crawlid")]);
         Check(gameplay.Status?.IsGameplay == true && gameplay.RanObjectInference);
         Check(pipeline.Observe(null, null, 4, creditsLikely: true).Status?.IsGameplay == true);

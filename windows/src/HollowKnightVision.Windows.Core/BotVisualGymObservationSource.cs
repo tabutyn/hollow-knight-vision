@@ -19,7 +19,8 @@ public sealed class BotVisualGymObservationSource
 {
     private const long Generation = 1;
     private readonly LiveObjectDetectionPipeline objects = new();
-    private readonly LiveGameStatusPipeline status = new();
+    // Visual Gym begins at a controlled Gameplay checkpoint, as on macOS.
+    private readonly LiveGameStatusPipeline status = new(startsInGameplay: true);
     private readonly GameplayFrameAdmission admission = new();
     private readonly VisualRoomTransitionTracker rooms = new();
     private readonly MaskedFrameMotionTracker motion = new();

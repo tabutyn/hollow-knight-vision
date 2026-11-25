@@ -25,7 +25,6 @@ internal sealed class WindowsMenuStencilRecognizer
     private readonly LiveObjectInferenceWorker objects = new();
     private double objectExtension = .12;
     private bool createsPixelDiagnostic;
-    private IReadOnlySet<string> customClassIdentifiers = new HashSet<string>();
     private HudStencilTemplate? hudTemplate;
     private bool hasCapturedHudReference;
     private HudStencilTracker hud = new(null);
@@ -95,14 +94,6 @@ internal sealed class WindowsMenuStencilRecognizer
             hud = new(nextHud);
             statusPipeline.Reset(preservingGameplay: nextHud is not null);
             objects.Reset();
-            try
-            {
-                var support = Path.GetDirectoryName(Path.GetDirectoryName(examplesRoot))!;
-                customClassIdentifiers = new UserObjectCatalog(Path.Combine(support, "object-catalog-v1.json")).Load()
-                    .Select(item => item.Identifier).ToHashSet(StringComparer.Ordinal);
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
-            { customClassIdentifiers = new HashSet<string>(); }
             Volatile.Write(ref latestHud, null); Interlocked.Increment(ref generation);
         }
     }
@@ -157,8 +148,8 @@ internal sealed class WindowsMenuStencilRecognizer
         {
             if (!acceptsFrames) return new(null, null, null, null, generation, [], "stopped");
             var timestamp = (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds;
-            // Fresh health evidence owns the image before the menu matcher can
-            // update its tracking state, including just after capture starts.
+            // Fresh health evidence suppresses menu lookalikes while the
+            // object worker independently verifies Gameplay entry.
             var hudResult = hud.Observe(frame, true, timestamp, generation);
             var menuObservation = hudResult?.EstablishesGameplay == true ? null
                 : menuWorker.Observe(frame, timestamp, asynchronously)?.Observation;
@@ -171,7 +162,7 @@ internal sealed class WindowsMenuStencilRecognizer
                 return snapshot.Tracked;
             }
             var state = statusPipeline.Observe(rawMenu, hudResult, timestamp, CreditsVisualSignature.IsLikelyCredits(frame),
-                inferObjects is null ? null : InferAndTrack, customClassIdentifiers);
+                inferObjects is null ? null : InferAndTrack);
             // Menus admit no new object work and expose no object overlay. Like
             // Mac, prior bounded work may finish but retains its capture age.
             Volatile.Write(ref latestHud, hudResult);
@@ -181,8 +172,6 @@ internal sealed class WindowsMenuStencilRecognizer
                 { Objects = snapshot, ObjectDiagnostics = objects.Diagnostics };
         }
     }
-    // Kept for HUD integration checks; production consumes one atomic observation.
-    internal string? Detect(BgraFrame frame) => Observe(frame).RecognizedStatus?.ContextIdentifier;
     private static BgraFrame LoadFrame(string path)
     {
         var decoder = BitmapDecoder.Create(new Uri(path, UriKind.Absolute), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
