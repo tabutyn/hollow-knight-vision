@@ -136,8 +136,7 @@ internal sealed class LiveGroundClosureSearch
                 || !matcher.PermitsPatchProposal(candidate.Features)) continue;
 
             var features = candidate.Features.Features.Take(80).ToArray();
-            var points = features.Select(feature => feature.SamplePoint with { Y = prior.Height - 1 - feature.SamplePoint.Y })
-                .ToArray();
+            var points = features.Select(feature => feature.SamplePoint).ToArray();
             var batch = CalibratedSceneMotionTracker.FitBatch(prior, current, points);
             var fits = new List<(int Index, AtlasPoint Point, CalibratedSceneMotionTracker.PatchFit Fit)>();
             for (var index = 0; index < features.Length; index++)

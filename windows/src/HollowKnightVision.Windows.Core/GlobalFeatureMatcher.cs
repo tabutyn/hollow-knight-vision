@@ -589,6 +589,31 @@ public sealed class GlobalFeatureMatcher
         return false;
     }
 
+    internal static bool HasMirroredStoredFeatures(BgraFrame frame, IEnumerable<LiveWorldLandmark> landmarks)
+    {
+        var grid = Sample(frame);
+        if (grid is null) return false;
+
+        double topOriginError = 0, bottomOriginError = 0;
+        foreach (var landmark in landmarks)
+        {
+            var x = (int)landmark.SamplePoint.X;
+            var y = (int)landmark.SamplePoint.Y;
+            if (landmark.Descriptor.Count != 25 || x < 2 || x >= grid.Width - 2
+                || y < 2 || y >= grid.Height - 2) continue;
+            for (var dy = -2; dy <= 2; dy++)
+            for (var dx = -2; dx <= 2; dx++)
+            {
+                var saved = landmark.Descriptor[(dy + 2) * 5 + dx + 2];
+                topOriginError += Math.Abs(saved - Value(grid, x + dx, y + dy));
+                bottomOriginError += Math.Abs(saved - Value(grid, x + dx, grid.Height - 1 - (y + dy)));
+            }
+        }
+        // Imported Atlases can contain both Mac and earlier Windows keyframes.
+        // Use the saved pixels to resolve the legacy convention when the evidence is clear.
+        return bottomOriginError < topOriginError * .8;
+    }
+
     private static Grid? Sample(BgraFrame image)
     {
         if (image.Width <= 0 || image.Height <= 0) return null;
@@ -600,8 +625,10 @@ public sealed class GlobalFeatureMatcher
         var luma = new byte[checked(SampleWidth * height)];
         for (var y = 0; y < height; y++)
         {
-            var logicalSourceY = ((y + 0.5) * image.Height / height) - 0.5;
-            var sourceY = Math.Clamp(image.Height - 1 - logicalSourceY, 0, image.Height - 1.0);
+            var sourceY = Math.Clamp(
+                ((y + 0.5) * image.Height / height) - 0.5,
+                0,
+                image.Height - 1.0);
             var y0 = (int)Math.Floor(sourceY);
             var y1 = Math.Min(image.Height - 1, y0 + 1);
             var yWeight = sourceY - y0;

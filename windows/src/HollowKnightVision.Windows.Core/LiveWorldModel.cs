@@ -194,7 +194,11 @@ internal sealed class LiveWorldObservationJsonConverter
     }
 }
 
-public sealed record LiveWorldKeyframe(int Id, int ObservationId, int SourceObservationId);
+public sealed record LiveWorldKeyframe(int Id, int ObservationId, int SourceObservationId)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool TopOriginFeatures { get; init; }
+}
 
 public sealed record LiveWorldLandmark(
     int Id,
