@@ -105,16 +105,25 @@ public sealed partial class GroundCameraSolver
         foreach (var candidate in execution.Results)
             if ((Math.Abs(candidate.Dx - best.Dx) > 2 || Math.Abs(candidate.Dy - best.Dy) > 2)
                 && (rival is null || candidate.Error < rival.Value.Error)) rival = candidate;
-        var consensusStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-        var consensus = broadSearchEveryFrame
-            ? GroundPatchConsensus.Refine(patches, pixels, width, height, best.Dx, best.Dy, exclusions, allowVerticalSpread: textureFallback) : null;
-        profiledConsensus += System.Diagnostics.Stopwatch.GetElapsedTime(consensusStarted).TotalMilliseconds;
+        var consensus = broadSearchEveryFrame ? RefineConsensus(textureFallback) : null;
         if (broadSearchEveryFrame && consensus is null) return null;
         if (consensus is not null) best = new(consensus.Dx, consensus.Dy, consensus.Error, consensus.Patches.Length);
         else if (rival is { } competing && competing.Error <= best.Error * 1.12 + .25) return null;
-        if (!textureFallback && longRowOnly && (best.Support < 8 || best.Error > 6) && (best.Support < 12 || best.Error > 10)) return null;
+        if (!textureFallback && longRowOnly && !HasLongRowSupport(best.Support, best.Error)) return null;
         if (textureFallback && (best.Support < 4 || best.Error > 8)) return null;
         if (GroundPoseAcceptancePolicy.Rejects(best.Support, best.Error)) return null;
+        // Refine only an already accepted search. The subset may improve the
+        // displacement, but keep the full population's quality as a bound.
+        if (independentPatchConsensusEnabled && !broadSearchEveryFrame
+            && RefineConsensus(allowVerticalSpread: false) is { } independent
+            && independent.Patches.All(patch => MatchesRow(searchLines, patch.Y + independent.Dy))
+            && (!longRowOnly || HasLongRowSupport(independent.Patches.Length, independent.Error)))
+        {
+            best = new(independent.Dx, independent.Dy, Math.Max(best.Error, independent.Error),
+                Math.Min(best.Support, independent.Patches.Length));
+            if (GroundPoseAcceptancePolicy.Rejects(best.Support, best.Error)) return null;
+            consensus = independent;
+        }
         var coarseDisplacement = new CameraVector(best.Dx, best.Dy);
         var coarseScale = MotionScale(matchSource, coarseDisplacement);
         var coarseNext = Add(prior.Position, new(coarseDisplacement.X * coarseScale.X, coarseDisplacement.Y * coarseScale.Y));
@@ -192,7 +201,22 @@ public sealed partial class GroundCameraSolver
             else AppendSpatial(currentReference);
         }
         return new(translation, best.Support, best.Error, prior.PoseTrusted, prior.Timestamp, prior.Position, matched, matchSource)
-        { IndependentTextureConsensus = consensus is not null && prior.PoseTrusted, UniqueLocalTextureMatch = uniqueLocalTextureMatch };
+        {
+            IndependentTextureConsensus = broadSearchEveryFrame && consensus is not null && prior.PoseTrusted,
+            UniqueLocalTextureMatch = uniqueLocalTextureMatch
+        };
+
+        GroundPatchConsensus.Result? RefineConsensus(bool allowVerticalSpread)
+        {
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var result = GroundPatchConsensus.Refine(patches, pixels, width, height, best.Dx, best.Dy, exclusions,
+                allowVerticalSpread: allowVerticalSpread);
+            profiledConsensus += System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            return result;
+        }
+
+        static bool HasLongRowSupport(int support, double error) =>
+            support >= 8 && error <= 6 || support >= 12 && error <= 10;
     }
 
     // Row matching and mask vertical overlap do not depend on dx. Compute
