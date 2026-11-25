@@ -15,6 +15,9 @@ public sealed class ModelSummaryReviewPanel : Grid
     private readonly ListBox least = new(), errors = new();
     private readonly TextBlock leastHeading = new(), errorsHeading = new(), title = new(), position = new(), empty = new(), failure = new();
     private readonly Button previous = new() { Content = "‹" }, next = new() { Content = "›" };
+    private readonly StackPanel errorLegend = new() { Orientation = Orientation.Horizontal, Margin = new Thickness(10, 0, 10, 8) };
+    private readonly TextBlock falsePositives = new() { Foreground = Brushes.Red, Margin = new Thickness(0, 0, 14, 0) };
+    private readonly TextBlock falseNegatives = new() { Foreground = Brushes.Orange };
     private readonly ReviewedLabelImage preview;
     private string[] customClasses = [];
     private LabelingObjectAtlasSnapshot? atlas;
@@ -31,7 +34,9 @@ public sealed class ModelSummaryReviewPanel : Grid
         AddPriorities(least, leastHeading, "SummaryLeastRegistered", 0);
         AddPriorities(errors, errorsHeading, "SummaryMostErrors", 1);
         var detail = new Grid { Margin = new Thickness(10), Background = PanelBrush };
-        detail.RowDefinitions.Add(new() { Height = GridLength.Auto }); detail.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star), MaxHeight = 390 });
+        detail.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        detail.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        detail.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star), MaxHeight = 390 });
         detail.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         Grid.SetColumn(detail, 2); body.Children.Add(detail);
         var heading = new DockPanel { Margin = new Thickness(10) };
@@ -46,11 +51,17 @@ public sealed class ModelSummaryReviewPanel : Grid
         title.Foreground = Brushes.White; title.FontWeight = FontWeights.SemiBold; title.FontSize = 15;
         title.VerticalAlignment = VerticalAlignment.Center; title.TextTrimming = TextTrimming.CharacterEllipsis;
         AutomationProperties.SetAutomationId(title, "SummaryObjectTitle"); heading.Children.Add(title); detail.Children.Add(heading);
+        AutomationProperties.SetAutomationId(falsePositives, "SummaryFalsePositiveCount");
+        AutomationProperties.SetAutomationId(falseNegatives, "SummaryFalseNegativeCount");
+        errorLegend.Children.Add(falsePositives);
+        errorLegend.Children.Add(falseNegatives);
+        Grid.SetRow(errorLegend, 1);
+        detail.Children.Add(errorLegend);
         preview = new(text, openExample, "SummaryOpenScreenshot") { Margin = new Thickness(10, 0, 10, 0) };
-        Grid.SetRow(preview, 1); detail.Children.Add(preview);
+        Grid.SetRow(preview, 2); detail.Children.Add(preview);
         empty.Foreground = Brushes.LightSlateGray; empty.TextWrapping = TextWrapping.Wrap;
         empty.Margin = new Thickness(10); empty.HorizontalAlignment = HorizontalAlignment.Center; empty.VerticalAlignment = VerticalAlignment.Center;
-        AutomationProperties.SetAutomationId(empty, "SummaryEmptyReview"); Grid.SetRow(empty, 1); detail.Children.Add(empty);
+        AutomationProperties.SetAutomationId(empty, "SummaryEmptyReview"); Grid.SetRow(empty, 2); detail.Children.Add(empty);
         failure.Foreground = Brushes.Salmon; failure.TextWrapping = TextWrapping.Wrap; failure.Margin = new Thickness(12); failure.Visibility = Visibility.Collapsed;
         AutomationProperties.SetAutomationId(failure, "SummaryReviewError"); Children.Add(failure);
     }
@@ -140,7 +151,14 @@ public sealed class ModelSummaryReviewPanel : Grid
         finally { updating = false; }
         title.Text = session.ReviewClassIdentifier is { } identifier ? text(LabelingVisualIdentity.DisplayName(identifier)) : text("Errors");
         position.Text = session.PositionText; previous.IsEnabled = next.IsEnabled = session.FailureExamples.Count >= 2;
-        preview.SetExample(session.SelectedFailure, session.SelectedClassIdentifier, customClasses, atlas, session.SelectedPredictions);
+        var review = session.SelectedErrors;
+        preview.SetExample(session.SelectedFailure, session.SelectedClassIdentifier, customClasses, atlas, errors: review);
+        errorLegend.Visibility = review.HasValue && preview.OpenButton.IsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        if (review is { } boxes)
+        {
+            falsePositives.Text = $"{boxes.FalsePositives.Count} {text("FP · false detection")}";
+            falseNegatives.Text = $"{boxes.FalseNegatives.Count} {text("FN · missed object")}";
+        }
         preview.Visibility = session.SelectedFailure is null ? Visibility.Collapsed : Visibility.Visible;
         empty.Text = text("No failed screenshots for this object."); empty.Visibility = session.SelectedFailure is null ? Visibility.Visible : Visibility.Collapsed;
     }

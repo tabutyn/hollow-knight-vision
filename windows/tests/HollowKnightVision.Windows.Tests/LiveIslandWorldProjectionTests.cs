@@ -112,6 +112,76 @@ internal static class LiveIslandWorldProjectionTests
         }
     }
 
+    internal static void TestReverseLoopMovesTheSameRigidComponent()
+    {
+        var graph = LinkedIslandFixture();
+        var components = new LiveIslandComponents(graph);
+        var forward = components.Plan(0, 1, new(-60, 0), tolerance: 4);
+        var reverse = components.Plan(1, 0, new(60, 0), tolerance: 4);
+        Check(forward is not null && reverse is not null
+            && forward.PlacedIslands.SetEquals([0, 1, 2]) && reverse.PlacedIslands.SetEquals(forward.PlacedIslands)
+            && forward.Shifts.Count == 2 && reverse.Shifts.Count == 2
+            && forward.Shifts.All(shift => shift.Value == new AtlasPoint(-60, 0)
+                && reverse.Shifts.GetValueOrDefault(shift.Key) == shift.Value),
+            "Reversing the measured link must move both already linked islands by the same translation.");
+        var moved = ApplyPlan(graph, components, reverse!);
+        Check(moved.Observations.Select(observation => observation.OptimizedPose.X)
+            .SequenceEqual([0d, 10d, 40d, 50d, 90d, 100d, 300d]),
+            "The reference, rigid local offsets and disconnected island must stay intact.");
+    }
+
+    internal static void TestContradictoryLoopCannotBendAnAlreadyConnectedComponent()
+    {
+        var graph = LinkedIslandFixture();
+        var components = new LiveIslandComponents(graph);
+        var joined = ApplyPlan(graph, components, components.Plan(0, 1, new(-60, 0), tolerance: 4)!);
+        var linked = new LiveWorldSnapshot(joined.SchemaVersion, joined.MapRevision, joined.AnchoredObservationId,
+            joined.Observations, joined.Keyframes, joined.Landmarks, joined.RelativeMotionEdges,
+            [.. joined.LoopClosureEdges, IslandEdge(1, 0, 2, 40)], joined.TrackingIslands);
+        components = new(linked);
+        var original = LiveWorldJson.WriteSnapshot(linked);
+        Check(components.SameRigidComponent(0, 2) && components.Plan(0, 2, new(-20, 0), tolerance: 4) is null
+            && components.Plan(2, 0, new(20, 0), tolerance: 4) is null,
+            "A contradictory closing loop must be rejected in both directions.");
+        Check(components.Plan(0, 2, default, tolerance: 4) is { Shifts.Count: 0 }
+            && LiveWorldJson.WriteSnapshot(linked).SequenceEqual(original),
+            "A consistent loop needs no shift and the original graph must remain immutable.");
+    }
+
+    private static LiveWorldSnapshot ApplyPlan(LiveWorldSnapshot snapshot, LiveIslandComponents components,
+        LiveIslandComponents.LinkPlan plan)
+    {
+        var poses = snapshot.Observations.ToDictionary(observation => observation.Id, observation =>
+        {
+            var shift = plan.Shifts.GetValueOrDefault(components.Owner(observation.Id)!.Id);
+            return new AtlasPoint(observation.OptimizedPose.X + shift.X, observation.OptimizedPose.Y + shift.Y);
+        });
+        return snapshot.ReplaceOptimizedPoses(poses, snapshot.MapRevision);
+    }
+
+    private static LiveWorldSnapshot LinkedIslandFixture()
+    {
+        double[] positions = [0, 10, 100, 110, 150, 160, 300];
+        var observations = positions.Select((x, id) => LiveWorldObservation.Create(
+            id, id, id, 640, 360, 640, 160, [], new(x, 0), new(x, 0))).ToArray();
+        int[][] groups = [[0, 1], [2, 3], [4, 5], [6]];
+        var islands = groups.Select((group, id) => new LiveTrackingIsland(
+            id, 0, group[0], new(positions[group[0]], 0),
+            id == 0 ? LiveIslandPlacement.Reference : LiveIslandPlacement.Estimated,
+            id == 0 ? new(0, 0) : default, LiveTrackingIsland.RecoveryBreakReason,
+            group.Select(member => new LiveIslandMember(member, new(positions[member] - positions[group[0]], 0), true))
+                .ToArray())).ToArray();
+        var keyframes = observations.Select(row => new LiveWorldKeyframe(row.Id, row.Id, row.Id)).ToArray();
+        var landmarks = observations.SelectMany(row => Enumerable.Range(0, 3).Select(index =>
+            new LiveWorldLandmark(row.Id * 10 + index, row.Id, row.Id, new(10 + index * 20, 10),
+                new(row.RawPose.X + 10 + index * 20, 10), [0, 1, 2], 1, 1))).ToArray();
+        return new(LiveWorldSnapshot.CurrentSchemaVersion, 5, 0, observations, keyframes, landmarks,
+            loopClosureEdges: [IslandEdge(0, 2, 4, 50)], trackingIslands: islands);
+    }
+
+    private static LiveWorldLoopClosureEdge IslandEdge(int id, int from, int to, double dx) =>
+        new(id, from, to, [from * 10, from * 10 + 1, from * 10 + 2], dx, 0, 3, 0) { ResidualPixels = 2 };
+
     internal static void TestWorldProjectionFencesCaptureRoomEpochAndRecovery()
     {
         var world = new LiveWorldTracker();

@@ -12,6 +12,22 @@ internal static class ReviewAnalysisTests
         new() { Id = Guid.NewGuid(), DatasetIdentifier = Guid.NewGuid(), ClassIdentifier = LabelingModelVersionStore.SharedObjectModel,
             CompletedAt = DateTimeOffset.UnixEpoch, ModelFilename = "model.onnx", PredictionsFilename = "predictions.json", ClassIdentifiers = classes }, review);
 
+    public static void TestErrorBoxesMatchCountsAndIgnoreBelowThreshold()
+    {
+        var duplicate = Box("target", .1, .8);
+        var missed = Box("target", .5);
+        var example = Example(Guid.NewGuid(), [Box("target"), missed],
+            [duplicate, Box("target", .8, .2), Box("target", .1, .9), Box("other", .8, 1)]);
+        var errors = LabelingPredictionReviewAnalyzer.Errors(example, "target", .5, .5);
+        Check(errors.FalsePositives.SequenceEqual([duplicate]) && errors.FalseNegatives.SequenceEqual([missed]),
+            "Only the lower-confidence duplicate and the unmatched label should be highlighted.");
+        Near(1, errors.Overlaps.Single());
+        var review = new LabelingPredictionReview([example], Metrics);
+        var summary = LabelingPredictionReviewAnalyzer.Summaries(review).Single(value => value.ClassIdentifier == "target");
+        Check(summary.TruePositives == errors.Overlaps.Count && summary.FalsePositives == errors.FalsePositives.Count
+            && summary.FalseNegatives == errors.FalseNegatives.Count, "The error boxes and summary must use the same matches.");
+    }
+
     public static void TestSummariesByClass()
     {
         var first = Guid.NewGuid(); var second = Guid.NewGuid();
@@ -105,13 +121,17 @@ internal static class ReviewAnalysisTests
         session.SetContent([first, second, menu], candidate, classes, "game.playable-knight");
         Check(session.ReviewClassIdentifier is null && session.SelectedFailure is null && session.PositionText == "0 / 0");
         Check(session.SelectPriority("game.playable-knight") && !session.SelectPriority("unknown"));
-        Check(session.FailureExamples.Select(example => example.Id).SequenceEqual(new[] { second.Id, first.Id }) && session.PositionText == "1 / 2" && session.SelectedPredictions.Count == 1);
-        session.Move(1); Check(session.SelectedFailure?.Id == first.Id && session.PositionText == "2 / 2" && session.SelectedPredictions.Count == 0);
+        Check(session.FailureExamples.Select(example => example.Id).SequenceEqual(new[] { second.Id, first.Id })
+            && session.PositionText == "1 / 2" && session.SelectedErrors is { FalsePositives.Count: 1, FalseNegatives.Count: 0 });
+        session.Move(1);
+        Check(session.SelectedFailure?.Id == first.Id && session.PositionText == "2 / 2"
+            && session.SelectedErrors is { FalsePositives.Count: 0, FalseNegatives.Count: 1 });
         session.SetContent([first, second], candidate, classes, "game.mana");
         Check(session.SelectedFailure?.Id == first.Id && session.ReviewClassIdentifier == "game.playable-knight" && session.SelectedClassIdentifier == "game.mana");
         session.SetContent([second], candidate, classes, "game.mana"); Check(session.SelectedFailure?.Id == second.Id && session.PositionText == "1 / 1");
         session.SetContent([second], null, classes, "game.mana");
-        Check(session.FailureExamples.Count == 0 && session.SelectedPredictions.Count == 0 && session.MostErrors.Count == 0 && session.LeastRegistered.Count == 3);
+        Check(session.FailureExamples.Count == 0 && session.SelectedErrors is null
+            && session.MostErrors.Count == 0 && session.LeastRegistered.Count == 3);
         session.SetContent([second], candidate, classes, "game.mana"); Check(session.SelectedFailure?.Id == second.Id);
     }
 

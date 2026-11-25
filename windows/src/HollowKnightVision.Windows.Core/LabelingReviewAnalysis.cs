@@ -12,8 +12,53 @@ public sealed record LabelingObjectPrioritySummary(string ClassIdentifier, int R
     public int ErrorCount => FalsePositives + FalseNegatives;
 }
 
+public readonly record struct LabelingReviewErrors(IReadOnlyList<LabelingReviewBox> FalsePositives,
+    IReadOnlyList<LabelingReviewBox> FalseNegatives, IReadOnlyList<double> Overlaps)
+{
+    internal bool HasFailures => FalsePositives.Count > 0 || FalseNegatives.Count > 0;
+}
+
 public static class LabelingPredictionReviewAnalyzer
 {
+    public static LabelingReviewErrors Errors(LabelingReviewExample example, string classIdentifier,
+        double confidenceThreshold, double intersectionOverUnionThreshold)
+    {
+        var identifier = Canonical(classIdentifier);
+        var human = example.Human.Where(box => Canonical(box.Label) == identifier).ToArray();
+        var predictions = example.Predictions
+            .Where(box => Canonical(box.Label) == identifier && box.Confidence >= confidenceThreshold)
+            .OrderByDescending(box => box.Confidence);
+        var matched = new bool[human.Length];
+        List<LabelingReviewBox>? falsePositives = null;
+        List<double>? overlaps = null;
+        foreach (var prediction in predictions)
+        {
+            var match = -1;
+            var bestOverlap = double.NegativeInfinity;
+            var geometry = Standardized(prediction);
+            for (var index = 0; index < human.Length; index++)
+            {
+                if (matched[index]) continue;
+                var overlap = geometry.IntersectionOverUnion(Standardized(human[index]));
+                if (overlap > bestOverlap)
+                {
+                    match = index;
+                    bestOverlap = overlap;
+                }
+            }
+            if (match >= 0 && bestOverlap >= intersectionOverUnionThreshold)
+            {
+                matched[match] = true;
+                (overlaps ??= []).Add(bestOverlap);
+            }
+            else
+            {
+                (falsePositives ??= []).Add(prediction);
+            }
+        }
+        return new(falsePositives ?? [], human.Where((_, index) => !matched[index]).ToArray(), overlaps ?? []);
+    }
+
     public static IReadOnlyList<LabelingClassReviewSummary> Summaries(LabelingPredictionReview review,
         IEnumerable<string>? classIdentifiers = null, double? confidenceThreshold = null, double? intersectionOverUnionThreshold = null)
     {
@@ -27,26 +72,12 @@ public static class LabelingPredictionReviewAnalyzer
             var truePositives = 0; var falsePositives = 0; var falseNegatives = 0; var overlapSum = 0.0; var failures = new HashSet<Guid>();
             foreach (var example in review.Examples)
             {
-                var human = example.Human.Where(box => Canonical(box.Label) == identifier).ToArray();
-                var predictions = example.Predictions.Where(box => Canonical(box.Label) == identifier && box.Confidence >= confidence)
-                    .OrderByDescending(box => box.Confidence);
-                var unmatched = Enumerable.Repeat(true, human.Length).ToArray(); var exampleFalsePositives = 0;
-                foreach (var prediction in predictions)
-                {
-                    var match = -1; var bestOverlap = double.NegativeInfinity;
-                    for (var index = 0; index < human.Length; index++)
-                    {
-                        if (!unmatched[index]) continue;
-                        var overlap = Standardized(prediction).IntersectionOverUnion(Standardized(human[index]));
-                        // Stable lowest-index tie breaking; Swift's Set iteration does not specify ties.
-                        if (overlap > bestOverlap) { match = index; bestOverlap = overlap; }
-                    }
-                    if (match >= 0 && bestOverlap >= overlapThreshold)
-                    { truePositives++; overlapSum += bestOverlap; unmatched[match] = false; }
-                    else { falsePositives++; exampleFalsePositives++; }
-                }
-                var missed = unmatched.Count(value => value); falseNegatives += missed;
-                if (exampleFalsePositives > 0 || missed > 0) failures.Add(example.ExampleIdentifier);
+                var errors = Errors(example, identifier, confidence, overlapThreshold);
+                truePositives += errors.Overlaps.Count;
+                foreach (var overlap in errors.Overlaps) overlapSum += overlap;
+                falsePositives += errors.FalsePositives.Count;
+                falseNegatives += errors.FalseNegatives.Count;
+                if (errors.HasFailures) failures.Add(example.ExampleIdentifier);
             }
             summaries.Add(new(identifier, truePositives, falsePositives, falseNegatives,
                 truePositives == 0 ? 0 : overlapSum / truePositives, failures));
