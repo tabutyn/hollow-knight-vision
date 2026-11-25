@@ -9,19 +9,26 @@ using HollowKnightVision.Windows.Core;
 
 namespace HollowKnightVision.Windows.Host;
 
-internal sealed record VisualProductionReplayOptions(string Path, string Output, int? FrameLimit, bool AllowIncomplete)
+internal sealed record VisualProductionReplayOptions(
+    string Path, string Output, int? FrameLimit, bool AllowIncomplete, bool ReplayAllFrames = false)
 {
     internal static VisualProductionReplayOptions Parse(string[] args)
     {
         string? path = null, output = null;
         int? limit = null;
         var allowIncomplete = false;
+        var replayAllFrames = false;
         for (var i = 0; i < args.Length; i++)
         {
             var option = args[i];
             if (option == "--visual-replay-allow-incomplete" && !allowIncomplete)
             {
                 allowIncomplete = true;
+                continue;
+            }
+            if (option == "--visual-replay-all-frames" && !replayAllFrames)
+            {
+                replayAllFrames = true;
                 continue;
             }
             if (++i >= args.Length || string.IsNullOrWhiteSpace(args[i]) || args[i].StartsWith("--", StringComparison.Ordinal))
@@ -44,7 +51,7 @@ internal sealed record VisualProductionReplayOptions(string Path, string Output,
         }
         if (path is null || output is null)
             throw new ArgumentException("Expected --replay-visual-archive PATH --visual-replay-output DIRECTORY.");
-        return new(path, output, limit, allowIncomplete);
+        return new(path, output, limit, allowIncomplete, replayAllFrames);
     }
 }
 
@@ -86,7 +93,7 @@ internal static class VisualProductionReplay
         var started = manifest.StageEvents.Where(stage => stage.Stage == "visionStarted")
             .Select(stage => FrameKey.Of(stage.CaptureGeneration, stage.CaptureTimestamp)).ToHashSet();
         var available = selected.Where(frame => frame.FileName is not null).ToArray();
-        var frames = started.Count == 0 ? available : available.Where(frame =>
+        var frames = options.ReplayAllFrames || started.Count == 0 ? available : available.Where(frame =>
             started.Contains(FrameKey.Of(frame.CaptureGeneration, frame.CaptureTimestamp))).ToArray();
         if (frames.Length == 0) throw new InvalidDataException("The selected archive has no readable frames delivered to vision.");
         var groundInputs = new Dictionary<FrameKey, VisualReplayGroundInput>();
@@ -306,7 +313,9 @@ internal static class VisualProductionReplay
             [
                 "Tracking and world publication run serially using the Windows production ground, camera and atlas code.",
                 "Only archived images, visual masks, tuning and input transitions feed tracking. Room identity is derived from visual transitions. Score against the original recording for receiver truth.",
-                "Archives with vision-stage events replay the frames delivered to that worker. Missing images retain their original indices.",
+                options.ReplayAllFrames
+                    ? "All selected readable captures are replayed. Missing images retain their original indices."
+                    : "Archives with vision-stage events replay the frames delivered to that worker. Missing images retain their original indices.",
                 timeBase.Note
             ]);
         AtomicWrite(Path.Combine(output, "report.json"), JsonSerializer.SerializeToUtf8Bytes(report, Json));

@@ -883,6 +883,8 @@ internal static class Program
                                     Replay archived frames through Windows ground tracking and atlas placement.
             --visual-replay-frame-limit N
                                     Consider only the first N original archive entries.
+            --visual-replay-all-frames
+                                    Include archived captures that the live vision worker skipped.
             --visual-replay-allow-incomplete
                                     Retain reported gaps and process the remaining images.
             --recover-bot-walls CLIP ARCHIVE
