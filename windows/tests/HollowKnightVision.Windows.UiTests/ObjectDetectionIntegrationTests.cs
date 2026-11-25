@@ -96,7 +96,8 @@ internal static class ObjectDetectionIntegrationTests
             Call("ConfigureObjectDiagnostics", .5, true);
             var strong = Observe(10, [Knight(), new("enemies.crawlid", new(.5, .4, .1, .1), .9f)]);
             var snapshot = Snapshot(strong);
-            Check((string?)strong.GetType().GetProperty("Context")!.GetValue(strong) == "game", "Tracked objects never reach live gameplay recognition.");
+            Check(strong.GetType().GetProperty("Context")!.GetValue(strong) is null,
+                "The object streams should remain available without treating an unverified frame as Gameplay.");
             Check(snapshot.Raw[0].Box == Knight().Box && snapshot.Tracked[0].Box != Knight().Box, "Raw and tracked streams still share the same geometry.");
             Check(snapshot.PixelDiagnostic is not null, "Pixel diagnostic was not produced by the live recognizer.");
             Check(snapshot.Masks[1].ClassIdentifier == "game.playable-knight" && snapshot.Masks[1].Box.Width > snapshot.Tracked[0].Box.Width,
@@ -128,12 +129,19 @@ internal static class ObjectDetectionIntegrationTests
         void Drain() => Check(((Task)type.GetMethod("DrainObjectInferenceAsync", BindingFlags.NonPublic | BindingFlags.Instance)!
             .Invoke(instance, null)!).Wait(TimeSpan.FromSeconds(3)), "App did not drain object inference.");
         LiveObjectDetectionSnapshot Snapshot(object observation) => (LiveObjectDetectionSnapshot)observation.GetType().GetProperty("Objects")!.GetValue(observation)!;
-        object Observe(double time, Func<IReadOnlyList<ObjectDetection>> inference) => type.GetMethod("AnalyzeLive", BindingFlags.NonPublic | BindingFlags.Instance)!
-            .Invoke(instance, [Frame(time), false, inference])!;
         try
         {
+            var examples = Path.Combine(root, "labeling-v1", "examples");
+            var gameplay = HudStencilTests.SaveGameplayReference(new LabelingExampleStore(examples));
             instance = Activator.CreateInstance(type, BindingFlags.NonPublic | BindingFlags.Instance, null,
-                [Path.Combine(root, "labeling-v1", "examples"), "en"], null)!;
+                [examples, "en"], null)!;
+            object Observe(double time, Func<IReadOnlyList<ObjectDetection>> inference)
+            {
+                var frame = new BgraFrame(gameplay.Width, gameplay.Height, gameplay.Stride, gameplay.Pixels,
+                    (long)(time * 10), DateTimeOffset.UnixEpoch.AddSeconds(time));
+                return type.GetMethod("AnalyzeLive", BindingFlags.NonPublic | BindingFlags.Instance)!
+                    .Invoke(instance, [frame, false, inference])!;
+            }
             var first = Task.Run(() => Observe(10, () =>
             {
                 started.Set(); if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Blocked fixture was not released.");
