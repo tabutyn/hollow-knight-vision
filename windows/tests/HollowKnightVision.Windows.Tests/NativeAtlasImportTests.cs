@@ -1120,6 +1120,69 @@ internal static class NativeAtlasImportTests
         finally { root.Delete(recursive: true); }
     }
 
+    internal static void TestInconclusiveEarlyProbesDoNotCancelOrPostponeScheduledConfirmation()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-floor-recovery-probes-");
+        try
+        {
+            var pipeline = new WindowsLiveWorldPipeline(root.FullName);
+            var store = new LiveWorldSessionStore(root.FullName);
+            var origin = new AtlasPoint(80, 0);
+            var drifted = new AtlasPoint(130, 0);
+            var source = MeasuredRecoveryFrame(1, .5, 71, origin);
+            Check(pipeline.Process(source).AllowsAtlasComposition, "save the placed reference");
+            pipeline.NotifyTrackingLoss(1);
+            _ = pipeline.Process(Measure(2, .7, 901));
+            _ = pipeline.Process(Measure(3, .8, 901));
+            Check(pipeline.Process(Measure(4, .9, 901)).PlacementPending,
+                "the recovery island must start unplaced");
+
+            Check(pipeline.Process(Probe(5, 1.5)).PlacementPending, "the first observed floor match must wait");
+            foreach (var (id, time) in new[] { (6, 1.65), (7, 1.8) })
+            {
+                Check(pipeline.Process(Probe(id, time, wrongElevation: true)).PlacementPending
+                    && store.Load().Snapshot.LoopClosureEdges.Count == 0,
+                    "scenery with an inconclusive floor must leave the original vote pending");
+            }
+
+            var result = pipeline.Process(Probe(8, 2.04));
+            var saved = store.Load().Snapshot;
+            Check(result is { AllowsAtlasComposition: true, RebuiltAtlas.TileCount: > 0 }
+                && saved.LoopClosureEdges.Count == 1 && saved.UnplacedObservationIds().Count == 0,
+                $"an inconclusive early probe cannot postpone the scheduled confirmation ({result.Diagnostic})");
+            Check(saved.Observations.All(row => row.OptimizedPose == origin)
+                && saved.Observations.Skip(1).All(row => row.RawPose == drifted)
+                && saved.Observations[^1].GroundGeometry is null,
+                "the two observed-floor votes must shift only the recovering island and leave its raw evidence intact");
+
+            WindowsLiveWorldFrame Measure(long id, double time, int texture)
+            {
+                var frame = MeasuredRecoveryFrame(id, time, texture, drifted);
+                return frame with { WorldEvidence = frame.WorldEvidence! with { MeasuredLineage = 2 } };
+            }
+
+            WindowsLiveWorldFrame Probe(long id, double time, bool wrongElevation = false)
+            {
+                var frame = Measure(id, time, 71);
+                var evidence = frame.WorldEvidence!;
+                var spans = evidence.FloorCandidates!.Lines;
+                return frame with
+                {
+                    WorldEvidence = evidence with
+                    {
+                        GroundGeometry = null,
+                        FloorCandidates = new(wrongElevation ? spans.Select(line => line with
+                        {
+                            Start = line.Start with { Y = line.Start.Y + 30 },
+                            End = line.End with { Y = line.End.Y + 30 }
+                        }).ToArray() : spans)
+                    }
+                };
+            }
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
     internal static void TestDoorwaySpacingUsesOnlyPlacedImages()
     {
         var root = Directory.CreateTempSubdirectory("hkv-local-recovery-doorway-");

@@ -331,6 +331,49 @@ internal static class GameplayGymVisualTests
             new(width, height, width * 4, image, id, DateTimeOffset.UnixEpoch.AddSeconds(id / 5d));
     }
 
+    internal static void TestGymPreservesFloorConfirmationAfterInconclusiveEarlyProbes()
+    {
+        const int width = 320, height = 180;
+        var pixels = new byte[width * height * 4];
+        new Random(71).NextBytes(pixels);
+        for (var offset = 3; offset < pixels.Length; offset += 4) pixels[offset] = 255;
+        var good = new LiveGroundLineEvidence(0, new(0, 30), new(width, 30));
+        var wrong = new LiveGroundLineEvidence(0, new(0, 60), new(width, 60));
+        var atlas = new BotGymAtlasCoverage();
+        var drifted = new AtlasPoint(96, 0);
+        atlas.EnterRoom(7);
+        Observe(0, .5, default, good, placedReference: true);
+        atlas.Interrupt(requireMatch: true);
+
+        Observe(1, 1.5, drifted, good);
+        Observe(2, 1.65, drifted, wrong, scenery: true);
+        Observe(3, 1.8, drifted, wrong);
+        if (!atlas.PlacementPending || atlas.Snapshot.LoopClosureEdges.Count != 0)
+            throw new InvalidOperationException("The initial floor match and two inconclusive probes must keep the island unplaced.");
+        Observe(4, 2.04, drifted, good);
+        var view = atlas.View(drifted, new(width, height), 5);
+        if (view is not { CoveredCells: 5, EarnedCells: 0 } || atlas.PlacementPending
+            || atlas.Snapshot.LoopClosureEdges.Count != 1 || atlas.Snapshot.UnplacedObservationIds().Count != 0)
+            throw new InvalidOperationException("The next verified floor must place the Gym island without awarding exploration credit.");
+
+        void Observe(int id, double time, AtlasPoint pose, LiveGroundLineEvidence floor,
+            bool scenery = false, bool placedReference = false)
+        {
+            var frame = new BgraFrame(width, height, width * 4, pixels, id, DateTimeOffset.UnixEpoch.AddSeconds(time));
+            var tracking = scenery ? GroundHypothesisTrackingResult.Empty : GroundHypothesisTrackingResult.Empty with
+            {
+                PoseVerified = true, HasConfirmedGround = true, LocalTextureSupport = 8
+            };
+            var evidence = new LiveWorldCaptureEvidence(time,
+                placedReference ? new([floor]) : null, new([floor]))
+            {
+                HasMeasuredSceneryContinuity = scenery, MeasuredLineage = placedReference ? 1 : 2
+            };
+            atlas.Observe(frame, pose, time, [], default, tracking, admitsPlacement: true,
+                continuesMeasuredScenery: scenery, captureEvidence: evidence);
+        }
+    }
+
     internal static void TestGymContinuesItsLocalAtlasWhilePlacementIsPending()
     {
         const int width = 320, height = 180;
