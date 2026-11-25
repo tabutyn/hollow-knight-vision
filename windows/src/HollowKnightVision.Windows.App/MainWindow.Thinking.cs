@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using HollowKnightVision.Windows.Core;
 
 namespace HollowKnightVision.Windows.App;
@@ -20,6 +22,9 @@ public partial class MainWindow
     private Task? thinkingQuestionTask;
     private CancellationTokenSource? thinkingPreloadCancellation;
     private Task? thinkingPreloadTask;
+    private long? thinkingLoadStarted;
+    private OllamaLoadProgress? thinkingLoadProgress;
+    private TimeSpan? thinkingLastLoad;
     private double nextThinkingQuestion;
     private string thinkingStatus = "Waiting for the local model…";
     private string thinkingInput = "";
@@ -87,9 +92,22 @@ public partial class MainWindow
         PresentThinking();
     }
 
-    private void PresentThinking() => thinkingWindow?.Present(CurrentThinkingOptions, thinkingStatus,
+    private void PresentThinking() => thinkingWindow?.Present(CurrentThinkingOptions, ThinkingStatusText(),
         thinkingScreenshot, ReferenceEquals(thinkingDisplayFrame, thinkingAttachedFrame) ? null : thinkingAttachment,
         thinkingInput, thinkingRows, thinkingReply, thinkingHandoff);
+
+    private string ThinkingStatusText()
+    {
+        if (thinkingLoadStarted is not { } started) return thinkingStatus;
+        var elapsed = Stopwatch.GetElapsedTime(started).TotalSeconds;
+        var status = $"{thinkingStatus.TrimEnd('…')} · {elapsed:0} s";
+        if (thinkingLoadProgress is not { } progress) return status;
+        status += $"\n{progress.Stage}";
+        if (progress.OffloadedLayers is { } layers) status += $" · Offloaded {layers} layers to GPU";
+        if (progress.GpuMiB > 0 || progress.CpuMiB > 0)
+            status += $"\nModel buffers · {progress.GpuMiB / 1024:0.00} GiB GPU · {progress.CpuMiB / 1024:0.00} GiB CPU";
+        return status;
+    }
 
     private void StartThinkingPreload()
     {
@@ -113,7 +131,9 @@ public partial class MainWindow
             token.ThrowIfCancellationRequested();
             await LocateThinkingModelAsync(options, token);
             token.ThrowIfCancellationRequested();
-            thinkingStatus = "Model ready. Waiting for a game frame…";
+            thinkingStatus = thinkingLastLoad is { } elapsed
+                ? $"Model ready in {elapsed.TotalSeconds:0.0} s. Waiting for a game frame…"
+                : "Model ready. Waiting for a game frame…";
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception error) when (error is HttpRequestException or IOException or InvalidDataException
@@ -132,6 +152,7 @@ public partial class MainWindow
 
     private async Task<ResidentThinkingModel> LocateThinkingModelAsync(ThinkingOptions options, CancellationToken token)
     {
+        thinkingLastLoad = null;
         thinkingStatus = "Checking " + options.Model.Title + "…";
         PresentThinking();
         var resident = await thinkingClient.FindResidentAsync(options.Model, options.SeparateLlama, token);
@@ -140,8 +161,31 @@ public partial class MainWindow
             && resident.OnCompatibilityService == (options.Model == LocalThinkingModel.Llama && options.SeparateLlama)
             && resident.ContextLength is not (> 0 and not 4096)) return resident;
         thinkingStatus = "Loading " + options.Model.Title + "…";
+        var started = Stopwatch.GetTimestamp();
+        thinkingLoadStarted = started;
+        thinkingLoadProgress = null;
+        var timer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background,
+            (_, _) => PresentThinking(), Dispatcher);
+        var progress = new Progress<OllamaLoadProgress>(update =>
+        {
+            if (token.IsCancellationRequested || thinkingLoadStarted != started) return;
+            thinkingLoadProgress = update;
+            PresentThinking();
+        });
         PresentThinking();
-        return await thinkingClient.LoadForThinkingAsync(options.Model, options.SeparateLlama, token);
+        try
+        {
+            var loaded = await thinkingClient.LoadForThinkingAsync(options.Model, options.SeparateLlama, token, progress);
+            token.ThrowIfCancellationRequested();
+            thinkingLastLoad = Stopwatch.GetElapsedTime(started);
+            return loaded;
+        }
+        finally
+        {
+            timer.Stop();
+            thinkingLoadStarted = null;
+            thinkingLoadProgress = null;
+        }
     }
 
     private void StartThinkingQuestion()

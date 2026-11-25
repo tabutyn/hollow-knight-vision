@@ -54,6 +54,7 @@ internal static class Program
         GameTextWindowTests.TestProofreadingControlAndQuestView();
         GameTextWindowTests.TestThinkingInspectorShowsItsCapturedOffer();
         GameTextWindowTests.TestDisabledThinkingLeavesModelIdleAndSkipsCaptureAndInference();
+        GameTextWindowTests.TestThinkingInspectorReportsLoadProgressUntilReceipt();
         GameTextWindowTests.TestThinkingRequestUsesBoundFrameAndNotebook();
         InputPathReplayIntegrationTests.Run();
         BotDesktopEvaluationTests.Run();

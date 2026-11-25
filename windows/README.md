@@ -97,6 +97,11 @@ has focus. Both workspaces use the shared registered routes and frame-matched
 receiver actors for Thinking decisions. Vision rechecks the target before
 using the same input lease as PPO. Press **B** to stop. Normal mode is for inspection.
 
+While a model is loading, Thinking shows elapsed time and the stages Ollama
+has logged for that model. Windows uses the local Ollama tray app's
+`%LOCALAPPDATA%\Ollama\server.log`. For a separate Llama service, set
+`HKV_OLLAMA_COMPAT_LOG` to its absolute log path. [Ollama log locations](https://docs.ollama.com/troubleshooting)
+
 Before the first training run, **B** uses the built-in explorer in modded Game
 Play or Hacker. It waits for admitted gameplay and fresh movement observations.
 After a verified checkpoint is available for that domain, **B** uses the

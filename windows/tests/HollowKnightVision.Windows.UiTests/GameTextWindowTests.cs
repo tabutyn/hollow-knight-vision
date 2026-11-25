@@ -172,6 +172,62 @@ internal static class GameTextWindowTests
         Console.WriteLine("PASS disabled Thinking exposes no inspector, captures, or model traffic");
     }
 
+    internal static void TestThinkingInspectorReportsLoadProgressUntilReceipt()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-thinking-load-progress-");
+        var log = System.IO.Path.Combine(root.FullName, "server.log");
+        File.WriteAllText(log, "");
+        var digest = new string('a', 64);
+        var confirm = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var service = new LocalThinkingFixture
+        {
+            Modelfile = "FROM C:\\models\\sha256-" + digest,
+            BeforeLoadReceipt = async token =>
+            {
+                await File.AppendAllTextAsync(log, $"srv load_model: loading model 'sha256-{digest}'\n"
+                    + "load_tensors: CUDA0 model buffer size = 2048.00 MiB\n"
+                    + "load_tensors: offloaded 19/24 layers to GPU\nclip: warmup with image size 224\n", token);
+                await confirm.Task.WaitAsync(token);
+            }
+        };
+        using var transport = new HttpClient(service);
+        var owner = new MainWindow(GameRuntimeMode.Normal, null, root.FullName, root.FullName,
+            policyClient: new(transport, _ => log), enableThinking: true);
+        var inspector = new ThinkingWindow(_ => { }, () => { });
+        try
+        {
+            Field("thinkingWindow").SetValue(owner, inspector);
+            var label = (TextBlock)inspector.FindName("StatusText");
+            Method("StartThinkingPreload").Invoke(owner, null);
+            var preload = (Task)Field("thinkingPreloadTask").GetValue(owner)!;
+            var deadline = Stopwatch.StartNew();
+            while (!label.Text.Contains("Warming up the vision encoder", StringComparison.Ordinal)
+                && deadline.Elapsed < TimeSpan.FromSeconds(8))
+            {
+                Program.Pump();
+                Thread.Sleep(5);
+            }
+            Require(!preload.IsCompleted && label.Text.Contains("Warming up the vision encoder")
+                && label.Text.Contains("19/24 layers") && label.Text.Contains("GiB GPU") && label.Text.Contains(" s"),
+                "show elapsed time, verified model stages, offloaded layers and device buffers before the load receipt");
+            confirm.TrySetResult();
+            Await(preload);
+            Require(label.Text.StartsWith("Model ready in ", StringComparison.Ordinal)
+                && !label.Text.Contains("Warming up", StringComparison.Ordinal),
+                "the confirmed model receipt must replace load progress with readiness and elapsed time");
+        }
+        finally
+        {
+            confirm.TrySetResult();
+            Field("thinkingWindow").SetValue(owner, null);
+            inspector.Close();
+            Field("isClosing").SetValue(owner, true);
+            Await((Task)Method("PrepareShutdownAsync").Invoke(owner, null)!);
+            root.Delete(recursive: true);
+        }
+        Console.WriteLine("PASS Thinking displays the selected Ollama model's load stages until the receipt");
+    }
+
     internal static void TestThinkingRequestUsesBoundFrameAndNotebook()
     {
         using var service = new LocalThinkingFixture();
@@ -252,6 +308,8 @@ internal static class GameTextWindowTests
     private sealed class LocalThinkingFixture : HttpMessageHandler
     {
         public string Reply { get; set; } = """{"scores":{"c0":96}}""";
+        public string? Modelfile { get; init; }
+        public Func<CancellationToken, Task>? BeforeLoadReceipt { get; init; }
         public int InventoryCount { get; private set; }
         public int LoadCount { get; private set; }
         public int RequestCount { get; private set; }
@@ -269,12 +327,15 @@ internal static class GameTextWindowTests
             }
             using var content = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
             var body = content.RootElement;
+            if (request.RequestUri?.AbsolutePath == "/api/show" && Modelfile is not null)
+                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { modelfile = Modelfile })) };
             if (request.RequestUri?.AbsolutePath == "/api/generate")
             {
                 Require(body.GetProperty("model").GetString() == LocalThinkingModel.Gemma.Identifier
                     && body.GetProperty("options").GetProperty("num_ctx").GetInt32() == 4096,
                     "startup must use the selected default model and Thinker's context");
                 LoadCount++;
+                if (BeforeLoadReceipt is { } before) await before(cancellationToken);
                 return new(HttpStatusCode.OK) { Content = new StringContent("""{"done":true,"done_reason":"load"}""") };
             }
             var user = body.GetProperty("messages")[1];

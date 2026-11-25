@@ -1432,6 +1432,8 @@ var tests = new List<(string Name, Action Run)>
     ("Thinking maneuvers expire and release controls", ThinkingHandoffTests.TestBoundManeuversAndRelease),
     ("Thinking inspection records settled text", ThinkingHandoffTests.TestInspectionUsesSettledText),
     ("Thinking local model load and attached image", ThinkingHandoffTests.TestThinkingModelLoadAndImageRequest),
+    ("Thinking load parser binds stages to the selected model", ThinkingHandoffTests.TestLoadProgressMatchesOnlyTheSelectedModel),
+    ("Thinking load tails the selected service until the receipt", ThinkingHandoffTests.TestLoadWaitsForReceiptWhileTailingTheSelectedService),
     ("scene session rejects schema and path traversal", SceneSessionStoreTests.TestUnsupportedManifestAndPathTraversalAreRejected),
     ("scene session canonical root accepts evidence", SceneSessionStoreTests.TestTmpSymlinkRootAcceptsCanonicalEvidencePath)
 };
