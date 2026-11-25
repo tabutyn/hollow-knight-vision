@@ -381,7 +381,8 @@ public sealed class LiveWorldTracker
         LiveWorldCaptureEvidence? captureEvidence = null,
         bool placementPending = false,
         IReadOnlyList<LiveWalkedGroundBatch>? carriedWalks = null,
-        Func<int, (BgraFrame Image, IReadOnlyList<WorldRect> Exclusions)>? loadGroundSource = null)
+        Func<int, (BgraFrame Image, IReadOnlyList<WorldRect> Exclusions)>? loadGroundSource = null,
+        LiveIslandCapture? recordedIsland = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         var excluded = exclusions?.ToArray() ?? [];
@@ -394,6 +395,9 @@ public sealed class LiveWorldTracker
             || !double.IsFinite(solveWidth) || solveWidth <= 0
             || roomId < 0
             || (placementPending && captureEvidence is null)
+            || (recordedIsland is not null && (!recordedIsland.HasValidGeometry || recordedIsland.RoomId != roomId
+                || recordedIsland.UnplacedSource is not null || placementPending || carriedWalks is not null
+                || captureEvidence?.MeasuredLineage is not null))
             || excluded.Any(rectangle => !Valid(rectangle)))
         {
             throw Error(LiveWorldTrackerError.InvalidScan, "Live-world scan is invalid.");
@@ -410,6 +414,17 @@ public sealed class LiveWorldTracker
         if (sourceId < 0)
         {
             throw Error(LiveWorldTrackerError.InvalidScan, "Source observation is invalid.");
+        }
+
+        var recordedOwner = recordedIsland is null ? null
+            : Snapshot.TrackingIslands.FirstOrDefault(island => island.Id == recordedIsland.Id);
+        if (recordedOwner is not null && (recordedOwner.RoomId != roomId || recordedOwner.StartedAt != recordedIsland!.StartedAt))
+            throw Error(LiveWorldTrackerError.InvalidScan, "Recorded island ownership changed within the replay.");
+        if (recordedIsland is not null)
+        {
+            // A queued recorded frame follows its owner if an earlier scan has already moved it.
+            var basis = recordedOwner?.WorldFromLocal ?? recordedIsland.WorldFromLocal;
+            placedCameraPose = new(basis.X + recordedIsland.LocalPose.X, basis.Y + recordedIsland.LocalPose.Y);
         }
 
         var travel = NextCumulativeTravel(proposedCameraPose, roomId);
@@ -432,14 +447,16 @@ public sealed class LiveWorldTracker
             basisRevision,
             roomId) with
         {
-            WalkedGround = walkedGround is { Count: > 0 } ? walkedGround.ToArray() : null,
+            WalkedGround = recordedIsland is not { Measured: false } && walkedGround is { Count: > 0 } ? walkedGround.ToArray() : null,
             CaptureTimestamp = captureEvidence?.CaptureTimestamp,
-            GroundGeometry = captureEvidence?.GroundGeometry,
-            ObservedFloorCandidates = captureEvidence?.FloorCandidates,
+            GroundGeometry = recordedIsland is { Measured: false } ? null : captureEvidence?.GroundGeometry,
+            ObservedFloorCandidates = recordedIsland is { Measured: false } ? null : captureEvidence?.FloorCandidates,
             ObservedPlayerBounds = captureEvidence?.PlayerBounds
         };
         var priorIsland = Snapshot.TrackingIslands.LastOrDefault();
-        var islands = CurrentTrackingIslands(observation, placementPending, captureEvidence?.MeasuredLineage);
+        var islands = recordedIsland is null
+            ? CurrentTrackingIslands(observation, placementPending, captureEvidence?.MeasuredLineage)
+            : RecordedTrackingIslands(recordedIsland, observation.Id, recordedOwner);
         if (captureEvidence?.MeasuredLineage is { } lineage && carriedWalks is { Count: > 0 })
         {
             var carried = CarryWalks(observation, lineage, islands, carriedWalks);
@@ -451,13 +468,20 @@ public sealed class LiveWorldTracker
             }
         }
         var activeIsland = islands.LastOrDefault();
-        if (priorIsland?.Id != activeIsland?.Id
-            && (priorIsland?.MeasuredLineage is not null || activeIsland?.MeasuredLineage is not null))
+        if (priorIsland?.Id != activeIsland?.Id && (recordedIsland is not null
+            || priorIsland?.MeasuredLineage is not null || activeIsland?.MeasuredLineage is not null))
             pendingClosure = null;
         ReplaceSnapshot(observations: [.. Snapshot.Observations, observation], trackingIslands: islands);
         currentVisitObservationIds.Add(observationId);
         cumulativeTravel[observationId] = travel;
         lastObservationId = observationId;
+
+        if (recordedIsland is { Measured: false })
+        {
+            // These recorded pixels remain visible at their estimated pose. They cannot vote or add landmarks.
+            pendingClosure = null;
+            return Update(default, null, []);
+        }
 
         var ground = observation.ObservedFloorCandidates?.Lines ?? observation.GroundGeometry?.Lines;
         var groundCaptureTime = loadGroundSource is not null ? observation.CaptureTimestamp : null;
@@ -595,7 +619,7 @@ public sealed class LiveWorldTracker
         var refinesDoorwayPlacement = doorwayComponents is not null
             && (doorwayComponents.HasDoorwayElevation(observationId)
                 || doorwayComponents.HasDoorwayElevation(reference.ObservationId));
-        var refinesPlacement = loadGroundSource is not null || refinesDoorwayPlacement;
+        var refinesPlacement = loadGroundSource is not null || refinesDoorwayPlacement || recordedIsland is not null;
         var components = refinesPlacement
             ? doorwayComponents ?? new LiveIslandComponents(Snapshot, FixedRoomObservations())
             : placementPending || Snapshot.TrackingIslands.LastOrDefault()?.Placement == LiveIslandPlacement.Connected
@@ -685,6 +709,18 @@ public sealed class LiveWorldTracker
             }).Select(row => row.Id).ToHashSet();
         if (Snapshot.AnchoredObservationId is { } anchor) fixedObservations.Add(anchor);
         return fixedObservations;
+    }
+
+    private IReadOnlyList<LiveTrackingIsland> RecordedTrackingIslands(LiveIslandCapture capture,
+        int observationId, LiveTrackingIsland? existing)
+    {
+        var member = new LiveIslandMember(observationId, capture.LocalPose, capture.Measured);
+        if (existing is null)
+            return [.. Snapshot.TrackingIslands, new LiveTrackingIsland(capture.Id, capture.RoomId, capture.StartedAt,
+                capture.WorldFromLocal, capture.Placement, capture.Uncertainty, capture.BreakReason, [member])];
+        // The rest of the tracker considers the current observation's owner last.
+        return [.. Snapshot.TrackingIslands.Where(island => island.Id != capture.Id),
+            existing with { Members = [.. existing.Members, member] }];
     }
 
     private IReadOnlyList<LiveTrackingIsland> CurrentTrackingIslands(LiveWorldObservation observation,
