@@ -325,6 +325,23 @@ internal static class StencilGuidanceParityTests
             Check(complete.IsComplete && complete.Guidance(null, null) is null);
             Check(complete.LabelContextForCapture("game", null, "options") == "game",
                 "Completed setup did not return to recognized Gameplay labeling.");
+            foreach (var context in new[] { "brightness", "clear-save" })
+            {
+                var reference = complete.ExampleFor(context) ?? throw new InvalidDataException("The completed reference is missing.");
+                store.Delete(reference);
+                complete.Refresh();
+                var expected = context == "clear-save" ? complete.Text("navigateClearSave")
+                    : complete.Text("navigateShort", ("screen", complete.ScreenName("Brightness")));
+                Check(complete.IsFirstPhaseComplete && !complete.IsComplete
+                    && complete.Guidance(null, null) == expected
+                    && complete.Guidance(null, null, context) == expected
+                    && complete.LabelContextForCapture("game", context, "game") == context,
+                    $"Deleting the {context} reference must restore its capture instruction while preserving Phase 1.");
+                store.Save(Frame(), context, reference.Manifest.Annotations, languageIdentifier: "en");
+                complete.Refresh();
+                Check(complete.IsComplete && complete.Guidance(null, null) is null,
+                    $"Recapturing {context} must clear the navigation instruction.");
+            }
         });
     }
 }

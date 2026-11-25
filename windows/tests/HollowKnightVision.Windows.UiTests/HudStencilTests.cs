@@ -152,6 +152,9 @@ internal static class HudStencilTests
         }
     }
 
+    internal static void VerifyCapturedLifeblood(HudStencilTemplate captured) =>
+        TestFilledOnlyReferenceRecognizesLifeblood(LoadFixtures(), captured);
+
     private static void TestHealthSurvivesChangingCaptureAspect(BgraFrame reference, HudStencilTemplate template)
     {
         (int Height, double Scale)[] layouts = [(360, 1), (402, 1), (480, 1), (480, .75), (360, 1)];
