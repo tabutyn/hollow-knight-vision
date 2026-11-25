@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using HollowKnightVision.Windows.Core;
 
@@ -339,6 +340,30 @@ internal static class BotCaptureTests
         });
     }
 
+    internal static void TestPublishedCapturesLinkSourceArchiveAndFrozenReference()
+    {
+        WithLibrary(root =>
+        {
+            var paths = Path.Combine(root, "paths");
+            var paired = WriteFixture(root, visualArchiveRoot: paths).Published;
+            Check(paired.Count == 2, "The same run must publish both domains.");
+            foreach (var clip in paired)
+            {
+                var folder = Path.Combine(root, BotCaptureSession.DirectoryName(clip.Id));
+                var context = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "audit-context.json")))!.AsObject();
+                var reference = Path.Combine(folder, "authored-ground.json");
+                var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(reference))).ToLowerInvariant();
+                Check(context["replayRoot"]!.GetValue<string>() == paths && context["pathID"]!.GetValue<Guid>() == clip.ReplayId
+                    && context["domain"]!.GetValue<string>() == clip.BotDomain && context["authoredGroundSHA256"]!.GetValue<string>() == hash
+                    && Directory.Exists(Path.Combine(paths, $"frames-{clip.ReplayId:D}")),
+                    "Both recordings must link to the same saved frames and authenticate their frozen authored reference.");
+                var observation = BotCaptureSession.Review(folder).Single();
+                Check(observation.Authored == (clip.BotDomain == "hacker"),
+                    "The frozen authored reference must never replace the Game Play detector's observations.");
+            }
+        });
+    }
+
     internal static void TestReadsMacAndPreviousWindowsCaptureDates()
     {
         WithLibrary(root =>
@@ -390,13 +415,13 @@ internal static class BotCaptureTests
     }
 
     internal static BotCaptureResult WriteFixture(string root, bool observeHacker = true,
-        bool skillControls = false, bool interruptSkillControls = false)
+        bool skillControls = false, bool interruptSkillControls = false, string? visualArchiveRoot = null)
     {
         var id = Guid.NewGuid();
         var labels = Labels();
         var record = new InputPathRecorder();
         record.Start(Start, id: id, metadata: skillControls
-            ? new Dictionary<string, string> { [RecordedInputPath.SkillControlsMetadata] = "true" } : null);
+            ? new Dictionary<string, string> { [RecordedInputPath.SkillControlsMetadata] = "true" } : null, visualArchiveRoot: visualArchiveRoot);
         record.RecordInput(RecordedGameButton.Right, true, Start);
         record.RecordInput(RecordedGameButton.X, true, Start + .08);
         if (skillControls)
@@ -416,10 +441,11 @@ internal static class BotCaptureTests
             record.RecordInput(RecordedGameButton.DreamNail, false, Start + .70);
         }
         if (interruptSkillControls) record.InvalidateSkillControls();
-        var active = new BotCaptureSession(root, "modded", "visual", Generation, Start, labels, id, paired: true);
+        var active = new BotCaptureSession(root, "modded", "visual", Generation, Start, labels, id, paired: true, replayRoot: visualArchiveRoot);
         for (var i = 0; i < 6; i++)
         {
             var input = Input(i);
+            record.RecordVisualFrame(input.Frame, input.Time.CaptureTimestamp, input.Time.CaptureTimestamp, Generation, null);
             Check(active.TryRecord(input.Frame, Visual(input), observeHacker ? Hacker(input, input.Mod) : null), "A current paired sample was dropped.");
         }
         // Keep attack held through stop and release right independently. The path recorder supplies the final releases.

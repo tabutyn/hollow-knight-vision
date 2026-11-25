@@ -41,6 +41,12 @@ if (args is ["--export-skill-capture-probe", var skillCaptureRoot])
     return;
 }
 
+if (args is ["--export-wall-replay-probe", var wallReplayRoot])
+{
+    Console.WriteLine(JsonSerializer.Serialize(BotWallReplayTests.WriteFixture(wallReplayRoot), new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+    return;
+}
+
 if (args is ["--verify-skill-actor-probe", var actorRoot, var actorFixture])
 {
     BotLearnedSkillTests.VerifyTrainedActor(actorRoot, actorFixture);
@@ -75,6 +81,8 @@ var tests = new List<(string Name, Action Run)>
     ("native ability models use the validated compact and legacy observation layouts", BotLearnedSkillTests.TestAbilityModelsAndBoundInference),
     ("built-in game policies use the shared compact layout and stop on stale input", BotStarterPolicyTests.TestBuiltInPoliciesUseSharedFeaturesAndRelease),
     ("bot clip timeline uses the original timestamped frames and matching terrain", BotCaptureTests.TestClipTimelineUsesExactSourceRowsAndFallsBackToStills),
+    ("published bot clips link the original archive and frozen authored reference", BotCaptureTests.TestPublishedCapturesLinkSourceArchiveAndFrozenReference),
+    ("bot wall replay requires an exact verified PNG with the original masks", BotWallReplayTests.TestRecoveryNeedsExactOriginalImageAndMasks),
     ("bot clip route evidence verifies clip, replay, checksum and frame identity", BotClipAnnotationTests.TestSidecarRequiresMatchingClipChecksumAndFrameIdentity),
     ("bot clip deletion keeps shared replay until the last domain is deleted", BotCaptureTests.TestDeletionKeepsSharedReplayUntilLastClipInEitherOrder),
     ("bot clip deletion validates evidence and removes a single surviving domain", BotCaptureTests.TestDeletionRejectsChangedClipsAndRemovesEligibleSingleDomain),

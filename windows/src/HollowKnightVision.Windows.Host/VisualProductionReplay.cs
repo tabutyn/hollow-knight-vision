@@ -160,7 +160,7 @@ internal static class VisualProductionReplay
                 var coarse = coarseMotion.Observe(signal.MotionGrid, evidence.CaptureTimestamp);
                 var admission = admissionPolicy.Observe(signal, input is not null, captureGeneration);
                 if (admission.ResetMotionReference) tracking.ResetMotionReference();
-                var masks = RestoreMasks(input, frame);
+                var masks = VisualReplayGroundInput.RestoreMasks(input, frame);
                 var prepared = tracking.Prepare(frame, masks, admission.AdmitsTracking,
                     tuning: input?.Tuning, semanticTuning: input?.SemanticTuning);
                 var tracked = tracking.Track(frame, prepared, masks.GroundKnight, admission, signal, evidence.CaptureTimestamp,
@@ -330,27 +330,6 @@ internal static class VisualProductionReplay
             if (drive > 0) held |= InputButtons.Right;
         }
         return input?.RecentJump == true ? held | InputButtons.ActionZ : held;
-    }
-
-    private static GameplaySceneMasks RestoreMasks(VisualReplayGroundInput? input, BgraFrame frame)
-    {
-        StencilRect Rect(double[][] value)
-        {
-            if (value is not [{ Length: 2 }, { Length: 2 }]
-                || !value.All(pair => pair.All(double.IsFinite)))
-                throw new InvalidDataException("Visual replay contains an invalid recorded mask.");
-            return new(value[0][0], frame.Height - value[0][1] - value[1][1], value[1][0], value[1][1]);
-        }
-
-        var omissions = input?.ExcludingRects?.Select(Rect).ToArray() ?? [];
-        var atlas = input?.WindowsAtlasExcludingRects?.Select(Rect).ToArray() ?? omissions;
-        var knight = input?.KnightRect is { } box
-            ? SceneRegions.PixelRectangles(frame.Width, frame.Height, [Rect(box)]) : [];
-        return new(SceneRegions.Startup() with { HudStencilRects = atlas },
-            SceneRegions.Startup() with { HudStencilRects = omissions },
-            SceneRegions.PixelRectangles(frame.Width, frame.Height, atlas),
-            SceneRegions.PixelRectangles(frame.Width, frame.Height, omissions),
-            knight.Count > 0 ? knight[0] : null);
     }
 
     private static string WriteAtlas(GroundTruthAtlasMosaic atlas, string directory)

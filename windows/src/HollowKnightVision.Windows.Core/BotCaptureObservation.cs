@@ -183,10 +183,7 @@ public static class BotObservationBuilder
         BotBlueHealthOutcomes? blueHealth = null, IReadOnlyList<BotLine>? visualDoors = null)
     {
         var terrain = new BotScreenTerrain(image.Width, image.Height,
-            ProjectDetectedFloors(image, floors),
-            walls.Where(wall => wall.X >= 0 && wall.X <= image.Width && wall.Top >= 0
-                    && wall.Bottom <= image.Height && wall.Top < wall.Bottom)
-                .Select(wall => new BotWall(wall.X, image.Height - wall.Bottom, image.Height - wall.Top, wall.SolidOnRight ? 1 : -1)).ToArray(),
+            ProjectDetectedFloors(image, floors), ProjectDetectedWalls(image, walls),
             Doors: visualDoors is { Count: > 0 } ? visualDoors : null);
         var issues = BaseIssues(timing);
         var age = batch is null ? double.PositiveInfinity : (image.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds - batch.SourceTimestamp;
@@ -349,6 +346,12 @@ public static class BotObservationBuilder
             features[i++] = 1;
         }
     }
+
+    internal static BotWall[] ProjectDetectedWalls(BgraFrame image, IReadOnlyList<DetectedWall> walls) =>
+        walls.Where(wall => wall.X >= 0 && wall.X <= image.Width && wall.Top >= 0
+                && wall.Bottom <= image.Height && wall.Top < wall.Bottom)
+            .Select(wall => new BotWall(wall.X, image.Height - wall.Bottom, image.Height - wall.Top,
+                wall.SolidOnRight ? 1 : -1)).ToArray();
 
     internal static void WriteWallFeatures(double[] features, BotScreenTerrain terrain, double x, double y)
     {
