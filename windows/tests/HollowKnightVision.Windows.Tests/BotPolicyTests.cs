@@ -365,6 +365,74 @@ internal static class BotPolicyTests
         finally { temporary.Delete(recursive: true); }
     }
 
+    internal static void TestDoorRasterKeepsBothAxesAndLegacySchemas()
+    {
+        var terrain = new BotScreenTerrain(240, 140, [], [],
+            Doors: [new(20, 30, 50, 30), new(100, 40, 100, 70)]);
+        var raster = BotPolicyGeometry.Raster(terrain, doors: true);
+        var occupied = raster.Select((value, index) => (value, index)).Where(cell => cell.value == 1).Select(cell => cell.index);
+        if (!occupied.SequenceEqual(new[] { 74, 75, 76, 77, 106, 130, 154, 178 }))
+            throw new InvalidOperationException("Legacy door raster must encode both horizontal and vertical doors.");
+        var earlier = BotPolicyContract.Names(10)!;
+        var doorSchema = BotPolicyContract.Names(11)!;
+        if (doorSchema.Count != earlier.Count + BotPolicyGeometry.Cells || !doorSchema.Take(earlier.Count).SequenceEqual(earlier))
+            throw new InvalidOperationException("Adding a door channel must preserve every existing policy input in order.");
+        var restored = JsonSerializer.Deserialize<BotScreenTerrain>(
+            """{"width":240,"height":140,"floors":[],"walls":[]}""", new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        if (restored is null || restored.Doors is not null || BotPolicyGeometry.Raster(restored, doors: true).Any(value => value != 0))
+            throw new InvalidOperationException("A clip without door data must remain readable without inventing a doorway.");
+    }
+
+    internal static void TestFullScreenTerrainDrivesOnlyItsOwnDomain()
+    {
+        var terrain = new BotScreenTerrain(240, 140,
+            Enumerable.Range(0, 20).Select(index => new BotFloor(index * 10 + 1, index * 10 + 4, 115, 1)).ToArray(),
+            new[] { 5, 15, 25, 195 }.Select(x => new BotWall(x, 115, 135, 0)).ToArray());
+        var grid = BotPolicyGeometry.Raster(terrain, doors: false);
+        if (grid.Take(BotPolicyGeometry.Cells).Count(value => value == 1) != 20
+            || grid.Skip(BotPolicyGeometry.Cells).Count(value => value == 1) != 12)
+            throw new InvalidOperationException("The screen raster must retain floors and walls beyond the old local slots.");
+
+        var temporary = Directory.CreateTempSubdirectory("hkv-screen-policy-");
+        try
+        {
+            WriteRuntime(temporary.FullName);
+            var names = BotPolicyContract.Names(3)!;
+            var inputSize = names.Count * BotRecordingContract.HistoryLength;
+            var latestRaster = inputSize - names.Count + BotRecordingContract.FeatureNames.Count;
+            var weights = new float[10 * inputSize];
+            weights[7 * inputSize + latestRaster + 11 * 24 + 19] = 1;
+            weights[7 * inputSize + latestRaster + BotPolicyGeometry.Cells + 13 * 24 + 19] = 1;
+            var biases = new float[10];
+            biases[6] = 1.5f;
+            var policy = EditRuntime(temporary.FullName, model =>
+            {
+                model["observationSchemaVersion"] = 3;
+                model["featureNames"] = JsonSerializer.SerializeToNode(names);
+                model["layers"] = JsonSerializer.SerializeToNode(new[]
+                {
+                    new { inputSize, outputSize = 10, activation = "linear", weights, biases }
+                });
+            });
+            foreach (var domain in new[] { BotCaptureDomain.Gameplay, BotCaptureDomain.Hacker })
+            {
+                var hacker = domain == BotCaptureDomain.Hacker;
+                var other = BotVisualKnightMemoryTests.Row(100, .3) with
+                {
+                    TerrainSource = hacker ? "human-authored" : "detected",
+                    DetectedTerrain = hacker ? terrain : null,
+                    AuthoredTerrain = hacker ? null : terrain
+                };
+                var both = other with { DetectedTerrain = terrain, AuthoredTerrain = terrain };
+                var ignored = new BotPolicyPlayback(policy, domain).Evaluate(other, InputButtons.None, 100)?.Decision;
+                var admitted = new BotPolicyPlayback(policy, domain).Evaluate(both, InputButtons.None, 100)?.Decision;
+                if (ignored is not { Action.Buttons: InputButtons.None } || admitted is not { Action.Buttons: InputButtons.ActionZ })
+                    throw new InvalidOperationException($"Only the {domain} screen geometry should activate the distant terrain decision.");
+            }
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
     internal static void TestPlaybackIgnoresObservationsFromTheOtherDomain()
     {
         var temporary = Directory.CreateTempSubdirectory("hkv-bot-playback-domain-");

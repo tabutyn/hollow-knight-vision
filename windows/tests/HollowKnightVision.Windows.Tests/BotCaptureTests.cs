@@ -419,17 +419,23 @@ internal static class BotCaptureTests
     {
         WithLibrary(root =>
         {
-            var frames = new[] { Input(0), Input(1) };
+            var frames = new[] { WithCocoons(Input(0), [new(4, "Cocoon", 110, 42, 10, 10)]),
+                WithCocoons(Input(1), []), WithCocoons(Input(2), null) };
             var replay = Guid.NewGuid();
             var session = Guid.NewGuid();
             var clock = 0;
-            var capture = new BotCaptureSession(root, "modded", "visual", Generation, Start, Labels(),
+            var labels = Labels();
+            var capture = new BotCaptureSession(root, "modded", "visual", Generation, Start, labels,
                 replay, paired: true, observationClock: () => frames[clock++].Time.AvailableAt);
+            labels.Lines.Clear();
+            labels.Walls?.Clear();
             var recorder = new InputPathRecorder();
             recorder.Start(Start, id: replay);
             recorder.RecordInput(RecordedGameButton.Right, true, Start);
             var path = recorder.Stop(Start + 1);
             var first = Matched(frames[0]);
+            Check(Hacker(frames[0], frames[0].Mod with { CameraAvailable = false }) is null,
+                "A correctly numbered receiver frame without a measured camera cannot project authored terrain.");
             Check(!capture.TryQueueHacker(first with { Generation = Generation + 1 })
                 && !capture.TryQueueHacker(first with { Match = first.Match with { Sample = frames[0].Mod with { AtlasGameplayActive = false } } })
                 && !capture.TryQueueHacker(first with { Match = first.Match with { Sample = frames[0].Mod with { UnityFrame = 99 } } }),
@@ -437,20 +443,28 @@ internal static class BotCaptureTests
             Check(capture.TryQueueHacker(first) && !capture.TryQueueHacker(first),
                 "The independent Hacker sampler should accept one copy of the exact rendered frame.");
             Check(capture.TryQueueHacker(Matched(frames[1]))
+                && capture.TryQueueHacker(Matched(frames[2]))
                 && capture.TryRecord(frames[1].Frame, Visual(frames[1]), exact: null),
                 "The Hacker and Game Play samples should each retain their own sampling cadence.");
             var result = capture.FinishAsync(Start + 1, path, completed: true).GetAwaiter().GetResult();
             var hacker = result.Published.Single(clip => clip.BotDomain == "hacker");
             var visual = result.Published.Single(clip => clip.BotDomain == "gameplay");
-            Check(hacker.ObservationCount == 2 && visual.ObservationCount == 1 && hacker.PairedClipId == visual.Id
+            Check(hacker.ObservationCount == 3 && visual.ObservationCount == 1 && hacker.PairedClipId == visual.Id
                 && visual.PairedClipId == hacker.Id && hacker.ReplayId == replay && visual.ReplayId == replay,
                 "An absent visual observation must leave the matching Hacker sample and the paired recording intact.");
             var saved = BotRecordedAtlasPath.ReadCapture(Path.Combine(root, BotCaptureSession.DirectoryName(hacker.Id))).Observations;
             Check(saved.Select(row => row.CaptureTimestamp).SequenceEqual(frames.Select(frame => frame.Time.CaptureTimestamp))
+                && saved.Select(row => row.DetectionFrameId).SequenceEqual(frames.Select(frame => (long?)frame.Frame.CaptureId))
                 && saved.All(row => row.CanTrain && row.DetectedTerrain is null && row.KnightSource == "hacker-frame"
                     && row.AuthoredTerrain is { Floors.Count: 1, Walls.Count: 1, Doors.Count: 1, Spikes.Count: 1 }),
                 "The independent writer must preserve the rendered timestamp and all authored terrain.");
-            Check(!capture.TryQueueHacker(Matched(Input(2))),
+            Check(saved.Select(row => row.LifebloodCocoons?.Count).SequenceEqual(new int?[] { 1, 0, null }),
+                "The clip must distinguish visible, broken, and unavailable cocoon evidence on the original rendered frames.");
+            var history = new BotObservationHistory(10);
+            var presence = saved.Select(row => history.Append(row, default, row.AvailableAt)?[^1]).ToArray();
+            Check(presence.SequenceEqual(new float?[] { 1, 0, 0 }),
+                "A broken cocoon or an older receiver must not leave a present target in the current policy input.");
+            Check(!capture.TryQueueHacker(Matched(Input(3))),
                 "An ended capture must reject subsequent receiver frames.");
 
             BotHackerCaptureFrame Matched(Fixture fixture) => new(
@@ -458,6 +472,9 @@ internal static class BotCaptureTests
                         IntegratesAtlas: false, MovementButtons: InputButtons.Right),
                     fixture.Mod with { SessionId = session }, fixture.Time.AvailableAt),
                 Generation, fixture.Time.RoomId, "tutorial-room");
+
+            static Fixture WithCocoons(Fixture fixture, IReadOnlyList<ReceiverActorState>? cocoons) =>
+                fixture with { Mod = fixture.Mod with { Actors = fixture.Mod.Actors! with { LifebloodCocoons = cocoons } } };
         });
     }
 
