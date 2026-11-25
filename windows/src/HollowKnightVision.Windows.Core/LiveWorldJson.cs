@@ -13,7 +13,7 @@ internal static class LiveWorldJson
     };
     private static readonly JsonSerializerOptions Native = CreateNativeOptions();
 
-    public static LiveWorldSnapshot ReadSnapshot(ReadOnlyMemory<byte> data)
+    public static LiveWorldSnapshot ReadSnapshot(ReadOnlyMemory<byte> data, bool swiftSession = false)
     {
         using var document = JsonDocument.Parse(data);
         var root = document.RootElement;
@@ -27,9 +27,46 @@ internal static class LiveWorldJson
         if (schemaVersion < 1 || schemaVersion > LiveWorldSnapshot.CurrentSchemaVersion)
             throw new LiveWorldModelException(LiveWorldModelError.UnsupportedSchema,
                 $"Unsupported live-world schema {schemaVersion}.", schemaVersion);
-        return root.Deserialize<LiveWorldSnapshot>(schemaVersion >= 2 ? Native : LegacySnapshot)
+        var swift = schemaVersion >= 2 || UsesSwiftV1Encoding(root, swiftSession);
+        if (swift && schemaVersion is 1 or 2)
+        {
+            var legacy = root.Deserialize<LegacySwiftSnapshot>(Native)
+                ?? throw new JsonException("Live-world snapshot is empty.");
+            return new(LiveWorldSnapshot.CurrentSchemaVersion, legacy.MapRevision, legacy.AnchoredObservationId,
+                legacy.Observations, legacy.Keyframes, legacy.Landmarks, legacy.RelativeMotionEdges,
+                legacy.LoopClosureEdges, schemaVersion == 2 ? legacy.TrackingIslands : null);
+        }
+
+        return root.Deserialize<LiveWorldSnapshot>(swift ? Native : LegacySnapshot)
             ?? throw new JsonException("Live-world snapshot is empty.");
     }
+
+    private static bool UsesSwiftV1Encoding(JsonElement root, bool swiftSession)
+    {
+        // Both platforms used schema number 1. Swift uses coordinate arrays
+        // and Windows uses coordinate objects. Empty snapshots need a format hint.
+        if (root.TryGetProperty("observations", out var frames) && frames.ValueKind == JsonValueKind.Array
+            && frames.GetArrayLength() > 0 && frames[0].ValueKind == JsonValueKind.Object
+            && frames[0].TryGetProperty("rawPose", out var pose))
+        {
+            return pose.ValueKind == JsonValueKind.Array;
+        }
+
+        return swiftSession || root.TryGetProperty("anchoredObservationID", out _);
+    }
+
+    // The earlier Swift schemas predate doorway constraints, and v1 also
+    // predates measured island ownership. The current snapshot validates and
+    // reconstructs the legacy placement using only the fields available then.
+    private sealed record LegacySwiftSnapshot(
+        int MapRevision,
+        int? AnchoredObservationId,
+        IReadOnlyList<LiveWorldObservation>? Observations,
+        IReadOnlyList<LiveWorldKeyframe>? Keyframes,
+        IReadOnlyList<LiveWorldLandmark>? Landmarks,
+        IReadOnlyList<LiveWorldRelativeMotionEdge>? RelativeMotionEdges,
+        IReadOnlyList<LiveWorldLoopClosureEdge>? LoopClosureEdges,
+        IReadOnlyList<LiveTrackingIsland>? TrackingIslands);
 
     public static byte[] WriteSnapshot(LiveWorldSnapshot snapshot) =>
         JsonSerializer.SerializeToUtf8Bytes(snapshot, snapshot.UsesSwiftWireFormat ? Native : LegacySnapshot);

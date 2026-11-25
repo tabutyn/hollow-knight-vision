@@ -175,17 +175,17 @@ internal static class GameStartupDetectorTests
             new GameStartupEvidence(Screen: null, GameplayLikely: false)).AdmitsWorldFrames);
     }
 
-    public static void TestBrightHudArtEstablishesGameplay()
+    public static void TestBrightHudArtCannotEstablishGameplay()
     {
         var image = MakeFrame(
             (0.06, 0.04, 0.06, 0.11),
             (0.12, 0.06, 0.10, 0.05));
         var evidence = new GameStartupDetector().Detect(image);
         Check(evidence.Screen is null);
-        Check(evidence.GameplayLikely);
+        Check(!evidence.GameplayLikely);
     }
 
-    public static void TestHudPairWinsWhenGameplaySceneryResemblesTitle()
+    public static void TestHudAndKnightWinWhenGameplaySceneryResemblesTitle()
     {
         var image = MakeFrame(
             (0.06, 0.06, 0.05, 0.11),
@@ -193,21 +193,48 @@ internal static class GameStartupDetectorTests
             (0.412, 0.57, 0.032, 0.055),
             (0.46, 0.57, 0.088, 0.055),
             (0.568, 0.57, 0.032, 0.055));
-        var evidence = new GameStartupDetector().Detect(image);
+        var evidence = new GameStartupDetector().Detect(image, hudStencil: Hud(), objectDetections: [Knight()]);
         Check(evidence.Screen is null);
         Check(evidence.GameplayLikely);
     }
 
-    public static void TestGameplayNeedsBothHudElementsButNotKnight()
+    public static void TestGameplayNeedsVerifiedMasksAndKnight()
     {
-        var hud = MakeFrame(
+        var frame = MakeFrame(
             (0.06, 0.06, 0.05, 0.11),
             (0.13, 0.06, 0.11, 0.06));
-        Check(new GameStartupDetector().Detect(hud).GameplayLikely);
-
-        var manaOnly = MakeFrame((0.06, 0.06, 0.05, 0.11));
-        Check(!new GameStartupDetector().Detect(manaOnly).GameplayLikely);
+        var detector = new GameStartupDetector();
+        var hud = Hud();
+        Check(!detector.Detect(frame, objectDetections: [Knight()]).GameplayLikely);
+        Check(!detector.Detect(frame, hudStencil: hud).GameplayLikely);
+        Check(!detector.Detect(frame, hudStencil: hud, objectDetections: [Knight(.49f)]).GameplayLikely);
+        Check(!detector.Detect(frame, hudStencil: hud with { Health = [], HoldsHealthMask = true },
+            objectDetections: [Knight()]).GameplayLikely);
+        Check(detector.Detect(frame, hudStencil: hud, objectDetections: [Knight(.50f)]).GameplayLikely);
     }
+
+    public static void TestCutsceneCannotOpenWorldWritesBeforeBothSourcesRemainStable()
+    {
+        var frame = MakeFrame((0.06, 0.06, 0.05, 0.11), (0.13, 0.06, 0.11, 0.06));
+        var detector = new GameStartupDetector();
+        var coordinator = new GameStartupCoordinator();
+        var hud = Hud();
+        var both = detector.Detect(frame, hudStencil: hud, objectDetections: [Knight()]);
+        for (var i = 0; i < 16; i++)
+            Check(!coordinator.Observe(detector.Detect(frame, hudStencil: hud)).AdmitsWorldFrames);
+        for (var i = 0; i < 7; i++)
+            Check(!coordinator.Observe(both).AdmitsWorldFrames);
+        Check(!coordinator.Observe(detector.Detect(frame, objectDetections: [Knight()])).AdmitsWorldFrames);
+        for (var i = 0; i < 7; i++)
+            Check(!coordinator.Observe(both).AdmitsWorldFrames);
+        Check(coordinator.Observe(both).AdmitsWorldFrames);
+    }
+
+    private static ObjectDetection Knight(float confidence = .9f) =>
+        new(LiveObjectDetectionPostprocessor.Knight, new(.5, .4, .05, .1), confidence);
+
+    private static HudStencilResult Hud() =>
+        new([new(0, "full", default, .9), new(1, "full", default, .9)], null, [], [], [], default, false, 0);
 
     private static BgraFrame MakeFrame(
         params (double X, double Y, double Width, double Height)[] brightRects)
