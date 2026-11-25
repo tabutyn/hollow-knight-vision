@@ -94,10 +94,12 @@ internal static class LiveDoorwayFloorEvidence
 
             var unit = endpoint.SolveWidth / 640;
             var result = new List<LiveWorldObservation>();
-            var previousTime = endpoint.Timestamp;
-            foreach (var frame in Enumerable.Reverse(frames).Where(frame => frame.Timestamp <= endpoint.Timestamp))
+            var endpointTime = endpoint.CaptureTimestamp!.Value;
+            var previousTime = endpointTime;
+            foreach (var frame in Enumerable.Reverse(frames).Where(frame => frame.CaptureTimestamp <= endpointTime))
             {
-                if (endpoint.Timestamp - frame.Timestamp > 2 || previousTime - frame.Timestamp > .35
+                var time = frame.CaptureTimestamp!.Value;
+                if (endpointTime - time > 2 || previousTime - time > .35
                     || !owners.TryGetValue(frame.Id, out var current) || !current.Member.Measured
                     || current.Island.Id != owner.Island.Id || frame.SolveWidth != endpoint.SolveWidth
                     || Math.Abs(frame.OptimizedPose.Y - endpoint.OptimizedPose.Y) > 4 * unit
@@ -107,8 +109,8 @@ internal static class LiveDoorwayFloorEvidence
                     break;
                 }
                 result.Add(frame);
-                previousTime = frame.Timestamp;
-                if (result.Count >= 3 && endpoint.Timestamp - frame.Timestamp >= .25) break;
+                previousTime = time;
+                if (result.Count >= 3 && endpointTime - time >= .25) break;
             }
             result.Reverse();
             return result;
@@ -134,10 +136,10 @@ internal static class LiveDoorwayFloorEvidence
     private static bool ProvesFootContact(IReadOnlyList<LiveWorldObservation> frames,
         LiveWorldObservation endpoint, Surface floor)
     {
-        var contacts = frames.Select(frame => (frame.Timestamp, Height: FootHeight(frame, floor)))
+        var contacts = frames.Select(frame => (Time: frame.CaptureTimestamp!.Value, Height: FootHeight(frame, floor)))
             .Where(value => value.Height is not null).ToArray();
-        return contacts.Length >= 2 && contacts[^1].Timestamp == endpoint.Timestamp
-            && contacts[^1].Timestamp - contacts[0].Timestamp >= .15
+        return contacts.Length >= 2 && contacts[^1].Time == endpoint.CaptureTimestamp
+            && contacts[^1].Time - contacts[0].Time >= .15
             && contacts.Max(value => value.Height) - contacts.Min(value => value.Height) <= 6 * endpoint.SolveWidth / 640;
     }
 

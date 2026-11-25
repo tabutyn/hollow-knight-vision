@@ -26,6 +26,12 @@ internal static class NativeAtlasImportTests
                 "both rigid islands");
             Check(original.DoorwayFloorConstraints.Single().ArrivalSupport.SequenceEqual([3, 4, 5]),
                 "doorway support survives import");
+            var legacy = JsonNode.Parse(payload)!;
+            foreach (var observation in legacy["observations"]!.AsArray())
+                observation!.AsObject().Remove("captureTimestamp");
+            var withoutCaptureClock = LiveWorldJson.ReadSnapshot(JsonSerializer.SerializeToUtf8Bytes(legacy));
+            Check(withoutCaptureClock.DoorwayFloorConstraints.Single().ArrivalSupport.SequenceEqual([3, 4, 5]),
+                "older Swift snapshots keep doorway evidence from their stored timestamps");
             Check(original.Observations[0].CaptureTimestamp == 0.99
                 && original.Observations[3].ObservedFloorCandidates?.Lines[0].SegmentId == 3
                 && original.Observations[4].ObservedPlayerBounds?.Y == 12,
@@ -511,12 +517,13 @@ internal static class NativeAtlasImportTests
 
     internal static void TestDoorwayFloorAlignsOnlyWithMeasuredContactOnBothSides()
     {
-        foreach (var (direction, airborne, competingSurface) in new[]
+        foreach (var (direction, airborne, competingSurface, wallClockBehindAtlas) in new[]
         {
-            (VisualRoomDirection.Right, false, false),
-            (VisualRoomDirection.Left, false, false),
-            (VisualRoomDirection.Right, true, false),
-            (VisualRoomDirection.Right, false, true)
+            (VisualRoomDirection.Right, false, false, false),
+            (VisualRoomDirection.Left, false, false, false),
+            (VisualRoomDirection.Right, true, false, false),
+            (VisualRoomDirection.Right, false, true, false),
+            (VisualRoomDirection.Right, false, false, true)
         })
         {
             WithRecoveryFixture(identicalRooms: false, (root, saved) =>
@@ -528,14 +535,15 @@ internal static class NativeAtlasImportTests
                 var exitsRight = direction == VisualRoomDirection.Right;
                 for (var id = 3; id <= 5; id++)
                 {
-                    Check(pipeline.Process(FloorFrame(id, 71, exitsRight, 135, false, false)).AllowsAtlasWrite,
+                    Check(pipeline.Process(FloorFrame(id, 71, exitsRight, 135, false, false, wallClockBehindAtlas)).AllowsAtlasWrite,
                         "save measured departure samples");
                 }
 
                 pipeline.NotifyTrackingLoss(1);
                 var cut = new VisualSceneDiscontinuityTracker.Cut(1.65, 2.5, new(80, 0), direction);
                 const string arrivingScene = "New_room_past_the_door";
-                WindowsLiveWorldFrame Arrive(long id) => FloorFrame(id, 901, !exitsRight, 150, airborne, competingSurface) with
+                WindowsLiveWorldFrame Arrive(long id) => FloorFrame(id, 901, !exitsRight, 150, airborne,
+                    competingSurface, wallClockBehindAtlas) with
                 {
                     RoomName = arrivingScene,
                     DoorwayCut = cut
@@ -565,9 +573,17 @@ internal static class NativeAtlasImportTests
                     return;
                 }
 
+                Check(snapshot.DoorwayFloorConstraints.Count == 1,
+                    "stable contacts at a valid crossing must persist one measured doorway");
                 var relation = snapshot.DoorwayFloorConstraints.Single();
                 var departure = snapshot.Observations.Single(row => row.Id == relation.DepartureObservationId);
                 var arrival = snapshot.Observations.Single(row => row.Id == relation.ArrivalObservationId);
+                if (wallClockBehindAtlas)
+                {
+                    Check(arrival.Timestamp - departure.Timestamp < .001
+                        && arrival.CaptureTimestamp - departure.CaptureTimestamp > .25,
+                        "A stale wall clock must not erase the measured time across the doorway.");
+                }
                 Check(relation.Direction == (int)direction && relation.DepartureSupport.Count == 3
                     && relation.ArrivalSupport.Count == 3, "the saved doorway names three source and target images");
                 Check(departure.OptimizedPose.Y + relation.DepartureFloor.Y
@@ -1277,11 +1293,12 @@ internal static class NativeAtlasImportTests
         }
     }
 
-    private static WindowsLiveWorldFrame FloorFrame(long id, int seed, bool rightSide, int row, bool airborne, bool competing)
+    private static WindowsLiveWorldFrame FloorFrame(long id, int seed, bool rightSide, int row, bool airborne,
+        bool competing, bool wallClockBehindAtlas = false)
     {
         var request = ResumeFrame(id, seed);
         var image = request.Frame;
-        var observedAt = new DateTimeOffset(2001, 1, 1, 0, 0, 0, TimeSpan.Zero)
+        var observedAt = wallClockBehindAtlas ? DateTimeOffset.UnixEpoch : new DateTimeOffset(2001, 1, 1, 0, 0, 0, TimeSpan.Zero)
             .AddSeconds(SwiftDateSeconds + 100 + request.MonotonicTimestamp);
         var frame = new BgraFrame(image.Width, image.Height, image.Stride, image.Pixels, id, observedAt);
         var span = rightSide ? new PixelSpan(220, 319) : new PixelSpan(0, 100);
