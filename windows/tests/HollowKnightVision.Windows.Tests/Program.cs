@@ -447,6 +447,7 @@ var tests = new List<(string Name, Action Run)>
     ("Game Play bot receives visible doors only from its measured room", BotCaptureTests.TestVisualPortalProjectionReachesGameplayPolicyOnlyInItsRoom),
     ("fresh visual terrain retains training evidence through Knight occlusion", BotCaptureTests.TestFreshTerrainMakesOccludedKnightUsable),
     ("bot coordinates use frame width and reserve enemy slots for enemy classes", BotCaptureTests.TestVisualCoordinatesAndEnemyNamespace),
+    ("visual geo deposits reach fresh captures and versioned policy history", BotCaptureTests.TestVisualGeoDepositsReachVersionedPolicyHistory),
     ("bot observations reject stale, future and foreign detections", BotCaptureTests.TestStaleFutureAndForeignDetectionsAreRejected),
     ("analyzed airborne frames can train without a floor", BotCaptureTests.TestAnalyzedAirborneFrameCanTrainWithoutFloors),
     ("slow or transitioning frames cannot produce training clips", BotCaptureTests.TestSlowFramesAndReceiverTransitionsAreExcluded),
