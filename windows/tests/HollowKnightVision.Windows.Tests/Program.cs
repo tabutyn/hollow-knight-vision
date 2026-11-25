@@ -87,6 +87,12 @@ if (args is ["--recorded-blockade-host-probe", _] or ["--recorded-blockade-host-
     return;
 }
 
+if (args is ["--recorded-door-policy-probe", var doorCaptureLibrary])
+{
+    BotBlockadeReplayTests.VerifyRecordedDoorPolicies(doorCaptureLibrary);
+    return;
+}
+
 if (args is ["--train-bot-probe", var installedVision])
 {
     await BotTrainingTests.TrainFromWindowsCaptures(installedVision);
@@ -431,6 +437,7 @@ var tests = new List<(string Name, Action Run)>
     ("bot playback ignores observations from the other camera domain", BotPolicyTests.TestPlaybackIgnoresObservationsFromTheOtherDomain),
     ("legacy door raster preserves both axes and policy field order", BotPolicyTests.TestDoorRasterKeepsBothAxesAndLegacySchemas),
     ("full-screen terrain drives the policy only in its own camera domain", BotPolicyTests.TestFullScreenTerrainDrivesOnlyItsOwnDomain),
+    ("measured blockades keep all four controls on the shared actor in both domains", BotPolicyTests.TestGeneralPolicyKeepsAllControlsAtMeasuredBlockades),
     ("bot playback starts with fresh history after an expired action", BotPolicyTests.TestPlaybackResetsHistoryWhenTheActionLeaseExpires),
     ("Game Play playback preserves learned actions through sustained Knight occlusion", BotPolicyTests.TestGameplayPlaybackKeepsActorControlThroughSustainedOcclusion),
     ("bot playback preserves all four actor heads at enemies, geo and frontiers", BotPolicyTests.TestPlaybackPreservesActorActionsAtEnemiesGeoAndFrontiers),
