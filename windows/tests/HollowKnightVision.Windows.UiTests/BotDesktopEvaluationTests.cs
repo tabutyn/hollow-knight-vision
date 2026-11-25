@@ -387,21 +387,34 @@ internal static class BotDesktopEvaluationTests
                 Check(Field("botPlayback").GetValue(window) is null
                     && status.Text.Contains("Bot controls did not become ready", StringComparison.Ordinal),
                     "The heartbeat must end an expired handoff without waiting for another capture.");
+                Check(!bridge.OwnsBotControl(owner) && status.Text.Contains("Gameplay reached.", StringComparison.Ordinal)
+                    && status.Text.Contains("Controls returned to you.", StringComparison.Ordinal),
+                    "An expired gameplay handoff must release the receiver lease.");
             }
             else
             {
-                while (Field("botPlayback").GetValue(window) is not null)
+                object? started = null;
+                while (started is null)
                 {
-                    Step(null, receiverGameplay: true, recognizedGameplay: true, admitGameplay: true, showHud: true);
+                    started = Step(null, receiverGameplay: true, recognizedGameplay: true, admitGameplay: true, showHud: true);
                     await Task.Delay(40, token);
                 }
-                Check(status.Text.Contains("Train or select a Hacker", StringComparison.Ordinal),
-                    "The no-checkpoint handoff must explain how to start gameplay playback.");
+                Check(ReferenceEquals(started, run) && bridge.OwnsBotControl(owner)
+                    && !Directory.Exists(Path.Combine(root, "bot-v1", "models")),
+                    "The verified gameplay handoff should retain the same lease before any checkpoint exists.");
+                var gameplayFrame = new BgraFrame(Width, Height, Width * 4, pixels, ++index, DateTimeOffset.UtcNow);
+                _ = Method("CaptureBotObservations").Invoke(window, [
+                    gameplayFrame, Generation, Generation, Clock(), 1, 1UL, index, Telemetry(session, index), null,
+                    Array.Empty<DetectedFloorLine>(), TerrainWallDetection.Empty, true, null, null, null, InputButtons.None,
+                    run, 1L, GroundHypothesisTrackingResult.Empty, true, Array.Empty<PixelRect>(), null, false,
+                    null, Array.Empty<GroundHypothesisAtlasLine>(), null, null, null
+                ]);
+                while ((await states.Reader.ReadAsync(token)).HeldButtons != InputButtons.Right) { }
+                Check((bool)Method("HandleLocalShortcut").Invoke(window, [Key.B, false, ModifierKeys.None])!
+                    && !bridge.OwnsBotControl(owner), "B must stop the built-in policy and return controls.");
+                while ((await states.Reader.ReadAsync(token)).Enabled) { }
             }
-            Check(!bridge.OwnsBotControl(owner) && status.Text.Contains("Gameplay reached.", StringComparison.Ordinal)
-                && status.Text.Contains("Controls returned to you.", StringComparison.Ordinal),
-                "The session must release control at the end of either handoff.");
-            Check(!Directory.Exists(Path.Combine(root, "bot-v1", "evaluations")), "Opening alone must not write a policy evaluation.");
+            Check(!Directory.Exists(Path.Combine(root, "bot-v1", "evaluations")), "No trained-policy evaluation may be attributed to a built-in run.");
 
             async Task ExpectAction(InputButtons button, string context, bool receiverGameplay, bool showHud = false)
             {
@@ -415,7 +428,7 @@ internal static class BotDesktopEvaluationTests
                 }
             }
 
-            void Step(string? context, bool receiverGameplay, bool recognizedGameplay, bool admitGameplay, bool showHud,
+            object? Step(string? context, bool receiverGameplay, bool recognizedGameplay, bool admitGameplay, bool showHud,
                 bool holdsHealthMask = false)
             {
                 ++index;
@@ -432,7 +445,7 @@ internal static class BotDesktopEvaluationTests
                     ? new HudStencilResult([new(0, "full", default, 1), new(1, "full", default, 1)],
                         null, [], [], [], default, holdsHealthMask, timestamp)
                     : null;
-                _ = Method("ObserveBotStartup").Invoke(window,
+                return Method("ObserveBotStartup").Invoke(window,
                     [image, Generation, Clock(), admitGameplay, recognizedGameplay,
                         Telemetry(session, index) with { AtlasGameplayActive = receiverGameplay }, menu, hud]);
             }
@@ -444,7 +457,7 @@ internal static class BotDesktopEvaluationTests
             await peer.WaitAsync(TimeSpan.FromSeconds(5));
         }
         Console.WriteLine(expireHandoff ? "PASS Desktop bot returns control when the Gameplay HUD handoff expires without new frames"
-            : "PASS Desktop bot stops skip input at the Gameplay HUD while the receiver and Atlas prepare, and returns control without a checkpoint");
+            : "PASS Desktop bot stops cutscene input at the Gameplay HUD, starts the built-in explorer, and releases with B");
     }
 
     private static async Task VerifyDomainAsync(string root, string domain, GroundTruthWorldLine label,

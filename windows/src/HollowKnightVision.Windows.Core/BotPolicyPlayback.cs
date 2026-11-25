@@ -12,11 +12,28 @@ public sealed record BotPlaybackUpdate(string Status, BotPlaybackDecision? Decis
 }
 
 /// <summary>Runs the selected model against fresh evidence and bounds each action to that evidence.</summary>
-public sealed class BotPolicyPlayback(BotNativePolicy policy, BotCaptureDomain domain)
+public sealed class BotPolicyPlayback
 {
-    private readonly BotObservationHistory history = new(policy.Version);
+    private readonly BotObservationHistory history;
+    private readonly BotCaptureDomain domain;
+    private readonly bool supportsMaskedKnight;
+    private readonly Func<float[], BotPolicyAction> decide;
     private double lastAttempt = double.NegativeInfinity;
     private (long Generation, double Timestamp)? newestCapture;
+
+    public BotPolicyPlayback(BotNativePolicy policy, BotCaptureDomain domain)
+        : this(domain, policy.Version, policy.SupportsMaskedKnight, input => BotNativePolicy.Action(policy.Logits(input))) { }
+
+    public BotPolicyPlayback(BotStarterPolicy starter, BotCaptureDomain domain)
+        : this(domain, starter.ObservationSchema, supportsMaskedKnight: false, input => starter.Decide(input)) { }
+
+    private BotPolicyPlayback(BotCaptureDomain domain, int schema, bool supportsMaskedKnight, Func<float[], BotPolicyAction> decide)
+    {
+        this.domain = domain;
+        this.supportsMaskedKnight = supportsMaskedKnight;
+        this.decide = decide;
+        history = new(schema);
+    }
 
     public bool WantsObservation(double capturedAt)
     {
@@ -48,13 +65,13 @@ public sealed class BotPolicyPlayback(BotNativePolicy policy, BotCaptureDomain d
                 ? "Bot waiting for authored terrain" : "Bot waiting for detected terrain");
 
         var features = history.Append(row, BotPolicyAction.FromButtons(previous.Value), now,
-            allowMaskedKnight: domain == BotCaptureDomain.Gameplay && policy.SupportsMaskedKnight);
+            allowMaskedKnight: domain == BotCaptureDomain.Gameplay && supportsMaskedKnight);
         if (features is null) return WaitFor(Reason(row, now));
         var deadline = Math.Min(now + .18,
             Math.Min(row.KnightPredictionDeadline,
                 Math.Min(row.CapturedAt + BotRecordingContract.MaximumCaptureAge, row.AvailableAt + .25)));
         if (now >= deadline) return WaitFor(Reason(row, now));
-        var action = BotNativePolicy.Action(policy.Logits(features));
+        var action = decide(features);
         var tracking = row.KnightPrediction is not null ? " · estimating Knight"
             : row.HasMaskedKnightEvidence ? " · Knight occluded" : "";
         return new($"Bot · {action.DisplayName}{tracking}", new(action, deadline));

@@ -20,6 +20,8 @@
       <Link>%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="../../../macos/Sources/HollowKnightVision/Resources/playing-policy-inputs.json"
+             Link="training/playing-policy-inputs.json" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../../src/HollowKnightVision.Windows.Core/HollowKnightVision.Windows.Core.csproj" />
     <ProjectReference Include="../../src/HollowKnightVision.Windows.Host/HollowKnightVision.Windows.Host.csproj"
                       ReferenceOutputAssembly="false" />
