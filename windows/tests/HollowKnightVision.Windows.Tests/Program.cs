@@ -408,6 +408,7 @@ var tests = new List<(string Name, Action Run)>
     ("bot startup latches cutscene skipping until fresh gameplay", BotPolicyTests.TestStartupSkipIsLatchedUntilFreshGameplay),
     ("bot policy preserves attack and rejects stale observations and wrong domains", BotPolicyTests.TestLivePolicyPreservesAttackAndRevokesInvalidPerception),
     ("bot playback names the evidence it is waiting for", BotPolicyTests.TestPlaybackWaitingStatusNamesMissingEvidence),
+    ("bot playback ignores observations from the other camera domain", BotPolicyTests.TestPlaybackIgnoresObservationsFromTheOtherDomain),
     ("bot runtime keeps four fresh history frames and expires stale input", BotPolicyTests.TestObservationHistoryRejectsStaleFramesAndResetsAtDiscontinuities),
     ("bot checkpoint selection finds the latest native export independently for each domain", BotPolicyTests.TestNewestNativeModelIsSelectedWithinEachDomain),
     ("bot checkpoint catalog excludes partial and foreign versions", BotPolicyTests.TestCatalogHidesPartialAndForeignVersionsAndRejectsInvalidPaths),

@@ -274,7 +274,8 @@ internal static class ForwarderPauseTests
         var next = forwarder.BeginBotControl() ?? throw new Exception("Bot control did not restart.");
         await Expect(InputButtons.None);
         forwarder.EndBotControl(owner);
-        Check(forwarder.OwnsBotControl(next), "An old controller ended a newer session.");
+        Check(forwarder.OwnsBotControl(next) && !forwarder.RenewBotControl(owner, InputButtons.Right, Clock() + .23),
+            "An old controller cannot end or renew a newer session.");
         var gate = (SemaphoreSlim)typeof(WindowsGameControlForwarder).GetField("outboundGate", BindingFlags.NonPublic | BindingFlags.Instance)!
             .GetValue(forwarder)!;
         await gate.WaitAsync();
@@ -297,6 +298,12 @@ internal static class ForwarderPauseTests
         await Expect(InputButtons.None);
         Check(!forwarder.OwnsBotControl(next) && forwarder.CaptureMovement(out var afterReset) == InputButtons.None
             && !afterReset, "Focus loss left bot control or its jump evidence armed.");
+
+        var waiting = forwarder.BeginBotControl() ?? throw new Exception("Bot control did not enter the waiting state.");
+        await Expect(InputButtons.None);
+        forwarder.ReleaseAll();
+        await Expect(InputButtons.None);
+        Check(!forwarder.OwnsBotControl(waiting), "Focus loss must release a bot that is still waiting for observations.");
 
         var final = forwarder.BeginBotControl() ?? throw new Exception("Bot control did not restart.");
         await Expect(InputButtons.None);
