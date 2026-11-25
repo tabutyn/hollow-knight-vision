@@ -73,6 +73,11 @@ at `%LOCALAPPDATA%\Programs\Hollow Knight Vision` and refreshes its Start Menu
 shortcut. The build fails instead of leaving that installed copy stale; close
 the installed app before building.
 
+**Settings → Debug View → Ground Viewer** opens an overview of the current
+ground and visible Atlas routes in Game Play or Hacker. In Game Play, click
+a tracking patch to inspect its saved reference pixels. Drag the strip or use
+the arrows to browse the same ground line. A black cell marks a missing patch.
+
 **Settings → Debug View → Game Text Log** opens the recent scan and the save's
 notebook. Select a line to highlight its bounds on the captured frame. Turn off
 **Read game text** to stop scanning. The build downloads and verifies the OCR

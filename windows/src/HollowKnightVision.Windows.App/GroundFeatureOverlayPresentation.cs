@@ -13,6 +13,13 @@ namespace HollowKnightVision.Windows.App;
 /// </summary>
 internal static class GroundFeatureOverlayPresentation
 {
+    internal readonly record struct FeatureKey(int Segment, int Sequence)
+    {
+        internal FeatureKey(GroundHypothesisAtlasFeature feature) : this(feature.SegmentId, feature.SequenceIndex) { }
+    }
+
+    internal sealed record AtlasDrawing(IReadOnlyList<GroundHypothesisAtlasLine> Lines, Func<AtlasPoint, Point> Project);
+
     internal readonly record struct AtlasProjection(double Scale, double OriginX, double OriginY)
     {
         internal Point ToCanvas(AtlasPoint p) => new(p.X * Scale - OriginX, -p.Y * Scale - OriginY);
@@ -35,7 +42,7 @@ internal static class GroundFeatureOverlayPresentation
                 .MinBy(line => Math.Abs(line.Row - observed.Y));
             if (floor is null) continue;
             Append(observed with { Y = floor.Row }, Kind(feature.Classification),
-                $"ground feature {feature.Id} • {feature.Classification}");
+                $"ground feature {feature.Id} • {feature.Classification}", new(feature.SegmentId, feature.SequenceIndex));
         }
         foreach (var box in measuredPatches)
         {
@@ -44,9 +51,10 @@ internal static class GroundFeatureOverlayPresentation
         }
         return occupied.Count;
 
-        void Append(PixelRect box, DashboardFeatureReviewMarkerKind kind, string tooltip)
+        void Append(PixelRect box, DashboardFeatureReviewMarkerKind kind, string tooltip, FeatureKey? key = null)
         {
             var marker = Rectangle(box.Width, box.Height, kind, opacity: 1, tooltip);
+            marker.Tag = key;
             Canvas.SetLeft(marker, box.X);
             Canvas.SetTop(marker, box.Y);
             canvas.Children.Add(marker);
@@ -81,14 +89,14 @@ internal static class GroundFeatureOverlayPresentation
     internal static void DrawSavedAtlas(Canvas canvas, AtlasProjection projection,
         IReadOnlyList<GroundHypothesisAtlasLine> lines) => DrawLines(canvas, lines, projection.ToCanvas);
 
-    internal static void DrawAtlas(Canvas linesCanvas, Canvas? patchesCanvas,
+    internal static AtlasDrawing? DrawAtlas(Canvas? linesCanvas, Canvas? patchesCanvas,
         AtlasPoint camera, ViewportSize capture, ViewportRect live,
         IReadOnlyList<GroundHypothesisAtlasLine> lines, IReadOnlyList<GroundHypothesisAtlasFeature> features,
         AtlasProjection savedProjection = default, IReadOnlyList<GroundHypothesisAtlasLine>? saved = null,
         PixelRect? knight = null)
     {
         if (!capture.IsUsable || !live.IsUsable || !double.IsFinite(camera.X) || !double.IsFinite(camera.Y))
-            return;
+            return null;
         var scaleX = live.Width / capture.Width;
         var scaleY = live.Height / capture.Height;
         Point Project(AtlasPoint p) => new(live.X + (p.X - camera.X) * scaleX,
@@ -108,8 +116,9 @@ internal static class GroundFeatureOverlayPresentation
             }).ToArray();
             lines = LiveWorldGroundOverlay.CombineWithLive(projected, lines, (int)capture.Height, knight);
         }
-        DrawLines(linesCanvas, lines, Project);
-        if (patchesCanvas is null) return;
+        if (linesCanvas is not null) DrawLines(linesCanvas, lines, Project);
+        var drawing = new AtlasDrawing(lines, Project);
+        if (patchesCanvas is null) return drawing;
         foreach (var feature in features)
         {
             if (!double.IsFinite(feature.AtlasPosition.X) || !double.IsFinite(feature.AtlasPosition.Y)) continue;
@@ -121,10 +130,12 @@ internal static class GroundFeatureOverlayPresentation
             if (!lines.Any(line => Math.Abs(line.AtlasStart.Y - patchTop) <= 3
                 && line.AtlasStart.X <= left && line.AtlasEnd.X >= left + GroundPixels.PatchWidth)) continue;
             var marker = PersistentRectangle(feature, scaleX, scaleY);
+            marker.Tag = new FeatureKey(feature);
             Canvas.SetLeft(marker, center.X - marker.Width * .5);
             Canvas.SetTop(marker, center.Y - marker.Height * .5);
             patchesCanvas.Children.Add(marker);
         }
+        return drawing;
     }
 
     private static void DrawLines(Canvas canvas, IReadOnlyList<GroundHypothesisAtlasLine> lines,
