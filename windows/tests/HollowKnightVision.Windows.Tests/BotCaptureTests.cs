@@ -89,6 +89,73 @@ internal static class BotCaptureTests
         Check(!stale.CanTrain && stale.Issues.Contains("stale-or-missing-detection"), "Stale detector output must remain ineligible.");
     }
 
+    internal static void TestVisualCoordinatesAndEnemyNamespace()
+    {
+        var input = Input(0);
+        var cache = new ObjectDetection("world.geo-deposit", new(.48, .5, .1, .1), .9f) { SourceFrameIdentifier = input.Frame.CaptureId };
+        var detections = input.Detections with { Detections = [.. input.Detections.Detections, cache] };
+        var row = BotObservationBuilder.Gameplay(input.Frame, input.Time, detections, [new(36, new(5, 62))], [],
+            terrainAnalyzed: true, null, null, null, InputButtons.None);
+        Check(row.CanTrain && row.Features.Count == BotRecordingContract.FeatureNames.Count
+            && BotRecordingContract.FeatureNames.Distinct().Count() == row.Features.Count,
+            "The observation must match the current recording feature layout.");
+        Check(Near(0, 36 / 80d) && Near(1, 24 / 80d) && Near(16, -31 / 80d) && Near(18, -12 / 80d)
+            && Near(96, -.31) && row.Features[101] == 1 && row.Features.Skip(102).Take(42).All(value => value == 0)
+            && row.GeoCaches is { Count: 1 },
+            "Knight, floor, and enemy coordinates should use frame width. Geo must stay outside the enemy slots.");
+
+        bool Near(int feature, double value) => Math.Abs(row.Features[feature] - value) < 1e-7;
+    }
+
+    internal static void TestStaleFutureAndForeignDetectionsAreRejected()
+    {
+        var input = Input(0);
+        var batch = input.Detections;
+        foreach (var invalid in new[]
+        {
+            batch with { SourceTimestamp = batch.SourceTimestamp - 1 },
+            batch with { SourceTimestamp = batch.SourceTimestamp + 1 },
+            batch with { SourceFrameIdentifier = input.Frame.CaptureId + 1 },
+            batch with { CaptureGeneration = Generation + 1 }
+        })
+        {
+            var row = Visual(input with { Detections = invalid });
+            Check(!row.CanTrain && row.Issues.Contains("stale-or-missing-detection")
+                && row.DetectionFrameId is null && row.Features.All(double.IsFinite),
+                "A rejected detector publication must leave finite features and no trainable observation.");
+        }
+    }
+
+    internal static void TestAnalyzedAirborneFrameCanTrainWithoutFloors()
+    {
+        var input = Input(0);
+        var row = BotObservationBuilder.Gameplay(input.Frame, input.Time, input.Detections, [], [],
+            terrainAnalyzed: true, null, null, null, InputButtons.ActionZ);
+        Check(row.CanTrain && row.Features[6] == 1
+            && row.DetectedTerrain is { Floors.Count: 0 } && row.Features.Skip(16).Take(80).All(field => field == 0),
+            "Valid terrain analysis must admit an airborne frame with no floor features.");
+    }
+
+    internal static void TestSlowFramesAndReceiverTransitionsAreExcluded()
+    {
+        WithLibrary(root =>
+        {
+            var input = Input(0);
+            var slow = input.Time with { AvailableAt = input.Time.CaptureTimestamp + BotRecordingContract.MaximumCaptureAge + .01 };
+            var observation = BotObservationBuilder.Gameplay(input.Frame, slow, input.Detections, [], [],
+                terrainAnalyzed: false, null, null, null, InputButtons.None);
+            Check(!observation.CanTrain && observation.Issues.ToHashSet().SetEquals(["stale-capture", "missing-terrain-analysis"]),
+                "The observation must declare both the delayed capture and the missing terrain analysis.");
+            Check(Hacker(input, input.Mod with { AtlasGameplayActive = false }) is null,
+                "A receiver transition must never produce an authored training observation.");
+            var capture = new BotCaptureSession(root, "normal", "visual", Generation, Start, Labels());
+            Check(capture.TryRecord(input.Frame, observation, null), "The recorder must be able to evaluate the stale row.");
+            var result = capture.FinishAsync(Start + 1, null, completed: true).GetAwaiter().GetResult();
+            Check(result.Published.Count == 0 && result.Discarded == 1 && BotCaptureSession.Library(root).Count == 0,
+                "A clip made entirely of late frames must be discarded.");
+        });
+    }
+
     internal static void TestPairedEvidencePublishesOnceAndHazardClipsAreDiscarded()
     {
         WithLibrary(root =>
@@ -99,6 +166,23 @@ internal static class BotCaptureTests
             Check(clips.Count == 2 && clips[0].PairedClipId == clips[1].Id && clips[1].PairedClipId == clips[0].Id
                 && clips[0].ReplayId == clips[1].ReplayId && clips.All(c => c.ObservationCount == 6 && c.InputEventCount == 6),
                 "A single run should publish two reciprocal manifests with the exact same input edges.");
+            var hacker = clips.Single(clip => clip.BotDomain == "hacker");
+            Check(hacker.Id == hacker.ReplayId, "The Hacker clip must retain the shared input replay identity.");
+            var fields = BotPolicyContract.Names(BotPolicyContract.CurrentVersion)!.ToList();
+            var wallCount = fields.IndexOf("marking_wall_count");
+            Check(wallCount >= 0, "The active policy schema must still accept wall geometry.");
+            foreach (var clip in clips)
+            {
+                var saved = BotRecordedAtlasPath.ReadCapture(Path.Combine(root, BotCaptureSession.DirectoryName(clip.Id)))
+                    .Observations.First();
+                Check(clip.Id == hacker.Id
+                    ? saved.AuthoredTerrain?.Walls.Count == 1 && saved.DetectedTerrain is null
+                    : saved.DetectedTerrain?.Walls.Count == 1 && saved.AuthoredTerrain is null,
+                    "Each reopened observation must carry walls from its own source.");
+                var vector = new BotObservationHistory(BotPolicyContract.CurrentVersion).Append(saved, default, saved.AvailableAt);
+                Check(vector is not null && vector[vector.Length - fields.Count + wallCount] > 0,
+                    "A recorded wall must reach the current policy inputs after reopening its clip.");
+            }
             var pending = Directory.GetDirectories(root, ".pending-demo-*");
             Check(pending.Length == 0 && clips.All(clip => File.Exists(Path.Combine(root,
                 BotCaptureSession.DirectoryName(clip.Id), "frames", "0.png"))), "Saved PNG evidence should be readable immediately.");
