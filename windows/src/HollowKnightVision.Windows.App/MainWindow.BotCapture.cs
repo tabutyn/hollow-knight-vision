@@ -110,7 +110,8 @@ public partial class MainWindow
         var visual = capture is not null || (playback is not null || skillFrame is not null) && policyDomain == BotCaptureDomain.Gameplay
             ? BotObservationBuilder.Gameplay(frame, time, batch, visualFloors, terrain.Walls, analyzedTerrain,
                 camera, hud, measuredFoot, input, exact?.BlueHealthOutcomes,
-                committedAtlas?.ProjectDoors(new(frame.Width, frame.Height))).WithSharedHackerPath(exact) : null;
+                committedAtlas?.ProjectDoors(new(frame.Width, frame.Height)), supportingFloors: floors, masks: auditMasks)
+                .WithSharedHackerPath(exact) : null;
         if (visual is not null)
         {
             BotPolicyAction? appliedAction = (playback is not null || skillFrame is not null) && input is { } applied
@@ -160,7 +161,8 @@ public partial class MainWindow
             evaluation = Volatile.Read(ref playbackRun.Loaded)?.Evaluation;
         if (evaluation is not null)
             evaluation.RecordFrame(frame, time, row, receiverTelemetry?.SceneName,
-                visual?.DetectedTerrain?.Floors ?? BotObservationBuilder.ProjectDetectedFloors(frame, visualFloors),
+                visual?.DetectedTerrain?.Floors ?? BotObservationBuilder.ProjectDetectedFloors(frame,
+                    visualFloors, terrain.Walls, supportingFloors: floors, masks: auditMasks),
                 exact?.AuthoredTerrain, auditMasks is null ? null : VisualReplayGroundInput.FromTracking(
                     timestamp, (ulong)generation, frame.Height, auditMasks, input), renderedFrame, skill: skillFrame is not null);
         if (skillFrame is not null)
