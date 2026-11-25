@@ -104,13 +104,35 @@ internal static class BotDesktopEvaluationTests
             }
             await Expect(InputButtons.Right | InputButtons.ActionX);
             var update = run.GetType().GetField("PlaybackUpdate", Instance)!;
-            Check(((BotPlaybackUpdate)update.GetValue(run)!).Decision is { Action.Buttons: Action },
+            BotPlaybackUpdate CurrentUpdate() => (BotPlaybackUpdate)update.GetValue(run)!;
+            Check(CurrentUpdate().Decision is { Action.Buttons: Action },
                 "An exact receiver frame must produce a native policy decision without Game Play analysis.");
 
-            var late = Frame(++marker);
-            _ = Method("ObserveBotStartup").Invoke(window, [late, Generation, Clock(), false, false, null, null, null]);
-            Check(((BotPlaybackUpdate)update.GetValue(run)!).Decision is { Action.Buttons: Action },
-                "A failed visual analysis result must leave the current receiver action intact.");
+            for (var index = 0; index < 6; index++)
+            {
+                var previous = CurrentUpdate().Decision!.Value;
+                var late = Frame(++marker);
+                _ = Method("ObserveBotStartup").Invoke(window, [late, Generation, Clock() - 1, false, false, null, null, null]);
+                Check(CurrentUpdate().Decision == previous,
+                    "A delayed visual result must leave the current receiver action intact.");
+                await Task.Delay(110, token);
+                NotifyReceiver(gameplay: true);
+                SubmitFrame();
+                await WaitForUpdate(value => value.Decision is { Action.Buttons: Action } next
+                    && next.Deadline > previous.Deadline);
+            }
+
+            await Task.Delay(110, token);
+            NotifyReceiver(gameplay: true);
+            SubmitFrame(hero: false);
+            await WaitForUpdate(value => value.Decision is null && value.Status == "Bot waiting for the mod Knight position");
+            await Expect(InputButtons.None);
+            await Task.Delay(110, token);
+            NotifyReceiver(gameplay: true);
+            SubmitFrame();
+            await WaitForUpdate(value => value.Decision is { Action.Buttons: Action });
+            await Expect(Action);
+
             NotifyReceiver(gameplay: false);
             await Expect(InputButtons.None);
             Check(((BotPlaybackUpdate)update.GetValue(run)!).Status == "Bot waiting for gameplay",
@@ -140,18 +162,27 @@ internal static class BotDesktopEvaluationTests
                 var sample = Telemetry(session, ++marker) with { AtlasGameplayActive = gameplay };
                 _ = Method("OnReceiverGroundTruth").Invoke(window, [sample, Clock()]);
             }
-            void SubmitFrame(double? time = null)
+            void SubmitFrame(double? time = null, bool hero = true)
             {
                 var frame = Frame(++marker);
                 var timestamp = time ?? Clock();
+                var sample = Telemetry(session, marker);
+                if (!hero) sample = sample with { Actors = sample.Actors! with { Hero = null } };
                 BotDesktopCaptureIntegrationTests.SubmitReceiverMatch(window, Generation,
                     new(new(marker, frame, timestamp, IntegratesAtlas: false, MovementButtons: bridge.CaptureMovement()),
-                        Telemetry(session, marker), Clock()));
+                        sample, Clock()));
             }
             static BgraFrame Frame(int id) => new(Width, Height, Width * 4, new byte[Width * Height * 4], id, DateTimeOffset.UtcNow);
             async Task Expect(InputButtons buttons)
             {
                 while ((await states.Reader.ReadAsync(token)).HeldButtons != buttons) { }
+            }
+
+            async Task WaitForUpdate(Func<BotPlaybackUpdate, bool> predicate)
+            {
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+                deadline.CancelAfter(TimeSpan.FromSeconds(2));
+                while (!predicate(CurrentUpdate())) await Task.Delay(5, deadline.Token);
             }
         }
         finally

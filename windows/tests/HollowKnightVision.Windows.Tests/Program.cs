@@ -429,6 +429,8 @@ var tests = new List<(string Name, Action Run)>
     ("bot policy preserves attack and rejects stale observations and wrong domains", BotPolicyTests.TestLivePolicyPreservesAttackAndRevokesInvalidPerception),
     ("bot playback names the evidence it is waiting for", BotPolicyTests.TestPlaybackWaitingStatusNamesMissingEvidence),
     ("bot playback ignores observations from the other camera domain", BotPolicyTests.TestPlaybackIgnoresObservationsFromTheOtherDomain),
+    ("legacy door raster preserves both axes and policy field order", BotPolicyTests.TestDoorRasterKeepsBothAxesAndLegacySchemas),
+    ("full-screen terrain drives the policy only in its own camera domain", BotPolicyTests.TestFullScreenTerrainDrivesOnlyItsOwnDomain),
     ("bot playback starts with fresh history after an expired action", BotPolicyTests.TestPlaybackResetsHistoryWhenTheActionLeaseExpires),
     ("Game Play playback preserves learned actions through sustained Knight occlusion", BotPolicyTests.TestGameplayPlaybackKeepsActorControlThroughSustainedOcclusion),
     ("bot playback preserves all four actor heads at enemies, geo and frontiers", BotPolicyTests.TestPlaybackPreservesActorActionsAtEnemiesGeoAndFrontiers),
