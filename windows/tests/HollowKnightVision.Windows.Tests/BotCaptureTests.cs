@@ -67,6 +67,15 @@ internal static class BotCaptureTests
             "A lower platform is evidence of a pit, even inside a wide surface proposal.");
         Check(Observe([surface, higher], []).Count == 2,
             "Stitch the supported floor while preserving the upper ledge.");
+
+        var fallback = BotObservationBuilder.Gameplay(frame, timing, null, [surface], [], terrainAnalyzed: true,
+            camera: null, hud: null, measuredFoot: null, input: null).DetectedTerrain!.Floors;
+        Check(fallback.SequenceEqual(stitched),
+            "Direct evidence of the same surface survives a missing Knight box even across a wider seam.");
+
+        var lip = new DetectedFloorLine(40, new(39, 110), [new(39, 71), new(110, 110)]);
+        Check(Observe([parts[1], parts[2]], [], [lip]).SequenceEqual([new(39, 150, 60, 1)]),
+            "A same-surface witness meeting the beginning of the next floor is enough for an observation.");
     }
 
     internal static void TestVisualPortalProjectionReachesGameplayPolicyOnlyInItsRoom()
