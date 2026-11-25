@@ -1,20 +1,27 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace HollowKnightVision.Windows.App;
 
-internal sealed record GameLaunchOptions(GameRuntimeMode? Mode, string? GamePath)
+internal sealed record GameLaunchOptions(GameRuntimeMode? Mode, string? GamePath, bool ThinkingEnabled)
 {
     internal static GameLaunchOptions Parse(string[] arguments)
     {
         GameRuntimeMode? mode = null;
         string? gamePath = null;
+        var thinkingEnabled = false;
         for (var index = 0; index < arguments.Length; index++)
         {
             var argument = arguments[index];
+            if (argument == "--enable-thinking")
+            {
+                thinkingEnabled = true;
+                continue;
+            }
             string? modeValue = null;
             if (argument == "--game-mode")
             {
@@ -50,13 +57,15 @@ internal sealed record GameLaunchOptions(GameRuntimeMode? Mode, string? GamePath
                 gamePath = argument["--game-path=".Length..];
             }
         }
-        return new GameLaunchOptions(mode, gamePath);
+        return new GameLaunchOptions(mode, gamePath, thinkingEnabled);
     }
 }
 
 internal sealed class GameRuntimeModeWindow : Window
 {
+    private readonly CheckBox enableThinking;
     internal GameRuntimeMode? Selection { get; private set; }
+    internal bool ThinkingEnabled => enableThinking.IsChecked == true;
 
     private static string Text(string key)
     {
@@ -66,38 +75,50 @@ internal sealed class GameRuntimeModeWindow : Window
         return StencilGuidanceText.Text(language, key);
     }
 
-    internal GameRuntimeModeWindow(bool normalAvailable, bool moddedAvailable)
+    internal GameRuntimeModeWindow(bool normalAvailable, bool moddedAvailable, bool thinkingEnabled)
     {
         Title = "Hollow Knight Vision";
         Width = 540;
-        Height = 330;
+        Height = 350;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         var panel = new Grid { Margin = new Thickness(30, 26, 30, 24) };
         panel.RowDefinitions.Add(new RowDefinition());
         panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var icon = new Image
         {
             Source = new BitmapImage(new Uri(
-                "pack://application:,,,/Resources/HollowKnightVision.ico",
+                "pack://application:,,,/HollowKnightVision.Windows;component/Resources/HollowKnightVision.ico",
                 UriKind.Absolute)),
             Width = 156,
             Height = 156,
             Stretch = Stretch.Uniform,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 24)
+            Margin = new Thickness(0, 0, 0, 10)
         };
         panel.Children.Add(icon);
+
+        enableThinking = new CheckBox
+        {
+            Content = Text("enableThinking"),
+            IsChecked = thinkingEnabled,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 14)
+        };
+        AutomationProperties.SetAutomationId(enableThinking, "enable-thinking");
+        Grid.SetRow(enableThinking, 1);
+        panel.Children.Add(enableThinking);
 
         var buttons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Center
         };
-        Grid.SetRow(buttons, 1);
+        Grid.SetRow(buttons, 2);
         var normal = Choice("Normal Hollow Knight", GameRuntimeMode.Normal);
         normal.IsEnabled = normalAvailable;
         var modded = Choice("Modded Hollow Knight", GameRuntimeMode.Modded);

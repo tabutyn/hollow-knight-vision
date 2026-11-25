@@ -11,15 +11,17 @@ namespace HollowKnightVision.Windows.App;
 public partial class MainWindow
 {
     private readonly LocalThinkingClient thinkingClient;
-    private bool thinkingEnabled;
+    private readonly bool thinkingEnabled;
     private bool thinkingAutomatic = true;
     private LocalThinkingModel thinkingModel = LocalThinkingModel.Gemma;
     private bool thinkingSeparateLlama;
     private ThinkingWindow? thinkingWindow;
     private CancellationTokenSource? thinkingCancellation;
     private Task? thinkingQuestionTask;
+    private CancellationTokenSource? thinkingPreloadCancellation;
+    private Task? thinkingPreloadTask;
     private double nextThinkingQuestion;
-    private string thinkingStatus = "Thinking is off.";
+    private string thinkingStatus = "Waiting for the local model…";
     private string thinkingInput = "";
     private string thinkingReply = "";
     private string? thinkingHandoff;
@@ -30,10 +32,13 @@ public partial class MainWindow
     private ThinkingFrame? thinkingAttachedFrame;
     private IReadOnlyList<ThinkingCandidateRow> thinkingRows = [];
 
-    private ThinkingOptions CurrentThinkingOptions => new(thinkingEnabled, thinkingAutomatic, thinkingModel, thinkingSeparateLlama);
+    private ThinkingOptions CurrentThinkingOptions => new(thinkingAutomatic, thinkingModel, thinkingSeparateLlama);
 
-    private void Thinking_Click(object sender, RoutedEventArgs e)
+    private void Thinking_Click(object sender, RoutedEventArgs e) => OpenThinkingInspector();
+
+    private void OpenThinkingInspector()
     {
+        if (!thinkingEnabled || isClosing) return;
         if (thinkingWindow is not null)
         {
             thinkingWindow.Activate();
@@ -51,14 +56,17 @@ public partial class MainWindow
 
     private void SetThinkingOptions(ThinkingOptions next)
     {
+        if (!thinkingEnabled) return;
         var current = CurrentThinkingOptions;
         if (next == current) return;
-        Volatile.Write(ref thinkingEnabled, next.Enabled);
         thinkingAutomatic = next.Automatic;
         thinkingModel = next.Model;
         thinkingSeparateLlama = next.SeparateLlama;
-        if (current.Enabled != next.Enabled || current.Model != next.Model || current.SeparateLlama != next.SeparateLlama)
+        if (current.Model != next.Model || current.SeparateLlama != next.SeparateLlama)
+        {
             ResetThinking();
+            StartThinkingPreload();
+        }
         else if (!thinkingAutomatic) StopThinkingControl("Automatic policies paused.");
         PresentThinking();
     }
@@ -69,7 +77,8 @@ public partial class MainWindow
         StopThinkingControl();
         Volatile.Write(ref latestThinkingFrame, null);
         nextThinkingQuestion = 0;
-        thinkingStatus = thinkingEnabled ? "Waiting for a game frame…" : "Thinking is off.";
+        if (thinkingPreloadTask is not { IsCompleted: false })
+            thinkingStatus = "Waiting for a game frame…";
         thinkingInput = thinkingReply = "";
         thinkingHandoff = null;
         thinkingScreenshot = thinkingAttachment = null;
@@ -82,10 +91,64 @@ public partial class MainWindow
         thinkingScreenshot, ReferenceEquals(thinkingDisplayFrame, thinkingAttachedFrame) ? null : thinkingAttachment,
         thinkingInput, thinkingRows, thinkingReply, thinkingHandoff);
 
+    private void StartThinkingPreload()
+    {
+        if (!thinkingEnabled || isClosing) return;
+        thinkingPreloadCancellation?.Cancel();
+        var source = new CancellationTokenSource();
+        var priorLoad = thinkingPreloadTask;
+        thinkingPreloadCancellation = source;
+        thinkingPreloadTask = PreloadThinkingAsync(CurrentThinkingOptions, source, priorLoad, thinkingQuestionTask);
+    }
+
+    private async Task PreloadThinkingAsync(ThinkingOptions options, CancellationTokenSource source, Task? priorLoad, Task? priorQuestion)
+    {
+        var token = source.Token;
+        try
+        {
+            StopGameTextReview();
+            if (gameTextReviewTask is { } proofreading) await proofreading.WaitAsync(token);
+            if (priorLoad is not null) await priorLoad.WaitAsync(token);
+            if (priorQuestion is not null) await priorQuestion.WaitAsync(token);
+            token.ThrowIfCancellationRequested();
+            await LocateThinkingModelAsync(options, token);
+            token.ThrowIfCancellationRequested();
+            thinkingStatus = "Model ready. Waiting for a game frame…";
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception error) when (error is HttpRequestException or IOException or InvalidDataException
+            or JsonException or OperationCanceledException)
+        {
+            if (!token.IsCancellationRequested)
+                thinkingStatus = error is OperationCanceledException ? "The local model timed out." : error.Message;
+        }
+        finally
+        {
+            if (ReferenceEquals(thinkingPreloadCancellation, source)) thinkingPreloadCancellation = null;
+            source.Dispose();
+            PresentThinking();
+        }
+    }
+
+    private async Task<ResidentThinkingModel> LocateThinkingModelAsync(ThinkingOptions options, CancellationToken token)
+    {
+        thinkingStatus = "Checking " + options.Model.Title + "…";
+        PresentThinking();
+        var resident = await thinkingClient.FindResidentAsync(options.Model, options.SeparateLlama, token);
+        token.ThrowIfCancellationRequested();
+        if (resident is not null && resident.Model == options.Model
+            && resident.OnCompatibilityService == (options.Model == LocalThinkingModel.Llama && options.SeparateLlama)
+            && resident.ContextLength is not (> 0 and not 4096)) return resident;
+        thinkingStatus = "Loading " + options.Model.Title + "…";
+        PresentThinking();
+        return await thinkingClient.LoadForThinkingAsync(options.Model, options.SeparateLlama, token);
+    }
+
     private void StartThinkingQuestion()
     {
         var now = BotCaptureClock();
-        if (isClosing || !thinkingEnabled || visionCancellation is not { IsCancellationRequested: false }) return;
+        if (isClosing || !thinkingEnabled || thinkingPreloadTask is { IsCompleted: false }
+            || visionCancellation is not { IsCancellationRequested: false }) return;
         if (now >= nextThinkingQuestion && Volatile.Read(ref latestThinkingFrame) is { } latest && latest.Sight.IsFresh(now))
         {
             nextThinkingQuestion = now + 60;
@@ -143,20 +206,7 @@ public partial class MainWindow
             thinkingInput = $"Captured frame {frame.Image.CaptureId}\n\nSystem message\n{system}\n\nUser message\n{user}\n\nResponse schema\n"
                 + JsonSerializer.Serialize(schema, new JsonSerializerOptions { WriteIndented = true });
             thinkingRows = Rows(offer, null);
-            thinkingStatus = "Checking " + options.Model.Title + "…";
-            PresentThinking();
-
-            async Task<ResidentThinkingModel> LoadAsync()
-            {
-                thinkingStatus = "Loading " + options.Model.Title + "…";
-                PresentThinking();
-                return await thinkingClient.LoadForThinkingAsync(options.Model, options.SeparateLlama, token);
-            }
-            var resident = await thinkingClient.FindResidentAsync(options.Model, options.SeparateLlama, token);
-            if (resident is null || resident.Model != options.Model
-                || resident.OnCompatibilityService != (options.Model == LocalThinkingModel.Llama && options.SeparateLlama)
-                || resident.ContextLength is > 0 and not 4096)
-                resident = await LoadAsync();
+            var resident = await LocateThinkingModelAsync(options, token);
 
             thinkingStatus = "Generating policy JSON…";
             PresentThinking();

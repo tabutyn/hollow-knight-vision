@@ -2,6 +2,8 @@ using System.Collections;
 using System.IO;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using System.Windows.Automation;
+using System.Windows.Controls;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 using HollowKnightVision.Windows.Host;
@@ -16,6 +18,8 @@ internal static class RuntimeModeTests
             ("game-mode argument accepts both forms", TestGameModeArgumentAcceptsBothForms),
             ("game-mode argument rejects invalid and repeated values", TestGameModeArgumentRejectsInvalidAndRepeatedValues),
             ("game-path argument accepts managed launch forms", TestGamePathArgumentAcceptsManagedLaunchForms),
+            ("Thinking requires explicit startup consent", TestThinkingRequiresAnExplicitLaunchChoice),
+            ("the launch chooser carries the selected Thinking consent", TestLaunchChooserCarriesThinkingConsent),
             ("normal initialization omits mod-only menu label", TestNormalInitializationOmitsModOnlyMenuLabel),
             ("running installation must match selected mode", TestRunningInstallationMustMatchSelectedMode),
             ("discovery only enables complete compatible installations", TestDiscoveryOnlyEnablesCompleteCompatibleInstallations)
@@ -32,6 +36,36 @@ internal static class RuntimeModeTests
         Check(RequiresChoice(null));
         Check(!RequiresChoice(GameRuntimeMode.Normal));
         Check(!RequiresChoice(GameRuntimeMode.Modded));
+    }
+
+    public static void TestThinkingRequiresAnExplicitLaunchChoice()
+    {
+        Check(!ThinkingEnabled(Parse("Vision")));
+        Check(!ThinkingEnabled(Parse("Vision", "--game-mode=modded")));
+        Check(!ThinkingEnabled(Parse("Vision", "--enable-thinking=false")));
+        Check(!ThinkingEnabled(Parse("Vision", "--game-path", "--enable-thinking")));
+        Check(ThinkingEnabled(Parse("Vision", "--enable-thinking")));
+        var options = Parse("Vision", "--game-mode=normal", "--enable-thinking", "--game-path", "/Games/Hollow");
+        Check(ThinkingEnabled(options));
+        Equal(GameRuntimeMode.Normal, Mode(options)!.Value);
+        Equal("/Games/Hollow", GamePath(options)!);
+    }
+
+    public static void TestLaunchChooserCarriesThinkingConsent()
+    {
+        foreach (var optedIn in new[] { false, true })
+        {
+            var chooser = new GameRuntimeModeWindow(normalAvailable: true, moddedAvailable: false, thinkingEnabled: optedIn);
+            try
+            {
+                var option = ((Grid)chooser.Content).Children.OfType<CheckBox>().Single();
+                Equal("enable-thinking", AutomationProperties.GetAutomationId(option));
+                Equal(optedIn, chooser.ThinkingEnabled);
+                option.IsChecked = !optedIn;
+                Equal(!optedIn, chooser.ThinkingEnabled);
+            }
+            finally { chooser.Close(); }
+        }
     }
 
     public static void TestGameModeArgumentAcceptsBothForms()
@@ -161,6 +195,9 @@ internal static class RuntimeModeTests
 
     private static string? GamePath(object options) =>
         (string?)options.GetType().GetProperty("GamePath")!.GetValue(options);
+
+    private static bool ThinkingEnabled(object options) =>
+        (bool)options.GetType().GetProperty("ThinkingEnabled")!.GetValue(options)!;
 
     private static bool RequiresChoice(GameRuntimeMode? mode)
     {

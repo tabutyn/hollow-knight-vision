@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
@@ -111,7 +112,7 @@ internal static class GameTextWindowTests
         };
         var image = MainWindow.FrameBitmap(RenderText("INSPECT"));
         var captured = new[] { new ThinkingCandidateRow("c0", "interact", "Inspect", 96) };
-        window.Present(new(false, true, LocalThinkingModel.Gemma, false), "Model ready", image, image,
+        window.Present(new(true, LocalThinkingModel.Gemma, false), "Model ready", image, image,
             "System message and captured evidence", captured, "{\"scores\":{\"c0\":96}}", "Dispatched");
         window.Show();
         try
@@ -124,17 +125,51 @@ internal static class GameTextWindowTests
                 && ((TextBox)window.FindName("ReplyText")).Text.Contains("96")
                 && ((TextBlock)window.FindName("HandoffText")).Text == "Dispatched", "Thinking shows the offered action and its screenshot");
             Require(choices.Count == 0, "opening Thinking must not start model work");
-            ((CheckBox)window.FindName("EnabledCheck")).IsChecked = true;
             ((ComboBox)window.FindName("ModelCombo")).SelectedItem = LocalThinkingModel.Llama;
             ((CheckBox)window.FindName("CompatibilityCheck")).IsChecked = true;
             ((CheckBox)window.FindName("AutomaticCheck")).IsChecked = false;
-            Require(choices.Last() is { Enabled: true, Automatic: false, SeparateLlama: true, Model.Identifier: "llama3.2-vision:11b" },
-                "Thinking opt-in, model choice, service and policy pause");
+            Require(choices.Last() is { Automatic: false, SeparateLlama: true, Model.Identifier: "llama3.2-vision:11b" },
+                "Thinking model choice, service and policy pause");
             ((Button)window.FindName("OpenLog")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Require(logs == 1, "Thinking can open its notebook");
         }
         finally { window.Close(); }
         Console.WriteLine("PASS Thinking inspector presents the bound screenshot, request and scores");
+    }
+
+    internal static void TestDisabledThinkingLeavesModelIdleAndSkipsCaptureAndInference()
+    {
+        using var service = new LocalThinkingFixture();
+        using var transport = new HttpClient(service);
+        using var capture = new CancellationTokenSource();
+        var root = Directory.CreateTempSubdirectory("hkv-thinking-disabled-");
+        var window = new MainWindow(GameRuntimeMode.Normal, null, root.FullName, root.FullName, policyClient: new(transport));
+        try
+        {
+            Field("visionCancellation").SetValue(window, capture);
+            Method("StartThinkingPreload").Invoke(window, null);
+            Method("OpenThinkingInspector").Invoke(window, null);
+            var shortcut = Method("HandleLocalShortcut").Invoke(window, [Key.T, false, ModifierKeys.None]);
+            var capturedAt = (double)Method("BotCaptureClock").Invoke(null, null)!;
+            Method("ObserveThinkingFrame").Invoke(window,
+                [RenderText("INSPECT"), 1L, capturedAt, 1, 1L, "game", null, null, null, null, true, null, 0d]);
+            Method("StartThinkingQuestion").Invoke(window, null);
+            Require(((Button)window.FindName("ThinkingButton")).Visibility == Visibility.Collapsed
+                && shortcut is false && Field("thinkingWindow").GetValue(window) is null
+                && Field("latestThinkingFrame").GetValue(window) is null
+                && Field("thinkingPreloadTask").GetValue(window) is null
+                && Field("thinkingQuestionTask").GetValue(window) is null
+                && service.InventoryCount == 0 && service.LoadCount == 0 && service.RequestCount == 0,
+                "a launch without consent must expose no Thinking shortcuts, capture, or model traffic");
+        }
+        finally
+        {
+            capture.Cancel();
+            Field("isClosing").SetValue(window, true);
+            Await((Task)Method("PrepareShutdownAsync").Invoke(window, null)!);
+            root.Delete(recursive: true);
+        }
+        Console.WriteLine("PASS disabled Thinking exposes no inspector, captures, or model traffic");
     }
 
     internal static void TestThinkingRequestUsesBoundFrameAndNotebook()
@@ -144,16 +179,20 @@ internal static class GameTextWindowTests
         using var capture = new CancellationTokenSource();
         var root = Directory.CreateTempSubdirectory("hkv-thinking-request-");
         var window = new MainWindow(GameRuntimeMode.Normal, null, root.FullName, root.FullName,
-            policyClient: new(transport));
+            policyClient: new(transport), enableThinking: true);
         try
         {
             Field("visionCancellation").SetValue(window, capture);
             var reader = (GameTextReader)Field("gameTextReader").GetValue(window)!;
             reader.SetEnabled(true);
             reader.SetGoal("Read the King's Pass tablet");
-            CollectFrame();
-            Require(Field("thinkingQuestionTask").GetValue(window) is null, "Thinking does not request a model before opt-in");
-            Invoke("SetThinkingOptions", new ThinkingOptions(true, true, LocalThinkingModel.Gemma, false));
+            Invoke("StartThinkingPreload");
+            Await((Task)Field("thinkingPreloadTask").GetValue(window)!);
+            Require(((Button)window.FindName("ThinkingButton")).Visibility == Visibility.Visible
+                && Method("HandleLocalShortcut").Invoke(window, [Key.T, true, ModifierKeys.None]) is true
+                && service.InventoryCount > 0 && service.LoadCount == 1 && service.RequestCount == 0
+                && Field("latestThinkingFrame").GetValue(window) is null,
+                "an opted-in launch loads its model and exposes T before any screenshot");
             CollectFrame();
             var rows = (IReadOnlyList<ThinkingCandidateRow>)Field("thinkingRows").GetValue(window)!;
             Require(service.RequestCount == 1 && rows is [{ Id: "c0", Target: "Inspect", Score: 96 }]
@@ -192,36 +231,52 @@ internal static class GameTextWindowTests
         Console.WriteLine("PASS Windows Thinking request attaches its captured PNG, reads notebook context and displays the validated reply");
 
         void Invoke(string name, params object?[] arguments) => Method(name).Invoke(window, arguments);
-        static void Await(Task task)
-        {
-            var timer = Stopwatch.StartNew();
-            while (!task.IsCompleted && timer.Elapsed < TimeSpan.FromSeconds(10))
-            {
-                Program.Pump();
-                Thread.Sleep(5);
-            }
-            Require(task.IsCompleted, "Thinking request or cleanup did not complete");
-            task.GetAwaiter().GetResult();
-        }
-        static MethodInfo Method(string name) => typeof(MainWindow).GetMethod(name,
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)!;
-        static FieldInfo Field(string name) => typeof(MainWindow).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!;
     }
+
+    private static void Await(Task task)
+    {
+        var timer = Stopwatch.StartNew();
+        while (!task.IsCompleted && timer.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            Program.Pump();
+            Thread.Sleep(5);
+        }
+        Require(task.IsCompleted, "Thinking request or cleanup did not complete");
+        task.GetAwaiter().GetResult();
+    }
+
+    private static MethodInfo Method(string name) => typeof(MainWindow).GetMethod(name,
+        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)!;
+    private static FieldInfo Field(string name) => typeof(MainWindow).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!;
 
     private sealed class LocalThinkingFixture : HttpMessageHandler
     {
         public string Reply { get; set; } = """{"scores":{"c0":96}}""";
+        public int InventoryCount { get; private set; }
+        public int LoadCount { get; private set; }
         public int RequestCount { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.Method == HttpMethod.Get)
+            {
+                InventoryCount++;
                 return new(HttpStatusCode.OK)
                 {
-                    Content = new StringContent("""{"models":[{"name":"gemma3:4b","context_length":4096}]}""")
+                    Content = new StringContent(LoadCount == 0 ? """{"models":[]}"""
+                        : """{"models":[{"name":"gemma3:4b","context_length":4096}]}""")
                 };
+            }
             using var content = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
             var body = content.RootElement;
+            if (request.RequestUri?.AbsolutePath == "/api/generate")
+            {
+                Require(body.GetProperty("model").GetString() == LocalThinkingModel.Gemma.Identifier
+                    && body.GetProperty("options").GetProperty("num_ctx").GetInt32() == 4096,
+                    "startup must use the selected default model and Thinker's context");
+                LoadCount++;
+                return new(HttpStatusCode.OK) { Content = new StringContent("""{"done":true,"done_reason":"load"}""") };
+            }
             var user = body.GetProperty("messages")[1];
             var image = Convert.FromBase64String(user.GetProperty("images")[0].GetString()!);
             Require(request.RequestUri?.AbsolutePath == "/api/chat" && image.Length > 8
