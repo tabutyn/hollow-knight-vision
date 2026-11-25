@@ -1376,6 +1376,74 @@ internal static class NativeAtlasImportTests
         }
     }
 
+    internal static void TestPlacedAtlasKeepsFloorConfirmationThroughEarlyProbes()
+    {
+        foreach (var (occludedAt, firstClearAt, confirmsOnFirstClear, changeCorrection) in new[]
+        {
+            (Array.Empty<double>(), 1.65, true, false),
+            (new[] { 1.65, 1.8 }, 2.04, true, false),
+            (new[] { 1.65, 1.8, 2.04 }, 2.34, false, false),
+            (new[] { 2.04 }, 2.34, false, true),
+            (Array.Empty<double>(), 2.9, false, false)
+        })
+        {
+            var root = Directory.CreateTempSubdirectory("hkv-placed-floor-probes-");
+            try
+            {
+                var pipeline = new WindowsLiveWorldPipeline(root.FullName);
+                var store = new LiveWorldSessionStore(root.FullName);
+                var origin = new AtlasPoint(80, 0);
+                var drifted = new AtlasPoint(130, 0);
+                Check(pipeline.Process(Scan(1, .5, 71, origin, 1)).AllowsAtlasComposition, "save the placed reference");
+                Check(pipeline.Process(Scan(2, .9, 901, new(400, 0), 2)).AllowsAtlasComposition,
+                    "record a different view in the placed section");
+                var firstVote = pipeline.Process(Scan(3, 1.5, 71, drifted, 2));
+                Check(firstVote.AllowsAtlasComposition && firstVote.AcceptedClosure is null,
+                    "one floor-verified image must be tentative");
+                var id = 4;
+                var returnPose = changeCorrection ? drifted with { X = drifted.X + 12 } : drifted;
+                if (changeCorrection)
+                    Check(pipeline.Process(Scan(id++, 1.65, 71, returnPose, 2, scenery: true)).AcceptedClosure is null,
+                        "a conflicting early correction must start a new vote without shifting the scheduled scan");
+                foreach (var time in occludedAt)
+                {
+                    var inconclusive = pipeline.Process(Scan(id++, time, 71, returnPose, 2, row: 105, scenery: true));
+                    Check(inconclusive.AllowsAtlasComposition && inconclusive.AcceptedClosure is null
+                        && store.Load().Snapshot.LoopClosureEdges.Count == 0,
+                        "scenery with an inconclusive floor must leave the saved placement alone");
+                }
+
+                var clear = pipeline.Process(Scan(id++, firstClearAt, 71, returnPose, 2, scenery: true));
+                Check((clear.AcceptedClosure is not null) == confirmsOnFirstClear,
+                    $"incorrect confirmation timing at {firstClearAt} ({clear.Diagnostic})");
+                if (!confirmsOnFirstClear)
+                    clear = pipeline.Process(Scan(id, firstClearAt + .15, 71, returnPose, 2));
+                var saved = store.Load().Snapshot;
+                Check(clear is { AcceptedClosure: not null, RebuiltAtlas.TileCount: > 0 }
+                    && clear.CameraPose == origin && saved.LoopClosureEdges.Count == 1
+                    && saved.Observations[0].OptimizedPose == origin && saved.Observations[^1].RawPose == returnPose,
+                    "two independent current floor matches must rebuild the measured section without changing its raw poses");
+            }
+            finally { root.Delete(recursive: true); }
+        }
+
+        static WindowsLiveWorldFrame Scan(long id, double time, int seed, AtlasPoint pose, long lineage,
+            int row = 135, bool scenery = false)
+        {
+            var frame = FloorFrame(id, seed, rightSide: true, row, airborne: false, competing: false);
+            var evidence = frame.WorldEvidence!;
+            return frame with
+            {
+                Timestamp = time, MonotonicTimestamp = time, LocalPose = pose, StableTrackingVerified = !scenery,
+                WorldEvidence = evidence with
+                {
+                    CaptureTimestamp = time, MeasuredLineage = lineage, HasMeasuredSceneryContinuity = scenery,
+                    GroundGeometry = scenery ? null : evidence.GroundGeometry
+                }
+            };
+        }
+    }
+
     internal static void TestDoorwaySpacingUsesOnlyPlacedImages()
     {
         var root = Directory.CreateTempSubdirectory("hkv-local-recovery-doorway-");

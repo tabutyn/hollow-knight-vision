@@ -634,7 +634,7 @@ internal sealed class WindowsLiveWorldPipeline
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 var measuredIsland = request.WorldEvidence is { MeasuredLineage: not null };
                 // Pending measured islands use the floor verifier and its independent confirmation cadence.
-                var searchForClosure = globalSearchDue && !(measuredIsland && placementPending);
+                var searchForClosure = measuredIsland ? !placementPending : globalSearchDue;
                 if (globalSearchDue) lastGlobalSearchAt = request.MonotonicTimestamp;
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 LiveWorldRecoveryPlacement? restoredPlacement = null;
