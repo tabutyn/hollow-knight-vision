@@ -10016,8 +10016,13 @@ static void TestPipelinePersistsWalkedFloorAndRestoresItOnRecovery()
         var uncertain = reopened.Process(PipelineTextureFrameFromPixels(7, PipelineTexturePixels(911)),
             106, 2.50, 1, room, stableTrackingVerified: false, localPose: raw,
             walkedGround: [Span(100, 400)]);
-        Equal("Committed", uncertain.State);
-        True(new LiveWorldSessionStore(root).Load().Snapshot.Observations[^1].WalkedGround is null);
+        Equal("PendingRecovery", uncertain.State);
+        True(uncertain.Diagnostic.Contains("camera motion is unmeasured", StringComparison.Ordinal));
+        var afterDiscard = new LiveWorldSessionStore(root).Load().Snapshot;
+        Equal(archive.MapRevision, afterDiscard.MapRevision);
+        Equal(archive.Observations.Count, afterDiscard.Observations.Count);
+        True(placed.WalkedGround.SequenceEqual(LiveWorldWalkedGround.ProjectRoom(afterDiscard,
+            archive.Observations[^1].RoomId)));
     });
 }
 
