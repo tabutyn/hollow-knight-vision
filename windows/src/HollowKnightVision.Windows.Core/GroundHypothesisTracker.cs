@@ -377,7 +377,9 @@ public sealed class GroundHypothesisTracker
         this.backgroundGlobalSearchCompleted = backgroundGlobalSearchCompleted;
         cameraSolver = productionCameraSolver
             ? new GroundCameraSolver(
+                subpixelEnabled: true,
                 keyframeSubpixelEnabled: true,
+                independentPatchConsensusEnabled: true,
                 calibratedMotionEnabled: true,
                 matcherBackend: GroundComputeBackend.Automatic,
                 maximumLocalSearchRadius: 192, broadSearchEveryFrame: broadSearchEveryFrame)

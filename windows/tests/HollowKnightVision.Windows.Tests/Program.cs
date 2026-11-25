@@ -292,6 +292,7 @@ var tests = new List<(string Name, Action Run)>
     ("texture fallback measures two-axis shake without floor rows and rejects masks/flat images", GroundSubpixelTests.TestTextureFallback),
     ("subpixel RecoversFractionalTranslationOnIndependentValidationPixels", GroundSubpixelTests.TestFractionalTranslation),
     ("subpixel IntegratedSolverPublishesFractionalTranslation", GroundSubpixelTests.TestIntegratedFractionalSolve),
+    ("live tracking refines fractional motion between reference frames", GroundSubpixelTests.TestLiveTrackingRefinesBetweenReferenceFrames),
     ("subpixel ExactIntegerMotionStaysExactAndFlatFrameIsRejected", GroundSubpixelTests.TestIntegerAndFlat),
     ("ground texture snapshots own capture bytes and preserve observed evidence islands", GroundCameraSolverTests.TestOwnedEvidenceAndMasks),
     ("ground texture fallback and rejected promotions retain reference trust", GroundCameraSolverTests.TestRollbackAndTrust),

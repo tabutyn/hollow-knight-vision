@@ -206,6 +206,28 @@ internal static class GroundSubpixelTests
         Near(-2.65, result.ImageTranslation.X, .12); Near(4.75, result.ImageTranslation.Y, .12);
         Near(-2.65, result.MatchedImageDisplacement!.Value.X, .12); Near(4.75, result.MatchedImageDisplacement!.Value.Y, .12);
     }
+
+    public static void TestLiveTrackingRefinesBetweenReferenceFrames()
+    {
+        var tracker = new GroundHypothesisTracker(minimumObservationSeconds: .2, productionCameraSolver: true);
+        var lines = Rows.Select(row => new DetectedFloorLine(row, new(16, 303))).ToArray();
+        var shiftedLines = Rows.Select(row => new DetectedFloorLine(row + 5, new(16, 303))).ToArray();
+        _ = tracker.Update(Frame(), Width, Height, lines, timestamp: 0);
+
+        GroundPlacementProposal? proposal = null;
+        var tracking = tracker.Update(Frame(-3, 5, .35, -.25), Width, Height, shiftedLines, timestamp: 1d / 60,
+            placementValidator: measured =>
+            {
+                proposal = measured;
+                return true;
+            });
+        if (!tracking.PoseVerified || tracking.LocalMatchedImageDisplacement is not { } match)
+            throw new Exception("The live solver lost the fractional match before its next reference frame.");
+        Near(-2.65, match.X, .12);
+        Near(4.75, match.Y, .12);
+        Check(proposal is { IndependentTextureConsensus: false, UniqueLocalTextureMatch: false });
+    }
+
     public static void TestIntegerAndFlat()
     {
         var solver = new GroundCameraSolver(subpixelEnabled: true); Check(solver.Solve(Frame(), Width, Height, Lines(), 0, []) is not null);

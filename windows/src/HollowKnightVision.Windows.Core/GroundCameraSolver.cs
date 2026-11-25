@@ -53,7 +53,7 @@ public sealed partial class GroundCameraSolver
     public static readonly CameraVector HackerCalibratedRecentScale = new(.9809, .9923);
     public static readonly CameraVector BroadCalibratedCameraScale = new(.9956, .9947);
     private readonly CameraVector cameraCoordinateScale;
-    private readonly bool subpixelEnabled, keyframeSubpixelEnabled, usesAdaptiveRecentMotionScale;
+    private readonly bool subpixelEnabled, keyframeSubpixelEnabled, independentPatchConsensusEnabled, usesAdaptiveRecentMotionScale;
     private readonly CameraVector anchorImageMotionScale, recentImageMotionScale;
     private readonly GroundComputeBackend matcherBackend;
     private readonly int maximumLocalSearchRadius;
@@ -133,9 +133,11 @@ public sealed partial class GroundCameraSolver
         bool calibratedMotionEnabled = false, CameraVector? imageMotionScale = null,
         CameraVector? recentImageMotionScale = null,
         GroundComputeBackend matcherBackend = GroundComputeBackend.Cpu,
-        int maximumLocalSearchRadius = 96, bool broadSearchEveryFrame = false, CameraVector? cameraCoordinateScale = null)
+        int maximumLocalSearchRadius = 96, bool broadSearchEveryFrame = false, CameraVector? cameraCoordinateScale = null,
+        bool independentPatchConsensusEnabled = false)
     {
         this.subpixelEnabled = subpixelEnabled; this.keyframeSubpixelEnabled = keyframeSubpixelEnabled;
+        this.independentPatchConsensusEnabled = independentPatchConsensusEnabled;
         // Keep established registration coordinates independent of output
         // calibration: changing the projection must not move reference cadence
         // thresholds or change which pixel hypotheses are searched. Inbound
