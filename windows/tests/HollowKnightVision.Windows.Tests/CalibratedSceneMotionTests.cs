@@ -431,7 +431,7 @@ internal static class CalibratedSceneMotionTests
         return tracker;
     }
 
-    private static Scene.Grid Grid(int dx = 0, int dy = 0, double exposure = 1)
+    internal static Scene.Grid Grid(int dx = 0, int dy = 0, double exposure = 1)
     {
         const int width = 160, height = 90;
         var pixels = new float[width * height];
