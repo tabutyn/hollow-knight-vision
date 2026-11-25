@@ -56,11 +56,26 @@ public sealed record SceneRegions(StencilRect? Knight, StencilRect Health, Stenc
             HudStencilRects: AtlasHudMaskRects(extent, hudStencil));
     }
 
-    public static IReadOnlyList<StencilRect> AtlasHudMaskRects(StencilRect extent, HudStencilResult? hudStencil)
+    public static IReadOnlyList<StencilRect> AtlasHudMaskRects(StencilRect extent, HudStencilResult? hudStencil) =>
+        [AtlasHudShield(extent), .. hudStencil?.OmittedRects ?? []];
+
+    internal static IReadOnlyList<StencilRect> GroundOmittedRects(IReadOnlyList<StencilRect> sceneRects, StencilRect extent)
     {
-        var shield = Integral(new StencilRect(extent.X, extent.Y, extent.Width * .40, extent.Height * .25).Intersect(extent));
-        return [shield, .. hudStencil?.OmittedRects ?? []];
+        var shield = AtlasHudShield(extent);
+        if (!sceneRects.Contains(shield)) return sceneRects;
+        var scaleX = extent.Width / 640;
+        var scaleY = extent.Height / 360;
+        StencilRect Footprint(double x, double y, double width, double height) =>
+            Integral(new StencilRect(extent.X + x * scaleX, extent.Y + y * scaleY,
+                width * scaleX, height * scaleY).Intersect(extent));
+        return [.. sceneRects.Where(rect => rect != shield),
+            Footprint(0, 0, 120, 6),    // Capture marker
+            Footprint(29, 17, 83, 52),  // Soul and Geo
+            Footprint(72, 22, 164, 23)]; // Health row
     }
+
+    private static StencilRect AtlasHudShield(StencilRect extent) =>
+        Integral(new StencilRect(extent.X, extent.Y, extent.Width * .40, extent.Height * .25).Intersect(extent));
 
     public static SceneRegions Hud(StencilRect extent, StencilRect? knight, int geoDigitCount = 1,
         StencilRect? focusPrompt = null, IReadOnlyList<StencilRect>? particles = null)
@@ -167,7 +182,8 @@ public sealed record GameplaySceneMasks(SceneRegions AtlasRegions, SceneRegions 
         atlas = atlas with { TutorialPrompt = tutorialPrompt };
         ground = ground with { TutorialPrompt = tutorialPrompt };
         var knight = ground.Knight is { } rect ? SceneRegions.PixelRectangles(width, height, [rect]) : [];
-        return new(atlas, ground, atlas.PixelExclusions(width, height), ground.PixelExclusions(width, height),
+        var groundOmissions = SceneRegions.GroundOmittedRects(ground.OmittedRects, extent);
+        return new(atlas, ground, atlas.PixelExclusions(width, height), SceneRegions.PixelRectangles(width, height, groundOmissions),
             knight.Count > 0 ? knight[0] : null);
     }
 }

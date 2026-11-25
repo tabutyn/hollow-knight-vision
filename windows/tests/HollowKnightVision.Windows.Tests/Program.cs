@@ -488,6 +488,7 @@ var tests = new List<(string Name, Action Run)>
     ("ground broad texture recovers noisy landing", GroundLongRowParityTests.TestManyIndependentPatchesRecoverModeratelyNoisyLanding),
     ("ground repeated texture cannot choose an ambiguous phase", GroundLongRowParityTests.TestRepeatedTextureCannotChooseAnAmbiguousLongRowPhase),
     ("ground edge masks match the pixel oracle", GroundDetectionEfficiencyTests.TestRasterizedMasksArePixelExactIncludingClippedAndOffscreenRectangles),
+    ("ground mask retains HUD and recovers room inside the atlas shield", GroundDetectionEfficiencyTests.TestGroundMaskKeepsHudAndRecoversRoomInsideAtlasShield),
     ("ground paired kernel matches the pixel oracle", GroundDetectionEfficiencyTests.TestPairedKernelIsPixelExactForNoiseAndBorders),
     ("ground optimized edge and kernel match at capture resolution", GroundDetectionEfficiencyTests.TestReleaseEdgeAndKernelTimingAtCaptureResolution),
     ("ground shared theory preserves lines, detection, and debug pixels", TestSharedLineAnalysisPreservesLinesDebugPixelsAndReferenceDetection),

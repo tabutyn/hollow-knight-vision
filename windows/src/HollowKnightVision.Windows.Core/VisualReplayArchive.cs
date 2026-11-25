@@ -30,6 +30,8 @@ public sealed record VisualReplayGroundInput(double CaptureTimestamp, ulong Capt
 
         var omissions = input?.ExcludingRects?.Select(Rect).ToArray() ?? [];
         var atlas = input?.WindowsAtlasExcludingRects?.Select(Rect).ToArray() ?? omissions;
+        var extent = new StencilRect(0, 0, frame.Width, frame.Height);
+        var groundOmissions = SceneRegions.GroundOmittedRects(omissions, extent);
         var knight = input?.KnightRect is { } box
             ? SceneRegions.PixelRectangles(frame.Width, frame.Height, [Rect(box)]) : [];
         StencilRect? observed = null;
@@ -37,13 +39,13 @@ public sealed record VisualReplayGroundInput(double CaptureTimestamp, ulong Capt
         if (exactInput && input?.ObservedPlayerBounds is { } player
             && (input.WindowsAtlasExcludingRects is null || input.WindowsObservedPlayerBoundsMeasured == true))
         {
-            var bounds = Rect(player).Intersect(new(0, 0, frame.Width, frame.Height));
+            var bounds = Rect(player).Intersect(extent);
             if (bounds.IsFinite && !bounds.IsEmpty) observed = bounds;
         }
         return new GameplaySceneMasks(SceneRegions.Startup() with { HudStencilRects = atlas },
             SceneRegions.Startup() with { HudStencilRects = omissions },
             SceneRegions.PixelRectangles(frame.Width, frame.Height, atlas),
-            SceneRegions.PixelRectangles(frame.Width, frame.Height, omissions),
+            SceneRegions.PixelRectangles(frame.Width, frame.Height, groundOmissions),
             knight.Count > 0 ? knight[0] : null) { ObservedPlayerBounds = observed };
     }
 
