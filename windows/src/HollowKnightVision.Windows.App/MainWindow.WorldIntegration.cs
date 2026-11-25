@@ -39,14 +39,17 @@ public partial class MainWindow
         completed?.Frame.CaptureGeneration == frame.CaptureGeneration && completed.Frame.RoomName == frame.Room
             ? completed : null;
 
-    private VisionAnalysisResult ReprojectWorldFrame(VisionAnalysisResult analysis, CompletedWorld? publication)
+    private VisionAnalysisResult ReprojectWorldFrame(VisionAnalysisResult analysis, CompletedWorld? publication,
+        out bool hasCurrentWorldPlacement)
     {
+        hasCurrentWorldPlacement = false;
         if (analysis.WorldFrame is not { } frame || CurrentWorldFrame(frame, publication) is not { } completed
             || completed.Result.Revision < analysis.LiveWorldRevision)
             return analysis;
         var placement = completed.Result.ProjectFrame(completed.Frame, frame);
         var offset = placement?.WorldFromLocal;
         var confirmed = placement?.IsPlaced == true;
+        hasCurrentWorldPlacement = confirmed;
         var saved = completed.Result.SavedWorld ?? analysis.SavedWorld;
         if (offset == analysis.WorldBasisOffset && confirmed == analysis.WorldPlacementConfirmed)
             return analysis with { SavedWorld = saved };

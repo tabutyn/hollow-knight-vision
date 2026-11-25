@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using HollowKnightVision.Windows.Core;
 
@@ -168,6 +169,42 @@ internal static class BotCaptureTests
                 && row.DetectionFrameId is null && row.Features.All(double.IsFinite),
                 "A rejected detector publication must leave finite features and no trainable observation.");
         }
+    }
+
+    internal static void TestVisualGeoDepositsReachVersionedPolicyHistory()
+    {
+        const double timestamp = 10;
+        const int width = 200, height = 100;
+        var frame = new BgraFrame(width, height, width * 4, new byte[width * height * 4], 1,
+            DateTimeOffset.UnixEpoch.AddSeconds(timestamp));
+        var timing = new BotCaptureTiming(timestamp, timestamp + .01, Generation, 1, 0);
+        var batch = new LiveObjectDetectionBatch(
+            [Detection("game.playable-knight", .45), Detection("world.geo-deposit", .7),
+             Detection("world.geo-deposit", .1), Detection("game.geo", .4), Detection("world.geo-deposit", .3, .25f)],
+            frame.CaptureId, timestamp, Generation, .01);
+        var row = Capture(batch);
+        Check(row.GeoCaches is { Count: 2 } caches && caches.Any(cache =>
+            Math.Abs(cache.X - .75) < 1e-6 && Math.Abs(cache.Y - .35) < 1e-6
+            && Math.Abs(cache.Width - .1) < 1e-6 && Math.Abs(cache.Height - .05) < 1e-6),
+            "Only confident deposit boxes from this capture should reach the policy in width-normalized coordinates.");
+        var document = JsonSerializer.SerializeToNode(row)!.AsObject();
+        var roundTrip = document.Deserialize<BotCaptureObservation>();
+        Check(roundTrip?.GeoCaches?.SequenceEqual(row.GeoCaches!) == true,
+            "Capture persistence must retain both deposit bounds.");
+        document.Remove(nameof(BotCaptureObservation.GeoCaches));
+        Check(document.Deserialize<BotCaptureObservation>() is { GeoCaches: null },
+            "An older clip without deposit evidence must remain readable.");
+        var history = new BotObservationHistory(5).Append(row, default, timing.AvailableAt + .01);
+        Check(history is not null && history.Length == BotPolicyContract.Names(5)!.Count * BotRecordingContract.HistoryLength
+            && history.TakeLast(3).Zip(new[] { .25f, 0, 1 }).All(pair => Math.Abs(pair.First - pair.Second) < 1e-6),
+            "The versioned policy must receive the nearest deposit's relative position and presence.");
+        Check(Capture(batch with { SourceTimestamp = timestamp - 1 }).GeoCaches is null,
+            "Late detector evidence cannot populate this frame's deposits.");
+
+        ObjectDetection Detection(string name, double x, float confidence = .95f) =>
+            new(name, new(x, .25, .1, .1), confidence) { SourceFrameIdentifier = frame.CaptureId };
+        BotCaptureObservation Capture(LiveObjectDetectionBatch detections) =>
+            BotObservationBuilder.Gameplay(frame, timing, detections, [], [], true, null, null, null, InputButtons.None);
     }
 
     internal static void TestAnalyzedAirborneFrameCanTrainWithoutFloors()

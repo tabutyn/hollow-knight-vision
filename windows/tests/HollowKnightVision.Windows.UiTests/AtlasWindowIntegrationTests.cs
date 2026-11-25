@@ -105,10 +105,9 @@ internal static class AtlasWindowIntegrationTests
             var before = viewport.SetFreeFlyTransform(new(1, 0, 0));
 
             var arriving = AtlasDoorwayFrame(7, entering: true);
-            var queued = AtlasDoorwayFrame(8, entering: true) with { LocalPose = new(90, -2) };
+            var queued = AtlasDoorwayFrame(9, entering: true) with { LocalPose = new(90, -2) };
             // This pre-rebuild analysis reaches the dispatcher after the worker's corrected result.
             var delayed = Analysis(arriving);
-            var latestImage = live.Source;
             var update = Submit(arriving);
             Check(update is { AllowsAtlasComposition: true, RebuiltAtlas: { } }
                 && update.CameraPose == new AtlasPoint(432, 15), update.Diagnostic);
@@ -124,7 +123,28 @@ internal static class AtlasWindowIntegrationTests
             Check(GetField<int?>(window, "gameplayAtlasMinimumTileY") == -3
                 && Canvas.GetTop(live) == 6,
                 "Out-of-order placement must keep the previously painted Atlas and live frame together.");
-            window.ApplyVisionAnalysis(delayed);
+            window.ApplyVisionAnalysis(oldState with { WorldFrame = null });
+            Check(GetField<GroundTruthAtlasMosaic>(window, "gameplayAtlasPresentationPending") == update.RebuiltAtlas,
+                "An out-of-order result without a world scope cannot consume the pending replacement.");
+            var unplacedRoom = AtlasDoorwayFrame(8, entering: true) with { RoomName = "Next room" };
+            window.ApplyVisionAnalysis(Analysis(unplacedRoom) with
+            {
+                WorldBasisOffset = null, WorldBasisTimestamp = null, WorldPlacementConfirmed = false
+            });
+            Check(GetField<int?>(window, "gameplayAtlasMinimumTileY") == -3
+                && GetField<GroundTruthAtlasMosaic>(window, "gameplayAtlasPresentationPending") == update.RebuiltAtlas,
+                "An ordered frame from another room must leave the rebuilt raster pending until there is matching world placement.");
+
+            var store = new LiveWorldSessionStore(Path.Combine(root, "live-world"));
+            var aligned = store.Load().Snapshot;
+            var arrival = aligned.Observations[^1];
+            var arrivalIsland = aligned.TrackingIslands.Single(island => island.Members.Any(member =>
+                member.ObservationId == arrival.Id));
+            var connector = LiveWorldGroundOverlay.ProjectPlacement(aligned).Doorways.Single();
+            var finalAnalysis = Analysis(queued);
+            var latestImage = live.Source;
+            var continued = Submit(queued);
+            window.ApplyVisionAnalysis(finalAnalysis);
 
             var images = GetField<Dictionary<AtlasTileCoordinate, Image>>(window, "gameplayTileImages");
             var originY = GetField<int?>(window, "gameplayAtlasMinimumTileY");
@@ -136,17 +156,10 @@ internal static class AtlasWindowIntegrationTests
                 .CopyPixels(new Int32Rect(16, 28, 1, 1), color, 4, 0);
             Check(color.SequenceEqual(new byte[] { 200, 0, 0, 255 }),
                 "The corrected arrival pixels did not reach the desktop Atlas.");
-            Check(ReferenceEquals(live.Source, latestImage) && Canvas.GetTop(live) == 23
+            Check(ReferenceEquals(live.Source, latestImage) && Canvas.GetTop(live) == 25
                 && viewport.Transform.OffsetY == before.OffsetY - 32,
                 "The displayed frame and Free Fly transform must use the rebuilt origin together.");
 
-            var store = new LiveWorldSessionStore(Path.Combine(root, "live-world"));
-            var aligned = store.Load().Snapshot;
-            var arrival = aligned.Observations[^1];
-            var arrivalIsland = aligned.TrackingIslands.Single(island => island.Members.Any(member =>
-                member.ObservationId == arrival.Id));
-            var connector = LiveWorldGroundOverlay.ProjectPlacement(aligned).Doorways.Single();
-            var continued = Submit(queued);
             var saved = store.Load().Snapshot;
             var registered = saved.Observations[^1];
             Check(continued is { AllowsAtlasComposition: true, RebuiltAtlas: null }
@@ -166,7 +179,7 @@ internal static class AtlasWindowIntegrationTests
                 live.Source = (System.Windows.Media.Imaging.BitmapSource)frameBitmap.Invoke(null, [request.Frame])!;
                 GetField<AtlasPathFrameEvidence>(window, "atlasPathEvidence")
                     .ObserveGameplayPreview(request.Frame.CaptureId, hasSceneSignal: true);
-                var camera = Camera(432, 0) with
+                var camera = Camera(352 + request.LocalPose.X, request.LocalPose.Y) with
                 {
                     OrthographicSize = request.Frame.Height / 2.0,
                     ProjectionPixelWidth = request.Frame.Width,

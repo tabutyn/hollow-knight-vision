@@ -32,6 +32,9 @@ internal static class LiveIslandWorldProjectionTests
         Check(completed.Result.ProjectFrame(completed.Frame, returning with { MeasuredLineage = 2 })?.WorldFromLocal == new AtlasPoint(300, 30)
             && moved.Observations.Select(row => row.RawPose).SequenceEqual(before.Observations.Select(row => row.RawPose)),
             "Moving one island cannot change the camera's measured motion or another island's translation.");
+        Check(completed.Result.ProjectFrame(completed.Frame, queuedOld with { Room = "another room" }) is null
+            && completed.Result.ProjectFrame(completed.Frame, queuedOld with { CaptureGeneration = Capture + 1 }) is null,
+            "A delayed image must not borrow the correction after its lineage number reappears in a different capture or room.");
     }
 
     internal static void TestUnknownAndProvisionalOwnersCannotInheritTheLastPlacement()
@@ -40,14 +43,21 @@ internal static class LiveIslandWorldProjectionTests
         Admit(world, 0, 1, new(10, 5), new(110, 15), 1);
         Admit(world, 1, 3, new(30, 7), new(330, 37), 1, pending: true);
         Admit(world, 2, 4, new(50, 7), new(550, 37), 2);
-        var completed = Publication(world.Snapshot);
+        var before = world.Snapshot;
+        var coordinates = before.Observations.ToDictionary(row => row.Id, row => row.OptimizedPose);
+        coordinates[0] = new(130, 13);
+        var completed = Publication(before.ReplaceOptimizedPoses(coordinates, before.MapRevision));
         var returning = new WindowsLiveWorldFrameScope(Capture, "room", 5, CoordinateEpoch, 1, 1, false);
         Check(completed.Result.ProjectFrame(completed.Frame, returning) is { IsPlaced: false } provisional
             && provisional.WorldFromLocal == new AtlasPoint(300, 30),
             "A provisional incarnation cannot borrow an earlier incarnation's registered position.");
-        Check(completed.Result.ProjectFrame(completed.Frame, returning with { CaptureTimestamp = 2 }) is { IsPlaced: true } earlier
-            && earlier.WorldFromLocal == new AtlasPoint(100, 10),
-            "A delayed frame keeps the owner that was measured at its capture time.");
+        var duringGap = returning with { CaptureTimestamp = 2, MeasuredLineage = null };
+        var estimated = completed.Result.ProjectFrame(completed.Frame, duringGap);
+        Check(estimated is { IsPlaced: false, WorldFromLocal: { X: 120, Y: 8 } },
+            "An unmeasured frame retains the display offset of its last owner without authorizing registered geometry.");
+        Check(completed.Result.ProjectFrame(completed.Frame, duringGap with { MeasuredLineage = 1 }) is { IsPlaced: true } earlier
+            && earlier.IslandId == estimated?.IslandId && earlier.WorldFromLocal == estimated?.WorldFromLocal,
+            "An exact earlier reference recovers the corrected island for that capture.");
         Check(completed.Result.ProjectFrame(completed.Frame, returning with { MeasuredLineage = 3 }) is null
             && completed.Result.ProjectFrame(completed.Frame, returning with { CaptureTimestamp = .5 }) is null,
             "An unknown owner or a future measurement must not supply a world correction.");

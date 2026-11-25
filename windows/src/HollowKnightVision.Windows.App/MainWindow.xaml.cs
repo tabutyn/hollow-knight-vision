@@ -3683,23 +3683,26 @@ public partial class MainWindow : Window
             || !labelCapture.CanProcess(result.LabelRevision)) return;
         var menuEvidenceIsCurrent = menuStencilRecognizer.IsCurrent(result.MenuGeneration);
         var acceptsGameplayPlacement = menuEvidenceIsCurrent && gameplayPresentation.TryAcceptAnalysis(result.Frame);
-        var canPresentReplacement = menuEvidenceIsCurrent && (result.WorldFrame is null || acceptsGameplayPlacement);
         GroundTruthAtlasMosaic renderAtlas;
         CompletedWorld? placement;
-        bool presentsReplacement, defersReplacement;
+        bool replacementPending;
         lock (gameplayWorldPublicationGate)
         {
             renderAtlas = gameplayAtlas;
             placement = completedWorld;
-            var pending = ReferenceEquals(renderAtlas, gameplayAtlasPresentationPending);
-            presentsReplacement = pending && canPresentReplacement;
-            defersReplacement = pending && !canPresentReplacement;
-            if (presentsReplacement) Interlocked.Exchange(ref gameplayAtlasPresentationPending, null);
+            replacementPending = ReferenceEquals(renderAtlas, gameplayAtlasPresentationPending);
         }
-        result = ReprojectWorldFrame(result, placement);
+        result = ReprojectWorldFrame(result, placement, out var hasCurrentWorldPlacement);
+        // Keep the previous raster during an unplaced room transition. A
+        // capture can be ordered while its camera still belongs to another basis.
+        var presentsReplacement = replacementPending && acceptsGameplayPlacement
+            && (result.WorldFrame is null || hasCurrentWorldPlacement);
         if (presentsReplacement)
+        {
+            Interlocked.CompareExchange(ref gameplayAtlasPresentationPending, null, renderAtlas);
             result = result with { GameplayTiles = renderAtlas.SnapshotSince(-1), AtlasSource = renderAtlas };
-        else if (defersReplacement || result.AtlasSource is not null && !ReferenceEquals(result.AtlasSource, renderAtlas))
+        }
+        else if (replacementPending || result.AtlasSource is not null && !ReferenceEquals(result.AtlasSource, renderAtlas))
             result = result with { GameplayTiles = null };
         PublishGpuDiagnostics(result);
         var presentsLatestFrame = result.Frame.CaptureId
