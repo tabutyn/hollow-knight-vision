@@ -18,7 +18,8 @@ $torchCache = $trainingEnvironment.TorchCache
 $trainer = $trainingEnvironment.Trainer
 
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
-  throw "Training environment missing at '$python'. Run .\setup-training-windows.ps1 or set HKV_TRAINER_PYTHON."
+  [Console]::Error.WriteLine("Training environment missing at '$python'. Run .\setup-training-windows.ps1 or set HKV_TRAINER_PYTHON.")
+  exit 1
 }
 $datasetPath = (Resolve-Path -LiteralPath $Dataset).Path
 $trainerArguments = @(

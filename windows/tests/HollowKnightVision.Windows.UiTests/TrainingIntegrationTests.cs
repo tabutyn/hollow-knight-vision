@@ -226,25 +226,32 @@ internal static class TrainingIntegrationTests
             // Run a native subprocess through the shipped script so its stderr and exit code cross the PowerShell boundary.
             var worker = Path.Combine(root.FullName, "fixture-trainer.cmd");
             File.WriteAllText(worker, $"@echo off\r\n>&2 echo {diagnostic}\r\nexit /b 23\r\n");
-            Environment.SetEnvironmentVariable(environment, worker);
             window = new MainWindow(GameRuntimeMode.Modded, null, root.FullName, root.FullName);
             var controls = (TrainingControlsPanel)window.FindName("TrainingControls");
             var status = (TextBlock)window.FindName("StatusText");
             var log = (TextBox)window.FindName("TrainingLogText");
-            Check(controls.TrainButton.IsEnabled, $"The saved Game Play label should enable model training. {status.Text}");
-            controls.TrainButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            var process = typeof(MainWindow).GetField("trainingProcessTask", BindingFlags.Instance | BindingFlags.NonPublic)
-                ?.GetValue(window) as Task<TrainingProcessResult>
-                ?? throw new InvalidOperationException($"The Model Train button did not launch the packaged trainer. {status.Text}");
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            var result = await process.WaitAsync(deadline.Token);
-            while (controls.ProgressRow.Visibility == Visibility.Visible)
-                await Task.Delay(20, deadline.Token);
-            Check(result.ExitCode == 23 && !result.Cancelled && status.Text.StartsWith("Training failed.", StringComparison.Ordinal)
-                && status.Text.Contains(diagnostic, StringComparison.Ordinal) && controls.TrainButton.IsEnabled
-                && log.Text.Contains(diagnostic, StringComparison.Ordinal),
-                $"Object training must preserve the worker error and let the user retry. Exit {result.ExitCode}, status {status.Text}\n{log.Text}");
-            Console.WriteLine("PASS Model Train keeps the worker diagnostic, exit code, and log and allows retry");
+            var missing = Path.Combine(root.FullName, "missing-fixture-trainer.exe");
+            await VerifyFailure(missing, 1, $"Training environment missing at '{missing}'.");
+            await VerifyFailure(worker, 23, diagnostic);
+            Console.WriteLine("PASS Model Train keeps missing-runtime and worker diagnostics, exit codes, and logs and allows retry");
+
+            async Task VerifyFailure(string python, int exitCode, string expected)
+            {
+                Environment.SetEnvironmentVariable(environment, python);
+                Check(controls.TrainButton.IsEnabled, $"The saved Game Play label should enable model training. {status.Text}");
+                controls.TrainButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var process = typeof(MainWindow).GetField("trainingProcessTask", BindingFlags.Instance | BindingFlags.NonPublic)
+                    ?.GetValue(window) as Task<TrainingProcessResult>
+                    ?? throw new InvalidOperationException($"The Model Train button did not launch the packaged trainer. {status.Text}");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                var result = await process.WaitAsync(deadline.Token);
+                while (controls.ProgressRow.Visibility == Visibility.Visible)
+                    await Task.Delay(20, deadline.Token);
+                Check(result.ExitCode == exitCode && !result.Cancelled && status.Text.StartsWith("Training failed.", StringComparison.Ordinal)
+                    && status.Text.Contains(expected, StringComparison.Ordinal) && controls.TrainButton.IsEnabled
+                    && log.Text.Contains(expected, StringComparison.Ordinal),
+                    $"Object training must preserve the worker error and let the user retry. Exit {result.ExitCode}, status {status.Text}\n{log.Text}");
+            }
         }
         finally
         {
