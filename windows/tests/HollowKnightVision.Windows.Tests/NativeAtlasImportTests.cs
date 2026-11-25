@@ -1790,6 +1790,55 @@ internal static class NativeAtlasImportTests
         });
     }
 
+    internal static void TestAlreadyConnectedImageLoopUsesVectorTolerance()
+    {
+        var first = LiveWorldObservation.Create(0, 0, 1, 640, 360, 640, 160, [], default, default);
+        var second = first with { Id = 1, SourceObservationId = 1, Timestamp = 2 };
+        var islands = new[] { first, second }.Select(observation => new LiveTrackingIsland(
+            observation.Id, observation.RoomId, observation.Timestamp, default, LiveIslandPlacement.Estimated,
+            default, LiveTrackingIsland.RecoveryBreakReason, [new(observation.Id, default, true)])).ToArray();
+        var linked = new LiveWorldSnapshot(anchoredObservationId: first.Id, observations: [first, second],
+            keyframes: [new(0, first.Id, first.SourceObservationId), new(1, second.Id, second.SourceObservationId)],
+            landmarks: [new(0, 0, first.SourceObservationId, new(30, 20), new(30, 20), [1, 2, 3], 1, 1)],
+            loopClosureEdges: [new(0, 0, 1, [0], 0, 0, 3, 0)], trackingIslands: islands);
+        var components = new LiveIslandComponents(linked, new HashSet<int>());
+
+        Check(components.SameRigidComponent(first.Id, second.Id)
+            && components.Plan(first.Id, second.Id, new(3, 3), tolerance: 4) is null,
+            "Two individually small residuals must still fail when the vector exceeds the shared visual-loop tolerance.");
+        Check(components.Plan(first.Id, second.Id, new(2, 2), tolerance: 4) is { } accepted
+            && accepted.Shifts.Count == 0 && accepted.PlacedIslands.Count == 0,
+            "An acceptable residual may confirm a link without moving or anchoring an estimated group.");
+    }
+
+    internal static void TestUnplacedDoorwayKeepsTheOlderConnectedGroup()
+    {
+        WithFixture((_, store, _) =>
+        {
+            var original = store.Load().Snapshot;
+            var last = original.Observations[^1];
+            var newRoom = last with { Id = last.Id + 1, SourceObservationId = last.SourceObservationId + 1,
+                RoomId = last.RoomId + 1, Timestamp = last.Timestamp + 1, LocalPose = default };
+            const int newIslandId = TargetIsland + 1;
+            var estimated = original.TrackingIslands.Select(island => island with
+                { Placement = LiveIslandPlacement.Estimated, BreakReason = LiveTrackingIsland.RecoveryBreakReason });
+            var newIsland = new LiveTrackingIsland(newIslandId, newRoom.RoomId, newRoom.Timestamp, newRoom.OptimizedPose,
+                LiveIslandPlacement.Estimated, default, LiveTrackingIsland.RecoveryBreakReason, [new(newRoom.Id, default, true)]);
+            var snapshot = new LiveWorldSnapshot(original.SchemaVersion, original.MapRevision, original.AnchoredObservationId,
+                [.. original.Observations, newRoom], original.Keyframes, original.Landmarks, original.RelativeMotionEdges,
+                original.LoopClosureEdges, [.. estimated, newIsland], original.DoorwayFloorConstraints);
+            var components = new LiveIslandComponents(snapshot, new HashSet<int>());
+
+            var forward = components.PlanDoorwayElevation(newIslandId, TargetIsland, 12, tolerance: 4);
+            var reverse = components.PlanDoorwayElevation(TargetIsland, newIslandId, -12, tolerance: 4);
+            Check(forward is not null && reverse is not null && forward.SequenceEqual(reverse)
+                && forward.Count == 1 && forward.GetValueOrDefault(newIslandId) == -12,
+                "An elevation link must correct only the younger group regardless of edge direction.");
+            Check(components.Plan(newIslandId, TargetIsland, new(0, 12), tolerance: 4)?.PlacedIslands.Count == 0,
+                "Connecting estimates cannot create a measured absolute anchor.");
+        });
+    }
+
     internal static void TestConfirmedLoopPreservesMeasuredDoorwayElevation()
     {
         foreach (var fixedNeighbor in new[] { false, true })

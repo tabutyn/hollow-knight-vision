@@ -623,6 +623,8 @@ var tests = new List<(string Name, Action Run)>
     ("floor-only recovery rejects competing rooms and stale votes", NativeAtlasImportTests.TestFloorOnlyRecoveryRejectsCompetingRoomsAndStaleVotes),
     ("measured Atlas sections keep their relative link until the group is placed", NativeAtlasImportTests.TestMeasuredAtlasLinksSurviveUntilTheirGroupIsPlaced),
     ("Atlas image links preserve measured doorway axes and fixed placements", NativeAtlasImportTests.TestAtlasLinksPreserveDoorwayAxesAndFixedPlacements),
+    ("an already connected Atlas image loop uses a shared XY residual tolerance", NativeAtlasImportTests.TestAlreadyConnectedImageLoopUsesVectorTolerance),
+    ("an unplaced doorway preserves the older connected group without creating an anchor", NativeAtlasImportTests.TestUnplacedDoorwayKeepsTheOlderConnectedGroup),
     ("Atlas image loops preserve measured doorway elevation", NativeAtlasImportTests.TestConfirmedLoopPreservesMeasuredDoorwayElevation),
     ("a doorway never inherits the vertical correction of an unplaced Atlas section", NativeAtlasImportTests.TestDoorwayDoesNotInheritUnplacedVerticalCorrection),
     ("new doorway spacing excludes measured sections awaiting placement", NativeAtlasImportTests.TestDoorwaySpacingUsesOnlyPlacedImages),
