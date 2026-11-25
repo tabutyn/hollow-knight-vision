@@ -24,12 +24,6 @@ internal static class BotDesktopEvaluationTests
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private enum OpeningOutcome { Gameplay, HandoffTimeout, ArchiveFailure, EvaluationFailure, FocusLost }
 
-    private sealed class FocusTestWindow(string root, Func<ReceiverClient> receiverFactory)
-        : MainWindow(GameRuntimeMode.Modded, null, root, root, receiverFactory)
-    {
-        internal void DeactivateForTest() => OnDeactivated(EventArgs.Empty);
-    }
-
     internal static void Run()
     {
         var scope = new DispatcherFrame();
@@ -845,7 +839,7 @@ internal static class BotDesktopEvaluationTests
             Directory.CreateDirectory(Path.GetDirectoryName(evaluationRoot)!);
             File.WriteAllText(evaluationRoot, "existing user file");
         }
-        var window = new FocusTestWindow(root, () => new ReceiverClient(session, port: port));
+        var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
         try
         {
             Field("recentCaptureGeneration").SetValue(window, Generation);
@@ -888,7 +882,7 @@ internal static class BotDesktopEvaluationTests
                 "The opening must start only after the fixture's empty slot has a verified archive.");
             if (outcome == OpeningOutcome.FocusLost)
             {
-                window.DeactivateForTest();
+                _ = typeof(Window).GetMethod("OnDeactivated", Instance)!.Invoke(window, [EventArgs.Empty]);
                 Check(Field("botPlayback").GetValue(window) is null && !bridge.OwnsBotControl(owner),
                     "Window deactivation must immediately release menu control and discard the active run.");
                 ReceiverInputSnapshot releasedInput;
