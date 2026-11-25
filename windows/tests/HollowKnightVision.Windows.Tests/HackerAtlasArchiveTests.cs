@@ -81,11 +81,19 @@ internal static class HackerAtlasArchiveTests
             node => node.GetProperty("neighbors").EnumerateArray().Select(point => point.GetRawText()).ToHashSet());
         Check(room.GetProperty("roomID").GetGuid() == rooms.Single(item => item.SceneName == "Room").Id
             && room.GetProperty("tileCount").GetInt32() > 0
+            && !room.TryGetProperty("issue", out _)
             && room.GetProperty("floors").GetRawText() == "[[[-280,-245],[280,-245]],[[-120,-14],[32,-14]],[[56,77],[144,77]]]"
             && strokes.Any(stroke => stroke.GetProperty("kind").GetString() == "walk")
             && strokes.Any(stroke => stroke.GetProperty("kind").GetString() == "doubleJump")
             && nodes.Count > 2,
             "Report must use the archived scale, ignore non-authored lines and include the saved jump and its graph.");
+        foreach (var stroke in strokes)
+        {
+            var from = stroke.GetProperty("from").EnumerateArray().Select(value => value.GetInt32()).ToArray();
+            var to = stroke.GetProperty("to").EnumerateArray().Select(value => value.GetInt32()).ToArray();
+            Check(from.Length == 2 && to.Length == 2 && (from[0] == to[0] || from[1] == to[1]),
+                "An inspected route stroke must be a horizontal or vertical segment.");
+        }
         Check(strokes.Any(stroke =>
         {
             if (stroke.GetProperty("kind").GetString() != "drop") return false;
