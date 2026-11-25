@@ -2,6 +2,45 @@ using HollowKnightVision.Windows.Core;
 
 internal static class LiveWorldGroundOverlayTests
 {
+    internal static void TestCaptureKeepsOnlyObservedConfirmedSpansAtSolveScale()
+    {
+        const int width = 1280, height = 720, solveWidth = 640;
+        var observed = new DetectedFloorLine(600, new(32, 400), [new(32, 159), new(288, 400)]);
+        var confirmed = new GroundLinePresenceReview(7, observed.ToSemanticLine(), GroundLinePresenceState.Confirmed, 2, 1);
+        var evidence = LiveWorldCaptureEvidence.FromGround(1, width, height, solveWidth,
+            [observed], [confirmed], null, new AtlasPoint(108, 600), observedPlayerBounds: new(96, 552, 24, 42));
+        var expected = new LiveGroundLineEvidence[]
+        {
+            new(7, new(16, 60), new(80, 60)),
+            new(7, new(144, 60), new(200.5, 60))
+        };
+        Check(evidence.GroundGeometry?.Lines.SequenceEqual(expected) == true
+            && expected.All(line => line.IsInImage(solveWidth, width, height)),
+            "Persist measured spans in solve pixels, preserving the gap and exclusive right edge.");
+        Check(evidence.FloorCandidates?.Lines.SequenceEqual(expected.Select(line => line with { SegmentId = 0 })) == true
+            && evidence.PlayerBounds == new WorldRect(new(48, 60), new(12, 24)),
+            "Same-image recovery candidates and measured feet must use the same coordinate system.");
+
+        var occluded = LiveWorldCaptureEvidence.FromGround(2, width, height, solveWidth,
+            [], [confirmed], null, null, supportedFloor: new CleanFloorLine(600, new(1240, 1300)));
+        Check(occluded.FloorCandidates is null && occluded.GroundGeometry?.Lines.SequenceEqual(
+            [new(long.MaxValue, new(620, 60), new(640, 60))]) == true,
+            "An old detection cannot fill an occlusion, and independent foot contact is clipped to the image.");
+    }
+
+    internal static void TestUnconfirmedGroundDoesNotBecomePersistentGeometry()
+    {
+        var observed = new DetectedFloorLine(300, new(10, 600));
+        var review = new GroundLinePresenceReview(7, observed.ToSemanticLine(), GroundLinePresenceState.Observing, .1, 1);
+        var evidence = LiveWorldCaptureEvidence.FromGround(1, 640, 360, 640, [observed], [review], null, null);
+        Check(evidence.GroundGeometry is null && evidence.FloorCandidates?.Lines.SequenceEqual(
+            [new(0, new(10, 60), new(601, 60))]) == true,
+            "Unconfirmed evidence supplies an image recovery candidate without creating a floor.");
+        var invalid = LiveWorldCaptureEvidence.FromGround(2, 640, 360, double.NaN, [observed], [review], null, null);
+        Check(invalid.GroundGeometry is null && invalid.FloorCandidates is null,
+            "An invalid solve width cannot produce stored evidence.");
+    }
+
     internal static void TestEightNearbyMeasurementsProduceOneFloorEstimate()
     {
         var observations = Enumerable.Range(0, 8).Select(id =>

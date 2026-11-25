@@ -489,7 +489,7 @@ internal static class NativeAtlasImportTests
                 {
                     RoomName = target,
                     DoorwayCut = cut,
-                    WorldEvidence = LiveWorldCaptureEvidence.FromGround(id * .3, 320, 180,
+                    WorldEvidence = LiveWorldCaptureEvidence.FromGround(id * .3, 320, 180, 320,
                         [surface, competing], [new(17, surface.ToSemanticLine(), GroundLinePresenceState.Confirmed, .8, 1)],
                         new PixelRect(20, 100, 24, 35), new AtlasPoint(30, 135))
                 };
@@ -576,12 +576,12 @@ internal static class NativeAtlasImportTests
 
     internal static void TestMeasuredWalkSavesFloorUnderAHiddenEdge()
     {
-        var observed = LiveWorldCaptureEvidence.FromGround(2, 320, 180, [], [], null, null,
+        var observed = LiveWorldCaptureEvidence.FromGround(2, 320, 180, 320, [], [], null, null,
             supportedFloor: new CleanFloorLine(135, new PixelSpan(65, 119)));
         Check(observed.FloorCandidates is null && observed.GroundGeometry!.Lines.SequenceEqual([
             new LiveGroundLineEvidence(long.MaxValue, new(65, 45), new(120, 45))]),
             "independent ground contact saves the observed traversal span");
-        var missing = LiveWorldCaptureEvidence.FromGround(3, 320, 180, [], [], null, null);
+        var missing = LiveWorldCaptureEvidence.FromGround(3, 320, 180, 320, [], [], null, null);
         Check(missing.GroundGeometry is null, "no current measurement cannot recreate a hidden floor");
     }
 
@@ -1444,7 +1444,7 @@ internal static class NativeAtlasImportTests
         {
             Frame = frame,
             MaskedFrame = frame,
-            WorldEvidence = LiveWorldCaptureEvidence.FromGround(request.MonotonicTimestamp, image.Width, image.Height,
+            WorldEvidence = LiveWorldCaptureEvidence.FromGround(request.MonotonicTimestamp, image.Width, image.Height, request.SolveWidth,
                 competing ? [surface, other] : [surface],
                 competing ? [confirmed, confirmed with { Id = 31, Line = other.ToSemanticLine() }] : [confirmed],
                 new PixelRect(knightX, footY - 35, 24, 35), new AtlasPoint(knightX + 12, footY))
