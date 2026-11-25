@@ -4,9 +4,11 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading.Channels;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
@@ -37,6 +39,7 @@ internal static class AtlasWindowIntegrationTests
             temporary.Delete(recursive: true);
         }
         Console.WriteLine("PASS Atlas window saves, restores and deletes scoped snapshots and switches both playthroughs");
+        Console.WriteLine("PASS Atlas Delete defaults to No and only deletes the confirmed Gameplay or Hacker selection");
         Console.WriteLine("PASS Profile switching adopts and archives unloaded Hacker autosaves from disk");
         Console.WriteLine("PASS Windows Reset Room handles local and game-focused R, protects capture, and clears both atlases only after confirmation");
         Console.WriteLine("PASS Windows Player Ops serializes requests, applies invincibility, and persists Label randomization");
@@ -871,8 +874,14 @@ internal static class AtlasWindowIntegrationTests
             Check(VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7
                 && SaveProfileAtlas.Read(activeWorld) == profile, "Gameplay Load did not restore the current playthrough.");
             Select(rows, "Gameplay run");
-            Wait(InvokeTask(window, "DeleteAtlasSelectionAsync", rows.SelectedItem!));
-            Check(!gameplayStates.List().Any(state => state.Name == "Gameplay run") && gameplayStates.List().Count == 2
+            var gameplayBeforeDelete = gameplayStates.List().OrderBy(state => state.Id).ToArray();
+            var namedGameplay = gameplayBeforeDelete.Single(state => state.Name == "Gameplay run");
+            AnswerAtlasDelete(window, confirm: false);
+            Check(gameplayStates.List().OrderBy(state => state.Id).SequenceEqual(gameplayBeforeDelete),
+                "Declining Delete changed the named Gameplay states.");
+            AnswerAtlasDelete(window, confirm: true);
+            Check(gameplayStates.List().OrderBy(state => state.Id)
+                    .SequenceEqual(gameplayBeforeDelete.Where(state => state.Id != namedGameplay.Id))
                 && hackerStates.Read(profile)?.RegistrationCount == 3, "Gameplay Delete affected a different state.");
 
             OpenManager(window, "Hacker");
@@ -894,9 +903,15 @@ internal static class AtlasWindowIntegrationTests
             Check(Control<TextBlock>(window, "AtlasPreviewText").Text.Contains("1 rooms", StringComparison.Ordinal),
                 "Hacker Load did not publish its restored layout.");
             Select(rows, "Hacker route");
-            Wait(InvokeTask(window, "DeleteAtlasSelectionAsync", rows.SelectedItem!));
-            Check(!hackerStates.ListStates().Any(state => state.Id == namedHacker.Id)
-                && hackerStates.ListStates().Count == 2, "Hacker Delete did not retain the recovery snapshots.");
+            var hackerBeforeDelete = hackerStates.ListStates().OrderBy(state => state.Id).ToArray();
+            AnswerAtlasDelete(window, confirm: false);
+            Check(hackerStates.ListStates().OrderBy(state => state.Id).SequenceEqual(hackerBeforeDelete),
+                "Declining Delete changed the named Hacker states.");
+            AnswerAtlasDelete(window, confirm: true);
+            Check(hackerStates.ListStates().OrderBy(state => state.Id)
+                    .SequenceEqual(hackerBeforeDelete.Where(state => state.Id != namedHacker.Id))
+                && VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7,
+                "Hacker Delete did not retain the recovery snapshots or preserve the active Gameplay map.");
 
             SetField(window, "hackerLayoutRevision", 1L);
             Wait(InvokeTask(window, "PersistHackerAtlasPeriodicallyAsync"));
@@ -922,13 +937,31 @@ internal static class AtlasWindowIntegrationTests
                 "Returning to a saved profile did not restore both atlases.");
 
             rows.SelectedIndex = 0;
-            var count = hackerStates.ListStates().Count;
-            Wait(InvokeTask(window, "DeleteAtlasSelectionAsync", rows.SelectedItem!));
-            Check(hackerStates.Read(profile)?.Rooms.Count == 0 && hackerStates.ListStates().Count == count
+            var savedHacker = hackerStates.ListStates().OrderBy(state => state.Id).ToArray();
+            AnswerAtlasDelete(window, confirm: false);
+            Check(hackerStates.Read(profile)?.Rooms.Count == 1
+                && hackerStates.ListStates().OrderBy(state => state.Id).SequenceEqual(savedHacker),
+                "Declining Delete cleared the active Hacker map or changed its saved states.");
+            AnswerAtlasDelete(window, confirm: true);
+            Check(hackerStates.Read(profile)?.Rooms.Count == 0
+                && hackerStates.ListStates().OrderBy(state => state.Id).SequenceEqual(savedHacker)
                 && VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7,
                 "Deleting the Hacker autosave must clear only that active map.");
 
             VerifyGameplayPlacementVisibility(window);
+
+            OpenManager(window, "Gameplay");
+            rows.SelectedIndex = 0;
+            var savedGameplay = gameplayStates.List().OrderBy(state => state.Id).ToArray();
+            AnswerAtlasDelete(window, confirm: false);
+            Check(VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7
+                && gameplayStates.List().OrderBy(state => state.Id).SequenceEqual(savedGameplay),
+                "Declining Delete cleared the active Gameplay map or changed its saved states.");
+            AnswerAtlasDelete(window, confirm: true);
+            Check(VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 0
+                && gameplayStates.List().OrderBy(state => state.Id).SequenceEqual(savedGameplay)
+                && hackerStates.ListStates().OrderBy(state => state.Id).SequenceEqual(savedHacker),
+                "Deleting the Gameplay autosave must clear only that active map.");
         }
         finally
         {
@@ -1100,6 +1133,52 @@ internal static class AtlasWindowIntegrationTests
         if (typeof(MainWindow).GetField("atlasOperationCompletion", InstanceMembers)?.GetValue(window) is Task operation)
             Wait(operation);
     }
+
+    private static void AnswerAtlasDelete(MainWindow window, bool confirm)
+    {
+        const int enabledOwnedPopup = 6;
+        const uint getDefaultButton = 0x0400;
+        const uint command = 0x0111;
+        const int yes = 6;
+        const int no = 7;
+        var owner = new WindowInteropHelper(window).EnsureHandle();
+        var answered = false;
+        var defaultsToNo = false;
+        // The dialog pumps messages on the same STA thread as the button handler.
+        // Respond to the owned native dialog without sending desktop-wide input.
+        var timer = new DispatcherTimer(DispatcherPriority.Send) { Interval = TimeSpan.FromMilliseconds(20) };
+        timer.Tick += (_, _) =>
+        {
+            var dialog = GetWindow(owner, enabledOwnedPopup);
+            if (dialog == 0 || dialog == owner) return;
+            var answer = confirm ? yes : no;
+            var button = GetDlgItem(dialog, answer);
+            if (button == 0) return;
+            timer.Stop();
+            defaultsToNo = ((long)SendMessage(dialog, getDefaultButton, 0, 0) & 0xffff) == no;
+            answered = true;
+            SendMessage(dialog, command, (nint)answer, button);
+        };
+        timer.Start();
+        try
+        {
+            Click(window, "AtlasDeleteStateButton");
+        }
+        finally
+        {
+            timer.Stop();
+        }
+        Check(answered && defaultsToNo, "Atlas Delete did not open an owned Yes/No dialog defaulting to No.");
+    }
+
+    [DllImport("user32.dll")]
+    private static extern nint GetWindow(nint window, uint command);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetDlgItem(nint dialog, int item);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern nint SendMessage(nint window, uint message, nint wParam, nint lParam);
 
     private static IEnumerable<string> RowNames(ListBox rows) =>
         rows.Items.Cast<object>().Select(row =>
