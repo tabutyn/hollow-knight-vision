@@ -183,6 +183,97 @@ internal static class ThinkingHandoffTests
         }).GetAwaiter().GetResult();
     }
 
+    internal static void TestLoadProgressMatchesOnlyTheSelectedModel()
+    {
+        var selected = new string('a', 64);
+        var other = new string('b', 64);
+        var log = new OllamaLoadLog(selected);
+        Check(OllamaLoadLog.ModelDigest("FROM C:\\models\\sha256-" + selected + "\r\n") == selected
+            && OllamaLoadLog.ModelDigest("# FROM sha256:" + selected) is null, "select the model's real FROM digest");
+        Check(!log.Consume($"starting llama-server --model sha256:{other}\nload_tensors: offloaded 99/99 layers to GPU\n").Any(),
+            "another local client's model cannot supply progress");
+        Check(!log.Consume($"srv load_model: loading model 'sha256-{selected}").Any(), "wait for a complete line");
+        var states = log.Consume("'\r\nload_tensors: loading model tensors\r\nload_tensors: offloaded 30/33 layers to GPU\r\n"
+            + "load_tensors: CUDA0 model buffer size = 2048.00 MiB\r\nload_tensors: Vulkan1 model buffer size = 256.00 MiB\r\n"
+            + "load_tensors: CUDA_Host model buffer size = 1024.00 MiB\r\nload_tensors: CPU_Mapped model buffer size = 512.00 MiB\r\n"
+            + "load_tensors: warming up the model with an empty run\r\nclip: warmup with image size 448\r\n"
+            + "srv load_model: initializing, n_slots = 1\r\n").ToArray();
+        Check(states[0].Stage == "Opening model weights" && states[1].Stage == "Mapping model weights into memory"
+            && states.Any(state => state.Stage == "Warming up the language model")
+            && states.Any(state => state.Stage == "Warming up the vision encoder")
+            && states[^1] is { Stage: "Preparing the inference context", OffloadedLayers: "30/33", GpuMiB: 2304, CpuMiB: 1536 },
+            "keep the selected model's stage, cumulative device buffers and layer count");
+        Check(!log.Consume($"loading model via llama-server sha256-{other}\nclip: warmup with image size 128\n").Any(),
+            "stop reporting as soon as a different runner begins");
+    }
+
+    internal static void TestLoadWaitsForReceiptWhileTailingTheSelectedService()
+    {
+        Task.Run(async () =>
+        {
+            var selected = new string('f', 64);
+            var root = Directory.CreateTempSubdirectory("hkv-ollama-load-");
+            try
+            {
+                var log = Path.Combine(root.FullName, "compat.log");
+                await File.WriteAllTextAsync(log, $"loading model via llama-server sha256-{selected}\n"
+                    + "load_tensors: offloaded 99/99 layers to GPU\n");
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                var stages = new List<OllamaLoadProgress>();
+                var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var reports = new LoadReports(state =>
+                {
+                    stages.Add(state);
+                    if (state.Stage == "Warming up the vision encoder") observed.TrySetResult();
+                });
+                var shows = 0;
+                using var wire = new ModelStub(async (request, token) =>
+                {
+                    var url = request.RequestUri!;
+                    if (url.AbsolutePath == "/api/ps") return """{"models":[]}""";
+                    Check(url.Port == 11435, "diagnostics and load must use the selected service");
+                    using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
+                    Check(body.RootElement.GetProperty("model").GetString() == "llama3.2-vision:11b", "request targets the chosen model");
+                    if (url.AbsolutePath == "/api/show")
+                    {
+                        Interlocked.Increment(ref shows);
+                        return JsonSerializer.Serialize(new { modelfile = $"FROM C:\\blobs\\sha256-{selected}\r\n" });
+                    }
+                    Check(url.AbsolutePath == "/api/generate", "expected a load request");
+                    await File.AppendAllTextAsync(log, $"srv load_model: loading model 'sha256-{selected}'\n"
+                        + "load_tensors: offloaded 24/28 layers to GPU\nclip: warmup with image size 224\n", token);
+                    await observed.Task.WaitAsync(token);
+                    return """{"done":true,"done_reason":"load"}""";
+                });
+                using var http = new HttpClient(wire);
+                var client = new LocalThinkingClient(http, compatibility => compatibility ? log : null);
+                var ready = await client.LoadForThinkingAsync(LocalThinkingModel.Llama, true, timeout.Token, reports);
+                Check(ready.OnCompatibilityService && shows == 1 && stages.First().Stage == "Opening model weights"
+                    && stages[^1].OffloadedLayers == "24/28" && stages.All(state => state.OffloadedLayers != "99/99"),
+                    "tail the current load only, then return the receipt from the selected service");
+                var count = stages.Count;
+                await File.AppendAllTextAsync(log, "srv load_model: initializing, n_slots = 1\n", timeout.Token);
+                Check(stages.Count == count, "the monitor must have stopped before the load returned");
+
+                using var missingWire = new ModelStub((request, _) => Task.FromResult(request.RequestUri!.AbsolutePath switch
+                {
+                    "/api/ps" => """{"models":[]}""",
+                    "/api/generate" => """{"done":true,"done_reason":"load"}""",
+                    _ => throw new InvalidOperationException("An unavailable log must not add requests.")
+                }));
+                using var missingHttp = new HttpClient(missingWire);
+                var withoutLog = new LocalThinkingClient(missingHttp, _ => Path.Combine(root.FullName, "missing.log"));
+                _ = await withoutLog.LoadForThinkingAsync(LocalThinkingModel.Gemma, false, timeout.Token, reports);
+            }
+            finally { root.Delete(recursive: true); }
+        }).GetAwaiter().GetResult();
+    }
+
+    private sealed class LoadReports(Action<OllamaLoadProgress> onProgress) : IProgress<OllamaLoadProgress>
+    {
+        public void Report(OllamaLoadProgress value) => onProgress(value);
+    }
+
     internal static ReceiverGroundTruthSample Telemetry() => new(
         2, "ground_truth", Scope.ReceiverSession!.Value, 1, 1, 6, "Tutorial_01", true,
         0, 0, 0, 0, 0, true, true, true, 0, 0, 0, 0, 0, 0, 9, 10, 10, 100, 60, 200, 120, 200, 120)

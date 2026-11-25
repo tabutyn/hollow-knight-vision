@@ -27,13 +27,24 @@ public sealed class LocalThinkingClient
     });
 
     private readonly HttpClient http;
+    private readonly Func<bool, string?>? serverLog;
     private sealed record Inventory(InventoryItem[]? Models);
     private sealed record InventoryItem(string? Name, [property: JsonPropertyName("context_length")] int? ContextLength);
     private sealed record Reply(LocalThinkingMessage? Message, string? Error);
     private sealed record ModelReceipt(bool Done, [property: JsonPropertyName("done_reason")] string? DoneReason);
+    private sealed record ModelDetails(string? Modelfile);
 
-    public LocalThinkingClient() => http = LocalHttp;
-    internal LocalThinkingClient(HttpClient http) => this.http = http;
+    public LocalThinkingClient() : this(LocalHttp, WindowsServerLog) { }
+
+    internal LocalThinkingClient(HttpClient http, Func<bool, string?>? serverLog = null)
+    {
+        this.http = http;
+        this.serverLog = serverLog;
+    }
+
+    private static string? WindowsServerLog(bool compatibility) => compatibility
+        ? Environment.GetEnvironmentVariable("HKV_OLLAMA_COMPAT_LOG")
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ollama", "server.log");
 
     private static HttpClient Configure(HttpMessageHandler handler) =>
         new(handler) { Timeout = Timeout.InfiniteTimeSpan, MaxResponseContentBufferSize = 1024 * 1024 };
@@ -103,7 +114,7 @@ public sealed class LocalThinkingClient
     }
 
     public async Task<ResidentThinkingModel> LoadForThinkingAsync(LocalThinkingModel model, bool useCompatibilityService,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, IProgress<OllamaLoadProgress>? progress = null)
     {
         var compatibility = model == LocalThinkingModel.Llama && useCompatibilityService;
         var server = compatibility ? Compatible : Primary;
@@ -116,11 +127,57 @@ public sealed class LocalThinkingClient
             ["model"] = model.Identifier, ["stream"] = false, ["keep_alive"] = "30m",
             ["options"] = new Dictionary<string, int> { ["num_ctx"] = 4096 }
         };
-        var data = await PostAsync(new Uri(server, "generate"), request, TimeSpan.FromMinutes(15), cancellationToken).ConfigureAwait(false);
-        var receipt = JsonSerializer.Deserialize<ModelReceipt>(data, Json);
-        if (receipt is not { Done: true } || receipt.DoneReason == "unload")
-            throw new InvalidDataException("Ollama did not confirm the model load.");
-        return new(model, 4096, compatibility);
+        using var monitorCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var monitor = progress is not null && serverLog?.Invoke(compatibility) is { } filename && Path.IsPathFullyQualified(filename)
+            ? MonitorLoadAsync(server, model, filename, progress, monitorCancellation.Token) : Task.CompletedTask;
+        try
+        {
+            var data = await PostAsync(new Uri(server, "generate"), request, TimeSpan.FromMinutes(15), cancellationToken).ConfigureAwait(false);
+            var receipt = JsonSerializer.Deserialize<ModelReceipt>(data, Json);
+            if (receipt is not { Done: true } || receipt.DoneReason == "unload")
+                throw new InvalidDataException("Ollama did not confirm the model load.");
+            return new(model, 4096, compatibility);
+        }
+        finally
+        {
+            monitorCancellation.Cancel();
+            await monitor.ConfigureAwait(false);
+        }
+    }
+
+    private async Task MonitorLoadAsync(Uri server, LocalThinkingModel model, string path,
+        IProgress<OllamaLoadProgress> progress, CancellationToken token)
+    {
+        try
+        {
+            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+                bufferSize: 4096, useAsync: true);
+            file.Seek(0, SeekOrigin.End);
+            // Note the end of the file before the load starts. The receipt remains authoritative.
+            var data = await PostAsync(new Uri(server, "show"), new { model = model.Identifier }, TimeSpan.FromSeconds(4), token)
+                .ConfigureAwait(false);
+            var detail = JsonSerializer.Deserialize<ModelDetails>(data, Json);
+            if (OllamaLoadLog.ModelDigest(detail?.Modelfile) is not { } digest) return;
+            var parser = new OllamaLoadLog(digest);
+            using var reader = new StreamReader(file);
+            var buffer = new char[8192];
+            while (!token.IsCancellationRequested)
+            {
+                var count = await reader.ReadAsync(buffer.AsMemory(), token).ConfigureAwait(false);
+                if (count == 0)
+                {
+                    await Task.Delay(250, token).ConfigureAwait(false);
+                    continue;
+                }
+                foreach (var update in parser.Consume(new string(buffer, 0, count)))
+                {
+                    token.ThrowIfCancellationRequested();
+                    progress.Report(update);
+                }
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or HttpRequestException
+            or JsonException or OperationCanceledException or ArgumentException) { }
     }
 
     private async Task ReleaseOtherModelsAsync(Uri server, LocalThinkingModel selected, CancellationToken token)
