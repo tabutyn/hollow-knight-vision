@@ -1317,6 +1317,7 @@ var tests = new List<(string Name, Action Run)>
     ("a missed Atlas registration can reconnect to its exact previous capture", AtlasCaptureGapTests.TestOneMissCanReconnectOnlyToTheRetainedCapture),
     ("Game Play Gym preserves Atlas placement through measured floorless frames and verifies the landing", AtlasCaptureGapTests.TestGymFloorlessIntervalKeepsOnlyVerifiedPlacement),
     ("calibrated scenery tolerates exposure changes and expires across a gap", CalibratedSceneMotionTests.TestExposureChangeAndMissingFrames),
+    ("recorded calibrated scenery uses exact frames and freezes ground after loss", CalibratedSceneReplayAuditTests.TestSceneReplayStopsReadingGroundAfterFloorLoss),
     ("distributed scenery motion survives moving occlusion", CalibratedSceneMotionTests.TestDistributedMotionSurvivesMovingOcclusion),
     ("horizontal scenery calibration cannot constrain a fall", CalibratedSceneMotionTests.TestHorizontalCalibrationCannotSupplyVerticalMotion),
     ("scenery patch replacement preserves measured axis lineage", CalibratedSceneMotionTests.TestPatchReplacementPreservesAxisLineage),
@@ -1652,6 +1653,8 @@ if (Environment.GetEnvironmentVariable("HKV_CURRENT_STENCIL_AUDIT") is not null)
     tests.Add(("current title, Extras, and Inventory captures keep local selector alignment", CurrentMenuReplayAuditTests.TestCurrentUserPlainMenuRowsWhenRequested));
 if (Environment.GetEnvironmentVariable("HKV_GROUND_PAIR_RECORDING") is not null)
     tests.Add(("archived ground pairs and sequences replay the pixel solver", GroundPairReplayAuditTests.TestArchivedGroundPairsWhenRequested));
+if (Environment.GetEnvironmentVariable("HKV_CALIBRATED_SCENE_AUDIT_INPUT") is not null)
+    tests.Add(("archived fall replays calibrated scenery after ground loss", CalibratedSceneReplayAuditTests.TestArchivedFallWhenRequested));
 
 foreach (var test in tests)
 {
