@@ -66,6 +66,13 @@ if (args is ["--recorded-path-host-probe", var routeHost])
     return;
 }
 
+if (args is ["--inspect-atlas-road-host-probe", var atlasHost])
+{
+    HackerAtlasArchiveTests.CheckRoadInspection(atlasHost);
+    Console.WriteLine("PASS installed Host inspects the directed Hacker Atlas graph and returns usage and archive errors.");
+    return;
+}
+
 if (args is ["--train-bot-probe", var installedVision])
 {
     await BotTrainingTests.TrainFromWindowsCaptures(installedVision);
@@ -980,6 +987,7 @@ var tests = new List<(string Name, Action Run)>
     ("profile Atlas cancels on menu exit, capture reset and unconfirmed selection", ProfileAtlasTests.TestAbandonedSelectionsCannotSwitchAtlases),
     ("profile Atlas adopts, switches and restores real raster tiles", ProfileAtlasTests.TestProfileAtlasRoundTrip),
     ("profile Atlas keeps previous tiles when a saved profile is invalid or activation fails", ProfileAtlasTests.TestProfileAtlasRollback),
+    ("Hacker Atlas road inspection reports current authored geometry and saved links", HackerAtlasArchiveTests.TestRoadInspectionUsesSavedRoomAndAuthoredGraph),
     ("Hacker Atlas restores rooms, doorways and raster and continues compositing", HackerAtlasArchiveTests.TestRestoresPlaythroughAndContinuesCompositing),
     ("Hacker Atlas aligns both directions after landing and keeps the alignment in restored maps", HackerAtlasArchiveTests.TestGroundedDoorwayHeightsSurviveArchiveAndAirborneReturn),
     ("Hacker Atlas requires fresh grounded poses close to both doorway edges", HackerAtlasArchiveTests.TestAirborneAndOutOfPositionSamplesDoNotAlignDoorways),

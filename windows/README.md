@@ -706,6 +706,12 @@ The solver keeps raw capture poses immutable, holds each connected component's
 anchor exact, distributes loop drift deterministically, and commits exactly one
 new map revision.
 
+Inspect a saved Hacker Atlas with the installed Host's
+`--inspect-atlas-road HACKER_ARCHIVE` command. Pass an active Hacker Atlas ZIP
+or a named state's `world` directory. The JSON lists room-local floors,
+strokes, and directed neighbors using the current authored labels and links.
+The command reads the archive metadata without loading the tile pixels.
+
 In modded Gameplay, **K** records an input path. **Replay** selects a saved path,
 restores its start checkpoint, and replays it through the existing live receiver
 connection. **Stop Replay** cancels and releases held controls. Each pass saves a
