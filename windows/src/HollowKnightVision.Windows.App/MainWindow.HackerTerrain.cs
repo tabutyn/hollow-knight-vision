@@ -96,18 +96,33 @@ public partial class MainWindow
             var minY = bounds.MinY;
             var maxX = bounds.MaxX;
             var maxY = bounds.MaxY;
-            // An authored doorway may extend past the captured image.
+            // Authored terrain can extend past the captured image.
             foreach (var line in groundTruthLabels.Document.AuthoredLines.Where(line => line.SceneName == room.SceneName))
             {
-                var a = room.Projection.WorldToAtlas(line.Start, room.Position);
-                var b = room.Projection.WorldToAtlas(line.End, room.Position);
-                minX = Math.Min(minX, a.X);
-                minY = Math.Min(minY, a.Y);
-                maxX = Math.Max(maxX, b.X);
-                maxY = Math.Max(maxY, b.Y);
+                Include(room.Projection.WorldToAtlas(line.Start, room.Position), 0);
+                Include(room.Projection.WorldToAtlas(line.End, room.Position), 0);
+            }
+            if (hackerTerrainTool == GroundTruthTerrainTool.Door)
+            {
+                // Let a doorway start beside a route beyond the visited tiles.
+                const double routeHitPadding = 5;
+                var offset = PathOffset(room);
+                foreach (var stroke in HackerPaths(room).Display)
+                {
+                    Include(new(offset.X + stroke.A.X, offset.Y + stroke.A.Y), routeHitPadding);
+                    Include(new(offset.X + stroke.B.X, offset.Y + stroke.B.Y), routeHitPadding);
+                }
             }
             if (atlasPoint.X >= minX - tolerance && atlasPoint.X <= maxX + tolerance
                 && atlasPoint.Y >= minY - tolerance && atlasPoint.Y <= maxY + tolerance) return room;
+
+            void Include(AtlasPoint point, double padding)
+            {
+                minX = Math.Min(minX, point.X - padding);
+                minY = Math.Min(minY, point.Y - padding);
+                maxX = Math.Max(maxX, point.X + padding);
+                maxY = Math.Max(maxY, point.Y + padding);
+            }
         }
         return null;
     }

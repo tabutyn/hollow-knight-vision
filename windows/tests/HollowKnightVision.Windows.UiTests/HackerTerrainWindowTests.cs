@@ -35,7 +35,7 @@ internal static class HackerTerrainWindowTests
             Environment.SetEnvironmentVariable(LabelRoot, oldRoot);
             directory.Delete(recursive: true);
         }
-        Console.WriteLine("PASS native Hacker door controls draw both axes and keep an active drag attached to its room");
+        Console.WriteLine("PASS native Hacker door editing reaches paths beyond visited tiles and keeps drafts attached to their room");
     }
 
     private static void VerifyGestures(string root)
@@ -83,7 +83,9 @@ internal static class HackerTerrainWindowTests
             var add = Control<RadioButton>(window, "GroundAddButton");
             var modify = Control<RadioButton>(window, "GroundModifyButton");
             var delete = Control<RadioButton>(window, "GroundDeleteButton");
+            var undo = Control<Button>(window, "GroundUndoButton");
             var framing = viewport.Transform.Scale;
+            TestDoorDragUsesPathBeyondCapturedTiles();
             Choose("Door");
             SetMode(add);
             Check(controller.Tool == GroundTruthTerrainTool.Door && controller.Mode == GroundTruthEditingMode.Add
@@ -129,7 +131,6 @@ internal static class HackerTerrainWindowTests
             Release();
             WaitFor(() => !controller.HasActiveGesture, "Delete did not receive the native release.");
             Check(ReadDoors().Count == 1, "Delete must remove only the selected door.");
-            var undo = Control<Button>(window, "GroundUndoButton");
             undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(ReadDoors().Count == 2, "Undo must restore the edited door on disk.");
             Choose("Objective");
@@ -149,6 +150,48 @@ internal static class HackerTerrainWindowTests
             Release();
             Pump();
             Check(ReadDoors().Count == 2, "A cancelled drag must not write a line to the removed room.");
+            TestTabFramingKeepsDoorEditor();
+
+            void TestDoorDragUsesPathBeyondCapturedTiles()
+            {
+                // The ground starts inside the bitmap, then extends past its right edge.
+                Choose("Ground");
+                SetMode(add);
+                Drag(new(13, 58), new(69, 58));
+                Check(store.Load().Lines.Single() is { Kind: GroundTruthLineKind.Positive },
+                    "Could not author the floor that extends beyond the bitmap.");
+                var start = new AtlasPoint(69, 61.25);
+                var roomPosition = (AtlasPoint)Invoke(window, "HackerScenePosition", Room)!;
+                var pointer = projection.WorldToAtlas(start, roomPosition);
+                var tolerance = (double)Invoke(window, "GroundPointerTolerance")!;
+                Check(Invoke(window, "TerrainRoomAt", pointer, tolerance) is null,
+                    "The exit must be outside ordinary ground hit bounds.");
+
+                Choose("Door");
+                Drag(start, new(69, 64.5));
+                var door = ReadDoors().Single();
+                Check(door.SceneName == Room && door.Kind == GroundTruthLineKind.DoorVertical
+                    && Near(door.Start.X, start.X) && Near(door.Start.Y, start.Y),
+                    "The visible route should let the Door tool start beyond the room bitmap and save in its scene.");
+                undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Check(ReadDoors().Count == 0 && store.Load().Lines.Count == 0, "Undo must remove the staged floor and door.");
+            }
+
+            void TestTabFramingKeepsDoorEditor()
+            {
+                // Expose the controls that a frame-matched game normally activates.
+                Control<FrameworkElement>(window, "HackerCameraControlsPanel").Visibility = Visibility.Visible;
+                foreach (var preset in new[] { "Current Near", "Current Wide", "Fit", "Current Near" })
+                {
+                    Check(Invoke(window, "HandleLocalShortcut", Key.Tab, false, ModifierKeys.None) is true
+                        && Equals(Field(window, "hackerFramingValue").GetValue(window), preset),
+                        $"The Hacker Tab shortcut should select {preset}.");
+                    Check(controller.Tool == GroundTruthTerrainTool.Door && controller.Mode == GroundTruthEditingMode.Add
+                        && Control<FrameworkElement>(window, "HackerGroundToolbar").IsVisible,
+                        "Tab framing should keep the Door editor and its mode in the top bar.");
+                }
+            }
 
             List<GroundTruthWorldLine> ReadDoors() => store.Load().Doors ?? [];
 
