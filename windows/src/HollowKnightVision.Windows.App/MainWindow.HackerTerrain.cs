@@ -20,6 +20,7 @@ public partial class MainWindow
     private static readonly Brush GroundLineBrush = FrozenBrush(Color.FromRgb(69, 255, 120));
     private static readonly Brush NegativeGroundLineBrush = FrozenBrush(Color.FromRgb(255, 46, 46));
     private static readonly Brush DoorLineBrush = FrozenBrush(Color.FromRgb(102, 222, 247));
+    private readonly ScaleTransform hackerTerrainHandleScale = new();
 
     private static Brush FrozenBrush(Color color)
     {
@@ -214,10 +215,11 @@ public partial class MainWindow
         {
             foreach (var legacy in legacyGroundEdits.Where(RenderableLegacyGroundLine))
                 DrawTerrainLine(new(legacy.X0 - originX, legacy.Y0 - originY), new(legacy.X1 - originX, legacy.Y1 - originY),
-                    legacy.IsNegative ? NegativeGroundLineBrush : GroundLineBrush, drawHandles: false);
+                    legacy.IsNegative ? NegativeGroundLineBrush : GroundLineBrush);
         }
 
         var roomsByScene = rooms.ToDictionary(room => room.SceneName, StringComparer.Ordinal);
+        HashSet<Guid>? drawnCorners = null;
         foreach (var line in groundTruthLabels.VisibleLines)
         {
             if (!roomsByScene.TryGetValue(line.SceneName, out var room)) continue;
@@ -239,12 +241,23 @@ public partial class MainWindow
                 GroundTruthLineKind.Door or GroundTruthLineKind.DoorVertical => GroundTruthTerrainTool.Door,
                 _ => GroundTruthTerrainTool.Ground
             };
-            var handles = EditsHackerTerrain && (line.Id == groundTruthLabels.SelectedId
+            var selected = line.Id == groundTruthLabels.SelectedId;
+            var handles = EditsHackerTerrain && (selected
                 || groundTruthLabels.Mode == GroundTruthEditingMode.Modify
                     && (tool == hackerTerrainTool || hackerTerrainTool == GroundTruthTerrainTool.Wall
                         && line.Kind == GroundTruthLineKind.Positive));
-            DrawTerrainLine(new(first.X - originX, -first.Y - originY), new(last.X - originX, -last.Y - originY),
-                brush, handles);
+            var start = new AtlasPoint(first.X - originX, -first.Y - originY);
+            var end = new AtlasPoint(last.X - originX, -last.Y - originY);
+            DrawTerrainLine(start, end, brush);
+            if (!handles) continue;
+            DrawEndpoint(start, line.StartCornerId);
+            DrawEndpoint(end, line.EndCornerId);
+
+            void DrawEndpoint(AtlasPoint point, Guid? corner)
+            {
+                if (corner is { } id && !(drawnCorners ??= []).Add(id)) return;
+                DrawTerrainHandle(point, brush, selected, corner.HasValue);
+            }
         }
 
         if (!EditsHackerTerrain) return;
@@ -255,20 +268,32 @@ public partial class MainWindow
         HackerGroundToolbar.ToolTip = groundTruthLabels.Error;
     }
 
-    private void DrawTerrainLine(AtlasPoint first, AtlasPoint last, Brush brush, bool drawHandles)
+    private void DrawTerrainLine(AtlasPoint first, AtlasPoint last, Brush brush)
     {
         HackerOverlayCanvas.Children.Add(new Line
         {
             X1 = first.X, Y1 = first.Y, X2 = last.X, Y2 = last.Y,
             Stroke = brush, StrokeThickness = 2, IsHitTestVisible = false
         });
-        if (!drawHandles) return;
-        foreach (var endpoint in new[] { first, last })
+    }
+
+    private void DrawTerrainHandle(AtlasPoint point, Brush brush, bool selected, bool joined)
+    {
+        const double size = 8;
+        var handle = new Rectangle
         {
-            var handle = new Rectangle { Width = 6, Height = 6, Fill = brush, IsHitTestVisible = false };
-            Canvas.SetLeft(handle, endpoint.X - 3);
-            Canvas.SetTop(handle, endpoint.Y - 3);
-            HackerOverlayCanvas.Children.Add(handle);
-        }
+            Width = size,
+            Height = size,
+            Fill = joined ? GroundLineBrush : null,
+            Stroke = joined ? null : brush,
+            StrokeThickness = selected ? 2 : 1,
+            IsHitTestVisible = false,
+            RenderTransform = hackerTerrainHandleScale,
+            RenderTransformOrigin = new(.5, .5)
+        };
+        Panel.SetZIndex(handle, 1);
+        Canvas.SetLeft(handle, point.X - size / 2);
+        Canvas.SetTop(handle, point.Y - size / 2);
+        HackerOverlayCanvas.Children.Add(handle);
     }
 }
