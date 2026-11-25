@@ -1024,6 +1024,7 @@ public partial class MainWindow : Window
         // Capture owns every live-world and atlas mutation. Cancel it before
         // waiting for any persistence or destructive filesystem operation.
         StopVision();
+        groundFeatureViewer?.Close();
         objectReferencePanel?.StopAndDrain();
         MenuParticles.SetScene(null, null);
         gameLostCountdownCancellation?.Cancel();
@@ -1600,6 +1601,7 @@ public partial class MainWindow : Window
             RoomEditorMouseDown(e);
             return;
         }
+        if (SelectGroundViewerPatch(e)) return;
         if (GameplayViewportPolicy.CanPan(workspace == "Gameplay"
                 ? gameplayFraming
                 : hackerFraming))
@@ -3896,6 +3898,7 @@ public partial class MainWindow : Window
     private void StopVision()
     {
         trialCheckpointCancellation?.Cancel();
+        ClearGroundViewerFrame();
         StopBotPlayback();
         CancelGroundTruthGesture();
         prepareLabelWhenPaused = false;
@@ -3950,13 +3953,21 @@ public partial class MainWindow : Window
     {
         AtlasGroundLinesCanvas.Children.Clear();
         AtlasGroundPatchesCanvas.Children.Clear();
-        if (GroundLinesCheck.IsChecked != true || !gameplayFrameRegistered || !result.AdmitsTracking) return;
-        var patches = GroundTrackingPatchesCheck.IsChecked == true ? AtlasGroundPatchesCanvas : null;
-        GroundFeatureOverlayPresentation.DrawAtlas(AtlasGroundLinesCanvas, patches, result.GroundDisplayCamera,
+        groundViewerFrame = null;
+        if (!gameplayFrameRegistered || !result.AdmitsTracking) return;
+        var drawsGround = GroundLinesCheck.IsChecked == true;
+        if (!drawsGround && groundFeatureViewer is null) return;
+        var patches = drawsGround && GroundTrackingPatchesCheck.IsChecked == true ? AtlasGroundPatchesCanvas : null;
+        var drawing = GroundFeatureOverlayPresentation.DrawAtlas(drawsGround ? AtlasGroundLinesCanvas : null,
+            patches, result.GroundDisplayCamera,
             new(result.Frame.Width, result.Frame.Height),
             new(Canvas.GetLeft(GameplayImage), Canvas.GetTop(GameplayImage), GameplayImage.Width, GameplayImage.Height),
             result.GroundDisplayLines, result.GroundHypotheses.AtlasFeatures,
             SavedGroundProjection, gameplaySavedWorld.DisplayLines, result.GroundDisplayKnight);
+        if (drawing is not null)
+            groundViewerFrame = new(result.CaptureGeneration, result.WorldFrame?.Room ?? result.ReceiverTelemetry?.SceneName,
+                result.WorldFrame?.CoordinateEpoch, result.GroundHypotheses.AtlasFeatures, drawing);
+        if (groundFeatureViewer?.Selected is not null) DrawGroundViewerHighlight();
     }
 
     private GroundFeatureOverlayPresentation.AtlasProjection SavedGroundProjection => new(
@@ -5928,6 +5939,7 @@ public partial class MainWindow : Window
         inputPathMotionTracker.Reset();
         latestMotion = null;
         gameplayFrameRegistered = false;
+        ClearGroundViewerFrame();
         gameplaySavedWorld = LiveWorldGroundProjection.Empty;
         gameplayLiveFrame = null;
         gameplayLiveTelemetry = null;

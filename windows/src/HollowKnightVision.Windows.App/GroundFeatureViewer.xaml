@@ -1,0 +1,32 @@
+<Window x:Class="HollowKnightVision.Windows.App.GroundFeatureViewer"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Ground Viewer" Width="736" Height="432" MinWidth="380" MinHeight="310"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" ShowActivated="False"
+        Background="#171A20" Foreground="#EDF1F5">
+    <DockPanel Margin="12">
+        <StackPanel x:Name="PatchPanel" DockPanel.Dock="Top" Visibility="Collapsed" Margin="0,0,0,12">
+            <DockPanel Margin="0,0,0,6">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="PreviousPatch" Content="←" AutomationProperties.Name="Previous ground patch" Click="PreviousPatch_Click" Padding="8,1"/>
+                    <Button x:Name="NextPatch" Content="→" AutomationProperties.Name="Next ground patch" Click="NextPatch_Click" Padding="8,1" Margin="4,0,0,0"/>
+                </StackPanel>
+                <TextBlock x:Name="PatchDetails" VerticalAlignment="Center" TextWrapping="Wrap"/>
+            </DockPanel>
+            <Canvas x:Name="PatchStrip" Height="104" Background="Black" ClipToBounds="True" Cursor="ScrollWE"
+                    AutomationProperties.Name="Ground patch strip"
+                    SizeChanged="PatchStrip_SizeChanged" MouseLeftButtonDown="PatchStrip_Down"
+                    MouseMove="PatchStrip_Move" MouseLeftButtonUp="PatchStrip_Up" LostMouseCapture="PatchStrip_LostCapture"
+                    MouseWheel="PatchStrip_Wheel" RenderOptions.BitmapScalingMode="NearestNeighbor">
+                <Image x:Name="PatchPixels" Stretch="Fill" Canvas.Top="4" IsHitTestVisible="False"/>
+                <Border x:Name="PatchSelection" Height="92" Width="92" BorderBrush="White" BorderThickness="3"
+                        Canvas.Top="6" IsHitTestVisible="False"/>
+            </Canvas>
+            <Slider x:Name="PatchPosition" AutomationProperties.Name="Scroll ground patches"
+                    SmallChange="1" LargeChange="4" ValueChanged="PatchPosition_Changed" Margin="0,4,0,0"/>
+        </StackPanel>
+        <TextBlock DockPanel.Dock="Top" Text="Merged ground and path" Margin="0,0,0,6"/>
+        <Grid x:Name="OverviewHost" Background="Black" ClipToBounds="True"
+              AutomationProperties.Name="Ground and Atlas paths"/>
+    </DockPanel>
+</Window>

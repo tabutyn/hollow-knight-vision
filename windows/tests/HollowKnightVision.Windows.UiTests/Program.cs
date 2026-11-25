@@ -103,6 +103,7 @@ internal static class Program
         TestNegativeModeAndFreshProfileChoices();
         TestModeSelection();
         TestSettingsSections();
+        GroundFeatureViewerTests.Run();
         AtlasWindowIntegrationTests.Run();
         HackerTerrainWindowTests.Run();
         TestBottomControlScope();
@@ -1007,7 +1008,7 @@ internal static class Program
         var named = tabs.Select(tab => tab.Descendants().Select(item => (string?)item.Attribute(x + "Name"))
             .OfType<string>().ToHashSet(StringComparer.Ordinal)).ToArray();
         Check(named[0].Contains("AtlasStatesList") && named[1].Contains("GroundLinesCheck")
-            && named[1].Contains("GroundTrackingPatchesCheck")
+            && named[1].Contains("GroundTrackingPatchesCheck") && named[1].Contains("GroundViewerButton")
             && named[2].Contains("OpsResetRoomButton") && named[2].Contains("SettingsLanguageCombo"),
             "Controls appeared in the wrong settings section.");
         var textReader = tabs[1].Descendants(ns + "CheckBox")
