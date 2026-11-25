@@ -1663,6 +1663,8 @@ if (Environment.GetEnvironmentVariable("HKV_DOOR_FLOOR_AUDIT_INPUT") is not null
     tests.Add(("archived doorway floor and black-edge candidates use recorded pixels", LoadingGapReplayAuditTests.TestArchivedDoorwayFloorCandidates));
 if (Environment.GetEnvironmentVariable("HKV_WORLD_REOPEN_AUDIT_INPUT") is not null)
     tests.Add(("archived Atlas world reopens with identical pixels", LiveIslandReplayAuditTests.TestRecordedOwnedWorldReopensWithIdenticalPixels));
+if (Environment.GetEnvironmentVariable("HKV_GROUND_OVERLAY_AUDIT_WORLD") is not null)
+    tests.Add(("archived Atlas shows one stroke for a dense group of floor measurements", LiveWorldGroundOverlayTests.TestSavedOverlayMeasurementsWhenRequested));
 
 foreach (var test in tests)
 {
