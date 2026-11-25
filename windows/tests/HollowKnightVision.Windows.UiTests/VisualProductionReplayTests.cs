@@ -5,7 +5,26 @@ using HostProgram = HollowKnightVision.Windows.Host.Program;
 
 internal static class VisualProductionReplayTests
 {
-    internal static void Run() => Task.Run(Exercise).GetAwaiter().GetResult();
+    internal static void Run()
+    {
+        VerifyCommandHelp();
+        Task.Run(Exercise).GetAwaiter().GetResult();
+    }
+
+    private static void VerifyCommandHelp()
+    {
+        using var output = new StringWriter();
+        var original = Console.Out;
+        try
+        {
+            Console.SetOut(output);
+            Check(HostProgram.RunAsync(["--help"]).GetAwaiter().GetResult() == 0
+                && output.ToString().Contains("--visual-replay-all-frames", StringComparison.Ordinal),
+                "Host help must advertise the option to replay all archived captures.");
+        }
+        finally { Console.SetOut(original); }
+        Console.WriteLine("PASS Windows Host help documents the all-frame replay option");
+    }
 
     private static async Task Exercise()
     {

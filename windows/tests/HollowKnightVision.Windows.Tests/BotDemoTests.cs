@@ -33,6 +33,29 @@ internal static class BotDemoTests
         Throws<ArgumentException>(() => new BotDemoSaveArchive(fixture.Saves, Path.Combine(fixture.Saves, "nested")));
     }
 
+    public static void TestSaveArchiveRejectsFileLinks()
+    {
+        using var fixture = new Fixture();
+        fixture.Write("user4.dat", "slot four");
+        var target = Path.Combine(Path.GetDirectoryName(fixture.Saves)!, "other.dat");
+        File.WriteAllText(target, "original");
+        var backup = fixture.Store.Create(8);
+
+        foreach (var name in new[] { "user4.dat.bak1", "user4.dat" })
+        {
+            var linked = Path.Combine(fixture.Saves, name);
+            File.Delete(linked);
+            File.CreateSymbolicLink(linked, target);
+            Throws<InvalidDataException>(() => fixture.Store.Create(8));
+            Throws<InvalidDataException>(() => fixture.Store.VerifyBeforeClear(backup));
+            Check(File.ReadAllText(target) == "original"
+                && File.ReadAllText(Path.Combine(backup.Directory, "user4.dat")) == "slot four"
+                && Directory.EnumerateFileSystemEntries(fixture.Archives).SequenceEqual([backup.Directory]),
+                "A linked save or sidecar must leave the original target and the existing backup intact.");
+            File.Delete(linked);
+        }
+    }
+
     public static void TestEmptySaveAndMismatchedFamiliesCannotAuthorizeClear()
     {
         using var fixture = new Fixture();
