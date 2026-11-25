@@ -2,6 +2,50 @@ using HollowKnightVision.Windows.Core;
 
 internal static class LiveWorldGroundOverlayTests
 {
+    internal static void TestSavedOverlayMeasurementsWhenRequested()
+    {
+        var path = Environment.GetEnvironmentVariable("HKV_GROUND_OVERLAY_AUDIT_WORLD")
+            ?? throw new InvalidOperationException("Set HKV_GROUND_OVERLAY_AUDIT_WORLD to a saved world snapshot.");
+        var islandId = int.Parse(Environment.GetEnvironmentVariable("HKV_GROUND_OVERLAY_AUDIT_ISLAND") ?? "1341",
+            System.Globalization.CultureInfo.InvariantCulture);
+        var segmentId = long.Parse(Environment.GetEnvironmentVariable("HKV_GROUND_OVERLAY_AUDIT_SEGMENT") ?? "458",
+            System.Globalization.CultureInfo.InvariantCulture);
+        var world = LiveWorldJson.ReadSnapshot(File.ReadAllBytes(path));
+        var unplaced = world.UnplacedObservationIds();
+        var owners = world.TrackingIslands.SelectMany(island => island.Members
+                .Where(member => member.Measured && !unplaced.Contains(member.ObservationId))
+                .Select(member => (member.ObservationId, Island: island.Id)))
+            .ToDictionary(owner => owner.ObservationId, owner => owner.Island);
+        var groups = world.Observations
+            .Where(observation => owners.ContainsKey(observation.Id) && observation.GroundGeometry is not null)
+            .SelectMany(observation =>
+            {
+                var origin = LiveWorldGroundOverlay.ImageOriginOffset(observation);
+                var x = origin.X + observation.OptimizedPose.X;
+                var y = origin.Y + observation.OptimizedPose.Y;
+                return observation.GroundGeometry!.Lines.Where(line => line.SegmentId != long.MaxValue)
+                    .Select(line => (Island: owners[observation.Id], Segment: line.SegmentId,
+                        Span: new LiveWorldGroundOverlay.Span(observation.Id, x + line.Start.X,
+                            x + line.End.X, y + line.Start.Y)));
+            })
+            .ToLookup(line => (line.Island, line.Segment), line => line.Span);
+        var before = groups.Sum(CountHeights);
+        var overlay = LiveWorldGroundOverlay.Project(world);
+        var repeated = groups[(islandId, segmentId)].ToArray();
+        var heights = CountHeights(repeated);
+        var selected = LiveWorldGroundOverlay.Estimate(segmentId, repeated).ToArray();
+        Console.WriteLine($"Saved ground overlay: {groups.Sum(group => group.Count())} owned raw spans, "
+            + $"{before} distinct owned heights, {overlay.Count} projected strokes.");
+        Console.WriteLine($"Island {islandId}, segment {segmentId}: {repeated.Length} spans, "
+            + $"{heights} distinct heights, {selected.Length} consensus strokes.");
+        Check(overlay.Count < before, "The saved world must consolidate repeated heights.");
+        Check(heights > 1 && selected.Length == 1,
+            $"Island {islandId}, segment {segmentId} must contain multiple heights that merge into one stroke.");
+
+        static int CountHeights(IEnumerable<LiveWorldGroundOverlay.Span> spans) => spans
+            .Select(span => Math.Round(span.Y * 2, MidpointRounding.AwayFromZero)).Distinct().Count();
+    }
+
     internal static void TestCaptureKeepsOnlyObservedConfirmedSpansAtSolveScale()
     {
         const int width = 1280, height = 720, solveWidth = 640;
