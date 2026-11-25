@@ -9711,7 +9711,7 @@ static void TestLiveWorldWorkerRestoresReturningIslandBasis()
             var image = PipelineTextureFrameFromPixels(id, pixels);
             return new(image, image, time, time, pose, image.Width, [], [], 1, room, 1, 64)
             {
-                WorldEvidence = new(time) { MeasuredLineage = lineage },
+                WorldEvidence = new(time, new([new(0, new(0, 45), new(image.Width, 45))])) { MeasuredLineage = lineage },
                 WalkedGroundLineage = lineage
             };
         }
