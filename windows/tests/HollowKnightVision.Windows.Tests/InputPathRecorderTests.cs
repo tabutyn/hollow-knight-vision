@@ -291,6 +291,83 @@ internal static class InputPathRecorderTests
         }
     }
 
+    public static void TestStoreRoundTripsFallAndSceneDiagnosticsWithoutPromotingPose()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-recorded-movement-");
+        try
+        {
+            var store = new RecordedInputPathStore(root.FullName);
+            var recorder = new InputPathRecorder();
+            Check(recorder.Start(10));
+            recorder.RecordTracking(InputPathTrackingObservation.Empty, 10.1, poseSource: "fallPrediction",
+                fallPrediction: new(20, 17, 23, .05), observedAt: 10.12);
+            recorder.RecordTracking(InputPathTrackingObservation.Empty, 10.2, poseSource: "calibratedScene",
+                sceneMotion: new(new(30, -20), 10.15, 10.2, 4, false, true, .8, .2),
+                sceneMotionMilliseconds: 3.5, observedAt: 10.22);
+
+            var recorded = recorder.Stop(10.3) ?? throw new InvalidOperationException("The recorder did not stop.");
+            var samples = store.Load(store.Save(recorded)).TrackingSamples;
+            Check(samples.Count == 2);
+            Check(samples[0] is { PoseSource: "fallPrediction", FallPredictionMinimumY: 17, FallPredictionMaximumY: 23,
+                FallPredictionAge: .05, PoseVerified: false, PublishedCameraY: null },
+                "The recorded height interval must survive without creating a verified or published camera pose.");
+            Check(samples[1] is { PoseSource: "calibratedScene", SceneMotionSupport: 4, SceneMotionMeasuredX: false,
+                SceneMotionMeasuredY: true, SceneMotionResidualX: .8, SceneMotionResidualY: .2,
+                SceneMotionReferenceTimestamp: 10.15, SceneMotionMilliseconds: 3.5, PublishedCameraX: null },
+                "Scenery diagnostics must preserve each axis, its residual, and the reference capture separately.");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    public static void TestNonFiniteTrackingDiagnosticDoesNotDestroyRecordedRoute()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-recorded-nonfinite-");
+        try
+        {
+            var store = new RecordedInputPathStore(root.FullName);
+            var recorder = new InputPathRecorder();
+            Check(recorder.Start(10, createdAt: DateTimeOffset.FromUnixTimeSeconds(1_700_000_000),
+                startCheckpoint: MakeCheckpoint()));
+            recorder.RecordInput(RecordedGameButton.Right, true, 10.01);
+            var tracking = InputPathTrackingObservation.Empty with
+            {
+                CameraPosition = new(12, 3),
+                LocalTextureError = double.PositiveInfinity
+            };
+            recorder.RecordTracking(tracking, 10.1, observedAt: 10.12, publishedCameraPosition: new(12, 3),
+                sceneMotion: new(default, 10, 10.1, 0, false, false, double.NegativeInfinity, double.NaN));
+            recorder.RecordGroundTruth(MakeGroundTruth(7), observedAt: 10.13);
+            var original = recorder.Stop(11) ?? throw new InvalidOperationException("The recorder did not stop.");
+            var path = store.Save(original);
+            var restored = store.Load(path);
+            Check(restored.Events.SequenceEqual(original.Events)
+                && restored.GroundTruthTrace.SequenceEqual(original.GroundTruthTrace)
+                && restored.StartCheckpoint == original.StartCheckpoint && restored.IsValidPlaybackPath(),
+                "Unusable diagnostics must leave input, reference samples, and replay readiness intact.");
+
+            var sample = restored.TrackingSamples.Single();
+            Check(sample is { LocalTextureError: double.PositiveInfinity, SceneMotionResidualX: double.NegativeInfinity,
+                SceneMotionResidualY: { } residual, PublishedCameraX: 12, PoseVerified: false }
+                && double.IsNaN(residual), "Special values must survive as diagnostics without promoting the pose.");
+
+            var wire = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            var encoded = wire["trackingSamples"]![0]!;
+            Check(encoded["localTextureError"]?.GetValue<string>() == "Infinity"
+                && encoded["sceneMotionResidualX"]?.GetValue<string>() == "-Infinity"
+                && encoded["sceneMotionResidualY"]?.GetValue<string>() == "NaN"
+                && encoded["publishedCameraX"]?.GetValue<double>() == 12,
+                "The Windows recording must use the same special-value markers as macOS and keep valid coordinates numeric.");
+
+            wire["events"]![0]!["offset"] = "NaN";
+            var invalidPath = Path.Combine(root.FullName, "invalid-event.json");
+            File.WriteAllText(invalidPath, wire.ToJsonString());
+            try { _ = store.Load(invalidPath); }
+            catch (InvalidDataException) { return; }
+            throw new InvalidOperationException("Named floating-point values cannot bypass input timing validation.");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
     public static void TestRecordedButtonsRoundTripBridgeBits()
     {
         foreach (var button in Enum.GetValues<RecordedGameButton>())

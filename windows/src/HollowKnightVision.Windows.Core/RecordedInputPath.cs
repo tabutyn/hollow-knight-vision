@@ -724,7 +724,12 @@ public sealed record GamePathPlaybackCommand(string FileName, int Iteration)
 
 public sealed class RecordedInputPathStore
 {
-    private static readonly JsonSerializerOptions JsonOptions = LabelingExampleStore.CreateJsonOptions();
+    // Preserve failed measurements as named values. Route timing and replay
+    // coordinates still pass through their own finite-value validation.
+    private static readonly JsonSerializerOptions JsonOptions = new(LabelingExampleStore.CreateJsonOptions())
+    {
+        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals
+    };
     public RecordedInputPathStore(string? rootDirectory = null) =>
         RootDirectory = Path.GetFullPath(rootDirectory ?? DefaultRootDirectory());
     public string RootDirectory { get; }

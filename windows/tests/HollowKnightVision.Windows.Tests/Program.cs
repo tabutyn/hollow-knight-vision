@@ -503,6 +503,8 @@ var tests = new List<(string Name, Action Run)>
     ("input path records unverified tracking for diagnosis", InputPathRecorderTests.TestRecordsUnverifiedTrackingForLaterFailureAnalysis),
     ("input path assigns atlas admission to the exact capture", InputPathRecorderTests.TestAtlasAdmissionBelongsToExactCaptureAndOlderSamplesRemainReadable),
     ("input path store round trips replay-ready paths", InputPathRecorderTests.TestStoreRoundTripsReplayReadyPath),
+    ("input path preserves fall intervals and calibrated scene axes without promoting the camera pose", InputPathRecorderTests.TestStoreRoundTripsFallAndSceneDiagnosticsWithoutPromotingPose),
+    ("input path saves nonfinite diagnostics without losing valid route inputs", InputPathRecorderTests.TestNonFiniteTrackingDiagnosticDoesNotDestroyRecordedRoute),
     ("input path recorded buttons round trip bridge bits", InputPathRecorderTests.TestRecordedButtonsRoundTripBridgeBits),
     ("input path playback validation allows balanced overlapping keys", InputPathRecorderTests.TestPlaybackValidationAllowsOverlappingBalancedKeys),
     ("input path playback validation accepts recorded world poses", InputPathRecorderTests.TestPlaybackValidationAcceptsRecordedWorldPoseTrace),
