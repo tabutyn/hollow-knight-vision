@@ -1396,6 +1396,7 @@ var tests = new List<(string Name, Action Run)>
     ("walked ground matches observed elevation and owns its columns", WalkedGroundTests.TestWalkSnapsToAnObservedFloorAndReplacesOverlappingStrokes),
     ("two current platforms keep their gap over a stored edge", WalkedGroundTests.TestCurrentPlatformsKeepTheirGapOverStoredGround),
     ("observed floor strokes merge without connecting a gap or step", WalkedGroundTests.TestStackedRowsMergeWithoutConnectingGapOrStep),
+    ("walked ground trims competing camera-reference ledges only through freshly measured columns", WalkedGroundTests.TestCameraReferencesTrimFalseLedgesThroughWalkedColumns),
     ("a walked line suppresses only its observed columns after panning", WalkedGroundTests.TestWalkedDisplayOwnsOnlyItsColumnsAfterPanning),
     ("ground clearance trims overlapping platform tips", GroundClearanceTests.TestGroundClearanceTrimsOnlyShortSharedTips),
     ("terrain edits preserve shared Mac room calibrations", HackerTerrainEditingTests.TestMacRoomCalibrationsSurviveTerrainEditAndUndo),

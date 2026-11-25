@@ -133,8 +133,12 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         VisualGameplayObservation observation;
         if (terrainAnalysis?.Edges.SourceLuma is { } sourceLuma)
         {
+            var cameraReferences = admission.Transition.ResumedAfterTransition || roomIdentity.HasUnresolvedLoading
+                ? terrainAnalysis.CameraReferences
+                : walked.CameraReferences(terrainAnalysis.CameraReferences, hasKnownRoom ? knownRoom! : visualRoom.Id,
+                    generation, timestamp, frame.Width, frame.Height, contactKnight);
             observation = camera.ObserveGroundAnchored(frame, prepared.Motion, sourceLuma,
-                terrainAnalysis.CameraReferences, prepared.ProtectedOcclusions, hasCommittedAtlas, knight, tracker, timestamp,
+                cameraReferences, prepared.ProtectedOcclusions, hasCommittedAtlas, knight, tracker, timestamp,
                 sceneGrid, direction, skippedCaptureRegistration, ObserveRoomPlace, deferFreshAtlasBootstrap: true);
         }
         else

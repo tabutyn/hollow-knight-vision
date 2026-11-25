@@ -88,9 +88,12 @@ public sealed class BotVisualGymObservationSource
         var roomKey = chart.ToString(CultureInfo.InvariantCulture);
         var skipped = !admitted.Transition.ResumedAfterTransition && coverage.CanContinueMeasuredScenery
             ? atlasMotion.MatchSkipped(frame, masks, Generation, roomKey, time) : null;
+        var cameraReferences = admitted.Transition.ResumedAfterTransition ? analysis.CameraReferences
+            : walked.CameraReferences(analysis.CameraReferences, roomKey, Generation, time,
+                frame.Width, frame.Height, contactKnight);
         VisualRoomSnapshot? room = null;
         var observed = camera.ObserveGroundAnchored(frame, measuredMotion, analysis.Edges.SourceLuma!,
-            analysis.CameraReferences, textureExclusions, coverage.HasPlacedRoom, masks.GroundKnight, ground, time,
+            cameraReferences, textureExclusions, coverage.HasPlacedRoom, masks.GroundKnight, ground, time,
             signal.MotionGrid, direction, skipped, (pose, verified) =>
             {
                 room = ObserveRoom(pose, verified);
@@ -185,7 +188,7 @@ public sealed class BotVisualGymObservationSource
         row = row with { AtlasView = coverage.PolicyView(terrainCamera, size, row.MeasuredHealth) };
         return new(row, row.Issues, confidence)
         {
-            Camera = new(observed.Source, observed.GroundVerified, observed.AllowsAtlasWrite || continuesScenery, analysis.CameraReferences.Count,
+            Camera = new(observed.Source, observed.GroundVerified, observed.AllowsAtlasWrite || continuesScenery, cameraReferences.Count,
                 observed.GroundSupport, observed.GroundTracking.GlobalFeatureCount, observed.GroundTracking.GlobalMatchCount)
             { AtlasPlacementPending = coverage.PlacementPending }
         };
