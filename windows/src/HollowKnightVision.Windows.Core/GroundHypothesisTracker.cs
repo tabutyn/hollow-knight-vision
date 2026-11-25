@@ -775,6 +775,8 @@ public sealed class GroundHypothesisTracker
         var admissionLines = AtlasAdmissionLines(
             PreservingKnownFloorGaps(stabilized),
             luma, width, height, lineSeparation, exclusions);
+        if (linePresence.MinimumObservationSeconds > 0)
+            cameraSolver.PrioritizeAdmittedReferenceRows(now, admissionLines);
 
         linePresence.Update(
             admissionLines.Select(line => new CleanFloorLine(line.Row, line.XSpan)).ToArray(),
