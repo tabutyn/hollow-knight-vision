@@ -158,6 +158,142 @@ internal static class HackerTerrainEditingTests
         });
     }
 
+    public static void TestClickAndToolChangeDoNotCommitCornerDrafts()
+    {
+        WithStore((store, editor) =>
+        {
+            DrawTwoFloors(editor);
+            var original = editor.Document.Clone();
+            Drag(editor, 40, 25, 40, 25);
+            Check(editor.Document.Equals(original) && store.Load().Equals(original),
+                "A click beside an endpoint persisted a wall.");
+            Point(editor, GroundTruthPointerPhase.Began, 42, 21);
+            Point(editor, GroundTruthPointerPhase.Changed, 41, 103);
+            Check(editor.HasActiveGesture, "The fixture did not start the wall draft.");
+            editor.Tool = GroundTruthTerrainTool.Ground;
+            Check(!editor.HasActiveGesture && store.Load().Equals(original),
+                "Changing tools committed a draft corner.");
+            editor.Tool = GroundTruthTerrainTool.Wall;
+            Drag(editor, 70, 20, 70, 103);
+            var wall = store.Load().Walls!.Single();
+            Check(wall.StartCornerId is null && wall.EndCornerId is null
+                && editor.Document.Lines.SequenceEqual(original.Lines),
+                "Drawing across a floor interior attached a corner or displaced the floor.");
+        });
+    }
+
+    public static void TestCornerSnapRespectsTheScreenRadiusAtHighZoom()
+    {
+        WithStore((store, editor) =>
+        {
+            Drag(editor, 40, 20, 100, 20);
+            editor.Tool = GroundTruthTerrainTool.Wall;
+            // At 8x zoom one atlas unit is the full eight-unit pointer radius.
+            Drag(editor, 41.5, 20, 41.5, 70, tolerance: 1);
+            Drag(editor, 40.5, 20, 40.5, 80, tolerance: 1);
+            var walls = store.Load().Walls!;
+            Check(walls[0].Start == new AtlasPoint(41.5, 20) && walls[0].StartCornerId is null
+                && walls[1].Start == new AtlasPoint(40, 20) && walls[1].StartCornerId is not null,
+                "At maximum zoom, twelve display units must miss and four must attach.");
+        });
+    }
+
+    public static void TestDownwardWallKeepsCornerIdentityAndClampsAttachedFloor()
+    {
+        WithStore((store, editor) =>
+        {
+            DrawTwoFloors(editor);
+            Drag(editor, 43, 100, 43, 21);
+            var wall = editor.Document.Walls!.Single();
+            var lower = editor.Document.Lines[0];
+            var upper = editor.Document.Lines[1];
+            Check(lower.Start == wall.Start && upper.End == wall.End
+                && lower.StartCornerId is not null && lower.StartCornerId == wall.StartCornerId
+                && upper.EndCornerId is not null && upper.EndCornerId == wall.EndCornerId,
+                "Drawing down swapped the corners belonging to the upper and lower floors.");
+            editor.Mode = GroundTruthEditingMode.Modify;
+            Drag(editor, 43, 60, 0, 60);
+            var saved = store.Load();
+            Check(saved.Walls!.Single().End == new AtlasPoint(10, 100)
+                && saved.Lines[0].Start == new AtlasPoint(10, 21)
+                && saved.Lines[1].Start == saved.Lines[1].End,
+                "The moving wall should stop when the short floor reaches its other endpoint.");
+        });
+    }
+
+    public static void TestSharedFloorMovesFarWallVerticallyWithoutMovingItSideways()
+    {
+        WithStore((store, editor) =>
+        {
+            Drag(editor, 40, 30, 120, 30);
+            editor.Tool = GroundTruthTerrainTool.Wall;
+            Drag(editor, 41, 29, 41, 70);
+            Drag(editor, 119, 31, 119, 80);
+            editor.Mode = GroundTruthEditingMode.Modify;
+            Drag(editor, 40, 30, 49, 40);
+            var saved = store.Load();
+            var walls = saved.Walls!;
+            Check(walls[0].Start == new AtlasPoint(49, 40) && walls[0].End == new AtlasPoint(49, 70)
+                && walls[1].Start == new AtlasPoint(120, 40) && walls[1].End == new AtlasPoint(120, 80)
+                && saved.Lines.Single().Start == walls[0].Start && saved.Lines.Single().End == walls[1].Start,
+                "The first wall should move both floor ends up while the second wall stays at its own X.");
+        });
+    }
+
+    public static void TestCoincidentLegacyEndpointsRemainIndependent()
+    {
+        WithStore((store, _) =>
+        {
+            var floor = new GroundTruthWorldLine(Room, 40, 100, 30, GroundTruthLineKind.Positive, false);
+            var wall = new GroundTruthWorldLine(Room, 40, 40, 30, GroundTruthLineKind.Wall, false) { EndWorldY = 80 };
+            store.Save(new() { Lines = [floor], Walls = [wall] });
+            var editor = new GroundTruthLabelController(store) { Tool = GroundTruthTerrainTool.Wall, Mode = GroundTruthEditingMode.Modify };
+            Drag(editor, 40, 50, 45, 50);
+            var saved = store.Load();
+            Check(saved.Lines.Single() == floor && saved.Walls!.Single().Start == new AtlasPoint(45, 30)
+                && saved.Walls!.Single().StartCornerId is null,
+                "The editor joined coincident legacy endpoints without an endpoint gesture.");
+        });
+    }
+
+    public static void TestGroundHandlesTakePriorityOverOverlappingLineBodies()
+    {
+        WithStore((store, editor) =>
+        {
+            var projection = new AtlasPoint(10, 10);
+            Drag(editor, 0, 2, 10, 2, pixelsPerUnit: projection);
+            Drag(editor, 2, 2, 6, 2, pixelsPerUnit: projection);
+            var original = editor.Document.Clone();
+            editor.Mode = GroundTruthEditingMode.Modify;
+            Drag(editor, 6, 2, 8, 5, pixelsPerUnit: projection);
+            Check(editor.Document.Lines[0] == original.Lines[0]
+                && editor.Document.Lines[1].Start == new AtlasPoint(2, 2)
+                && editor.Document.Lines[1].End == new AtlasPoint(8, 2),
+                "The right handle should win over the overlapping line and stay horizontal.");
+            Drag(editor, 2, 2, 1, -3, pixelsPerUnit: projection);
+            Check(store.Load().Lines[1].Start == new AtlasPoint(1, 2)
+                && store.Load().Lines[1].End == new AtlasPoint(8, 2),
+                "The left handle should resize the same line without dragging its elevation.");
+            editor.Undo();
+            editor.Undo();
+            Check(store.Load().Equals(original), "Undo did not restore both original lines.");
+        });
+    }
+
+    public static void TestShortLineResizesTheNearestOverlappingHandle()
+    {
+        WithStore((store, editor) =>
+        {
+            var projection = new AtlasPoint(10, 10);
+            Drag(editor, 1, 2, 1.5, 2, pixelsPerUnit: projection);
+            editor.Mode = GroundTruthEditingMode.Modify;
+            Drag(editor, 1.5, 2, 2.5, 2, pixelsPerUnit: projection, tolerance: 8);
+            var line = store.Load().Lines.Single();
+            Check(line.Start == new AtlasPoint(1, 2) && line.End == new AtlasPoint(2.5, 2),
+                "The right endpoint should win even when both handles are within the hit radius.");
+        });
+    }
+
     public static void TestDoorsDrawOnEitherAxisAndFollowGround()
     {
         WithStore((store, editor) =>
@@ -300,15 +436,15 @@ internal static class HackerTerrainEditingTests
     }
 
     private static void Point(GroundTruthLabelController editor, GroundTruthPointerPhase phase, double x, double y,
-        string scene = Room, AtlasPoint? pixelsPerUnit = null) =>
-        editor.HandleWorld(phase, new(x, y), 6, scene, pixelsPerUnit ?? Scale);
+        string scene = Room, AtlasPoint? pixelsPerUnit = null, double tolerance = 6) =>
+        editor.HandleWorld(phase, new(x, y), tolerance, scene, pixelsPerUnit ?? Scale);
 
     private static void Drag(GroundTruthLabelController editor, double x1, double y1, double x2, double y2,
-        string scene = Room, AtlasPoint? pixelsPerUnit = null)
+        string scene = Room, AtlasPoint? pixelsPerUnit = null, double tolerance = 6)
     {
-        Point(editor, GroundTruthPointerPhase.Began, x1, y1, scene, pixelsPerUnit);
-        Point(editor, GroundTruthPointerPhase.Changed, x2, y2, scene, pixelsPerUnit);
-        Point(editor, GroundTruthPointerPhase.Ended, x2, y2, scene, pixelsPerUnit);
+        Point(editor, GroundTruthPointerPhase.Began, x1, y1, scene, pixelsPerUnit, tolerance);
+        Point(editor, GroundTruthPointerPhase.Changed, x2, y2, scene, pixelsPerUnit, tolerance);
+        Point(editor, GroundTruthPointerPhase.Ended, x2, y2, scene, pixelsPerUnit, tolerance);
         Check(editor.Error is null, editor.Error ?? "Could not save terrain.");
     }
 

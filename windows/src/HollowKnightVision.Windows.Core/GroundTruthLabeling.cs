@@ -591,7 +591,7 @@ public sealed class GroundTruthLabelController
             || pixelsPerWorldUnit.X <= 0 || pixelsPerWorldUnit.Y <= 0) return;
         if (phase == GroundTruthPointerPhase.Began)
         {
-            var radius = double.IsFinite(atlasTolerance) ? Math.Max(2, atlasTolerance) : 2;
+            var radius = double.IsFinite(atlasTolerance) && atlasTolerance > 0 ? atlasTolerance : 2;
             Begin(world, new(radius / pixelsPerWorldUnit.X, radius / pixelsPerWorldUnit.Y), sceneName);
             return;
         }

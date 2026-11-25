@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
@@ -86,6 +87,7 @@ internal static class HackerTerrainWindowTests
             var undo = Control<Button>(window, "GroundUndoButton");
             var framing = viewport.Transform.Scale;
             TestDoorDragUsesPathBeyondCapturedTiles();
+            TestEndpointHandlesFollowVisibleLinesAndRemainReadableWhenZoomed();
             Choose("Door");
             SetMode(add);
             Check(controller.Tool == GroundTruthTerrainTool.Door && controller.Mode == GroundTruthEditingMode.Add
@@ -191,6 +193,54 @@ internal static class HackerTerrainWindowTests
                         && Control<FrameworkElement>(window, "HackerGroundToolbar").IsVisible,
                         "Tab framing should keep the Door editor and its mode in the top bar.");
                 }
+            }
+
+            void TestEndpointHandlesFollowVisibleLinesAndRemainReadableWhenZoomed()
+            {
+                Choose("Ground");
+                SetMode(add);
+                Drag(new(15, 20), new(59, 20));
+                Choose("Wall");
+                Drag(new(15, 20), new(15, 44));
+                SetMode(modify);
+                var handles = overlay.Children.OfType<Rectangle>().ToArray();
+                Check(handles.Length == 3 && handles.Count(handle => handle.Fill is null && handle.Stroke is not null) == 2,
+                    "The two free endpoints should be outlined and the attachment should have one solid marker.");
+                Check(handles.Any(handle => ReferenceEquals(handle.Stroke, Brushes.White) && handle.StrokeThickness == 2),
+                    "The selected wall should have a white outlined free endpoint.");
+                var corner = handles.Single(handle => handle.Fill is not null);
+                var center = Center(corner);
+                Check(overlay.Children.OfType<Line>().Count(line =>
+                    new Point(line.X1, line.Y1) == center || new Point(line.X2, line.Y2) == center) == 2,
+                    "The solid marker must be centered over both attached endpoints.");
+
+                var host = Control<FrameworkElement>(window, "HackerViewportPanel");
+                var before = viewport.Transform;
+                try
+                {
+                    foreach (var scale in new[] { .25, 1, 8 })
+                    {
+                        Invoke(window, "ApplySettledViewportTransform", atlas, before with { Scale = scale });
+                        window.UpdateLayout();
+                        foreach (var handle in handles)
+                        {
+                            var displayed = handle.TransformToAncestor(host).TransformBounds(new Rect(handle.RenderSize));
+                            var anchor = overlay.TranslatePoint(Center(handle), host);
+                            Check(Math.Abs(displayed.Width - 8) < .001 && Math.Abs(displayed.Height - 8) < .001
+                                && (anchor - new Point(displayed.Left + 4, displayed.Top + 4)).Length < .001,
+                                $"The endpoint should stay centered and 8 display units wide at zoom {scale}.");
+                        }
+                    }
+                }
+                finally { Invoke(window, "ApplySettledViewportTransform", atlas, before); }
+                undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Check(store.Load().Walls is null or { Count: 0 } && store.Load().Lines.Count == 0,
+                    "Both staged terrain edits must undo cleanly.");
+                Console.WriteLine("PASS Hacker terrain endpoints retain their display size and show one solid marker for each attached corner");
+
+                static Point Center(Rectangle handle) =>
+                    new(Canvas.GetLeft(handle) + handle.Width / 2, Canvas.GetTop(handle) + handle.Height / 2);
             }
 
             List<GroundTruthWorldLine> ReadDoors() => store.Load().Doors ?? [];

@@ -5338,6 +5338,8 @@ public partial class MainWindow : Window
         if (!ReferenceEquals(surface, GameplayAtlasCanvas))
         {
             ApplyViewportTransform(surface, transform);
+            // Keep each terrain handle centered on its endpoint at any Atlas zoom.
+            hackerTerrainHandleScale.ScaleX = hackerTerrainHandleScale.ScaleY = 1 / transform.Scale;
             return;
         }
 
