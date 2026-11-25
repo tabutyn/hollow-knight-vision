@@ -271,6 +271,33 @@ internal static class BotPolicyTests
         finally { temporary.Delete(recursive: true); }
     }
 
+    internal static void TestPlaybackIgnoresObservationsFromTheOtherDomain()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-bot-playback-domain-");
+        try
+        {
+            WriteRuntime(temporary.FullName, alwaysAttack: true);
+            var native = BotNativePolicy.Load(temporary.FullName);
+            foreach (var domain in new[] { BotCaptureDomain.Hacker, BotCaptureDomain.Gameplay })
+            {
+                var playback = new BotPolicyPlayback(native, domain);
+                var source = domain == BotCaptureDomain.Hacker ? "human-authored" : "detected";
+                var foreign = domain == BotCaptureDomain.Hacker ? "detected" : "human-authored";
+                var first = BotVisualKnightMemoryTests.Row(100, .3) with { TerrainSource = source };
+                var active = playback.Evaluate(first, InputButtons.None, 100.02);
+                if (active?.Decision is not { Action.Buttons: var held } || !held.HasFlag(InputButtons.ActionX))
+                    throw new InvalidOperationException($"Expected an active {domain} policy action before the domain switch.");
+
+                var next = BotVisualKnightMemoryTests.Row(100.1, .31) with { TerrainSource = source };
+                if (playback.Evaluate(next with { TerrainSource = foreign }, held, 100.12) is not null)
+                    throw new InvalidOperationException($"A foreign frame interrupted the active {domain} action.");
+                if (playback.Evaluate(next, held, 100.12)?.Decision is null)
+                    throw new InvalidOperationException($"A foreign frame claimed the next valid {domain} timestamp.");
+            }
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
     internal static void TestPlaybackWaitingStatusNamesMissingEvidence()
     {
         var temporary = Directory.CreateTempSubdirectory("hkv-bot-playback-status-");
@@ -291,7 +318,7 @@ internal static class BotPolicyTests
             Expect(gameplay, row with { CaptureTimestamp = 101 }, 100.5, "a fresh capture");
             Expect(gameplay, BotVisualKnightMemoryTests.Row(100.6, .3), 100.62, "current game controls", previous: null);
             Expect(hacker, null, 100.5, "mod actor telemetry");
-            Expect(hacker, row, 100.02, "authored terrain");
+            Expect(hacker, row with { TerrainSource = "" }, 100.02, "authored terrain");
             var authored = BotVisualKnightMemoryTests.Row(100.1, .3) with { TerrainSource = "human-authored" };
             Expect(hacker, authored with { Issues = ["invalid-hacker-actors"] }, 100.12, "mod actor telemetry");
             Expect(hacker, authored with { CaptureTimestamp = 100.2, Issues = ["missing-hacker-knight"] }, 100.22, "the mod Knight position");
