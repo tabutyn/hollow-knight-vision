@@ -34,6 +34,12 @@ try {
   & $Python -B -m unittest discover -s $trainerRoot -p test_incremental_trainer.py
   if ($LASTEXITCODE -ne 0) { throw 'Shared trainer unit tests failed.' }
   $null = New-Item -ItemType Directory -Path $fixtureRoot
+  $dataset = & $Dotnet $tests --export-dataset-probe $fixtureRoot
+  if ($LASTEXITCODE -ne 0) { throw 'Synthetic Windows export failed.' }
+  $dataset = [IO.Path]::GetFullPath(($dataset | Out-String).Trim())
+  if (-not $dataset.StartsWith((Join-Path $fixtureRoot 'datasets') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Dataset probe returned a path outside its disposable fixture.'
+  }
   $blockadeFixture = Join-Path $fixtureRoot 'recorded-blockades'
   & $Dotnet $tests --recorded-blockade-host-probe $NativeVerifier $blockadeFixture
   if ($LASTEXITCODE -ne 0) { throw 'Native recorded blockade fixtures failed.' }
@@ -51,12 +57,6 @@ print("PASS shared trainer imports native blockade observations from both legacy
 '@
   & $Python -B -c $blockadeValidation (Join-Path $repositoryRoot 'macos\BotPython') $blockadeFixture
   if ($LASTEXITCODE -ne 0) { throw 'Shared training could not read native legacy blockade evidence.' }
-  $dataset = & $Dotnet $tests --export-dataset-probe $fixtureRoot
-  if ($LASTEXITCODE -ne 0) { throw 'Synthetic Windows export failed.' }
-  $dataset = [IO.Path]::GetFullPath(($dataset | Out-String).Trim())
-  if (-not $dataset.StartsWith((Join-Path $fixtureRoot 'datasets') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'Dataset probe returned a path outside its disposable fixture.'
-  }
   & (Join-Path $PSScriptRoot 'train-model-windows.ps1') -Dataset $dataset -ValidateOnly
   if ($LASTEXITCODE -ne 0) { throw 'Windows trainer launcher rejected the synthetic export.' }
   $validation = @'
