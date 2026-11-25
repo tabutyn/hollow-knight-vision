@@ -1552,6 +1552,65 @@ internal static class NativeAtlasImportTests
         }
     }
 
+    internal static void TestClosureProbePreservesOnlyFreshMeasuredVote()
+    {
+        const LiveWorldTrackerRejection wrongFloor = LiveWorldTrackerRejection.GroundPlaneVerificationRejected;
+        const LiveWorldTrackerRejection wrongAppearance = LiveWorldTrackerRejection.MatcherRejected;
+        const LiveWorldTrackerRejection conflict = LiveWorldTrackerRejection.InconsistentConfirmation;
+        (string Reason, double Time, int Seed, int FloorY, long? Lineage, int Offset,
+            LiveWorldTrackerRejection? ProbeRejection, bool RetainsVote)[] cases =
+        [
+            ("inconclusive floor", 1.65, 71, 75, 2, 0, wrongFloor, true),
+            ("inconclusive appearance", 1.65, 901, 45, 2, 0, wrongAppearance, true),
+            ("scheduled search", 2.04, 71, 75, 2, 0, wrongFloor, false),
+            ("expired vote", 2.85, 71, 75, 2, 0, wrongFloor, false),
+            ("unmeasured scan", 1.65, 71, 45, null, 0, null, false),
+            ("contradictory correction", 1.65, 71, 45, 2, 12, conflict, false),
+            ("different island", 1.65, 381, 75, 3, 0, null, false)
+        ];
+        foreach (var test in cases)
+        {
+            var world = new LiveWorldTracker();
+            var images = new Dictionary<int, BgraFrame>();
+            Ingest(0, .5, 71, 45, 1, 0);
+            var first = Ingest(1, 1.5, 71, 45, 2, 270);
+            Check(first.AcceptedClosure is null
+                && first.Review.Rejections.Contains(LiveWorldTrackerRejection.ConfirmationRequired),
+                $"{test.Reason}: the first floor match must be tentative");
+
+            var probe = Ingest(2, test.Time, test.Seed, test.FloorY, test.Lineage, 270 + test.Offset);
+            Check(probe.AcceptedClosure is null && probe.Snapshot.LoopClosureEdges.Count == 0,
+                $"{test.Reason}: the intermediate image must never move the Atlas");
+            if (test.ProbeRejection is { } rejection)
+                Check(probe.Review.Rejections.Contains(rejection), $"{test.Reason}: the probe must report {rejection}");
+
+            var clearTime = test.Time + .3;
+            var clear = Ingest(3, clearTime, 71, 45, 2, 270);
+            Check((clear.AcceptedClosure is not null) == test.RetainsVote
+                && clear.Snapshot.Observations.Count == 4,
+                $"{test.Reason}: incorrect confirmation on the next measured image ({string.Join(", ", clear.Review.Rejections)})");
+            if (!test.RetainsVote)
+                clear = Ingest(4, clearTime + .15, 71, 45, 2, 270);
+            Check(clear.AcceptedClosure is not null && clear.Snapshot.LoopClosureEdges.Count == 1
+                && clear.Snapshot.Observations[^1].OptimizedPose == default,
+                $"{test.Reason}: two consistent measurements must recover the original placement ({string.Join(", ", clear.Review.Rejections)})");
+
+            LiveWorldTrackerUpdate Ingest(int id, double time, int seed, int floorY, long? lineage, int x)
+            {
+                var image = RecoveryTexture(seed, id);
+                images.Add(id, image);
+                var evidence = new LiveWorldCaptureEvidence(time,
+                    lineage is null ? null : new([new(0, new(0, floorY), new(image.Width, floorY))]))
+                {
+                    MeasuredLineage = lineage
+                };
+                return world.Ingest(id, time, image, new(x, 0), image.Width, captureEvidence: evidence,
+                    searchForClosure: lineage is not null,
+                    loadGroundSource: lineage is null ? null : source => (images[source], []));
+            }
+        }
+    }
+
     internal static void TestPlacedAtlasKeepsFloorConfirmationThroughEarlyProbes()
     {
         foreach (var (occludedAt, firstClearAt, confirmsOnFirstClear, changeCorrection) in new[]
