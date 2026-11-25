@@ -38,6 +38,7 @@ public partial class MainWindow
     private string InputPathRoot { get; }
 
     private static double BotCaptureClock() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
+    internal Func<double> ReadBotObservationTime { get; init; } = BotCaptureClock;
 
     private void CaptureBotObservations(BgraFrame frame, long generation, long visualGeneration, double timestamp,
         int roomId, ulong roomRevision, int? renderedFrame, ReceiverGroundTruthSample? receiverTelemetry,
@@ -84,7 +85,7 @@ public partial class MainWindow
 
         if (batch?.CaptureGeneration == visualGeneration) batch = batch with { CaptureGeneration = generation };
         else batch = null;
-        var time = new BotCaptureTiming(timestamp, BotCaptureClock(), generation, roomId, roomRevision);
+        var time = new BotCaptureTiming(timestamp, ReadBotObservationTime(), generation, roomId, roomRevision);
         var roomKey = receiverTelemetry?.SceneName is { Length: > 0 } scene
             ? HackerLayoutId("room", scene).ToString("D").ToUpperInvariant() : null;
         var objectives = Volatile.Read(ref hackerObjectives);

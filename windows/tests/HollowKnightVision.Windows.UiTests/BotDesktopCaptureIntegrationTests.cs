@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text.Json;
@@ -27,10 +26,14 @@ internal static class BotDesktopCaptureIntegrationTests
             var auditDirectory = Path.Combine(root, "ground-audit");
             var audits = GroundFrameAudits.Launch(["--ground-audit-directory=" + auditDirectory,
                 "--ground-raw-audit-directory=" + auditDirectory]);
-            var window = new MainWindow(GameRuntimeMode.Modded, gamePath: null, root: root, documents: root, groundAudits: audits);
+            double availableAt = 0;
+            var window = new MainWindow(GameRuntimeMode.Modded, gamePath: null, root: root, documents: root, groundAudits: audits)
+            {
+                ReadBotObservationTime = () => availableAt
+            };
             try
             {
-                VerifyDesktopRecording(window, hudFrame, Path.Combine(root, "demonstrations"));
+                VerifyDesktopRecording(window, hudFrame, Path.Combine(root, "demonstrations"), time => availableAt = time);
                 Wait(VerifyTimedClipAsync(window, root));
             }
             finally
@@ -224,9 +227,14 @@ internal static class BotDesktopCaptureIntegrationTests
         }
     }
 
-    private static void VerifyDesktopRecording(MainWindow window, BgraFrame hudFrame, string library)
+    private static void VerifyDesktopRecording(MainWindow window, BgraFrame hudFrame, string library, Action<double> setAvailableAt)
     {
-        var capture = new BotCaptureSession(library, "normal", "visual", Generation, Clock(), new());
+        const double startedAt = 10;
+        const double sampleSpacing = .12;
+        const double processingDelay = .015;
+        const double stoppedAt = startedAt + 1.5;
+        var lastCaptureAt = startedAt;
+        var capture = new BotCaptureSession(library, "normal", "visual", Generation, startedAt, new());
         Field("botCapture").SetValue(window, capture);
         var finished = false;
         try
@@ -236,9 +244,7 @@ internal static class BotDesktopCaptureIntegrationTests
             var scene = FrameWithScenery(hudFrame);
             var shift = new AtlasPoint(40, -16);
             _ = Step(10, .50, InputButtons.Right, 2, default, GroundHypothesisTrackingResult.Empty);
-            Thread.Sleep(115);
             _ = Step(11, .50, InputButtons.Right, 2, default, GroundHypothesisTrackingResult.Empty);
-            Thread.Sleep(115);
             var before = Step(12, .50, InputButtons.Right, 2, default, GroundHypothesisTrackingResult.Empty);
             Check(Field("gameplayWallContacts").GetValue(window) is MainWindow.BotWallContactsFrame
                 { CaptureGeneration: Generation, CaptureId: 12, PlacedRoom: 19, Marks.Count: 1 },
@@ -253,31 +259,25 @@ internal static class BotDesktopCaptureIntegrationTests
             // This capture belongs to the solver, but falls inside the clip's sampling interval.
             var betweenSamples = before + .03;
             Check(!capture.WantsFrame(Generation, betweenSamples), "The correction must arrive between clip samples.");
-            WaitUntilCaptureTime(betweenSamples);
             _ = Step(13, .50, InputButtons.Right, 3, shift, correction, betweenSamples);
-            // Fix the measured gap across the change of island. CI scheduling
-            // and graph construction can take longer than the intended sample spacing.
             var afterCorrection = before + .125;
-            WaitUntilCaptureTime(afterCorrection);
             _ = Step(14, .50, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty, afterCorrection);
-            Thread.Sleep(115);
             _ = Step(15, .56, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty);
             Check(Field("gameplayWallContacts").GetValue(window) is null,
                 "The desktop must remove a wall contact from the live overlay after a measured crossing.");
-            Thread.Sleep(115);
             _ = Step(16, .50, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty);
-            Thread.Sleep(115);
             _ = Step(17, .50, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty);
-            Thread.Sleep(115);
             _ = Step(18, .50, InputButtons.None, 3, shift, GroundHypothesisTrackingResult.Empty);
 
             finished = true;
-            var published = capture.FinishAsync(Clock() + .2, null, completed: true).GetAwaiter().GetResult();
+            var published = capture.FinishAsync(stoppedAt, null, completed: true).GetAwaiter().GetResult();
             var clip = published.Published.Single();
             Check(clip.BotDomain == "gameplay" && clip.ObservationCount == 8, "The desktop path must save all eight admitted samples.");
             var path = Path.Combine(library, BotCaptureSession.DirectoryName(clip.Id), "events.jsonl");
             var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
             var rows = File.ReadLines(path).Select(line => JsonSerializer.Deserialize<BotCaptureObservation>(line, json)!).ToArray();
+            Check(rows.All(row => Math.Abs(row.AvailableAt - row.CaptureTimestamp - processingDelay) < 1e-9
+                && !row.Issues.Contains("stale-capture")), "The fixture must preserve the intended capture delay.");
             Check(rows.Select(row => row.DetectionFrameId).SequenceEqual([10L, 11L, 12L, 14L, 15L, 16L, 17L, 18L]),
                 "The unsampled correction frame must stay out of the clip.");
             var expectedDoor = new BotLine(16, 10, 16, 40);
@@ -322,7 +322,8 @@ internal static class BotDesktopCaptureIntegrationTests
                 var knight = new ObjectDetection("game.playable-knight", new(knightX - .02, .50, .04, .1), .95f)
                     { SourceFrameIdentifier = id };
                 var batch = new LiveObjectDetectionBatch([knight], id, id, Generation, 0);
-                var captureAt = timestamp ?? Clock();
+                var captureAt = timestamp ?? lastCaptureAt + sampleSpacing;
+                lastCaptureAt = captureAt;
                 const int committedRoom = 19;
                 var center = new AtlasPoint(frame.Width / 2d, frame.Height / 2d);
                 double[] offsets = id switch
@@ -370,6 +371,8 @@ internal static class BotDesktopCaptureIntegrationTests
                 var usesDurableWorld = id < 18;
                 var groundCamera = id == 14 || id >= 16 ? (AtlasPoint?)null : camera;
                 var sceneryCamera = id == 14 || id >= 17 ? camera : (AtlasPoint?)null;
+                // Keep sample spacing and observation age independent of CI scheduling.
+                setAvailableAt(captureAt + processingDelay);
                 _ = Method("CaptureBotObservations").Invoke(window, [
                     frame, Generation, Generation, captureAt, 17, 1UL, null, null, batch,
                     new[] { new DetectedFloorLine(101, new(70, 100)), new DetectedFloorLine(112, new(30, 60)) },
@@ -383,7 +386,7 @@ internal static class BotDesktopCaptureIntegrationTests
         finally
         {
             Field("botCapture").SetValue(window, null);
-            if (!finished) _ = capture.FinishAsync(Clock(), null, completed: false).GetAwaiter().GetResult();
+            if (!finished) _ = capture.FinishAsync(stoppedAt, null, completed: false).GetAwaiter().GetResult();
         }
     }
 
@@ -418,14 +421,6 @@ internal static class BotDesktopCaptureIntegrationTests
             scene[i + 3] = 255;
         }
         return scene;
-    }
-
-    private static double Clock() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
-
-    private static void WaitUntilCaptureTime(double timestamp)
-    {
-        var remaining = timestamp - Clock();
-        if (remaining > 0) Thread.Sleep(TimeSpan.FromSeconds(remaining) + TimeSpan.FromMilliseconds(1));
     }
 
     private static FieldInfo Field(string name) => typeof(MainWindow).GetField(name, InstanceMembers)
