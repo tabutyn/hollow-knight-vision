@@ -139,6 +139,7 @@ public sealed class LiveWorldTracker
     private readonly Guid visitId = Guid.NewGuid();
     private readonly Dictionary<int, CachedReference> references = [];
     private readonly Dictionary<int, CachedReference?> restoredRecoveryReferences = [];
+    private readonly HashSet<int> mirroredImportedKeyframes = [];
     private readonly Dictionary<int, double> cumulativeTravel = [];
     private readonly HashSet<int> closedReferenceKeyframeIds = [];
     private readonly HashSet<int> currentVisitObservationIds = [];
@@ -164,6 +165,7 @@ public sealed class LiveWorldTracker
         RestoreRuntimeState();
         if (snapshot.UsesSwiftWireFormat && loadSavedFrame is not null)
             RestoreRecoveryReferences(loadSavedFrame);
+        RefreshReferences();
     }
 
     public LiveWorldSnapshot Snapshot { get; private set; }
@@ -940,7 +942,7 @@ public sealed class LiveWorldTracker
         var keyframe = new LiveWorldKeyframe(
             keyframeId,
             observation.Id,
-            observation.SourceObservationId);
+            observation.SourceObservationId) { TopOriginFeatures = true };
         var motionEdges = Snapshot.RelativeMotionEdges.ToList();
         if (prior is not null)
         {
@@ -1436,18 +1438,22 @@ public sealed class LiveWorldTracker
             previous = observation;
         }
         lastObservationId = null;
-        RefreshReferences();
     }
 
     private void RestoreRecoveryReferences(Func<int, BgraFrame> loadSavedFrame)
     {
         var observations = Snapshot.Observations.ToDictionary(value => value.Id);
+        var landmarks = Snapshot.Landmarks.Where(value => !value.GroundClosureOnly)
+            .ToLookup(value => value.KeyframeId);
         foreach (var keyframe in Snapshot.Keyframes)
         {
             var observation = observations[keyframe.ObservationId];
             var frame = loadSavedFrame(observation.SourceObservationId);
             if (frame.Width != observation.SourceWidth || frame.Height != observation.SourceHeight)
                 throw Error(LiveWorldTrackerError.InvalidSnapshot, "Saved keyframe dimensions have changed.", observation.Id);
+            if (!keyframe.TopOriginFeatures
+                && GlobalFeatureMatcher.HasMirroredStoredFeatures(frame, landmarks[keyframe.Id]))
+                mirroredImportedKeyframes.Add(keyframe.Id);
 
             // Swift descriptors use Core Graphics sampling. Derive Windows features
             // for recovery only, so the original landmark IDs and closures stay intact.
@@ -1486,25 +1492,40 @@ public sealed class LiveWorldTracker
             .Where(value => value.KeyframeId == keyframe.Id && !value.GroundClosureOnly)
             .OrderBy(value => value.Id)
             .ToArray();
-        if (storedLandmarks.Length < 6) return null;
+        if (storedLandmarks.Length < 6 || storedLandmarks.Any(value => value.Descriptor.Count != 25)) return null;
         var sampleHeight = Math.Max(
             1,
             (int)Math.Round(
                 observation.SourceHeight * (double)observation.SampleWidth
                     / observation.SourceWidth,
                 MidpointRounding.AwayFromZero));
+        var mirrored = !keyframe.TopOriginFeatures
+            && (!Snapshot.UsesSwiftWireFormat || mirroredImportedKeyframes.Contains(keyframe.Id));
         var features = storedLandmarks.Select(landmark =>
-            new GlobalFeatureReference.Feature(
+        {
+            var point = landmark.SamplePoint;
+            var descriptor = landmark.Descriptor.Select(value => (byte)Math.Clamp(
+                (int)Math.Round(value, MidpointRounding.AwayFromZero),
+                byte.MinValue,
+                byte.MaxValue)).ToArray();
+            if (mirrored)
+            {
+                point = point with { Y = sampleHeight - 1 - point.Y };
+                for (var row = 0; row < 2; row++)
+                for (var column = 0; column < 5; column++)
+                {
+                    var top = row * 5 + column;
+                    var bottom = (4 - row) * 5 + column;
+                    (descriptor[top], descriptor[bottom]) = (descriptor[bottom], descriptor[top]);
+                }
+            }
+            return new GlobalFeatureReference.Feature(
                 landmark.Id,
-                landmark.SamplePoint,
-                landmark.Descriptor.Select(value => (byte)Math.Clamp(
-                    (int)Math.Round(value, MidpointRounding.AwayFromZero),
-                    byte.MinValue,
-                    byte.MaxValue)).ToArray(),
+                point, descriptor,
                 255,
                 landmark.Depth,
-                landmark.DepthConfidence)).ToArray();
-        if (features.Any(value => value.Descriptor.Count != 25)) return null;
+                landmark.DepthConfidence);
+        }).ToArray();
         return new CachedReference(
             keyframe.Id,
             observation.Id,

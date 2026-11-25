@@ -717,6 +717,7 @@ var tests = new List<(string Name, Action Run)>
     ("live world replay default one-way ignores vision endpoint coordinates", TestDefaultOneWayRouteCannotBeReclassifiedFromVisionCoordinates),
     ("live world replay wide intent bound requires tight optimized success", TestLoopIntentUsesWiderDetectionBoundButMustMeetTightOptimizedBound),
     ("global feature matcher recovers large offset without pose prior", TestRecoversLargeHorizontalAndVerticalOffsetWithoutPosePrior),
+    ("Atlas feature orientation survives reopening native, legacy and shared references", TestAtlasFeatureOrientationAfterReopen),
     ("global feature matcher rejects repeated placement ambiguity", TestRepeatPatternIsRejectedAsAmbiguous),
     ("global feature matcher excludes HUD evidence", TestHUDExclusionCannotProvideMatch),
     ("global feature matcher rejects unrelated frames", TestUnrelatedFrameIsRejected),
@@ -7455,6 +7456,42 @@ static void TestRecoversLargeHorizontalAndVerticalOffsetWithoutPosePrior()
     True(match.AmbiguityRatio < 0.8);
 }
 
+static void TestAtlasFeatureOrientationAfterReopen()
+{
+    var reference = GlobalFeatureTexture();
+    var returned = GlobalFeatureTexture(offsetX: 72, offsetY: -36);
+    var tracker = new LiveWorldTracker();
+    tracker.Ingest(0, 1, reference, new(500, 900), 320);
+    var canonical = tracker.Snapshot;
+    var keyframe = canonical.Keyframes.Single();
+    var originalIds = canonical.Landmarks.Select(value => value.Id).ToHashSet();
+    True(keyframe.TopOriginFeatures && originalIds.Count >= 6);
+
+    var legacy = canonical.Landmarks.Select(value => value with
+    {
+        SamplePoint = value.SamplePoint with { Y = 89 - value.SamplePoint.Y },
+        Descriptor = Enumerable.Range(0, 5).Reverse()
+            .SelectMany(row => value.Descriptor.Skip(row * 5).Take(5)).ToArray()
+    }).ToArray();
+    foreach (var (schema, oldRows) in new[] { (1, false), (1, true), (3, false), (3, true) })
+    {
+        var saved = new LiveWorldSnapshot(schema, canonical.MapRevision, canonical.AnchoredObservationId,
+            canonical.Observations, [keyframe with { TopOriginFeatures = schema == 1 && !oldRows }],
+            oldRows ? legacy : canonical.Landmarks);
+        var persisted = LiveWorldJson.WriteSnapshot(saved);
+        var loaded = new LiveWorldTracker(LiveWorldJson.ReadSnapshot(persisted), _ => reference);
+        var pending = loaded.Ingest(1, 2, returned, new(400, 800), 320);
+        var match = pending.Review.MatchLines.Single();
+        CloseWithin(428, match.ToPose.X, 5);
+        CloseWithin(864, match.ToPose.Y, 5);
+        True(pending.AcceptedClosure is null);
+        var accepted = loaded.Ingest(2, 3, returned, new(400, 800), 320).AcceptedClosure;
+        True(accepted is { Support: >= 6 } && accepted.LandmarkIds.All(originalIds.Contains));
+        True(loaded.Snapshot.Landmarks.Where(value => originalIds.Contains(value.Id))
+            .Select(value => value.SamplePoint).SequenceEqual(saved.Landmarks.Select(value => value.SamplePoint)));
+    }
+}
+
 static void TestRepeatPatternIsRejectedAsAmbiguous()
 {
     var matcher = new GlobalFeatureMatcher();
@@ -7732,11 +7769,9 @@ static BgraFrame GlobalFeatureImage(Func<int, int, (int Red, int Green, int Blue
     var pixels = new byte[width * height * BgraFrame.BytesPerPixel];
     for (var topY = 0; topY < height; topY++)
     {
-        // Mac fixture coordinates are CoreGraphics/world-up; BGRA rows are top-origin.
-        var logicalY = height - 1 - topY;
         for (var x = 0; x < width; x++)
         {
-            var value = color(x, logicalY);
+            var value = color(x, topY);
             var index = (topY * width + x) * BgraFrame.BytesPerPixel;
             pixels[index] = (byte)value.Blue;
             pixels[index + 1] = (byte)value.Green;
