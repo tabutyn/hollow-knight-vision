@@ -62,7 +62,43 @@ internal static class ModelSummaryIntegrationTests
     public static void Run()
     {
         TestSummaryControls(); TestMissingImagesAndRecovery();
+        TestRenderCampaignPreview();
         Console.WriteLine("PASS Model Summary rankings, selected styling, exact false-positive and false-negative overlays, wraparound repair navigation, retained state and failures");
+    }
+
+    internal static void TestRenderCampaignPreview()
+    {
+        var classes = LabelingObjectReferencePolicy.ModelClasses().OrderBy(item => item.Identifier).ToArray();
+        var progress = classes.Select((item, index) => new LabelingCampaignProgress(item.Identifier, index == 3 ? 14 : index)).ToArray();
+        LabelingCampaignPoint[] history = [new(Guid.NewGuid(), 1, .2, 5), new(Guid.NewGuid(), 2, .5, 8),
+            new(Guid.NewGuid(), 3, .65, 10)];
+        var panel = new LabelingCampaignPanel { Width = 1100, Background = Brushes.Black };
+        panel.Update(progress, history, key => key, identifier => classes.Single(item => item.Identifier == identifier).Name);
+        var window = Show(panel);
+        try
+        {
+            var bars = Children<Rectangle>(panel).ToArray();
+            var labels = Children<TextBlock>(panel).Select(item => item.Text).ToArray();
+            var plot = Children<Polyline>(panel).Single();
+            Check(AutomationProperties.GetAutomationId(panel) == "labeling-campaign-progress"
+                && bars.Length == progress.Length && bars.All(bar => bar.Fill == Brushes.DodgerBlue)
+                && progress.All(item => labels.Contains(item.Count.ToString()))
+                && labels.All(label => !label.Contains('/'))
+                && plot.Points.Count == history.Length && plot.Points[2].Y < plot.Points[0].Y,
+                "Model Summary should show captured examples and measured validation without batch targets.");
+            var preview = new RenderTargetBitmap((int)panel.ActualWidth, (int)panel.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+            preview.Render(panel);
+            Check(preview.PixelWidth > 1000 && preview.PixelHeight > 0, "The chart preview did not render at its intended width.");
+            if (Environment.GetEnvironmentVariable("HKV_CAMPAIGN_PREVIEW_PATH") is { Length: > 0 } path)
+            {
+                var png = new PngBitmapEncoder();
+                png.Frames.Add(BitmapFrame.Create(preview));
+                using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
+                png.Save(stream);
+            }
+            Console.WriteLine("PASS Model Summary renders capture counts and validation without batch targets");
+        }
+        finally { window.Close(); }
     }
 
     private static void TestSummaryControls()
