@@ -373,6 +373,7 @@ var tests = new List<(string Name, Action Run)>
     ("carried ground follows its placed owner across pending images and scopes", LiveWorldWalkedGroundTests.TestCarrierPlacementCannotHideAPlacedFootprintOrBindAReusedLineage),
     ("invalid saved walked ground is rejected", LiveWorldWalkedGroundTests.TestInvalidPersistedWalkedGeometryFailsSnapshotValidation),
     ("saved ground keeps only current confirmed spans at the solve scale", LiveWorldGroundOverlayTests.TestCaptureKeepsOnlyObservedConfirmedSpansAtSolveScale),
+    ("saved player bounds require a capture-matched Knight", LiveWorldGroundOverlayTests.TestSweptKnightMaskCannotBecomeContactEvidenceAndMeasuredBoundsScaleToSolvePixels),
     ("unconfirmed floor supplies a recovery candidate without persisting as ground", LiveWorldGroundOverlayTests.TestUnconfirmedGroundDoesNotBecomePersistentGeometry),
     ("saved floor has one median row", LiveWorldGroundOverlayTests.TestEightNearbyMeasurementsProduceOneFloorEstimate),
     ("measured Atlas references bridge prediction gaps across uncommitted captures", CaptureIslandLineageTests.TestUncommittedMeasuredReferenceBridgesPredictionGap),

@@ -5,6 +5,8 @@
     <UseWPF>true</UseWPF>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../HollowKnightVision.Windows.Tests/Fixtures/actor-calibration-detector.onnx"
+                      LogicalName="actor-calibration-detector.onnx" />
     <Content Include="../../src/HollowKnightVision.Windows.App/MainWindow.xaml" Link="MainWindow.source.xaml" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../../macos/Tests/HollowKnightVisionTests/hud-stencil-cases.json" Link="hud-stencil-cases.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../../macos/Tests/HollowKnightVisionTests/hud-stencil-reference.json" Link="hud-stencil-reference.json" CopyToOutputDirectory="PreserveNewest" />

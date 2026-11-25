@@ -264,7 +264,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             && (measuredGround || publishesScenery))
         {
             worldEvidence = LiveWorldCaptureEvidence.FromGround(timestamp, frame.Width, frame.Height, frame.Width,
-                floors, ground.LineReviews, contactKnight, contact.MeasuredFoot, measuredGround ? contact.Floor : null,
+                floors, ground.LineReviews, contact.MeasuredFoot, measuredGround ? contact.Floor : null,
                 prepared.ObservedPlayerBounds) with
             {
                 LocalReferenceTimestamp = referenceTimestamp,

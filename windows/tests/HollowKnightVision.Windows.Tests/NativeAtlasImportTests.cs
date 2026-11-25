@@ -561,7 +561,7 @@ internal static class NativeAtlasImportTests
                     DoorwayCut = cut,
                     WorldEvidence = LiveWorldCaptureEvidence.FromGround(id * .3, 320, 180, 320,
                         [surface, competing], [new(17, surface.ToSemanticLine(), GroundLinePresenceState.Confirmed, .8, 1)],
-                        new PixelRect(20, 100, 24, 35), new AtlasPoint(30, 135))
+                        new AtlasPoint(30, 135), observedPlayerBounds: new(20, 100, 24, 35))
                 };
                 for (var id = 7; id <= 9; id++)
                 {
@@ -646,24 +646,25 @@ internal static class NativeAtlasImportTests
 
     internal static void TestMeasuredWalkSavesFloorUnderAHiddenEdge()
     {
-        var observed = LiveWorldCaptureEvidence.FromGround(2, 320, 180, 320, [], [], null, null,
+        var observed = LiveWorldCaptureEvidence.FromGround(2, 320, 180, 320, [], [],
             supportedFloor: new CleanFloorLine(135, new PixelSpan(65, 119)));
         Check(observed.FloorCandidates is null && observed.GroundGeometry!.Lines.SequenceEqual([
             new LiveGroundLineEvidence(long.MaxValue, new(65, 45), new(120, 45))]),
             "independent ground contact saves the observed traversal span");
-        var missing = LiveWorldCaptureEvidence.FromGround(3, 320, 180, 320, [], [], null, null);
+        var missing = LiveWorldCaptureEvidence.FromGround(3, 320, 180, 320, [], []);
         Check(missing.GroundGeometry is null, "no current measurement cannot recreate a hidden floor");
     }
 
     internal static void TestDoorwayFloorAlignsOnlyWithMeasuredContactOnBothSides()
     {
-        foreach (var (direction, airborne, competingSurface, wallClockBehindAtlas) in new[]
+        foreach (var (direction, airborne, competingSurface, wallClockBehindAtlas, missingPlayer) in new[]
         {
-            (VisualRoomDirection.Right, false, false, false),
-            (VisualRoomDirection.Left, false, false, false),
-            (VisualRoomDirection.Right, true, false, false),
-            (VisualRoomDirection.Right, false, true, false),
-            (VisualRoomDirection.Right, false, false, true)
+            (VisualRoomDirection.Right, false, false, false, false),
+            (VisualRoomDirection.Left, false, false, false, false),
+            (VisualRoomDirection.Right, true, false, false, false),
+            (VisualRoomDirection.Right, false, true, false, false),
+            (VisualRoomDirection.Right, false, false, true, false),
+            (VisualRoomDirection.Right, false, false, false, true)
         })
         {
             WithRecoveryFixture(identicalRooms: false, (root, saved) =>
@@ -683,7 +684,7 @@ internal static class NativeAtlasImportTests
                 var cut = new VisualSceneDiscontinuityTracker.Cut(1.65, 2.5, new(80, 0), direction);
                 const string arrivingScene = "New_room_past_the_door";
                 WindowsLiveWorldFrame Arrive(long id) => FloorFrame(id, 901, !exitsRight, 150, airborne,
-                    competingSurface, wallClockBehindAtlas) with
+                    competingSurface, wallClockBehindAtlas, missingPlayer) with
                 {
                     RoomName = arrivingScene,
                     DoorwayCut = cut
@@ -703,12 +704,15 @@ internal static class NativeAtlasImportTests
                     .SequenceEqual(saved.Observations.Select(frame => frame.OptimizedPose)),
                     "doorway alignment preserves the restored poses");
                 var expectedX = exitsRight ? 452 : -252;
-                if (airborne || competingSurface)
+                if (airborne || competingSurface || missingPlayer)
                 {
                     Check(snapshot.DoorwayFloorConstraints.Count == 0 && last!.RebuiltAtlas is null
                         && placement.Doorways.Count == 0 && placement.EstimatedFootprints.Count > 0
                         && snapshot.Observations[^1].OptimizedPose == new AtlasPoint(expectedX, 20),
-                        "ambiguous or airborne evidence leaves height provisional");
+                        "Ambiguous, airborne, or missing player evidence leaves the height provisional.");
+                    if (missingPlayer)
+                        Check(snapshot.Observations[^1] is { GroundGeometry.Lines.Count: > 0, ObservedPlayerBounds: null },
+                            "A current floor can survive without a capture-matched player position.");
                     Check(placement.RoomDoorways.Count == 0, "Unconfirmed crossings must not become policy doors.");
                     return;
                 }
@@ -1759,7 +1763,7 @@ internal static class NativeAtlasImportTests
     }
 
     private static WindowsLiveWorldFrame FloorFrame(long id, int seed, bool rightSide, int row, bool airborne,
-        bool competing, bool wallClockBehindAtlas = false)
+        bool competing, bool wallClockBehindAtlas = false, bool missingPlayer = false)
     {
         var request = ResumeFrame(id, seed);
         var image = request.Frame;
@@ -1779,7 +1783,8 @@ internal static class NativeAtlasImportTests
             WorldEvidence = LiveWorldCaptureEvidence.FromGround(request.MonotonicTimestamp, image.Width, image.Height, request.SolveWidth,
                 competing ? [surface, other] : [surface],
                 competing ? [confirmed, confirmed with { Id = 31, Line = other.ToSemanticLine() }] : [confirmed],
-                new PixelRect(knightX, footY - 35, 24, 35), new AtlasPoint(knightX + 12, footY))
+                new AtlasPoint(knightX + 12, footY),
+                observedPlayerBounds: missingPlayer ? null : new(knightX, footY - 35, 24, 35))
         };
     }
 

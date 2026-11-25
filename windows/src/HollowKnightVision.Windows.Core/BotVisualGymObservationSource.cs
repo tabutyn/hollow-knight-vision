@@ -161,7 +161,7 @@ public sealed class BotVisualGymObservationSource
         if (admitted.AllowsAtlasWrite && (measuredGround || continuesScenery))
         {
             captureEvidence = LiveWorldCaptureEvidence.FromGround(time, frame.Width, frame.Height, frame.Width,
-                analysis.Floors, observed.GroundTracking.LineReviews, contactKnight, contact.MeasuredFoot,
+                analysis.Floors, observed.GroundTracking.LineReviews, contact.MeasuredFoot,
                 measuredGround ? contact.Floor : null, masks.ObservedPlayerBounds) with
             {
                 LocalReferenceTimestamp = referenceTimestamp,
