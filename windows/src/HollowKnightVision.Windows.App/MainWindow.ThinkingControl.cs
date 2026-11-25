@@ -10,8 +10,9 @@ public partial class MainWindow
     private sealed record ThinkingAuthored(int Epoch, GroundTruthLineDocument Labels);
     private sealed record ThinkingAbilityModel(BotLearnedSkill Skill, BotNativePolicy? Motor);
     private sealed record ThinkRequest(ThinkingPlan Plan, double Time, IReadOnlyDictionary<string, ThinkingAbilityModel>? Models);
-    private sealed record ThinkingLease(Guid Owner, BotRun? PriorRun, ThinkingManeuver Maneuver, ThinkingAbilityDrive? Ability);
-    private sealed record ThinkingAbilityFrame(ThinkingLease Lease, ThinkingFrame Frame, InputButtons? Input, double Blockage);
+    private sealed record ThinkingLease(Guid Owner, BotRun? PriorRun, ThinkingManeuver Maneuver, ThinkingAbilityDrive? Ability,
+        ThinkingPlan Plan, GroundTruthLineDocument Authored, BotEvaluationRecorder? Evaluation);
+    private sealed record ThinkingPlaybackFrame(ThinkingLease Lease, ThinkingFrame Frame, InputButtons? Input, double Blockage);
 
     private ThinkingFrame? latestThinkingFrame;
     private GameTextReader.Reading? latestThinkingReading;
@@ -26,7 +27,7 @@ public partial class MainWindow
     private readonly object thinkingControlLock = new();
     private ThinkRequest? pendingThinkingControl;
     private ThinkingLease? thinkingLease;
-    private ThinkingAbilityFrame? thinkingAbilityFrame; // Analysis worker only.
+    private ThinkingPlaybackFrame? thinkingPlaybackFrame; // Analysis worker only.
     private long lastSubmittedThinkingDecision;
     private bool thinkingControlAvailable;
 
@@ -36,7 +37,7 @@ public partial class MainWindow
         long chartEpoch, string? menuContext, MenuStencilResult? menu, ReceiverGroundTruthSample? receiver,
         int? renderedFrame, GameplayPathView? paths, bool admitted, InputButtons? input, double blockage)
     {
-        thinkingAbilityFrame = null;
+        thinkingPlaybackFrame = null;
         if (!thinkingEnabled) return false;
         var domain = workspace == "Hacker" ? BotCaptureDomain.Hacker : BotCaptureDomain.Gameplay;
         if (receiver is not null) thinkingReceiverSession = receiver.SessionId;
@@ -81,20 +82,26 @@ public partial class MainWindow
                 pendingThinkingControl = null;
                 if (thinkingLease is null && now - request.Time <= .45
                     && request.Plan.Pick(sight, now) is { } candidate)
-                    StartThinkingControlLocked(candidate, sight, now, request.Models?.GetValueOrDefault(candidate.Id));
+                    StartThinkingControlLocked(request.Plan, candidate, sight, now, request.Models?.GetValueOrDefault(candidate.Id));
                 else
                     PostThinkingHandoff("The offered target changed before controls were available.");
             }
 
             if (thinkingLease is not { } lease) return false;
-            if (lease.Ability is not null && gameplay)
-                thinkingAbilityFrame = new(lease, publication, input, blockage);
-            else DriveThinkingMotionLocked(lease, publication, input, blockage, null);
+            if (gameplay && (lease.Ability is not null || lease.Evaluation?.WantsSkillSample(capturedAt) == true))
+                thinkingPlaybackFrame = new(lease, publication, input, blockage);
+            else
+            {
+                if (!gameplay)
+                    lease.Evaluation?.RecordFrame(frame, new(capturedAt, now, generation, room, 0),
+                        null, null, [], null, null, renderedFrame, skill: true);
+                DriveThinkingMotionLocked(lease, publication, input, blockage, null);
+            }
             return true;
         }
     }
 
-    private void DriveThinkingAbility(ThinkingAbilityFrame frame, BotCaptureObservation? observation)
+    private void DriveThinkingFrame(ThinkingPlaybackFrame frame, BotCaptureObservation? observation)
     {
         lock (thinkingControlLock)
             if (ReferenceEquals(thinkingLease, frame.Lease))
@@ -115,7 +122,7 @@ public partial class MainWindow
         var motion = lease.Maneuver.Step(frame.Sight, now, input ?? InputButtons.None, passage, blockage);
         if (motion.Finished)
         {
-            StopThinkingControlLocked(motion.Status);
+            StopThinkingControlLocked(motion.Status, "skill-finished");
             return;
         }
         var buttons = motion.Buttons;
@@ -140,8 +147,8 @@ public partial class MainWindow
             StopThinkingControlLocked("Policy controls expired.");
             return;
         }
-        if (lease.PriorRun is { } run && observation is not null && input is { } applied)
-            Volatile.Read(ref run.Loaded)?.Evaluation?.RecordDecision(observation, buttons, applied, frame.Sight.Scope.Context);
+        if (observation is not null && input is { } applied)
+            lease.Evaluation?.RecordDecision(observation, buttons, applied, frame.Sight.Scope.Context);
         if (motion.BeginReading)
         {
             var old = frame.Reading?.Lines ?? [];
@@ -184,7 +191,8 @@ public partial class MainWindow
             route with { Chart = FormattableString.Invariant($"{route.Chart}/{authored.Epoch}") }).ToArray();
     }
 
-    private void StartThinkingControlLocked(ThinkingCandidate candidate, ThinkingSight sight, double now, ThinkingAbilityModel? model)
+    private void StartThinkingControlLocked(ThinkingPlan plan, ThinkingCandidate candidate, ThinkingSight sight, double now,
+        ThinkingAbilityModel? model)
     {
         var prior = Volatile.Read(ref botPlayback);
         Guid? owner;
@@ -208,7 +216,14 @@ public partial class MainWindow
             return;
         }
         var ability = model is null || !gameControls.SkillControlsAvailable ? null : new ThinkingAbilityDrive(model.Skill, model.Motor, candidate);
-        thinkingLease = new(leaseOwner, prior, new(candidate, sight, now), ability);
+        var authored = prior?.Authored ?? Volatile.Read(ref thinkingAuthored)?.Labels ?? new GroundTruthLineDocument();
+        var motor = candidate.Action == ThinkingAction.Traverse && ability is not null ? model?.Motor : null;
+        var evaluation = prior is null
+            ? new BotEvaluationRecorder(BotEvaluationRoot, sight.Scope.Domain, motor?.Name ?? "Built-in playing policies",
+                motor?.SourceCheckpointSha256, authored, sight.Scope.Generation, sight.CapturedAt)
+            : Volatile.Read(ref prior.Loaded)?.Evaluation;
+        evaluation?.RecordSkill(plan, candidate, plan.Scope.Context, "selected", now);
+        Volatile.Write(ref thinkingLease, new(leaseOwner, prior, new(candidate, sight, now), ability, plan, authored, evaluation));
         PostThinkingHandoff($"Dispatched · {candidate.Id} · {candidate.Action}" + (ability is null ? "" : " · learned abilities"));
     }
 
@@ -281,25 +296,29 @@ public partial class MainWindow
         }
     }
 
-    private bool StopThinkingControl(string? status = null)
+    private bool StopThinkingControl(string? status = null, string reason = "interrupted")
     {
         lock (thinkingControlLock)
         {
             var wasActive = pendingThinkingControl is not null || thinkingLease is not null;
-            StopThinkingControlLocked(status);
+            StopThinkingControlLocked(status, reason);
             return wasActive;
         }
     }
 
-    private void StopThinkingControlLocked(string? status)
+    private void StopThinkingControlLocked(string? status, string reason = "interrupted")
     {
         var pending = pendingThinkingControl;
         pendingThinkingControl = null;
         if (thinkingLease is { } lease)
         {
-            thinkingLease = null;
+            Volatile.Write(ref thinkingLease, null);
+            lease.Evaluation?.RecordSkill(lease.Plan, lease.Maneuver.Candidate, lease.Plan.Scope.Context,
+                status ?? reason, BotCaptureClock());
             if (lease.PriorRun is null) gameControls.EndBotControl(lease.Owner);
             else gameControls.NeutralizeBotControl(lease.Owner);
+            if (lease.PriorRun is null && lease.Evaluation is { } evaluation)
+                FinishEvaluation(evaluation, reason);
             if (status is not null) PostThinkingHandoff(status);
         }
         else if (pending is not null && status is not null) PostThinkingHandoff(status);

@@ -69,13 +69,15 @@ internal static class BotDesktopEvaluationTests
         var peer = ServeAsync(server, states.Writer, token, skills: true);
         var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port),
             enableThinking: true);
+        var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
+        var applied = Channel.CreateUnbounded<InputButtons>();
+        bridge.BotInputSent += (_, buttons, _) => applied.Writer.TryWrite(buttons);
         try
         {
             Field("recentCaptureGeneration").SetValue(window, Generation);
             Field("workspace").SetValue(window, "Hacker");
             Field("recognizedMenuContext").SetValue(window, "game");
             Field("thinkingControlAvailable").SetValue(window, true);
-            var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
             bridge.Start();
             while (bridge.PauseState != GamePauseState.Ready) await Task.Delay(15, token);
             Check(bridge.SkillControlsAvailable, "The Windows bridge did not negotiate the shared skill capability.");
@@ -103,7 +105,7 @@ internal static class BotDesktopEvaluationTests
             Check(((string)Method("QueueThinkingPlan").Invoke(window, [plan, null])!).Contains("next frame", StringComparison.Ordinal),
                 "A matching score must wait for a fresh analysis frame.");
             Check(Observe(first), "The native maneuver did not consume the chosen offer.");
-            await ExpectWireState(InputButtons.ActionA);
+            await ExpectSkillPress(InputButtons.ActionA);
             Check(Observe(WithRecovery(4, session)), "The frame that verified healing should release Focus.");
             await ExpectWireState(InputButtons.None);
             Check(bridge.OwnsBotControl(owner) && ReferenceEquals(Field("botPlayback").GetValue(window), run),
@@ -128,9 +130,18 @@ internal static class BotDesktopEvaluationTests
                 "Game Play v2 must bind the same exact receiver actors without changing the playback observation domain.");
             _ = Method("QueueThinkingPlan").Invoke(window, [gameplay, null]);
             Check(Observe(first), "A fresh Game Play policy should use the receiver lease without a PPO checkpoint.");
-            await ExpectWireState(InputButtons.ActionA);
-            Check((bool)Method("StopThinkingControl").Invoke(window, ["Paused."])!,
-                "An interrupted standalone Thinking maneuver must release its lease.");
+            await ExpectSkillPress(InputButtons.ActionA);
+            _ = Method("PathRecording_Click").Invoke(window, [window, new RoutedEventArgs()]);
+            Check(Field("botCapture").GetValue(window) is null
+                && ((TextBlock)window.FindName("StatusText")).Text.Contains("Stop the bot", StringComparison.Ordinal),
+                "Human recording must refuse a standalone Thinking lease.");
+            window.EnableBotTrialControl();
+            var status = (await BotTrialControl.SendAsync("status", token)).Status!.Value;
+            Check(status.GetProperty("active").GetBoolean() && status.GetProperty("botDomain").GetString() == "gameplay"
+                && status.GetProperty("skillCandidate").GetString() == gameplay.Scores.Single().Candidate.Id,
+                "Trial diagnostics must show the standalone maneuver and its domain.");
+            Check((await BotTrialControl.SendAsync("stop", token)).Accepted,
+                "The trial stop command must release a standalone Thinking maneuver.");
             await ExpectWireState(InputButtons.None);
 
             Field("workspace").SetValue(window, "Hacker");
@@ -154,10 +165,22 @@ internal static class BotDesktopEvaluationTests
             Check(((string)Method("QueueThinkingPlan").Invoke(window, [combat, abilityModels])!).Contains("next frame", StringComparison.Ordinal),
                 "The learned fight ability did not enter the regular Thinking handoff.");
             Check(Observe(target), "A fresh exact observation must reach the learned fight model.");
-            await ExpectWireState(InputButtons.Right | InputButtons.ActionX | InputButtons.Dash);
+            await ExpectSkillPress(InputButtons.Right | InputButtons.ActionX | InputButtons.Dash);
             Check(Observe(first), "A disappeared bound actor must release the learned ability.");
             await ExpectWireState(InputButtons.None);
             Check(Field("thinkingLease").GetValue(window) is null, "The lost actor retained its learned ability lease.");
+
+            await ((Task)Field("botEvaluationWrites").GetValue(window)!).WaitAsync(token);
+            var evaluationRoot = Path.Combine(root, "bot-v1", "evaluations");
+            var hacker = Directory.GetDirectories(Path.Combine(evaluationRoot, "hacker"));
+            var attached = hacker.Single(path => Read<JsonElement>(path, "evaluation.json").TryGetProperty("modelSHA256", out _));
+            var autonomous = hacker.Single(path => path != attached);
+            var standalone = Directory.GetDirectories(Path.Combine(evaluationRoot, "gameplay")).Single();
+            VerifyEvaluation(attached, plan, "focus", "Focus restored a mask.", "user-stop", "a");
+            VerifyEvaluation(standalone, gameplay, "focus", "Bot stopped.", "local-control", "a");
+            VerifyEvaluation(autonomous, combat, "native", "Bound target expired.", "skill-finished", "dash");
+            Check(BotCaptureSession.Library(Path.Combine(root, "bot-v1", "demonstrations")).Count == 0,
+                "The Thinking evaluation must never enter the demonstration library.");
 
             (BgraFrame Image, double Time) Frame()
             {
@@ -178,7 +201,7 @@ internal static class BotDesktopEvaluationTests
                 var current = Frame();
                 var handled = (bool)Method("ObserveThinkingFrame").Invoke(window,
                     [current.Image, Generation, current.Time, 1, 1L, "game", null, truth, 42, null, true, InputButtons.None, 0d])!;
-                if (Field("thinkingAbilityFrame").GetValue(window) is { } skillFrame)
+                if (Field("thinkingPlaybackFrame").GetValue(window) is { } skillFrame)
                     _ = Method("CaptureBotObservations").Invoke(window, [
                         current.Image, Generation, Generation, current.Time, 1, 1UL, 42, truth, null,
                         Array.Empty<DetectedFloorLine>(), TerrainWallDetection.Empty, true, null, null, null, InputButtons.None,
@@ -197,6 +220,29 @@ internal static class BotDesktopEvaluationTests
                 using var response = JsonDocument.Parse(JsonSerializer.Serialize(new { scores = new Dictionary<string, int> { [candidate.Id] = 98 } }));
                 return offer.Resolve(response.RootElement);
             }
+
+            static void VerifyEvaluation(string directory, ThinkingPlan plan, string control, string outcome,
+                string reason, string button)
+            {
+                var manifest = Read<BotCaptureManifest>(directory, "manifest.json");
+                var metadata = Read<JsonElement>(directory, "evaluation.json");
+                var log = File.ReadLines(Path.Combine(directory, metadata.GetProperty("skillEvents").GetString()!))
+                    .Select(line => JsonSerializer.Deserialize<JsonElement>(line, Json)).ToArray();
+                Check(manifest is { Status: "completed", ExpertDemonstration: false, TerrainAuditCount: > 0 }
+                    && manifest.StopReason == reason && metadata.GetProperty("actionSource").GetString() == "skill-plan"
+                    && log.Length == 2 && log[0].GetProperty("event").GetString() == "selected"
+                    && log[0].GetProperty("plan").GetProperty("decisionID").GetInt64() == plan.DecisionId
+                    && log[0].GetProperty("choice").GetProperty("points").GetInt32() == 98
+                    && log[0].GetProperty("choice").GetProperty("control").GetString() == control
+                    && log[1].GetProperty("event").GetString() == outcome,
+                    "The native policy archive lost its actual selection, original plan, or runtime outcome.");
+                var controls = File.ReadLines(Path.Combine(directory, "events.jsonl"))
+                    .Select(line => JsonSerializer.Deserialize<JsonElement>(line, Json))
+                    .Where(row => row.TryGetProperty("button", out var name) && name.GetString() == button).ToArray();
+                Check(controls.Length >= 2 && controls[0].GetProperty("isPressed").GetBoolean()
+                    && !controls[^1].GetProperty("isPressed").GetBoolean(),
+                    "An evaluation must pair receiver-sent skill controls with their release.");
+            }
         }
         finally
         {
@@ -213,6 +259,12 @@ internal static class BotDesktopEvaluationTests
                 var state = await states.Reader.ReadAsync(token);
                 if (state.HeldButtons == buttons && state.Enabled == (buttons != InputButtons.None)) return;
             }
+        }
+
+        async Task ExpectSkillPress(InputButtons buttons)
+        {
+            await ExpectWireState(buttons);
+            while (await applied.Reader.ReadAsync(token) != buttons) { }
         }
     }
 
@@ -414,7 +466,18 @@ internal static class BotDesktopEvaluationTests
                     && !bridge.OwnsBotControl(owner), "B must stop the built-in policy and return controls.");
                 while ((await states.Reader.ReadAsync(token)).Enabled) { }
             }
-            Check(!Directory.Exists(Path.Combine(root, "bot-v1", "evaluations")), "No trained-policy evaluation may be attributed to a built-in run.");
+            await ((Task)Field("botEvaluationWrites").GetValue(window)!).WaitAsync(token);
+            var evaluationRoot = Path.Combine(root, "bot-v1", "evaluations");
+            if (expireHandoff)
+                Check(!Directory.Exists(evaluationRoot), "An opening without a playable frame must leave no evaluation.");
+            else
+            {
+                var evaluation = Directory.GetDirectories(Path.Combine(evaluationRoot, "hacker")).Single();
+                var metadata = Read<JsonElement>(evaluation, "evaluation.json");
+                Check(metadata.GetProperty("actionSource").GetString() == "starter-policy"
+                    && !metadata.TryGetProperty("modelSHA256", out _) && !metadata.TryGetProperty("skillEvents", out _),
+                    "A built-in run must have its own evaluation with no fabricated model or skill plan.");
+            }
 
             async Task ExpectAction(InputButtons button, string context, bool receiverGameplay, bool showHud = false)
             {

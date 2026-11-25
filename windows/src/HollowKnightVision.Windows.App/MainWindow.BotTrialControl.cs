@@ -49,7 +49,9 @@ public partial class MainWindow
         if (command.Kind == BotTrialCommandKind.Status) return new(true, Status: ReadTrialStatus());
         if (command.Kind == BotTrialCommandKind.Stop)
         {
+            thinkingAutomatic = false;
             StopBotPlayback("Bot stopped.", reason: "local-control");
+            PresentThinking();
             return new(true);
         }
         if (!CanUseTrialCheckpoint())
@@ -111,23 +113,28 @@ public partial class MainWindow
     private JsonElement ReadTrialStatus()
     {
         var run = Volatile.Read(ref botPlayback);
+        var skill = Volatile.Read(ref thinkingLease);
         var decision = run is null ? null : Volatile.Read(ref run.TrialDiagnostics);
         var evaluationPose = gameControls.TryGetFreshGroundTruth(TimeSpan.FromSeconds(.5), out var sample)
             && sample.HeroAvailable ? new { scene = sample.SceneName, x = sample.HeroX, y = sample.HeroY, sample.Grounded } : null;
         return JsonSerializer.SerializeToElement(new
         {
-            active = run is not null, phase = run?.Demo?.Phase.ToString() ?? (run is null ? "idle"
+            active = run is not null || skill is not null, phase = skill is not null ? "playing" : run?.Demo?.Phase.ToString() ?? (run is null ? "idle"
                 : Volatile.Read(ref run.Playing) ? "playing" : "waiting-for-gameplay"),
             status = run?.Demo?.Status ?? StatusText.Text, ready = CanUseTrialCheckpoint(),
             applicationActive = IsActive, capture = visionCancellation is { IsCancellationRequested: false },
             pause = gameControls.PauseState.ToString(), gameContext = recognizedMenuContext,
             trialReturnPoint = CurrentTrialReturnPoint() is not null,
-            botActive = run is not null && Volatile.Read(ref run.Playing), botDecisions = decision?.Count ?? 0,
+            botActive = skill is not null || run is not null && Volatile.Read(ref run.Playing), botDecisions = decision?.Count ?? 0,
             botStatus = run is null ? null : Volatile.Read(ref run.PlaybackUpdate).StatusAt(BotCaptureClock()),
             botAction = decision?.Action.Values, terrainSource = decision?.TerrainSource,
             humanTerrainSlots = decision?.AuthoredSlots, archivePath = lastBotDemoArchive,
             pathRecording = gameControls.IsRecording, learningRecording = botCapture is not null,
-            botDomain = run?.Domain == BotCaptureDomain.Hacker ? "hacker" : run is null ? null : "gameplay",
+            botDomain = (run?.Domain ?? skill?.Plan.Scope.Domain) switch
+            {
+                BotCaptureDomain.Hacker => "hacker", BotCaptureDomain.Gameplay => "gameplay", _ => null
+            },
+            skillCandidate = skill?.Maneuver.Candidate.Id,
             inputPath = InputPathText.Text, evaluationPose
         }, TrialJson);
     }

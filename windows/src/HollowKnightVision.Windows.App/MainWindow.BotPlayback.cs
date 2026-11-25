@@ -44,6 +44,7 @@ public partial class MainWindow
     private string? lastBotDemoArchive;
     private string BotDemoArchiveRoot => Path.Combine(BotRoot, "save-archives");
     private string BotEvaluationRoot => Path.Combine(BotRoot, "evaluations");
+    private readonly object botEvaluationLock = new();
     private Task botEvaluationWrites = Task.CompletedTask;
 
     private async void BotPlayback_Click(object sender, RoutedEventArgs e) => await ToggleBotPlaybackAsync();
@@ -77,7 +78,7 @@ public partial class MainWindow
 
     private async Task ToggleBotPlaybackAsync()
     {
-        var stoppedThinking = StopThinkingControl("Policy stopped with B.");
+        var stoppedThinking = StopThinkingControl("Policy stopped with B.", "user-stop");
         if (stoppedThinking || Volatile.Read(ref botPlayback) is not null)
         {
             thinkingAutomatic = false;
@@ -132,10 +133,10 @@ public partial class MainWindow
             loaded = new(null, null, $"Bot checkpoint unavailable. {error.Message}");
         }
         if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
-        if (loaded is { Policy: not null, ModelName: { } modelName, ModelHash: { } hash })
+        if (loaded is { Policy: not null, ModelName: { } modelName })
             loaded = loaded with
             {
-                Evaluation = new(BotEvaluationRoot, domain, modelName, hash, run.Authored, run.Generation, run.StartedAt)
+                Evaluation = new(BotEvaluationRoot, domain, modelName, loaded.ModelHash, run.Authored, run.Generation, run.StartedAt)
             };
         if (run.StartedInGameplay && loaded.Policy is null)
             StopBotPlayback(loaded.Issue);
@@ -145,7 +146,13 @@ public partial class MainWindow
 
     private void StopBotPlayback(string? status = null, string reason = "interrupted")
     {
-        if (Interlocked.Exchange(ref botPlayback, null) is not { } run) return;
+        BotRun? run;
+        lock (thinkingControlLock)
+        {
+            StopThinkingControlLocked(status, reason);
+            run = Interlocked.Exchange(ref botPlayback, null);
+        }
+        if (run is null) return;
         gameControls.EndBotControl(run.Owner);
         FinishBotEvaluation(run, reason);
         if (status is not null) SetStatus(status);
@@ -155,13 +162,23 @@ public partial class MainWindow
     {
         if (Volatile.Read(ref botPlayback) is { } run && run.Owner == owner && Volatile.Read(ref run.Playing))
             Volatile.Read(ref run.Loaded)?.Evaluation?.RecordControls(buttons, time);
+        else if (Volatile.Read(ref thinkingLease) is { PriorRun: null } lease && lease.Owner == owner)
+            lease.Evaluation?.RecordControls(buttons, time);
     }
 
     private void FinishBotEvaluation(BotRun run, string reason)
     {
         if (Volatile.Read(ref run.Loaded)?.Evaluation is not { } evaluation) return;
-        var write = SaveBotEvaluationAsync(evaluation, reason);
-        botEvaluationWrites = botEvaluationWrites.IsCompleted ? write : Task.WhenAll(botEvaluationWrites, write);
+        FinishEvaluation(evaluation, reason);
+    }
+
+    private void FinishEvaluation(BotEvaluationRecorder evaluation, string reason)
+    {
+        lock (botEvaluationLock)
+        {
+            var write = SaveBotEvaluationAsync(evaluation, reason);
+            Volatile.Write(ref botEvaluationWrites, botEvaluationWrites.IsCompleted ? write : Task.WhenAll(botEvaluationWrites, write));
+        }
     }
 
     private async Task SaveBotEvaluationAsync(BotEvaluationRecorder evaluation, string reason)
@@ -171,8 +188,11 @@ public partial class MainWindow
             or GroundTruthLineStoreException or JsonException)
         {
             Trace.TraceError("Bot evaluation could not be saved: {0}", error.Message);
-            if (!isClosing && Volatile.Read(ref botPlayback) is null)
-                SetStatus($"Bot evaluation could not be saved. {error.Message}");
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (!isClosing && Volatile.Read(ref botPlayback) is null && Volatile.Read(ref thinkingLease) is null)
+                    SetStatus($"Bot evaluation could not be saved. {error.Message}");
+            });
         }
     }
 
@@ -320,7 +340,11 @@ public partial class MainWindow
         gameControls.EndBotControl(run.Owner);
         Dispatcher.InvokeAsync(() =>
         {
-            if (Interlocked.CompareExchange(ref botPlayback, null, run) != run) return;
+            lock (thinkingControlLock)
+            {
+                if (Interlocked.CompareExchange(ref botPlayback, null, run) != run) return;
+                if (ReferenceEquals(thinkingLease?.PriorRun, run)) StopThinkingControlLocked(issue);
+            }
             FinishBotEvaluation(run, issue);
             SetStatus(issue);
         });

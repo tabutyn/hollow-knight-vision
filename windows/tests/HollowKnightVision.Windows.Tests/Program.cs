@@ -127,6 +127,7 @@ var tests = new List<(string Name, Action Run)>
     ("bot evaluations preserve source images, applied controls, and paired terrain outside training", BotEvaluationTests.TestBotEvaluationPreservesFramesControlsAndPairedAuditOutsideExpertData),
     ("empty and failed bot evaluations do not publish archives", BotEvaluationTests.TestEmptyAndFailedEvaluationsDoNotPublish),
     ("overloaded bot evaluations mark the source archive incomplete", BotEvaluationTests.TestEvaluationBackpressureMarksArchiveIncomplete),
+    ("skill evaluations preserve winning and alternate scores and outcomes", BotEvaluationTests.TestSkillEvaluationKeepsChoicesAndOutcome),
     ("atlas score uses stable health and forward progress and penalizes dwelling", BotAtlasRunTests.TestDamageDwellAndPathProgress),
     ("atlas score counts blue health once and repeated attack decisions", BotAtlasRunTests.TestOutcomesAndHeldAttack),
     ("older atlas scores load without blue health and held attack counts", BotAtlasRunTests.TestLegacyAtlasScore),

@@ -1046,7 +1046,7 @@ public partial class MainWindow : Window
             if (thinkingQuestionTask is { } answer) await answer;
             if (thinkingPreloadTask is { } preload) await preload;
             gameTextRecognition.Dispose();
-            await botEvaluationWrites;
+            await Volatile.Read(ref botEvaluationWrites);
             if (replayUiFinished is { } replayUi) await replayUi.Task;
             await worldWorker.DrainAsync();
             if (persistentWorldInitialization is { } worldInitialization)
@@ -1579,9 +1579,8 @@ public partial class MainWindow : Window
     private void ReleaseForwardedInput()
     {
         Volatile.Write(ref thinkingControlAvailable, false);
-        StopThinkingControl();
         forwardedKeys.Clear();
-        Interlocked.Exchange(ref botPlayback, null);
+        StopBotPlayback(reason: "input-released");
         gameControls.ReleaseAll();
         if (passingPrimaryMouse)
         {
@@ -3516,7 +3515,7 @@ public partial class MainWindow : Window
                 terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch, groundHypotheses,
                 gameplayAdmitted, atlasCompositionExclusions, masks, usesDurableWorld, botAtlas,
                 tracked.RoomAllowsAtlasWrite && tracked.MeasuredLineage is not null ? localWalkedGround : [],
-                tracked.MeasuredSceneryCamera, wallLineage, thinkingAbilityFrame);
+                tracked.MeasuredSceneryCamera, wallLineage, thinkingPlaybackFrame);
         }
         else
         {
