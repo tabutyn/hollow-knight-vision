@@ -37,6 +37,7 @@ internal static class BotDesktopCaptureIntegrationTests
                 VerifyDesktopRecording(window, hudFrame, Path.Combine(root, "demonstrations"), time => availableAt = time);
                 Wait(VerifyTimedClipAsync(window, root));
                 VerifyMatchedHackerRecording(window, Path.Combine(root, "paired-hacker"));
+                VerifyHackerVisualEvidence(window, hudFrame, Path.Combine(root, "hacker-evaluation"));
             }
             finally
             {
@@ -442,7 +443,7 @@ internal static class BotDesktopCaptureIntegrationTests
                     new[] { new DetectedFloorLine(101, new(70, 100)), new DetectedFloorLine(112, new(30, 60)) },
                     TerrainWallDetection.Empty, true, groundCamera, null, new AtlasPoint(42, 100), input,
                     null, epoch, ground, !usesDurableWorld, Array.Empty<PixelRect>(), null, usesDurableWorld,
-                    usesDurableWorld ? world : null, walked, sceneryCamera, null, null
+                    usesDurableWorld ? world : null, walked, sceneryCamera, null, null, false
                 ]);
                 return captureAt;
             }
@@ -477,6 +478,82 @@ internal static class BotDesktopCaptureIntegrationTests
             if (ReferenceEquals(Field("botRouteOwner").GetValue(window), capture)) return;
         }
         throw new InvalidOperationException("Established Gameplay did not reach the desktop bot capture path.");
+    }
+
+    private static void VerifyHackerVisualEvidence(MainWindow window, BgraFrame hudFrame, string library)
+    {
+        const string scene = "Tutorial_01";
+        const double start = 300;
+        const double matchedAt = start + 1.25;
+        const double unpairedAt = start + 1.5;
+        const int marker = 800;
+        var pixels = FrameWithScenery(hudFrame);
+        BgraFrame Frame(int id, double timestamp) => new(hudFrame.Width, hudFrame.Height, hudFrame.Stride,
+            pixels, id, DateTimeOffset.UnixEpoch.AddSeconds(timestamp));
+
+        var recognizer = (WindowsMenuStencilRecognizer)Field("menuStencilRecognizer").GetValue(window)!;
+        var initial = recognizer.Analyze(Frame(marker - 6, start), false,
+            () => [new ObjectDetection("game.playable-knight", new(.48, .62, .04, .16), .95f)]);
+        Check(initial.HasFreshGameplayEvidence, "The captured HUD must admit terrain analysis for the Hacker evaluation.");
+
+        var labels = new GroundTruthLineDocument { Lines = [new(scene, -2, 4, 0, GroundTruthLineKind.Positive, false)] };
+        var evaluation = new BotEvaluationRecorder(library, BotCaptureDomain.Hacker, "Hacker terrain audit",
+            null, labels, Generation, start);
+        var playback = Field("botPlayback");
+        var run = Activator.CreateInstance(playback.FieldType, Guid.NewGuid(), BotCaptureDomain.Hacker,
+            Generation, start, labels, null)!;
+        playback.FieldType.GetField("UsesReceiverFrames", InstanceMembers)!.SetValue(run, true);
+        playback.FieldType.GetField("Evaluation", InstanceMembers)!.SetValue(run, evaluation);
+        Field("workspace").SetValue(window, "Hacker");
+        playback.SetValue(window, run);
+        try
+        {
+            // The receiver playback test independently covers queueing exact captures and driving the policy.
+            // Supply its two accepted samples here to isolate their join with the desktop visual worker.
+            var terrain = new BotScreenTerrain(hudFrame.Width, hudFrame.Height, [new(20, 170, 100, 1)], []);
+            RecordAcceptedFrame(marker, matchedAt);
+            RecordAcceptedFrame(marker + 1, unpairedAt);
+            var admission = new GameplayFrameAdmission();
+            var tracking = (GameplayTrackingPipeline)Method("CreateLiveTrackingPipeline").Invoke(window, null)!;
+            for (var index = 1; index <= 5; index++)
+            {
+                var time = start + index * .25;
+                var id = marker - 5 + index;
+                _ = Method("AnalyzeVisionFrame").Invoke(window, [
+                    Frame(id, time), null, admission, Generation, 0L, time, id, null, false, false, 0L,
+                    InputButtons.Right, time == matchedAt, tracking
+                ]);
+            }
+
+            var directory = evaluation.FinishAsync(start + 2, "user-stop").GetAwaiter().GetResult()!;
+            var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+            var manifest = JsonSerializer.Deserialize<BotCaptureManifest>(File.ReadAllBytes(Path.Combine(directory, "manifest.json")), json)!;
+            using var metadata = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(directory, "evaluation.json")));
+            var source = metadata.RootElement.GetProperty("visualFrameArchive").Deserialize<RecordedVisualFrameArchive>(json)!;
+            var archive = new VisualReplayArchiveReader(directory, source, manifest.Id).Manifest;
+            Check(manifest is { ObservationCount: 2, TerrainPairedFrameCount: 1 }
+                && archive.Frames.Select(frame => frame.RenderedGameFrame).SequenceEqual([marker, marker + 1])
+                && archive.StageEvents.Where(stage => stage.Stage == "visionCompleted").Select(stage => stage.CaptureTimestamp)
+                    .SequenceEqual([matchedAt]), "Only the exact analyzed Hacker sample should receive visual terrain evidence.");
+            Check(archive.GroundInputs.Single() is
+                { CaptureTimestamp: matchedAt, CaptureGeneration: Generation, WindowsMovementButtons: InputButtons.Right,
+                    HorizontalDrive: 1, RecentJump: true, ExcludingRects.Length: > 0 },
+                "The Hacker evaluation must keep the desktop analysis' movement, recent jump and exclusion masks.");
+
+            void RecordAcceptedFrame(int id, double time)
+            {
+                var row = new BotCaptureObservation(time, time, time + .01, Generation, 1, 0,
+                    new double[BotRecordingContract.FeatureNames.Count], [], "human-authored") { AuthoredTerrain = terrain };
+                evaluation.RecordFrame(Frame(id, time), new(time, row.AvailableAt, Generation, 1, 0), row,
+                    scene, [], terrain, null, id, awaitHackerVisual: true);
+            }
+        }
+        finally
+        {
+            playback.SetValue(window, null);
+            _ = evaluation.FinishAsync(start + 2, "user-stop").GetAwaiter().GetResult();
+        }
+        Console.WriteLine("PASS Desktop Hacker evaluation preserves the exact frame's visual terrain and recent jump evidence");
     }
 
     private static byte[] FrameWithScenery(BgraFrame hudFrame)
