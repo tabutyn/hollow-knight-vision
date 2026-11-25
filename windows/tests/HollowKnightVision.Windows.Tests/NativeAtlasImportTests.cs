@@ -44,6 +44,15 @@ internal static class NativeAtlasImportTests
             Check(horizontal.TrackingIslands[0].WorldFromLocal == new AtlasPoint(8, 70)
                 && horizontal.TrackingIslands[0].Members.SequenceEqual(original.TrackingIslands[0].Members),
                 "room translation preserves rigid member poses");
+            Check(horizontal.DoorwayFloorConstraints.SequenceEqual(original.DoorwayFloorConstraints),
+                "horizontal translation retains the measured doorway");
+            var rejectedVertical = false;
+            try { _ = original.TranslateRoom(SourceRoom, new(0, 8)); }
+            catch (LiveWorldModelException error) when (error.Error == LiveWorldModelError.InvalidDoorwayFloorConstraint)
+            {
+                rejectedVertical = true;
+            }
+            Check(rejectedVertical, "moving one room vertically must preserve the doorway elevation constraint");
             Check(LiveWorldWalkedGround.ProjectRoom(horizontal, SourceRoom).Single().AtlasStart == new AtlasPoint(-22, 90),
                 "walked geometry moves with its island");
             Check(store.Commit(horizontal, original.MapRevision, horizontal.MapRevision), "commit rigid translation");
@@ -91,6 +100,22 @@ internal static class NativeAtlasImportTests
             var brokenDoor = JsonNode.Parse(payload)!;
             brokenDoor["doorwayFloorConstraints"]![0]!["arrivalSupport"]![0] = 4;
             Reject(brokenDoor, LiveWorldModelError.InvalidDoorwayFloorConstraint);
+            foreach (var (property, value) in new[]
+            {
+                ("departureSupport", "[0,0,2]"),
+                ("departureSupport", "[1,2]"),
+                ("departureFloor", "[30,20]"),
+                ("departureFloor", "[550,21]")
+            })
+            {
+                var malformed = JsonNode.Parse(payload)!;
+                malformed["doorwayFloorConstraints"]![0]![property] = JsonNode.Parse(value);
+                Reject(malformed, LiveWorldModelError.InvalidDoorwayFloorConstraint);
+            }
+            var duplicate = JsonNode.Parse(payload)!;
+            var doorways = duplicate["doorwayFloorConstraints"]!.AsArray();
+            doorways.Add(doorways[0]!.DeepClone());
+            Reject(duplicate, LiveWorldModelError.InvalidDoorwayFloorConstraint);
             var brokenMask = JsonNode.Parse(payload)!;
             brokenMask["observations"]![0]!["excludedRects"]![0] = JsonNode.Parse("[[2.5],[7,4]]");
             try
