@@ -1518,6 +1518,32 @@
     { "mac": "MenuStencilTests.testPlainMenuSelectorPredictionRejectsWrongRowsAndInsideText", "windows": "windows/tests/HollowKnightVision.Windows.Tests/MenuTrackerTests.cs:TestPlainMenuSelectorPredictionRejectsWrongRowsAndInsideText", "notes": "Directly verifies the exact row, fallback gap, and context conditions. TestPlainMenuSelectorBoxesFollowTheMatchedWords also covers repeated tracking with nearby Menu Style decorations." },
     { "mac": "MenuStencilTests.testCurrentUserPlainMenuRowsWhenRequested", "windows": "windows/tests/HollowKnightVision.Windows.Tests/CurrentMenuReplayAuditTests.cs:TestCurrentUserPlainMenuRowsWhenRequested", "notes": "Passed using the current English title, Extras, and Inventory references and the supplied corpus calibration. All 264 selector regions across 24 frames remained beside their matched text rows. Extras consistently selected Menu Style. The complete Inventory matched while its isolated heading did not. Private screens and calibration are external inputs." }
   ],
+  "unportedTestDispositions": [
+    {
+      "reason": "The deployed macOS playback path takes its actions from the learned policy. These retired Geo pursuit, combat, pit, and scripted recovery helpers cannot override playback. Windows verifies old checkpoint metadata and uses the shared actor through measured blockades in both observation domains.",
+      "macTests": [
+        "BotGeoCacheTests.testOffscreenTargetReturnsAfterCombatAndClearsWhenRoomChangesOrRockIsGone",
+        "BotPitPolicyTests.testExplorationNeedsADropWhenTheKnightOccludesTheFlatFloor",
+        "BotPitPolicyTests.testExportedPitCheckpointMatchesSB3",
+        "BotPitPolicyTests.testFlatGroundAndNarrowDetectorBreaksDoNotEngage",
+        "BotPitPolicyTests.testKeepsControlInAirAndReleasesAfterTwoLedgeObservations",
+        "BotPitPolicyTests.testUsesRelativeGeometryAndVisibilityAcrossDifferentStartingPositions",
+        "BotPlaybackControllerTests.testCombatUsesDemonstratedDodgeAndAimsAboveOrBelowKnight",
+        "BotRecoveryManeuverTests.testPrivateRecordedRecoveryStartsOnlyWithAMatchingHiddenFrame",
+        "BotRecoveryManeuverTests.testSplitLedgesMatchAndFlatViewsDoNotStartTheCorrection"
+      ],
+      "windowsEvidence": [
+        "windows/tests/HollowKnightVision.Windows.Tests/BotPolicyTests.cs:TestGeneralPolicyKeepsAllControlsAtMeasuredBlockades"
+      ]
+    },
+    {
+      "reason": "macOS computes offset wall guides internally and excludes them from routing, objective selection, and drawing. Windows keeps the authored walls and their path constraints without storing hidden guide strokes.",
+      "macTests": ["AtlasPlatformGraphTests.testWallOffsetsFollowInteriorAboveAndBelowTheLedge"],
+      "windowsEvidence": [
+        "windows/tests/HollowKnightVision.Windows.Tests/AtlasPlatformGraphTests.cs:TestAuthoredWallsAndSpikesConstrainRoadsWithoutCreatingGround"
+      ]
+    }
+  ],
   "macTestIssues": [
     "The calibrated scenery comparison is mapped to CUDA on Windows. The kernel and CPU fallback were verified without a device, and native CUDA hardware execution remains open.",
     "In the deployed Mac tree (8d67fa3), BotCombat and BotGeoPursuit have no playback caller. BotPitPolicy and BotRecoveryManeuver are checkpoint fields with no action consumer. Their helper tests are historical and remain unmapped. Active playback uses the learned policy and keeps old checkpoint data readable.",

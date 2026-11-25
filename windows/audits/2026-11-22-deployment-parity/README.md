@@ -4,6 +4,20 @@ The deployed source range is `b6f647c..8d67fa3`. The Mac coverage run used
 `6a15e70`, which has identical Mac sources, because the last two commits in
 the deployed range touched only Windows tests and the parity audit.
 
+Run the test inventory from the repository root to audit either the current
+checkout or a particular release candidate:
+
+```sh
+python3 windows/audits/2026-11-22-deployment-parity/summarize-test-parity.py --target HEAD
+```
+
+The report checks new XCTest methods and edits within existing test methods in
+the deployment range. Each Windows reference is checked at the selected commit.
+It reports intentionally omitted behavior with the Windows tests for the active
+behavior. `--require-accounted` fails when a surviving test has neither a mapping
+nor a documented disposition. Line counters, live gameplay and GPU execution
+still require their own evidence.
+
 ## Measured coverage
 
 | Deployed production surface | Covered changed executable lines | Coverage |
