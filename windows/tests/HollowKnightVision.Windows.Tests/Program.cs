@@ -248,6 +248,7 @@ var tests = new List<(string Name, Action Run)>
     ("recorded ground detection keeps requested frames and rejects stale or foreign masks", RecordedTerrainDetectionAuditTests.TestGroundAuditKeepsSelectedFramesAndRejectsStaleMasks),
     ("recorded ground pairs preserve frame identity, masks, and solver evidence", GroundPairReplayAuditTests.TestGroundPairReplayKeepsExactFramesAndMaskOwnership),
     ("recorded doorway floor evidence uses exact owned masks and reports black edges", LoadingGapReplayAuditTests.TestDoorwayFloorReplayNeedsExactOwnedMasks),
+    ("recorded Atlas reopens with the same masked pixels and owned ground", LiveIslandReplayAuditTests.TestWorldReopenPreservesMaskedPixelsAndSavedGround),
     ("ground scene labeled gameplay reports detection cost and evidence", GroundSceneAuditParityTests.TestLabeledGameplayGroundDetectionCostAndEvidence),
     ("ground scene captured platform audit runs masked and unmasked", GroundSceneAuditParityTests.TestCapturedPlatformScene),
     ("ground scene audit converts coordinates and alpha", GroundSceneAuditParityTests.TestSceneAuditCoordinateAndAlphaConversion),
@@ -1660,6 +1661,8 @@ if (Environment.GetEnvironmentVariable("HKV_REPLAY_GEO_LABELS") == "1")
     tests.Add(("active ONNX detector replays labeled Geo deposits through Game Play capture", GeoCacheReplayAuditTests.TestActiveDetectorFeedsLabeledGeoDepositsIntoGamePlayCapture));
 if (Environment.GetEnvironmentVariable("HKV_DOOR_FLOOR_AUDIT_INPUT") is not null)
     tests.Add(("archived doorway floor and black-edge candidates use recorded pixels", LoadingGapReplayAuditTests.TestArchivedDoorwayFloorCandidates));
+if (Environment.GetEnvironmentVariable("HKV_WORLD_REOPEN_AUDIT_INPUT") is not null)
+    tests.Add(("archived Atlas world reopens with identical pixels", LiveIslandReplayAuditTests.TestRecordedOwnedWorldReopensWithIdenticalPixels));
 
 foreach (var test in tests)
 {
