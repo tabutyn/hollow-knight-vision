@@ -105,6 +105,33 @@ internal static class HackerTerrainEditingTests
         });
     }
 
+    public static void TestIndependentWallStaysVerticalAndPreservesIntersectingFloor()
+    {
+        WithStore((store, editor) =>
+        {
+            var scale = new AtlasPoint(4, 10);
+            Drag(editor, -2.5, 0, 10, 0, pixelsPerUnit: scale, tolerance: 2);
+            var floor = editor.Document.Lines.Single();
+            editor.Tool = GroundTruthTerrainTool.Wall;
+            Drag(editor, 0, -3, 7.5, -2.9, pixelsPerUnit: scale, tolerance: 2);
+            Check(editor.Document.Walls is null or { Count: 0 }, "A nearly horizontal wall gesture must not save a wall.");
+            Drag(editor, 0, -3, 7.5, 3, pixelsPerUnit: scale, tolerance: 2);
+            var wall = editor.Document.Walls!.Single();
+            Check(wall is { Kind: GroundTruthLineKind.Wall, StartCornerId: null, EndCornerId: null }
+                && wall.Start == new AtlasPoint(0, -3) && wall.End == new AtlasPoint(0, 3),
+                "A vertical wall crossing a floor interior must not latch to the floor.");
+            editor = new GroundTruthLabelController(store) { Tool = GroundTruthTerrainTool.Wall, Mode = GroundTruthEditingMode.Modify };
+            Drag(editor, 0, 3, 12.5, 4, pixelsPerUnit: scale, tolerance: 2);
+            Drag(editor, 0, -3, -11.25, -4, pixelsPerUnit: scale, tolerance: 2);
+            Drag(editor, 0, 0, 1, 1, pixelsPerUnit: scale, tolerance: 2);
+            var reopened = store.Load();
+            var updated = reopened.Walls!.Single();
+            Check(reopened.Lines.Single() == floor && updated.Id == wall.Id
+                && updated.Start == new AtlasPoint(1, -3) && updated.End == new AtlasPoint(1, 5),
+                "Dragging free wall endpoints and the body must keep the wall vertical and preserve the existing floor.");
+        });
+    }
+
     public static void TestWallModifyCanAttachAGroundEndpoint()
     {
         WithStore((store, editor) =>

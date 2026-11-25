@@ -36,6 +36,50 @@ internal static class MenuStencilCorpusTests
         Case("testProblematicExtrasReferenceWhenRequested", TestProblematicExtrasReferenceWhenRequested);
         Case("testExternalMenuFrameWhenRequested", TestExternalMenuFrameWhenRequested);
         Case("testItalianOptionsWinsFullCatalog", TestItalianOptionsWinsFullCatalog);
+        Case("testCurrentCapturedHUDRecognizesLowHealthLifebloodWhenRequested", TestCurrentCapturedHudRecognizesLowHealthLifeblood);
+        Case("testCurrentMenuCapturesDoNotSupplyAtlasPathEvidenceWhenRequested", TestCurrentMenusWithCapturedHudDoNotAdmitPaths);
+    }
+
+    private static void TestCurrentCapturedHudRecognizesLowHealthLifeblood()
+    {
+        var (_, examples, _) = DefaultCorpus();
+        HudStencilTests.VerifyCapturedLifeblood(CapturedHud(examples));
+    }
+
+    private static void TestCurrentMenusWithCapturedHudDoNotAdmitPaths()
+    {
+        var (root, examples, _) = DefaultCorpus();
+        var template = CapturedHud(examples);
+        var menus = new[] { "pause", "inventory" }.Select(context =>
+            examples.FirstOrDefault(item => item.Manifest.ContextIdentifier == context)).ToArray();
+        RequireCompleteOrSkip(examples, menus.All(item => item is not null), "Current Pause and Inventory references are unavailable");
+        var catalog = Build(root, examples, [], Calibration());
+        var recentKnight = new ObjectDetection("game.playable-knight", new(.5, .4, .05, .1), .9f);
+        foreach (var example in menus.OfType<SavedLabelingExample>())
+        {
+            var frame = LoadFrame(example.ImagePath);
+            var hud = new HudStencilTracker(template);
+            var menu = new MenuStencilTracker(catalog, minimumSearchInterval: .1);
+            var pipeline = new LiveGameStatusPipeline(startsInGameplay: true);
+            for (var index = 0; index < 2; index++)
+            {
+                var time = 1 + .2 * index;
+                var health = hud.Observe(frame, true, time, 1);
+                var candidate = health?.EstablishesGameplay == true ? null : menu.Observe(frame, time);
+                var analysis = pipeline.Observe(candidate, health, time, inferObjects: () => [recentKnight]);
+                Check(AtlasPathFrameEvidence.Classify(true, analysis.RecognizedStatus?.ContextIdentifier) != AtlasPathFrameState.Gameplay,
+                    $"{example.Manifest.ContextIdentifier}: a current menu must not authorize the Atlas path with stale Knight evidence.");
+            }
+            Equal(example.Manifest.ContextIdentifier, pipeline.Current?.ContextIdentifier, "Recognized menu after two frames");
+        }
+    }
+
+    private static HudStencilTemplate CapturedHud(IReadOnlyList<SavedLabelingExample> examples)
+    {
+        var source = StencilInitializationPolicy.RepresentativeExample(examples, "gameplay-hud", "en", GameRuntimeMode.Normal);
+        if (source is null) Skip("The current captured English gameplay HUD reference is unavailable");
+        return HudStencilTemplate.Captured(LoadFrame(source.ImagePath), source.Manifest.Annotations, source.Id.ToString())
+            ?? throw new InvalidDataException("The current gameplay HUD labels do not produce a usable template.");
     }
 
     private static void TestCurrentReportedMenuStatesRecognizeWithoutLiveSelfReference()

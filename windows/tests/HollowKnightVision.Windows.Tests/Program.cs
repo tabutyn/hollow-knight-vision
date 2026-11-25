@@ -1433,6 +1433,7 @@ var tests = new List<(string Name, Action Run)>
     ("terrain edits preserve shared Mac room calibrations", HackerTerrainEditingTests.TestMacRoomCalibrationsSurviveTerrainEditAndUndo),
     ("wall preview and persisted ground corners", HackerTerrainEditingTests.TestWallSnapsBothCornersAndCommitsOnRelease),
     ("wall and floor move on constrained axes after reload", HackerTerrainEditingTests.TestWallAndFloorMoveOnTheirOwnAxesAfterReload),
+    ("a free vertical wall preserves the intersecting ground through edits and reload", HackerTerrainEditingTests.TestIndependentWallStaysVerticalAndPreservesIntersectingFloor),
     ("wall tool modifies and attaches ground endpoints", HackerTerrainEditingTests.TestWallModifyCanAttachAGroundEndpoint),
     ("terrain corners use nearby endpoints in the same room", HackerTerrainEditingTests.TestCornerRequiresNearbyEndpointInSameRoom),
     ("overlapping rooms rank authored terrain using their projected endpoint distances", HackerTerrainEditingTests.TestRoomHitRankingUsesProjectedEndpointsBeforeBodies),
