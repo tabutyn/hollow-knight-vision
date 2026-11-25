@@ -791,6 +791,11 @@ atlas. Use `--visual-replay-frame-limit 600` to cap the run. An incomplete archi
 requires `--visual-replay-allow-incomplete` and reports the original missing
 frame indices.
 
+When a frame has no recorded mask, replay can reuse the previous mask for up
+to 100 ms within the same capture generation and image size. The report counts
+exact and reused masks. Short jump taps in older recordings still suppress
+walked-ground evidence for 400 ms when an exact jump state is unavailable.
+
 The replay trace contains visual estimates. Both scorers read receiver
 measurements from the original recording. For the Windows Host's
 `--evaluate-low-resolution-trace` command, pass the original recording with

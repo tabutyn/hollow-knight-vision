@@ -22,18 +22,25 @@ internal static class VisualProductionReplayTests
             for (var index = 0; index < 76; index++)
             {
                 var time = startedAt + index * .04;
+                var generation = index < 70 ? 7UL : 8UL;
                 var frame = new BgraFrame(width, height, width * 4, pixels, index, DateTimeOffset.UnixEpoch);
-                writer.Append(frame, time, index == 75 ? double.NaN : time + .002, 7, width, index + 500);
+                writer.Append(frame, time, index == 75 ? double.NaN : time + .002, generation, width, index + 500);
                 if (index is 1 or 75) continue;
-                writer.RecordStage(new("visionStarted", time, 7));
-                if (index != 0)
-                    writer.RecordGroundInput(new(time, 7, ExcludingRects: [[[0, 150], [50, 30]]],
-                        WindowsMovementButtons: InputButtons.Right));
-                writer.RecordStage(new("visionCompleted", time, 7));
+                writer.RecordStage(new("visionStarted", time, generation));
+                if (index is not (0 or 3 or 4 or 5 or 70))
+                    writer.RecordGroundInput(new(time, generation, ExcludingRects: [[[0, 150], [50, 30]]],
+                        HorizontalDrive: index == 6 ? -1 : null, RecentJump: index == 6 ? false : null,
+                        WindowsMovementButtons: index is 6 or 7 or 14 ? null : InputButtons.Right));
+                writer.RecordStage(new("visionCompleted", time, generation));
             }
             var archive = await writer.FinishAsync();
+            RecordedInputPathEvent[] events =
+            [
+                new(.09, RecordedGameButton.Z, RecordedInputTransition.Pressed),
+                new(.10, RecordedGameButton.Z, RecordedInputTransition.Released)
+            ];
             var recorded = new RecordedInputPath(RecordedInputPath.CurrentSchemaVersion, pathId,
-                DateTimeOffset.UnixEpoch, 4, null, null, null, [], trackingSamples: [], visualFrameArchive: archive);
+                DateTimeOffset.UnixEpoch, 4, null, null, null, events, trackingSamples: [], visualFrameArchive: archive);
             var source = new RecordedInputPathStore(root).Save(recorded);
 
             using var invalidOutput = new StringWriter();
@@ -54,7 +61,8 @@ internal static class VisualProductionReplayTests
             Check(first.GetProperty("frames").GetInt32() == 74);
             Check(first.GetProperty("skippedBeforeVision").GetInt32() == 1);
             Check(first.GetProperty("missingFrameIndices").EnumerateArray().Single().GetInt32() == 75);
-            Check(first.GetProperty("maskInputs").GetInt32() == 73);
+            Check(first.GetProperty("maskInputs").GetInt32() == 69);
+            Check(first.GetProperty("carriedMaskInputs").GetInt32() == 2);
             Check(first.GetProperty("groundVerifiedFrames").GetInt32() > 0, "The source floor did not anchor the camera.");
             Check(first.GetProperty("committedFrames").GetInt32() > 0 && first.GetProperty("atlasTiles").GetInt32() > 0,
                 "Replay did not use the durable atlas pipeline.");
@@ -67,11 +75,25 @@ internal static class VisualProductionReplayTests
                     { GameplayEnabled: true, GroundTrackingReliable: true, HorizontalInput: 1, MotionGridAvailable: true }),
                 "Visual replay must record its own solver inputs and revision on the replayed frames.");
             var rows = File.ReadLines(first.GetProperty("diagnosticsPath").GetString()!).ToArray();
-            Check(rows.Length == 74 && rows.Sum(line =>
+            var byIndex = rows.Select(line =>
             {
                 using var row = JsonDocument.Parse(line);
-                return row.RootElement.GetProperty("index").GetInt32() == 1 ? 1 : 0;
-            }) == 0);
+                return row.RootElement.Clone();
+            }).ToDictionary(row => row.GetProperty("index").GetInt32());
+            Check(byIndex.Count == 74 && !byIndex.ContainsKey(1));
+            Check(byIndex[4].GetProperty("maskAgeSeconds").GetDouble() is > .07 and < .09
+                && byIndex[4].GetProperty("admitsTracking").GetBoolean(),
+                "A short gap must reuse the last mask and keep admitting tracked imagery.");
+            Check(byIndex[5].GetProperty("maskAgeSeconds").ValueKind == JsonValueKind.Null
+                && !byIndex[5].GetProperty("admitsTracking").GetBoolean()
+                && byIndex[70].GetProperty("maskAgeSeconds").ValueKind == JsonValueKind.Null,
+                "Masks must expire after 100 ms and must not cross a capture generation.");
+            InputButtons Movement(int index) => (InputButtons)byIndex[index].GetProperty("movementButtons").GetInt32();
+            Check(Movement(3) == InputButtons.ActionZ && Movement(4) == InputButtons.ActionZ,
+                "A jump tap between captures must suppress walked ground without reusing earlier movement.");
+            Check(Movement(6) == InputButtons.Left && Movement(7) == InputButtons.ActionZ
+                && Movement(14) == InputButtons.None,
+                "Exact legacy input must override the jump fallback and the fallback must expire.");
 
             var altered = Path.Combine(root, "path-altered-receiver.json");
             var data = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(source))!.AsObject();
