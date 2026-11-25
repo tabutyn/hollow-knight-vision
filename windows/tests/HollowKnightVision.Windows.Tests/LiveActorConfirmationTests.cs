@@ -111,6 +111,10 @@ internal static class LiveActorConfirmationTests
                     "The production detector should keep the baseline and add verified Knight, deposit, and corroborated enemy.");
                 Check(result.All(item => item.SourceFrameIdentifier == 47 && item.ModelVersion == version),
                     "Every supplemental actor must keep the exact source frame and active version.");
+                var capture = GeoCacheReplayAuditTests.Capture(frame, result);
+                Check(capture.GeoCaches is { Count: 1 } && capture.ModelVersion == version.DisplayName
+                    && GeoCacheReplayAuditTests.ReadCurrentPolicy(capture) == (true, true),
+                    "A real detector deposit must reach the exact-frame capture and the current policy schema.");
                 var raw = detector.Detect(frame, raw: true);
                 Check(raw.Count == 2 && raw.All(item => item.ClassIdentifier == Crawlid),
                     "The raw debug path should expose only primary trained heads.");

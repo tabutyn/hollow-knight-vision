@@ -1655,6 +1655,8 @@ if (Environment.GetEnvironmentVariable("HKV_GROUND_PAIR_RECORDING") is not null)
     tests.Add(("archived ground pairs and sequences replay the pixel solver", GroundPairReplayAuditTests.TestArchivedGroundPairsWhenRequested));
 if (Environment.GetEnvironmentVariable("HKV_CALIBRATED_SCENE_AUDIT_INPUT") is not null)
     tests.Add(("archived fall replays calibrated scenery after ground loss", CalibratedSceneReplayAuditTests.TestArchivedFallWhenRequested));
+if (Environment.GetEnvironmentVariable("HKV_REPLAY_GEO_LABELS") == "1")
+    tests.Add(("active ONNX detector replays labeled Geo deposits through Game Play capture", GeoCacheReplayAuditTests.TestActiveDetectorFeedsLabeledGeoDepositsIntoGamePlayCapture));
 
 foreach (var test in tests)
 {
