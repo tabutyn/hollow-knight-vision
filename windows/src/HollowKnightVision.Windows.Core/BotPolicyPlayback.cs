@@ -54,13 +54,17 @@ public sealed class BotPolicyPlayback
         if (row is null)
             return WaitFor(domain == BotCaptureDomain.Hacker
                 ? "Bot waiting for mod actor telemetry" : BotPlaybackUpdate.WaitingForFrame);
+        var expectedTerrain = domain == BotCaptureDomain.Hacker ? "human-authored" : "detected";
+        // The paired camera can publish first. Leave this policy's history and input deadline untouched.
+        if (row.TerrainSource is "human-authored" or "detected" && row.TerrainSource != expectedTerrain)
+            return null;
         if (!double.IsFinite(row.CaptureTimestamp) || row.CaptureTimestamp > now)
             return WaitFor("Bot waiting for a fresh capture");
         if (newestCapture is { } latest && row.Generation == latest.Generation && row.CaptureTimestamp <= latest.Timestamp)
             return null;
         newestCapture = (row.Generation, row.CaptureTimestamp);
         if (!previous.HasValue) return WaitFor("Bot waiting for current game controls");
-        if (row.TerrainSource != (domain == BotCaptureDomain.Hacker ? "human-authored" : "detected"))
+        if (row.TerrainSource != expectedTerrain)
             return WaitFor(domain == BotCaptureDomain.Hacker
                 ? "Bot waiting for authored terrain" : "Bot waiting for detected terrain");
 
