@@ -874,11 +874,14 @@ internal static class AtlasWindowIntegrationTests
             Check(VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7
                 && SaveProfileAtlas.Read(activeWorld) == profile, "Gameplay Load did not restore the current playthrough.");
             Select(rows, "Gameplay run");
+            var gameplayBeforeDelete = gameplayStates.List().OrderBy(state => state.Id).ToArray();
+            var namedGameplay = gameplayBeforeDelete.Single(state => state.Name == "Gameplay run");
             AnswerAtlasDelete(window, confirm: false);
-            Check(gameplayStates.List().Count == 2 && gameplayStates.List().Any(state => state.Name == "Gameplay run"),
+            Check(gameplayStates.List().OrderBy(state => state.Id).SequenceEqual(gameplayBeforeDelete),
                 "Declining Delete changed the named Gameplay states.");
             AnswerAtlasDelete(window, confirm: true);
-            Check(!gameplayStates.List().Any(state => state.Name == "Gameplay run") && gameplayStates.List().Count == 2
+            Check(gameplayStates.List().OrderBy(state => state.Id)
+                    .SequenceEqual(gameplayBeforeDelete.Where(state => state.Id != namedGameplay.Id))
                 && hackerStates.Read(profile)?.RegistrationCount == 3, "Gameplay Delete affected a different state.");
 
             OpenManager(window, "Hacker");
@@ -900,12 +903,15 @@ internal static class AtlasWindowIntegrationTests
             Check(Control<TextBlock>(window, "AtlasPreviewText").Text.Contains("1 rooms", StringComparison.Ordinal),
                 "Hacker Load did not publish its restored layout.");
             Select(rows, "Hacker route");
+            var hackerBeforeDelete = hackerStates.ListStates().OrderBy(state => state.Id).ToArray();
             AnswerAtlasDelete(window, confirm: false);
-            Check(hackerStates.ListStates().Count == 2 && hackerStates.ListStates().Any(state => state.Id == namedHacker.Id),
+            Check(hackerStates.ListStates().OrderBy(state => state.Id).SequenceEqual(hackerBeforeDelete),
                 "Declining Delete changed the named Hacker states.");
             AnswerAtlasDelete(window, confirm: true);
-            Check(!hackerStates.ListStates().Any(state => state.Id == namedHacker.Id)
-                && hackerStates.ListStates().Count == 2, "Hacker Delete did not retain the recovery snapshots.");
+            Check(hackerStates.ListStates().OrderBy(state => state.Id)
+                    .SequenceEqual(hackerBeforeDelete.Where(state => state.Id != namedHacker.Id))
+                && VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7,
+                "Hacker Delete did not retain the recovery snapshots or preserve the active Gameplay map.");
 
             SetField(window, "hackerLayoutRevision", 1L);
             Wait(InvokeTask(window, "PersistHackerAtlasPeriodicallyAsync"));
@@ -931,12 +937,14 @@ internal static class AtlasWindowIntegrationTests
                 "Returning to a saved profile did not restore both atlases.");
 
             rows.SelectedIndex = 0;
-            var count = hackerStates.ListStates().Count;
+            var savedHacker = hackerStates.ListStates().OrderBy(state => state.Id).ToArray();
             AnswerAtlasDelete(window, confirm: false);
-            Check(hackerStates.Read(profile)?.Rooms.Count == 1 && hackerStates.ListStates().Count == count,
+            Check(hackerStates.Read(profile)?.Rooms.Count == 1
+                && hackerStates.ListStates().OrderBy(state => state.Id).SequenceEqual(savedHacker),
                 "Declining Delete cleared the active Hacker map or changed its saved states.");
             AnswerAtlasDelete(window, confirm: true);
-            Check(hackerStates.Read(profile)?.Rooms.Count == 0 && hackerStates.ListStates().Count == count
+            Check(hackerStates.Read(profile)?.Rooms.Count == 0
+                && hackerStates.ListStates().OrderBy(state => state.Id).SequenceEqual(savedHacker)
                 && VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7,
                 "Deleting the Hacker autosave must clear only that active map.");
 
@@ -944,14 +952,15 @@ internal static class AtlasWindowIntegrationTests
 
             OpenManager(window, "Gameplay");
             rows.SelectedIndex = 0;
-            var savedGameplay = gameplayStates.List().Select(state => state.Name).Order().ToArray();
+            var savedGameplay = gameplayStates.List().OrderBy(state => state.Id).ToArray();
             AnswerAtlasDelete(window, confirm: false);
-            Check(VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7,
-                "Declining Delete cleared the active Gameplay map.");
+            Check(VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 7
+                && gameplayStates.List().OrderBy(state => state.Id).SequenceEqual(savedGameplay),
+                "Declining Delete cleared the active Gameplay map or changed its saved states.");
             AnswerAtlasDelete(window, confirm: true);
             Check(VisionResetController.ReadPersistedAtlas(activeWorld).Metadata.RegistrationCount == 0
-                && gameplayStates.List().Select(state => state.Name).Order().SequenceEqual(savedGameplay)
-                && hackerStates.ListStates().Count == count,
+                && gameplayStates.List().OrderBy(state => state.Id).SequenceEqual(savedGameplay)
+                && hackerStates.ListStates().OrderBy(state => state.Id).SequenceEqual(savedHacker),
                 "Deleting the Gameplay autosave must clear only that active map.");
         }
         finally
