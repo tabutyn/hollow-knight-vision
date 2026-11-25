@@ -1657,6 +1657,8 @@ if (Environment.GetEnvironmentVariable("HKV_CURRENT_STENCIL_AUDIT") is not null)
     tests.Add(("current title, Extras, and Inventory captures keep local selector alignment", CurrentMenuReplayAuditTests.TestCurrentUserPlainMenuRowsWhenRequested));
 if (Environment.GetEnvironmentVariable("HKV_GROUND_PAIR_RECORDING") is not null)
     tests.Add(("archived ground pairs and sequences replay the pixel solver", GroundPairReplayAuditTests.TestArchivedGroundPairsWhenRequested));
+if (Environment.GetEnvironmentVariable("HKV_CAPTURE_REFINEMENT_RECORDING") is not null)
+    tests.Add(("archived capture refinement uses exact current and reference floor evidence", CaptureRefinementAuditTests.TestInspectIndependentCaptureRefinementWhenRequested));
 if (Environment.GetEnvironmentVariable("HKV_CALIBRATED_SCENE_AUDIT_INPUT") is not null)
     tests.Add(("archived fall replays calibrated scenery after ground loss", CalibratedSceneReplayAuditTests.TestArchivedFallWhenRequested));
 if (Environment.GetEnvironmentVariable("HKV_REPLAY_GEO_LABELS") == "1")
@@ -1667,6 +1669,8 @@ if (Environment.GetEnvironmentVariable("HKV_WORLD_REOPEN_AUDIT_INPUT") is not nu
     tests.Add(("archived Atlas world reopens with identical pixels", LiveIslandReplayAuditTests.TestRecordedOwnedWorldReopensWithIdenticalPixels));
 if (Environment.GetEnvironmentVariable("HKV_ISLAND_AUDIT_INPUT") is not null)
     tests.Add(("archived Atlas islands replay with their measured camera evidence", RecordedIslandClosureAuditTests.TestRecordedWorldIslandClosures));
+if (Environment.GetEnvironmentVariable("HKV_ISLAND_CANDIDATE_AUDIT_INPUT") is not null)
+    tests.Add(("archived island comparison measures ambiguities in pooled and per-island searches", IslandCandidateAmbiguityAuditTests.TestInspectSavedIslandCandidateAmbiguity));
 if (Environment.GetEnvironmentVariable("HKV_SAME_VIEW_AUDIT_INPUT") is not null)
     tests.Add(("recorded return places an island after two fresh floor votes", LiveIslandReplayAuditTests.TestRecordedReturnUsesTwoFreshFloorVotes));
 if (Environment.GetEnvironmentVariable("HKV_SAME_VIEW_AUDIT_OUTPUT") is not null)
