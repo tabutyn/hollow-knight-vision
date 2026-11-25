@@ -23,7 +23,10 @@ internal static class GroundFeatureViewerTests
                     new(new(20, 50), new(160, 50), Brushes.Lime),
                     new(new(100, 50), new(100, 70), Brushes.Gold)
                 ], new(90, 50), point => new(point.X, point.Y));
+            scene.Show();
             Layout(scene);
+            Check(scene is { IsVisible: true, Title: "Ground Viewer", Selected: null },
+                "Ground Viewer must open with no selected tracking patch.");
             var overview = (Grid)scene.FindName("OverviewHost");
             var bitmap = new RenderTargetBitmap((int)overview.ActualWidth, (int)overview.ActualHeight,
                 96, 96, PixelFormats.Pbgra32);

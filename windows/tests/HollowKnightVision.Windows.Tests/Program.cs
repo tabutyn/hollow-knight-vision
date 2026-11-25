@@ -1647,6 +1647,8 @@ if (Environment.GetEnvironmentVariable("HKV_PATCH_REPLAY_INPUT") is not null)
     tests.Add(("platform patch replay processes every captured frame", GroundDetectionReplayAuditTests.TestPlatformPatchTrackingOnRecordedGameplayWhenRequested));
 if (Environment.GetEnvironmentVariable("HKV_GROUND_DETECTION_RECORDING") is not null)
     tests.Add(("recorded terrain detection audits pixel evidence and verified contacts", RecordedTerrainDetectionAuditTests.TestRecordedGroundDetectionsWhenRequested));
+if (Environment.GetEnvironmentVariable("HKV_CURRENT_STENCIL_AUDIT") is not null)
+    tests.Add(("current title, Extras, and Inventory captures keep local selector alignment", CurrentMenuReplayAuditTests.TestCurrentUserPlainMenuRowsWhenRequested));
 
 foreach (var test in tests)
 {
