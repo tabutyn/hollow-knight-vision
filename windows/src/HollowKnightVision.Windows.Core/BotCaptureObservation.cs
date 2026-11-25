@@ -180,10 +180,11 @@ public static class BotObservationBuilder
     public static BotCaptureObservation Gameplay(BgraFrame image, BotCaptureTiming timing, LiveObjectDetectionBatch? batch,
         IReadOnlyList<DetectedFloorLine> floors, IReadOnlyList<DetectedWall> walls, bool terrainAnalyzed,
         AtlasPoint? camera, HudStencilResult? hud, AtlasPoint? measuredFoot, InputButtons? input,
-        BotBlueHealthOutcomes? blueHealth = null, IReadOnlyList<BotLine>? visualDoors = null)
+        BotBlueHealthOutcomes? blueHealth = null, IReadOnlyList<BotLine>? visualDoors = null,
+        IReadOnlyList<DetectedFloorLine>? supportingFloors = null, GameplaySceneMasks? masks = null)
     {
         var terrain = new BotScreenTerrain(image.Width, image.Height,
-            ProjectDetectedFloors(image, floors), ProjectDetectedWalls(image, walls),
+            ProjectDetectedFloors(image, floors, walls, supportingFloors, masks), ProjectDetectedWalls(image, walls),
             Doors: visualDoors is { Count: > 0 } ? visualDoors : null);
         var issues = BaseIssues(timing);
         var age = batch is null ? double.PositiveInfinity : (image.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds - batch.SourceTimestamp;
@@ -234,10 +235,35 @@ public static class BotObservationBuilder
         }
     }
 
-    public static IReadOnlyList<BotFloor> ProjectDetectedFloors(BgraFrame image, IReadOnlyList<DetectedFloorLine> floors) =>
-        floors.Where(line => line.Row >= 0 && line.Row < image.Height && line.XSpan.Start >= 0
-                && line.XSpan.EndInclusive < image.Width)
-            .Select(line => new BotFloor(line.XSpan.Start, line.XSpan.EndInclusive + 1, image.Height - line.Row, 1)).ToArray();
+    public static IReadOnlyList<BotFloor> ProjectDetectedFloors(BgraFrame image, IReadOnlyList<DetectedFloorLine> floors,
+        IReadOnlyList<DetectedWall> walls, IReadOnlyList<DetectedFloorLine>? supportingFloors = null, GameplaySceneMasks? masks = null)
+    {
+        IReadOnlyList<AtlasPathPlatform> spans = floors.Where(InFrame)
+            .SelectMany(floor => floor.EvidenceSpans.Select(span =>
+                new AtlasPathPlatform(span.Start, span.EndInclusive + 1, image.Height - floor.Row))).ToArray();
+        if (spans.Count > 1)
+        {
+            var knight = masks?.ContactKnight(image.Width, image.Height);
+            var height = Math.Max(4, AtlasPathPoint.Round(GroundClearance.KnightHeight(image.Height, knight)));
+            var width = Math.Max(2, knight is { Width: > 0, Height: > 0 } sprite && sprite.Height < image.Height / 2d
+                ? sprite.Width : height / 2);
+            var barriers = walls.Select(wall =>
+                new AtlasPathWall(wall.X, image.Height - wall.Bottom, image.Height - wall.Top)).ToArray();
+            // Bridge a wider seam only when consecutive pieces of one accepted surface support it.
+            var seams = (supportingFloors ?? floors).Where(floor => floor.EvidenceSpans.Count > 1 && InFrame(floor))
+                .SelectMany(floor =>
+                {
+                    var ordered = floor.EvidenceSpans.OrderBy(span => span.Start).ToArray();
+                    return ordered.Zip(ordered.Skip(1), (left, right) =>
+                        new AtlasPathPlatform(left.Start, right.EndInclusive + 1, image.Height - floor.Row));
+                }).ToArray();
+            spans = AtlasPathFloorGeometry.StitchDetected(spans, [], barriers, height, width, seams);
+        }
+        return spans.Select(span => new BotFloor(span.Left, span.Right, span.Y, 1)).ToArray();
+
+        bool InFrame(DetectedFloorLine floor) => floor.Row < image.Height && floor.XSpan.Start >= 0
+            && floor.XSpan.EndInclusive < image.Width;
+    }
 
     /// <summary>Projects observed openings in the current room into bottom-up image pixels.</summary>
     public static IReadOnlyList<BotLine> ProjectVisualDoors(LiveWorldPlacementProjection placement, int room,

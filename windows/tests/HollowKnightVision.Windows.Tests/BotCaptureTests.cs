@@ -34,6 +34,50 @@ internal static class BotCaptureTests
         Check(Hacker(input, bad) is { CanTrain: false }, "Duplicate mod identities must not produce valid observations.");
     }
 
+    internal static void TestGameplayFloorsStitchOnlyAcrossTheSameSurface()
+    {
+        var frame = new BgraFrame(160, 100, 640, new byte[160 * 100 * 4], 1, DateTimeOffset.UnixEpoch);
+        var timing = new BotCaptureTiming(0, 0, 1, 1, 0);
+        var surface = new DetectedFloorLine(40, new(0, 149), [new(0, 29), new(39, 71), new(110, 149)]);
+        var lower = new DetectedFloorLine(65, new(80, 97));
+        var higher = new DetectedFloorLine(22, new(30, 64));
+        var wall = new DetectedWall(88, 28, 43, true);
+        var masks = new GameplaySceneMasks(SceneRegions.Startup(), SceneRegions.Startup(), [], [], null)
+            { ObservedPlayerBounds = new(50, 16, 12, 24) };
+
+        IReadOnlyList<BotFloor> Observe(IReadOnlyList<DetectedFloorLine> floors, IReadOnlyList<DetectedWall> walls,
+            IReadOnlyList<DetectedFloorLine>? proof = null) =>
+            BotObservationBuilder.Gameplay(frame, timing, null, floors, walls, terrainAnalyzed: true,
+                camera: null, hud: null, measuredFoot: null, input: null, supportingFloors: proof, masks: masks)
+                .DetectedTerrain!.Floors;
+
+        var stitched = Observe([surface], []);
+        Check(stitched.SequenceEqual([new(0, 150, 60, 1)]),
+            "Separated evidence on the same clean surface should form one Game Play floor.");
+        var road = new AtlasPlatformGraph(stitched.Select(floor =>
+            new AtlasPathPlatform((int)floor.MinimumX, (int)floor.MaximumX, (int)floor.Y)).ToArray(), [], 24, 12);
+        Check(road.Strokes.Select(stroke => stroke.Kind).SequenceEqual([AtlasPathKind.Walk]),
+            "A stitched surface must produce one walk with no false jump or fall.");
+        var parts = surface.EvidenceSpans.Select(span => new DetectedFloorLine(40, span)).ToArray();
+        Check(Observe(parts, []).Count == 2 && Observe(parts, [], [surface]).SequenceEqual([new(0, 150, 60, 1)]),
+            "A wide gap requires independent proof of a single surface after merging walked spans.");
+        Check(Observe([surface], [wall]).SequenceEqual([new(0, 72, 60, 1), new(110, 150, 60, 1)]),
+            "Do not connect the floor across a wall in the unobserved interval.");
+        Check(Observe([surface, lower], []).Count == 3,
+            "A lower platform is evidence of a pit, even inside a wide surface proposal.");
+        Check(Observe([surface, higher], []).Count == 2,
+            "Stitch the supported floor while preserving the upper ledge.");
+
+        var fallback = BotObservationBuilder.Gameplay(frame, timing, null, [surface], [], terrainAnalyzed: true,
+            camera: null, hud: null, measuredFoot: null, input: null).DetectedTerrain!.Floors;
+        Check(fallback.SequenceEqual(stitched),
+            "Direct evidence of the same surface survives a missing Knight box even across a wider seam.");
+
+        var lip = new DetectedFloorLine(40, new(39, 110), [new(39, 71), new(110, 110)]);
+        Check(Observe([parts[1], parts[2]], [], [lip]).SequenceEqual([new(39, 150, 60, 1)]),
+            "A same-surface witness meeting the beginning of the next floor is enough for an observation.");
+    }
+
     internal static void TestVisualPortalProjectionReachesGameplayPolicyOnlyInItsRoom()
     {
         var placement = LiveWorldPlacementProjection.Empty with

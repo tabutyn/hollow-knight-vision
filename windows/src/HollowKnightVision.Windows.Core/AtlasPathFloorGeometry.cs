@@ -8,7 +8,7 @@ internal static class AtlasPathFloorGeometry
         IReadOnlyList<AtlasPathWall> walls, IReadOnlyList<AtlasPathPlatform> spikes, IReadOnlyList<AtlasPathPlatform> walked,
         IReadOnlyList<AtlasPathPlatform> handoffSeams, int height, int width, bool detected)
     {
-        var merged = detected ? StitchDetected(raw, walked, walls, height, width, handoffSeams)
+        var merged = detected ? StitchDetected(raw, walked, walls, height, width, handoffSeams, maximumSupportedGap: 3 * height)
             : Merge(raw, height);
         return merged.SelectMany(floor => SubtractSpikes(floor, spikes, height, width))
             .SelectMany(floor => CutStandingWalls(floor, walls, detected ? walked : [], height, width))
@@ -52,9 +52,9 @@ internal static class AtlasPathFloorGeometry
     {
         var jitter = Math.Clamp(height / 5, 2, 8);
         var seam = requireWitness ? 0 : Math.Max(2, Math.Min(width, height));
-        var searchWidth = Math.Max(seam, Math.Min(maximumSupportedGap ?? 3 * height,
-            witnesses.Select(span => span.Right - span.Left).DefaultIfEmpty().Max()));
-        var margin = Math.Min(3, width / 2);
+        var longestWitness = witnesses.Select(span => span.Right - span.Left).DefaultIfEmpty().Max();
+        var searchWidth = Math.Max(seam, Math.Min(maximumSupportedGap ?? longestWitness, longestWitness));
+        var margin = maximumSupportedGap.HasValue ? Math.Min(3, width / 2) : 0;
         var pending = new List<Band>();
         var finished = new List<AtlasPathPlatform>();
         var confirmed = walked.ToHashSet();

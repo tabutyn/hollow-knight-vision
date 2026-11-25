@@ -52,6 +52,39 @@ internal static class AtlasPlatformGraphTests
         Require(graph.Floors.Count == 3, "A lower floor inside the opening should keep the pit open.");
     }
 
+    internal static void TestFloorClusteringIsLocalAndLeavesThePitOpen()
+    {
+        var graph = new AtlasPlatformGraph([
+            new(-200, -110, -3), new(0, 40, 0), new(2, 55, 1), new(53, 70, 2), new(86, 110, 1)
+        ], [], height: 20, width: 10);
+        Require(graph.Floors.SequenceEqual([new(-200, -110, -3), new(0, 70, 2), new(86, 110, 1)]),
+            "Only nearby pieces belong to the same floor. The pit remains open.");
+    }
+
+    internal static void TestOverhangingLedgeIsReachableFromBothLips()
+    {
+        var graph = new AtlasPlatformGraph([new(0, 100, 0), new(25, 75, 25)], [], height: 20, width: 10);
+        var launches = graph.Strokes.Where(stroke => stroke.Kind == Jump && !stroke.Horizontal && stroke.A.Y == 20)
+            .Select(stroke => stroke.A.X).ToHashSet();
+        Require(launches.SetEquals([15, 85]), "Both exposed lips should permit a jump onto the overhanging platform.");
+    }
+
+    internal static void TestRouteApproachesJumpWhenGoalIsBehindTheKnight()
+    {
+        var graph = new AtlasPlatformGraph([new(0, 100, 0), new(0, 120, 200)], [], height: 20, width: 10,
+            connections: [new(new(90, 0), new(100, 200), true)]);
+        var navigator = new AtlasPathNavigator();
+        var objective = new AtlasPathPoint(5, 220);
+        var approach = navigator.Follow(graph, new(20, 0), grounded: true, measured: true,
+            admitted: null, walked: [], fixedObjective: objective);
+        var takeoff = navigator.Follow(graph, new(90, 0), grounded: true, measured: true,
+            admitted: null, walked: [], fixedObjective: objective);
+        Require(approach is { } path && BotPathMotion.Road(path, graph.KnightHeight, 200, frontier: false).Dx == 1,
+            "The route must go right toward the reachable jump before going left to the upper goal.");
+        Require(takeoff is { } atJump && BotPathMotion.Road(atJump, graph.KnightHeight, 200, frontier: false).Dy == 1
+            && graph.Strokes.Count(stroke => stroke.Kind == DoubleJump) == 3, "At the shelf the objective must guide upward.");
+    }
+
     internal static void TestJumpShelfUsesMeasuredRiseAndClearsWalls()
     {
         AtlasPathPlatform[] floors = [new(0, 100, 0), new(112, 175, 25)];
