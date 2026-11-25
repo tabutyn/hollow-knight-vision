@@ -18,6 +18,62 @@ internal static class BotEvaluationTests
         finally { temporary.Delete(recursive: true); }
     }
 
+    internal static void TestReceiverEvaluationJoinsOnlyExactVisualEvidence()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-receiver-evaluation-");
+        try
+        {
+            const string scene = "Tutorial_01";
+            var labels = new GroundTruthLineDocument
+            {
+                Lines = [new(scene, 0, 4, 0, GroundTruthLineKind.Positive, false)]
+            };
+            var terrain = new BotScreenTerrain(32, 16, [new(4, 24, 8, 1)], []);
+            var observed = new[] { new BotFloor(6, 20, 8, 1) };
+            var evaluation = new BotEvaluationRecorder(temporary.FullName, BotCaptureDomain.Hacker,
+                "Exact receiver", null, labels, Generation, 1);
+            evaluation.RecordHackerVisualEvidence(new(1.1, Generation), observed);
+            AddFrame(1.1, 101);
+            AddFrame(1.2, 102);
+            evaluation.RecordHackerVisualEvidence(new(1.2, Generation + 1), observed);
+            AddFrame(1.3, 103);
+            evaluation.RecordHackerVisualEvidence(new(1.3, Generation), observed);
+            AddFrame(1.4, 104);
+            AddFrame(1.5, 105);
+            AddFrame(1.6, 106);
+            evaluation.RecordHackerVisualEvidence(new(1.4, Generation), observed);
+
+            var directory = evaluation.FinishAsync(2, "user-stop").GetAwaiter().GetResult()!;
+            var manifest = Load<BotCaptureManifest>(directory, "manifest.json");
+            var metadata = Load<JsonElement>(directory, "evaluation.json");
+            var source = metadata.GetProperty("visualFrameArchive").Deserialize<RecordedVisualFrameArchive>(Json)!;
+            var archive = new VisualReplayArchiveReader(directory, source, manifest.Id);
+            Check(manifest is { ObservationCount: 6, TerrainPairedFrameCount: 3 }
+                && archive.Manifest.Frames.Select(frame => frame.RenderedGameFrame).SequenceEqual([101, 102, 103, 104, 105, 106])
+                && archive.Manifest.GroundInputs.Select(input => input.CaptureTimestamp).SequenceEqual([1.1, 1.3, 1.4])
+                && archive.Manifest.StageEvents.Count(item => item.Stage == "receiverMatched") == 6
+                && archive.Manifest.StageEvents.Where(item => item.Stage == "visionCompleted")
+                    .Select(item => item.CaptureTimestamp).SequenceEqual([1.1, 1.3, 1.4]),
+                "The writer must join early and late exact evidence and keep every unpaired receiver observation.");
+            var audits = File.ReadLines(Path.Combine(directory, "terrain-audit.jsonl"))
+                .Select(line => JsonSerializer.Deserialize<JsonElement>(line, Json)).ToArray();
+            Check(audits.Select(item => item.GetProperty("referenceAvailable").GetBoolean())
+                    .SequenceEqual([true, false, true, true, false, false])
+                && audits.Select(item => item.GetProperty("detected").GetArrayLength()).SequenceEqual([1, 0, 1, 1, 0, 0]),
+                "Missing visual data must not be scored as missed detections.");
+
+            void AddFrame(double timestamp, int marker)
+            {
+                var image = new BgraFrame(32, 16, 128, new byte[32 * 16 * 4], marker, DateTimeOffset.UnixEpoch);
+                var row = new BotCaptureObservation(timestamp, timestamp, timestamp + .01, Generation, 1, 0,
+                    new double[BotRecordingContract.FeatureNames.Count], [], "human-authored") { AuthoredTerrain = terrain };
+                evaluation.RecordFrame(image, new(timestamp, row.AvailableAt, Generation, 1, 0), row, scene,
+                    [], terrain, null, marker, awaitHackerVisual: true);
+            }
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
     private static void CheckArchive(string root, BotCaptureDomain domain)
     {
         const string scene = "Tutorial_01";

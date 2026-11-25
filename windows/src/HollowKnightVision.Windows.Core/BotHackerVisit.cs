@@ -53,6 +53,20 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
 
     private sealed record RouteSample(AtlasPathHint Path, AtlasPathPoint Knight, double Time, BotRoadHint Road);
 
+    public BotCaptureObservation? ObserveMatched(BotHackerCaptureFrame frame, double availableAt)
+    {
+        var match = frame.Match;
+        var capture = match.Capture;
+        var size = new WorldSize(capture.Image.Width, capture.Image.Height);
+        var timing = new BotCaptureTiming(capture.CapturedAt, availableAt, frame.Generation, frame.RoomId, 0);
+        var row = Observe(size, capture.UnityFrame, match.Sample, timing, capture.MovementButtons, 0,
+            objective: frame.Objective, roomKey: frame.RoomKey, automaticObjective: frame.AutomaticObjective,
+            registeredRoom: frame.RegisteredRoom);
+        if (row is null) return null;
+        var camera = GroundTruthCameraTransform.FromSample(match.Sample, match.SampleObservedAt, size);
+        return row with { AtlasView = camera is null ? null : frame.RegisteredRoom?.BotView(camera, row.MeasuredHealth) };
+    }
+
     public BotCaptureObservation? Observe(WorldSize size, int? renderedFrame, ReceiverGroundTruthSample? sample,
         BotCaptureTiming timing, InputButtons? input, int revision, int? health = null,
         BotAtlasObjective? objective = null, string? roomKey = null, bool automaticObjective = false,

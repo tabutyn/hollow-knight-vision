@@ -14,6 +14,7 @@ internal sealed class AtlasPathFrameEvidence
     private Guid? receiverSession;
     private bool? receiverGameplay;
     private double receiverObservedAt = double.NegativeInfinity;
+    private double receiverGameplayObservedAt = double.NegativeInfinity;
     private double receiverResumedAt = double.NegativeInfinity;
 
     internal static AtlasPathFrameState Classify(bool hasSceneSignal, string? recognition) =>
@@ -68,6 +69,7 @@ internal sealed class AtlasPathFrameEvidence
             if (!double.IsFinite(observedAt) || observedAt < receiverObservedAt) return false;
             receiverObservedAt = observedAt;
             var changedSession = receiverSession != session;
+            if (changedSession || gameplay.HasValue) receiverGameplayObservedAt = observedAt;
             if (!changedSession && (gameplay is null || gameplay == receiverGameplay)) return false;
             if ((changedSession && receiverSession.HasValue) || (receiverGameplay == false && gameplay != false))
                 receiverResumedAt = observedAt;
@@ -84,5 +86,11 @@ internal sealed class AtlasPathFrameEvidence
             return receiverGameplay != false && double.IsFinite(capturedAt) && capturedAt >= receiverResumedAt
                 && (session is null || receiverSession is null || receiverSession == session);
         }
+    }
+
+    internal bool ReceiverConfirmsGameplay(double now)
+    {
+        lock (receiverLock)
+            return receiverGameplay == true && now - receiverGameplayObservedAt is >= 0 and <= .25;
     }
 }

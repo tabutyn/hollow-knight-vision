@@ -3127,9 +3127,12 @@ public partial class MainWindow : Window
         double observedAt)
     {
         if (gameMode == GameRuntimeMode.Modded
-            && atlasPathEvidence.ObserveReceiver(sample.SessionId, sample.AtlasGameplayActive, observedAt)
-            && !Dispatcher.HasShutdownStarted)
-            _ = Dispatcher.BeginInvoke(RefreshAtlasPathVisibility, DispatcherPriority.Render);
+            && atlasPathEvidence.ObserveReceiver(sample.SessionId, sample.AtlasGameplayActive, observedAt))
+        {
+            ObserveHackerReceiverPause(sample.AtlasGameplayActive);
+            if (!Dispatcher.HasShutdownStarted)
+                _ = Dispatcher.BeginInvoke(RefreshAtlasPathVisibility, DispatcherPriority.Render);
+        }
         if (!sample.CameraAvailable) return;
         Volatile.Read(ref stepCapture)?.Trace("truth", -1, sample.UnityFrame, observedAt);
         if (Volatile.Read(ref replayVision) is { } replayFrame)
@@ -3196,6 +3199,7 @@ public partial class MainWindow : Window
         bool ownsHackerWork,
         long hackerGeneration)
     {
+        QueueMatchedHackerCapture(matched, receiverFrameJoinGeneration);
         // Exact pairs are offered in capture order. Live and atlas workers
         // each keep the newest pending frame while their current work runs.
         QueueReceiverHackerMatch(new HackerPipelineWork(
@@ -3204,6 +3208,7 @@ public partial class MainWindow : Window
             hackerGeneration,
             ownsHackerWork));
         if (matched.Capture.Image.CaptureId <= latestMatchedCaptureId) return;
+        QueueMatchedHackerPlayback(matched, receiverFrameJoinGeneration);
         var pending = new PendingVisionFrame(
             matched.Capture.Image,
             labelRevision,
@@ -3510,6 +3515,18 @@ public partial class MainWindow : Window
                 recognition.RecognizedStatus?.IsGameplay == true, receiverTelemetry, recognition.Menu, hudStencil);
         if (botGameplay)
         {
+            if (Volatile.Read(ref botPlayback) is { UsesReceiverFrames: true } hackerRun
+                && hackerRun.Generation == captureGeneration && groundAnalysis is not null
+                && Volatile.Read(ref hackerRun.Evaluation) is { } hackerEvaluation)
+            {
+                var witnessedWalk = tracked.RoomAllowsAtlasWrite && tracked.MeasuredLineage is not null ? localWalkedGround : [];
+                var visualFloors = GroundStrokeGeometry.MergeWalkedFloors(ground, witnessedWalk,
+                    visualObservation.GroundVerified ? groundDisplayCamera : tracked.MeasuredSceneryCamera,
+                    frame.Width, frame.Height, masks.GroundKnight);
+                hackerEvaluation.RecordHackerVisualEvidence(VisualReplayGroundInput.FromTracking(captureTimestamp,
+                    (ulong)captureGeneration, frame.Height, masks, movementButtons),
+                    BotObservationBuilder.ProjectDetectedFloors(frame, visualFloors, terrain.Walls, ground, masks));
+            }
             var wallLineage = tracked.RoomAllowsAtlasWrite && !tracked.RequiresWorldRecovery ? tracked.MeasuredLineage : null;
             CommittedBotFrame? botAtlas = null;
             if (liveWorldResult is { CommittedGraph: { } graph, CommittedRoomId: { } committedRoom } placement)

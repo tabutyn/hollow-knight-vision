@@ -1,6 +1,7 @@
 using System.IO;
 using System.Reflection;
 using System.Text.Json;
+using System.Threading.Channels;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -35,6 +36,7 @@ internal static class BotDesktopCaptureIntegrationTests
             {
                 VerifyDesktopRecording(window, hudFrame, Path.Combine(root, "demonstrations"), time => availableAt = time);
                 Wait(VerifyTimedClipAsync(window, root));
+                VerifyMatchedHackerRecording(window, Path.Combine(root, "paired-hacker"));
             }
             finally
             {
@@ -55,6 +57,68 @@ internal static class BotDesktopCaptureIntegrationTests
             temporary.Delete(recursive: true);
         }
         Console.WriteLine("PASS Desktop analysis captures room-owned doors and preserves wall evidence across a correction");
+    }
+
+    private static void VerifyMatchedHackerRecording(MainWindow window, string library)
+    {
+        const double start = 200;
+        const double capturedAt = start + .02;
+        const int marker = 2;
+        var id = Guid.NewGuid();
+        var labels = new GroundTruthLineDocument
+        {
+            Lines = [new("Tutorial_01", -30, 30, -6, GroundTruthLineKind.Positive, false)],
+            Walls = [new("Tutorial_01", -8, -8, -3, GroundTruthLineKind.Wall, false) { EndWorldY = 8 }]
+        };
+        var recording = new BotCaptureSession(library, "modded", "visual", Generation, start, labels,
+            id, paired: true, observationClock: () => capturedAt + .01);
+        var recorder = new InputPathRecorder();
+        recorder.Start(start, id: id);
+        recorder.RecordInput(RecordedGameButton.Right, true, start);
+        var path = recorder.Stop(start + 1);
+        var withoutHud = new BgraFrame(80, 48, 320, new byte[80 * 48 * 4], marker,
+            DateTimeOffset.UnixEpoch.AddSeconds(capturedAt));
+        var sample = new ReceiverGroundTruthSample(2, "groundTruth", Guid.NewGuid(), marker, marker,
+            capturedAt, "Tutorial_01", true, 0, 0, 0, 0, 0, true, true, true, 0, 0, 0, 0, 0, 0,
+            24, 2, 2, 80, 36, 160, 96, 160, 96)
+        {
+            AtlasGameplayActive = true,
+            Actors = new(1, new(1, "Knight", 80, 36, 10, 12), [])
+        };
+        var match = new HackerMatchedFrame(new(marker, withoutHud, capturedAt, IntegratesAtlas: false,
+            MovementButtons: InputButtons.Right), sample, capturedAt + .005);
+        var finished = false;
+        Field("botCapture").SetValue(window, recording);
+        try
+        {
+            SubmitReceiverMatch(window, Generation, match);
+            finished = true;
+            var result = recording.FinishAsync(start + 1, path, completed: true).GetAwaiter().GetResult();
+            Check(result is { Published: [{ BotDomain: "hacker", ObservationCount: 1, PairedClipId: null }], Discarded: 1 },
+                "The live receiver join should publish Hacker even when no Game Play observation completed.");
+            var saved = BotRecordedAtlasPath.ReadCapture(Path.Combine(library, BotCaptureSession.DirectoryName(id))).Observations.Single();
+            Check(saved.CaptureTimestamp == capturedAt && saved.DetectionFrameId == marker && saved.DetectedTerrain is null
+                && saved.AuthoredTerrain is { Floors.Count: 1, Walls.Count: 1 },
+                "The clip should keep the authored terrain from the exact received frame.");
+            Console.WriteLine("PASS Desktop records matched Hacker frames without a visual analysis result");
+        }
+        finally
+        {
+            Field("botCapture").SetValue(window, null);
+            if (!finished) _ = recording.FinishAsync(start + 1, path, completed: false).GetAwaiter().GetResult();
+        }
+    }
+
+    internal static void SubmitReceiverMatch(MainWindow window, long generation, HackerMatchedFrame match)
+    {
+        // The joined frame is available before the test supplies any visual analysis.
+        var pendingFrame = typeof(MainWindow).GetNestedType("PendingVisionFrame", BindingFlags.NonPublic)!;
+        var factory = typeof(Channel).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(method => method.Name == "CreateUnbounded" && method.GetParameters().Length == 0);
+        var analysis = factory.MakeGenericMethod(pendingFrame).Invoke(null, null)!;
+        var analysisWriter = analysis.GetType().GetProperty("Writer")!.GetValue(analysis);
+        Field("receiverFrameJoinGeneration").SetValue(window, generation);
+        _ = Method("SubmitReceiverFrameMatch").Invoke(window, [analysisWriter, match, 0L, false, 0L]);
     }
 
     private static async Task VerifyTimedClipAsync(MainWindow window, string root)

@@ -40,6 +40,30 @@ public partial class MainWindow
     private static double BotCaptureClock() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
     internal Func<double> ReadBotObservationTime { get; init; } = BotCaptureClock;
 
+    private void QueueMatchedHackerCapture(HackerMatchedFrame matched, long generation)
+    {
+        if (Volatile.Read(ref botCapture) is not { CapturesHacker: true } capture
+            || matched.Sample.AtlasGameplayActive != true || matched.Sample.SceneName is not { Length: > 0 }) return;
+        capture.TryQueueHacker(MatchedHackerBotFrame(matched, generation));
+    }
+
+    private BotHackerCaptureFrame MatchedHackerBotFrame(HackerMatchedFrame matched, long generation)
+    {
+        var scene = matched.Sample.SceneName;
+        var objectives = Volatile.Read(ref hackerObjectives);
+        var registeredRoom = RegisteredHackerRoom(scene, matched.Capture.CapturedAt);
+        return new(matched, generation, WindowsLiveWorldPipeline.RoomIdentifier(scene),
+            HackerLayoutId("room", scene).ToString("D").ToUpperInvariant(),
+            objectives.SelectedFor(scene), objectives.IsAutomatic(scene), registeredRoom);
+    }
+
+    private HackerAtlasRoom? RegisteredHackerRoom(string? scene, double timestamp)
+    {
+        var published = latestStagedHackerAtlas;
+        return scene is not null && published is not null && published.CapturedAt <= timestamp
+            ? published.Output.Rooms.FirstOrDefault(candidate => candidate.SceneName == scene) : null;
+    }
+
     private void CaptureBotObservations(BgraFrame frame, long generation, long visualGeneration, double timestamp,
         int roomId, ulong roomRevision, int? renderedFrame, ReceiverGroundTruthSample? receiverTelemetry,
         LiveObjectDetectionBatch? batch, IReadOnlyList<DetectedFloorLine> floors, TerrainWallDetection terrain,
@@ -65,7 +89,8 @@ public partial class MainWindow
             botVisualBlockade.Reset();
             botVisualChart = null;
             Volatile.Write(ref gameplayWallContacts, null);
-            Volatile.Write(ref hackerWallContacts, null);
+            if (Volatile.Read(ref botPlayback) is not { UsesReceiverFrames: true })
+                Volatile.Write(ref hackerWallContacts, null);
         }
         if (Volatile.Read(ref gameplayWallContacts) is { } oldGameplay
             && (oldGameplay.RoomId != roomId || oldGameplay.CaptureGeneration != generation))
@@ -79,8 +104,13 @@ public partial class MainWindow
             botVisualBlockade.ObserveVisualBasis(generation, roomId, walkedCoordinateEpoch, frame.Width,
                 timestamp, camera.HasValue, ground, measuredSceneryCamera);
         if (capture?.WantsFrame(generation, timestamp) != true) capture = null;
-        var playback = run is null ? null : Volatile.Read(ref run.Loaded)?.Policy;
-        if (playback?.WantsObservation(timestamp) != true) playback = null;
+        BotPolicyPlayback? playback = null;
+        if (run is not null)
+        {
+            lock (thinkingControlLock)
+                if (!run.UsesReceiverFrames && Volatile.Read(ref run.Loaded)?.Policy is { } policy
+                    && policy.WantsObservation(timestamp)) playback = policy;
+        }
         if (capture is null && playback is null && skillFrame is null) return;
 
         if (batch?.CaptureGeneration == visualGeneration) batch = batch with { CaptureGeneration = generation };
@@ -90,9 +120,7 @@ public partial class MainWindow
             ? HackerLayoutId("room", scene).ToString("D").ToUpperInvariant() : null;
         var objectives = Volatile.Read(ref hackerObjectives);
         var objectiveScene = receiverTelemetry?.SceneName;
-        var published = latestStagedHackerAtlas;
-        var registeredRoom = objectiveScene is not null && published is not null && published.CapturedAt <= timestamp
-            ? published.Output.Rooms.FirstOrDefault(candidate => candidate.SceneName == objectiveScene) : null;
+        var registeredRoom = RegisteredHackerRoom(objectiveScene, timestamp);
         var exact = botRouteVisit?.Observe(new(frame.Width, frame.Height), renderedFrame, receiverTelemetry, time, input,
             (int)Math.Min(roomRevision, int.MaxValue), objective: objectiveScene is null ? null : objectives.SelectedFor(objectiveScene),
             roomKey: roomKey, automaticObjective: objectiveScene is not null && objectives.IsAutomatic(objectiveScene), registeredRoom: registeredRoom);
@@ -154,21 +182,33 @@ public partial class MainWindow
                 ? new(new(owner), epoch, generation, frame.CaptureId, timestamp, roomId, committedAtlas?.Room,
                     null, null, contacts) : null);
         }
-        if (capture is not null) capture.TryRecord(frame, visual!, exact);
+        // Older receivers lack the gameplay flag. Their matched recording keeps the visual admission gate.
+        if (capture is not null)
+            capture.TryRecord(frame, visual!, receiverTelemetry?.AtlasGameplayActive is null ? exact : null);
         var row = policyDomain == BotCaptureDomain.Hacker ? exact : visual;
-        var evaluation = skillFrame?.Lease.Evaluation;
-        if (evaluation is null && playback is not null && playbackRun is not null)
-            evaluation = Volatile.Read(ref playbackRun.Evaluation);
-        if (evaluation is not null)
-            evaluation.RecordFrame(frame, time, row, receiverTelemetry?.SceneName,
+        if (skillFrame is not null)
+        {
+            RecordEvaluation(skillFrame.Lease.Evaluation);
+            DriveThinkingFrame(skillFrame, row);
+        }
+        else if (run is not null && playback is not null)
+        {
+            lock (thinkingControlLock)
+            {
+                if (run.UsesReceiverFrames || thinkingLease is not null || !ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
+                RecordEvaluation(Volatile.Read(ref run.Evaluation));
+                DriveBotFrame(run, playback, row, input, receiverTelemetry?.SceneName);
+            }
+        }
+
+        void RecordEvaluation(BotEvaluationRecorder? evaluation)
+        {
+            evaluation?.RecordFrame(frame, time, row, receiverTelemetry?.SceneName,
                 visual?.DetectedTerrain?.Floors ?? BotObservationBuilder.ProjectDetectedFloors(frame,
                     visualFloors, terrain.Walls, supportingFloors: floors, masks: auditMasks),
                 exact?.AuthoredTerrain, auditMasks is null ? null : VisualReplayGroundInput.FromTracking(
                     timestamp, (ulong)generation, frame.Height, auditMasks, input), renderedFrame, skill: skillFrame is not null);
-        if (skillFrame is not null)
-            DriveThinkingFrame(skillFrame, row);
-        else if (run is not null && playback is not null)
-            DriveBotFrame(run, playback, row, input, receiverTelemetry?.SceneName);
+        }
     }
 
     private async void PathRecording_Click(object sender, RoutedEventArgs e)
@@ -235,7 +275,8 @@ public partial class MainWindow
             Volatile.Write(ref botCapture, new BotCaptureSession(BotCaptureRoot,
                 gameMode == GameRuntimeMode.Modded ? "modded" : "normal", "visual",
                 Interlocked.Read(ref recentCaptureGeneration), recording?.StartedAt ?? BotCaptureClock(),
-                groundTruthLabels.Document, recording?.Id, paired, replayRoot: InputPathRoot));
+                groundTruthLabels.Document, recording?.Id, paired, replayRoot: InputPathRoot,
+                hackerPathLinks: hackerPathLinks, observationClock: ReadBotObservationTime));
             PathRecordingButton.Background = Brushes.Firebrick;
             SetStatus(paired ? "Recording Hacker and Game Play. Press K to stop." : "Recording Game Play. Press K to stop.");
         }
