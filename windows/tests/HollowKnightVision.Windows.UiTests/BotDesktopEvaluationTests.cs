@@ -22,7 +22,13 @@ internal static class BotDesktopEvaluationTests
     private const int Width = 192, Height = 128;
     private const InputButtons Action = InputButtons.Right | InputButtons.ActionX;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-    private enum OpeningOutcome { Gameplay, HandoffTimeout, ArchiveFailure, EvaluationFailure }
+    private enum OpeningOutcome { Gameplay, HandoffTimeout, ArchiveFailure, EvaluationFailure, FocusLost }
+
+    private sealed class FocusTestWindow(string root, Func<ReceiverClient> receiverFactory)
+        : MainWindow(GameRuntimeMode.Modded, null, root, root, receiverFactory)
+    {
+        internal void DeactivateForTest() => OnDeactivated(EventArgs.Empty);
+    }
 
     internal static void Run()
     {
@@ -55,6 +61,7 @@ internal static class BotDesktopEvaluationTests
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-backup-failure"), OpeningOutcome.ArchiveFailure, timeout.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-evaluation-failure"), OpeningOutcome.EvaluationFailure, timeout.Token);
+            await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-focus-lost"), OpeningOutcome.FocusLost, timeout.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
             await VerifyCheckpointControlsAsync(Path.Combine(temporary.FullName, "versions"), timeout.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
@@ -838,7 +845,7 @@ internal static class BotDesktopEvaluationTests
             Directory.CreateDirectory(Path.GetDirectoryName(evaluationRoot)!);
             File.WriteAllText(evaluationRoot, "existing user file");
         }
-        var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
+        var window = new FocusTestWindow(root, () => new ReceiverClient(session, port: port));
         try
         {
             Field("recentCaptureGeneration").SetValue(window, Generation);
@@ -879,6 +886,21 @@ internal static class BotDesktopEvaluationTests
             Check(File.Exists(Path.Combine(Directory.GetDirectories(archives).Single(), "manifest.json"))
                 && Directory.GetFileSystemEntries(saves).Length == 0,
                 "The opening must start only after the fixture's empty slot has a verified archive.");
+            if (outcome == OpeningOutcome.FocusLost)
+            {
+                window.DeactivateForTest();
+                Check(Field("botPlayback").GetValue(window) is null && !bridge.OwnsBotControl(owner),
+                    "Window deactivation must immediately release menu control and discard the active run.");
+                ReceiverInputSnapshot releasedInput;
+                do { releasedInput = await states.Reader.ReadAsync(token); }
+                while (releasedInput.Enabled || releasedInput.HeldButtons != InputButtons.None);
+                _ = Step("select-profile", receiverGameplay: false, recognizedGameplay: false,
+                    admitGameplay: false, showHud: false);
+                Check(Field("botPlayback").GetValue(window) is null && !bridge.OwnsBotControl(owner),
+                    "Fresh menu evidence must leave the bot stopped after deactivation.");
+                Console.WriteLine("PASS Desktop bot deactivation releases live menu controls");
+                return;
+            }
             await ExpectAction(InputButtons.ActionX, "quit-game", receiverGameplay: true);
             await ExpectAction(InputButtons.ActionZ, "brightness", receiverGameplay: true, showHud: true);
             Check(bridge.OwnsBotControl(owner), "Conflicting menu and HUD cues must preserve the opening until Gameplay is admitted.");
@@ -1097,7 +1119,16 @@ internal static class BotDesktopEvaluationTests
             Check(!bridge.SkillControlsAvailable && !bridge.RenewBotControl(guardLease, InputButtons.Dash, Clock() + .12),
                 "A receiver without the skill capability must reject a learned ability snapshot.");
             bridge.EndBotControl(guardLease);
-            await window.StartBotPlaybackAsync().WaitAsync(token);
+            var saves = Directory.CreateDirectory(Path.Combine(root, domain, "saves")).FullName;
+            var slotFour = Path.Combine(saves, "user4.dat");
+            var archives = Path.Combine(root, domain, "save-archives");
+            File.WriteAllText(slotFour, "existing save");
+            await window.StartBotPlaybackAsync(new BotDemoSaveArchive(saves, archives)).WaitAsync(token);
+            var started = Field("botPlayback").GetValue(window)!;
+            Check(started.GetType().GetProperty("StartedInGameplay", Instance)!.GetValue(started) is true
+                && started.GetType().GetProperty("Demo", Instance)!.GetValue(started) is null
+                && !Directory.Exists(archives) && File.ReadAllText(slotFour) == "existing save",
+                "Starting B in gameplay must go straight to the policy and leave slot four untouched.");
 
             // The running policy and its audit must retain the labels present when B started playback.
             var editor = (GroundTruthLabelController)Field("groundTruthLabels").GetValue(window)!;
