@@ -197,6 +197,23 @@ internal static class MenuTrackerTests
         Near(32, result.Anchors.Single().Rect.Y);
     }
 
+    internal static void TestPlainMenuSelectorPredictionRejectsWrongRowsAndInsideText()
+    {
+        var text = new StencilRect(297, 131, 46, 10);
+        var wrongRow = new StencilRect(168, 101, 12, 11);
+        var left = MenuSelectorPlacement.BesideText(wrongRow, text, isLeft: true);
+        var right = MenuSelectorPlacement.BesideText(wrongRow, text, isLeft: false);
+        Near(text.MidY, left.MidY);
+        Near(text.MidY, right.MidY);
+        Near(10, text.X - left.Right);
+        Near(10, right.X - text.Right);
+        Check(MenuSelectorPlacement.AlignsWithText("extras", "extras.credits")
+            && MenuSelectorPlacement.AlignsWithText("main-title", "main-title.start-game")
+            && !MenuSelectorPlacement.AlignsWithText("extras", "extras.menu-style")
+            && !MenuSelectorPlacement.AlignsWithText("select-profile", "select-profile.slot-1"),
+            "Only plain menu labels should use text-aligned decoration placement.");
+    }
+
     internal static void TestPlainMenuSelectorBoxesFollowTheMatchedWords()
     {
         var heading = Variant();
