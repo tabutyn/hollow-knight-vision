@@ -723,6 +723,7 @@ var tests = new List<(string Name, Action Run)>
     ("global feature matcher ordering and equal ambiguity are deterministic", TestReferenceOrderingIsDeterministic),
     ("global feature matcher overlapping references corroborate world pose", TestOverlappingReferencesThatAgreeOnWorldPoseReinforceMatch),
     ("global feature matcher shortlist preserves spatial coverage and preferred confirmation", TestSpatiallyDiverseShortlistFindsTargetBeyondSignatureCap),
+    ("global feature matcher preserves patch candidates when the current frame has few corners", TestSparseFramesPreservePatchShortlist),
     ("global feature matcher self-placement search remains bounded", TestSelfPlacementCheckUsesBoundedDescriptorCandidates),
     ("global feature matcher rejects self-placement consensus across histogram boundaries", TestSelfPlacementRejectsConsensusSplitAcrossHistogramBoundary),
     ("global feature matcher current solve width scales recovered pose", TestCurrentSolveWidthUsesCurrentFrameScaleForCamera),
@@ -7577,6 +7578,33 @@ static void TestSpatiallyDiverseShortlistFindsTargetBeyondSignatureCap()
         references,
         preferredReferenceId: targetId);
     Equal(targetId, confirmation?.ReferenceId ?? Guid.Empty);
+}
+
+static void TestSparseFramesPreservePatchShortlist()
+{
+    var matcher = new GlobalFeatureMatcher();
+    var reference = matcher.MakeReference(GlobalFeatureTexture(), default, 320)!;
+    var references = Enumerable.Range(0, 48).Select(index => reference with
+    {
+        Id = new Guid(index, 0, 0, new byte[8]),
+        CameraPose = new AtlasPoint(index == 47 ? 4_000 : 0, 0)
+    }).ToArray();
+    var frame = SolidFrame(320, 180, 24, 24, 24);
+    var preferred = references[39].Id;
+
+    True(matcher.Match(frame, references, preferredReferenceId: preferred) is null);
+    var first = matcher.LastSearchedReferences.Select(candidate => candidate.Id).ToArray();
+    Equal(32, first.Length);
+    Equal(32, first.Distinct().Count());
+    Equal(preferred, first[0]);
+    True(first.Contains(references[47].Id));
+
+    True(matcher.Match(frame, references, preferredReferenceId: preferred) is null);
+    var second = matcher.LastSearchedReferences.Select(candidate => candidate.Id).ToArray();
+    Equal(32, second.Length);
+    Equal(preferred, second[0]);
+    True(first.Union(second).Count() > 32);
+    True(!matcher.LastMatchWasAmbiguous);
 }
 
 static void TestSelfPlacementCheckUsesBoundedDescriptorCandidates()

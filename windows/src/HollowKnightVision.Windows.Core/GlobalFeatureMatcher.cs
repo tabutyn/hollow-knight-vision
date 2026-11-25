@@ -161,11 +161,12 @@ public sealed class GlobalFeatureMatcher
                 frame.Height - 1 - point.Y * frame.Height / currentGrid.Height);
             return !exclusions.Any(rectangle => Contains(rectangle.Expand(2), sourcePoint));
         });
-        if (currentFeatures.Count < 6) return null;
-
         var signature = AppearanceSignature(currentFeatures.Select(value => value.Descriptor));
         var selected = SelectReferences(references, signature, preferredReferenceId);
+        // Patch matching still uses this shortlist when descriptor matching cannot proceed.
         LastSearchedReferences = selected;
+        if (currentFeatures.Count < 6) return null;
+
         var candidates = new List<Candidate>();
         foreach (var reference in selected)
         {
