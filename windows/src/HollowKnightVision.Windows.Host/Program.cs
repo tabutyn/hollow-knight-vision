@@ -928,6 +928,8 @@ internal static class Program
                                     Use --ground-threshold=N and the other tuning options with '='.
             --evaluate-low-resolution-trace PATH
                                     Measure saved camera tracking against recorded Unity frames.
+            --low-resolution-reference PATH
+                                    Read receiver measurements from the original recording.
             --low-resolution-report FILE
                                     Also save the trace report as JSON.
             --low-resolution-world-evidence DIRECTORY

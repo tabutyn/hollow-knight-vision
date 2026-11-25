@@ -76,9 +76,11 @@ internal static class VisualProductionReplayTests
             var altered = Path.Combine(root, "path-altered-receiver.json");
             var data = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(source))!.AsObject();
             data["groundTruthSamples"] = System.Text.Json.Nodes.JsonNode.Parse("""
-                [{"offset":0.1,"captureTimestamp":120.1,"sample":{"version":2,"type":"groundTruth",
+                [{"offset":0.08,"receivedTimestamp":120.08,"sample":{"version":2,"type":"groundTruth",
+                "sessionID":"84B83F30-D834-4DFC-AEE5-B3D96C232A2C","sequence":3,"unityFrame":502,
                 "sceneName":"unrelated-room","heroAvailable":true,"heroX":9999,"heroY":9999,
-                "cameraAvailable":true,"cameraX":9999,"cameraY":9999}}]
+                "cameraAvailable":true,"cameraX":9999,"cameraY":9999,
+                "projectionPixelWidth":320,"projectionPixelHeight":180,"pixelsPerWorldUnitX":20,"pixelsPerWorldUnitY":20}}]
                 """);
             File.WriteAllText(altered, data.ToJsonString());
             using var secondOutput = new StringWriter();
@@ -89,6 +91,18 @@ internal static class VisualProductionReplayTests
             foreach (var key in new[] { "visualDigest", "coarseVisualDigest", "worldDigest", "atlasDigest" })
                 Check(first.GetProperty(key).GetString() == second.RootElement.GetProperty(key).GetString(),
                     $"Reference receiver telemetry changed {key}.");
+            var scoredTracePath = second.RootElement.GetProperty("outputPath").GetString()!;
+            var scoredTrace = new RecordedInputPathStore().Load(scoredTracePath);
+            Check(scoredTrace.GroundTruthTrace.Count == 0,
+                "An exact reference match was copied into the independent replay output.");
+            var score = LowResolutionTraceEvaluator.Run(
+                ["--evaluate-low-resolution-trace", scoredTracePath, "--low-resolution-reference", altered]);
+            Check(score.ConnectedTrackingCamera.ExactFramePairs == 1,
+                "The original recording's exact receiver match was not available during scoring.");
+            using var wrongReference = new StringWriter();
+            Check(await RunHost(wrongReference, "--evaluate-low-resolution-trace", scoredTracePath,
+                "--low-resolution-reference", scoredTracePath) == 64,
+                "A reference for a different recording was accepted.");
             Check(await RunHost(invalidOutput, "--replay-visual-archive", source, "--visual-replay-output", firstDirectory,
                 "--visual-replay-allow-incomplete", "--visual-replay-frame-limit", "3") == 1);
         }

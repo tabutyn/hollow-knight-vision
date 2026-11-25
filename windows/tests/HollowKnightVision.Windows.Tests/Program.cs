@@ -4550,13 +4550,17 @@ static void TestOfflineReplayPreservesDiagnosticTrace()
             ["--replay-visual-archive", inputPath, "--visual-replay-output", Path.Combine(root, "output")], output, errors);
         if (result != 0) throw new InvalidOperationException(errors.ToString());
         using var replayReport = JsonDocument.Parse(output.ToString());
-        var replayed = pathStore.Load(replayReport.RootElement.GetProperty("outputPath").GetString()!);
+        var replayPath = replayReport.RootElement.GetProperty("outputPath").GetString()!;
+        var replayed = pathStore.Load(replayPath);
         Equal(source.Id, replayed.SourcePathId!.Value);
         Equal("640", replayed.RuntimeMetadata!["captureWidth"]);
         True(source.Events.SequenceEqual(replayed.Events));
-        True(replayed.GroundTruthTrace.Select(truth => truth.Sample.UnityFrame).SequenceEqual([10L, 11L]));
-        Close(source.GroundTruthTrace[1].Offset, replayed.GroundTruthTrace[1].Offset);
-        Equal(2, LowResolutionTraceEvaluator.Evaluate(replayed).ExactTruthFrames);
+        Equal(0, replayed.GroundTruthTrace.Count);
+        var score = LowResolutionTraceEvaluator.Run([LowResolutionTraceEvaluator.CommandFlag, replayPath,
+            "--low-resolution-reference", inputPath]);
+        Equal(2, score.ExactTruthFrames);
+        Equal(2, score.ConnectedTrackingCamera.ExactFramePairs);
+        True(source.GroundTruthTrace.SequenceEqual(pathStore.Load(inputPath).GroundTruthTrace));
         var reliableGround = replayed.TrackingSamples.Where(sample => GroundMotionEvidence.IsMeasured(
             sample.PoseVerified, sample.HasConfirmedGround, sample.LocalTextureSupport ?? 0,
             sample.InlierCount, sample.GlobalMatchCount)).Select(sample => sample.CaptureTimestamp).ToHashSet();

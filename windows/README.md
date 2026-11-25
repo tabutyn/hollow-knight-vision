@@ -791,6 +791,11 @@ atlas. Use `--visual-replay-frame-limit 600` to cap the run. An incomplete archi
 requires `--visual-replay-allow-incomplete` and reports the original missing
 frame indices.
 
+The replay trace contains visual estimates. Both scorers read receiver
+measurements from the original recording. For the Windows Host's
+`--evaluate-low-resolution-trace` command, pass the original recording with
+`--low-resolution-reference`.
+
 The desktop and offline replay can start a fresh Atlas during level walking
 when tracked foot contact and independent scene motion agree with the held
 movement input.
