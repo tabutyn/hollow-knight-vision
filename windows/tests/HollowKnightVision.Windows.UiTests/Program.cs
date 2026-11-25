@@ -24,6 +24,11 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (args is ["--installed-startup"])
+        {
+            RuntimeModeTests.VerifyInstalledStartup();
+            return;
+        }
         // Tests use offscreen controls or an unshown Atlas window with temporary data.
         // Receiver tests use their own loopback listeners. No test starts Hollow Knight.
         _ = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };

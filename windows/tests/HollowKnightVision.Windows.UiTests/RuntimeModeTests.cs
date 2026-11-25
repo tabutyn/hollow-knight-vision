@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
@@ -97,6 +98,60 @@ internal static class RuntimeModeTests
             GamePath(Parse(
                 "Vision", "--game-path=/Games/Modded/hollow_knight.app"))!);
         Throws<ArgumentException>(() => Parse("Vision", "--game-path"));
+        Throws<ArgumentException>(() => Parse("Vision", "--game-path=/Games/Stock", "--game-path", "/Games/Modded"));
+        Throws<ArgumentException>(() => Parse("Vision", "--game-path", "/Games/Stock", "--game-path=/Games/Modded"));
+    }
+
+    internal static void VerifyInstalledStartup()
+    {
+        var programs = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+        var shortcut = Path.Combine(programs, "Hollow Knight Vision.lnk");
+        var installed = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Programs", "Hollow Knight Vision", "HollowKnightVision.Windows.exe");
+        Check(File.Exists(shortcut) && File.Exists(installed));
+        var previous = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(installed));
+        foreach (var process in previous) process.Dispose();
+        if (previous.Length != 0) throw new InvalidOperationException("Close the existing Vision process before testing Startup.");
+
+        using var application = Process.Start(new ProcessStartInfo(shortcut) { UseShellExecute = true })
+            ?? throw new InvalidOperationException("The Start Menu shortcut did not return the installed Vision process.");
+        try
+        {
+            var timer = Stopwatch.StartNew();
+            TogglePattern? thinking = null;
+            while (!application.HasExited && timer.Elapsed < TimeSpan.FromSeconds(20))
+            {
+                application.Refresh();
+                var handle = application.MainWindowHandle;
+                if (handle != 0)
+                {
+                    var window = AutomationElement.FromHandle(handle);
+                    var choice = window.FindFirst(TreeScope.Descendants,
+                        new PropertyCondition(AutomationElement.AutomationIdProperty, "enable-thinking"));
+                    if (choice is not null && choice.TryGetCurrentPattern(TogglePattern.Pattern, out var pattern))
+                    {
+                        thinking = (TogglePattern)pattern;
+                        break;
+                    }
+                }
+                Thread.Sleep(50);
+            }
+            if (thinking is null) throw new InvalidOperationException("The installed app did not show its startup chooser.");
+            if (!string.Equals(application.MainModule?.FileName, installed, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The Start Menu shortcut launched a different executable.");
+            Equal(ToggleState.Off, thinking.Current.ToggleState);
+            if (!application.CloseMainWindow() || !application.WaitForExit(10_000) || application.ExitCode != 0)
+                throw new InvalidOperationException("Cancelling the installed startup chooser did not exit cleanly.");
+        }
+        finally
+        {
+            if (!application.HasExited && string.Equals(application.MainModule?.FileName, installed, StringComparison.OrdinalIgnoreCase))
+            {
+                _ = application.CloseMainWindow();
+                if (!application.WaitForExit(5_000)) application.Kill();
+            }
+        }
+        Console.WriteLine("PASS installed Windows Start Menu opens the chooser with Thinking off and exits cleanly on cancellation");
     }
 
     public static void TestNormalInitializationOmitsModOnlyMenuLabel()
