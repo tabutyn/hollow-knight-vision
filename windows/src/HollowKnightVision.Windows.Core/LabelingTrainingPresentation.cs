@@ -89,16 +89,25 @@ public static class TrainingProgressUpdate
     }
 }
 
-public sealed record TrainingOutputSnapshot(long Sequence, string Text, string? ProgressText, string? LastMessage);
+public sealed record TrainingOutputSnapshot(long Sequence, string Text, string? ProgressText, string? LastMessage)
+{
+    public string? ErrorMessage { get; init; }
+}
 
 /// <summary>Bounded combined log with independent, incremental UTF-8 line decoders for stdout/stderr.</summary>
 public sealed class TrainingOutputBuffer
 {
     public const int MaximumBytes = 128 * 1024;
-    private sealed class Channel { public readonly Decoder Decoder = Encoding.UTF8.GetDecoder(); public readonly StringBuilder Line = new(); public bool Oversized; }
+    private sealed class Channel(bool standardError = false)
+    {
+        public readonly Decoder Decoder = Encoding.UTF8.GetDecoder();
+        public readonly StringBuilder Line = new();
+        public bool StandardError { get; } = standardError;
+        public bool Oversized;
+    }
     private readonly object gate = new(); private readonly byte[] tail = new byte[MaximumBytes];
-    private readonly Channel[] channels = [new(), new()]; private int start, count; private long sequence;
-    private string? progress, lastMessage;
+    private readonly Channel[] channels = [new(), new(standardError: true)]; private int start, count; private long sequence;
+    private string? progress, lastMessage, errorMessage;
     public TrainingOutputSnapshot Append(ReadOnlySpan<byte> bytes, bool standardError = false)
     {
         lock (gate)
@@ -143,10 +152,23 @@ public sealed class TrainingOutputBuffer
     }
     private void FinishLine(Channel channel)
     {
-        var line = channel.Oversized ? "Trainer output line exceeded the log limit." : channel.Line.ToString().TrimEnd('\r');
+        var line = channel.Oversized ? "Trainer output line exceeded the log limit." : channel.Line.ToString().Trim();
         channel.Line.Clear(); channel.Oversized = false;
         if (line.Length == 0) return;
-        lastMessage = line; progress = TrainingProgressUpdate.Parse(line) ?? progress;
+        if (TrainingProgressUpdate.Parse(line) is { } update)
+        {
+            progress = update;
+            return;
+        }
+        if (channel.StandardError)
+        {
+            // Keep PowerShell's source location and error record in the log.
+            if (line.StartsWith("+ ", StringComparison.Ordinal)
+                || line.StartsWith("At ", StringComparison.Ordinal) && line.Contains(" char:", StringComparison.Ordinal))
+                return;
+            errorMessage = line;
+        }
+        lastMessage = line;
     }
     private TrainingOutputSnapshot Snapshot()
     {
@@ -154,6 +176,9 @@ public sealed class TrainingOutputBuffer
         Array.Copy(tail, start, bytes, 0, first); Array.Copy(tail, 0, bytes, first, count - first);
         var offset = 0;
         while (offset < bytes.Length && (bytes[offset] & 0xc0) == 0x80) offset++;
-        return new(sequence, Encoding.UTF8.GetString(bytes, offset, bytes.Length - offset), progress, lastMessage);
+        return new(sequence, Encoding.UTF8.GetString(bytes, offset, bytes.Length - offset), progress, lastMessage)
+        {
+            ErrorMessage = errorMessage
+        };
     }
 }

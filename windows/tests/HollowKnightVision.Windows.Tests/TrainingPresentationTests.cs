@@ -93,6 +93,33 @@ internal static class TrainingPresentationTests
         Check(!value.Text.Contains('\ufffd') && value.Text.EndsWith("🐛x") && Encoding.UTF8.GetByteCount(value.Text) <= TrainingOutputBuffer.MaximumBytes,
             "Bounded log split its first UTF-8 code point or exceeded its byte limit.");
     }
+
+    internal static void TestTrainingFailurePrefersTheDiagnosticAndPreservesTheLog()
+    {
+        var buffer = new TrainingOutputBuffer();
+        const string diagnostic = "Training environment missing. Run setup-training-windows.ps1.";
+        buffer.Append(Encoding.UTF8.GetBytes(diagnostic + "\r\n"), standardError: true);
+        buffer.Append(Encoding.UTF8.GetBytes(
+            "At line:1 char:1\r\n+ throw \"environment missing\"\r\n"
+            + "    + CategoryInfo : OperationStopped\r\n    + FullyQualifiedErrorId : environment missing\r\n  \r\n"),
+            standardError: true);
+        buffer.Append(Encoding.UTF8.GetBytes("HKV_STAGE name=baseline\r\nFinished cleanup.\r\n   \r\n"));
+        var output = buffer.Complete();
+        Check(output.LastMessage == "Finished cleanup." && output.ProgressText == "Measuring current model…");
+        Check(new TrainingProcessResult(1, false, output).FailureMessage == diagnostic
+            && output.Text.Contains("FullyQualifiedErrorId", StringComparison.Ordinal),
+            "The status should display the trainer error and preserve the PowerShell context in the log.");
+
+        var silent = new TrainingOutputBuffer();
+        silent.Append(Encoding.UTF8.GetBytes("HKV_STAGE name=training\n  \n"));
+        silent.Append(Encoding.UTF8.GetBytes("    "), standardError: true);
+        Check(new TrainingProcessResult(12, false, silent.Complete(standardError: true)).FailureMessage ==
+            "Trainer exited with code 12.", "A trainer without a diagnostic should show its exit code.");
+        silent.Append(Encoding.UTF8.GetBytes("The selected dataset is empty.\n"));
+        Check(new TrainingProcessResult(12, false, silent.Current).FailureMessage == "The selected dataset is empty.",
+            "A trainer that reports its diagnostic on stdout should still show it.");
+    }
+
     internal static void Check(bool condition, string message = "Training parity assertion failed.")
     { if (!condition) throw new Exception(message); }
 }

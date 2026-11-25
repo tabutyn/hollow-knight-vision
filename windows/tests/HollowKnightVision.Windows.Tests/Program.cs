@@ -684,6 +684,7 @@ var tests = new List<(string Name, Action Run)>
     ("shared model uses full training configuration like Mac", TrainingPresentationTests.TestConfiguration),
     ("training notification reads eligible manifest dates and rejects invalid snapshots", TrainingPresentationTests.TestManifestNotification),
     ("training progress and bounded UTF-8 output survive fragmented independent streams", TrainingPresentationTests.TestProgressAndOutput),
+    ("training failure retains the useful diagnostic and full log", TrainingPresentationTests.TestTrainingFailurePrefersTheDiagnosticAndPreservesTheLog),
     ("training process drains output and tolerates closing observers", TrainingProcessTests.TestSuccessAndObserverFailure),
     ("stop training and launcher exit terminate owned descendants and close pipes", TrainingProcessTests.TestCancellationAndDescendants),
     ("cancelled and failed training artifacts cannot become model candidates", TrainingProcessTests.TestInterruptedOutputIsolation),

@@ -5,7 +5,10 @@ using Microsoft.Win32.SafeHandles;
 
 namespace HollowKnightVision.Windows.Core;
 
-public sealed record TrainingProcessResult(int ExitCode, bool Cancelled, TrainingOutputSnapshot Output);
+public sealed record TrainingProcessResult(int ExitCode, bool Cancelled, TrainingOutputSnapshot Output)
+{
+    public string FailureMessage => Output.ErrorMessage ?? Output.LastMessage ?? $"Trainer exited with code {ExitCode}.";
+}
 
 /// <summary>Runs a cooperating launcher inside a kill-on-close job before permitting it to create children.</summary>
 public static class WindowsTrainingProcess
