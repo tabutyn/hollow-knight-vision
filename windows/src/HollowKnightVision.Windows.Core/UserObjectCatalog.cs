@@ -27,30 +27,43 @@ public sealed class UserObjectCatalog
 
     public string Path { get; }
 
-    public IReadOnlyList<UserObjectDefinition> Load()
+    public IReadOnlyList<UserObjectDefinition> Load() => Load(forEdit: false);
+
+    private IReadOnlyList<UserObjectDefinition> Load(bool forEdit)
     {
-        if (!File.Exists(Path)) return [];
-        var document = JsonSerializer.Deserialize<UserObjectCatalogDocument>(
-            File.ReadAllBytes(Path), JsonOptions)
-            ?? throw new InvalidDataException("Object catalog is empty.");
-        if (document.SchemaVersion != UserObjectCatalogDocument.CurrentSchemaVersion)
+        try
         {
-            throw new InvalidDataException($"Unsupported object catalog schema {document.SchemaVersion}.");
+            var document = JsonSerializer.Deserialize<UserObjectCatalogDocument>(File.ReadAllBytes(Path), JsonOptions);
+            if (document is null || document.SchemaVersion != UserObjectCatalogDocument.CurrentSchemaVersion
+                || document.Objects is null)
+            {
+                // An optional catalog must not block startup. Editing still
+                // requires a compatible document before replacing its file.
+                if (!forEdit) return [];
+                throw new InvalidDataException("The object catalog does not use the supported schema.");
+            }
+            return document.Objects.Select(Validated).OfType<UserObjectDefinition>()
+                .DistinctBy(item => item.Identifier, StringComparer.Ordinal)
+                .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
         }
-        return document.Objects
-            .Select(Validate)
-            .DistinctBy(item => item.Identifier, StringComparer.Ordinal)
-            .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException
+            || !forEdit && error is (IOException or UnauthorizedAccessException or JsonException))
+        {
+            return [];
+        }
     }
 
     public UserObjectDefinition Add(string name, string group)
     {
         var cleanName = name.Trim();
         if (cleanName.Length == 0) throw new ArgumentException("Object name is required.", nameof(name));
-        var cleanGroup = NormalizeGroup(group);
-        var identifier = $"{cleanGroup}.{Slug(cleanName)}";
-        var existing = Load().ToList();
+        var cleanGroup = NormalizeGroup(group)
+            ?? throw new ArgumentException("Object group must be game, enemies, or world.", nameof(group));
+        var slug = Slug(cleanName);
+        if (slug.Length == 0) throw new ArgumentException("Object name needs a letter or number.", nameof(name));
+        var identifier = $"{cleanGroup}.{slug}";
+        var existing = Load(forEdit: true).ToList();
         var match = existing.FirstOrDefault(item => item.Identifier == identifier);
         if (match is not null) return match;
         var added = new UserObjectDefinition(identifier, cleanName, cleanGroup);
@@ -67,7 +80,7 @@ public sealed class UserObjectCatalog
         var temporary = $"{Path}.tmp-{Guid.NewGuid():N}";
         var document = new UserObjectCatalogDocument(
             UserObjectCatalogDocument.CurrentSchemaVersion,
-            objects.Select(Validate).OrderBy(item => item.Identifier, StringComparer.Ordinal).ToArray());
+            objects.OrderBy(item => item.Identifier, StringComparer.Ordinal).ToArray());
         try
         {
             File.WriteAllBytes(temporary, JsonSerializer.SerializeToUtf8Bytes(document, JsonOptions));
@@ -79,32 +92,29 @@ public sealed class UserObjectCatalog
         }
     }
 
-    private static UserObjectDefinition Validate(UserObjectDefinition item)
+    private static UserObjectDefinition? Validated(UserObjectDefinition? item)
     {
-        var group = NormalizeGroup(item.Group);
-        var name = item.Name.Trim();
-        var identifier = item.Identifier.Trim().ToLowerInvariant();
-        if (name.Length == 0 || identifier != $"{group}.{Slug(name)}")
-        {
-            throw new InvalidDataException($"Invalid object catalog entry '{item.Identifier}'.");
-        }
-        return new UserObjectDefinition(identifier, name, group);
+        var group = NormalizeGroup(item?.Group);
+        var name = item?.Name?.Trim();
+        var identifier = item?.Identifier?.Trim().ToLowerInvariant();
+        if (group is null || string.IsNullOrEmpty(name) || identifier is null) return null;
+        var slug = Slug(name);
+        return slug.Length > 0 && identifier == $"{group}.{slug}" ? new(identifier, name, group) : null;
     }
 
-    private static string NormalizeGroup(string group) => group.Trim().ToLowerInvariant() switch
+    private static string? NormalizeGroup(string? group) => group?.Trim().ToLowerInvariant() switch
     {
         "game" or "gameplay" => "game",
         "enemy" or "enemies" => "enemies",
         "world" => "world",
-        _ => throw new ArgumentException("Object group must be game, enemies, or world.", nameof(group))
+        _ => null
     };
 
     private static string Slug(string value)
     {
         var characters = value.Trim().ToLowerInvariant().Select(character =>
             char.IsLetterOrDigit(character) ? character : '-').ToArray();
-        var slug = string.Join('-', new string(characters)
+        return string.Join('-', new string(characters)
             .Split('-', StringSplitOptions.RemoveEmptyEntries));
-        return slug.Length > 0 ? slug : throw new ArgumentException("Object name needs a letter or number.", nameof(value));
     }
 }

@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using HollowKnightVision.Windows.Core;
@@ -16,6 +18,7 @@ internal static class LabelSelectionIntegrationTests
         TestAutosaveRefresh();
         TestFailedContextRead();
         TestExitShortcutBeforeTypeAhead();
+        TestCustomObjectGroupsFromGameplay();
         Console.WriteLine("PASS WPF label selector transactions, autosave selection and failed-load recovery");
     }
 
@@ -163,4 +166,78 @@ internal static class LabelSelectionIntegrationTests
         Check(activeContext == "audio" && attempted == 2 && !guard.IsUpdating,
             "Failed context recovery disabled later user selections.");
     });
+
+    private static void TestCustomObjectGroupsFromGameplay()
+    {
+        var data = Directory.CreateTempSubdirectory("hkv-custom-object-menu-");
+        var catalog = new UserObjectCatalog(Path.Combine(data.FullName, "object-catalog-v1.json"));
+        File.WriteAllText(catalog.Path, """{"schemaVersion":1,"objects":[null]}""");
+        // Allocate an owner for the native modal without starting the main window's capture.
+        var window = new MainWindow(GameRuntimeMode.Modded, gamePath: null, root: data.FullName, documents: data.FullName);
+        try
+        {
+            _ = new WindowInteropHelper(window).EnsureHandle();
+            var contexts = (ComboBox)window.FindName("ContextCombo");
+            contexts.SelectedValue = "Gameplay";
+            var button = (Button)window.FindName("NewObjectButton");
+            var menu = button.ContextMenu;
+            var choices = menu.Items.OfType<MenuItem>().ToDictionary(item => (string)item.Tag);
+            Check(choices.Keys.SequenceEqual(["game", "enemies", "world"]),
+                "New Object must expose all three groups from Gameplay.");
+
+            Create("game", "Fixture Lantern", "game.fixture-lantern");
+            Create("enemies", "Fixture Charger", "enemies.fixture-charger");
+            Create("world", "Fixture Gate", "world.fixture-gate");
+            var custom = catalog.Load().Select(item => new MenuStencilLabel(item.Identifier, item.Name)).ToArray();
+            var eligible = LabelingSharedModelPolicy.ClassIdentifiers(custom);
+            Check(custom.Length == 3 && custom.All(item => eligible.Contains(item.Identifier)),
+                "The grouped objects should be eligible for the shared Gameplay model.");
+
+            contexts.SelectedValue = "Main Title";
+            Check(button.Visibility == Visibility.Collapsed, "The custom object menu must be hidden in menu labeling contexts.");
+            choices["enemies"].RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Check(catalog.Load().Count == 3, "A menu context must not add a custom Gameplay class.");
+
+            void Create(string group, string name, string identifier)
+            {
+                button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Check(ReferenceEquals(menu.PlacementTarget, button), "The New Object button did not open its own menu.");
+                var answer = window.Dispatcher.InvokeAsync(() =>
+                {
+                    var dialog = window.OwnedWindows.OfType<Window>().Single(item => item.IsVisible);
+                    try
+                    {
+                        var panel = (StackPanel)dialog.Content;
+                        panel.Children.OfType<TextBox>().Single().Text = name;
+                        var buttons = panel.Children.OfType<StackPanel>().Single();
+                        buttons.Children.OfType<Button>().Single(item => item.IsDefault)
+                            .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    }
+                    finally
+                    {
+                        if (dialog.IsVisible) dialog.Close();
+                    }
+                }, DispatcherPriority.Background);
+                choices[group].RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                Pump();
+                answer.Task.GetAwaiter().GetResult();
+                Check((string)contexts.SelectedValue == "Gameplay"
+                    && ((TextBox)window.FindName("ClassIdentifierText")).Text == identifier
+                    && catalog.Load().Any(item => item.Identifier == identifier && item.Group == group),
+                    "Creating a custom class must select it and retain its group within Gameplay.");
+            }
+        }
+        finally
+        {
+            const BindingFlags privateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
+            typeof(MainWindow).GetField("isClosing", privateInstance)!.SetValue(window, true);
+            var shutdown = (Task)typeof(MainWindow).GetMethod("PrepareShutdownAsync", privateInstance)!.Invoke(window, null)!;
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (!shutdown.IsCompleted && DateTime.UtcNow < deadline) Pump();
+            Check(shutdown.IsCompleted, "The label test window did not finish shutting down.");
+            shutdown.GetAwaiter().GetResult();
+            data.Delete(recursive: true);
+        }
+        Console.WriteLine("PASS Windows Gameplay label editor adds Enemy and World objects through its group menu");
+    }
 }

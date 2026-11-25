@@ -2281,19 +2281,16 @@ public partial class MainWindow : Window
 
     private void NewObject_Click(object sender, RoutedEventArgs e)
     {
-        var context = CurrentContextName;
-        var group = context switch
-        {
-            "Enemies" => "enemies",
-            "World" => "world",
-            "Gameplay" => "game",
-            _ => null
-        };
-        if (group is null)
-        {
-            SetStatus("Choose Gameplay, Enemies, or World before adding an object.");
-            return;
-        }
+        if (CurrentContextName != "Gameplay") return;
+        var menu = NewObjectButton.ContextMenu;
+        menu.PlacementTarget = NewObjectButton;
+        menu.IsOpen = true;
+    }
+
+    private void NewObjectGroup_Click(object sender, RoutedEventArgs e)
+    {
+        if (CurrentContextName != "Gameplay" || sender is not MenuItem { Tag: string group }) return;
+        NewObjectButton.ContextMenu.IsOpen = false;
         var name = PromptForObjectName(group);
         if (name is null) return;
         try
