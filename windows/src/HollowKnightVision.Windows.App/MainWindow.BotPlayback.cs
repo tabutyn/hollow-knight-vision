@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Text.Json;
+using System.Threading.Channels;
 using HollowKnightVision.Windows.Core;
 
 namespace HollowKnightVision.Windows.App;
@@ -34,7 +35,10 @@ public partial class MainWindow
         internal double HandoffDeadline = double.PositiveInfinity;
         internal BotPlaybackUpdate PlaybackUpdate = new(BotPlaybackUpdate.WaitingForFrame);
         internal string? DisplayedPlaybackStatus; // UI thread
-        // The vision analysis worker owns these fields.
+        internal Channel<HackerMatchedFrame>? HackerFrames { get; } = domain == BotCaptureDomain.Hacker
+            ? LatestHackerChannel<HackerMatchedFrame>(singleWriter: true) : null;
+        // The control lock serializes startup and action ownership across workers.
+        internal bool UsesReceiverFrames;
         internal bool Playing;
         internal string? ReportedDemoStatus;
         internal BotDemoSaveBackup? ReportedBackup;
@@ -108,12 +112,16 @@ public partial class MainWindow
         }
 
         var domain = workspace == "Hacker" ? BotCaptureDomain.Hacker : BotCaptureDomain.Gameplay;
-        var archive = recognizedMenuContext == "game" ? null : demoArchive ?? new BotDemoSaveArchive(
+        var startedAt = BotCaptureClock();
+        var inGameplay = recognizedMenuContext == "game"
+            || domain == BotCaptureDomain.Hacker && atlasPathEvidence.ReceiverConfirmsGameplay(startedAt);
+        var archive = inGameplay ? null : demoArchive ?? new BotDemoSaveArchive(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 "AppData", "LocalLow", "Team Cherry", "Hollow Knight"), BotDemoArchiveRoot);
-        var run = new BotRun(owner, domain, Interlocked.Read(ref recentCaptureGeneration), BotCaptureClock(),
+        var run = new BotRun(owner, domain, Interlocked.Read(ref recentCaptureGeneration), startedAt,
             groundTruthLabels.Document.Clone(), archive);
         Volatile.Write(ref botPlayback, run);
+        if (run.HackerFrames is not null) _ = Task.Run(() => RunMatchedHackerPlaybackAsync(run));
         SetStatus(run.StartedInGameplay ? "Loading the latest verified bot checkpoint."
             : "Bot Demo active. Press B again to stop.");
 
@@ -171,6 +179,7 @@ public partial class MainWindow
             run = Interlocked.Exchange(ref botPlayback, null);
         }
         if (run is null) return;
+        run.HackerFrames?.Writer.TryComplete();
         gameControls.EndBotControl(run.Owner);
         FinishBotEvaluation(run, reason);
         if (status is not null) SetStatus(status);
@@ -236,8 +245,16 @@ public partial class MainWindow
     private BotRun? ObserveBotStartup(BgraFrame frame, long generation, double capturedAt, bool admitted, bool recognizedGameplay,
         ReceiverGroundTruthSample? receiver, MenuStencilResult? menu, HudStencilResult? hud)
     {
-        var run = Volatile.Read(ref botPlayback);
-        if (run is null || run.Generation != generation || capturedAt < run.StartedAt
+        lock (thinkingControlLock)
+            return Volatile.Read(ref botPlayback) is { UsesReceiverFrames: false } run
+                ? ObserveBotStartupLocked(run, frame, generation, capturedAt, admitted, recognizedGameplay, receiver, menu, hud)
+                : null;
+    }
+
+    private BotRun? ObserveBotStartupLocked(BotRun run, BgraFrame frame, long generation, double capturedAt, bool admitted,
+        bool recognizedGameplay, ReceiverGroundTruthSample? receiver, MenuStencilResult? menu, HudStencilResult? hud)
+    {
+        if (run.Generation != generation || capturedAt < run.StartedAt
             || !gameControls.OwnsBotControl(run.Owner) || Volatile.Read(ref run.Loaded) is not { } loaded) return null;
         if (!run.Playing)
         {
@@ -361,6 +378,7 @@ public partial class MainWindow
 
     private void EndBotFromWorker(BotRun run, string issue)
     {
+        run.HackerFrames?.Writer.TryComplete();
         gameControls.EndBotControl(run.Owner);
         Dispatcher.InvokeAsync(() =>
         {
