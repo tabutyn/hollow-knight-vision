@@ -34,14 +34,32 @@ internal static class HudStencilTests
     // This fixture is copied only to the test output; production embeds no HUD pixels.
     private static HudStencilTemplate ReferenceTemplate() => JsonSerializer.Deserialize<HudStencilTemplate>(
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "hud-stencil-reference.json")),
+        new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+        ?? throw new InvalidDataException("The test HUD template is missing.");
+
+    private static Fixture[] LoadFixtures() => JsonSerializer.Deserialize<Fixture[]>(
+        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "hud-stencil-cases.json")),
         new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+
+    private static LabelingExampleAnnotation[] TwoHealthLabels(HudStencilTemplate template)
+    {
+        var full = template.Health.First(atom => atom.Kind == "full").Bounds;
+        return Enumerable.Range(0, 2).Select(index => new LabelingExampleAnnotation(Guid.NewGuid(), "game.health",
+            (full.X + index * template.HealthPitch) / 640, full.Y / 360, full.Width / 640, full.Height / 360)).ToArray();
+    }
+
+    internal static BgraFrame SaveGameplayReference(LabelingExampleStore store)
+    {
+        var gameplay = Frame(LoadFixtures().Single(item => item.Health?.SequenceEqual(new[] { 9, 0, 0 }) == true));
+        store.Save(gameplay, "gameplay-hud", TwoHealthLabels(ReferenceTemplate()), languageIdentifier: "en");
+        return gameplay;
+    }
 
     internal static void Run()
     {
-        var fixtures = JsonSerializer.Deserialize<Fixture[]>(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "hud-stencil-cases.json")),
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        var fixtures = LoadFixtures();
         var template = ReferenceTemplate();
-        Check(template?.IsValid == true, "Test HUD reference missing or invalid.");
+        Check(template.IsValid, "Test HUD reference is invalid.");
         Check(!typeof(HudStencilTemplate).Assembly.GetManifestResourceNames().Contains("hud-stencil-template.json"),
             "Production assembly still ships reference pixels.");
         foreach (var fixture in fixtures)
@@ -80,9 +98,7 @@ internal static class HudStencilTests
         Check(tracker.Observe(first, false, 3.1, 2) is null, "Known menu retained HUD matches.");
         Check(tracker.Observe(blank, true, 3.2, 2)!.HealthMasks.Count == 0, "Menu exit retained old masks.");
         Console.WriteLine("PASS HUD mask hold expires and resets on menu/generation changes");
-        var full = template!.Health.First(atom => atom.Kind == "full").Bounds;
-        var annotations = Enumerable.Range(0, 2).Select(index => new LabelingExampleAnnotation(Guid.NewGuid(), "game.health",
-            (full.X + index * template.HealthPitch) / 640, full.Y / 360, full.Width / 640, full.Height / 360)).ToArray();
+        var annotations = TwoHealthLabels(template);
         var nineFull = fixtures.Single(item => item.Health?.SequenceEqual(new[] { 9, 0, 0 }) == true);
         var capturedFrame = Frame(nineFull);
         TestHealthSurvivesChangingCaptureAspect(capturedFrame, template);
@@ -111,7 +127,7 @@ internal static class HudStencilTests
             "Gameplay requires two verified health icons, not a Soul match or one icon.");
         var many = new HudStencilTracker(ReferenceTemplate()).Observe(Frame(fixtures[1]), true, 1, 1)!;
         Check(many.Geo == one.Geo && many.Health.Count > one.Health.Count, "Geo bounds changed with health count.");
-        Console.WriteLine("PASS Health-only gameplay gate and fixed Geo bounds match Mac");
+        Console.WriteLine("PASS Two visible health stencils supply HUD evidence and fixed Geo bounds");
         TestPipelineConnectsRoomsAndRestoresOriginalSceneAnchor();
         TestNewRoomAlignsKnightsDoorwayPositionAcrossSceneCoordinates();
         TestPipelineReinsertsLastBrightFrameWhenRoomFadesToBlack();
@@ -826,51 +842,44 @@ internal static class HudStencilTests
         {
             var examplesRoot = Path.Combine(root, "labeling-v1", "examples");
             new LabelingExampleStore(examplesRoot).Save(source, "gameplay-hud", annotations, languageIdentifier: "en");
-            var type = typeof(HollowKnightVision.Windows.App.MainWindow).Assembly.GetType("HollowKnightVision.Windows.App.WindowsMenuStencilRecognizer")!;
-            var recognizer = Activator.CreateInstance(type, BindingFlags.NonPublic | BindingFlags.Instance, null, [examplesRoot, "en"], null)!;
-            var detect = type.GetMethod("Detect", BindingFlags.NonPublic | BindingFlags.Instance)!;
-            var refresh = type.GetMethod("Refresh", BindingFlags.NonPublic | BindingFlags.Instance)!;
-            var reference = type.GetProperty("HasGameplayReference", BindingFlags.NonPublic | BindingFlags.Instance)!;
-            var result = type.GetProperty("LatestHud", BindingFlags.NonPublic | BindingFlags.Instance)!;
-            Check((bool)reference.GetValue(recognizer)!, "Live recognizer rejected valid saved labels.");
-            Check((string?)detect.Invoke(recognizer, [live]) == "game", "Live recognizer did not use the captured HUD matcher.");
-            Check(((HudStencilResult)result.GetValue(recognizer)!).Health.Count == 9, "Live recognizer still detects only the two labeled icons.");
+            var recognizer = new WindowsMenuStencilRecognizer(examplesRoot, "en");
+            IReadOnlyList<ObjectDetection> Knight() => [new("game.playable-knight", new(.5, .55, .04, .08), .9f)];
+            Check(recognizer.HasGameplayReference, "Live recognizer rejected valid saved labels.");
+            var hudOnly = recognizer.Observe(live);
+            Check(hudOnly.Hud?.Health.Count == 9 && hudOnly.Context is null && !hudOnly.HasFreshGameplayEvidence,
+                "The captured HUD should identify all visible health icons while waiting for the Knight.");
+            Check(recognizer.Analyze(live, false, Knight).HasFreshGameplayEvidence,
+                "Together the captured HUD and the model's Knight must establish Gameplay.");
             var inset = LayoutHud(live, 343d / 360, 0);
-            Check((string?)detect.Invoke(recognizer, [inset]) == "game"
-                && ((HudStencilResult)result.GetValue(recognizer)!).Health.Count == 9,
+            var changedLayout = recognizer.Analyze(inset, false, Knight);
+            Check(changedLayout.HasFreshGameplayEvidence && changedLayout.Hud?.Health.Count == 9,
                 "Changing window layout lost fresh gameplay evidence in the live recognizer.");
-            var observe = type.GetMethod("Observe", BindingFlags.NonPublic | BindingFlags.Instance)!;
             var blankPixels = new byte[live.Width * live.Height * 4];
             var blank = new BgraFrame(live.Width, live.Height, live.Width * 4, blankPixels, 2, live.ObservedAt.AddSeconds(1));
-            var lostHud = observe.Invoke(recognizer, [blank, false])!;
-            Check((string?)lostHud.GetType().GetProperty("Context")!.GetValue(lostHud) == "game", "HUD dropout cleared established Gameplay state.");
-            Check(!(bool)lostHud.GetType().GetProperty("HasFreshGameplayEvidence")!.GetValue(lostHud)!,
-                "HUD dropout was incorrectly reported as fresh gameplay evidence.");
-            Check((bool)lostHud.GetType().GetProperty("GameplayEnabled")!.GetValue(lostHud)!,
-                "Temporary HUD loss disabled Mac-parity gameplay tracking.");
-            type.GetMethod("ResetTracking", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(recognizer, null);
+            var lostHud = recognizer.Observe(blank);
+            Check(lostHud.Context == "game" && lostHud.GameplayEnabled && !lostHud.HasFreshGameplayEvidence,
+                "Established Gameplay must continue through a temporary HUD dropout.");
+            recognizer.ResetTracking();
             var clockRestart = new BgraFrame(live.Width, live.Height, live.Width * 4, blankPixels, 3, DateTimeOffset.UnixEpoch);
-            var restarted = observe.Invoke(recognizer, [clockRestart, false])!;
-            Check((string?)restarted.GetType().GetProperty("Context")!.GetValue(restarted) == "game", "Capture transport reset erased established gameplay.");
-            type.GetMethod("ResetGameSession", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(recognizer, null);
-            var newSession = observe.Invoke(recognizer, [clockRestart, false])!;
-            Check(newSession.GetType().GetProperty("Context")!.GetValue(newSession) is null, "New game process inherited old session's Gameplay latch.");
-            refresh.Invoke(recognizer, ["fr"]);
-            Check(!(bool)reference.GetValue(recognizer)!, "Language switch retained the wrong HUD references.");
-            Check(detect.Invoke(recognizer, [live]) is null, "Unlabeled language bypassed setup via bundled templates.");
-            refresh.Invoke(recognizer, ["en"]);
-            Check((string?)detect.Invoke(recognizer, [live]) == "game", "Returning to labeled language did not restore HUD detection.");
+            Check(recognizer.Observe(clockRestart).GameplayEnabled, "Capture transport reset erased established gameplay.");
+            recognizer.ResetGameSession();
+            Check(recognizer.Observe(clockRestart).Context is null, "New game process inherited the old session's Gameplay latch.");
+            recognizer.Refresh("fr");
+            Check(!recognizer.HasGameplayReference && recognizer.Analyze(live, false, Knight).Context is null,
+                "An unlabeled language should wait for HUD setup.");
+            recognizer.Refresh("en");
+            Check(recognizer.Analyze(live, false, Knight).HasFreshGameplayEvidence,
+                "Returning to the labeled language must restore Gameplay entry with the Knight.");
             Directory.Delete(examplesRoot, recursive: true);
-            refresh.Invoke(recognizer, ["en"]);
-            var reset = observe.Invoke(recognizer, [live, false])!;
-            Check(!(bool)reference.GetValue(recognizer)! && result.GetValue(recognizer) is null
-                && reset.GetType().GetProperty("Context")!.GetValue(reset) is null,
+            recognizer.Refresh("en");
+            var reset = recognizer.Observe(live);
+            Check(!recognizer.HasGameplayReference && reset.Hud is null && reset.Context is null,
                 "Deleting stencils retained the gameplay latch or reference pixels.");
             new LabelingExampleStore(examplesRoot).Save(source, "gameplay-hud", annotations.Take(1).ToArray(), languageIdentifier: "en");
-            refresh.Invoke(recognizer, ["en"]);
-            Check(!(bool)reference.GetValue(recognizer)! && detect.Invoke(recognizer, [live]) is null,
+            recognizer.Refresh("en");
+            Check(!recognizer.HasGameplayReference && recognizer.Analyze(live, false, Knight).Context is null,
                 "Incomplete labels bypassed setup.");
-            Console.WriteLine("PASS Live HUD recognition preserves gameplay across dropout, requires captured labels, and relocks on reset/language change");
+            Console.WriteLine("PASS Captured health and Knight establish Gameplay, with continuity across dropout and capture restart");
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
     }

@@ -126,15 +126,22 @@ internal static class MenuIntegrationTests
             var expired = analyze.Invoke(instance, [At(blank, 4), false, inference])!;
             Check(expired.GetType().GetProperty("Context")!.GetValue(expired) is null && inferenceCalls > 0, "Unknown frame did not expire menu state/restart inference.");
             Func<IReadOnlyList<ObjectDetection>> worldInference = () => [new("game.playable-knight", new(.2, .2, .1, .1), .9f), new("enemies.crawlid", new(.4, .4, .1, .1), .9f)];
-            var game = analyze.Invoke(instance, [At(blank, 5), false, worldInference])!;
-            Check((string?)game.GetType().GetProperty("Context")!.GetValue(game) == "game", "Production status ignores current gameplay object evidence.");
-            // Stay beyond the 100ms untracked search cadence; a binary-double
-            // timestamp exactly 0.1 apart can legitimately fall just below it.
-            var firstMenu = analyze.Invoke(instance, [At(pixels, 5.15), false, inference])!;
+            var objectsOnly = analyze.Invoke(instance, [At(blank, 5), false, worldInference])!;
+            Check(objectsOnly.GetType().GetProperty("Context")!.GetValue(objectsOnly) is null,
+                "The production recognizer must wait for fresh HUD evidence.");
+            var hud = HudStencilTests.SaveGameplayReference(store);
+            type.GetMethod("Refresh", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(instance, ["en"]);
+            var gameplayFrame = new BgraFrame(hud.Width, hud.Height, hud.Stride, hud.Pixels, 51, DateTimeOffset.UnixEpoch.AddSeconds(5.1));
+            var game = analyze.Invoke(instance, [gameplayFrame, false, worldInference])!;
+            generation = (long)game.GetType().GetProperty("Generation")!.GetValue(game)!;
+            Check((bool)game.GetType().GetProperty("HasFreshGameplayEvidence")!.GetValue(game)!,
+                "The production recognizer should enter Gameplay when fresh Knight and HUD evidence agree.");
+            // These menu frames are beyond the HUD hold and spaced beyond the search cadence.
+            var firstMenu = analyze.Invoke(instance, [At(pixels, 5.6), false, inference])!;
             Check((string?)firstMenu.GetType().GetProperty("Context")!.GetValue(firstMenu) == "game"
                 && !(bool)firstMenu.GetType().GetProperty("HasFreshGameplayEvidence")!.GetValue(firstMenu)!, "First menu candidate replaces Gameplay or enters the atlas.");
             Check(((string)firstMenu.GetType().GetProperty("Diagnostic")!.GetValue(firstMenu)!).Contains("raw=main-title/", StringComparison.Ordinal), "First menu fixture was not actually scanned.");
-            var secondMenu = analyze.Invoke(instance, [At(pixels, 5.3), false, inference])!;
+            var secondMenu = analyze.Invoke(instance, [At(pixels, 5.75), false, inference])!;
             Check((string?)secondMenu.GetType().GetProperty("Context")!.GetValue(secondMenu) == "main-title", "Stable real menu did not release Gameplay latch.");
             VerifyLiveCalibration(root, examples, frame);
             var current = type.GetMethod("IsCurrent", BindingFlags.NonPublic | BindingFlags.Instance)!;

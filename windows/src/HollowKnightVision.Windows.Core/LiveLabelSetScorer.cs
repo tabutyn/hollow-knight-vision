@@ -13,9 +13,6 @@ public static class LiveLabelSetScorer
     private static readonly IReadOnlyDictionary<string, IReadOnlyDictionary<string, LabelingOccurrenceBounds>> Expectations =
         LabelingContractCatalog.ScreenContexts.Where(context => context.Identifier != "credits")
             .ToDictionary(context => context.Identifier, Expectation, StringComparer.Ordinal);
-    private static readonly IReadOnlySet<string> GameplayModelClasses = LabelingContractCatalog.ScreenContexts
-        .Single(context => context.Identifier == "game").Labels.Select(label => Canonical(label.Identifier))
-        .Where(id => id is not ("game.health" or "game.mana" or "game.geo")).ToHashSet(StringComparer.Ordinal);
     private static string Canonical(string id) => LabelingClassIdentity.CanonicalIdentifier(id);
     public static double EvidenceWeight(string identifier) => Memberships.TryGetValue(Canonical(identifier), out var count) && count > 0
         ? Math.Max(CommonWeightFloor, UniqueWeight / count) : CommonWeightFloor;
@@ -48,12 +45,6 @@ public static class LiveLabelSetScorer
     {
         var ranked = Scores(detections); var best = ranked.FirstOrDefault();
         return Qualifies(best) && (ranked.Count < 2 || best!.Score - ranked[1].Score >= MinimumWinningMargin) ? best : null;
-    }
-    public static LiveLabelSetScore? GameplayMatch(IReadOnlyList<ObjectDetection> detections, IReadOnlySet<string>? customClassIdentifiers = null)
-    {
-        var gameplay = Scores(detections.Where(item => GameplayModelClasses.Contains(Canonical(item.ClassIdentifier))
-            || customClassIdentifiers?.Contains(Canonical(item.ClassIdentifier)) == true).ToArray()).Single(item => item.ContextIdentifier == "game");
-        return Qualifies(gameplay) ? gameplay : null;
     }
     private static bool Qualifies(LiveLabelSetScore? score) => score is not null && score.Score >= MinimumScore
         && score.MatchedObjectCount >= 2 && score.DistinctiveObjectCount >= 1;

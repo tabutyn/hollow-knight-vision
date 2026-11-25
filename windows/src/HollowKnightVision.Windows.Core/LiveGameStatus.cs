@@ -14,6 +14,11 @@ public sealed class LiveGameStatusTracker
     public const double MissingCueGrace = .8;
     public LiveGameStatus? Current { get; private set; }
     private double? lastRecognitionTimestamp, lastObservedTimestamp;
+    internal void RestoreGameplaySession()
+    {
+        Reset();
+        Current = new(LabelingContractCatalog.ContextName("game"), "game");
+    }
     public void Reset(bool preservingGameplay = false)
     {
         if (!preservingGameplay || Current?.IsGameplay != true) Current = null;
@@ -59,17 +64,22 @@ public sealed class GameplayMenuEvidenceGate
 
 public static class LiveGameStatusEvidencePolicy
 {
+    public static bool HasGameplayEntryEvidence(IReadOnlyList<ObjectDetection> detections, HudStencilResult? hud) =>
+        hud?.EstablishesGameplay == true && detections.Any(detection =>
+            float.IsFinite(detection.Confidence) && detection.Confidence >= SceneRegions.DefaultKnightConfidence
+            && LabelingClassIdentity.CanonicalIdentifier(detection.ClassIdentifier) == LiveObjectDetectionPostprocessor.Knight);
+
     public static bool ShouldRunObjectInference(LiveGameStatus? status) => status is null || status.IsGameplay || status.ContextIdentifier == "credits";
 }
 
 public static class LiveGameStatusResolver
 {
     public static LiveGameStatus? Resolve(IReadOnlyList<ObjectDetection> detections, MenuStencilResult? menuStencil = null,
-        HudStencilResult? hudStencil = null, bool creditsLikely = false, IReadOnlySet<string>? customClassIdentifiers = null)
+        HudStencilResult? hudStencil = null, bool creditsLikely = false)
     {
-        if (menuStencil?.IsMatch == true)
+        if (menuStencil is { IsMatch: true, ContextIdentifier: not "game" })
             return new(LabelingContractCatalog.ContextName(menuStencil.ContextIdentifier), menuStencil.ContextIdentifier, menuStencil.SelectedOption);
-        if (hudStencil?.EstablishesGameplay == true || LiveLabelSetScorer.GameplayMatch(detections, customClassIdentifiers) is not null)
+        if (LiveGameStatusEvidencePolicy.HasGameplayEntryEvidence(detections, hudStencil))
             return new(LabelingContractCatalog.ContextName("game"), "game");
         return creditsLikely ? new(LabelingContractCatalog.ContextName("credits"), "credits") : null;
     }
@@ -83,16 +93,20 @@ public sealed class LiveGameStatusPipeline
     private readonly LiveGameStatusTracker tracker = new();
     private readonly GameplayMenuEvidenceGate menuGate = new();
     public LiveGameStatus? Current => tracker.Current;
+    public LiveGameStatusPipeline(bool startsInGameplay = false)
+    {
+        if (startsInGameplay) tracker.RestoreGameplaySession();
+    }
     public void Reset(bool preservingGameplay = false) { tracker.Reset(preservingGameplay); menuGate.Reset(); }
     public Observation Observe(MenuStencilResult? rawMenu, HudStencilResult? hud, double timestamp, bool creditsLikely = false,
-        Func<IReadOnlyList<ObjectDetection>>? inferObjects = null, IReadOnlySet<string>? customClassIdentifiers = null)
+        Func<IReadOnlyList<ObjectDetection>>? inferObjects = null)
     {
         var menu = menuGate.Admits(rawMenu?.IsMatch == true ? rawMenu.ContextIdentifier : null,
             tracker.Current?.IsGameplay == true, hud?.Health.Count ?? 0, timestamp) ? rawMenu : null;
-        var provisional = LiveGameStatusResolver.Resolve([], menu, hud, creditsLikely, customClassIdentifiers);
+        var provisional = LiveGameStatusResolver.Resolve([], menu, hud, creditsLikely);
         var runsInference = inferObjects is not null && LiveGameStatusEvidencePolicy.ShouldRunObjectInference(provisional);
         var detections = runsInference ? inferObjects!() : Array.Empty<ObjectDetection>();
-        var recognized = LiveGameStatusResolver.Resolve(detections, menu, hud, creditsLikely, customClassIdentifiers);
+        var recognized = LiveGameStatusResolver.Resolve(detections, menu, hud, creditsLikely);
         return new(tracker.Observe(recognized, timestamp), recognized, menu, detections, runsInference);
     }
 }
