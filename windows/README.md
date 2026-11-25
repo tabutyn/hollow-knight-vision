@@ -849,6 +849,11 @@ Vision. Keep the sibling `calibrations` directory with it. Each optional
 heatmap requires the matching detector run, trained class evidence, and a
 verified model checksum.
 
+Game Play Gym reads the same calibrations for its active detector. Its
+training identity includes the receipts and model digests, so an input
+change is detected before continuing a training run. Explicit Gym localizer
+arguments accept an ONNX calibration receipt or a replacement ONNX run directory.
+
 The shared incremental detector can train on Windows without Core ML and export
 an ONNX model. Setup installs CPU-only PyTorch into the repository's ignored
 `.tools/hkv-training-windows` environment and caches the pretrained MobileNet
