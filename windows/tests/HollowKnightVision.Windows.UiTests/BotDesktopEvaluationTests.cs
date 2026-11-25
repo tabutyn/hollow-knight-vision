@@ -470,6 +470,7 @@ internal static class BotDesktopEvaluationTests
         var states = Channel.CreateUnbounded<ReceiverInputSnapshot>();
         var peer = ServeAsync(server, states.Writer, token);
         var modelName = $"Desktop {domain}";
+        var usesTrialControl = domain == "hacker";
         var botRoot = Path.Combine(root, "bot-v1");
         var modelHash = WriteCheckpoint(botRoot, domain, modelName);
         var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
@@ -478,6 +479,13 @@ internal static class BotDesktopEvaluationTests
             Field("recentCaptureGeneration").SetValue(window, Generation);
             Field("workspace").SetValue(window, domain == "hacker" ? "Hacker" : "Gameplay");
             Field("recognizedMenuContext").SetValue(window, "game");
+            if (usesTrialControl)
+            {
+                window.EnableBotTrialControl();
+                var denied = await BotTrialControl.SendAsync("mark-return", token);
+                Check(!denied.Accepted && denied.Issue?.Contains("Focus Vision", StringComparison.Ordinal) == true,
+                    "An opted-in but unfocused desktop must reject trial checkpoint changes.");
+            }
             var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
             var publishedControl = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             bridge.BotInputSent += (_, buttons, _) =>
@@ -516,16 +524,27 @@ internal static class BotDesktopEvaluationTests
             await Task.Delay(110, token);
             var secondTimestamp = Capture(42, renderedFrame + 1, Action, 2);
             await ExpectWireState(Action);
-            Check((bool)Method("HandleLocalShortcut").Invoke(window, [Key.B, false, ModifierKeys.None])!,
-                "B did not handle stopping the active desktop bot.");
+            if (usesTrialControl)
+            {
+                var status = (await BotTrialControl.SendAsync("status", token)).Status
+                    ?? throw new InvalidOperationException("Missing desktop trial status.");
+                Check(status.GetProperty("active").GetBoolean() && status.GetProperty("botDecisions").GetInt32() == 2
+                    && status.GetProperty("terrainSource").GetString() == "human-authored"
+                    && status.GetProperty("botAction").EnumerateArray().Select(value => value.GetInt32()).SequenceEqual([2, 0, 0, 1]),
+                    "Trial status reports the actual policy, decisions and terrain source of the current run.");
+                Check((await BotTrialControl.SendAsync("stop", token)).Accepted, "Trial stop failed to release the active desktop bot.");
+            }
+            else Check((bool)Method("HandleLocalShortcut").Invoke(window, [Key.B, false, ModifierKeys.None])!,
+                    "B did not handle stopping the active desktop bot.");
             await ExpectWireState(InputButtons.None);
             await ((Task)Field("botEvaluationWrites").GetValue(window)!).WaitAsync(token);
 
             var directory = Directory.GetDirectories(Path.Combine(botRoot, "evaluations", domain)).Single();
             var manifest = Read<BotCaptureManifest>(directory, "manifest.json");
-            Check(manifest is { Status: "completed", StopReason: "user-stop", ExpertDemonstration: false,
+            Check(manifest is { Status: "completed", ExpertDemonstration: false,
                 ObservationCount: 2, UsableObservationCount: 2, TerrainPairedFrameCount: 2, InputEventCount: >= 4 }
-                && manifest.BotDomain == domain, "The finalized evaluation did not describe the desktop playback.");
+                && manifest.BotDomain == domain && manifest.StopReason == (usesTrialControl ? "local-control" : "user-stop"),
+                "The finalized evaluation did not describe the desktop playback.");
             var events = File.ReadLines(Path.Combine(directory, "events.jsonl")).ToArray();
             var row = JsonSerializer.Deserialize<BotCaptureObservation>(events[0], Json)!;
             Check(domain == "hacker"

@@ -14,6 +14,7 @@ public sealed class BotDemoSession(BotDemoSaveArchive saves, double startedAt)
 
     public BotDemoSaveBackup? Backup { get; private set; }
     public string Status => failure ?? navigation.Status;
+    public BotDemoPhase Phase => failure is null ? navigation.Phase : BotDemoPhase.Stopped;
 
     public BotDemoDecision Observe(BotDemoFrame frame, double now)
     {

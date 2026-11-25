@@ -153,6 +153,17 @@ internal static class Program
         if (evaluationIndex >= 0)
             return Task.FromResult(EvaluateGroundLabels(
                 arguments, evaluationIndex, standardOutput ?? Console.Out, standardError ?? Console.Error));
+        if (arguments.FirstOrDefault() == "--bot-demo-control")
+        {
+            var errors = standardError ?? Console.Error;
+            if (arguments is not [_, var command, HollowKnightVisionLaunchOptions.AutomationControlFlag]
+                || BotTrialCommand.Parse(command) is null)
+            {
+                errors.WriteLine("Expected --bot-demo-control status|stop|mark-return|return|restore-start:PATH --enable-automation-control.");
+                return Task.FromResult(64);
+            }
+            return SendTrialCommandAsync(command, standardOutput ?? Console.Out, errors);
+        }
         if (arguments.FirstOrDefault() == MenuCalibrationCapture.Flag)
         {
             if (arguments is not [_, var command, HollowKnightVisionLaunchOptions.AutomationControlFlag]
@@ -839,6 +850,28 @@ internal static class Program
         }
     }
 
+    private static async Task<int> SendTrialCommandAsync(string command, TextWriter output, TextWriter errors)
+    {
+        try
+        {
+            var reply = await BotTrialControl.SendAsync(command).ConfigureAwait(false);
+            output.WriteLine(reply.Status?.GetRawText() ?? (reply.Accepted ? "accepted" : "rejected"));
+            if (!reply.Accepted && reply.Issue is { } issue) errors.WriteLine(issue);
+            return reply.Accepted ? 0 : 1;
+        }
+        catch (TimeoutException)
+        {
+            errors.WriteLine("No trial control is listening. Launch Vision with --enable-automation-control.");
+            return 1;
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
+            or JsonException or ArgumentException or OperationCanceledException)
+        {
+            errors.WriteLine($"Bot trial control failed. {error.Message}");
+            return 1;
+        }
+    }
+
     private static void PrintHelp()
     {
         Console.WriteLine("""
@@ -946,6 +979,8 @@ internal static class Program
             --capture-once PATH     Capture and write the newest frame as a BMP.
             --menu-calibration COMMAND --enable-automation-control
                                     Read or save a menu stencil frame from a running game.
+            --bot-demo-control COMMAND --enable-automation-control
+                                    Control an opted-in Vision trial in the current Windows session.
             --frames N              Capture N frames; only the latest is retained (default 1).
             --interval-ms N         Delay between captures (default 133).
             --native                Keep native client size instead of CPU-normalizing to 640x360.

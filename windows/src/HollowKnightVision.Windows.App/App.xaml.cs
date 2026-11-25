@@ -55,6 +55,8 @@ public partial class App : Application
                     $"A compatible {selectedMode} Hollow Knight installation was not found.");
             }
             var window = new MainWindow(selectedMode, selectedExecutable, thinkingEnabled, GroundFrameAudits.Launch(e.Args));
+            if (HollowKnightVisionLaunchOptions.Parse(e.Args).AutomationControlEnabled)
+                window.EnableBotTrialControl();
             MainWindow = window;
             ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose;
             window.Show();
