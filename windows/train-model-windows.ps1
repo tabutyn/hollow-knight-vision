@@ -18,7 +18,8 @@ $torchCache = $trainingEnvironment.TorchCache
 $trainer = $trainingEnvironment.Trainer
 
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
-  throw "Training environment missing at '$python'. Run .\setup-training-windows.ps1 or set HKV_TRAINER_PYTHON."
+  [Console]::Error.WriteLine("Training environment missing at '$python'. Run .\setup-training-windows.ps1 or set HKV_TRAINER_PYTHON.")
+  exit 1
 }
 $datasetPath = (Resolve-Path -LiteralPath $Dataset).Path
 $trainerArguments = @(
@@ -51,7 +52,7 @@ try {
   $env:CUDA_VISIBLE_DEVICES = "-1"
   $env:TORCH_HOME = $torchCache
   & $python @trainerArguments
-  if ($LASTEXITCODE -ne 0) { throw "Hollow Knight Vision training failed." }
+  $trainerExitCode = $LASTEXITCODE
 } finally {
   $env:CUDA_VISIBLE_DEVICES = $previousCudaDevices
   $env:TORCH_HOME = $previousTorchHome
@@ -59,3 +60,4 @@ try {
   $env:PYTHONUNBUFFERED = $previousPythonBuffering
   [Console]::OutputEncoding = $previousOutputEncoding
 }
+if ($trainerExitCode -ne 0) { exit $trainerExitCode }

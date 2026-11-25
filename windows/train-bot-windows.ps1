@@ -28,7 +28,10 @@ if (-not $python) {
     & (Join-Path $PSScriptRoot 'setup-bot-trainer-windows.ps1')
   }
 }
-if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw "Bot training Python was not found at '$python'." }
+if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
+  [Console]::Error.WriteLine("Bot training Python was not found at '$python'.")
+  exit 1
+}
 $trainerArguments = @('-X', 'utf8', '-u', '-B', $trainer,
   '--root', $BotRoot, '--selection', $Selection, '--run-id', $RunId.ToString('D'),
   '--domain', $Domain, '--epochs', [string]$Epochs, '--follow-playback', '--native-verifier', $Vision)

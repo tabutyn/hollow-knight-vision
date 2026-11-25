@@ -570,11 +570,28 @@ internal static class BotDesktopEvaluationTests
             File.WriteAllText(launcher, TrainingCompletionFixture);
             var train = (Button)window.FindName("BotTrainButton");
             var trainingStatus = (TextBlock)window.FindName("BotTrainingStatus");
+            var trainingRuns = Path.Combine(botRoot, "training-runs");
             Refresh();
             await WaitFor(() => train.IsEnabled && pending.Text == "3 new runs · Hacker 2 · Game Play 3");
             var previousPython = Environment.GetEnvironmentVariable("HKV_BOT_PYTHON");
+            string failedRun;
             try
             {
+                var currentActor = Field("botPlayback").GetValue(window);
+                var missingPython = Path.Combine(root, "missing-fixture-trainer.exe");
+                Environment.SetEnvironmentVariable("HKV_BOT_PYTHON", missingPython);
+                train.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                await WaitFor(() => Field("botTrainingCancellation").GetValue(window) is null && train.IsEnabled);
+                failedRun = Directory.GetDirectories(trainingRuns).Single();
+                var failureLog = File.ReadAllText(Path.Combine(failedRun, "training.log"));
+                Check(trainingStatus.Text.StartsWith("Bot training failed. ", StringComparison.Ordinal)
+                    && trainingStatus.Text.Contains("Bot training Python was not found", StringComparison.Ordinal)
+                    && failureLog.Contains(missingPython, StringComparison.Ordinal)
+                    && ReferenceEquals(currentActor, Field("botPlayback").GetValue(window))
+                    && store.Catalog().ActiveId == "bot-second",
+                    $"A failed Bot Train must keep the active actor and show the missing trainer diagnostic. {trainingStatus.Text}\n{failureLog}");
+                Console.WriteLine("PASS Bot Train reports its missing trainer and keeps the running checkpoint");
+
                 // Exercise the shipped launcher and desktop completion path with a verified export.
                 Environment.SetEnvironmentVariable("HKV_BOT_PYTHON", launcher);
                 train.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -584,8 +601,7 @@ internal static class BotDesktopEvaluationTests
             }
             finally { Environment.SetEnvironmentVariable("HKV_BOT_PYTHON", previousPython); }
 
-            var trainingRuns = Path.Combine(botRoot, "training-runs");
-            var trainingRun = Directory.Exists(trainingRuns) ? Directory.GetDirectories(trainingRuns).SingleOrDefault() : null;
+            var trainingRun = Directory.GetDirectories(trainingRuns).SingleOrDefault(path => path != failedRun);
             var trainingLog = trainingRun is null ? null : Path.Combine(trainingRun, "training.log");
             var trainingOutput = trainingLog is not null && File.Exists(trainingLog) ? File.ReadAllText(trainingLog) : "";
             Check(trainingStatus.Text == $"Hacker is using {buttonModel}." && Field("botPlayback").GetValue(window) is null,
