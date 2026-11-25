@@ -3546,7 +3546,7 @@ public partial class MainWindow : Window
                 terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch, groundHypotheses,
                 gameplayAdmitted, atlasCompositionExclusions, masks, usesDurableWorld, botAtlas,
                 tracked.RoomAllowsAtlasWrite && tracked.MeasuredLineage is not null ? localWalkedGround : [],
-                tracked.MeasuredSceneryCamera, wallLineage, thinkingPlaybackFrame);
+                tracked.MeasuredSceneryCamera, wallLineage, thinkingPlaybackFrame, recentJump);
         }
         else
         {
