@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using ILGPU;
 using ILGPU.Runtime;
 
@@ -8,8 +9,11 @@ public sealed class ScenePatchAccelerator : IDisposable
 {
     internal const double RescoreOnCpu = -1.5;
     // The generated ILGPU launcher needs public, blittable argument types.
+    [ExcludeFromCodeCoverage(Justification = "ILGPU compiles the generated members into device code.")]
     public readonly record struct Point(int X, int Y);
+    [ExcludeFromCodeCoverage(Justification = "ILGPU compiles the generated members into device code.")]
     public readonly record struct Mask(double Left, double Top, double Right, double Bottom);
+    [ExcludeFromCodeCoverage(Justification = "ILGPU compiles the generated members into device code.")]
     public readonly record struct Search(int Width, int Height, int CenterX, int CenterY, int RadiusX, int RadiusY);
     private readonly Accelerator accelerator;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<Point>, ArrayView<Mask>,
@@ -64,6 +68,7 @@ public sealed class ScenePatchAccelerator : IDisposable
         return storage.View.SubView(0, length).BaseView;
     }
 
+    [ExcludeFromCodeCoverage(Justification = "Coverlet hit counters are managed code. The kernel has a separate execution test.")]
     private static void Correlate(Index1D index, ArrayView<float> source, ArrayView<float> target,
         ArrayView<Point> points, ArrayView<Mask> sourceMasks, ArrayView<Mask> targetMasks, ArrayView<double> output, Search search)
     {
@@ -95,6 +100,7 @@ public sealed class ScenePatchAccelerator : IDisposable
             output[index] = (ab - sumA * sumB / 192) / Math.Sqrt(varianceA * varianceB);
     }
 
+    [ExcludeFromCodeCoverage(Justification = "ILGPU compiles this helper as part of the kernel.")]
     private static bool IsMasked(ArrayView<Mask> masks, int x, int y)
     {
         for (var index = 0; index < masks.Length; index++)
