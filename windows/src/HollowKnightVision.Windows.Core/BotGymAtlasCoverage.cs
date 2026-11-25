@@ -62,6 +62,8 @@ internal sealed class BotGymAtlasCoverage
         bool continuesMeasuredScenery = false, bool retainBasis = false, LiveWorldCaptureEvidence? captureEvidence = null,
         IReadOnlyList<GroundHypothesisAtlasLine>? walkedGround = null)
     {
+        if (!double.IsFinite(time) || captureEvidence is { } captured && captured.CaptureTimestamp != time)
+            return;
         var correction = tracking.GlobalCorrection;
         if (correction is { } shift && shift.X * shift.X + shift.Y * shift.Y > 9)
         {
