@@ -112,7 +112,8 @@ public sealed class LiveWorldTracker
 
     private sealed record PendingClosure(
         int ReferenceKeyframeId,
-        AtlasPoint Correction);
+        AtlasPoint Correction,
+        bool FloorVerified);
 
     private sealed record PendingRecovery(
         int Epoch,
@@ -147,6 +148,7 @@ public sealed class LiveWorldTracker
     private double lastGroundRecoverySearchAt = double.NegativeInfinity;
     private int recoveryEpoch;
     private double? lastAcceptedClosureTravel;
+    private int? lastAcceptedClosureIslandId;
     private int? lastObservationId;
 
     public LiveWorldTracker()
@@ -191,6 +193,7 @@ public sealed class LiveWorldTracker
         currentVisitObservationIds.Clear();
         closedReferenceKeyframeIds.Clear();
         lastAcceptedClosureTravel = null;
+        lastAcceptedClosureIslandId = null;
         lastObservationId = null;
     }
 
@@ -212,6 +215,7 @@ public sealed class LiveWorldTracker
             if (!currentVisitObservationIds.Contains(observationId)) continue;
             closedReferenceKeyframeIds.Add(edge.FromKeyframeId);
             lastAcceptedClosureTravel = cumulativeTravel[observationId];
+            lastAcceptedClosureIslandId = OwnerOfObservation(observationId)?.Id;
         }
     }
 
@@ -528,9 +532,10 @@ public sealed class LiveWorldTracker
 
         var proposedCorrection = Difference(closurePose, observation.RawPose);
         var consistency = Math.Max(solveWidth * 0.0125, 4);
+        var floorVerified = loadGroundSource is not null;
         if (pendingClosure is null)
         {
-            pendingClosure = new PendingClosure(reference.KeyframeId, proposedCorrection);
+            pendingClosure = new PendingClosure(reference.KeyframeId, proposedCorrection, floorVerified);
             rejections.Add(LiveWorldTrackerRejection.ConfirmationRequired);
             if (!sceneryOnly && ShouldCreateKeyframe(observation, travel)) AddKeyframe(observation, frame);
             return Update(
@@ -540,10 +545,13 @@ public sealed class LiveWorldTracker
                 reference,
                 match);
         }
-        if (pendingClosure.ReferenceKeyframeId != reference.KeyframeId
+        var sameReference = pendingClosure.ReferenceKeyframeId == reference.KeyframeId
+            || floorVerified && pendingClosure.FloorVerified
+                && ReferenceViewsShareMeasuredIsland(pendingClosure.ReferenceKeyframeId, reference.ObservationId);
+        if (!sameReference || pendingClosure.FloorVerified != floorVerified
             || Distance(pendingClosure.Correction, proposedCorrection) > consistency)
         {
-            pendingClosure = new PendingClosure(reference.KeyframeId, proposedCorrection);
+            pendingClosure = new PendingClosure(reference.KeyframeId, proposedCorrection, floorVerified);
             rejections.Add(LiveWorldTrackerRejection.InconsistentConfirmation);
             if (!sceneryOnly && ShouldCreateKeyframe(observation, travel)) AddKeyframe(observation, frame);
             return Update(
@@ -595,6 +603,7 @@ public sealed class LiveWorldTracker
             closure = closure with { ResidualPixels = match.Residual * reference.Reference.SolveWidth / reference.Reference.SampleWidth };
         closedReferenceKeyframeIds.Add(reference.KeyframeId);
         lastAcceptedClosureTravel = travel;
+        lastAcceptedClosureIslandId = activeIsland?.Id;
         ReplaceSnapshot(loopEdges: [.. Snapshot.LoopClosureEdges, closure]);
         AtlasPoint correction;
         if (components is not null && plan is not null)
@@ -769,8 +778,12 @@ public sealed class LiveWorldTracker
         var minimumTravelAfterClosure = Math.Max(
             observation.SolveWidth * KeyframeTravelFraction,
             1);
-        var placementPending = Snapshot.TrackingIslands.LastOrDefault()?.RequiresPlacement == true;
+        var currentIsland = Snapshot.TrackingIslands.LastOrDefault();
+        var placementPending = currentIsland?.RequiresPlacement == true;
+        var measuredClosure = requireGround && currentIsland is { Placement: not LiveIslandPlacement.LegacyUnknown }
+            && currentIsland.Members.Any(member => member.ObservationId == observation.Id && member.Measured);
         if (!placementPending && lastAcceptedClosureTravel is { } lastClosure
+            && (!measuredClosure || currentIsland?.Id == lastAcceptedClosureIslandId)
             && travelDistance - lastClosure < minimumTravelAfterClosure)
         {
             return [];
@@ -778,8 +791,7 @@ public sealed class LiveWorldTracker
 
         var observations = Snapshot.Observations.ToDictionary(value => value.Id);
         var keyframes = Snapshot.Keyframes.ToDictionary(value => value.Id);
-        var currentIslandMembers = Snapshot.TrackingIslands.Count != 0
-            ? Snapshot.TrackingIslands[^1].Members.Select(member => member.ObservationId).ToHashSet() : null;
+        var currentIslandMembers = currentIsland?.Members.Select(member => member.ObservationId).ToHashSet();
         var unplaced = Snapshot.UnplacedObservationIds();
         return references.Values.Where(candidate =>
         {
@@ -796,7 +808,7 @@ public sealed class LiveWorldTracker
                 && !unplaced.Contains(candidate.ObservationId)
                 && (!requireGround || referenced.SolveWidth == observation.SolveWidth
                     && referenced.GroundGeometry is { Lines.Count: > 0 })
-                && (placementPending || (!closedReferenceKeyframeIds.Contains(candidate.KeyframeId)
+                && (placementPending || measuredClosure || (!closedReferenceKeyframeIds.Contains(candidate.KeyframeId)
                     && (!currentVisitObservationIds.Contains(candidate.ObservationId)
                         || travelDistance - referenceTravel >= minimumTravel)));
         }).OrderBy(value => value.KeyframeId).ToArray();
@@ -815,9 +827,20 @@ public sealed class LiveWorldTracker
         return travel - lastTravel >= observation.SolveWidth * KeyframeTravelFraction;
     }
 
+    private bool ReferenceViewsShareMeasuredIsland(int firstKeyframeId, int secondObservationId)
+    {
+        var first = Snapshot.Keyframes.FirstOrDefault(keyframe => keyframe.Id == firstKeyframeId);
+        return first is not null
+            && OwnerOfObservation(first.ObservationId) is { Placement: not LiveIslandPlacement.LegacyUnknown } owner
+            && owner.Members.Any(member => member.ObservationId == first.ObservationId && member.Measured)
+            && owner.Members.Any(member => member.ObservationId == secondObservationId && member.Measured);
+    }
+
+    private LiveTrackingIsland? OwnerOfObservation(int observationId) =>
+        Snapshot.TrackingIslands.LastOrDefault(island => island.Members.Any(member => member.ObservationId == observationId));
+
     private LiveTrackingIsland? MeasuredOwner(int observationId) =>
-        Snapshot.TrackingIslands.LastOrDefault(island => island.MeasuredLineage is not null
-            && island.Members.Any(member => member.ObservationId == observationId));
+        OwnerOfObservation(observationId) is { MeasuredLineage: not null } owner ? owner : null;
 
     private LiveWorldKeyframe? PreviousLocalKeyframe(LiveWorldObservation observation, LiveTrackingIsland? measuredOwner)
     {
