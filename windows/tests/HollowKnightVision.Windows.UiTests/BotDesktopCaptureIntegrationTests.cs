@@ -24,7 +24,10 @@ internal static class BotDesktopCaptureIntegrationTests
             var root = temporary.FullName;
             var examples = new LabelingExampleStore(Path.Combine(root, "labeling-v1", "examples"));
             _ = examples.Save(hudFrame, "gameplay-hud", health, languageIdentifier: "en");
-            var window = new MainWindow(GameRuntimeMode.Modded, gamePath: null, root: root, documents: root);
+            var auditDirectory = Path.Combine(root, "ground-audit");
+            var audits = GroundFrameAudits.Launch(["--ground-audit-directory=" + auditDirectory,
+                "--ground-raw-audit-directory=" + auditDirectory]);
+            var window = new MainWindow(GameRuntimeMode.Modded, gamePath: null, root: root, documents: root, groundAudits: audits);
             try
             {
                 VerifyDesktopRecording(window, hudFrame, Path.Combine(root, "demonstrations"));
@@ -35,6 +38,14 @@ internal static class BotDesktopCaptureIntegrationTests
                 Field("isClosing").SetValue(window, true);
                 Wait((Task)Method("PrepareShutdownAsync").Invoke(window, null)!);
             }
+            var auditPath = Directory.EnumerateFiles(auditDirectory, "*.json").Order().First();
+            using var audit = JsonDocument.Parse(File.ReadAllBytes(auditPath));
+            var rawPath = Path.Combine(auditDirectory, "raw", Path.GetFileName(auditPath));
+            using var rawAudit = JsonDocument.Parse(File.ReadAllBytes(rawPath));
+            if (audit.RootElement.GetProperty("generation").GetInt64() != Generation
+                || audit.RootElement.GetProperty("captureId").GetInt64() != rawAudit.RootElement.GetProperty("captureId").GetInt64()
+                || !File.Exists(Path.ChangeExtension(auditPath, ".png")) || !File.Exists(Path.ChangeExtension(rawPath, ".luma")))
+                throw new InvalidOperationException("The live diagnostics must retain a complete frame from the desktop capture generation.");
         }
         finally
         {
@@ -380,7 +391,7 @@ internal static class BotDesktopCaptureIntegrationTests
     {
         var pixels = FrameWithScenery(hudFrame);
         var admission = new GameplayFrameAdmission();
-        var tracking = new GameplayTrackingPipeline(new VisualGameplayTracker(), new MaskedFrameMotionTracker());
+        var tracking = (GameplayTrackingPipeline)Method("CreateLiveTrackingPipeline").Invoke(window, null)!;
         for (var index = 1; index <= 6; index++)
         {
             var time = 1 + index * .2;

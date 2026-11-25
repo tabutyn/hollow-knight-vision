@@ -756,6 +756,19 @@ atlas. Use `--visual-replay-frame-limit 600` to cap the run. An incomplete archi
 requires `--visual-replay-allow-incomplete` and reports the original missing
 frame indices.
 
+### Record live ground-tracking diagnostics
+
+Launch the installed desktop app with
+`--ground-audit-directory=C:\absolute\ground-audit` to save exact source
+PNGs, floor spans, exclusions, matched patch rectangles, and camera evidence.
+The `HKV_GROUND_AUDIT_DIRECTORY` environment variable provides the same
+option. Use `--ground-raw-audit-directory=C:\absolute\ground-raw` to save
+the solver's luma and periodic snapshots of its relocalization features.
+Both streams include the capture timestamp and generation. Each allows one
+pending write. PNG recording runs at up to 10 Hz, and raw recording is capped
+at 6,000 samples per launch. If both options use the same directory, raw
+samples go in its `raw` subdirectory.
+
 ## CPU model training on Windows
 
 The shared incremental detector can train on Windows without Core ML and export

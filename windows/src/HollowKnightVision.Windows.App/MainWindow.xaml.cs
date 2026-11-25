@@ -541,6 +541,7 @@ public partial class MainWindow : Window
     private Rectangle? dragPreview;
     private CancellationTokenSource? visionCancellation;
     private Task? visionRunCompletion;
+    private readonly GroundFrameAudits? groundAudits;
     private bool visionRestartPending;
     private bool atlasOperationInProgress;
     private Task? atlasOperationCompletion;
@@ -805,21 +806,23 @@ public partial class MainWindow : Window
     {
     }
 
-    public MainWindow(GameRuntimeMode gameMode, string? gamePath = null, bool enableThinking = false)
+    public MainWindow(GameRuntimeMode gameMode, string? gamePath = null, bool enableThinking = false, GroundFrameAudits? groundAudits = null)
         : this(gameMode, gamePath,
             IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HollowKnightVision"),
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), enableThinking: enableThinking)
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), enableThinking: enableThinking, groundAudits: groundAudits)
     {
     }
 
     internal MainWindow(GameRuntimeMode gameMode, string? gamePath, string root, string documents,
-        Func<ReceiverClient>? createReceiver = null, LocalThinkingClient? policyClient = null, bool enableThinking = false)
+        Func<ReceiverClient>? createReceiver = null, LocalThinkingClient? policyClient = null, bool enableThinking = false,
+        GroundFrameAudits? groundAudits = null)
     {
         this.gameMode = gameMode;
         this.gamePath = gamePath;
         BotRoot = IOPath.Combine(root, "bot-v1");
         InputPathRoot = IOPath.Combine(documents, "HollowKnightVision", "paths");
-        gameControls = new(createReceiver);
+        this.groundAudits = groundAudits;
+        gameControls = new(createReceiver, rawGroundAudit: groundAudits?.RecordsRawFrames == true);
         playerOpsPreferences = new(root);
         gameTextReader = new(IOPath.Combine(root, "Notebooks"));
         gameTextPreference = IOPath.Combine(root, "read-game-text.txt");
@@ -1030,6 +1033,7 @@ public partial class MainWindow : Window
         {
             if (visionRunCompletion is { } captureFinished)
                 await captureFinished;
+            if (groundAudits is not null) await groundAudits.DrainAsync();
             if (gameTextTask is { } reading) await reading;
             if (gameTextReviewTask is { } proofreading) await proofreading;
             if (thinkingQuestionTask is { } answer) await answer;
@@ -2727,7 +2731,7 @@ public partial class MainWindow : Window
         CancellationToken cancellationToken)
     {
         var frameAdmission = new GameplayFrameAdmission();
-        var trackingPipeline = new GameplayTrackingPipeline(visualGameplayTracker, frameMotionTracker);
+        var trackingPipeline = CreateLiveTrackingPipeline();
         var appliedGroundResetGeneration = Interlocked.Read(
             ref groundHypothesisResetGeneration);
         long? lastLabelRevision = null;
@@ -3253,6 +3257,9 @@ public partial class MainWindow : Window
             return true;
         }
     }
+
+    private GameplayTrackingPipeline CreateLiveTrackingPipeline() =>
+        new(visualGameplayTracker, frameMotionTracker, groundAudits: groundAudits);
 
     private VisionAnalysisResult? AnalyzeVisionFrame(
         BgraFrame frame,
