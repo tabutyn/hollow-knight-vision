@@ -3684,6 +3684,11 @@ public partial class MainWindow : Window
     private void PublishAuthoritativeVisionState(VisionAnalysisResult result)
     {
         if (result.GameplayAtlasReplacement is not { } replacement) return;
+        lock (gameplayWorldPublicationGate) StageGameplayAtlasReplacement(replacement);
+    }
+
+    private void StageGameplayAtlasReplacement(GroundTruthAtlasMosaic replacement)
+    {
         Interlocked.Exchange(ref gameplayAtlas, replacement);
         Interlocked.Exchange(ref gameplayPersistedRevision, -1);
         Interlocked.Exchange(ref gameplayRenderedRevision, -1);
@@ -3691,12 +3696,39 @@ public partial class MainWindow : Window
         Interlocked.Exchange(ref gameplayAtlasPresentationPending, replacement);
     }
 
+    private void PublishGameplayRenderedRevision(GroundTruthAtlasMosaic atlas, long revision)
+    {
+        lock (gameplayWorldPublicationGate)
+        {
+            if (ReferenceEquals(atlas, gameplayAtlas))
+                Interlocked.Exchange(ref gameplayRenderedRevision, revision);
+        }
+    }
+
     internal void ApplyVisionAnalysis(VisionAnalysisResult result)
     {
         if (result.CaptureGeneration != Interlocked.Read(ref recentCaptureGeneration)
             || !labelCapture.CanProcess(result.LabelRevision)) return;
-        result = ReprojectWorldFrame(result);
-        if (result.AtlasSource is not null && !ReferenceEquals(result.AtlasSource, gameplayAtlas))
+        var menuEvidenceIsCurrent = menuStencilRecognizer.IsCurrent(result.MenuGeneration);
+        var acceptsGameplayPlacement = menuEvidenceIsCurrent && gameplayPresentation.TryAcceptAnalysis(result.Frame);
+        var canPresentReplacement = (menuEvidenceIsCurrent || result.GameplayAtlasReplacement is not null)
+            && (result.WorldFrame is null || acceptsGameplayPlacement);
+        GroundTruthAtlasMosaic renderAtlas;
+        CompletedWorld? placement;
+        bool presentsReplacement, defersReplacement;
+        lock (gameplayWorldPublicationGate)
+        {
+            renderAtlas = gameplayAtlas;
+            placement = completedWorld;
+            var pending = ReferenceEquals(renderAtlas, gameplayAtlasPresentationPending);
+            presentsReplacement = pending && canPresentReplacement;
+            defersReplacement = pending && !canPresentReplacement;
+            if (presentsReplacement) Interlocked.Exchange(ref gameplayAtlasPresentationPending, null);
+        }
+        result = ReprojectWorldFrame(result, placement);
+        if (presentsReplacement)
+            result = result with { GameplayTiles = renderAtlas.SnapshotSince(-1), AtlasSource = renderAtlas };
+        else if (defersReplacement || result.AtlasSource is not null && !ReferenceEquals(result.AtlasSource, renderAtlas))
             result = result with { GameplayTiles = null };
         PublishGpuDiagnostics(result);
         var presentsLatestFrame = result.Frame.CaptureId
@@ -3708,8 +3740,6 @@ public partial class MainWindow : Window
             if (workspace == "Hacker")
                 PresentGroundTruthMatchedContext(latestGroundTruthContext);
         }
-        var menuEvidenceIsCurrent = menuStencilRecognizer.IsCurrent(
-            result.MenuGeneration);
         if (menuEvidenceIsCurrent && workspace == "Hacker" && result.OwnsHackerWork
             && result.HackerWorkGeneration == Interlocked.Read(ref hackerWorkGeneration))
         {
@@ -3721,17 +3751,13 @@ public partial class MainWindow : Window
         // menu evidence advanced meanwhile; never publish the stale menu result.
         if (!menuEvidenceIsCurrent
             && result.GameplayAtlasReplacement is null) return;
-        var replacementToPresent = Interlocked.Exchange(
-            ref gameplayAtlasPresentationPending,
-            null);
-        if (replacementToPresent is not null
-            && ReferenceEquals(gameplayAtlas, replacementToPresent))
+        if (presentsReplacement)
         {
             foreach (var image in gameplayTileImages.Values)
                 GameplayAtlasCanvas.Children.Remove(image);
             gameplayTileImages.Clear();
             gameplayOccupiedTileBounds.Clear();
-            gameplayAtlasMinimumTileX = gameplayAtlasMinimumTileY = null;
+            // Keep the old origin until RenderLiveAtlas has rebased the viewport.
         }
         if (!menuEvidenceIsCurrent)
         {
@@ -3741,16 +3767,14 @@ public partial class MainWindow : Window
                 RenderLiveAtlas(
                     GameplayAtlasCanvas,
                     gameplayTileImages,
-                    gameplayAtlas,
+                    renderAtlas,
                     result.GameplayTiles,
                     ref gameplayAtlasMinimumTileX,
                     ref gameplayAtlasMinimumTileY,
                     GameplayImage,
                     gameplayLiveFrame,
                     gameplayLiveTelemetry);
-                Interlocked.Exchange(
-                    ref gameplayRenderedRevision,
-                    result.GameplayTiles.Revision);
+                PublishGameplayRenderedRevision(renderAtlas, result.GameplayTiles.Revision);
             }
             if (result.AcceptedClosure is { } committedClosure)
             {
@@ -3765,7 +3789,6 @@ public partial class MainWindow : Window
         }
         // The capture loop has usually displayed a newer bitmap while tracking
         // runs. Accept ordered positions without replacing it with older pixels.
-        var acceptsGameplayPlacement = gameplayPresentation.TryAcceptAnalysis(result.Frame);
         if (acceptsGameplayPlacement)
         {
             if (result.WorldBasisOffset is { } basis
@@ -3816,14 +3839,14 @@ public partial class MainWindow : Window
             RenderLiveAtlas(
                 GameplayAtlasCanvas,
                 gameplayTileImages,
-                gameplayAtlas,
+                renderAtlas,
                 result.GameplayTiles,
                 ref gameplayAtlasMinimumTileX,
                 ref gameplayAtlasMinimumTileY,
                 GameplayImage,
                 gameplayLiveFrame,
                 gameplayLiveTelemetry);
-            Interlocked.Exchange(ref gameplayRenderedRevision, result.GameplayTiles.Revision);
+            PublishGameplayRenderedRevision(renderAtlas, result.GameplayTiles.Revision);
         }
         else if (acceptsGameplayPlacement) RenderGameplayPaths();
         if (result.AcceptedClosure is { } closure)

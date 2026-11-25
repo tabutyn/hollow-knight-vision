@@ -14,6 +14,8 @@ using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 using Line = System.Windows.Shapes.Line;
 using Rectangle = System.Windows.Shapes.Rectangle;
+using SerialWorldWorker = VisionApp::HollowKnightVision.Windows.App.SerialWorldWorker;
+using WindowsLiveWorldPipeline = VisionApp::HollowKnightVision.Windows.App.WindowsLiveWorldPipeline;
 using WindowsLiveWorldFrame = VisionApp::HollowKnightVision.Windows.App.WindowsLiveWorldFrame;
 using WindowsLiveWorldPipelineResult = VisionApp::HollowKnightVision.Windows.App.WindowsLiveWorldPipelineResult;
 using WindowsLiveWorldPipelineState = VisionApp::HollowKnightVision.Windows.App.WindowsLiveWorldPipelineState;
@@ -33,6 +35,7 @@ internal static class AtlasWindowIntegrationTests
             VerifyRoomReset(Directory.CreateDirectory(Path.Combine(temporary.FullName, "room-reset")).FullName);
             VerifyRestoredPassageAlignment(Directory.CreateDirectory(Path.Combine(temporary.FullName, "passages")).FullName);
             VerifyGameplayWorldHandoff(Directory.CreateDirectory(Path.Combine(temporary.FullName, "handoff")).FullName);
+            VerifyQueuedAtlasRebuild(Directory.CreateDirectory(Path.Combine(temporary.FullName, "publication")).FullName);
         }
         finally
         {
@@ -46,6 +49,7 @@ internal static class AtlasWindowIntegrationTests
         Console.WriteLine("PASS Hacker Atlas draws restored rooms at the measured passage elevation");
         Console.WriteLine("PASS Gameplay Atlas draws measured doorways independently of optional outlines and hides them outside gameplay");
         Console.WriteLine("PASS Gameplay window applies only ordered Atlas placements and keeps menu images in capture coordinates");
+        Console.WriteLine("PASS desktop Atlas publishes the rebuilt tiles, live frame, and new origin together");
         Console.WriteLine("PASS Game Play toggles ground lines and tracking patches in the live view and Atlas");
         Console.WriteLine("PASS Game Play ground diagnostics are opt-in and use the analyzed frame's exact pixels");
         Console.WriteLine("PASS Hacker displays fresh object detections through the measured camera and drops cross-room results");
@@ -53,6 +57,153 @@ internal static class AtlasWindowIntegrationTests
         Console.WriteLine("PASS Game Play and Hacker draw only scoped bot wall contacts while Atlas Paths is enabled");
     }
 
+    internal static void VerifyQueuedAtlasRebuild(string root)
+    {
+        var mosaic = new GroundTruthAtlasMosaic(1, 32, sourceTopInsetFraction: 0);
+        var pipeline = new WindowsLiveWorldPipeline(Path.Combine(root, "live-world"));
+        var window = new MainWindow(GameRuntimeMode.Normal, gamePath: null, root: root, documents: root);
+        try
+        {
+            SetField(window, "recentCaptureGeneration", 1L);
+            SetField(window, "hasFreshGameFrame", true);
+            SetField(window, "activeAtlasPersistenceBlocked", true);
+            SetField(window, "workspace", "Gameplay");
+            SetField(window, "gameplayFramingValue", "Free Fly");
+            SetField(window, "gameplayAtlas", mosaic);
+            SetField(window, "liveWorldPipeline", pipeline);
+            var worker = GetField<SerialWorldWorker>(window, "worldWorker");
+            var completedField = typeof(MainWindow).GetField("completedWorld", InstanceMembers)!;
+            var frameBitmap = typeof(MainWindow).GetMethod("FrameBitmap", BindingFlags.Static | BindingFlags.NonPublic)!;
+
+            WindowsLiveWorldPipelineResult Submit(WindowsLiveWorldFrame request)
+            {
+                _ = Invoke(window, "QueueWorldFrame", request);
+                object? completed = null;
+                Check(SpinWait.SpinUntil(() =>
+                {
+                    completed = completedField.GetValue(window);
+                    return worker.LastError is not null || completed?.GetType().GetProperty("Frame")?.GetValue(completed)
+                        is WindowsLiveWorldFrame published && published.Frame.CaptureId == request.Frame.CaptureId;
+                }, OperationTimeout), $"The Atlas worker did not publish capture {request.Frame.CaptureId}.");
+                Check(worker.LastError is null, $"The Atlas worker failed: {worker.LastError}");
+                return (WindowsLiveWorldPipelineResult)completed!.GetType().GetProperty("Result")!.GetValue(completed)!;
+            }
+
+            for (var id = 1; id <= 6; id++)
+            {
+                var result = Submit(AtlasDoorwayFrame(id, entering: id >= 4));
+                Check(result.State == (id == 4 ? WindowsLiveWorldPipelineState.PendingRecovery
+                    : WindowsLiveWorldPipelineState.Committed) && result.RebuiltAtlas is null, result.Diagnostic);
+            }
+
+            var live = Control<Image>(window, "GameplayImage");
+            var viewport = GetField<GameplayViewportController>(window, "gameplayViewport");
+            var oldState = Analysis(AtlasDoorwayFrame(6, entering: true));
+            window.ApplyVisionAnalysis(oldState);
+            Check(GetField<int?>(window, "gameplayAtlasMinimumTileY") == -3
+                && Canvas.GetTop(live) == 6, "The desktop did not paint the provisional room at its initial origin.");
+            var before = viewport.SetFreeFlyTransform(new(1, 0, 0));
+
+            var arriving = AtlasDoorwayFrame(7, entering: true);
+            // This pre-rebuild analysis reaches the dispatcher after the worker's corrected result.
+            var delayed = Analysis(arriving);
+            var latestImage = live.Source;
+            var update = Submit(arriving);
+            Check(update is { AllowsAtlasComposition: true, RebuiltAtlas: { } }
+                && update.CameraPose == new AtlasPoint(432, 15), update.Diagnostic);
+            window.ApplyVisionAnalysis(oldState with
+            {
+                AtlasSource = update.RebuiltAtlas,
+                GameplayTiles = update.RebuiltAtlas!.SnapshotSince(-1)
+            });
+            Check(GetField<int?>(window, "gameplayAtlasMinimumTileY") == -3
+                && Canvas.GetTop(live) == 6,
+                "Out-of-order placement must keep the previously painted Atlas and live frame together.");
+            window.ApplyVisionAnalysis(delayed);
+
+            var images = GetField<Dictionary<AtlasTileCoordinate, Image>>(window, "gameplayTileImages");
+            var originY = GetField<int?>(window, "gameplayAtlasMinimumTileY");
+            Check(originY == -4 && images.TryGetValue(new(13, -4), out var upperTile)
+                && upperTile.Source is System.Windows.Media.Imaging.BitmapSource,
+                "The same dispatcher update must paint the rebuilt Atlas even when its analysis carried old tiles.");
+            var color = new byte[4];
+            ((System.Windows.Media.Imaging.BitmapSource)images[new(13, -4)].Source)
+                .CopyPixels(new Int32Rect(16, 28, 1, 1), color, 4, 0);
+            Check(color.SequenceEqual(new byte[] { 200, 0, 0, 255 }),
+                "The corrected arrival pixels did not reach the desktop Atlas.");
+            Check(ReferenceEquals(live.Source, latestImage) && Canvas.GetTop(live) == 23
+                && viewport.Transform.OffsetY == before.OffsetY - 32,
+                "The displayed frame and Free Fly transform must use the rebuilt origin together.");
+
+            MainWindow.VisionAnalysisResult Analysis(WindowsLiveWorldFrame request)
+            {
+                GetField<GameplayPresentationState>(window, "gameplayPresentation").Capture(request.Frame);
+                SetField(window, "latestPresentedCaptureId", request.Frame.CaptureId);
+                live.Source = (System.Windows.Media.Imaging.BitmapSource)frameBitmap.Invoke(null, [request.Frame])!;
+                GetField<AtlasPathFrameEvidence>(window, "atlasPathEvidence")
+                    .ObserveGameplayPreview(request.Frame.CaptureId, hasSceneSignal: true);
+                var camera = Camera(432, 0) with
+                {
+                    OrthographicSize = request.Frame.Height / 2.0,
+                    ProjectionPixelWidth = request.Frame.Width,
+                    ProjectionPixelHeight = request.Frame.Height,
+                    ScreenWidth = request.Frame.Width,
+                    ScreenHeight = request.Frame.Height
+                };
+                var menuRecognizer = GetField<WindowsMenuStencilRecognizer>(window, "menuStencilRecognizer");
+                return new(request.Frame, [], [], mosaic.SnapshotSince(-1), camera, null,
+                    new("Playing", "game"), null, null, GetField<long>(menuRecognizer, "generation"), null, true, "")
+                {
+                    AtlasSource = mosaic,
+                    CaptureGeneration = 1,
+                    CaptureTimestamp = request.MonotonicTimestamp,
+                    LabelRevision = GetField<LabelCaptureSession>(window, "labelCapture").Revision,
+                    WorldFrame = new(1, request.RoomName!, request.MonotonicTimestamp, 0, 2, 2, false),
+                    WorldBasisOffset = new(352, 0),
+                    WorldBasisTimestamp = request.MonotonicTimestamp,
+                    WorldPlacementConfirmed = true,
+                    AtlasPathState = AtlasPathFrameState.Gameplay
+                };
+            }
+        }
+        finally
+        {
+            SetField(window, "isClosing", true);
+            Wait(InvokeTask(window, "PrepareShutdownAsync"));
+        }
+    }
+
+
+    private static WindowsLiveWorldFrame AtlasDoorwayFrame(long id, bool entering)
+    {
+        const int width = 320, height = 180;
+        var time = entering ? 2.4 + (id - 4) * .3 : 1.2 + (id - 1) * .3;
+        var pixels = new byte[width * height * BgraFrame.BytesPerPixel];
+        for (var offset = 0; offset < pixels.Length; offset += BgraFrame.BytesPerPixel)
+        {
+            pixels[offset] = entering ? (byte)200 : (byte)0;
+            pixels[offset + 2] = entering ? (byte)0 : (byte)200;
+            pixels[offset + 3] = byte.MaxValue;
+        }
+        var image = new BgraFrame(width, height, width * BgraFrame.BytesPerPixel, pixels, id,
+            DateTimeOffset.UnixEpoch.AddSeconds(time));
+        var floorRow = entering ? 150 : 135;
+        var left = entering ? 0 : 220;
+        var x = entering ? 20 : 268;
+        var floor = new DetectedFloorLine(floorRow, new PixelSpan(left, left + 99));
+        var review = new GroundLinePresenceReview(30, floor.ToSemanticLine(), GroundLinePresenceState.Confirmed, 1, 1);
+        var evidence = LiveWorldCaptureEvidence.FromGround(time, width, height, width, [floor], [review],
+            new AtlasPoint(x + 12, floorRow), observedPlayerBounds: new(x, floorRow - 35, 24, 35)) with
+        {
+            MeasuredLineage = entering ? 2 : 1
+        };
+        return new(image, image, time, time, new(80, 0), width, [], [], 1,
+            entering ? "Arrival" : "Departure", 1, 32)
+        {
+            WorldEvidence = evidence,
+            DoorwayCut = entering ? new(1.95, 2.4, new(80, 0), VisualRoomDirection.Right) : null
+        };
+    }
     private static void VerifyGameplayWorldHandoff(string root)
     {
         const long generation = 5;
