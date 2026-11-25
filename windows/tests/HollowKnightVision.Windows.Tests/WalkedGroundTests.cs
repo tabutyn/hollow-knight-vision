@@ -24,6 +24,29 @@ internal static class WalkedGroundTests
             "An undetected edge must retire inside the image while remaining in the outside Atlas.");
     }
 
+    public static void TestStackedRowsMergeWithoutConnectingGapOrStep()
+    {
+        foreach (var scale in new[] { 1, 2 })
+        {
+            DetectedFloorLine[] floors =
+            [
+                new(100 * scale, Span(10, 150), [Span(10, 90), Span(110, 150)]),
+                new(101 * scale, Span(25, 89)),
+                new(102 * scale, Span(50, 100)),
+                new(109 * scale, Span(90, 150))
+            ];
+            var camera = new AtlasPoint(36, -12);
+            var strokes = GroundStrokeGeometry.ComposeDisplay([], floors, camera, Width * scale, Height * scale, null);
+            Check(strokes.Select(line => (line.AtlasStart.X, line.AtlasEnd.X, line.AtlasStart.Y)).ToHashSet()
+                .SetEquals([Stroke(10, 100, 100), Stroke(110, 150, 100), Stroke(90, 150, 109)]),
+                $"Expected measured strokes with an open gap and a separate step at {Width * scale} pixels.");
+
+            PixelSpan Span(int left, int right) => new(left * scale, (right + 1) * scale - 1);
+            (double Left, double Right, double Row) Stroke(int left, int right, int row)
+                => (camera.X + left * scale, camera.X + (right + 1) * scale, camera.Y + (Height - row) * scale - .5);
+        }
+    }
+
     public static void TestWalkedDisplayOwnsOnlyItsColumnsAfterPanning()
     {
         var walked = Line(WalkedGroundMemory.WalkedSegmentId, 20, 80, 79);

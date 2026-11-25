@@ -78,6 +78,15 @@ internal static class GroundFeatureViewerTests
         Check(drawing?.Project(feature.AtlasPosition) == new Point(120, 20)
             && MainWindow.GroundViewerKeyAt(atlas, new(120, 20)) == new GroundFeatureOverlayPresentation.FeatureKey(12, 1),
             "A retained patch must remain selectable in the same space as the merged terrain.");
+
+        var strokes = new Canvas();
+        GroundFeatureOverlayPresentation.DrawAtlas(strokes, null, default, new(100, 60),
+            new(0, 0, 100, 60), [new(7, new(0, 40), new(100, 40))], [],
+            [new(20, new(10, 90), [new(10, 40), new(60, 90)])]);
+        Check(strokes.Children.OfType<Line>().Select(line => (line.X1, line.Y1, line.X2, line.Y2))
+                .ToHashSet().SetEquals([(10d, 20.5, 41d, 20.5), (60d, 20.5, 91d, 20.5)]),
+            "A saved edge and a detector extent must both leave an unobserved gap open in the live overlay.");
+
         Console.WriteLine("PASS Ground Viewer paints paths and browses correctly aligned live patch evidence");
         VerifyMainWindowPatchSelection();
     }
