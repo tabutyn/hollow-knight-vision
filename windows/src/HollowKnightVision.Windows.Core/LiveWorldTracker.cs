@@ -543,11 +543,12 @@ public sealed class LiveWorldTracker
             preferredReferenceId,
             solveWidth,
             excluded);
-        if (match is null && loadGroundSource is not null && !matcher.LastMatchWasAmbiguous)
+        if (match is null && loadGroundSource is not null
+            && !matcher.LastMatchWasAmbiguous && matcher.LastSearchedReferences.Count > 0)
         {
             var searched = matcher.LastSearchedReferences.Select(reference => reference.Id).ToHashSet();
             var observations = Snapshot.Observations.ToDictionary(row => row.Id);
-            var patchReferences = eligible.Where(item => searched.Count == 0 || searched.Contains(item.Reference.Id))
+            var patchReferences = eligible.Where(item => searched.Contains(item.Reference.Id))
                 .Select(item => (new LiveGroundClosureSearch.Source(item.KeyframeId, observations[item.ObservationId]),
                     item.Reference)).ToArray();
             var current = loadGroundSource(sourceId);
