@@ -665,6 +665,38 @@ internal static class Program
         Check(provider.ObservationCount == 7,
             "Startup flow did not run live stencil recognition for every frame.");
         Console.WriteLine("PASS startup menus invalidate stale receiver evidence and newer telemetry reopens gameplay");
+
+        var detections = 0;
+        var visualProvider = new SequenceStartupStencilProvider(
+        [
+            new(null, Hud()),
+            new(null, Hud()),
+            new(null, null),
+            new(null, Hud()),
+            new(null, Hud())
+        ]);
+        var visualStartup = new AutoNavigationRunner.StartupEvidenceFlow(
+            visualProvider,
+            requiredStableFrames: 2,
+            detectObjects: currentFrame =>
+            {
+                Check(ReferenceEquals(frame, currentFrame), "Startup inference must use the current captured frame.");
+                detections++;
+                return detections == 1
+                    ? []
+                    : [new ObjectDetection(LiveObjectDetectionPostprocessor.Knight, new(.5, .4, .05, .1), .9f)];
+            });
+        Check(!visualStartup.Observe(frame, noReceiver).Evidence.GameplayLikely,
+            "Health alone admitted visual startup.");
+        Check(visualStartup.Observe(frame, noReceiver) is { Evidence.GameplayLikely: true, Decision.AdmitsWorldFrames: false },
+            "The first joint observation failed to start the stability window.");
+        Check(!visualStartup.Observe(frame, noReceiver).Evidence.GameplayLikely && detections == 2,
+            "Missing health should reset visual stability and skip object inference.");
+        Check(!visualStartup.Observe(frame, noReceiver).Decision.AdmitsWorldFrames,
+            "The stability window did not reset after a missing visual cue.");
+        Check(visualStartup.Observe(frame, noReceiver).Decision.AdmitsWorldFrames && detections == 4,
+            "Two stable joint observations did not establish visual gameplay.");
+        Console.WriteLine("PASS startup uses current health and Knight together on each visual frame");
     }
 
     private static void TestAutoNavigationEmptyStoreFallbackAndProductionPulses()

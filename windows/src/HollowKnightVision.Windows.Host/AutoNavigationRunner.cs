@@ -44,13 +44,17 @@ public static class AutoNavigationRunner
                 .ConnectWithRetryAsync(cancellation.Token).ConfigureAwait(false);
             WriteEvent("receiver-ready", new { sessionID = receiver.SessionId });
 
+            var supportRoot = LiveStartupStencilEvidenceProvider.DefaultSupportRoot;
+            using var startupObjects = LoadStartupObjects(supportRoot);
+            var startup = StartupEvidenceFlow.CreateDefault(supportRoot,
+                detectObjects: startupObjects is { HasModels: true } ? frame => startupObjects.Detect(frame) : null);
+            WriteEvent("startup-recognizers", new { startup.Diagnostic, knight = startupObjects?.HasModels == true });
+
             using var monitorCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellation.Token);
             var monitor = new ReceiverMonitor();
             var monitorTask = monitor.RunAsync(receiver, monitorCancellation.Token);
 
-            var startup = StartupEvidenceFlow.CreateDefault();
-            WriteEvent("startup-recognizers", new { startup.Diagnostic });
             var capture = new GdiWindowCapture();
             long frameId = 0;
             GameStartupPhase? reportedPhase = null;
@@ -141,6 +145,26 @@ public static class AutoNavigationRunner
         }
     }
 
+    private static OnnxObjectDetectorSet? LoadStartupObjects(string supportRoot)
+    {
+        try
+        {
+            var artifacts = new LabelingModelVersionStore(Path.Combine(supportRoot, "models-v1"))
+                .ActiveModelArtifacts()
+                .Where(artifact => artifact.TrainedClassIdentifiers?.Contains(LiveObjectDetectionPostprocessor.Knight) == true
+                    && File.Exists(artifact.ModelPath))
+                .ToArray();
+            return artifacts.Length == 0 ? null : new(
+                artifacts.Select(artifact => Path.GetDirectoryName(artifact.ModelPath)!), artifacts);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException
+            or InvalidDataException or Microsoft.ML.OnnxRuntime.OnnxRuntimeException)
+        {
+            Console.Error.WriteLine($"Startup Knight detector unavailable: {error.Message}");
+            return null;
+        }
+    }
+
     private static async Task<HollowKnightWindow> WaitForWindowAsync(CancellationToken cancellationToken)
     {
         while (true)
@@ -199,11 +223,12 @@ public static class AutoNavigationRunner
     /// <summary>
     /// The coordinator owns the gameplay latch. Menu evidence can close it even
     /// while the receiver still exposes its last gameplay sample; once closed,
-    /// fresh HUD or receiver evidence can establish gameplay again.
+    /// verified visual or fresh receiver evidence can establish gameplay again.
     /// </summary>
     internal sealed class StartupEvidenceFlow
     {
         private readonly IStartupStencilEvidenceProvider stencils;
+        private readonly Func<BgraFrame, IReadOnlyList<ObjectDetection>>? detectObjects;
         private readonly GameStartupDetector detector = new();
         private readonly GameStartupCoordinator coordinator;
         private long receiverGenerationFloor;
@@ -212,9 +237,11 @@ public static class AutoNavigationRunner
         internal StartupEvidenceFlow(
             IStartupStencilEvidenceProvider stencils,
             int requiredStableFrames = 8,
-            string diagnostic = "injected")
+            string diagnostic = "injected",
+            Func<BgraFrame, IReadOnlyList<ObjectDetection>>? detectObjects = null)
         {
             this.stencils = stencils ?? throw new ArgumentNullException(nameof(stencils));
+            this.detectObjects = detectObjects;
             coordinator = new(requiredStableFrames);
             Diagnostic = diagnostic;
         }
@@ -224,10 +251,11 @@ public static class AutoNavigationRunner
 
         internal static StartupEvidenceFlow CreateDefault(
             string? supportRoot = null,
-            int requiredStableFrames = 8)
+            int requiredStableFrames = 8,
+            Func<BgraFrame, IReadOnlyList<ObjectDetection>>? detectObjects = null)
         {
             var provider = LiveStartupStencilEvidenceProvider.CreateDefault(supportRoot);
-            return new(provider, requiredStableFrames, provider.Diagnostic);
+            return new(provider, requiredStableFrames, provider.Diagnostic, detectObjects);
         }
 
         internal StartupFrameObservation Observe(
@@ -237,11 +265,16 @@ public static class AutoNavigationRunner
             ArgumentNullException.ThrowIfNull(frame);
             ArgumentNullException.ThrowIfNull(receiverEvidence);
             var stencilEvidence = stencils.Observe(frame);
+            var gameplayIsLatched = coordinator.Phase == GameStartupPhase.Gameplay;
+            var detections = !gameplayIsLatched && stencilEvidence.Hud?.EstablishesGameplay == true
+                ? detectObjects?.Invoke(frame)
+                : null;
             var evidence = detector.Detect(
                 frame,
                 stencilEvidence.Menu,
                 stencilEvidence.Hud,
-                gameplayIsLatched: coordinator.Phase == GameStartupPhase.Gameplay);
+                gameplayIsLatched,
+                detections);
 
             if (stencilEvidence.Menu?.IsMatch == true)
             {

@@ -214,8 +214,8 @@ public sealed class GameStartupCoordinator
 
 /// <summary>
 /// CPU-only startup recognizer. Stable menu identity and selection come from
-/// the shared menu stencil result; pixels are retained only for the startup HUD
-/// fallback and the coarse profile-one geometry used before stencils settle.
+/// the shared menu stencil result. Gameplay entry requires verified health masks
+/// and a confident Knight detection. Pixels provide coarse profile-one geometry.
 /// </summary>
 public sealed class GameStartupDetector
 {
@@ -230,7 +230,8 @@ public sealed class GameStartupDetector
         BgraFrame frame,
         MenuStencilResult? menuStencil = null,
         HudStencilResult? hudStencil = null,
-        bool gameplayIsLatched = false)
+        bool gameplayIsLatched = false,
+        IReadOnlyList<ObjectDetection>? objectDetections = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         GameStartupEvidence? MenuEvidence()
@@ -255,27 +256,17 @@ public sealed class GameStartupDetector
             return MenuEvidence() ?? GameStartupEvidence.Unknown;
         }
 
-        var sampleHeight = Math.Max(
-            1,
-            (int)Math.Round(
-                frame.Height * (double)SampleWidth / Math.Max(1, frame.Width),
-                MidpointRounding.AwayFromZero));
-        var mana = BrightBounds(
-            frame,
-            sampleHeight,
-            new Rect(0.045, 0.035, 0.085, 0.18),
-            minimumPixels: 8);
-        var health = BrightBounds(
-            frame,
-            sampleHeight,
-            new Rect(0.115, 0.045, 0.16, 0.11),
-            minimumPixels: 8);
-        if (hudStencil?.EstablishesGameplay == true || mana is not null && health is not null)
+        if (LiveGameStatusEvidencePolicy.HasGameplayEntryEvidence(objectDetections ?? [], hudStencil))
         {
             return new GameStartupEvidence(null, GameplayLikely: true);
         }
 
         if (MenuEvidence() is { } menu) return menu;
+        var sampleHeight = Math.Max(
+            1,
+            (int)Math.Round(
+                frame.Height * (double)SampleWidth / Math.Max(1, frame.Width),
+                MidpointRounding.AwayFromZero));
         return ProfileEvidence(frame, sampleHeight) ?? GameStartupEvidence.Unknown;
     }
 
