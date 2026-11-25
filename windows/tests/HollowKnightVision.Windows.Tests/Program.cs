@@ -1421,6 +1421,7 @@ var tests = new List<(string Name, Action Run)>
     ("wall contact requires corroborated blocked movement", TerrainWallDetectionTests.TestWallContactNeedsCorroboratedBlockedMotion),
     ("wall contact extends visual faces and joins walked ground", TerrainWallDetectionTests.TestContactExtendsTheMatchingFaceAndJoinsWalkedGround),
     ("occluded walk requires input and a continuous level camera", WalkedGroundTests.TestOccludedWalkNeedsInputAndAContinuousLevelCamera),
+    ("walked ground needs safe input and measured feet on both sides of a brief mask gap", WalkedGroundTests.TestWalkEvidenceRejectsUnsafeConditionsAndBracketsMissingMasks),
     ("the Knight foot locator measures current mask pixels", WalkedGroundTests.TestFootUsesCurrentPixelsAndRejectsAmbiguousFaces),
     ("a brief unmeasured gap only resumes walked ground in the same camera basis", WalkedGroundTests.TestShortUnmeasuredCameraGapRequiresSameMeasuredBasis),
     ("Game Play bot floors use walked terrain without inventing unobserved spans", WalkedGroundTests.TestBotFloorsUseTheWalkedRowAndKeepOnlySupportedExtensions),

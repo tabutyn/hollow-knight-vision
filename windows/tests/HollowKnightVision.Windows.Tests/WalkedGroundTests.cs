@@ -139,6 +139,48 @@ internal static class WalkedGroundTests
                 "Opposing directions recorded motion.");
     }
 
+    public static void TestWalkEvidenceRejectsUnsafeConditionsAndBracketsMissingMasks()
+    {
+        Check(Walk() is { Row: 130 }, "Level motion with a held direction should establish ground even without edges.");
+        Check(Walk(jumpAt: 4) is null, "A jump must interrupt the current walking run.");
+        Check(Walk(movingVertically: true) is null, "A moving vertical camera cannot establish walked ground.");
+        Check(Walk(missingAt: 4) is { Row: 130 }, "Matching sightings on both sides must survive one obscured mask.");
+        Check(Walk(direction: InputButtons.None) is null, "Camera motion with no held direction cannot establish ground.");
+
+        foreach (var (missing, jumped, displacement, shouldResume) in new[]
+        {
+            (1, false, 0, true), (4, false, 0, true), (40, false, 0, false),
+            (1, true, 0, false), (1, false, 80, false)
+        })
+        {
+            var walk = new KnightLevelWalk();
+            for (var i = 0; i <= 8; i++)
+                _ = walk.Observe(new(100 + 2 * i, 130), default(AtlasPoint), InputButtons.Right, i * .04, Width, Height);
+            for (var i = 9; i < 9 + missing; i++)
+                Check(walk.Observe(null, default(AtlasPoint), jumped ? InputButtons.Right | InputButtons.ActionZ : InputButtons.Right,
+                    i * .04, Width, Height) is null, "An obscured frame cannot add ground before a measured return.");
+            var returning = 9 + missing;
+            var x = 100 + 2 * returning + displacement;
+            var floor = walk.Observe(new(x, 130), default(AtlasPoint), InputButtons.Right, returning * .04, Width, Height);
+            Check(shouldResume ? floor?.XSpan is { Start: <= 100 } extent && extent.EndInclusive >= x : floor is null,
+                $"Unexpected walked floor after {missing} missing masks, jump {jumped}, and displacement {displacement}.");
+        }
+
+        static CleanFloorLine? Walk(int jumpAt = -1, bool movingVertically = false, int missingAt = -1,
+            InputButtons direction = InputButtons.Right)
+        {
+            var walk = new KnightLevelWalk();
+            CleanFloorLine? support = null;
+            for (var i = 0; i <= 8; i++)
+            {
+                var y = movingVertically ? i : 0;
+                support = walk.Observe(i == missingAt ? null : new AtlasPoint(200, 130 + y), new(i * 3, y),
+                    i == jumpAt ? direction | InputButtons.ActionZ : direction, i * .04, Width, Height);
+            }
+            return support;
+        }
+    }
+
     public static void TestFootUsesCurrentPixelsAndRejectsAmbiguousFaces()
     {
         var locator = new KnightFootLocator();
