@@ -22,9 +22,9 @@ public partial class MainWindow
         {
             var modded = gameMode == GameRuntimeMode.Modded;
             if (modded) await FlushHackerAtlasAsync();
-            var previousProfile = hackerArchiveProfile;
+            var loadedProfile = hackerArchiveProfile;
             var hackerWasReady = hackerArchiveReady;
-            var previousHacker = modded && hackerWasReady
+            var loadedHacker = modded && hackerWasReady
                 ? hackerAtlasPipeline.CaptureArchive(CaptureHackerRoomOffsets()).Archive
                 : null;
             LoadedHackerArchive? switchedHacker = null;
@@ -63,18 +63,23 @@ public partial class MainWindow
             SelectGameTextProfile(activated.Profile);
             SetStatus($"Atlas uses {activated.Profile.Name}.");
 
-            void PrepareHacker(SaveProfileAtlas profile, bool adoptUnassigned)
+            void PrepareHacker(SaveProfileAtlas? previousProfile, SaveProfileAtlas profile, bool adoptUnassigned)
             {
-                if (hackerWasReady && previousProfile == profile) return;
+                if (hackerWasReady && loadedProfile == profile && previousProfile == profile) return;
                 var archive = hackerArchiveStore.Read(profile);
-                if (archive is null && adoptUnassigned && previousProfile is null && previousHacker is not null)
+                if (previousProfile != profile)
                 {
-                    hackerArchiveStore.Write(profile, previousHacker);
-                    archive = previousHacker;
-                }
-                else if (previousHacker is not null && (previousProfile is not null || previousHacker.Rooms.Count > 0))
-                {
-                    _ = hackerArchiveStore.SaveState(previousProfile?.Name ?? $"Atlas before {profile.Name}", previousProfile, previousHacker);
+                    var previous = hackerWasReady && loadedProfile == previousProfile
+                        ? loadedHacker : hackerArchiveStore.Read(previousProfile);
+                    if (archive is null && adoptUnassigned && previous is not null)
+                    {
+                        hackerArchiveStore.Write(profile, previous);
+                        archive = previous;
+                    }
+                    else if (previous is not null && (previousProfile is not null || previous.Rooms.Count > 0))
+                    {
+                        _ = hackerArchiveStore.SaveState(previousProfile?.Name ?? $"Atlas before {profile.Name}", previousProfile, previous);
+                    }
                 }
                 switchedHacker = CreateHackerArchivePresentation(profile, archive);
             }
