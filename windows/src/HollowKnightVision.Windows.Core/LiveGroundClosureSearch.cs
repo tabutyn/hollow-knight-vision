@@ -11,13 +11,14 @@ internal sealed class LiveGroundClosureSearch
     internal sealed record Match(int KeyframeId, AtlasPoint CameraPose, GlobalFeatureReference Reference,
         IReadOnlyList<int> Inliers, double Ambiguity, double ResidualPixels);
 
-    private sealed record Appearance(GlobalFeatureReference Features, CalibratedSceneMotionTracker.Grid? Grid);
+    private sealed record Appearance(LiveWorldObservation Observation, GlobalFeatureReference? Features,
+        CalibratedSceneMotionTracker.Grid? Grid);
     private sealed record Candidate(Source Source, GlobalFeatureReference Features, CalibratedSceneMotionTracker.Grid? Grid);
     private sealed record PoseProposal(Candidate Reference, AtlasPoint Pose, double Confidence, double Residual,
-        IReadOnlyList<int> Inliers, double Ambiguity = 0);
+        IReadOnlyList<int> Inliers, double Ambiguity = 0, IReadOnlyList<int>? PatchIndices = null);
 
     private readonly GlobalFeatureMatcher matcher = new();
-    private readonly Dictionary<int, Appearance?> appearances = [];
+    private readonly Dictionary<int, Appearance> appearances = [];
     private readonly Queue<int> cachedOrder = [];
 
     internal bool LastSearchWasAmbiguous { get; private set; }
@@ -33,21 +34,9 @@ internal sealed class LiveGroundClosureSearch
         foreach (var source in SelectSources(sources))
         {
             var observation = source.Observation;
-            if (!appearances.TryGetValue(source.KeyframeId, out var appearance))
-            {
-                var image = loadImage(observation.SourceObservationId);
-                var omissions = loadExclusions(observation.SourceObservationId)
-                    .Select(rect => new StencilRect(rect.X, rect.Y, rect.Width, rect.Height)).ToArray();
-                var feature = matcher.MakeReference(image, observation.OptimizedPose, solveWidth,
-                    id: new Guid(source.KeyframeId, 0, 0, new byte[8]),
-                    excluding: BottomOrigin(omissions, image.Height));
-                appearance = feature is null ? null : new Appearance(feature, Grid(image, omissions));
-                appearances.Add(source.KeyframeId, appearance);
-                cachedOrder.Enqueue(source.KeyframeId);
-                if (cachedOrder.Count > MaximumCachedReferences) appearances.Remove(cachedOrder.Dequeue());
-            }
-            if (appearance is not null)
-                candidates.Add(new(source, appearance.Features with { CameraPose = observation.OptimizedPose }, appearance.Grid));
+            var appearance = LoadAppearance(source, solveWidth, id => (loadImage(id), loadExclusions(id)));
+            if (appearance.Features is { } savedFeatures)
+                candidates.Add(new(source, savedFeatures with { CameraPose = observation.OptimizedPose }, appearance.Grid));
         }
         if (candidates.Count == 0) return null;
 
@@ -79,7 +68,52 @@ internal sealed class LiveGroundClosureSearch
             proposal.Residual * solveWidth / proposal.Reference.Features.SampleWidth);
     }
 
-    private static IEnumerable<Source> SelectSources(IReadOnlyList<Source> sources)
+    internal GlobalFeatureMatch? ProposePatchClosure(
+        IReadOnlyList<(Source Source, GlobalFeatureReference Features)> references,
+        BgraFrame current, IReadOnlyList<StencilRect> exclusions, double solveWidth,
+        Func<int, (BgraFrame Image, IReadOnlyList<WorldRect> Exclusions)> loadSource)
+    {
+        LastSearchWasAmbiguous = false;
+        var grid = Grid(current, exclusions);
+        if (grid is null) return null;
+        var candidates = new List<Candidate>();
+        foreach (var (source, features) in SelectSources(references))
+            candidates.Add(new(source, features, LoadAppearance(source, solveWidth, loadSource).Grid));
+        if (ProposeFromPatches(candidates, grid, solveWidth, searchAcrossRooms: false) is not { } proposal)
+            return null;
+
+        var reference = proposal.Reference.Features;
+        var sampleGain = reference.SolveWidth / reference.SampleWidth;
+        var translation = new AtlasPoint((proposal.Pose.X - reference.CameraPose.X) / sampleGain,
+            (reference.CameraPose.Y - proposal.Pose.Y) / sampleGain);
+        return new(reference.Id, proposal.Pose, translation, proposal.Inliers, proposal.PatchIndices!, proposal.Residual,
+            proposal.Confidence, proposal.Ambiguity);
+    }
+
+    private Appearance LoadAppearance(Source source, double solveWidth,
+        Func<int, (BgraFrame Image, IReadOnlyList<WorldRect> Exclusions)> loadSource)
+    {
+        var observation = source.Observation;
+        var cached = appearances.GetValueOrDefault(source.KeyframeId);
+        if (cached?.Observation is { } saved && saved.SourceObservationId == observation.SourceObservationId
+            && saved.Timestamp == observation.Timestamp && saved.SourceWidth == observation.SourceWidth
+            && saved.SourceHeight == observation.SourceHeight && saved.SolveWidth == observation.SolveWidth
+            && saved.ExcludedRects.SequenceEqual(observation.ExcludedRects)) return cached;
+        var (image, excluded) = loadSource(observation.SourceObservationId);
+        if (image.Width != observation.SourceWidth || image.Height != observation.SourceHeight)
+            return new(observation, null, null);
+        var omissions = excluded.Select(rect => new StencilRect(rect.X, rect.Y, rect.Width, rect.Height)).ToArray();
+        var feature = matcher.MakeReference(image, observation.OptimizedPose, solveWidth,
+            id: new Guid(source.KeyframeId, 0, 0, new byte[8]),
+            excluding: BottomOrigin(omissions, image.Height));
+        var appearance = new Appearance(observation, feature, Grid(image, omissions));
+        appearances[source.KeyframeId] = appearance;
+        if (cached is null) cachedOrder.Enqueue(source.KeyframeId);
+        if (cachedOrder.Count > MaximumCachedReferences) appearances.Remove(cachedOrder.Dequeue());
+        return appearance;
+    }
+
+    private static IEnumerable<T> SelectSources<T>(IReadOnlyList<T> sources)
     {
         if (sources.Count <= MaximumReferences) return sources;
         var olderCount = sources.Count - RecentReferences;
@@ -97,15 +131,18 @@ internal sealed class LiveGroundClosureSearch
         foreach (var candidate in candidates)
         {
             if (candidate.Grid is not { } prior || prior.Width != current.Width || prior.Height != current.Height
+                || candidate.Features.SolveWidth != solveWidth || candidate.Features.SampleWidth != prior.Width
+                || candidate.Features.SampleHeight != prior.Height
                 || !matcher.PermitsPatchProposal(candidate.Features)) continue;
 
             var features = candidate.Features.Features.Take(80).ToArray();
-            var fits = new List<(int FeatureId, AtlasPoint Point, CalibratedSceneMotionTracker.PatchFit Fit)>();
-            foreach (var feature in features)
+            var fits = new List<(int Index, AtlasPoint Point, CalibratedSceneMotionTracker.PatchFit Fit)>();
+            for (var index = 0; index < features.Length; index++)
             {
-                var point = feature.SamplePoint with { Y = prior.Height - 1 - feature.SamplePoint.Y };
+                var sample = features[index].SamplePoint;
+                var point = sample with { Y = prior.Height - 1 - sample.Y };
                 if (CalibratedSceneMotionTracker.FitPatch(prior, current, point) is { } fit)
-                    fits.Add((feature.Id, point, fit));
+                    fits.Add((index, point, fit));
             }
             if (fits.Count < 6) continue;
             var dx = Median(fits.Select(value => value.Fit.Motion.X));
@@ -123,7 +160,8 @@ internal sealed class LiveGroundClosureSearch
             var origin = candidate.Features.CameraPose;
             var scale = solveWidth / current.Width;
             proposals.Add(new(candidate, new AtlasPoint(origin.X - dx * scale, origin.Y + dy * scale),
-                confidence, residual, agreeing.Select(value => value.FeatureId).ToArray()));
+                confidence, residual, agreeing.Select(value => features[value.Index].Id).Order().ToArray(),
+                PatchIndices: agreeing.Select(value => value.Index).ToArray()));
         }
         var ranked = proposals.OrderByDescending(value => value.Confidence).ThenBy(value => value.Residual)
             .ThenBy(value => value.Reference.Source.KeyframeId).ToArray();

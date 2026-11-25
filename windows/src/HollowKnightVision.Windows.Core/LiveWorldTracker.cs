@@ -364,7 +364,7 @@ public sealed class LiveWorldTracker
         LiveWorldCaptureEvidence? captureEvidence = null,
         bool placementPending = false,
         IReadOnlyList<LiveWalkedGroundBatch>? carriedWalks = null,
-        Func<int, BgraFrame>? loadGroundImage = null)
+        Func<int, (BgraFrame Image, IReadOnlyList<WorldRect> Exclusions)>? loadGroundSource = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         var excluded = exclusions?.ToArray() ?? [];
@@ -442,10 +442,10 @@ public sealed class LiveWorldTracker
         lastObservationId = observationId;
 
         var ground = observation.ObservedFloorCandidates?.Lines ?? observation.GroundGeometry?.Lines;
-        if (loadGroundImage is not null && ground is not { Count: > 0 }) searchForClosure = false;
+        if (loadGroundSource is not null && ground is not { Count: > 0 }) searchForClosure = false;
         var sceneryOnly = captureEvidence is { HasMeasuredSceneryContinuity: true };
         // Scenery can carry current floor evidence, but cannot seed the Atlas or an ordinary keyframe.
-        if (sceneryOnly && (loadGroundImage is null || !searchForClosure || Snapshot.Keyframes.Count == 0))
+        if (sceneryOnly && (loadGroundSource is null || !searchForClosure || Snapshot.Keyframes.Count == 0))
             return Update(default, null, []);
 
         if (Snapshot.Keyframes.Count == 0)
@@ -465,7 +465,7 @@ public sealed class LiveWorldTracker
         }
 
         var rejections = new List<LiveWorldTrackerRejection>();
-        var eligible = EligibleReferences(observation, travel, requireGround: loadGroundImage is not null);
+        var eligible = EligibleReferences(observation, travel, requireGround: loadGroundSource is not null);
         var allOlder = references.Values.Where(value =>
             value.ObservationId != observationId && value.RoomId == roomId).ToArray();
         if (eligible.Count == 0)
@@ -487,6 +487,18 @@ public sealed class LiveWorldTracker
             preferredReferenceId,
             solveWidth,
             excluded);
+        if (match is null && loadGroundSource is not null && !matcher.LastMatchWasAmbiguous)
+        {
+            var searched = matcher.LastSearchedReferences.Select(reference => reference.Id).ToHashSet();
+            var observations = Snapshot.Observations.ToDictionary(row => row.Id);
+            var patchReferences = eligible.Where(item => searched.Count == 0 || searched.Contains(item.Reference.Id))
+                .Select(item => (new LiveGroundClosureSearch.Source(item.KeyframeId, observations[item.ObservationId]),
+                    item.Reference)).ToArray();
+            var current = loadGroundSource(sourceId);
+            match = groundClosureSearch.ProposePatchClosure(patchReferences, current.Image,
+                current.Exclusions.Select(rect => new StencilRect(rect.X, rect.Y, rect.Width, rect.Height)).ToArray(),
+                solveWidth, loadGroundSource);
+        }
         var reference = match is null
             ? null
             : eligible.FirstOrDefault(value => value.Reference.Id == match.ReferenceId);
@@ -499,11 +511,11 @@ public sealed class LiveWorldTracker
         }
 
         var closurePose = match.ProposedCameraPose;
-        if (loadGroundImage is not null)
+        if (loadGroundSource is not null)
         {
             var saved = Snapshot.Observations.First(item => item.Id == reference.ObservationId);
-            var verified = GroundPlaneClosureVerifier.Verify(loadGroundImage(saved.SourceObservationId),
-                saved.GroundGeometry!.Lines, saved.OptimizedPose, loadGroundImage(sourceId), ground!,
+            var verified = GroundPlaneClosureVerifier.Verify(loadGroundSource(saved.SourceObservationId).Image,
+                saved.GroundGeometry!.Lines, saved.OptimizedPose, loadGroundSource(sourceId).Image, ground!,
                 closurePose, solveWidth);
             if (verified is null)
             {
@@ -550,7 +562,7 @@ public sealed class LiveWorldTracker
         var refinesDoorwayPlacement = doorwayComponents is not null
             && (doorwayComponents.HasDoorwayElevation(observationId)
                 || doorwayComponents.HasDoorwayElevation(reference.ObservationId));
-        var refinesPlacement = loadGroundImage is not null || refinesDoorwayPlacement;
+        var refinesPlacement = loadGroundSource is not null || refinesDoorwayPlacement;
         var components = refinesPlacement
             ? doorwayComponents ?? new LiveIslandComponents(Snapshot, FixedRoomObservations())
             : placementPending || Snapshot.TrackingIslands.LastOrDefault()?.Placement == LiveIslandPlacement.Connected

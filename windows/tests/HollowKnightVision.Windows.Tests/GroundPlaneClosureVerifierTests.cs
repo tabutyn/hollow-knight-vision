@@ -1,3 +1,4 @@
+using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 
 internal static class GroundPlaneClosureVerifierTests
@@ -48,12 +49,7 @@ internal static class GroundPlaneClosureVerifierTests
     internal static void TestPatchProposalSurvivesExposureChange()
     {
         var saved = Image();
-        var current = Image();
-        for (var i = 0; i < current.Pixels.Length; i += BgraFrame.BytesPerPixel)
-        {
-            var dim = (byte)(20 + current.Pixels[i] / 4);
-            current.Pixels[i] = current.Pixels[i + 1] = current.Pixels[i + 2] = dim;
-        }
+        var current = Image(dimmed: true);
         var pose = new AtlasPoint(80, 20);
         var matcher = new GlobalFeatureMatcher();
         var reference = matcher.MakeReference(saved, pose, 320);
@@ -74,6 +70,94 @@ internal static class GroundPlaneClosureVerifierTests
             "Patch proposals in distinct rooms must compete even when their coordinates agree.");
     }
 
+    internal static void TestPlacedAtlasUsesFloorVerifiedPatchFallback()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-placed-atlas-patches-");
+        try
+        {
+            var pipeline = new WindowsLiveWorldPipeline(root.FullName);
+            var placed = new AtlasPoint(80, 20);
+            var drifted = new AtlasPoint(130, 20);
+            var bright = Image();
+            var dimmed = Image(dimmed: true);
+            var matcher = new GlobalFeatureMatcher();
+            var reference = matcher.MakeReference(bright, placed, bright.Width)!;
+            Require(matcher.Match(dimmed, [reference], currentSolveWidth: bright.Width) is null
+                && !matcher.LastMatchWasAmbiguous, "The return must need patches after the ordinary feature search finds no unique proposal.");
+            Require(pipeline.Process(Scan(bright, 1, .5, placed, 1)).AllowsAtlasComposition,
+                "Save the bright room reference.");
+            Require(pipeline.Process(Scan(Image(dx: 700, dy: 1000), 2, .9, new(400, 20), 2)).AllowsAtlasComposition,
+                "Record the excursion on a separate measured island.");
+
+            Require(pipeline.Process(Scan(dimmed, 3, 1.26, drifted, 2, floorY: 60)).AcceptedClosure is null
+                && pipeline.Process(Scan(dimmed, 4, 1.56, drifted, 2, floorY: 60)).AcceptedClosure is null,
+                "Matching scenery patches cannot confirm a floor at the wrong height.");
+            Require(pipeline.Process(Scan(dimmed, 5, 1.86, drifted, 2)).AcceptedClosure is null,
+                "The first floor-verified patch proposal must wait for a separate capture.");
+            var corrected = pipeline.Process(Scan(dimmed, 6, 2.16, drifted, 2));
+            Require(corrected is { AcceptedClosure: not null, AllowsAtlasComposition: true, RebuiltAtlas.TileCount: > 0 }
+                && Math.Abs(corrected.CameraPose.X - placed.X) < .25 && corrected.CameraPose.Y == placed.Y,
+                $"Two floor-verified patch proposals must correct the drawn Atlas ({corrected.Diagnostic}).");
+            var saved = new LiveWorldSessionStore(root.FullName).Load().Snapshot;
+            Require(saved.LoopClosureEdges.Count == 1 && saved.Observations[0].OptimizedPose == placed
+                && saved.Observations[^1].RawPose == drifted && saved.Observations[^1].OptimizedPose == corrected.CameraPose,
+                "Save the corrected placement without rewriting the raw capture.");
+        }
+        finally { root.Delete(recursive: true); }
+
+        static WindowsLiveWorldFrame Scan(BgraFrame pixels, long id, double time, AtlasPoint pose,
+            long lineage, double floorY = 30)
+        {
+            var frame = new BgraFrame(pixels.Width, pixels.Height, pixels.Stride, pixels.Pixels, id,
+                DateTimeOffset.UnixEpoch.AddSeconds(time));
+            return new(frame, frame, time, time, pose, frame.Width, [], [], 1, "exposure-room", 1, 128)
+            {
+                WorldEvidence = new(time, new(Ground(floorY))) { MeasuredLineage = lineage }
+            };
+        }
+    }
+
+    internal static void TestPatchSearchBoundsItsCacheAndReloadsChangedSource()
+    {
+        var bright = Image();
+        var dimmed = Image(dimmed: true);
+        var reference = new GlobalFeatureMatcher().MakeReference(bright, default, bright.Width)!;
+        var references = Enumerable.Range(0, 96).Select(id =>
+        {
+            var observation = LiveWorldObservation.Create(id, id, id, bright.Width, bright.Height, bright.Width, 160,
+                [], default, default) with { GroundGeometry = new(Ground(30)) };
+            return (Source: new LiveGroundClosureSearch.Source(id, observation),
+                Features: reference with { Id = new Guid(id, 0, 0, new byte[8]) });
+        }).ToArray();
+        var loads = 0;
+        var search = new LiveGroundClosureSearch();
+        _ = search.ProposePatchClosure(references, dimmed, [], bright.Width, ReadSavedFrame);
+        Require(loads == 32, "A single patch search can load at most 32 saved references.");
+
+        search = new LiveGroundClosureSearch();
+        loads = 0;
+        foreach (var group in references.Chunk(32))
+            _ = search.ProposePatchClosure(group, dimmed, [], bright.Width, ReadSavedFrame);
+        Require(loads == 96, "Each distinct reference loads once.");
+        var newest = references[^1];
+        var reused = search.ProposePatchClosure([newest], dimmed, [], bright.Width, ReadSavedFrame);
+        Require(loads == 96 && reused is { InlierReferenceFeatureIds.Count: >= 6 }
+            && reused.InlierReferenceFeatureIds.Count == reused.InlierCurrentFeatureIndices.Count,
+            "Repeated searches must reuse exact cached pixels and preserve both patch support indexes.");
+
+        var updated = newest.Source with { Observation = newest.Source.Observation with { Timestamp = 999 } };
+        _ = search.ProposePatchClosure([(updated, newest.Features)], dimmed, [], bright.Width, ReadSavedFrame);
+        Require(loads == 97, "A changed saved source must reload even while its keyframe ID is unchanged.");
+        _ = search.ProposePatchClosure([references[0]], dimmed, [], bright.Width, ReadSavedFrame);
+        Require(loads == 98, "The cache must evict the oldest reference once it holds 64 newer images.");
+
+        (BgraFrame Image, IReadOnlyList<WorldRect> Exclusions) ReadSavedFrame(int id)
+        {
+            loads++;
+            return (bright, []);
+        }
+    }
+
     private static GroundPlaneClosureVerifier.Measurement? Verify(AtlasPoint proposed) =>
         GroundPlaneClosureVerifier.Verify(Image(), Ground(30), default, Image(dx: 20, dy: 10), Ground(20), proposed, 320);
 
@@ -83,7 +167,7 @@ internal static class GroundPlaneClosureVerifierTests
         return spans.Select((span, index) => new LiveGroundLineEvidence(index, new(span.Left, y), new(span.Right, y))).ToArray();
     }
 
-    private static BgraFrame Image(int dx = 0, int dy = 0, int pattern = 0, (int Left, int Right)? black = null)
+    private static BgraFrame Image(int dx = 0, int dy = 0, int pattern = 0, (int Left, int Right)? black = null, bool dimmed = false)
     {
         const int width = 320;
         const int height = 120;
@@ -103,6 +187,7 @@ internal static class GroundPlaneClosureVerifierTests
                 2 => (byte)((wx % 4) * 50 + (wy % 3) * 10),
                 _ => (byte)(value >> 24)
             };
+            if (dimmed) intensity = (byte)(20 + intensity / 4);
             if (black is { } band && x >= band.Left && x <= band.Right) intensity = 0;
             var offset = (row * width + x) * 4;
             pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = intensity;
