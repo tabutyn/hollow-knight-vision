@@ -799,6 +799,10 @@ New recordings save this terrain cooldown alongside the held controls. Live
 Game Play and Gym use the same cooldown to prevent airborne movement from
 extending walked ground.
 
+The archive stores measured Knight bounds separately from the larger mask
+that protects the Atlas from moving sprites. Only a detection from the exact
+capture supplies those bounds for foot contact and doorway evidence.
+
 The replay trace contains visual estimates. Both scorers read receiver
 measurements from the original recording. For the Windows Host's
 `--evaluate-low-resolution-trace` command, pass the original recording with

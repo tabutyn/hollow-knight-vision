@@ -133,6 +133,20 @@ public sealed record SceneRegions(StencilRect? Knight, StencilRect Health, Stenc
 public sealed record GameplaySceneMasks(SceneRegions AtlasRegions, SceneRegions GroundRegions,
     IReadOnlyList<PixelRect> AtlasExclusions, IReadOnlyList<PixelRect> GroundExclusions, PixelRect? GroundKnight)
 {
+    public StencilRect? ObservedPlayerBounds { get; init; }
+
+    internal PixelRect? ContactKnight(int width, int height) =>
+        ObservedPlayerBounds is { } bounds && SceneRegions.PixelRectangles(width, height, [bounds]) is [var pixels]
+            ? pixels : GroundKnight;
+
+    public static GameplaySceneMasks Create(BgraFrame frame, LiveObjectDetectionSnapshot detections,
+        HudStencilResult? hudStencil, long generation) =>
+        Create(frame, detections.Tracked, hudStencil, detections.Masks) with
+        {
+            ObservedPlayerBounds = LiveObjectDetectionFreshness.CaptureMatchedKnightBounds(
+                detections.MeasuredBatch, generation, frame)
+        };
+
     public static GameplaySceneMasks Create(BgraFrame frame, IReadOnlyList<ObjectDetection> detections,
         HudStencilResult? hudStencil, IReadOnlyList<ObjectDetection>? movingMasks = null) =>
         Create(frame.Width, frame.Height, detections, hudStencil, movingMasks, GameplayTutorialPromptMask.Find(frame));

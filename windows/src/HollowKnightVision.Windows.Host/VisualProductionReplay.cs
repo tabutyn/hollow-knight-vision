@@ -184,7 +184,7 @@ internal static class VisualProductionReplay
                 var coarse = coarseMotion.Observe(signal.MotionGrid, evidence.CaptureTimestamp);
                 var admission = admissionPolicy.Observe(signal, maskInput is not null, captureGeneration);
                 if (admission.ResetMotionReference) tracking.ResetMotionReference();
-                var masks = VisualReplayGroundInput.RestoreMasks(maskInput, frame);
+                var masks = VisualReplayGroundInput.RestoreMasks(maskInput, frame, exactInput: exactInput is not null);
                 var prepared = tracking.Prepare(frame, masks, admission.AdmitsTracking,
                     tuning: maskInput?.Tuning, semanticTuning: maskInput?.SemanticTuning);
                 var tracked = tracking.Track(frame, prepared, masks.GroundKnight, admission, signal, evidence.CaptureTimestamp,
@@ -262,6 +262,7 @@ internal static class VisualProductionReplay
                 var visual = new {
                     evidence.Index, evidence.CaptureTimestamp, evidence.CaptureGeneration, evidence.RenderedGameFrame,
                     maskAgeSeconds = evidence.CaptureTimestamp - maskInput?.CaptureTimestamp, movementButtons = buttons,
+                    observedPlayerBounds = masks.ObservedPlayerBounds,
                     suppressesWalkedGroundForJump = recentJump || (buttons & InputButtons.ActionZ) != 0,
                     admission.AdmitsTracking, admission.Transition.ResumedAfterTransition, observation.Source,
                     observation.GroundVerified, tracked.AllowsAtlasWrite, tracked.HasMeasuredSceneryContinuity,

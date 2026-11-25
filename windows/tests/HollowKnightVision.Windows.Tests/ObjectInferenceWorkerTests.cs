@@ -47,7 +47,19 @@ internal static class ObjectInferenceWorkerTests
     {
         var worker = new LiveObjectInferenceWorker();
         worker.Observe(Frame(1), 1, () => [Body()], extension: 0, asynchronously: false);
-        worker.Observe(Frame(1.1, 2), 1, () => [Body(2, .15)], extension: 0, asynchronously: false);
+        var current = Frame(1.1, 2);
+        using var release = new ManualResetEventSlim();
+        try
+        {
+            worker.Observe(current, 1, () => { Release(release); return [Body(2, .15)]; }, extension: 0);
+            Check(worker.CaptureMatchedKnightBounds(current, 1) is null, "Contact assumed a result before inference finished.");
+        }
+        finally { release.Set(); Drain(worker); }
+        Check(worker.CaptureMatchedKnightBounds(current, 1) is { X: 3, Width: > .99 and < 1.01 },
+            "Ground processing could not use the completed observation for the same image.");
+        Check(worker.CaptureMatchedKnightBounds(Frame(1.2, 3), 1) is null
+            && worker.CaptureMatchedKnightBounds(current, 2) is null,
+            "Late inference must stay with its original image and generation.");
         var delayed = worker.Snapshot(1, 1.2);
         Check(delayed.Raw.Single().Box.X == .15 && delayed.Tracked.Single().Box.X < .15);
         var mask = delayed.Masks.Single().Box;

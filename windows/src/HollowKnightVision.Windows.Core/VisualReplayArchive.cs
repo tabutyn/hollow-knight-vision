@@ -17,9 +17,9 @@ public sealed record VisualReplayGroundInput(double CaptureTimestamp, ulong Capt
     double[][][]? ExcludingRects = null, double[][]? KnightRect = null, GroundTheoryTuning? Tuning = null,
     GroundTheoryTuning? SemanticTuning = null, double[][]? ObservedPlayerBounds = null,
     int? HorizontalDrive = null, bool? RecentJump = null, InputButtons? WindowsMovementButtons = null,
-    double[][][]? WindowsAtlasExcludingRects = null)
+    double[][][]? WindowsAtlasExcludingRects = null, bool? WindowsObservedPlayerBoundsMeasured = null)
 {
-    public static GameplaySceneMasks RestoreMasks(VisualReplayGroundInput? input, BgraFrame frame)
+    public static GameplaySceneMasks RestoreMasks(VisualReplayGroundInput? input, BgraFrame frame, bool exactInput = true)
     {
         StencilRect Rect(double[][] value)
         {
@@ -32,11 +32,19 @@ public sealed record VisualReplayGroundInput(double CaptureTimestamp, ulong Capt
         var atlas = input?.WindowsAtlasExcludingRects?.Select(Rect).ToArray() ?? omissions;
         var knight = input?.KnightRect is { } box
             ? SceneRegions.PixelRectangles(frame.Width, frame.Height, [Rect(box)]) : [];
-        return new(SceneRegions.Startup() with { HudStencilRects = atlas },
+        StencilRect? observed = null;
+        // Older Windows archives duplicated the swept Knight box in the player field.
+        if (exactInput && input?.ObservedPlayerBounds is { } player
+            && (input.WindowsAtlasExcludingRects is null || input.WindowsObservedPlayerBoundsMeasured == true))
+        {
+            var bounds = Rect(player).Intersect(new(0, 0, frame.Width, frame.Height));
+            if (bounds.IsFinite && !bounds.IsEmpty) observed = bounds;
+        }
+        return new GameplaySceneMasks(SceneRegions.Startup() with { HudStencilRects = atlas },
             SceneRegions.Startup() with { HudStencilRects = omissions },
             SceneRegions.PixelRectangles(frame.Width, frame.Height, atlas),
             SceneRegions.PixelRectangles(frame.Width, frame.Height, omissions),
-            knight.Count > 0 ? knight[0] : null);
+            knight.Count > 0 ? knight[0] : null) { ObservedPlayerBounds = observed };
     }
 
     public static VisualReplayGroundInput FromTracking(double timestamp, ulong generation, int imageHeight,
@@ -46,11 +54,13 @@ public sealed record VisualReplayGroundInput(double CaptureTimestamp, ulong Capt
         double[][] Rect(StencilRect rect) =>
             [[rect.X, imageHeight - rect.Bottom], [rect.Width, rect.Height]];
         var knight = masks.GroundRegions.Knight is { } bounds ? Rect(bounds) : null;
+        var observed = masks.ObservedPlayerBounds is { } player ? Rect(player) : null;
         return new(timestamp, generation, masks.GroundRegions.OmittedRects.Select(Rect).ToArray(), knight,
-            GroundTheoryTuning.Default, GroundTheoryTuning.SemanticDefault, knight,
+            GroundTheoryTuning.Default, GroundTheoryTuning.SemanticDefault, observed,
             buttons.HasValue ? KnightLevelWalk.Direction(buttons.Value) : null,
             RecentJump: buttons.HasValue ? recentJump : null,
-            WindowsMovementButtons: buttons, WindowsAtlasExcludingRects: masks.AtlasRegions.OmittedRects.Select(Rect).ToArray());
+            WindowsMovementButtons: buttons, WindowsAtlasExcludingRects: masks.AtlasRegions.OmittedRects.Select(Rect).ToArray(),
+            WindowsObservedPlayerBoundsMeasured: observed is not null ? true : null);
     }
 }
 

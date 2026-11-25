@@ -7,6 +7,15 @@ public sealed record GameplayTrackingPreparation(
     IReadOnlyList<PixelRect> ProtectedOcclusions, IReadOnlyList<PixelRect> GroundExclusions)
 {
     internal IReadOnlyList<StencilRect>? MotionExclusions { get; init; }
+    internal StencilRect? ObservedPlayerBounds { get; init; }
+    public PixelRect? ContactKnight { get; init; }
+
+    public GameplayTrackingPreparation WithPlayerBounds(GameplaySceneMasks masks, int width, int height) =>
+        this with
+        {
+            ObservedPlayerBounds = masks.ObservedPlayerBounds,
+            ContactKnight = masks.ContactKnight(width, height)
+        };
 }
 
 public sealed record GameplayTrackedFrame(
@@ -87,10 +96,12 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         {
             var terrain = GameplayTerrainAnalysis.Analyze(frame, masks, tuning, semanticTuning, includeSemanticRunEvidence);
             var motionExclusions = masks.GroundRegions.OmittedRects;
-            return new(terrain, motion.Observe(frame, motionExclusions), protectedOcclusions, masks.GroundExclusions)
+            var prepared = new GameplayTrackingPreparation(terrain, motion.Observe(frame, motionExclusions),
+                protectedOcclusions, masks.GroundExclusions)
             {
                 MotionExclusions = motionExclusions
             };
+            return masks.ObservedPlayerBounds is null ? prepared : prepared.WithPlayerBounds(masks, frame.Width, frame.Height);
         }
 
         ResetMotionReference();
@@ -105,6 +116,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
     {
         var groundStarted = Stopwatch.GetTimestamp();
         var terrainAnalysis = prepared.Terrain;
+        var contactKnight = prepared.ContactKnight ?? knight;
         var drive = KnightLevelWalk.Direction(buttons ?? InputButtons.None);
         VisualRoomDirection? direction = drive < 0 ? VisualRoomDirection.Left : drive > 0 ? VisualRoomDirection.Right : null;
         var hasKnownRoom = !string.IsNullOrWhiteSpace(knownRoom);
@@ -226,7 +238,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
                 ? ground.CameraPosition : null;
             terrain = TerrainWallDetector.Detect(edges, floors);
             var contactCamera = lineage is null ? null : publishesScenery ? localCamera : verifiedCamera;
-            contact = walked.Observe(room, edges, knight, contactCamera,
+            contact = walked.Observe(room, edges, contactKnight, contactCamera,
                 buttons, timestamp, floors, terrain.Walls,
                 generation, walkedCoordinateEpoch, lineage, recentJump);
             terrain = TerrainWallDetector.ApplyContact(terrain, contact, floors, edges);
@@ -240,7 +252,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         if (!hasCommittedAtlas && terrainAnalysis?.Edges.SourceLuma is not null)
         {
             if (measuredGround && admission.AllowsAtlasWrite && visualRoom.AllowsAtlasWrite && !groundAdjusted)
-                bootstrapWalk = CorroboratedBootstrapWalk(contact.Floor, frame.Height, knight, direction, coarseMotion);
+                bootstrapWalk = CorroboratedBootstrapWalk(contact.Floor, frame.Height, contactKnight, direction, coarseMotion);
             observation = camera.CompleteFreshAtlasBootstrap(observation, bootstrapWalk);
         }
         LiveWorldCaptureEvidence? worldEvidence = null;
@@ -249,7 +261,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             if (measuredGround)
             {
                 worldEvidence = LiveWorldCaptureEvidence.FromGround(timestamp, frame.Width, frame.Height,
-                    floors, ground.LineReviews, knight, contact.MeasuredFoot, contact.Floor) with
+                    floors, ground.LineReviews, contactKnight, contact.MeasuredFoot, contact.Floor,
+                    prepared.ObservedPlayerBounds) with
                 { LocalReferenceTimestamp = referenceTimestamp, MeasuredLineage = lineage };
             }
             else if (publishesScenery)

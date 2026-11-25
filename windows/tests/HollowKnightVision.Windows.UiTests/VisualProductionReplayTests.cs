@@ -29,6 +29,7 @@ internal static class VisualProductionReplayTests
                 writer.RecordStage(new("visionStarted", time, generation));
                 if (index is not (0 or 3 or 4 or 5 or 70))
                     writer.RecordGroundInput(new(time, generation, ExcludingRects: [[[0, 150], [50, 30]]],
+                        ObservedPlayerBounds: index is 2 or (>= 59 and <= 69) ? [[141.5, 65.25], [20, 25]] : null,
                         HorizontalDrive: index == 6 ? -1 : null,
                         RecentJump: index is 6 or 9 ? false : index == 20 ? true : null,
                         WindowsMovementButtons: index is 6 or 7 or 14 ? null : InputButtons.Right));
@@ -68,6 +69,10 @@ internal static class VisualProductionReplayTests
             Check(first.GetProperty("committedFrames").GetInt32() > 0 && first.GetProperty("atlasTiles").GetInt32() > 0,
                 "Replay did not use the durable atlas pipeline.");
             Check(File.Exists(first.GetProperty("worldSnapshotPath").GetString()));
+            var world = new LiveWorldSessionStore(first.GetProperty("worldDirectory").GetString()!).Load().Snapshot;
+            Check(world.Observations.Any(observation =>
+                observation.ObservedPlayerBounds == new WorldRect(new(141.5, 65.25), new(20, 25))),
+                "Committed observations must retain the exact body in image coordinates.");
             var trace = new RecordedInputPathStore().Load(first.GetProperty("outputPath").GetString()!);
             Check(trace.SourcePathId == pathId && trace.TrackingSamples.Count == 74 && trace.GroundTruthTrace.Count == 0,
                 "The replay output is not an independent visual trace.");
@@ -85,6 +90,9 @@ internal static class VisualProductionReplayTests
             Check(byIndex[4].GetProperty("maskAgeSeconds").GetDouble() is > .07 and < .09
                 && byIndex[4].GetProperty("admitsTracking").GetBoolean(),
                 "A short gap must reuse the last mask and keep admitting tracked imagery.");
+            Check(byIndex[2].GetProperty("observedPlayerBounds").GetProperty("x").GetDouble() == 141.5
+                && byIndex[4].GetProperty("observedPlayerBounds").ValueKind == JsonValueKind.Null,
+                "Reusing an exclusion mask must not reuse the player measurement.");
             Check(byIndex[5].GetProperty("maskAgeSeconds").ValueKind == JsonValueKind.Null
                 && !byIndex[5].GetProperty("admitsTracking").GetBoolean()
                 && byIndex[70].GetProperty("maskAgeSeconds").ValueKind == JsonValueKind.Null,

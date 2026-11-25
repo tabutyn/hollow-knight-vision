@@ -144,6 +144,9 @@ internal sealed class WindowsMenuStencilRecognizer
         => AnalyzeCore(frame, asynchronously, inferObjects, asynchronousObjects: false);
     internal Observation AnalyzeLive(BgraFrame frame, bool asynchronously, Func<IReadOnlyList<ObjectDetection>>? inferObjects)
         => AnalyzeCore(frame, asynchronously, inferObjects, asynchronousObjects: true);
+    internal StencilRect? CaptureMatchedKnightBounds(BgraFrame frame, long captureGeneration) =>
+        objects.CaptureMatchedKnightBounds(frame, captureGeneration);
+
     internal Observation AnalyzeLiveWithPublication(BgraFrame frame, bool asynchronously,
         Func<IReadOnlyList<ObjectDetection>>? inferObjects, Action<LiveObjectInferencePublication> onPublished)
         => AnalyzeCore(frame, asynchronously, inferObjects, asynchronousObjects: true, onPublished);

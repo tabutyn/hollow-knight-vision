@@ -85,7 +85,8 @@ internal static class VisualReplayArchiveTests
         Check(recorder.Start(timestamp: 100, id: fixture.Id, visualArchiveRoot: fixture.Root));
         var image = new BgraFrame(2, 3, 8, [.. Fixture.Pixels, .. Fixture.Pixels, .. Fixture.Pixels], 12, DateTimeOffset.UnixEpoch);
         var masks = new GameplaySceneMasks(new(null, new(0, 0, 1, 1), default, default),
-            new(new(1, 0, 1, 1), default, default, default), [new(0, 0, 1, 1)], [new(1, 0, 1, 1)], new(1, 0, 1, 1));
+            new(new(1, 0, 1, 1), default, default, default), [new(0, 0, 1, 1)], [new(1, 0, 1, 1)], new(1, 0, 1, 1))
+        { ObservedPlayerBounds = new(.25, .5, .5, 1.25) };
         recorder.RecordVisualFrame(image, 99.9, 100.1, 7, 390);
         recorder.RecordVisualStage("visionCompleted", 99.9, 7);
         recorder.RecordVisualGroundInput(99.9, 7, image.Height, masks, InputButtons.Left);
@@ -114,7 +115,16 @@ internal static class VisualReplayArchiveTests
         var ground = archive.Manifest.GroundInputs.Single();
         Check(ground.Tuning == GroundTheoryTuning.Default && ground.SemanticTuning == GroundTheoryTuning.SemanticDefault);
         var originalBounds = ground.ObservedPlayerBounds!;
-        Check(originalBounds[0].SequenceEqual(new double[] { 1, 2 }) && originalBounds[1].SequenceEqual(new double[] { 1, 1 }));
+        Check(ground.WindowsObservedPlayerBoundsMeasured == true
+            && originalBounds[0].SequenceEqual(new double[] { .25, 1.25 })
+            && originalBounds[1].SequenceEqual(new double[] { .5, 1.25 }));
+        var restored = VisualReplayGroundInput.RestoreMasks(ground, image);
+        Check(restored.ObservedPlayerBounds == masks.ObservedPlayerBounds && restored.GroundKnight == masks.GroundKnight);
+        Check(VisualReplayGroundInput.RestoreMasks(ground, image, exactInput: false).ObservedPlayerBounds is null,
+            "A borrowed mask cannot carry measured feet into the next capture.");
+        var legacy = ground with { WindowsObservedPlayerBoundsMeasured = null, ObservedPlayerBounds = ground.KnightRect };
+        Check(VisualReplayGroundInput.RestoreMasks(legacy, image).ObservedPlayerBounds is null,
+            "Legacy Windows archives recorded the swept mask in the player field.");
         Check(ground.HorizontalDrive == 1 && ground.WindowsMovementButtons == (InputButtons.Right | InputButtons.ActionX)
             && ground.RecentJump == true);
         Check(ground.ExcludingRects!.Single()[0][0] == 1 && ground.WindowsAtlasExcludingRects!.Single()[0][0] == 0);

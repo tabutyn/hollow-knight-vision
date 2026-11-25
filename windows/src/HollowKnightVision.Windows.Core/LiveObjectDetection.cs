@@ -6,6 +6,18 @@ public sealed record LiveObjectDetectionBatch(IReadOnlyList<ObjectDetection> Det
 public static class LiveObjectDetectionFreshness
 {
     public const double MaximumAge = .4;
+
+    internal static StencilRect? CaptureMatchedKnightBounds(LiveObjectDetectionBatch? batch,
+        long generation, BgraFrame frame)
+    {
+        var timestamp = (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds;
+        if (batch is null || batch.CaptureGeneration != generation || batch.SourceTimestamp != timestamp
+            || batch.SourceFrameIdentifier != frame.CaptureId) return null;
+
+        var sameImage = batch.Detections.Where(detection => detection.SourceFrameIdentifier == frame.CaptureId).ToArray();
+        return SceneRegions.FromObjectDetections(sameImage, new(0, 0, frame.Width, frame.Height)).Knight;
+    }
+
     public static IReadOnlyList<ObjectDetection> Detections(LiveObjectDetectionBatch? batch,
         long captureGeneration, double timestamp) => batch is not null
         && batch.CaptureGeneration == captureGeneration && double.IsFinite(timestamp)
