@@ -130,6 +130,29 @@ internal static class BotHumanGroundProjectionTests
             "Invalid, missing, stale and mismatched receiver observations cannot drive policy.");
     }
 
+    internal static void TestMalformedDimensionsCannotSupplyBotGeometry()
+    {
+        var labels = new GroundTruthLineDocument { Lines = [Floor()] };
+        foreach (var size in new WorldSize[] { new(1e30, 1e30), new(100, 65_537), new(double.NaN, 80), new(100, double.PositiveInfinity) })
+            Require(BotObservationBuilder.Hacker(size, 10, Sample, labels, Timing, InputButtons.None) is null,
+                "Malformed Hacker dimensions must be rejected before projection.");
+        Require(BotObservationBuilder.Hacker(new WorldSize(65_536, 80), 10, Sample, labels, Timing, InputButtons.None) is
+            { CanTrain: true, AuthoredTerrain.Width: 65_536 }, "The supported dimension boundary should retain the valid observation.");
+
+        foreach (var (width, height) in new[] { (65_537, 2), (2, 65_537) })
+        {
+            var frame = new BgraFrame(width, height, width * 4, new byte[width * height * 4], 1, DateTimeOffset.UnixEpoch);
+            var detections = new LiveObjectDetectionBatch(
+                [new ObjectDetection("game.playable-knight", new(.4, .4, .1, .2), .9f) { SourceFrameIdentifier = 1 }],
+                1, 0, Timing.Generation, 0);
+            var row = BotObservationBuilder.Gameplay(frame, Timing, detections, [new(1, new(0, 1))], [],
+                true, default, null, null, InputButtons.None);
+            Require(!row.CanTrain && row.Issues.SequenceEqual(["invalid-frame-size"]) && row.DetectedTerrain is null
+                && row.Features[4] == 0 && row.Features[6] == 0 && row.Features.All(double.IsFinite),
+                "An oversized detector frame must not become eligible even with a matched Knight and floor.");
+        }
+    }
+
     private static BotCaptureObservation Observe(GroundTruthLineDocument labels) =>
         BotObservationBuilder.Hacker(Size, 10, Sample, labels, Timing, InputButtons.None)
             ?? throw new InvalidOperationException("The exact Hacker fixture could not be observed.");
