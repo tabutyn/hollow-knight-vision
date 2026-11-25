@@ -16,9 +16,18 @@ public sealed class LabelingModelSummarySession
     public SavedLabelingExample? SelectedFailure => FailureExamples.FirstOrDefault(example => example.Id == SelectedFailureIdentifier) ?? FailureExamples.FirstOrDefault();
     public string PositionText => SelectedFailure is { } selected
         ? $"{Array.FindIndex(FailureExamples.ToArray(), example => example.Id == selected.Id) + 1} / {FailureExamples.Count}" : "0 / 0";
-    public IReadOnlyList<LabelingReviewBox> SelectedPredictions => SelectedFailure is { } selected && ReviewClassIdentifier is { } identifier && review is not null
-        ? review.Examples.FirstOrDefault(example => example.ExampleIdentifier == selected.Id)?.Predictions
-            .Where(box => LabelingClassIdentity.CanonicalIdentifier(box.Label) == identifier && box.Confidence >= review.Metrics.ConfidenceThreshold).ToArray() ?? [] : [];
+    public LabelingReviewErrors? SelectedErrors
+    {
+        get
+        {
+            if (SelectedFailure is not { } selected || ReviewClassIdentifier is not { } identifier
+                || review is not { } current
+                || current.Examples.FirstOrDefault(example => example.ExampleIdentifier == selected.Id) is not { } reviewed)
+                return null;
+            return LabelingPredictionReviewAnalyzer.Errors(reviewed, identifier,
+                current.Metrics.ConfidenceThreshold, current.Metrics.IntersectionOverUnionThreshold);
+        }
+    }
 
     public void SetContent(IEnumerable<SavedLabelingExample> values, LabelingModelCandidate? candidate,
         IEnumerable<string> classIdentifiers, string? selectedClassIdentifier)

@@ -62,7 +62,7 @@ internal static class ModelSummaryIntegrationTests
     public static void Run()
     {
         TestSummaryControls(); TestMissingImagesAndRecovery();
-        Console.WriteLine("PASS Model Summary rankings, selected styling, prediction overlays, wraparound repair navigation, retained state and failures");
+        Console.WriteLine("PASS Model Summary rankings, selected styling, exact false-positive and false-negative overlays, wraparound repair navigation, retained state and failures");
     }
 
     private static void TestSummaryControls()
@@ -88,16 +88,26 @@ internal static class ModelSummaryIntegrationTests
                 Check(((SolidColorBrush)border.Background).Color == Color.FromRgb(36, 91, 134), "Priority row lacks the shared selected highlight.");
             }
             var preview = Find<Button>(panel, "SummaryOpenScreenshot");
-            Check(Children<Rectangle>(preview).Count(box => box.Stroke == Brushes.Yellow) == 1, "Preview included another class or below-threshold predictions.");
+            var falsePositive = Children<Rectangle>(preview).Single();
+            Check(falsePositive.Stroke == Brushes.Red && (falsePositive.StrokeDashArray?.Count ?? 0) == 0
+                && Children<TextBlock>(preview).Any(item => item.Text == "FP")
+                && Find<TextBlock>(panel, "SummaryFalsePositiveCount").Text == "1 FP · false detection"
+                && Find<TextBlock>(panel, "SummaryFalseNegativeCount").Text == "0 FN · missed object",
+                "The preview must show only the above-threshold false positive for the selected class.");
             Click(Find<Button>(panel, "SummaryNextFailure"));
             Check(session.SelectedFailure?.Id == first.Id && session.PositionText == "2 / 2", "Next did not use review order.");
-            Check(Children<Rectangle>(preview).Count(box => box.StrokeThickness == 3) == 3 && Children<Rectangle>(preview).Any(box => box.Stroke == Brushes.HotPink), "Selected/negative human boxes disappeared from failure review.");
+            var falseNegative = Children<Rectangle>(preview).Single();
+            Check(falseNegative.Stroke == Brushes.Orange && falseNegative.StrokeDashArray.SequenceEqual([6d, 4d])
+                && Children<TextBlock>(preview).Any(item => item.Text == "FN")
+                && Find<TextBlock>(panel, "SummaryFalsePositiveCount").Text == "0 FP · false detection"
+                && Find<TextBlock>(panel, "SummaryFalseNegativeCount").Text == "1 FN · missed object",
+                "The preview must distinguish the missed human label from matched or unrelated boxes.");
             Click(preview); Check(opened?.Id == first.Id, "Repair callback opened a different screenshot.");
             Click(Find<Button>(panel, "SummaryNextFailure")); Check(session.SelectedFailure?.Id == last.Id, "Next did not wrap.");
             Click(Find<Button>(panel, "SummaryPreviousFailure")); Check(session.SelectedFailure?.Id == first.Id, "Previous did not wrap.");
             var atlas = new LabelingObjectAtlasStore(fixture.Root).LoadOrBuild(new(examples, classes.Select(item => item.Identifier).ToArray(), new Dictionary<string, Guid>()));
             panel.SetAtlas(atlas); Pump();
-            Check(Children<Image>(panel).Count() >= 3, "Summary legend did not receive reference icons.");
+            Check(Children<Image>(panel).Count() == 1, "The failure preview must keep the screenshot and its error boxes visible after reference icons arrive.");
             var rendered = new RenderTargetBitmap((int)panel.ActualWidth, (int)panel.ActualHeight, 96, 96, PixelFormats.Pbgra32); rendered.Render(panel);
             var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(rendered));
             using (var stream = File.Create(Path.Combine(AppContext.BaseDirectory, "model-summary-preview.png"))) encoder.Save(stream);
