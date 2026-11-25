@@ -12,6 +12,7 @@ internal static class LiveActorConfirmationTests
         var receipt = new ActorCalibrationReceipt(Run, Recipe, 0, 0, 0, false);
         Check(receipt.Matches(Deposit, Run), "Expected the current trained run's deposit heatmap.");
         Check(!receipt.Matches(Deposit, Guid.NewGuid()), "The previous run's heatmap must be ignored.");
+        Check(!receipt.Matches("enemies.vengfly", Run), "An unsupported actor cannot use a deposit receipt.");
         Check(!(receipt with { Localizer = Recipe with { StandaloneConfidence = .6f } }).Matches(Deposit, Run),
             "A weak deposit heatmap could match the HUD.");
         Check(!(receipt with { Localizer = Recipe with { Sha256 = "wrong" } }).Matches(Deposit, Run),
@@ -70,6 +71,10 @@ internal static class LiveActorConfirmationTests
         var result = ConfirmCrawlids([original, knight], [Box(.2, .24f), Box(.6, .23f)],
             [Box(.201, .8f), agreed, Box(.8, .97f), Box(.6, .53f)], recipe);
         Check(result.SequenceEqual([original, knight, agreed]), "Preserve primary detections and add only the agreed Crawlid.");
+        var occupied = Enumerable.Range(0, DetectionDecoder.DefaultMaximumPerClass)
+            .Select(index => Box(index * .06, .86f)).ToArray();
+        Check(ConfirmCrawlids(occupied, [Box(.85, .23f)], [Box(.851, .93f)], recipe).SequenceEqual(occupied),
+            "Corroboration must respect the per-class limit.");
     }
 
     internal static void TestProductionDetectorUsesVerifiedLocalizers()
@@ -134,6 +139,19 @@ internal static class LiveActorConfirmationTests
             using (var detector = new OnnxObjectDetectorSet([runDirectory], [artifact]))
                 Check(detector.Detect(frame).Single().ClassIdentifier == Crawlid,
                     "A corrupt optional model must leave the primary result usable.");
+
+            ExpectFallback("actor-calibration-detector.onnx", loaded: false);
+            ExpectFallback("actor-calibration-incompatible-heatmap.onnx", loaded: true);
+
+            void ExpectFallback(string fixture, bool loaded)
+            {
+                CopyModel(fixture, heatmapPath);
+                var verified = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(heatmapPath)));
+                WriteReceipt("knight", baselineRecipe with { Localizer = heatmap with { Sha256 = verified } });
+                using var detector = new OnnxObjectDetectorSet([runDirectory], [artifact]);
+                Check(detector.HasActorCalibration(Knight) == loaded && detector.Detect(frame).Single().ClassIdentifier == Crawlid,
+                    $"An incompatible optional model must leave the primary result usable ({fixture}).");
+            }
 
             void WriteReceipt(string name, ActorCalibrationReceipt receipt) =>
                 ModelStoreJson.Write(Path.Combine(calibrations, $"{name}-{Run:D}.json"), receipt);

@@ -222,6 +222,45 @@ internal static class HackerGymObservationTests
             throw new InvalidOperationException("A new room cannot inherit old visible cells.");
     }
 
+    internal static void TestSignedRouteMotionClearsAtObjectiveAndTrackingChanges()
+    {
+        var labels = new GroundTruthLineDocument { Lines = [new("Tutorial_01", 0, 25, 0, GroundTruthLineKind.Positive, false)] };
+        var visit = new BotHackerVisit(labels);
+        var right = new BotAtlasObjective("Tutorial_01", new(8, 1.28));
+        var left = new BotAtlasObjective("Tutorial_01", new(0, 1.28));
+        const double knightHeight = 26;
+
+        Check(AlignmentAt(0, 1.5, right), null);
+        Check(AlignmentAt(1, 1.8, right), 6 / knightHeight);
+        Check(AlignmentAt(2, 1.8, right), 0);
+        Check(AlignmentAt(3, 1.6, right), -4 / knightHeight);
+        Check(AlignmentAt(4, 1.5, left), null);
+        Check(AlignmentAt(5, 1.25, left), 5 / knightHeight);
+        if (Observe(6, 1.15, left) is { PathAlignment: not null } or { RoadHint: not null })
+            throw new InvalidOperationException("A missing camera cannot supply alignment or guidance.");
+        Check(AlignmentAt(7, 1, left), null);
+        Check(AlignmentAt(13, .5, left), null);
+        Check(AlignmentAt(14, .4, left), 2 / knightHeight);
+
+        double? AlignmentAt(int index, double x, BotAtlasObjective target) =>
+            (Observe(index, x, target) ?? throw new InvalidOperationException($"Missing observation at route step {index}.")).PathAlignment;
+
+        BotCaptureObservation? Observe(int index, double x, BotAtlasObjective target)
+        {
+            // Frame six drops the camera and all other frames carry measured actor and camera positions.
+            var sample = Frame(index, x) with { Grounded = true };
+            var time = index * .1 + .02;
+            return visit.Observe(new(192, 128), HackerFrameSynchronizer.Key(sample.UnityFrame), sample,
+                new(time, time + .001, 1, 1, 0), InputButtons.Left, index, objective: target);
+        }
+
+        static void Check(double? actual, double? expected)
+        {
+            if (expected is { } value ? actual is null || Math.Abs(actual.Value - value) > .000001 : actual is not null)
+                throw new InvalidOperationException($"Expected path alignment {expected?.ToString() ?? "absent"}, got {actual?.ToString() ?? "absent"}.");
+        }
+    }
+
     private static JsonElement[] Run(string frames, string labels, AtlasPoint? goal)
     {
         using var input = new StringReader(frames);

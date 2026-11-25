@@ -119,6 +119,70 @@ internal static class AtlasPlatformGraphTests
             "The observed zigzag jumps should connect through the wall-lined ledges.");
     }
 
+    internal static void TestPitShelfAndSealingWall()
+    {
+        AtlasPathPlatform[] floors = [new(0, 100, 0), new(112, 175, 25)];
+        var target = new AtlasPathPoint(160, 45);
+        var navigator = new AtlasPathNavigator();
+        var open = new AtlasPlatformGraph(floors, [], height: 20, width: 10);
+        var jumps = open.Strokes.Where(stroke => stroke.Kind == Jump).ToArray();
+        Require(jumps.Length == 3 && jumps.Where(stroke => stroke.Horizontal).Select(stroke => stroke.A.Y).SequenceEqual([50])
+            && jumps.Where(stroke => !stroke.Horizontal).Select(stroke => stroke.A.Y).Order().SequenceEqual([20, 45]),
+            "The walk levels must meet the jump from their own floors.");
+        Require(navigator.Follow(open, new(10, 0), grounded: true, measured: true, admitted: null,
+                walked: [], fixedObjective: target) is { } approach
+            && BotPathMotion.Road(approach, 20, 200, frontier: false).Dx == 1,
+            "The route must head toward the pit shelf to reach the upper platform.");
+
+        var blocked = new AtlasPlatformGraph(floors, [new(105, 0, 160, SolidSide: 1)], height: 20, width: 10);
+        Require(blocked.Strokes.All(stroke => stroke.Kind != Jump)
+            && navigator.Follow(blocked, new(10, 0), grounded: true, measured: true, admitted: null,
+                walked: [], fixedObjective: target) is null,
+            "A wall across the jump must invalidate the current route.");
+        var sealedFloor = new AtlasPlatformGraph([floors[0]], [new(60, 0, 180, SolidSide: 1)], height: 20, width: 10);
+        var walks = sealedFloor.Strokes.Where(stroke => stroke.Kind == Walk).ToArray();
+        Require(walks.Length == 2 && walks[0].B.X < 60 && walks[1].A.X > 60
+            && sealedFloor.Strokes.All(stroke => stroke.Kind != Jump)
+            && !Reachable(sealedFloor, new(0, 20), new(100, 20)),
+            "A high wall inside one floor must split walking clearance and disconnect the two sides.");
+    }
+
+    internal static void TestRescanRetainsFrontierAndPriorDistance()
+    {
+        var graph = new AtlasPlatformGraph([new(0, 100, 0)], [], height: 10, width: 5);
+        var navigator = new AtlasPathNavigator();
+        var initial = navigator.Follow(graph, new(48, 0), grounded: true, measured: true, admitted: null,
+            walked: []) ?? throw new InvalidOperationException("Expected an automatic frontier on the initial floor.");
+        Require(initial.Objective == new AtlasPathPoint(100, 10), "Choose the nearer room's farthest reachable unvisited point.");
+
+        var rescanned = new AtlasPlatformGraph([new(-30, 102, 1)], [], height: 10, width: 5, previous: graph);
+        var continued = navigator.Follow(rescanned, new(54, 1), grounded: true, measured: true, admitted: null,
+            walked: []) ?? throw new InvalidOperationException("The graph rescan lost a reachable frontier.");
+        Require(continued.Objective == new AtlasPathPoint(100, 11)
+            && BotPathMotion.Road(continued, 10, 100, frontier: true).Dx == 1,
+            "Retain the old forward objective when a rescan extends the floor behind the Knight.");
+        Require(continued.PriorRemaining is 46
+            && BotPathMotion.ForwardPixels(initial, new(48, 10), initial.Remaining, new(54, 11), continued.Projection, 46) == 6,
+            "Credit the six measured pixels along the previous route after its floor reprojects.");
+    }
+
+    internal static void TestRegisteredFrontierGuidesAndCreditsPreviousGoal()
+    {
+        var graph = new AtlasPlatformGraph([new(0, 100, 0), new(450, 900, 0)], [], height: 10, width: 5);
+        var navigator = new AtlasPathNavigator();
+        var initial = navigator.Follow(graph, new(25, 0), grounded: true, measured: true,
+            admitted: (a, b) => a.X <= 80 && b.X <= 80, walked: [])
+            ?? throw new InvalidOperationException("Expected a reachable frontier on registered ground.");
+        Require(initial.Objective == new AtlasPathPoint(80, 10)
+            && BotPathMotion.Road(initial, 10, 100, frontier: true).Dx == 1,
+            "Explore the registered reachable ground before unseen or disconnected platforms.");
+        var expanded = navigator.Follow(graph, new(32, 0), grounded: true, measured: true, admitted: null,
+            walked: []) ?? throw new InvalidOperationException("Expected the current objective after more ground was registered.");
+        Require(expanded.Objective == initial.Objective && expanded.PriorRemaining is 48
+            && BotPathMotion.ForwardPixels(initial, new(25, 10), initial.Remaining, new(32, 10), expanded.Projection, 48) == 7,
+            "The newly reachable ground must preserve the current goal and credit only the previous route.");
+    }
+
     internal static void TestFallsDescendFromEitherLipWithoutClimbingOrCrossingShelves()
     {
         AtlasPathPlatform[] floors = [new(0, 100, 0), new(25, 75, 200)];
