@@ -64,6 +64,7 @@ internal static class BotDesktopEvaluationTests
     private static async Task TestKRecordsBothDomainsFromEitherWorkspace(string root)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var receiverLifetime = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
         using var captureLifetime = new CancellationTokenSource();
         using var server = new TcpListener(IPAddress.Loopback, 0);
         server.Start();
@@ -73,7 +74,7 @@ internal static class BotDesktopEvaluationTests
         var states = Channel.CreateUnbounded<ReceiverInputSnapshot>();
         var checkpoint = JsonSerializer.Deserialize<RecordedGameCheckpoint>(
             """{"sceneName":"Tutorial_01","entryGateName":"left1","heroY":1.28,"grounded":true,"cameraY":2}""", Json)!;
-        var peer = ServeAsync(server, states.Writer, token, checkpoint: checkpoint);
+        var peer = ServeAsync(server, states.Writer, receiverLifetime.Token, checkpoint: checkpoint);
         var oldLabelRoot = Environment.GetEnvironmentVariable("HKV_GROUND_LABEL_ROOT");
         Environment.SetEnvironmentVariable("HKV_GROUND_LABEL_ROOT", root);
         try
@@ -164,14 +165,16 @@ internal static class BotDesktopEvaluationTests
                     Check(archive.Manifest.Frames.Single().RenderedGameFrame == marker,
                         "The replay frame must match the observation's rendered game frame.");
                 }
-                Console.WriteLine("PASS Unmodified K starts and stops paired Game Play and Hacker clips from either workspace");
             }
             finally
             {
+                receiverLifetime.Cancel();
                 Field("isClosing").SetValue(window, true);
                 await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
-                await peer.WaitAsync(TimeSpan.FromSeconds(5));
+                try { await peer.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (OperationCanceledException error) when (error.CancellationToken == receiverLifetime.Token) { }
             }
+            Console.WriteLine("PASS Unmodified K starts and stops paired Game Play and Hacker clips from either workspace");
 
             bool PressK(ModifierKeys modifiers = ModifierKeys.None) =>
                 Method("HandleLocalShortcut").Invoke(window, [Key.K, false, modifiers]) is true;
