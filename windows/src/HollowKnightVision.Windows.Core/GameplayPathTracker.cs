@@ -188,6 +188,7 @@ public sealed class GameplayPathTracker
     public void Suspend()
     {
         // An interruption breaks corroboration, while accepted room evidence remains available.
+        ApplyPendingObjective();
         registered.Witnesses.Reset();
         registered.Navigation.Interrupt();
         if (provisional is { } local)
@@ -199,14 +200,19 @@ public sealed class GameplayPathTracker
         previousChart = null;
         previousMeasurement = null;
         handoff = null;
-        Interlocked.Exchange(ref pendingObjective, null);
     }
 
     internal void RecoverMeasuredBasis(string room, long generation, long sourceEpoch, long destinationEpoch,
         double time, GroundHypothesisTrackingResult ground)
     {
+        var sameCaptureRoom = room == activeRoom && generation == activeGeneration;
+        if (sameCaptureRoom) ApplyPendingObjective();
+        var priorAtlas = sameCaptureRoom ? activeAtlas : null;
+        var atlasObjective = priorAtlas.HasValue ? registered.Objective : null;
+        var atlasObjectiveRevision = registered.ObjectiveRevision;
+
         AtlasPathPlatform[] witnessed = [];
-        if (room == activeRoom && generation == activeGeneration && IsContinuous(time)
+        if (sameCaptureRoom && IsContinuous(time)
             && previousChart is { Graph: { } graph } chart
             && previousMeasurement is { } measurement && measurement.Epoch == sourceEpoch
             && ground.LocalTextureSupport > 0 && ground.LocalReferenceTimestamp is { } reference
@@ -231,10 +237,18 @@ public sealed class GameplayPathTracker
         }
 
         Reset();
-        if (witnessed.Length == 0) return;
+        if (witnessed.Length == 0 && atlasObjective is null) return;
         activeRoom = room;
         activeGeneration = generation;
-        handoff = new(destinationEpoch, time, witnessed);
+        // The correction retires local geometry. A registered destination is
+        // already in Atlas coordinates and belongs to its original room.
+        if (atlasObjective is not null)
+        {
+            activeAtlas = priorAtlas;
+            registered.Objective = atlasObjective;
+            registered.ObjectiveRevision = atlasObjectiveRevision;
+        }
+        if (witnessed.Length > 0) handoff = new(destinationEpoch, time, witnessed);
     }
 
     private GameplayPathView? ObserveRegistered(GameplayPathFrame sample, AtlasPoint camera)
