@@ -87,18 +87,11 @@ internal static class BotDesktopCaptureIntegrationTests
         };
         var match = new HackerMatchedFrame(new(marker, withoutHud, capturedAt, IntegratesAtlas: false,
             MovementButtons: InputButtons.Right), sample, capturedAt + .005);
-        // A real joined frame can arrive while visual analysis has no consumer.
-        var pendingFrame = typeof(MainWindow).GetNestedType("PendingVisionFrame", BindingFlags.NonPublic)!;
-        var factory = typeof(Channel).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Single(method => method.Name == "CreateUnbounded" && method.GetParameters().Length == 0);
-        var analysis = factory.MakeGenericMethod(pendingFrame).Invoke(null, null)!;
-        var analysisWriter = analysis.GetType().GetProperty("Writer")!.GetValue(analysis);
         var finished = false;
         Field("botCapture").SetValue(window, recording);
-        Field("receiverFrameJoinGeneration").SetValue(window, Generation);
         try
         {
-            _ = Method("SubmitReceiverFrameMatch").Invoke(window, [analysisWriter, match, 0L, false, 0L]);
+            SubmitReceiverMatch(window, Generation, match);
             finished = true;
             var result = recording.FinishAsync(start + 1, path, completed: true).GetAwaiter().GetResult();
             Check(result is { Published: [{ BotDomain: "hacker", ObservationCount: 1, PairedClipId: null }], Discarded: 1 },
@@ -114,6 +107,18 @@ internal static class BotDesktopCaptureIntegrationTests
             Field("botCapture").SetValue(window, null);
             if (!finished) _ = recording.FinishAsync(start + 1, path, completed: false).GetAwaiter().GetResult();
         }
+    }
+
+    internal static void SubmitReceiverMatch(MainWindow window, long generation, HackerMatchedFrame match)
+    {
+        // The joined frame is available before the test supplies any visual analysis.
+        var pendingFrame = typeof(MainWindow).GetNestedType("PendingVisionFrame", BindingFlags.NonPublic)!;
+        var factory = typeof(Channel).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(method => method.Name == "CreateUnbounded" && method.GetParameters().Length == 0);
+        var analysis = factory.MakeGenericMethod(pendingFrame).Invoke(null, null)!;
+        var analysisWriter = analysis.GetType().GetProperty("Writer")!.GetValue(analysis);
+        Field("receiverFrameJoinGeneration").SetValue(window, generation);
+        _ = Method("SubmitReceiverFrameMatch").Invoke(window, [analysisWriter, match, 0L, false, 0L]);
     }
 
     private static async Task VerifyTimedClipAsync(MainWindow window, string root)

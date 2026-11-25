@@ -130,9 +130,13 @@ internal static class BotDesktopEvaluationTests
                     var batch = new LiveObjectDetectionBatch([knight], marker, 5, Generation, 0);
                     var timestamp = startedAt + .02;
                     availableAt = timestamp + .015;
+                    var receiver = Telemetry(session, marker);
                     bridge.RecordVisualFrame(frame, timestamp, timestamp, (ulong)Generation, marker);
+                    BotDesktopCaptureIntegrationTests.SubmitReceiverMatch(window, Generation,
+                        new(new(marker, frame, timestamp, IntegratesAtlas: false, MovementButtons: InputButtons.Right),
+                            receiver, availableAt));
                     _ = Method("CaptureBotObservations").Invoke(window, [
-                        frame, Generation, Generation, timestamp, 1, 1UL, marker, Telemetry(session, marker),
+                        frame, Generation, Generation, timestamp, 1, 1UL, marker, receiver,
                         batch, new[] { new DetectedFloorLine(100, new(20, 170)) },
                         new TerrainWallDetection([new(135, 20, 100, true)], []),
                         true, new AtlasPoint(0, 0), null, new AtlasPoint(76, 100), InputButtons.Right,
