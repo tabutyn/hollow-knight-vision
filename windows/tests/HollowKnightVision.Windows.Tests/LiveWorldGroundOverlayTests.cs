@@ -123,6 +123,72 @@ internal static class LiveWorldGroundOverlayTests
             "The live walk extends the remembered footprint and hides the nearby edge and duplicate stroke.");
     }
 
+    internal static void TestWalkedFootprintsJoinOnlyAcrossPlacedIslandsInOneRoom()
+    {
+        var walked = WalkedGroundMemory.WalkedSegmentId;
+        var center = new AtlasPoint(320, 180);
+        LiveWorldObservation[] frames =
+        [
+            Observation(0, 0, center, Line(walked, 10, 60, 80)),
+            Observation(1, 0, center, Line(walked, 55, 95, 86)),
+            Observation(2, 0, center, Line(walked, 100, 110, 81)),
+            Observation(3, 0, center, Line(33, 0, 125, 85), Line(34, 40, 70, 140)),
+            Observation(4, 1, center, Line(walked, 0, 90, 80)),
+            Observation(5, 0, center, Line(walked, 95, 105, 84))
+        ];
+        var owners = frames.Select(frame => Island(frame.Id, frame)).ToArray();
+        owners[5] = owners[5] with
+        {
+            Placement = LiveIslandPlacement.Estimated,
+            BreakReason = LiveTrackingIsland.RecoveryBreakReason
+        };
+        var view = LiveWorldGroundOverlay.ProjectWorld(World(frames, owners));
+        GroundHypothesisAtlasLine[] room0Walk = [Stroke(walked, 10, 95, 83), Stroke(walked, 100, 110, 81)];
+        var room1Walk = Stroke(walked, 0, 90, 80);
+        Check(view.DisplayLines.Where(line => line.SegmentId == walked).SequenceEqual([..room0Walk, room1Walk]),
+            "Nearby walked rows must join across placed islands and retain gaps and room boundaries.");
+        Check(view.DisplayLines.Where(line => line.SegmentId == 33).SequenceEqual(
+            [Stroke(33, 0, 10, 85), Stroke(33, 95, 100, 85), Stroke(33, 110, 125, 85)])
+            && view.DisplayLines.Contains(Stroke(34, 40, 70, 140)),
+            "Walked evidence may cover a nearby edge only on its measured columns in the same room.");
+        Check(view.PathRooms[0].Ground.Where(line => line.SegmentId == walked).SequenceEqual(room0Walk)
+            && view.PathRooms[1].Ground.SequenceEqual([room1Walk]),
+            "The saved route must follow the same verified walked footprints.");
+    }
+
+    internal static void TestWalkedHeightUsesOneVotePerImageAndDoesNotChainRows()
+    {
+        var walked = WalkedGroundMemory.WalkedSegmentId;
+        var center = new AtlasPoint(320, 180);
+        var fragments = Enumerable.Range(0, 5).Select(index => Line(walked, index * 5, 80 + index * 5, 86)).ToArray();
+        LiveWorldObservation[] frames =
+        [
+            Observation(0, 0, center, Line(walked, 0, 100, 80)),
+            Observation(1, 0, center, Line(walked, 0, 100, 81)),
+            Observation(2, 0, center, fragments),
+            Observation(3, 0, center, Line(walked, 0, 100, 92))
+        ];
+        var world = World(frames, frames.Select(frame => Island(frame.Id, frame)).ToArray());
+        Check(LiveWorldGroundOverlay.Project(world).SequenceEqual(
+                [Stroke(walked, 0, 100, 81), Stroke(walked, 0, 100, 92)]),
+            "The fragmented image has one vote and the next height cannot join through its adjacent row.");
+    }
+
+    internal static void TestSnapshotRejectsNonfiniteConfirmedGround()
+    {
+        var frame = Observation(0, 0, default,
+            new LiveGroundLineEvidence(1, new(1, double.NaN), new(30, 100)));
+        try
+        {
+            _ = World([frame]);
+        }
+        catch (LiveWorldModelException error) when (error.Error == LiveWorldModelError.InvalidGeometry)
+        {
+            return;
+        }
+        throw new InvalidOperationException("A confirmed stroke with an invalid coordinate entered the saved world.");
+    }
+
     internal static void TestNavigationUsesOnlyPlacedGroundAndCameraFootprintsFromItsRoom()
     {
         var known = Observation(0, 0, new(150, 50), Line(4, 20, 90, 70));

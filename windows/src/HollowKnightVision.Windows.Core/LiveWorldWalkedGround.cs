@@ -68,25 +68,32 @@ public static class LiveWorldWalkedGround
         var unplaced = snapshot.UnplacedObservationIds();
         var observations = snapshot.Observations.Where(observation => observation.RoomId == room);
         var nativeIslands = snapshot.TrackingIslands.ToDictionary(island => island.Id);
-        return ProjectPlaced(observations, nativeIslands, unplaced, includeImageContacts: includeImageContacts);
+        return GroundStrokeGeometry.Coalesce(observations.SelectMany(observation =>
+            ProjectPlacedWalks(observation, nativeIslands, unplaced, includeImageContacts)));
     }
 
-    internal static IReadOnlyList<GroundHypothesisAtlasLine> ProjectPlaced(
+    internal static IReadOnlyList<GroundHypothesisAtlasLine> ProjectOverlay(
         IEnumerable<LiveWorldObservation> observations,
-        IReadOnlyDictionary<int, LiveTrackingIsland> islands, IReadOnlySet<int> unplaced,
-        bool centered = false, bool includeImageContacts = true) =>
-        GroundStrokeGeometry.Coalesce(observations.SelectMany(observation =>
+        IReadOnlyDictionary<int, LiveTrackingIsland> islands, IReadOnlySet<int> unplaced)
+    {
+        var measurements = observations.SelectMany(observation =>
         {
-            var offset = centered ? LiveWorldGroundOverlay.ImageOriginOffset(observation) : default;
-            var carrierPlaced = !unplaced.Contains(observation.Id);
-            return (carrierPlaced ? ProjectObservation(observation) : [])
-                .Concat(ProjectIslandWalks(observation, islands, carrierPlaced, includeImageContacts))
-                .Select(line => line with
-                {
-                    AtlasStart = new(line.AtlasStart.X + offset.X, line.AtlasStart.Y + offset.Y),
-                    AtlasEnd = new(line.AtlasEnd.X + offset.X, line.AtlasEnd.Y + offset.Y),
-                });
-        }));
+            var offset = LiveWorldGroundOverlay.ImageOriginOffset(observation);
+            return ProjectPlacedWalks(observation, islands, unplaced, includeImageContacts: true)
+                .Select(line => new LiveWorldGroundOverlay.Span(observation.Id,
+                    line.AtlasStart.X + offset.X, line.AtlasEnd.X + offset.X, line.AtlasStart.Y + offset.Y));
+        });
+        var strokes = LiveWorldGroundOverlay.Estimate(WalkedGroundMemory.WalkedSegmentId, measurements);
+        return GroundStrokeGeometry.Coalesce(strokes);
+    }
+
+    private static IEnumerable<GroundHypothesisAtlasLine> ProjectPlacedWalks(LiveWorldObservation observation,
+        IReadOnlyDictionary<int, LiveTrackingIsland> islands, IReadOnlySet<int> unplaced, bool includeImageContacts)
+    {
+        var carrierPlaced = !unplaced.Contains(observation.Id);
+        return (carrierPlaced ? ProjectObservation(observation) : [])
+            .Concat(ProjectIslandWalks(observation, islands, carrierPlaced, includeImageContacts));
+    }
 
     private static IEnumerable<GroundHypothesisAtlasLine> ProjectIslandWalks(
         LiveWorldObservation observation,

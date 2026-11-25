@@ -368,6 +368,7 @@ var tests = new List<(string Name, Action Run)>
     ("walked ground follows its saved observation poses across store reopen", LiveWorldWalkedGroundTests.TestWalkedGroundSurvivesStoreReopenAndFollowsOnlyItsOwningPose),
     ("walked ground stages fresh columns and uses corrected persisted geometry", LiveWorldWalkedGroundTests.TestOnlyFreshWalkedColumnsAreCommittedAndAlreadySavedSpansFollowWorldCorrection),
     ("walked ground persists and acknowledges columns within their measured image owner", LiveWorldWalkedGroundTests.TestPipelineTracksWalkedCoveragePerImageOwner),
+    ("prediction-only camera frames cannot persist floor evidence or keyframes", LiveWorldWalkedGroundTests.TestPredictionOnlyFramesCannotSaveGroundOrBecomeReferences),
     ("Atlas commits a throttled footprint through a different image and later places its owner", LiveWorldWalkedGroundTests.TestPipelineCarriesAThrottledWalkUntilItsImageOwnerIsPlaced),
     ("carried ground follows its placed owner across pending images and scopes", LiveWorldWalkedGroundTests.TestCarrierPlacementCannotHideAPlacedFootprintOrBindAReusedLineage),
     ("invalid saved walked ground is rejected", LiveWorldWalkedGroundTests.TestInvalidPersistedWalkedGeometryFailsSnapshotValidation),
@@ -382,6 +383,10 @@ var tests = new List<(string Name, Action Run)>
     ("saved floor preserves gaps and room and island boundaries", LiveWorldGroundOverlayTests.TestNearbySegmentsCombineOnlyWithinTheirRoomAndIslandWithoutFillingGaps),
     ("placed, measured saved floor follows its revised pose", LiveWorldGroundOverlayTests.TestProjectsOnlyPlacedMeasuredEvidenceThroughRevisedPoses),
     ("walked floor supersedes saved and live edge duplicates", LiveWorldGroundOverlayTests.TestWalkedFloorReplacesOverlappingSavedAndLiveEvidence),
+    ("walked footprints join across placed islands and preserve pit and room boundaries", LiveWorldGroundOverlayTests.TestWalkedFootprintsJoinOnlyAcrossPlacedIslandsInOneRoom),
+    ("saved walked height uses one vote per image and cannot chain separated surfaces", LiveWorldGroundOverlayTests.TestWalkedHeightUsesOneVotePerImageAndDoesNotChainRows),
+    ("a confirmed floor with a nonfinite coordinate cannot enter a saved world", LiveWorldGroundOverlayTests.TestSnapshotRejectsNonfiniteConfirmedGround),
+    ("floor candidates keep their local coordinates through correction and older saves", LiveWorldModelParityTests.TestObservedFloorCandidatesStayImageLocalThroughCorrectionsAndOlderSaves),
     ("saved path ground and footprints respect room and placement", LiveWorldGroundOverlayTests.TestNavigationUsesOnlyPlacedGroundAndCameraFootprintsFromItsRoom),
     ("live-world pipeline persists fresh walked ground and restores it on recovery", TestPipelinePersistsWalkedFloorAndRestoresItOnRecovery),
     ("live-world pipeline enforces bounded persistence cadence", TestPipelineCadenceSuppressesDuplicatePersistence),
@@ -10011,8 +10016,13 @@ static void TestPipelinePersistsWalkedFloorAndRestoresItOnRecovery()
         var uncertain = reopened.Process(PipelineTextureFrameFromPixels(7, PipelineTexturePixels(911)),
             106, 2.50, 1, room, stableTrackingVerified: false, localPose: raw,
             walkedGround: [Span(100, 400)]);
-        Equal("Committed", uncertain.State);
-        True(new LiveWorldSessionStore(root).Load().Snapshot.Observations[^1].WalkedGround is null);
+        Equal("PendingRecovery", uncertain.State);
+        True(uncertain.Diagnostic.Contains("camera motion is unmeasured", StringComparison.Ordinal));
+        var afterDiscard = new LiveWorldSessionStore(root).Load().Snapshot;
+        Equal(archive.MapRevision, afterDiscard.MapRevision);
+        Equal(archive.Observations.Count, afterDiscard.Observations.Count);
+        True(placed.WalkedGround.SequenceEqual(LiveWorldWalkedGround.ProjectRoom(afterDiscard,
+            archive.Observations[^1].RoomId)));
     });
 }
 

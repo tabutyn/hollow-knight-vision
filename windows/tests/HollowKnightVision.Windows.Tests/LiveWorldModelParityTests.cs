@@ -15,6 +15,30 @@ internal static class LiveWorldModelParityTests
     private static void Check(bool value, string message = "Live-world model parity assertion failed.")
     { if (!value) throw new Exception(message); }
 
+    public static void TestObservedFloorCandidatesStayImageLocalThroughCorrectionsAndOlderSaves()
+    {
+        var candidates = new LiveObservedFloorCandidates([new(0, new(10, 60), new(601, 60))]);
+        var frame = LiveWorldObservation.Create(0, 0, 1, 640, 360, 640, 160, [], default, default)
+            with { ObservedFloorCandidates = candidates };
+        var island = new LiveTrackingIsland(0, 0, 1, default, LiveIslandPlacement.Estimated, default, "candidate",
+            [new(0, default, true)]);
+        var world = new LiveWorldSnapshot(anchoredObservationId: 0, observations: [frame], trackingIslands: [island]);
+        var shifted = world.ReplaceOptimizedPoses(new Dictionary<int, AtlasPoint> { [0] = new(12, 8) }, world.MapRevision);
+        var encoded = JsonSerializer.SerializeToUtf8Bytes(shifted, JsonOptions);
+        var reopened = JsonSerializer.Deserialize<LiveWorldSnapshot>(encoded, JsonOptions)!;
+        var stored = reopened.Observations.Single();
+        Check(stored.ObservedFloorCandidates?.Lines.SequenceEqual(candidates.Lines) == true
+            && stored.OptimizedPose == new AtlasPoint(12, 8)
+            && stored.GroundGeometry is null && LiveWorldGroundOverlay.Project(reopened).Count == 0,
+            "Pose correction and reopening must preserve candidate pixels without publishing saved ground.");
+
+        var previousJson = JsonNode.Parse(encoded)!.AsObject();
+        previousJson["observations"]!.AsArray()[0]!.AsObject().Remove("observedFloorCandidates");
+        var previous = previousJson.Deserialize<LiveWorldSnapshot>(JsonOptions)!.Observations.Single();
+        Check(previous.ObservedFloorCandidates is null && previous.OptimizedPose == stored.OptimizedPose,
+            "A save from before floor candidates must still reopen at its corrected pose.");
+    }
+
     public static void TestRoundTripAndPoseReplacementPreserveRawEvidence()
     {
         var original = Fixture();
