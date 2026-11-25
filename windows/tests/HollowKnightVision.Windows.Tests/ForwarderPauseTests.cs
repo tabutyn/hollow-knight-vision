@@ -239,15 +239,25 @@ internal static class ForwarderPauseTests
         await Until(() => forwarder.PauseState == GamePauseState.Ready);
         await fixture.Next("state");
 
+        forwarder.Press(InputButtons.ActionZ);
+        await Expect(InputButtons.ActionZ);
+        forwarder.Release(InputButtons.ActionZ);
+        await Expect(InputButtons.None, enabled: true);
+        Check(forwarder.CaptureMovement(out var afterHumanTap) == InputButtons.None && afterHumanTap,
+            "A tap between captures must keep jump evidence without reporting a held button.");
+
         var owner = forwarder.BeginBotControl() ?? throw new Exception("Bot control did not start.");
         await Expect(InputButtons.None);
         Check(forwarder.OwnsBotControl(owner) && forwarder.BeginBotControl() is null);
         Check(!await forwarder.StartRecordingAsync(), "Bot input could enter a demonstration.");
         Check(!forwarder.RenewBotControl(owner, InputButtons.Left, Clock() - .1), "Expired evidence was authorized.");
-        Check(forwarder.RenewBotControl(owner, InputButtons.Right | InputButtons.ActionX, Clock() + .26));
-        await Expect(InputButtons.Right | InputButtons.ActionX);
-        await Until(() => forwarder.CaptureMovement() == (InputButtons.Right | InputButtons.ActionX));
+        var jumpingAttack = InputButtons.Right | InputButtons.ActionX | InputButtons.ActionZ;
+        Check(forwarder.RenewBotControl(owner, jumpingAttack, Clock() + .26));
+        await Expect(jumpingAttack);
+        await Until(() => forwarder.CaptureMovement() == jumpingAttack);
         await Until(() => forwarder.CaptureMovement() == InputButtons.None);
+        Check(forwarder.CaptureMovement(out var afterBotJump) == InputButtons.None && afterBotJump,
+            "A bot jump must protect walked-ground evidence after the held state expires.");
         forwarder.Heartbeat();
         await Expect(InputButtons.None);
         Check(forwarder.OwnsBotControl(owner), "A short observation gap should retain session ownership.");
@@ -285,7 +295,8 @@ internal static class ForwarderPauseTests
         }
         finally { gate.Release(); }
         await Expect(InputButtons.None);
-        Check(!forwarder.OwnsBotControl(next), "Focus loss left the bot armed.");
+        Check(!forwarder.OwnsBotControl(next) && forwarder.CaptureMovement(out var afterReset) == InputButtons.None
+            && !afterReset, "Focus loss left bot control or its jump evidence armed.");
 
         var final = forwarder.BeginBotControl() ?? throw new Exception("Bot control did not restart.");
         await Expect(InputButtons.None);

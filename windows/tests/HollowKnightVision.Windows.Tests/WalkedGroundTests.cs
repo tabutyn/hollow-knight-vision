@@ -44,13 +44,15 @@ internal static class WalkedGroundTests
 
     public static void TestOccludedWalkNeedsInputAndAContinuousLevelCamera()
     {
-        void Reject(Func<int, InputButtons?> input, Func<int, AtlasPoint?> camera, Func<int, GroundEdgeAnalysis> returning)
+        void Reject(Func<int, InputButtons?> input, Func<int, AtlasPoint?> camera, Func<int, GroundEdgeAnalysis> returning,
+            Func<int, bool>? recentlyJumped = null)
         {
             var tracker = new WalkedGroundTracker();
             for (var i = 0; i <= 35; i++)
             {
                 var image = i is >= 10 and <= 30 ? Hidden : i > 30 ? returning(i) : Mask(200);
-                tracker.Observe("room A", image, Knight, camera(i), input(i), i * .03, []);
+                tracker.Observe("room A", image, Knight, camera(i), input(i), i * .03, [],
+                    recentJump: recentlyJumped?.Invoke(i) == true);
             }
             var retained = tracker.InRoom("room A").Single();
             Check(retained.AtlasEnd.X == 232, "An unsupported crossing extended the persistent floor.");
@@ -65,6 +67,14 @@ internal static class WalkedGroundTests
         Reject(Right, i => i is >= 10 and <= 30 ? null : Level(i), SameLevel);
         Reject(Right, i => new(i * 3, i == 21 ? 8 : 0), SameLevel);
         Reject(Right, Level, _ => Mask(200, 9));
+
+        var jump = new JumpContactGate();
+        jump.Record(.645);
+        Reject(Right, Level, SameLevel, i => jump.Observe(false, i * .03));
+        Check(jump.Observe(false, 1.04) && !jump.Observe(false, 1.05), "The jump contact cooldown did not expire.");
+        Check(jump.Observe(true, 1.19) && jump.Observe(false, 1.23), "Holding jump did not renew the cooldown.");
+        jump.Reset();
+        Check(!jump.Observe(false, 1.23), "The previous input session kept its jump cooldown.");
 
         var still = new KnightLevelWalk();
         for (var i = 0; i <= 12; i++)

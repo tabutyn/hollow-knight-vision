@@ -101,7 +101,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         GameplayFrameDecision admission, FrameSignalProfile signal, double timestamp, long generation, string? knownRoom,
         bool hasCommittedAtlas, InputButtons? buttons, bool resetWorldCoordinatesForCorrection,
         bool visualRoomObservationEnabled = true, bool observeLoadingInKnownRoom = false,
-        bool captureWorldEvidence = false, LowResolutionRoomMotionEstimate? coarseMotion = null)
+        bool captureWorldEvidence = false, LowResolutionRoomMotionEstimate? coarseMotion = null, bool recentJump = false)
     {
         var groundStarted = Stopwatch.GetTimestamp();
         var terrainAnalysis = prepared.Terrain;
@@ -228,7 +228,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             var contactCamera = lineage is null ? null : publishesScenery ? localCamera : verifiedCamera;
             contact = walked.Observe(room, edges, knight, contactCamera,
                 buttons, timestamp, floors, terrain.Walls,
-                generation, walkedCoordinateEpoch, lineage);
+                generation, walkedCoordinateEpoch, lineage, recentJump);
             terrain = TerrainWallDetector.ApplyContact(terrain, contact, floors, edges);
             platformPatches = patches.Observe(edges, floors, prepared.ProtectedOcclusions, verifiedCamera, timestamp);
             if (groundAudits is not null && !ReferenceEquals(observation.GroundTracking, GroundHypothesisTrackingResult.Empty)

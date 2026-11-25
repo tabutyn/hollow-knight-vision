@@ -43,9 +43,9 @@ public sealed class KnightLevelWalk
     }
 
     public CleanFloorLine? Observe(AtlasPoint? foot, AtlasPoint? camera, InputButtons? buttons, double time,
-        int width, int height)
+        int width, int height, bool recentJump = false)
     {
-        if (buttons is not { } input || (input & InputButtons.ActionZ) != 0 || !double.IsFinite(time)
+        if (buttons is not { } input || recentJump || (input & InputButtons.ActionZ) != 0 || !double.IsFinite(time)
             || width <= 0 || height <= 0)
         {
             Reset();

@@ -398,7 +398,7 @@ internal static class BotDesktopCaptureIntegrationTests
             var frame = new BgraFrame(hudFrame.Width, hudFrame.Height, hudFrame.Stride, pixels, index,
                 DateTimeOffset.UnixEpoch.AddSeconds(time));
             _ = Method("AnalyzeVisionFrame").Invoke(window, [
-                frame, null, admission, Generation, 0L, time, null, null, false, false, 0L, InputButtons.None, tracking
+                frame, null, admission, Generation, 0L, time, null, null, false, false, 0L, InputButtons.None, false, tracking
             ]);
             if (ReferenceEquals(Field("botRouteOwner").GetValue(window), capture)) return;
         }

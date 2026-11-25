@@ -21,6 +21,7 @@ internal sealed class WindowsNormalGameInput : IDisposable
     private const int GwlExStyle = -20;
     private const long WsExNoActivate = 0x08000000L;
     private const int SwRestore = 9;
+    private const int JumpVirtualKey = 0x5A;
     private const uint SwpNoSize = 0x0001;
     private const uint SwpNoMove = 0x0002;
     private const uint SwpNoActivate = 0x0010;
@@ -36,6 +37,7 @@ internal sealed class WindowsNormalGameInput : IDisposable
     private readonly Action<string> status;
     private readonly DispatcherTimer monitor;
     private readonly NormalGameShortcutState shortcutState = new();
+    private readonly JumpContactGate jumpContact = new();
     private readonly WindowsKeyboardHook keyboardHook;
     private HollowKnightWindow? target;
     private nint ownerHandle;
@@ -67,6 +69,7 @@ internal sealed class WindowsNormalGameInput : IDisposable
     {
         if (disposed) return;
         target = game;
+        jumpContact.Reset();
         ownerHandle = new WindowInteropHelper(owner).Handle;
         if (!keyboardHook.Install())
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not reserve Vision keyboard shortcuts.");
@@ -105,15 +108,18 @@ internal sealed class WindowsNormalGameInput : IDisposable
         return true;
     }
 
-    internal InputButtons? CaptureMovement()
+    internal InputButtons? CaptureMovement(out bool recentJump)
     {
+        recentJump = false;
         if (!overlayActive || !IsGameForeground()) return null;
+        var jumpDown = IsKeyDown(JumpVirtualKey);
+        recentJump = jumpContact.Observe(jumpDown, MonotonicSeconds());
         return (IsKeyDown(0x25) ? InputButtons.Left : InputButtons.None)
             | (IsKeyDown(0x27) ? InputButtons.Right : InputButtons.None)
             | (IsKeyDown(0x26) ? InputButtons.Up : InputButtons.None)
             | (IsKeyDown(0x28) ? InputButtons.Down : InputButtons.None)
             | (IsKeyDown(0x41) ? InputButtons.ActionA : InputButtons.None)
-            | (IsKeyDown(0x5A) ? InputButtons.ActionZ : InputButtons.None)
+            | (jumpDown ? InputButtons.ActionZ : InputButtons.None)
             | (IsKeyDown(0x58) ? InputButtons.ActionX : InputButtons.None)
             | (IsKeyDown(0x49) ? InputButtons.Inventory : InputButtons.None)
             | (IsKeyDown(0x50) || IsKeyDown(0x1B) ? InputButtons.PauseMenu : InputButtons.None);
@@ -224,6 +230,7 @@ internal sealed class WindowsNormalGameInput : IDisposable
     {
         ReleaseGameCursor();
         overlayActive = false;
+        jumpContact.Reset();
         freePointer = null;
         ApplyOverlayStyle(enabled: false);
         if (activateOwner && owner.IsVisible && owner.WindowState != WindowState.Minimized)
@@ -271,7 +278,9 @@ internal sealed class WindowsNormalGameInput : IDisposable
     private bool HandleKeyboardEvent(int virtualKey, bool down)
     {
         if (disposed || !overlayActive || !CanUseTarget() || !IsGameForeground()) return false;
-        if (!shortcutState.Handle(virtualKey, down, allowsGameInput(), IsModifierDown(), out var invoke))
+        var allowsInput = allowsGameInput();
+        if (allowsInput && virtualKey == JumpVirtualKey) jumpContact.Record(MonotonicSeconds());
+        if (!shortcutState.Handle(virtualKey, down, allowsInput, IsModifierDown(), out var invoke))
             return false;
         if (invoke)
         {
@@ -290,6 +299,8 @@ internal sealed class WindowsNormalGameInput : IDisposable
         IsKeyDown(0x11) || IsKeyDown(0x12) || IsKeyDown(0x5B) || IsKeyDown(0x5C);
 
     private static bool IsKeyDown(int virtualKey) => WindowsKeyboardHook.IsKeyDown(virtualKey);
+
+    private static double MonotonicSeconds() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
 
     private static bool ActivateWindowBehindOverlay(nint game, nint overlay)
     {

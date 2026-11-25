@@ -409,11 +409,11 @@ public sealed class InputPathRecorder
     }
 
     public void RecordVisualGroundInput(double timestamp, ulong generation, int imageHeight,
-        GameplaySceneMasks masks, InputButtons? buttons)
+        GameplaySceneMasks masks, InputButtons? buttons, bool? recentJump = null)
     {
         lock (gate)
             if (session is { VisualArchive: { } archive } current && timestamp >= current.StartedAt)
-                archive.RecordGroundInput(VisualReplayGroundInput.FromTracking(timestamp, generation, imageHeight, masks, buttons));
+                archive.RecordGroundInput(VisualReplayGroundInput.FromTracking(timestamp, generation, imageHeight, masks, buttons, recentJump));
     }
 
     public void RecordInput(RecordedGameButton button, bool isPressed, double? timestamp = null)

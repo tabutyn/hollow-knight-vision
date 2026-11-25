@@ -700,7 +700,8 @@ public partial class MainWindow : Window
         bool OwnsHackerWork = false,
         bool IntegratesHackerAtlas = false,
         long HackerWorkGeneration = 0,
-        InputButtons? MovementButtons = null);
+        InputButtons? MovementButtons = null,
+        bool RecentJump = false);
 
     private readonly record struct HackerTileKey(Guid RoomId, long LayerId);
 
@@ -2626,8 +2627,9 @@ public partial class MainWindow : Window
                     captureReadbackMilliseconds = capture.ReadbackMilliseconds;
                     var captureTimestamp = capture.CaptureTimestamp;
                     var capturedAt = BotCaptureClock();
+                    var recentJump = false;
                     var movement = gameMode == GameRuntimeMode.Normal
-                        ? normalGameInput?.CaptureMovement() : gameControls.CaptureMovement();
+                        ? normalGameInput?.CaptureMovement(out recentJump) : gameControls.CaptureMovement(out recentJump);
                     if (!labelCapture.Accept(frame, labelRevision)) continue;
                     if (gameMode == GameRuntimeMode.Normal)
                         Volatile.Read(ref botCapture)?.ObserveNativeInput(movement, captureTimestamp);
@@ -2656,7 +2658,7 @@ public partial class MainWindow : Window
                         frame,
                         labelRevision,
                         captureTimestamp,
-                        MovementButtons: movement);
+                        MovementButtons: movement, RecentJump: recentJump);
                     if (gameMode == GameRuntimeMode.Normal)
                     {
                         analysisFrames.Writer.TryWrite(pending);
@@ -2783,6 +2785,7 @@ public partial class MainWindow : Window
                         pending.IntegratesHackerAtlas,
                         pending.HackerWorkGeneration,
                         pending.MovementButtons,
+                        pending.RecentJump,
                         trackingPipeline);
                 }
                 finally
@@ -3100,7 +3103,7 @@ public partial class MainWindow : Window
                 capture.CaptureTimestamp,
                 IntegratesAtlas: ownsHackerWork
                     && capture.Frame.CaptureId % HackerAtlasSampleStride == 0,
-                MovementButtons: capture.MovementButtons));
+                MovementButtons: capture.MovementButtons) { RecentJump = capture.RecentJump });
             if (matched is null)
             {
                 RememberReceiverFrameMetadata(
@@ -3212,7 +3215,8 @@ public partial class MainWindow : Window
             ownsHackerWork,
             matched.Capture.IntegratesAtlas,
             hackerGeneration,
-            matched.Capture.MovementButtons);
+            matched.Capture.MovementButtons,
+            matched.Capture.RecentJump);
         Volatile.Read(ref stepCapture)?.Trace("joined", pending.Frame.CaptureId, pending.RenderedGameFrame, pending.CaptureTimestamp);
         if (!writer.TryWrite(pending)) return;
         latestMatchedCaptureId = pending.Frame.CaptureId;
@@ -3281,6 +3285,7 @@ public partial class MainWindow : Window
         bool integratesHackerAtlas,
         long pendingHackerWorkGeneration,
         InputButtons? movementButtons,
+        bool recentJump,
         GameplayTrackingPipeline trackingPipeline)
     {
         menuStencilRecognizer.ConfigureObjectDiagnostics(Volatile.Read(ref objectDetectionExtension), createsObjectPixelDiagnostic);
@@ -3326,7 +3331,8 @@ public partial class MainWindow : Window
         var readingOpening = profileLaunchDetector.AwaitingGameplay && profileMenu is not { IsMatch: true } && !freshProfileHud;
         var holdAtlas = Volatile.Read(ref profileAtlasHeld);
         if (admission.AdmitsTracking)
-            gameControls.RecordVisualGroundInput(captureTimestamp, (ulong)captureGeneration, frame.Height, masks, movementButtons);
+            gameControls.RecordVisualGroundInput(captureTimestamp, (ulong)captureGeneration, frame.Height, masks,
+                movementButtons, recentJump);
         var groundDiagnostics = workspace == "Gameplay" ? RequestedGroundDiagnostics : GroundDiagnosticLayers.None;
         var prepared = trackingPipeline.Prepare(frame, masks, admission.AdmitsTracking, exactReceiverTelemetry?.SceneName,
             includeSemanticRunEvidence: groundDiagnostics.HasFlag(GroundDiagnosticLayers.CandidateRuns));
@@ -3347,7 +3353,7 @@ public partial class MainWindow : Window
             resetWorldCoordinatesForCorrection: usesDurableWorld,
             visualRoomObservationEnabled: recognition.GameplayEnabled,
             observeLoadingInKnownRoom: usesDurableWorld,
-            captureWorldEvidence: usesDurableWorld, coarseMotion: coarseMotion);
+            captureWorldEvidence: usesDurableWorld, coarseMotion: coarseMotion, recentJump: recentJump);
         var visualObservation = tracked.Observation;
         var ground = prepared.Terrain?.Floors ?? [];
         var groundAnalysis = prepared.Terrain?.Edges;

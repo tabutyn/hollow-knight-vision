@@ -795,6 +795,9 @@ When a frame has no recorded mask, replay can reuse the previous mask for up
 to 100 ms within the same capture generation and image size. The report counts
 exact and reused masks. Short jump taps in older recordings still suppress
 walked-ground evidence for 400 ms when an exact jump state is unavailable.
+New recordings save this terrain cooldown alongside the held controls. Live
+Game Play and Gym use the same cooldown to prevent airborne movement from
+extending walked ground.
 
 The replay trace contains visual estimates. Both scorers read receiver
 measurements from the original recording. For the Windows Host's
