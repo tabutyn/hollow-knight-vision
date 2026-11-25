@@ -433,6 +433,75 @@ internal static class BotPolicyTests
         finally { temporary.Delete(recursive: true); }
     }
 
+    internal static void TestGeneralPolicyKeepsAllControlsAtMeasuredBlockades()
+    {
+        var temporary = Directory.CreateTempSubdirectory("hkv-blockade-policy-");
+        try
+        {
+            var root = temporary.FullName;
+            _ = ConstantActor(root, new(1, 2, 1, 0), masked: false);
+            var pitCheckpoint = Path.Combine(root, "pit-model.zip");
+            File.WriteAllText(pitCheckpoint, "fixture pit checkpoint");
+            BotNativePolicy LoadActor(int version) => EditRuntime(root, model =>
+            {
+                var names = BotPolicyContract.Names(version)!;
+                var inputSize = names.Count * BotRecordingContract.HistoryLength;
+                var newest = inputSize - names.Count;
+                var weights = new float[inputSize * 10];
+                weights[9 * inputSize + newest + 12] = -2;
+                weights[9 * inputSize + newest + 15] = 1;
+                model["observationSchemaVersion"] = version;
+                model["featureNames"] = JsonSerializer.SerializeToNode(names);
+                model["layers"] = JsonSerializer.SerializeToNode(new[]
+                {
+                    new { inputSize, outputSize = 10, activation = "linear", weights,
+                        biases = new float[] { 0, 1, 0, 0, 0, 1, 0, 1, 0, 0 } }
+                });
+                model["pitPolicy"] = JsonSerializer.SerializeToNode(new
+                {
+                    schemaVersion = 1, checkpointSHA256 = Hash(File.ReadAllBytes(pitCheckpoint)),
+                    layers = new[] { new { inputSize = 8, outputSize = 5, activation = "linear",
+                        weights = new float[40], biases = new float[] { 0, 0, 1, 0, 1 } } }
+                });
+            });
+            var actor = LoadActor(4);
+            var olderActor = LoadActor(3);
+            foreach (var domain in new[] { BotCaptureDomain.Gameplay, BotCaptureDomain.Hacker })
+            foreach (var side in new[] { -1, 1 })
+            {
+                var hacker = domain == BotCaptureDomain.Hacker;
+                var visit = new BotBlockadeVisit();
+                var playback = new BotPolicyPlayback(actor, domain);
+                var olderPlayback = new BotPolicyPlayback(olderActor, domain);
+                var previous = InputButtons.None;
+                var pose = new BotBlockadePose(hacker ? "hacker/Tutorial_01" : "room", 0, 0, 1);
+                for (var index = 0; index < 26; index++)
+                {
+                    var time = 10 + index / 10d;
+                    var row = BotVisualKnightMemoryTests.Row(time, .5) with
+                    {
+                        TerrainSource = hacker ? "human-authored" : "detected",
+                        KnightSource = hacker ? "mod" : "visual",
+                        Grounded = true,
+                        DriveDirection = side,
+                        AtlasView = new(.32, .87, [2, 5], 100, 9, 1, 6, 5)
+                    };
+                    row = visit.AddEvidence(row, pose);
+                    if (index < 2 ? row.Blockade is not null : row.Blockade?.Mark.Direction != side)
+                        throw new InvalidOperationException($"The {domain} push should measure side {side} after two tenths of a second.");
+                    var older = olderPlayback.Decide(row, previous, time);
+                    var expected = new BotPolicyAction(1, 2, 1,
+                        index >= 2 && side == 1 && !previous.HasFlag(InputButtons.ActionX) ? 1 : 0);
+                    var decision = playback.Decide(row, previous, time);
+                    if (decision?.Action != expected || older?.Action != new BotPolicyAction(1, 2, 1, 0))
+                        throw new InvalidOperationException($"The {domain} actor changed its controls at blockade side {side}, sample {index}.");
+                    previous = expected.Buttons;
+                }
+            }
+        }
+        finally { temporary.Delete(recursive: true); }
+    }
+
     internal static void TestPlaybackIgnoresObservationsFromTheOtherDomain()
     {
         var temporary = Directory.CreateTempSubdirectory("hkv-bot-playback-domain-");

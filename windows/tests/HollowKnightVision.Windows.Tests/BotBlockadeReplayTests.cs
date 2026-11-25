@@ -137,6 +137,78 @@ internal static class BotBlockadeReplayTests
         }
     }
 
+    internal static void VerifyRecordedDoorPolicies(string library)
+    {
+        var firstDoor = Open(2, "hacker");
+        var visit = new BotBlockadeVisit();
+        double? arrival = null, contact = null;
+        var crossed = false;
+        foreach (var row in firstDoor.Rows)
+        {
+            if (row.BlockadePose is not { Space: "hacker/Tutorial_01" } pose) continue;
+            var x = pose.X + row.Features[0] * pose.Width;
+            var evidence = visit.Observe(row, pose);
+            if (Math.Abs(x - 58.75) < .02 && row.DriveDirection == 1)
+                arrival ??= row.CapturedAt;
+            if (arrival is null)
+                Require(visit.ActiveMarks.Count == 0, "The uninterrupted first door approach should have no measured blockade.");
+            if (evidence?.Mark is { Direction: 1, X: > 58.4 and < 59.6 })
+                contact ??= row.CapturedAt;
+            if (x <= 61) continue;
+            crossed = evidence is null && visit.ActiveMarks.Count == 0;
+            break;
+        }
+        Require(contact - arrival is >= 0 and <= .3 && crossed, "The first door should be measured promptly and clear on passage.");
+        var firstReport = BotBlockadeReplay.Recover(firstDoor.Folder);
+        Require(firstReport.Marks.Any(mark => mark is { Direction: 1, X: > 58.4 and < 59.6, Crossed: true }),
+            "The first door crossing must be reproducible from the saved evidence.");
+        Console.WriteLine(FormattableString.Invariant($"Hacker clip 2 first door measured after {contact - arrival:F3} s, then retired on passage."));
+
+        foreach (var domain in new[] { BotCaptureDomain.Gameplay, BotCaptureDomain.Hacker })
+        {
+            var name = domain.ToString().ToLowerInvariant();
+            var clip = Open(20, name);
+            var modelRoot = Path.Combine(library, "models", name);
+            using var selection = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(modelRoot, "active.json")));
+            var selected = selection.RootElement.GetProperty("directory").GetString()!;
+            var policy = BotNativePolicy.Load(Path.Combine(modelRoot, selected));
+            var recovered = BotBlockadeReplay.Recover(clip.Folder).Rows
+                .ToDictionary(frame => (frame.Generation, frame.CaptureTimestamp), frame => frame.Blockade);
+            var playback = new BotPolicyPlayback(policy, domain);
+            BotPlaybackDecision? previous = null;
+            var decisionsAtDoor = 0;
+            var attackPressesAtDoor = 0;
+            foreach (var saved in clip.Rows)
+            {
+                var row = saved with { Blockade = saved.Blockade ?? recovered.GetValueOrDefault((saved.Generation, saved.CaptureTimestamp)) };
+                var held = previous is { } prior && row.AvailableAt < prior.Deadline ? prior.Action.Buttons : InputButtons.None;
+                var update = playback.Evaluate(row, held, row.AvailableAt);
+                if (update is null) continue;
+                previous = update.Decision;
+                if (previous is not { } decision || row.Blockade is null) continue;
+                decisionsAtDoor++;
+                if (!held.HasFlag(InputButtons.ActionX) && decision.Action.Attack == 1) attackPressesAtDoor++;
+            }
+            Require(decisionsAtDoor > 0, $"The selected {name} policy must make decisions while receiving recorded blockade evidence.");
+            Console.WriteLine($"{name} clip 20, schema {policy.Version}. {decisionsAtDoor} decisions with obstacle evidence and {attackPressesAtDoor} fresh attack presses.");
+        }
+
+        (string Folder, BotCaptureObservation[] Rows) Open(int number, string domain)
+        {
+            var numbers = JsonSerializer.Deserialize<Dictionary<Guid, int>>(
+                File.ReadAllBytes(Path.Combine(library, $"clip-numbers-by-domain-{domain}.json")), Json)!;
+            var id = numbers.Single(item => item.Value == number).Key;
+            var folder = Path.Combine(library, "demonstrations", BotCaptureSession.DirectoryName(id));
+            var rows = File.ReadLines(Path.Combine(folder, "events.jsonl")).Select(line =>
+            {
+                using var payload = JsonDocument.Parse(line);
+                return payload.RootElement.GetProperty("type").GetString() == "observation"
+                    ? payload.RootElement.Deserialize<BotCaptureObservation>(Json) : null;
+            }).OfType<BotCaptureObservation>().ToArray();
+            return (folder, rows);
+        }
+    }
+
     private static Clip WriteClip(string root, bool hacker)
     {
         var id = Guid.NewGuid();
