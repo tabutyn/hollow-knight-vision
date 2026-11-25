@@ -8,12 +8,15 @@ public sealed record FloorlessCameraEvidence(AtlasPoint? CoarsePosition, AtlasPo
     double? CoarseReferenceTimestamp, bool CoarseMeasured, CalibratedSceneMotionEvidence? Scene = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] LowResolutionPlaceMatch? Place = null)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public VisualFallPrediction? FallPrediction { get; init; }
     public string SelectionName => SelectedSource switch
     {
         FloorlessPoseCandidateSource.CoarseCaptureRate => "coarseCaptureRate",
         FloorlessPoseCandidateSource.MaskedRegistration => "maskedRegistration",
         FloorlessPoseCandidateSource.CalibratedScene => "calibratedScene",
         FloorlessPoseCandidateSource.RoomPlaceMatch => "coarsePlaceMatch",
+        FloorlessPoseCandidateSource.FallPrediction => "fallPrediction",
         _ => "held"
     };
 }
@@ -29,6 +32,7 @@ public sealed record VisualGameplayObservation(
 {
     public GroundHypothesisTrackingResult GroundTracking { get; init; } = GroundHypothesisTrackingResult.Empty;
     public FloorlessCameraEvidence? FloorlessEvidence { get; init; }
+    internal bool UsesFallPrediction => FloorlessEvidence?.FallPrediction is not null;
     internal CalibratedSceneMotionEvidence? SelectedScenery =>
         FloorlessEvidence is { SelectedSource: FloorlessPoseCandidateSource.CalibratedScene } evidence ? evidence.Scene : null;
     internal bool ReanchoredAtRoomPlace =>
@@ -72,6 +76,7 @@ public sealed class VisualGameplayTracker
     private readonly GroundPlacementRecovery placement = new();
     private readonly FloorlessCameraMotion floorless = new();
     private readonly CalibratedSceneMotionTracker calibratedScene = new();
+    private readonly VisualFallMotionPrior fallMotion = new();
     private VisualCameraPoseSample? measuredGround;
     private CameraVector? groundVelocity;
     private double? previousTimestamp;
@@ -89,6 +94,7 @@ public sealed class VisualGameplayTracker
     {
         ArgumentNullException.ThrowIfNull(frame);
         bootstrap.Reset();
+        fallMotion.Reset();
         var update = ApplyCoarseMotion(frame, diagnostic);
         return new(BuildSample(frame), update, false, false, 0, null,
             update is null ? "held" : "coarse-presentation");
@@ -108,7 +114,8 @@ public sealed class VisualGameplayTracker
         VisualRoomDirection? expectedDirection = null,
         TransitionMotionBridgeResult? skippedCaptureRegistration = null,
         Func<AtlasPoint, bool, LowResolutionPlaceMatch?>? observeRoomPlace = null,
-        bool deferFreshAtlasBootstrap = false)
+        bool deferFreshAtlasBootstrap = false,
+        StencilRect? measuredKnight = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(sourceLuma);
@@ -116,6 +123,7 @@ public sealed class VisualGameplayTracker
         ArgumentNullException.ThrowIfNull(exclusions);
         var tracker = groundTracker ?? defaultGroundTracker.Value;
         var timestamp = captureTimestamp ?? Elapsed(frame);
+        var frameSize = new WorldSize(frame.Width, frame.Height);
         var evaluatedPlacement = false;
         // One transaction owns local texture, persistent recovery, placement
         // validation and line admission, exactly as in Mac's LiveCaptureModel.
@@ -138,7 +146,11 @@ public sealed class VisualGameplayTracker
         var verified = tracking.PoseVerified && tracking.HasConfirmedGround
             && tracking.CameraPosition is not null;
         var groundMeasured = verified && GroundMotionEvidence.IsMeasured(tracking);
-        if (tracking.GlobalCorrection is not null) calibratedScene.Reset();
+        if (tracking.GlobalCorrection is not null)
+        {
+            calibratedScene.Reset();
+            fallMotion.Reset();
+        }
         var calibration = groundMeasured && tracking.GlobalCorrection is null
             && tracking.LocalReferenceTimestamp is { } reference
             && tracking.LocalProjectedImageDisplacement is { } displacement
@@ -160,6 +172,7 @@ public sealed class VisualGameplayTracker
         var selectedCoarse = false;
         var selectedScene = false;
         var selectedPlace = false;
+        AtlasPoint? predictedDisplayPosition = null;
         if (verified)
         {
             var pose = tracking.CameraPosition!.Value;
@@ -183,7 +196,8 @@ public sealed class VisualGameplayTracker
             var masked = skippedCaptureRegistration ?? transition.Track(diagnostic, frame.Width, frame.Height, frame.Width,
                 movingForeground: movingForeground);
             AtlasPoint? acceptedFallback = null;
-            if (sceneGrid is not null && transition.IsAnchored && !resumedAfterTransition)
+            var sceneFallbackAvailable = sceneGrid is not null && transition.IsAnchored && !resumedAfterTransition;
+            if (sceneFallbackAvailable)
             {
                 var velocity = FloorlessMotionHandoff.Seed(groundVelocity, measuredGround?.Timestamp, timestamp);
                 ObserveCoarse(current, false, velocity);
@@ -204,6 +218,7 @@ public sealed class VisualGameplayTracker
                     floorless.ReanchorAtPlace(place, sceneGrid, timestamp);
                     transition.Anchor(place, movingForeground);
                     calibratedScene.Reset();
+                    fallMotion.Reset();
                     measuredGround = null;
                     groundVelocity = null;
                     selectedPlace = true;
@@ -224,7 +239,6 @@ public sealed class VisualGameplayTracker
                 }
                 if (selectedCoarse || selectedScene || bridged?.ReferenceTimestamp is not null)
                     transition.Anchor(acceptedFallback!.Value, movingForeground);
-                update = acceptedFallback is { } pose ? ApplyPose(pose) : null;
             }
             else
             {
@@ -233,10 +247,25 @@ public sealed class VisualGameplayTracker
                 if (masked is not null)
                     floorlessEvidence = new(null, masked.CameraPosition, expectedDirection,
                         FloorlessPoseCandidateSource.MaskedRegistration, null, false);
-                update = acceptedFallback is { } pose ? ApplyPose(pose)
-                    : resumedAfterTransition ? null : ApplyCoarseMotion(frame, diagnostic);
-                _ = observeRoomPlace?.Invoke(Position, false);
             }
+
+            if (acceptedFallback is { } accepted) update = ApplyPose(accepted);
+            else if (!resumedAfterTransition
+                && fallMotion.Predict(measuredKnight, timestamp, frameSize, frame.Width) is { } prediction)
+            {
+                // Publish the estimate to the view and recorder. The accumulator,
+                // registration references and Atlas admission keep their measured state.
+                predictedDisplayPosition = new(current.X, -prediction.CameraY);
+                var step = new CameraVector(0, predictedDisplayPosition.Value.Y - camera.Position.Y);
+                update = new(CameraUpdateState.Accepted, step, step, predictedDisplayPosition.Value);
+                floorlessEvidence = (floorlessEvidence ?? new(null, null, expectedDirection, null, null, false)) with
+                {
+                    SelectedSource = FloorlessPoseCandidateSource.FallPrediction,
+                    FallPrediction = prediction
+                };
+            }
+            else update = sceneFallbackAvailable || resumedAfterTransition ? null : ApplyCoarseMotion(frame, diagnostic);
+            if (!sceneFallbackAvailable) _ = observeRoomPlace?.Invoke(Position, false);
 
             if (acceptedFallback is { } fallback)
             {
@@ -250,8 +279,10 @@ public sealed class VisualGameplayTracker
                         frame.Width, frame.Height, lines, timestamp, exclusions,
                         allowsProvisionalPromotion: selectedCoarse || bridged is { Confidence: >= MinimumRecoveryConfidence });
             }
-            floorless.RecordPublishedPose(timestamp, Position);
+            if (predictedDisplayPosition is null) floorless.RecordPublishedPose(timestamp, Position);
         }
+        if (groundMeasured || selectedScene && scene is { VerticalMeasured: true })
+            fallMotion.ObserveMeasured(Position.Y, measuredKnight, timestamp, frameSize, frame.Width);
         var position = camera.Position;
         var bootstrapReady = (!deferFreshAtlasBootstrap || hasCommittedEvidence) && bootstrap.AllowsFirstAtlasWrite(
             new AtlasPoint(position.X, -position.Y),
@@ -259,12 +290,13 @@ public sealed class VisualGameplayTracker
             groundVerified: verified,
             hasCommittedEvidence: hasCommittedEvidence);
         var canWriteAfterBootstrap = (verified || bridged is not null) && placement.AllowsAtlasWrite;
-        return new(BuildSample(frame), update, verified, bootstrapReady && canWriteAfterBootstrap,
+        return new(BuildSample(frame, displayPosition: predictedDisplayPosition), update, verified, bootstrapReady && canWriteAfterBootstrap,
             tracking.LocalTextureSupport, tracking.LocalTextureError,
             verified ? "ground" : bridged is not null ? "transition-bridge"
                 : selectedPlace ? "coarse-place-match"
                 : selectedScene ? "calibrated-scene"
                 : selectedCoarse ? "coarse-presentation"
+                : predictedDisplayPosition is not null ? "fallPrediction"
                 : firstFrame ? "ground-seed"
                 : tracking.PoseVerified ? "ground-observing"
                 : tracking.ProvisionalContinuityActive ? "ground-provisional"
@@ -358,16 +390,16 @@ public sealed class VisualGameplayTracker
     private double Elapsed(BgraFrame frame) =>
         Math.Max(0, (frame.ObservedAt - (startedAt ??= frame.ObservedAt)).TotalSeconds);
 
-    private ReceiverGroundTruthSample BuildSample(BgraFrame frame, double? elapsed = null)
+    private ReceiverGroundTruthSample BuildSample(BgraFrame frame, AtlasPoint? displayPosition = null)
     {
-        var position = camera.Position;
+        var position = displayPosition ?? camera.Position;
         return new ReceiverGroundTruthSample(
             ReceiverProtocol.ControlVersion,
             "visualTracking",
             Guid.Empty,
             ++sequence,
             frame.CaptureId,
-            elapsed ?? Elapsed(frame),
+            Elapsed(frame),
             "visual-gameplay",
             false,
             0, 0, 0,
@@ -416,6 +448,7 @@ public sealed class VisualGameplayTracker
     {
         floorless.Reset();
         calibratedScene.Reset();
+        fallMotion.Reset();
         measuredGround = null;
         groundVelocity = null;
     }

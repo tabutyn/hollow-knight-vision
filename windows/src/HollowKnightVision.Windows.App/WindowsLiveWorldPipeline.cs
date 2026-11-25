@@ -39,7 +39,10 @@ internal sealed record WindowsLiveWorldFrame(
 }
 
 internal readonly record struct WindowsLiveWorldFrameScope(ulong CaptureGeneration, string Room,
-    double CaptureTimestamp, long CoordinateEpoch, long? MeasuredLineage, long? RetainedLineage, bool RequiresRecovery);
+    double CaptureTimestamp, long CoordinateEpoch, long? MeasuredLineage, long? RetainedLineage, bool RequiresRecovery)
+{
+    internal (long Lineage, double Timestamp)? FallDisplayReference { get; init; }
+}
 
 internal sealed record WindowsLiveWorldPipelineResult(
     WindowsLiveWorldPipelineState State,
@@ -70,15 +73,24 @@ internal sealed record WindowsLiveWorldPipelineResult(
 
     internal LiveIslandPlacementProjection? ProjectFrame(WindowsLiveWorldFrame publication, WindowsLiveWorldFrameScope frame)
     {
+        var fallReference = frame.FallDisplayReference;
         if (Discarded || State is not (WindowsLiveWorldPipelineState.Committed or WindowsLiveWorldPipelineState.Throttled)
-            || frame.RequiresRecovery || frame.CaptureGeneration != CaptureGeneration
+            || (frame.RequiresRecovery && fallReference is null) || frame.CaptureGeneration != CaptureGeneration
             || publication.CaptureGeneration != frame.CaptureGeneration || publication.RoomName != frame.Room
             || frame.CoordinateEpoch != WalkedCoordinateEpoch || CommittedRoomId is not { } room
-            || CommittedGraph is not { } graph || (frame.MeasuredLineage ?? frame.RetainedLineage) is not { } lineage)
+            || CommittedGraph is not { } graph
+            || (fallReference?.Lineage ?? frame.MeasuredLineage ?? frame.RetainedLineage) is not { } lineage)
             return null;
 
         var placement = LiveIslandWorldProjection.Resolve(graph, PersistentCaptureGeneration, room,
-            LocalEpoch, lineage, frame.CaptureTimestamp);
+            LocalEpoch, lineage, fallReference?.Timestamp ?? frame.CaptureTimestamp);
+        if (fallReference is { } reference)
+        {
+            // The estimate can display in its measured basis during recovery.
+            // It cannot restore placement or enable the path and terrain consumers.
+            return !PlacementPending && frame.CaptureTimestamp - reference.Timestamp is > 0 and <= VisualFallPrediction.MaximumAge
+                && placement is { IsPlaced: true } placed ? placed with { IsPlaced = false } : null;
+        }
         return placement is { } value && (PlacementPending || frame.MeasuredLineage is null)
             ? value with { IsPlaced = false } : placement;
     }

@@ -130,6 +130,20 @@ internal static class LiveIslandWorldProjectionTests
         Check(LiveIslandWorldProjection.Resolve(world.Snapshot, SavedGeneration + 1, RoomId, LocalEpoch, 1, 2) is null
             && LiveIslandWorldProjection.Resolve(world.Snapshot, SavedGeneration, RoomId, LocalEpoch + 1, 1, 2) is null,
             "A persisted owner cannot cross a generation or graph epoch boundary.");
+
+        var predicted = frame with
+        {
+            CaptureTimestamp = 1.05, RequiresRecovery = true, MeasuredLineage = null, RetainedLineage = null,
+            FallDisplayReference = (1, 1)
+        };
+        Check(completed.Result.ProjectFrame(completed.Frame, predicted) is { IsPlaced: false, WorldFromLocal: { X: 92, Y: 15 } },
+            "A short prediction can place the display in its prior measured basis without restoring Atlas placement.");
+        Check(completed.Result.ProjectFrame(completed.Frame, predicted with { CaptureTimestamp = 1.09 }) is null
+            && completed.Result.ProjectFrame(completed.Frame, predicted with { FallDisplayReference = (9, 1) }) is null
+            && completed.Result.ProjectFrame(completed.Frame, predicted with { FallDisplayReference = (1, .99) }) is null
+            && completed.Result.ProjectFrame(completed.Frame, predicted with { Room = "another" }) is null
+            && (completed.Result with { PlacementPending = true }).ProjectFrame(completed.Frame, predicted) is null,
+            "An old prediction, unknown reference, other room or pending placement cannot retrieve a display basis.");
     }
 
     internal static void TestExactCaptureClockSurvivesCorrectionAndLegacyLoad()

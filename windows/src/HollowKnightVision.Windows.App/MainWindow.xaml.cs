@@ -3321,7 +3321,8 @@ public partial class MainWindow : Window
         if (Volatile.Read(ref stepCapture) is not null)
         {
             if (exactReceiverTelemetry is { } stepTruth && exactRenderedGameFrame is { } stepFrame)
-                ObserveTrackingStep(frame, masks, admission.AdmitsTracking, captureTimestamp, stepTruth, stepFrame);
+                ObserveTrackingStep(frame, masks, admission.AdmitsTracking, captureTimestamp, stepTruth, stepFrame,
+                    recognition.Generation);
             return null;
         }
         var profileTimestamp = (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds;
@@ -3454,7 +3455,10 @@ public partial class MainWindow : Window
             if (!string.IsNullOrWhiteSpace(worldRoom))
             {
                 worldFrame = new(liveWorldGeneration, worldRoom, captureTimestamp, walkedCoordinateEpoch,
-                    tracked.MeasuredLineage, tracked.WalkedGroundLineage, tracked.RequiresWorldRecovery);
+                    tracked.MeasuredLineage, tracked.WalkedGroundLineage, tracked.RequiresWorldRecovery)
+                {
+                    FallDisplayReference = tracked.FallDisplayReference
+                };
                 if (CurrentWorldFrame(worldFrame.Value) is { } completed)
                 {
                     liveWorldResult = completed.Result;

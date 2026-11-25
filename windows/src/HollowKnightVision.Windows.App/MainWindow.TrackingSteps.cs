@@ -131,7 +131,7 @@ public partial class MainWindow
     }
 
     private void ObserveTrackingStep(BgraFrame frame, GameplaySceneMasks masks, bool admitted,
-        double timestamp, ReceiverGroundTruthSample truth, int gameFrame)
+        double timestamp, ReceiverGroundTruthSample truth, int gameFrame, long captureGeneration)
     {
         if (Volatile.Read(ref stepCapture) is not { } active) return;
         var transform = GroundTruthCameraTransform.FromSample(truth, timestamp, new(frame.Width, frame.Height));
@@ -141,7 +141,11 @@ public partial class MainWindow
         var owned = frame;
         active.Trace("tracker", frame.CaptureId, gameFrame, timestamp);
         active.Observe(new(new(owned, timestamp, truth.SceneName, masks.GroundExclusions.ToArray(),
-            masks.GroundRegions.OmittedRects.ToArray(), masks.GroundKnight, admitted), gameFrame,
+            masks.GroundRegions.OmittedRects.ToArray(), masks.GroundKnight, admitted)
+        {
+            MeasuredKnight = masks.ObservedPlayerBounds
+                ?? menuStencilRecognizer.CaptureMatchedKnightBounds(frame, captureGeneration)
+        }, gameFrame,
             HackerAtlasCameraPlacement.CameraPosition(transform)), truth.ControlledFrameId);
     }
 

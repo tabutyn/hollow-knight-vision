@@ -32,6 +32,7 @@ public sealed record GameplayTrackedFrame(
     public AtlasPoint? MeasuredSceneryCamera => HasMeasuredSceneryContinuity ? DisplayCamera : null;
     public long? MeasuredLineage { get; init; }
     public long? WalkedGroundLineage { get; init; }
+    public (long Lineage, double Timestamp)? FallDisplayReference { get; internal init; }
     public bool RequiresWorldRecovery => !RoomAllowsAtlasWrite || SceneCut is not null
         || CaptureGap == AtlasCaptureGapState.RequiresRecovery
         || (!AllowsAtlasWrite && !Observation.RetainsWorldBasisDuringPlacementCheck
@@ -139,7 +140,8 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
                     generation, timestamp, frame.Width, frame.Height, contactKnight);
             observation = camera.ObserveGroundAnchored(frame, prepared.Motion, sourceLuma,
                 cameraReferences, prepared.ProtectedOcclusions, hasCommittedAtlas, knight, tracker, timestamp,
-                sceneGrid, direction, skippedCaptureRegistration, ObserveRoomPlace, deferFreshAtlasBootstrap: true);
+                sceneGrid, direction, skippedCaptureRegistration, ObserveRoomPlace, deferFreshAtlasBootstrap: true,
+                measuredKnight: prepared.ObservedPlayerBounds);
         }
         else
         {
@@ -178,7 +180,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
         ground = ground with { AtlasLines = semanticLines };
         var localCamera = new AtlasPoint(observation.Telemetry.CameraX, observation.Telemetry.CameraY);
         var estimate = reference.CurrentEstimate();
-        if (observation.Registration?.State == CameraUpdateState.Accepted && terrainAnalysis is not null)
+        if (observation.Registration?.State == CameraUpdateState.Accepted && !observation.UsesFallPrediction && terrainAnalysis is not null)
             estimate = reference.Observe(frame, localCamera, frame.Width, knight,
                 prepared.GroundExclusions, terrainAnalysis.Theory);
 
@@ -232,6 +234,14 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             admission.AdmitsTracking && visualRoom.AllowsAtlasWrite && (measuredGround || publishesScenery),
             referenceTimestamp, groundAdjusted || observation.ReanchoredAtRoomPlace
                 || admission.Transition.ResumedAfterTransition || visualRoom.Cut is not null);
+        (long Lineage, double Timestamp)? fallDisplayReference = null;
+        if (admission.AdmitsTracking && visualRoom.AllowsAtlasWrite
+            && observation.FloorlessEvidence?.FallPrediction is { } prediction)
+        {
+            var referenceTime = timestamp - prediction.Age;
+            if (captureIslands.MeasuredOwner(generation, room, referenceTime) is { } owner)
+                fallDisplayReference = (owner, referenceTime);
+        }
         var terrain = TerrainWallDetection.Empty;
         KnightTerrainContact contact = default;
         IReadOnlyList<PixelRect> platformPatches = [];
@@ -280,6 +290,7 @@ public sealed class GameplayTrackingPipeline(VisualGameplayTracker camera, Maske
             HasMeasuredSceneryContinuity = publishesScenery,
             MeasuredLineage = lineage,
             WalkedGroundLineage = walked.ActiveLineage,
+            FallDisplayReference = fallDisplayReference,
             CaptureGap = captureGap,
             SceneCut = visualRoom.Cut,
             RecentDoorwayCut = roomIdentity.RecentDoorwayCut(timestamp),
