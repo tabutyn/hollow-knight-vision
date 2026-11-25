@@ -27,6 +27,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not install Coverlet.' }
           .\build-windows.ps1 -Configuration Release -CoverageDirectory artifacts/coverage `
             -Coverlet (Join-Path $tools 'coverlet.exe')
+      - name: Verify installed Windows startup
+        run: dotnet run --project tests/HollowKnightVision.Windows.UiTests -c Release -- --installed-startup
       - name: Report remaining Mac parity obligations
         run: .\Test-MacParity.ps1
       - name: Install training dependencies

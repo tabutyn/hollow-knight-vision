@@ -169,7 +169,15 @@
                         <TextBlock x:Name="LabelObjectsComplete" Grid.Column="1" Text="&#xE73E;" FontFamily="Segoe MDL2 Assets"
                                    FontSize="16" Foreground="#62C27B" VerticalAlignment="Center" Margin="8,0"
                                    Visibility="Collapsed" ToolTip="All objects labeled" AutomationProperties.Name="All objects labeled"/>
-                        <Button x:Name="NewObjectButton" Grid.Column="2" Content="+ Object" Margin="4,0,0,0" Click="NewObject_Click"/>
+                        <Button x:Name="NewObjectButton" Grid.Column="2" Content="+ Object" Margin="4,0,0,0" Click="NewObject_Click">
+                            <Button.ContextMenu>
+                                <ContextMenu Placement="Bottom">
+                                    <MenuItem Header="Gameplay Object" Tag="game" Click="NewObjectGroup_Click"/>
+                                    <MenuItem Header="Enemy" Tag="enemies" Click="NewObjectGroup_Click"/>
+                                    <MenuItem Header="World Object" Tag="world" Click="NewObjectGroup_Click"/>
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                        </Button>
                         <UniformGrid x:Name="LabelModeSegments" Grid.Column="3" Margin="8,0,0,0" Columns="4" Height="30">
                             <RadioButton x:Name="LabelAddButton" GroupName="LabelMode" Content="Add" Style="{StaticResource Segment}" IsChecked="True" Checked="LabelMode_Checked" Click="LabelMode_Click"/>
                             <RadioButton x:Name="LabelModifyButton" GroupName="LabelMode" Content="Modify" Style="{StaticResource Segment}" Checked="LabelMode_Checked" Click="LabelMode_Click"/>
