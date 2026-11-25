@@ -1331,6 +1331,7 @@ var tests = new List<(string Name, Action Run)>
     ("wall and floor move on constrained axes after reload", HackerTerrainEditingTests.TestWallAndFloorMoveOnTheirOwnAxesAfterReload),
     ("wall tool modifies and attaches ground endpoints", HackerTerrainEditingTests.TestWallModifyCanAttachAGroundEndpoint),
     ("terrain corners use nearby endpoints in the same room", HackerTerrainEditingTests.TestCornerRequiresNearbyEndpointInSameRoom),
+    ("overlapping rooms rank authored terrain using their projected endpoint distances", HackerTerrainEditingTests.TestRoomHitRankingUsesProjectedEndpointsBeforeBodies),
     ("corner snapping keeps its screen radius at high zoom", HackerTerrainEditingTests.TestCornerSnapRespectsTheScreenRadiusAtHighZoom),
     ("corner drafts cancel when clicked or when changing tools", HackerTerrainEditingTests.TestClickAndToolChangeDoNotCommitCornerDrafts),
     ("downward walls preserve corner identity and clamp the attached floor", HackerTerrainEditingTests.TestDownwardWallKeepsCornerIdentityAndClampsAttachedFloor),

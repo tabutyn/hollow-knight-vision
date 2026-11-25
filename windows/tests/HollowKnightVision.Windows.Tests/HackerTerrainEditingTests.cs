@@ -294,6 +294,31 @@ internal static class HackerTerrainEditingTests
         });
     }
 
+    public static void TestRoomHitRankingUsesProjectedEndpointsBeforeBodies()
+    {
+        WithStore((_, editor) =>
+        {
+            var scale = new AtlasPoint(4, 4);
+            var otherScale = new AtlasPoint(2, 4);
+            Drag(editor, 17, 16, 55, 16, pixelsPerUnit: scale);
+            Drag(editor, 50, 16, 70, 16, OtherRoom, otherScale);
+            var body = new AtlasPoint(27, 16);
+            var endpoint = new AtlasPoint(50, 16);
+            editor.Mode = GroundTruthEditingMode.Modify;
+            Check(editor.RoomHitRank(body, 8, Room, scale) == 3
+                && editor.RoomHitRank(endpoint, 8, OtherRoom, otherScale) == 0,
+                "The projected endpoint should outrank a body in another room.");
+            editor.Mode = GroundTruthEditingMode.Add;
+            Check(editor.RoomHitRank(endpoint, 8, OtherRoom, otherScale) is null,
+                "A ground stroke should only prefer an opposite-axis corner over room bounds.");
+            editor.Tool = GroundTruthTerrainTool.Wall;
+            Check(editor.RoomHitRank(body, 8, Room, scale) is null
+                && editor.RoomHitRank(endpoint, 8, OtherRoom, otherScale) == 0
+                && editor.RoomHitRank(new(53, 16), 8, OtherRoom, otherScale) is > 0 and < 1,
+                "Wall Add should favor ground endpoints within the normalized screen radius.");
+        });
+    }
+
     public static void TestDoorsDrawOnEitherAxisAndFollowGround()
     {
         WithStore((store, editor) =>

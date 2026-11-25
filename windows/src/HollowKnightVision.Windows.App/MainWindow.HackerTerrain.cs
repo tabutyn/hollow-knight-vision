@@ -89,7 +89,20 @@ public partial class MainWindow
     private TerrainRoom? TerrainRoomAt(AtlasPoint atlasPoint, double tolerance)
     {
         var roomsInHitOrder = HackerTerrainRooms().Reverse()
-            .OrderByDescending(room => room.SceneName == hackerLivePrepared?.SceneName);
+            .OrderByDescending(room => room.SceneName == hackerLivePrepared?.SceneName).ToArray();
+        TerrainRoom? matchedRoom = null;
+        var bestRank = double.PositiveInfinity;
+        foreach (var room in roomsInHitOrder)
+        {
+            var world = room.Projection.AtlasToWorld(atlasPoint, room.Position);
+            if (groundTruthLabels.RoomHitRank(world, tolerance, room.SceneName, room.Projection.PixelsPerWorldUnit)
+                is not { } rank || rank >= bestRank) continue;
+            bestRank = rank;
+            matchedRoom = room;
+        }
+        if (matchedRoom is not null) return matchedRoom;
+
+        var smallestArea = double.PositiveInfinity;
         foreach (var room in roomsInHitOrder)
         {
             var bounds = room.Bounds.Offset(room.Position.X, room.Position.Y);
@@ -114,8 +127,13 @@ public partial class MainWindow
                     Include(new(offset.X + stroke.B.X, offset.Y + stroke.B.Y), routeHitPadding);
                 }
             }
+            var area = (maxX - minX) * (maxY - minY);
             if (atlasPoint.X >= minX - tolerance && atlasPoint.X <= maxX + tolerance
-                && atlasPoint.Y >= minY - tolerance && atlasPoint.Y <= maxY + tolerance) return room;
+                && atlasPoint.Y >= minY - tolerance && atlasPoint.Y <= maxY + tolerance && area < smallestArea)
+            {
+                smallestArea = area;
+                matchedRoom = room;
+            }
 
             void Include(AtlasPoint point, double padding)
             {
@@ -125,7 +143,7 @@ public partial class MainWindow
                 maxY = Math.Max(maxY, point.Y + padding);
             }
         }
-        return null;
+        return matchedRoom;
     }
 
     private AtlasPoint GroundPointerAtlas(MouseEventArgs e)
@@ -144,8 +162,8 @@ public partial class MainWindow
     {
         var atlas = GroundPointerAtlas(e);
         var tolerance = GroundPointerTolerance();
-        if (TerrainRoomAt(atlas, tolerance) is not { } room) return false;
         SelectGroundTruthMode();
+        if (TerrainRoomAt(atlas, tolerance) is not { } room) return false;
         groundTruthLabels.HandleWorld(GroundTruthPointerPhase.Began, room.Projection.AtlasToWorld(atlas, room.Position),
             tolerance, room.SceneName, room.Projection.PixelsPerWorldUnit);
         groundDragRoom = room;

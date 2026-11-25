@@ -586,18 +586,31 @@ public sealed class GroundTruthLabelController
     public void HandleWorld(GroundTruthPointerPhase phase, AtlasPoint world, double atlasTolerance,
         string sceneName, AtlasPoint pixelsPerWorldUnit)
     {
-        if (!double.IsFinite(world.X) || !double.IsFinite(world.Y) || string.IsNullOrWhiteSpace(sceneName)
-            || !double.IsFinite(pixelsPerWorldUnit.X) || !double.IsFinite(pixelsPerWorldUnit.Y)
-            || pixelsPerWorldUnit.X <= 0 || pixelsPerWorldUnit.Y <= 0) return;
+        if (!ValidPointer(world, pixelsPerWorldUnit) || string.IsNullOrWhiteSpace(sceneName)) return;
         if (phase == GroundTruthPointerPhase.Began)
         {
-            var radius = double.IsFinite(atlasTolerance) && atlasTolerance > 0 ? atlasTolerance : 2;
-            Begin(world, new(radius / pixelsPerWorldUnit.X, radius / pixelsPerWorldUnit.Y), sceneName);
+            Begin(world, PointerTolerance(atlasTolerance, pixelsPerWorldUnit), sceneName);
             return;
         }
         if (sceneName != gestureScene) return;
         Change(world);
         if (phase == GroundTruthPointerPhase.Ended) Finish(world, pixelsPerWorldUnit);
+    }
+
+    /// <summary>Uses the editor's terrain hit rules to compare overlapping room placements.</summary>
+    public double? RoomHitRank(AtlasPoint world, double atlasTolerance, string sceneName, AtlasPoint pixelsPerWorldUnit) =>
+        ValidPointer(world, pixelsPerWorldUnit)
+            ? FindLineHit(world, sceneName, PointerTolerance(atlasTolerance, pixelsPerWorldUnit))?.Rank : null;
+
+    private static bool ValidPointer(AtlasPoint world, AtlasPoint pixelsPerWorldUnit) =>
+        double.IsFinite(world.X) && double.IsFinite(world.Y)
+        && double.IsFinite(pixelsPerWorldUnit.X) && double.IsFinite(pixelsPerWorldUnit.Y)
+        && pixelsPerWorldUnit.X > 0 && pixelsPerWorldUnit.Y > 0;
+
+    private static AtlasPoint PointerTolerance(double atlasTolerance, AtlasPoint pixelsPerWorldUnit)
+    {
+        var radius = double.IsFinite(atlasTolerance) && atlasTolerance > 0 ? atlasTolerance : 2;
+        return new(radius / pixelsPerWorldUnit.X, radius / pixelsPerWorldUnit.Y);
     }
 
     public void Undo()
@@ -637,7 +650,7 @@ public sealed class GroundTruthLabelController
         gestureStart = world;
         gestureScene = sceneName;
         gestureTolerance = tolerance;
-        var hit = Mode == GroundTruthEditingMode.Add ? null : NearestLine(world, sceneName);
+        var hit = Mode == GroundTruthEditingMode.Add ? null : FindLineHit(world, sceneName, tolerance)?.Line;
         switch (Mode)
         {
             case GroundTruthEditingMode.Add:
@@ -775,32 +788,36 @@ public sealed class GroundTruthLabelController
         finally { ResetGesture(); }
     }
 
-    private GroundTruthWorldLine? NearestLine(AtlasPoint world, string sceneName)
+    private (GroundTruthWorldLine Line, double Rank)? FindLineHit(AtlasPoint world, string sceneName, AtlasPoint pointerTolerance)
     {
-        IEnumerable<GroundTruthWorldLine> candidates = Document.LinesFor(Tool);
+        var cornerOnly = Mode == GroundTruthEditingMode.Add && Tool is GroundTruthTerrainTool.Wall or GroundTruthTerrainTool.Ground;
+        IEnumerable<GroundTruthWorldLine> candidates = cornerOnly
+            ? Document.LinesFor(Tool == GroundTruthTerrainTool.Wall ? GroundTruthTerrainTool.Ground : GroundTruthTerrainTool.Wall)
+            : Document.LinesFor(Tool);
         if (Tool == GroundTruthTerrainTool.Wall && Mode == GroundTruthEditingMode.Modify)
             candidates = candidates.Concat(Document.Lines.Where(line => line.Kind == GroundTruthLineKind.Positive));
         GroundTruthWorldLine? best = null;
         var rank = double.PositiveInfinity;
         foreach (var line in candidates)
         {
-            if (line.SeededFromDetector || line.SceneName != sceneName) continue;
+            if (line.SeededFromDetector || line.SceneName != sceneName
+                || cornerOnly && line.Kind == GroundTruthLineKind.Negative) continue;
             var p = GroundTruthLineDocument.Components(world, line.IsVertical);
             var a = GroundTruthLineDocument.Components(line.Start, line.IsVertical);
             var b = GroundTruthLineDocument.Components(line.End, line.IsVertical);
-            var tolerance = GroundTruthLineDocument.Components(gestureTolerance, line.IsVertical);
+            var tolerance = GroundTruthLineDocument.Components(pointerTolerance, line.IsVertical);
             var across = Math.Abs(p.Y - a.Y) / tolerance.Y;
             if (across > 1 || p.X < a.X - tolerance.X || p.X > b.X + tolerance.X) continue;
             var endpoint = Math.Min(Math.Abs(p.X - a.X), Math.Abs(p.X - b.X)) / tolerance.X;
             var distance = Math.Sqrt(endpoint * endpoint + across * across);
-            var groundEndpointInWallMode = Tool == GroundTruthTerrainTool.Wall && !line.IsVertical;
-            if (groundEndpointInWallMode && distance > 1) continue;
-            var score = Mode == GroundTruthEditingMode.Modify && endpoint <= 1 ? distance : 3 + across;
+            var endpointOnly = cornerOnly || Tool == GroundTruthTerrainTool.Wall && !line.IsVertical;
+            if (endpointOnly && distance > 1) continue;
+            var score = endpointOnly || Mode == GroundTruthEditingMode.Modify && endpoint <= 1 ? distance : 3 + across;
             if (score >= rank) continue;
             best = line;
             rank = score;
         }
-        return best;
+        return best is null ? null : (best, rank);
     }
 
     private bool TrySave(GroundTruthLineDocument candidate)
