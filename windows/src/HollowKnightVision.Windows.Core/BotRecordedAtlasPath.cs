@@ -20,7 +20,7 @@ public static class BotRecordedAtlasPath
         ReadCapture(string folder)
     {
         using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(folder, "manifest.json")));
-        var header = manifest.RootElement.Deserialize<BotCaptureManifest>(Json)
+        var header = manifest.RootElement.Deserialize<BotCaptureManifest>(BotCaptureSession.Json)
             ?? throw new InvalidDataException("Missing bot capture manifest.");
         IReadOnlyList<string> expected = header.SchemaVersion switch
         {

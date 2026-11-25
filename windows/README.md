@@ -838,6 +838,12 @@ archive is available. For diagnostics, run the installed Host with
 observations with a verified source image and the original masking inputs at
 the same capture timestamp and generation.
 
+Bot Summary also opens earlier capture files. When an older observation lacks
+a wall-contact pose, the linked input replay can supply its measured visual
+island or its exact mod receiver frame. The Host command
+`--recover-bot-blockades CLIP_DIRECTORY` reports that evidence. Add
+`--register-crossed` to save proved crossings separately for diagnostics.
+
 ### Live Gym PPO from an installed build
 
 Run the launcher against a modded Hollow Knight executable and a verified bot

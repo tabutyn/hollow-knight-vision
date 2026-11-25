@@ -40,6 +40,23 @@ try {
   if (-not $dataset.StartsWith((Join-Path $fixtureRoot 'datasets') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Dataset probe returned a path outside its disposable fixture.'
   }
+  $blockadeFixture = Join-Path $fixtureRoot 'recorded-blockades'
+  & $Dotnet $tests --recorded-blockade-host-probe $NativeVerifier $blockadeFixture
+  if ($LASTEXITCODE -ne 0) { throw 'Native recorded blockade fixtures failed.' }
+  $blockadeValidation = @'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from hkv_bot_dataset import collect
+root = Path(sys.argv[2])
+for domain in ("visual", "hacker"):
+    _, report = collect(root / domain, compact=True, blockade_evidence=root / "sidecars")
+    assert not report["skipped"], report
+    assert report["sessions"][0]["blockadeExamples"] == 2, report
+print("PASS shared trainer imports native blockade observations from both legacy domains")
+'@
+  & $Python -B -c $blockadeValidation (Join-Path $repositoryRoot 'macos\BotPython') $blockadeFixture
+  if ($LASTEXITCODE -ne 0) { throw 'Shared training could not read native legacy blockade evidence.' }
   & (Join-Path $PSScriptRoot 'train-model-windows.ps1') -Dataset $dataset -ValidateOnly
   if ($LASTEXITCODE -ne 0) { throw 'Windows trainer launcher rejected the synthetic export.' }
   $validation = @'

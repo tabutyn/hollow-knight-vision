@@ -15,7 +15,8 @@ public sealed record BotCaptureManifest(
     [property: JsonPropertyName("replayID"), JsonConverter(typeof(CaptureIdConverter))] Guid? ReplayId,
     [property: JsonPropertyName("pairedClipID"), JsonConverter(typeof(CaptureIdConverter))] Guid? PairedClipId)
 {
-    public IReadOnlyList<string> FeatureNames => BotRecordingContract.FeatureNames;
+    public IReadOnlyList<string> FeatureNames => SchemaVersion == 1
+        ? BotRecordingContract.FeatureNames.Take(BotRecordingContract.LegacyWidth).ToArray() : BotRecordingContract.FeatureNames;
     public IReadOnlyList<int> ActionSizes => BotRecordingContract.ActionSizes;
     public int HistoryLength => BotRecordingContract.HistoryLength;
     public double SampleInterval => BotRecordingContract.SampleInterval;
@@ -254,12 +255,19 @@ public sealed class BotCaptureSession
             {
                 var manifest = JsonSerializer.Deserialize<BotCaptureManifest>(
                     File.ReadAllBytes(Path.Combine(folder, "manifest.json")), Json);
-                if (manifest is { Status: "completed", SchemaVersion: BotRecordingContract.SchemaVersion }
+                if (manifest is { Status: "completed", SchemaVersion: 1 or BotRecordingContract.SchemaVersion }
                     && manifest.ExpertDemonstration != false
                     && string.Equals(Path.GetFileName(folder), DirectoryName(manifest.Id), StringComparison.OrdinalIgnoreCase))
+                {
+                    if (manifest.BotDomain is null)
+                    {
+                        var domain = BotRecordedAtlasPath.ReadCapture(folder).Domain;
+                        manifest = manifest with { BotDomain = domain == BotCaptureDomain.Hacker ? "hacker" : "gameplay" };
+                    }
                     captures.Add(manifest);
+                }
             }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException) { }
         }
         return captures.OrderByDescending(item => item.CreatedAt).ToArray();
     }
@@ -270,12 +278,11 @@ public sealed class BotCaptureSession
         ReadReviewEvidence(folder, cancellationToken, requireImage: true).Observations.Select(item => item.Frame).ToArray();
 
     internal static (BotCaptureManifest Manifest, IReadOnlyList<ReviewObservation> Observations, IReadOnlyList<BotCaptureInput> Inputs) ReadReviewEvidence(
-        string folder, CancellationToken cancellationToken, bool requireImage = false)
+        string folder, CancellationToken cancellationToken, bool requireImage = false, string? replayRoot = null)
     {
         var manifest = JsonSerializer.Deserialize<BotCaptureManifest>(File.ReadAllBytes(Path.Combine(folder, "manifest.json")), Json)
             ?? throw new InvalidDataException("The capture has no manifest.");
-        if (manifest is not { Status: "completed", SchemaVersion: BotRecordingContract.SchemaVersion }) return (manifest, [], []);
-        var authored = manifest.BotDomain == "hacker";
+        if (manifest is not { Status: "completed", SchemaVersion: 1 or BotRecordingContract.SchemaVersion }) return (manifest, [], []);
         var frames = new List<ReviewObservation>();
         var observations = new List<BotCaptureObservation>();
         var inputs = new List<BotCaptureInput>();
@@ -304,6 +311,8 @@ public sealed class BotCaptureSession
             if (requireImage && image is null || row.Deserialize<BotCaptureObservation>(Json) is not { } observation) continue;
             var offset = observation.CaptureTimestamp - manifest.StartedAt;
             if (!double.IsFinite(offset)) continue;
+            var authored = manifest.BotDomain == "hacker"
+                || manifest.BotDomain is null && observation.TerrainSource == "human-authored";
             var terrain = authored ? observation.AuthoredTerrain : observation.DetectedTerrain;
             frames.Add(new(observation.Generation, new(image, Math.Max(0, offset), terrain, authored, observation.Features ?? [])
             {
@@ -330,10 +339,12 @@ public sealed class BotCaptureSession
             {
                 try
                 {
-                    foreach (var row in BotBlockadeReplay.Recover(observations, inputs, cancellationToken))
+                    var recovered = BotBlockadeReplay.Recover(folder, manifest.Id, manifest.ReplayId, manifest.BotDomain,
+                        observations, inputs, replayRoot, cancellationToken);
+                    foreach (var row in recovered.Rows)
                         blockades[(row.Generation, row.CaptureTimestamp)] = row.Blockade;
                 }
-                catch (InvalidDataException) { }
+                catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException) { }
             }
             for (var index = 0; index < observations.Count; index++)
             {

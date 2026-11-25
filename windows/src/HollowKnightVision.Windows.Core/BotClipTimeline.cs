@@ -31,19 +31,23 @@ public sealed class BotClipTimeline
 
     public static BotClipTimeline Open(string folder, string inputPaths, CancellationToken cancellationToken = default)
     {
-        var (manifest, evidence, inputs) = BotCaptureSession.ReadReviewEvidence(folder, cancellationToken);
+        var (manifest, evidence, inputs) = BotCaptureSession.ReadReviewEvidence(folder, cancellationToken, replayRoot: inputPaths);
         var stills = evidence.Select(item => item.Frame).Where(item => item.ImageFile is not null)
             .OrderBy(item => item.Offset).ToArray();
         var duration = double.IsFinite(manifest.Duration) && manifest.Duration > 0 ? manifest.Duration : 0;
         VisualReplayArchiveReader? archive = null;
         VisualReplayFrame[] sources = [];
-        if (manifest is { Status: "completed", SchemaVersion: BotRecordingContract.SchemaVersion }
+        if (manifest is { Status: "completed", SchemaVersion: 1 or BotRecordingContract.SchemaVersion }
             && double.IsFinite(manifest.StartedAt) && duration > 0)
         {
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                archive = VisualReplayArchiveReader.OpenClipFrames(inputPaths, manifest.ReplayId ?? manifest.Id);
+                var replayId = manifest.ReplayId ?? manifest.Id;
+                var linkedRoot = BotBlockadeReplaySource.LinkedRoot(folder, replayId);
+                var replayRoot = linkedRoot is not null && File.Exists(Path.Combine(linkedRoot, $"frames-{replayId:D}", "manifest.json"))
+                    ? linkedRoot : inputPaths;
+                archive = VisualReplayArchiveReader.OpenClipFrames(replayRoot, replayId);
                 sources = archive.Manifest.Frames.Where(frame => VisualReplayArchiveReader.IsFrameFileName(frame)
                     && frame.CaptureTimestamp >= manifest.StartedAt && frame.CaptureTimestamp - manifest.StartedAt <= duration)
                     .OrderBy(frame => frame.CaptureTimestamp).ToArray();
