@@ -7,12 +7,9 @@ public sealed record GameplayTerrainAnalysis(GroundEdgeAnalysis Edges, GroundThe
     public GroundTheoryAnalysis SemanticTheory { get; init; } = Theory;
 
     public static GameplayTerrainAnalysis Analyze(BgraFrame frame, GameplaySceneMasks masks,
-        GroundTheoryTuning? tuning = null, GroundTheoryTuning? semanticTuning = null, bool includeSemanticRunEvidence = false) =>
-        Analyze(GroundLineDetector.Analyze(frame, masks.GroundExclusions), masks, tuning, semanticTuning, includeSemanticRunEvidence);
-
-    internal static GameplayTerrainAnalysis Analyze(GroundEdgeAnalysis edges, GameplaySceneMasks masks,
-        GroundTheoryTuning? tuning, GroundTheoryTuning? semanticTuning, bool includeSemanticRunEvidence = false)
+        GroundTheoryTuning? tuning = null, GroundTheoryTuning? semanticTuning = null, bool includeSemanticRunEvidence = false)
     {
+        var edges = GroundLineDetector.Analyze(frame, masks.GroundExclusions);
         var comparison = GroundLineDetector.Compare(edges);
         var captions = new GroundCaptionEvidence(comparison);
         var theory = GroundLineDetector.TrackingTheory(comparison, tuning ?? GroundTheoryTuning.Default, captions);

@@ -31,7 +31,7 @@ public static class BotWallReplay
                 continue;
             var key = ((ulong)row.Generation, BitConverter.DoubleToInt64Bits(row.CaptureTimestamp));
             if (frames[key].Take(2).ToArray() is not [var match]
-                || inputs[key].Take(2).ToArray() is not [{ ExcludingRects: not null, SemanticTuning: not null } input])
+                || inputs[key].Take(2).ToArray() is not [{ ExcludingRects: not null, SemanticTuning: { } semanticTuning } input])
                 continue;
 
             var image = reader.ReadImage(match, out var hasSrgbProfile);
@@ -39,18 +39,23 @@ public static class BotWallReplay
             // The Mac wall recovery command uses the saved scene exclusions,
             // including its HUD shield, and pads them before sampling pixel centers.
             GroundEdgeAnalysis edges;
+            IReadOnlyList<DetectedFloorLine> floors;
             if (input.WindowsAtlasExcludingRects is null)
             {
                 var exclusions = masks.AtlasRegions.OmittedRects;
-                masks = masks with { GroundExclusions = GroundLineDetector.CaptureCenterExclusions(image, exclusions) };
                 edges = GroundLineDetector.AnalyzeMacReplay(image, exclusions, hasSrgbProfile);
+                var semantic = GroundLineDetector.MacReplaySemanticFloorLines(GroundLineDetector.Compare(edges),
+                    semanticTuning);
+                floors = GroundLineDetector.RejectKnownForegroundLines(semantic, image.Height,
+                    GroundLineDetector.CaptureCenterExclusions(image, exclusions), masks.GroundKnight);
             }
             else
             {
-                edges = GroundLineDetector.Analyze(image, masks.GroundExclusions);
+                var analysis = GameplayTerrainAnalysis.Analyze(image, masks, input.Tuning, semanticTuning);
+                edges = analysis.Edges;
+                floors = analysis.Floors;
             }
-            var analysis = GameplayTerrainAnalysis.Analyze(edges, masks, input.Tuning, input.SemanticTuning);
-            var walls = TerrainWallDetector.Detect(analysis.Edges, analysis.Floors).Walls;
+            var walls = TerrainWallDetector.Detect(edges, floors).Walls;
             var terrain = new BotScreenTerrain(image.Width, image.Height, [], BotObservationBuilder.ProjectDetectedWalls(image, walls));
             var features = new double[BotRecordingContract.FeatureNames.Count];
             BotObservationBuilder.WriteWallFeatures(features, terrain, row.Features[0] * image.Width, row.Features[1] * image.Width);

@@ -157,6 +157,37 @@ internal static class GroundSurfaceEvidenceTests
             new CleanFloorLine(40, new PixelSpan(60, 139)));
     }
 
+    public static void TestMacReplayUsesTheOriginalSurfaceRule()
+    {
+        const int width = 160, height = 100, row = 42;
+        var response = new byte[width * height];
+        Array.Fill(response, (byte)180, row * width, width);
+        var luma = Enumerable.Repeat((byte)20, width * height).ToArray();
+
+        Array.Fill(luma, (byte)180, row * width, width);
+        var shallow = new GroundComparisonAnalysis(width, height, response, luma);
+        Check(GroundLineDetector.SemanticFloorLines(shallow, GroundTheoryTuning.SemanticDefault).Count == 0);
+        Check(GroundLineDetector.MacReplaySemanticFloorLines(shallow, GroundTheoryTuning.SemanticDefault)
+            is [{ Row: row }]);
+
+        Array.Fill(luma, (byte)80, (row - 5) * width, 18 * width);
+        var lit = new GroundComparisonAnalysis(width, height, response, luma);
+        Check(GroundLineDetector.SemanticFloorLines(lit, GroundTheoryTuning.SemanticDefault).Count == 0);
+        Check(GroundLineDetector.MacReplaySemanticFloorLines(lit, GroundTheoryTuning.SemanticDefault)
+            is [{ Row: row }]);
+
+        var valid = Enumerable.Repeat((byte)1, width * height).ToArray();
+        Array.Clear(valid, (row + 18) * width, width);
+        Check(GroundLineDetector.MacReplaySemanticFloorLines(
+            lit with { ValidSourcePixels = valid }, GroundTheoryTuning.SemanticDefault).Count == 0);
+
+        var clippedResponse = new byte[width * height];
+        Array.Fill(clippedResponse, (byte)180, (height - 9) * width, width);
+        Array.Fill(luma, (byte)80);
+        Check(GroundLineDetector.MacReplaySemanticFloorLines(
+            new(width, height, clippedResponse, luma), GroundTheoryTuning.SemanticDefault).Count == 0);
+    }
+
     public static void TestEvidenceScoringDoesNotLetDarkGapApproveBrightEdge()
     {
         const int width = 200, height = 80;

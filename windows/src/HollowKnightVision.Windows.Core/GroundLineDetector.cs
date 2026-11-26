@@ -505,6 +505,10 @@ public static class GroundLineDetector
         GroundComparisonAnalysis analysis,
         GroundTheoryTuning tuning) => SemanticTheory(analysis, tuning, new GroundCaptionEvidence(analysis)).CleanFloorLines;
 
+    internal static IReadOnlyList<DetectedFloorLine> MacReplaySemanticFloorLines(GroundComparisonAnalysis analysis,
+        GroundTheoryTuning tuning) => CreateTheory(analysis, tuning, validateSurface: true,
+        new GroundCaptionEvidence(analysis), useMacReplaySurfaceRule: true).CleanFloorLines;
+
     internal static GroundTheoryAnalysis SemanticTheory(GroundComparisonAnalysis analysis,
         GroundTheoryTuning tuning, GroundCaptionEvidence captions, bool includeRunEvidence = false) =>
         CreateTheory(analysis, tuning, validateSurface: true, captions, includeRunEvidence);
@@ -692,10 +696,13 @@ public static class GroundLineDetector
     private static GroundTheoryAnalysis CreateTheory(
         GroundComparisonAnalysis analysis,
         GroundTheoryTuning tuning,
-        bool validateSurface, GroundCaptionEvidence? captions = null, bool includeRunEvidence = false)
+        bool validateSurface, GroundCaptionEvidence? captions = null, bool includeRunEvidence = false,
+        bool useMacReplaySurfaceRule = false)
     {
         ValidateComparisonAnalysis(analysis);
-        var surface = validateSurface ? new GroundSurfaceEvidence(analysis) : null;
+        var surface = validateSurface
+            ? new GroundSurfaceEvidence(analysis) { UseMacReplaySurfaceRule = useMacReplaySurfaceRule }
+            : null;
         var accepted = AcceptedRunsByRow(analysis, tuning, surface, captions);
         var lines = BuildTheoryLines(analysis, tuning, surface, accepted);
         var sharedRuns = Enumerable.Range(0, analysis.Height)
@@ -1011,6 +1018,7 @@ public static class GroundLineDetector
         private const int Depth = 12;
         private const int MaximumBodyLuma = 55;
         private readonly Dictionary<int, Band> bands = [];
+        internal bool UseMacReplaySurfaceRule { get; init; }
 
         internal bool Supports(int row, IReadOnlyList<PixelSpan> ranges)
         {
@@ -1056,6 +1064,8 @@ public static class GroundLineDetector
                 countTotal += band.Counts[upper] - band.Counts[lower];
             }
             var shallow = countTotal == 0 || total <= MaximumBodyLuma * countTotal;
+            if (UseMacReplaySurfaceRule)
+                return shallow || SupportsMacReplaySilhouette(row, ranges, luma);
             if (countTotal == 0 || row < 18 || row + 24 >= analysis.Height) return shallow;
 
             var width = analysis.Width;
@@ -1103,6 +1113,31 @@ public static class GroundLineDetector
             }
             if (isolated >= 8 && isolated * 2 >= measured) return false;
             return shallow || (solid >= 8 && solid * 2 >= measured);
+        }
+
+        private bool SupportsMacReplaySilhouette(int row, IReadOnlyList<PixelSpan> ranges, byte[] luma)
+        {
+            if (row < 5 || row + 24 >= analysis.Height) return false;
+
+            var width = analysis.Width;
+            var measured = 0;
+            var solid = 0;
+            foreach (var range in ranges)
+            {
+                for (var x = Math.Max(0, range.Start); x <= Math.Min(width - 1, range.EndInclusive); x += 3)
+                {
+                    var i = row * width + x;
+                    if (!IsValid(i) || !IsValid(i - 5 * width) || !IsValid(i - 2 * width)
+                        || !IsValid(i + 13 * width) || !IsValid(i + 18 * width) || !IsValid(i + 24 * width))
+                        continue;
+
+                    measured++;
+                    var air = (luma[i - 5 * width] + luma[i - 2 * width]) / 2;
+                    var deep = (luma[i + 13 * width] + luma[i + 18 * width] + luma[i + 24 * width]) / 3;
+                    if (deep <= MaximumBodyLuma && air - deep >= 12) solid++;
+                }
+            }
+            return solid >= 8 && solid * 2 >= measured;
         }
 
         private bool IsValid(int index) => analysis.ValidSourcePixels is null
