@@ -700,7 +700,9 @@ public static class GroundLineDetector
         bool useMacReplaySurfaceRule = false)
     {
         ValidateComparisonAnalysis(analysis);
-        var surface = validateSurface ? new GroundSurfaceEvidence(analysis, useMacReplaySurfaceRule) : null;
+        var surface = validateSurface
+            ? new GroundSurfaceEvidence(analysis) { UseMacReplaySurfaceRule = useMacReplaySurfaceRule }
+            : null;
         var accepted = AcceptedRunsByRow(analysis, tuning, surface, captions);
         var lines = BuildTheoryLines(analysis, tuning, surface, accepted);
         var sharedRuns = Enumerable.Range(0, analysis.Height)
@@ -1011,11 +1013,12 @@ public static class GroundLineDetector
 
     private sealed record ScoredRun(int Row, CandidateRun Run, ulong Strength);
 
-    private sealed class GroundSurfaceEvidence(GroundComparisonAnalysis analysis, bool useMacReplaySurfaceRule)
+    private sealed class GroundSurfaceEvidence(GroundComparisonAnalysis analysis)
     {
         private const int Depth = 12;
         private const int MaximumBodyLuma = 55;
         private readonly Dictionary<int, Band> bands = [];
+        internal bool UseMacReplaySurfaceRule { get; init; }
 
         internal bool Supports(int row, IReadOnlyList<PixelSpan> ranges)
         {
@@ -1061,7 +1064,7 @@ public static class GroundLineDetector
                 countTotal += band.Counts[upper] - band.Counts[lower];
             }
             var shallow = countTotal == 0 || total <= MaximumBodyLuma * countTotal;
-            if (useMacReplaySurfaceRule)
+            if (UseMacReplaySurfaceRule)
                 return shallow || SupportsMacReplaySilhouette(row, ranges, luma);
             if (countTotal == 0 || row < 18 || row + 24 >= analysis.Height) return shallow;
 
