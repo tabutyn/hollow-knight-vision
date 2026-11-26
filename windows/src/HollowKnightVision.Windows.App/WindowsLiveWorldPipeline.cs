@@ -649,6 +649,10 @@ internal sealed class WindowsLiveWorldPipeline
                 transactionObserver?.Invoke("append");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 var measuredIsland = request.WorldEvidence is { MeasuredLineage: not null };
+                // Measured closures propose with scenery and validate the pose separately against floor texture.
+                var featureExclusions = measuredIsland
+                    ? request.Exclusions.Select(mask => mask with { Y = request.Frame.Height - mask.Bottom }).ToArray()
+                    : request.GroundAlignmentExclusions;
                 // Pending measured islands use the floor verifier and its independent confirmation cadence.
                 var searchForClosure = measuredIsland ? !placementPending : globalSearchDue;
                 if (globalSearchDue) lastGlobalSearchAt = request.MonotonicTimestamp;
@@ -670,7 +674,7 @@ internal sealed class WindowsLiveWorldPipeline
                     capturePose,
                     request.SolveWidth,
                     sourceObservationId: source.Id,
-                    exclusions: request.GroundAlignmentExclusions,
+                    exclusions: featureExclusions,
                     searchForClosure: searchForClosure,
                     localPose: resolvedObservation.Value.Ticket.LocalPose,
                     captureGeneration: persistentCaptureGeneration,
