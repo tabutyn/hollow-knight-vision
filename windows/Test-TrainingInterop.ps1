@@ -1,7 +1,8 @@
 param(
   [string]$Python,
   [string]$Dotnet = 'dotnet',
-  [string]$NativeVerifier = (Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\HollowKnightVision.Windows.Host.exe')
+  [string]$NativeVerifier = (Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\HollowKnightVision.Windows.Host.exe'),
+  [string]$TrainerLauncher = (Join-Path $PSScriptRoot 'train-model-windows.ps1')
 )
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
@@ -61,7 +62,7 @@ print("PASS shared trainer imports native blockade observations from both legacy
 '@
   & $Python -B -c $blockadeValidation (Join-Path $repositoryRoot 'macos\BotPython') $blockadeFixture
   if ($LASTEXITCODE -ne 0) { throw 'Shared training could not read native legacy blockade evidence.' }
-  & (Join-Path $PSScriptRoot 'train-model-windows.ps1') -Dataset $dataset -ValidateOnly
+  & $TrainerLauncher -Dataset $dataset -ValidateOnly
   if ($LASTEXITCODE -ne 0) { throw 'Windows trainer launcher rejected the synthetic export.' }
   $validation = @'
 import hashlib

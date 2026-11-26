@@ -35,8 +35,47 @@ jobs:
         run: dotnet run --project tests/HollowKnightVision.Windows.UiTests -c Release -- --installed-startup
       - name: Report remaining Mac parity obligations
         run: .\Test-MacParity.ps1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - name: Install training dependencies
-        run: .\setup-training-windows.ps1
+        run: .\setup-training-windows.ps1 -Python (Get-Command python).Source
+      - name: Prepare trainer Python coverage
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'hkv-python-coverage'
+          $modules = Join-Path $root 'modules'
+          $config = Join-Path $root '.coveragerc'
+          $source = Join-Path $env:GITHUB_WORKSPACE 'macos'
+          $installed = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\training'
+          python -m pip install --target $modules 'coverage==7.10.7'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not install Python coverage for the trainers.' }
+          @'
+          import coverage
+          coverage.process_startup()
+          '@ | Set-Content -LiteralPath (Join-Path $modules 'sitecustomize.py') -Encoding utf8
+          @"
+          [run]
+          parallel = True
+          data_file = $root\.coverage
+          source =
+              $source\BotPython
+              $source\TrainingPython
+              $installed\BotPython
+              $installed\TrainingPython
+          omit = */test_*.py
+          disable_warnings = no-data-collected
+
+          [paths]
+          bot =
+              $source\BotPython
+              $installed\BotPython
+          objects =
+              $source\TrainingPython
+              $installed\TrainingPython
+          "@ | Set-Content -LiteralPath $config -Encoding utf8
+          $moduleSearch = if ($env:PYTHONPATH) { "$modules;$env:PYTHONPATH" } else { $modules }
+          "PYTHONPATH=$moduleSearch" >> $env:GITHUB_ENV
+          "COVERAGE_PROCESS_START=$config" >> $env:GITHUB_ENV
       - name: Verify and measure native trainer interchange coverage
         run: |
           $installed = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision'
@@ -48,7 +87,8 @@ jobs:
             Copy-Item -LiteralPath $installed -Destination $staging -Recurse
             $assembly = Join-Path $staging 'HollowKnightVision.Windows.Host.dll'
             $verifier = Join-Path $staging 'HollowKnightVision.Windows.Host.exe'
-            $targetArgs = '-NoProfile -File "{0}" -NativeVerifier "{1}"' -f (Resolve-Path .\Test-TrainingInterop.ps1), $verifier
+            $trainer = Join-Path $installed 'training\train-model-windows.ps1'
+            $targetArgs = '-NoProfile -File "{0}" -NativeVerifier "{1}" -TrainerLauncher "{2}"' -f (Resolve-Path .\Test-TrainingInterop.ps1), $verifier, $trainer
             & $coverlet $assembly --target (Get-Command pwsh).Source --targetargs $targetArgs `
               --include '[HollowKnightVision.Windows.Host]*' --include '[HollowKnightVision.Windows.Core]*' `
               --include-test-assembly --format lcov --output $report
@@ -64,6 +104,15 @@ jobs:
           } finally {
             if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
           }
+      - name: Verify installed Windows Gym trainer
+        run: .\Test-BotGymTrainer.ps1
+      - name: Report Windows trainer Python coverage
+        run: |
+          $config = $env:COVERAGE_PROCESS_START
+          Remove-Item Env:COVERAGE_PROCESS_START
+          $installed = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\training'
+          python -B .\tests\report-trainer-python-coverage.py $config $installed artifacts\coverage\trainer-python.json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not report Windows trainer Python coverage.' }
       - name: Publish measured Windows coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -71,11 +120,6 @@ jobs:
           name: HollowKnightVision-Windows-coverage
           path: windows/artifacts/coverage/
           if-no-files-found: error
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Verify installed Windows Gym trainer
-        run: .\Test-BotGymTrainer.ps1
       - name: Publish
         run: dotnet publish src/HollowKnightVision.Windows.App/HollowKnightVision.Windows.App.csproj -c Release -r win-x64 --self-contained false -o artifacts/publish
       - uses: actions/upload-artifact@v4
