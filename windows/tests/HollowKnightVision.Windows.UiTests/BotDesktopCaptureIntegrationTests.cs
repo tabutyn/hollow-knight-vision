@@ -39,6 +39,7 @@ internal static class BotDesktopCaptureIntegrationTests
                 VerifyMatchedHackerRecording(window, Path.Combine(root, "paired-hacker"));
                 VerifyHackerVisualEvidence(window, hudFrame, Path.Combine(root, "hacker-evaluation"));
                 VerifyVisualBotRoomScope(window, hudFrame);
+                VerifyTransitionDuringCapture(window, hudFrame, Path.Combine(root, "doorway-capture"), time => availableAt = time);
             }
             finally
             {
@@ -481,6 +482,87 @@ internal static class BotDesktopCaptureIntegrationTests
                 DateTimeOffset.UnixEpoch.AddSeconds(time));
             return ((bool, LiveObjectDetectionBatch?))Method("ScopeBotDetections").Invoke(window,
                 [frame, roomGeneration, room, settling, batch])!;
+        }
+    }
+
+    private static void VerifyTransitionDuringCapture(MainWindow window, BgraFrame hudFrame, string library,
+        Action<double> setAvailableAt)
+    {
+        const double start = 500;
+        const int room = 17;
+        const double cell = BotAtlasFrontiers.CellSize;
+        var capture = new BotCaptureSession(library, "normal", "visual", Generation, start, new());
+        var pixels = FrameWithScenery(hudFrame);
+        var floor = hudFrame.Height * 3 / 4;
+        var width = hudFrame.Width;
+        var coverage = (BotVisualAtlasCoverage)Field("botVisualCoverage").GetValue(window)!;
+        var blockades = (BotBlockadeVisit)Field("botVisualBlockade").GetValue(window)!;
+        var finished = false;
+        Field("botCapture").SetValue(window, capture);
+        try
+        {
+            Step(1, .02, InputButtons.Right, sceneryX: 0);
+            Step(2, .14, InputButtons.Right, sceneryX: cell);
+            Step(3, .26, InputButtons.Right, sceneryX: cell);
+            Step(4, .38, InputButtons.Left, sceneryX: cell);
+            Check(Field("gameplayWallContacts").GetValue(window) is MainWindow.BotWallContactsFrame
+                { RoomId: room, Marks: [{ Direction: 1 }] },
+                "Before the fade the desktop must display the right wall and have begun a separate left push.");
+            var size = new WorldSize(width, hudFrame.Height);
+            var before = coverage.View(new(cell, 0), size, 1, null)
+                ?? throw new InvalidOperationException("The test needs measured visual Atlas coverage before the fade.");
+            Check(before.EarnedCells > 0 && !capture.WantsFrame(Generation, start + .41),
+                "The first fade must arrive between samples after the camera has earned coverage.");
+            Step(5, .41, InputButtons.Left, sceneryX: cell, roomTransition: true);
+            Check(Field("gameplayWallContacts").GetValue(window) is null && blockades.ActiveMarks is [{ Direction: 1 }],
+                "A between-sample fade must immediately hide wall contacts while retaining the established mark.");
+
+            Step(6, .56, InputButtons.Left, sceneryX: 2 * cell);
+            var after = coverage.View(new(2 * cell, 0), size, 1, null);
+            Check(after is not null && after.EarnedCells == before.EarnedCells && after.CoveredCells > before.CoveredCells
+                && blockades.ActiveMarks is [{ Direction: 1 }],
+                "A same-room return must resume coverage without crediting motion across the fade or finishing the pre-fade wall push.");
+
+            Step(7, .59, InputButtons.Left, sceneryX: 2 * cell, roomTransition: true);
+            Step(8, .68, InputButtons.Left, sceneryX: 2 * cell, knightVisible: false);
+            Step(9, .80, InputButtons.Left, sceneryX: 2 * cell, roomTransition: true);
+            Step(10, .92, InputButtons.Left, sceneryX: 2 * cell);
+            finished = true;
+            var clip = capture.FinishAsync(start + 1, null, completed: true).GetAwaiter().GetResult().Published.Single();
+            var path = Path.Combine(library, BotCaptureSession.DirectoryName(clip.Id), "events.jsonl");
+            var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+            var rows = File.ReadLines(path).Select(line => JsonSerializer.Deserialize<BotCaptureObservation>(line, json)!).ToArray();
+            Check(rows.Select(row => row.DetectionFrameId).SequenceEqual([1L, 2L, 3L, 4L, 6L, 8L, 9L, 10L]),
+                "Only frames due for capture must be recorded, including the diagnostic transition sample.");
+            Check(rows[5] is { KnightSource: null, KnightPrediction: null, HasMaskedKnightEvidence: true }
+                && rows[6] is { Issues: ["room-transition"], KnightSource: "visual", CanTrain: false, AtlasView: null }
+                && rows[7] is { KnightSource: "visual", CanTrain: true },
+                "The same-room occlusion must not use Knight from before the fade, and bright transition evidence must remain diagnostic.");
+            Console.WriteLine("PASS Windows desktop capture breaks wall, Atlas and Knight continuity at a room transition between samples");
+        }
+        finally
+        {
+            Field("botCapture").SetValue(window, null);
+            if (!finished) _ = capture.FinishAsync(start + 1, null, completed: false).GetAwaiter().GetResult();
+        }
+
+        void Step(long id, double elapsed, InputButtons input, double sceneryX, bool roomTransition = false,
+            bool knightVisible = true)
+        {
+            var time = start + elapsed;
+            var frame = new BgraFrame(width, hudFrame.Height, hudFrame.Stride, pixels, id, DateTimeOffset.UnixEpoch.AddSeconds(time));
+            var knight = new ObjectDetection("game.playable-knight", new(.48, .25, .04, .1), .95f)
+                { SourceFrameIdentifier = id };
+            var observedAt = (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds;
+            var batch = new LiveObjectDetectionBatch(knightVisible ? [knight] : [], id, observedAt, Generation, 0);
+            setAvailableAt(time + .01);
+            _ = Method("CaptureBotObservations").Invoke(window, [
+                frame, Generation, Generation, time, room, 1UL, null, null, batch,
+                new[] { new DetectedFloorLine(floor, new(2, width - 3)) }, TerrainWallDetection.Empty,
+                true, new AtlasPoint(0, 0), null, new AtlasPoint(width / 2d, floor), input,
+                null, 1L, GroundHypothesisTrackingResult.Empty, true, Array.Empty<PixelRect>(), null, false, null,
+                Array.Empty<GroundHypothesisAtlasLine>(), new AtlasPoint(sceneryX, 0), null, null, false, roomTransition
+            ]);
         }
     }
 
