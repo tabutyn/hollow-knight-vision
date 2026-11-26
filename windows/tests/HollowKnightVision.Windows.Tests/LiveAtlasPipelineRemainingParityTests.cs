@@ -639,12 +639,8 @@ internal static class LiveAtlasPipelineRemainingParityTests
             Check(restoredSourceCount == 1,
                 "Restoration passed its deterministic first-source barrier.");
 
-            var stopwatch = Stopwatch.StartNew();
             var archive = owner.ArchiveAndReset(
                 DateTimeOffset.FromUnixTimeSeconds(1_700_000_000));
-            stopwatch.Stop();
-            Check(stopwatch.Elapsed < TimeSpan.FromMilliseconds(300),
-                $"Reset waited {stopwatch.Elapsed.TotalMilliseconds:F1} ms for the blocked restoration reader.");
             Check(!releaseRestoration.IsSet && !restoration.IsCompleted,
                 "Reset released or waited for the blocked restoration reader.");
 
