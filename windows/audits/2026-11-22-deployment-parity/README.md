@@ -1,93 +1,105 @@
 # November deployment coverage and Windows parity
 
-The deployed source range is `b6f647c..8d67fa3`. The Mac coverage run used
-`6a15e70`, which has identical Mac sources, because the last two commits in
-the deployed range touched only Windows tests and the parity audit.
+The original deployment spans `b6f647c..8d67fa3`. The Mac coverage run used
+`6a15e70`, whose `macos/` tree matches the deployment. The reviewed main
+counters use `b6f647c..44989f75e940328c2f83c8ff0e6844ae491a68b2` and include
+all measured Windows and shared-source changes in that range. The behavior
+inventory below follows the original deployment and its Windows ports.
+[Original deployment](https://github.com/tabutyn/hollow-knight-vision/compare/b6f647c...8d67fa3), [reviewed main](https://github.com/tabutyn/hollow-knight-vision/commit/44989f75e940328c2f83c8ff0e6844ae491a68b2)
 
-Run the test inventory from the repository root to audit either the current
-checkout or a particular release candidate:
+The source inventory accounts for all **489** introduced or modified XCTest
+cases in the original deployment. It found **479** Windows test mappings,
+**10** documented dispositions, and **0** unresolved cases. It checks that the
+mapped tests still exist at the selected revision. Use `--require-accounted`
+to fail on an unresolved case.
 
 ```sh
-python3 windows/audits/2026-11-22-deployment-parity/summarize-test-parity.py --target HEAD
+python3 windows/audits/2026-11-22-deployment-parity/summarize-test-parity.py \
+  --target 44989f7 --require-accounted
 ```
 
-The report checks new XCTest methods and edits within existing test methods in
-the deployment range. Each Windows reference is checked at the selected commit.
-It reports intentionally omitted behavior with the Windows tests for the active
-behavior. `--require-accounted` fails when a surviving test has neither a mapping
-nor a documented disposition. Line counters, live gameplay and GPU execution
-still require their own evidence.
+## Measured changed-line coverage
 
-## Measured coverage
-
-| Deployed production surface | Covered changed executable lines | Coverage |
+| Build and production surface | Covered lines | Coverage |
 | --- | ---: | ---: |
-| macOS Swift | 10,652 / 15,323 | 69.52% |
-| Bot Python | 4,012 / 5,879 | 68.24% |
-| Incremental object trainer | 4 / 8 | 50.00% |
-| Python diagnostics and replay tools | 328 / 489 | 67.08% |
-| Shared receiver protocol | 61 / 61 | 100.00% |
-| Windows receiver defaults | 2 / 2 | 100.00% |
+| Original deployment, macOS Swift | 10,652 / 15,323 | 69.52% |
+| Original deployment, Bot Python | 4,012 / 5,879 | 68.24% |
+| Original deployment, incremental object trainer | 4 / 8 | 50.00% |
+| Original deployment, Python diagnostics and replay tools | 328 / 489 | 67.08% |
+| Original deployment, shared receiver protocol | 61 / 61 | 100.00% |
+| Original deployment, Windows receiver defaults | 2 / 2 | 100.00% |
+| Reviewed main, hosted Windows desktop C# | 18,545 / 19,678 | 94.24% |
+| Reviewed main, shared receiver C# in hosted Windows tests | 119 / 119 | 100.00% |
+| Reviewed main, Bot Python in hosted Windows tests | 4,768 / 6,293 | 75.77% |
+| Reviewed main, incremental object trainer on Windows | 7 / 8 | 87.50% |
+| Reviewed main, incremental object trainer across Windows and Mac | 8 / 8 | 100.00% |
 
-The measured per-file report in `artifacts/audits/2026-11-22-deployment-parity/`
-records exact uncovered line numbers and lists files without counters. Swift numbers count
-unique executable lines. The summarizer was checked against LLVM LCOV output
-for 105 source files from the previous parity audit. The native game receiver
-has five changed files without counters, including the live room reload and
-Gym entry points. The two Mac Gym observation encoders had no executed lines
-in the portable Swift suite. Unit and loopback suites do not measure runtime
-game interactions, WPF keyboard focus in a live game, XAML, or installer
-scripts.
+The original local Python runs executed 147 bot tests, 15 incremental trainer
+tests, and 56 diagnostics tests. The hosted Windows run used the installed
+desktop app, installed Python runtime, and installed Gym encoder. Attempt 2 of
+run `45812267076` tested merge commit `42c1450`, whose tree matches reviewed
+main. Artifact `15115004222` contains the four LCOV reports and the combined
+Python report from that attempt.
+[Original Mac run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45080490072), [Windows run, attempt 2](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45812267076/attempts/2), [Windows coverage artifact](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45812267076/artifacts/15115004222)
 
-- [Mac CI run and Swift coverage artifact](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45080490072)
-- Bot Python coverage came from 147 tests. Incremental training coverage came
-  from 15 tests. The four diagnostics scripts ran 56 tests under coverage.py.
-- Shared receiver coverage came from its protocol executable, and Windows
-  defaults from the deployed player-operations tests, both under Coverlet.
+The eighth changed object-trainer line writes trained-class metadata into the
+Core ML model. A local Mac run covered it by exporting an actual trained
+checkpoint, checking the class metadata, and running CPU inference. The shared
+trainer source matches the version in reviewed main. The Windows run trained
+from native captures and loaded the resulting ONNX model through raw detection.
+[Windows object trainer run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45801595494)
 
-The native Windows run for PR #222 measured 18,374 of 19,565 changed executable
-C# lines (93.91%) from `b6f647c` to the tree deployed at `13cfc63`. The installed
-startup and trainer checks passed. The run exercised all 119 changed executable
-lines from the Atlas restore and PNG reader fixes in PRs #220 through #222.
-[Windows run and coverage artifact](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45764570203)
+The coverage script lists executable misses and files without counters.
+`Mod.HackerGym.cs`, `Mod.RoomReset.cs`, and `Mod.cs` lack counters in the
+Windows receiver report. XAML, installer scripts, and nonexecutable assembly
+metadata are outside the measured C# denominator. The original Mac run also
+left both Swift Gym observation encoders without executed lines. In the latest
+Windows run, the Gym wrapper covered 320 of 351 changed executable lines and
+the PPO training script covered 1,067 of 1,779.
 
-The Windows run for PR #227 measured 18,470 of 19,619 changed executable C#
-lines (94.14%) from `b6f647c` to the tree deployed at `1ec082a`. Its desktop,
-installed startup, and Gym trainer checks passed. The workspace handoff and
-object detection default changes exercised 27 of 31 changed executable lines.
-[Windows run and coverage artifact](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45775298111)
+## Deployment behavior verified on Windows
 
-Game Play restores committed tiles and walked ground together when its tile
-cache is missing or older than the pose graph. If shutdown interrupts the first
-Atlas capture before placement, the pending capture stays on disk and the next
-session can record a new placement. The tests exercise the saved floor,
-corrected placement, and imported Mac doorway crop. Older Windows tile-only
-maps still use their compatibility reader because they lack capture poses.
-Physical Windows gameplay and hardware CUDA verification remain open.
-
-## Windows port inventory
-
-Atlas paths, Estimated Room Outlines, and Ground Tracking Patches retain
-their Debug View choices across Windows launches. Tracking patches default on
-and outlines default off. The Windows desktop regression reopens the same
-settings, checks that choosing Hacker Path also saves the enabled path display,
-and covers missing, partial, damaged, and unwritable preferences.
-
-| Deployed behavior | Windows evidence |
+| Behavior | Evidence |
 | --- | --- |
-| Reset Room returns to the room entrance and clears both atlases | Windows uses the shared receiver reload command and requires a confirmed scene from its current receiver session before replacing the active maps. R works in the Vision window and has a game-focused route scoped to the managed modded process. The desktop loopback test exercises both routes with simulated game focus and checks fresh key presses, modifier rejection, focus loss, active bot-capture protection, preservation on an unconfirmed reset, both active map replacements, profile and saved map retention, and invalidation of stale Gameplay and Hacker frames. The actual reload at the room entrance and physical key delivery with Hollow Knight focused still need live verification. |
-| Player Ops and invincibility | Invincibility starts off and applies on a single click. Windows uses the current receiver session's counters for the toggle, keeps unsent numeric edits in the form, and restores the confirmed toggle on rejection. Pending operations serialize updates and block Reset Room. The shared randomizer preserves the current game's invincibility state. Randomization after Label defaults on and saves the user's choice. Windows numeric fields use Enter or Apply. The desktop receiver loopback covers the toggle, rejection, pending controls, normalization, and the saved Label preference. |
-| Object training uses available class evidence | Windows uses the shared incremental Python trainer. The detector and raw review filter untrained heads before choosing detections. Model version fixtures cover evidence on promotion and restore. Native incremental training and live detections still need behavior-level comparison. |
-| Settings, Clear Save capture, local stencil search, and object detector controls | The draft requires Clear Save during Select Profile setup, offers it in Add until a positive box is present, and restores guidance when a reference is deleted. Eight focused Windows setup and selection tests passed. Settings has a left Atlas, Debug View, and System column. Estimated room connections are hidden by default and can be enabled from Debug View. Menu tracking uses the captured probe positions across frames. Rejected menus leave the overlay clear. Plain text rows place selector boxes beside the matched text and limit recovery to the original language reference. Hacker save-state management and detector parity remain open. |
-| Hacker terrain editing | The draft provides Ground, Wall, Spike, Door, and Rooms controls independently of the camera controls. Walls and floors share editable corners. Doors can be drawn along either axis and follow an attached floor. Terrain uses the room coordinate system, and the editor preserves the floor-only document format. Older detector records stay stored and excluded from the editor and overlay. The core tests cover corner movement, room isolation, reload, undo, both door axes, and save failures. Windows retains macOS room calibration when editing the shared terrain file. Live game rendering and behavior after leaving and returning to a room still need verification. |
-| Atlas camera shortcuts | The Windows draft cycles both workspaces through Current at 1.1× zoomed out, Current at 2× zoomed out, and Fit. The offscreen WPF viewport regression checks the requested scale and keeps the follow point centered in both Current presets. |
-| Offline ground-label evaluation | The Windows host accepts `--evaluate-ground-labels DATASET_DIRECTORY` with optional `--sweep-ground-labels` and Mac-style tuning overrides such as `--ground-threshold=12`. It reads saved frame labels, scores only fully reviewed Train and Check frames in their respective totals, and writes a schema-3 JSON report in `evaluations`. Its base parameters and default sweep candidate use the semantic detector defaults. The test runs both report modes on a saved macOS ImageIO RGB capture and confirms the dataset is unchanged. The Windows reader supports bounded non-interlaced RGB8 and RGBA8 captures. The macOS report types decoded the Windows sweep output. Live label creation and import remain to be ported. |
-| Recorded camera diagnostics | The Windows Host evaluates a recorded path with `--evaluate-low-resolution-trace`. It can write the report using `--low-resolution-report` and reconstruct the trace from a saved Atlas using `--low-resolution-world-evidence`. Native Windows reconstruction joins the exact capture timestamp even if Atlas masking removed the barcode. macOS evidence uses its saved wall-clock window and frame marker. Offline visual replay exports the visual trace. Both scoring tools join receiver measurements from the original recording, and the Host scorer accepts it through `--low-resolution-reference`. Regression tests execute the Host against saved traces with both clock formats and confirm that the input and evidence manifest remain intact. A saved macOS run and a 170-frame Windows Atlas were read locally. A fresh prefix replay retained 150 exact receiver matches and marked 137 of them as reliable ground. The macOS report types decoded the Windows results. |
-| Game Play visual tracking | Windows rejects fully enclosed shorter floors within the Knight’s height and trims a slight overlap at supported platform tips. Game Play records level walks when frame-matched arrows, visible foot samples, and a verified camera agree. The draft keeps walked spans by room for the current capture and uses one green line over walked columns while keeping tracking boxes visible. Synthetic frames verify dark intervals, reversing, room isolation, and jump rejection. Camera references now need at least one patch width of floor support. Short platforms can show their own box after two adjacent, unmasked, registered observations. Existing live boxes align with the current floor and saved boxes show outside the live image. In both game modes, graph-backed atlases save admitted walks with their room observations and reproject them when recovering a room or correcting the atlas. The store and pipeline regressions exercise reopen, new-column admission, stale pose correction, and room isolation. Game Play detects walls from visual edges and textured platform faces. It joins nearby visible floor endpoints and uses sustained, corroborated movement contact to extend wall evidence. The overlay draws corner markers and horizontal joins. Native fixtures verify visual wall evidence in bot observations and archived wall replay. Live Windows recordings remain open. |
-| Atlas objectives, jumps, one-way drops, and path display | The draft builds a directed graph from authored Hacker terrain. Verified fixtures cover a continuous walked span, the measured jump apex, authored obstacles, one-way falls, and steered branches. Objective is the default Hacker tool. The atlas shows paths beyond the visited tiles, draws the selected route in white, and gates the path display on active gameplay and the Debug View setting. Game Play builds the directed graph from visual floors, persistent walks, and corroborated walls. It advances the automatic objective through reachable shelves, requires observed space along automatic descents, and limits unregistered paths to the originating image. Combat edges cannot cut a previously exposed floor without support. The Hacker Path tool adds and deletes jump and double-jump connections. Saved links use the shared room and scene formats, and choosing Path enables the Debug View setting. Deeper navigation and reward parity, plus live Windows interaction, remain open. |
-| Paired bot capture and runtime, human evidence, policy selection, and Gym PPO | K captures both domains from one modded run in either workspace. Normal Game Play produces a visual-only clip. The two observations use the same frame clock and input path, with authored markings and mod actors in Hacker and current visual detections in Game Play. The shared Python fixture verifies exact actions, compact observation versions, held attacks, and blue-health outcomes. Bot Summary updates when eligible clips are published and previews the stored terrain in green for Hacker and blue for Game Play. The Windows host supports the trainer’s native policy verification command and checks both checkpoint hashes and CPU logits. Bot Summary selects the latest complete verified checkpoint for each domain, or honors an explicit rollback through the previous newest version. The native policy input history matches the trainer field by field across all 16 deployed checkpoint schemas, including masked visual captures, previous controls, landing motion, and room resets. The shared trainer uses an OS file lock on both platforms for checkpoint publication and Gym worker ownership, including the queue time limit. Gym subprocess replies use a complete-line read with a deadline on both platforms. B toggles modded Game Play or Hacker playback using the selected domain and latest verified policy. The input bridge revokes stale controls, releases on deactivation and mode changes, and yields to manual input. The startup flow accepts the highlighted profile and pulses X/Z through the opening until fresh HUD confirmation. It works before training by starting the built-in policy once gameplay is ready. The native loopback tests verify empty slot-4 backup, skip pulses through conflicting menu cues, and a return to Hacker with the same controller lease. The startup heartbeat releases the lease if capture stalls. Native game runs and live route and Atlas coverage inputs remain open. The Hacker Gym executable now returns authored terrain, frame-matched mod actors, Atlas footprint, route reachability, directional movement rewards, and stationary push evidence through the shared Gym pipe. Its default objective follows the authored upper-right platform, and the encoder preserves fall steering and reward history during camera calibration changes. Game Play Gym reads Unity RGB frames and uses Windows ONNX detection, captured HUD stencils, visual ground and wall tracking, and verified episode Atlas footprints. The authored route supplies guidance and reward independently of visual actors and health. The Windows subprocess fixture changes mod actors, camera, and health and checks that the visual features remain identical. Game Play Gym loads the active detector’s verified ONNX calibrations and adds their receipt and model digests to the training identity. The interchange fixture exercises default and explicit Knight calibrations and reads the recovered confidence from the policy input. Physical Windows gameplay and live end-to-end training remain open. |
+| Settings, Atlas Debug View, and camera | Atlas, Debug View, and System use the left column. The Atlas settings match across modes, and Hacker retains its bottom camera controls. Tracking patches default on and estimated room outlines default off. Offscreen WPF checks both modes cycle through Current at 1.1×, Current at 2.0×, and Fit, and that path display follows its persisted preference. Choosing Hacker Path also enables that preference. [Tab framing run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45087249498), [Debug View tests](https://github.com/tabutyn/hollow-knight-vision/pull/215) |
+| Menu stencils and gameplay recognition | Select Profile requires a visible Clear Save. Add keeps offering it until there is a positive box, and deleting a reference restores capture guidance. Captured probe locations constrain stencil matches. Selector rectangles align with text when the select decoration differs. Reference priority, HUD confirmation, and stale or conflicting menu evidence have regression tests. Screenshot setup is optional, and object detection enables classes with training evidence. [Menu and stencil tests](https://github.com/tabutyn/hollow-knight-vision/pull/168), [profile and HUD tests](https://github.com/tabutyn/hollow-knight-vision/pull/173), [stencil recovery tests](https://github.com/tabutyn/hollow-knight-vision/pull/228) |
+| Hacker terrain editing and rooms | Ground, Wall, Spike, Door, Rooms, Path, and Objective are available independently of the camera. The editor tests vertical wall and horizontal floor constraints, attached corners, both door axes, room isolation, reload, undo, and save failure. Authored markings retain their calibration and remain scoped to their room. The native receiver loopback verifies separate authored floors across room visits and floor alignment across a doorway with both contacts. [Native terrain run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45086876700), [room-boundary run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45785879137) |
+| Game Play floor, wall, and corner tracking | Registered replay and synthetic frames exercise dark occlusions, changes in walk direction, jumping, support for short platform patches, wall contact, and persisted walls. Frame-matched arrows, observed feet, and a verified level camera establish walked ground. Tests cover rejecting enclosed shorter floors within the Knight’s height, adjusting slight overlap at longer platform tips, keeping a continuous walked span through combat clutter, and restoring ground with corrected Atlas poses. Offscreen rendering tests exercise a single live ground stroke with tracking boxes. The Game Play overlay hides the vertical debug marks. [Walked-ground run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45089001817), [wall and corner run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45098167394), [terrain replay tests](https://github.com/tabutyn/hollow-knight-vision/pull/187) |
+| Atlas placement, objectives, and routes | Pose-graph tests cover committed room imagery, walked ground, interrupted initial capture, and saved Mac doorway crops. The route tests cover connected shelving, clearing jumps, directed drops with steering branches, and suppression of duplicate drop links between jump-connected platforms. Hacker defaults to Objective, which accepts clicks along authored paths beyond the visited area and highlights the route. Choosing Path enables the overlay preference and supports editing jump and double-jump connections. Game Play gates its overlay on active gameplay and uses registered or current-frame visual terrain. [Objective tests](https://github.com/tabutyn/hollow-knight-vision/pull/166), [Path gesture tests](https://github.com/tabutyn/hollow-knight-vision/pull/223), [Atlas recovery tests](https://github.com/tabutyn/hollow-knight-vision/pull/222) |
+| Reset Room and player controls | The installed desktop loopback verifies that both Atlas replacements wait for a confirmed reset, preserves the saved profile data, invalidates stale frames, and exercises R with simulated game focus. It also checks invincibility starts off, updates once per click and recovers on rejection. The shared receiver command requests a fresh load at the room entrance. [Receiver build and installation](https://github.com/tabutyn/hollow-knight-vision/pull/214), [reset and private skill controls](https://github.com/tabutyn/hollow-knight-vision/pull/211) |
+| Object training and class admission | The installed trainer tests initial and incremental training from the native Windows export. The incremental run keeps a certified class with validation-only data, admits the newly labeled Geo class, and excludes a new validation-only class and an uncertified legacy head. The installed ONNX detector loads the exported model and checks its class metadata and decoded output. [Native training run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45801595494) |
+| Bot capture, preview, and model selection | K captures both domains from one modded run in either workspace. Unmodded Game Play captures the visual domain. Hacker observations carry authored terrain and mod actors. Game Play observations carry visual terrain and detections. Tests verify the shared frame clock, exact actions, stored clip preview, eligible publication into Bot Summary, and newest verified model selection with explicit rollback. Bot verification compares hashes and CPU logits. Tests cover masked Knight observations and clearing stale input or tracking at a room boundary. [Paired training tests](https://github.com/tabutyn/hollow-knight-vision/pull/216), [masked Knight run](https://github.com/tabutyn/hollow-knight-vision/pull/230), [capture transition run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45792276934) |
+| Bot startup and control | Native loopback runs cover B before the first trained model, opening the highlighted save, and pulsing X and Z across conflicting menu cues until fresh gameplay HUD evidence arrives. The tests cover the controller lease, startup heartbeat and stalled capture, deactivation, and switching mode. [Pre-training startup tests](https://github.com/tabutyn/hollow-knight-vision/pull/227), [watchdog tests](https://github.com/tabutyn/hollow-knight-vision/pull/225) |
+| Gym rewards and PPO persistence | The installed Gym encoder and simulated receiver exercise both domains, exact action masks, held-attack penalty, blue-health reward, timing, aborts, and cleanup. Both real PPO learners update from Gym transitions, save their private optimizer and actor state, and resume it after restart. The Game Play run loads the active installed detector and HUD stencils. The stationary fixture retains the verified playable model because the new candidate earns no qualifying gain. [Receiver and encoder run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45805590109), [both-domain PPO run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45812267076/attempts/2) |
+| Offline diagnostics | Windows Host replays recorded low-resolution camera traces and reconstructs reports from saved Atlas evidence, including archival Mac timestamps and masks. A saved Mac run and a 170-frame Windows Atlas were read locally. A fresh prefix replay matched 150 receiver frames and marked 137 reliable for ground. Windows also evaluates and sweeps the saved ground-label dataset format, including the deployed detector thresholds. The older offline label authoring and import tools fall outside the changed evaluator scope. [Recorded terrain tests](https://github.com/tabutyn/hollow-knight-vision/pull/187), [recorded Atlas recovery tests](https://github.com/tabutyn/hollow-knight-vision/pull/194) |
+
+## Live verification pending
+
+- A modded Hollow Knight session on Windows is needed to verify key delivery
+  with the game focused, the Unity receiver’s actual room-entrance reload,
+  and visual tracking, room alignment, and enemy and Geo observations while
+  playing. The hosted tests use archived frames and a simulated receiver.
+- PPO checkpoint persistence is verified on Windows. Measuring improvement at
+  pit recovery, damage, combat, and Atlas exploration requires repeatable live
+  episodes against the existing policy.
+- CUDA selection and fallback have tests. Running the CUDA kernel and measuring
+  speed and agreement with the CPU path requires a compatible Windows GPU.
+  [Windows CUDA port](https://github.com/tabutyn/hollow-knight-vision/pull/201)
 
 ## Reproduce the changed-line report
+
+From the repository root, extract artifact `15115004222` and run the report
+with the paths to the extracted files.
+
+```sh
+python3 windows/audits/2026-11-22-deployment-parity/summarize-coverage.py \
+  b6f647c 44989f7 --python-json trainer-python.json \
+  --lcov desktop-core.info --lcov desktop-ui.info \
+  --lcov receiver.info --lcov trainer-interop.info
+```
+
+The local Mac object-trainer result can be included with a second
+`--python-json` pointing to its coverage.py report.
 
 Fetch the Swift JSON artifact for the matching revision and supply the coverage.py
 JSON and Coverlet LCOV reports that were collected from that same source. The
@@ -113,14 +125,14 @@ reached 10 of 20 measured changed lines in the viewport policy. Those
 runs lacked WPF counters because Coverlet could not resolve desktop framework
 types. The coverage build now stages the WPF tests with their framework and
 checks that the offscreen renderer produces WPF app line hits. Installer
-scripts and XAML themselves have no executable line counters.
+scripts fall outside the C# line coverage report.
 
 The [walked-ground native test run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45089001817)
 passed and reached 291 of 308 changed executable lines in the instrumented
 files. The focused platform-patch tests reached 71 of 71 changed Core lines.
 
 The [WPF instrumentation run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45089975353)
-passed. Across the draft up to `19bd296`, native suites reached 949 of 1,381
+passed. At `19bd296`, native suites reached 949 of 1,381
 changed C# lines (68.72%). The ground renderer reached 48 of 49 changed lines.
 Most window event handlers had counters and received few or no hits.
 
@@ -136,7 +148,7 @@ new or changed live window integration lines still need runtime coverage.
 
 The [native pipeline instrumentation run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45092008893)
 confirmed 46 of 46 changed live-world pipeline lines. At `d3eb18b`, coverage
-was 1,044 of 1,517 changed C# executable lines across the draft, including WPF.
+was 1,044 of 1,517 changed C# executable lines across that port revision, including WPF.
 
 
 The [native wall-detector run](https://github.com/tabutyn/hollow-knight-vision/actions/runs/45098167394)
