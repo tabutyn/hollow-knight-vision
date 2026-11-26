@@ -213,6 +213,13 @@ internal static class BotDesktopEvaluationTests
                 }
                 finally { Field("trainingInProgress").SetValue(window, false); }
             }
+            Check(PressB(button) && Field("botPlayback").GetValue(window) is not null,
+                "The Hacker bot must start before testing a manual workspace change.");
+            var workspaceRun = Field("botPlayback").GetValue(window)!;
+            var workspaceOwner = (Guid)workspaceRun.GetType().GetProperty("Owner", Instance)!.GetValue(workspaceRun)!;
+            Check(Method("SelectWorkspace").Invoke(window, ["Gameplay", false, false]) is true
+                && Field("botPlayback").GetValue(window) is null && !bridge.OwnsBotControl(workspaceOwner),
+                "A manual workspace change must end the active Hacker bot run and release its controls.");
             Console.WriteLine("PASS Windows B starts either bot before training and preserves text entry, dialogs, and modifiers");
             Console.WriteLine("PASS Windows B respects stencil readiness and active trainers while preserving Stop");
 
@@ -329,9 +336,7 @@ internal static class BotDesktopEvaluationTests
             await Task.Delay(100, token);
             SubmitFrame();
             await Expect(Action);
-            Check(Method("SelectWorkspace").Invoke(window, ["Gameplay", false, false]) is true
-                && Field("botPlayback").GetValue(window) is null,
-                "A manual workspace change must end the active Hacker bot run.");
+            _ = Method("StopBotPlayback").Invoke(window, [null, "user-stop"]);
             await Expect(InputButtons.None);
             await ((Task)Field("botEvaluationWrites").GetValue(window)!).WaitAsync(token);
             var directory = Directory.GetDirectories(Path.Combine(botRoot, "evaluations", "hacker")).Single();
