@@ -148,11 +148,44 @@ internal static class BotDesktopEvaluationTests
             Keyboard.Focus(button);
             await WaitFor(() => button.IsKeyboardFocused);
             Check(PressB(button) && Field("botPlayback").GetValue(window) is null
+                && status.Text == "Complete stencil setup before starting the bot.",
+                "B should identify the unfinished stencil campaign before requesting receiver control.");
+            var examples = new LabelingExampleStore(Path.Combine(root, "labeling-v1", "examples"));
+            var stencilImage = HudStencilTests.SaveGameplayReference(examples);
+            foreach (var context in StencilInitializationPolicy.Contexts(GameRuntimeMode.Modded)
+                .Where(context => context.Identifier is "main-title" or "select-profile"))
+            {
+                var labels = context.Requirements.SelectMany(requirement => Enumerable.Range(0, requirement.Count)
+                    .Select(_ => new LabelingExampleAnnotation(Guid.NewGuid(), requirement.Identifier, .1, .2, .1, .04)))
+                    .ToArray();
+                examples.Save(stencilImage, context.Identifier, labels, languageIdentifier: "en");
+            }
+            var setup = (StencilInitializationCoordinator)Field("initialization").GetValue(window)!;
+            ((WindowsMenuStencilRecognizer)Field("menuStencilRecognizer").GetValue(window)!).Refresh(setup.LanguageIdentifier);
+            Method("RefreshInitializationStatus").Invoke(window, null);
+            Check(setup.IsFirstPhaseComplete, "The captured menu and HUD references must unlock the first campaign.");
+
+            Check(PressB(button) && Field("botPlayback").GetValue(window) is null
                 && !Directory.Exists(Path.Combine(root, "bot-v1", "evaluations"))
                 && status.Text == "Release the controls and finish the current recording or replay before starting the bot.",
                 "An unavailable receiver must report the failure and remain outside playback.");
             bridge.Start();
             await WaitFor(() => bridge.PauseState == GamePauseState.Ready);
+
+            VerifyTrainingBlocksStart("trainingInProgress", true, false);
+            using (var runningTraining = new CancellationTokenSource())
+                VerifyTrainingBlocksStart("botTrainingCancellation", runningTraining, null);
+
+            Field("workspace").SetValue(window, "Gameplay");
+            Field("recognizedMenuContext").SetValue(window, "select-profile");
+            Keyboard.Focus(button);
+            await WaitFor(() => button.IsKeyboardFocused);
+            Check(PressB(button) && Field("botPlayback").GetValue(window) is { } menuRun
+                && menuRun.GetType().GetProperty("Demo", Instance)?.GetValue(menuRun) is not null,
+                "B must start the menu demo with a complete stencil campaign and no trained model.");
+            Check(PressB(button) && Field("botPlayback").GetValue(window) is null,
+                "B must stop the menu demo.");
+            Field("recognizedMenuContext").SetValue(window, "game");
 
             foreach (var (workspace, domain) in new[] { ("Gameplay", BotCaptureDomain.Gameplay), ("Hacker", BotCaptureDomain.Hacker) })
             {
@@ -170,10 +203,28 @@ internal static class BotDesktopEvaluationTests
                 var selected = loaded.GetValue(run);
                 Check(selected?.GetType().GetProperty("ModelName")?.GetValue(selected)
                     is "Built-in playing policies", "The untrained bot must load the built-in policy.");
-                Check(PressB(button) && Field("botPlayback").GetValue(window) is null,
-                    "A second B press must stop the current bot.");
+                Field("trainingInProgress").SetValue(window, true);
+                try
+                {
+                    Check(PressB(button) && Field("botPlayback").GetValue(window) is null,
+                        "A second B press must stop the current bot even while training.");
+                }
+                finally { Field("trainingInProgress").SetValue(window, false); }
             }
             Console.WriteLine("PASS Windows B starts either bot before training and preserves text entry, dialogs, and modifiers");
+            Console.WriteLine("PASS Windows B respects stencil readiness and active trainers while preserving Stop");
+
+            void VerifyTrainingBlocksStart(string field, object active, object? idle)
+            {
+                Field(field).SetValue(window, active);
+                try
+                {
+                    Check(PressB(button) && Field("botPlayback").GetValue(window) is null
+                        && status.Text == "Wait for training to finish before starting the bot.",
+                        "B must leave receiver controls available while training is already in progress.");
+                }
+                finally { Field(field).SetValue(window, idle); }
+            }
 
             bool LocalB(bool repeat = false, ModifierKeys modifiers = ModifierKeys.None) =>
                 (bool)Method("HandleLocalShortcut").Invoke(window, [Key.B, repeat, modifiers])!;
@@ -956,8 +1007,37 @@ internal static class BotDesktopEvaluationTests
             await window.RefreshBotLibraryAsync().WaitAsync(token);
             Check(both.IsEnabled && pending.Text == "2 new runs · Hacker 2 · Game Play 2",
                 "Train Both must be available when both sides of the paired captures are eligible.");
+            Field("trainingInProgress").SetValue(window, true);
+            try
+            {
+                Method("UpdateBotTrainingControls").Invoke(window, null);
+                Check(!both.IsEnabled && !stop.IsEnabled
+                    && status.Text == "Wait for Model training to finish before training the bot.",
+                    "An active object trainer must disable both bot trainer entry points.");
+                both.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                stop.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Check(!Training() && !Directory.Exists(runs),
+                    "Neither bot trainer should launch while Model training is active.");
+            }
+            finally
+            {
+                Field("trainingInProgress").SetValue(window, false);
+                Method("UpdateBotTrainingControls").Invoke(window, null);
+            }
+            var modelTraining = (TrainingControlsPanel)window.FindName("TrainingControls");
+            Field("hasGameplayTrainingLabels").SetValue(window, true);
+            Method("UpdateModelTrainingControls").Invoke(window, null);
+            Check(modelTraining.TrainButton.IsEnabled, "The Model trainer should be available before the bot starts.");
             Start();
+            Check(!modelTraining.TrainButton.IsEnabled
+                && modelTraining.TrainButton.ToolTip is "Wait for bot training to finish before starting Model training."
+                && Method("AdmitModelTraining").Invoke(window, null) is false,
+                "An active bot trainer must disable the Model button and reject its direct start.");
+            await ((Task)Method("RunTrainerAsync").Invoke(window, [true])!).WaitAsync(token);
+            Check(Field("trainingInProgress").GetValue(window) is false,
+                "Dataset validation must wait while the bot trainer owns the training workspace.");
             await WaitFor(() => !Training() && pending.Text == "0 new runs · Hacker 0 · Game Play 0");
+            Check(modelTraining.TrainButton.IsEnabled, "The Model trainer must be available again when the bot job finishes.");
             Check(status.Text.Contains("Game Play is using Paired Game Play.", StringComparison.Ordinal)
                 && status.Text.Contains("Hacker is using Paired Hacker.", StringComparison.Ordinal) && !both.IsEnabled,
                 "Training both bots should report both selected checkpoints and clear both pending counts.");
@@ -1012,6 +1092,7 @@ internal static class BotDesktopEvaluationTests
             await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
         }
         Console.WriteLine("PASS Train Both queues domain-specific training, stops the queue, and preserves independent checkpoints");
+        Console.WriteLine("PASS Windows Model and bot trainers exclude each other and restore their controls when idle");
 
         HashSet<Guid> SelectedClips(string model) => JsonSerializer.Deserialize<Guid[]>(File.ReadAllBytes(
             Path.Combine(runs, model[4..], "selection.json")), Json)!.ToHashSet();

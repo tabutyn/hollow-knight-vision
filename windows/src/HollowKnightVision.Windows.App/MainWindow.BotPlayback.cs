@@ -97,6 +97,16 @@ public partial class MainWindow
             SetStatus("Bot playback requires an active modded game capture.");
             return;
         }
+        if (trainingInProgress || botTrainingCancellation is not null)
+        {
+            SetStatus("Wait for training to finish before starting the bot.");
+            return;
+        }
+        if (!initialization.IsFirstPhaseComplete)
+        {
+            SetStatus("Complete stencil setup before starting the bot.");
+            return;
+        }
         thinkingAutomatic = true;
         PresentThinking();
         await StartBotPlaybackAsync();

@@ -7,6 +7,7 @@ namespace HollowKnightVision.Windows.App;
 
 public partial class MainWindow
 {
+    private const string WaitForBotTraining = "Wait for bot training to finish before starting Model training.";
     private CancellationTokenSource? trainingCancellation;
     private Task<TrainingProcessResult>? trainingProcessTask;
     private TrainingRunWorkspace? trainingRunWorkspace;
@@ -33,16 +34,23 @@ public partial class MainWindow
     private void UpdateModelTrainingControls()
     {
         if (TrainingControls is null || initialization is null) return;
-        var help = hasGameplayTrainingLabels
+        var botIsTraining = botTrainingCancellation is not null;
+        var help = botIsTraining ? WaitForBotTraining : hasGameplayTrainingLabels
             ? initialization.Text("updateModel", ("model", LabelingSharedModelPolicy.ModelName))
             : initialization.Text("enableTraining");
-        TrainingControls.Update(untrainedImageCount, hasGameplayTrainingLabels, trainingInProgress, trainingStopping, trainingFinalizing,
+        TrainingControls.Update(untrainedImageCount, hasGameplayTrainingLabels && !botIsTraining,
+            trainingInProgress, trainingStopping, trainingFinalizing,
             trainingProgress, help, key => initialization.Text(key));
         RefreshGuidance();
     }
 
     private bool AdmitModelTraining()
     {
+        if (botTrainingCancellation is not null)
+        {
+            SetStatus(WaitForBotTraining);
+            return false;
+        }
         // Reload saved labels immediately before export and launch.
         RefreshExamples();
         if (hasGameplayTrainingLabels && !trainingInProgress) return true;
@@ -79,7 +87,15 @@ public partial class MainWindow
     private async Task RunTrainerAsync(bool validateOnly)
     {
         if (trainingInProgress || isClosing) return;
-        try { if (!validateOnly && !AdmitModelTraining()) return; }
+        try
+        {
+            if (!validateOnly && !AdmitModelTraining()) return;
+            if (validateOnly && botTrainingCancellation is not null)
+            {
+                SetStatus(WaitForBotTraining);
+                return;
+            }
+        }
         catch (Exception error) { ShowError(error); return; }
         try
         {
@@ -104,6 +120,7 @@ public partial class MainWindow
             }
             trainingCancellation = new(); trainingInProgress = true; trainingStopping = trainingFinalizing = false;
             trainingProgress = "Preparing data…"; TrainingLogText.Clear(); UpdateModelTrainingControls();
+            UpdateBotTrainingControls();
             SetStatus(validateOnly ? "Validating dataset on CPU…" : "Training ONNX model on CPU…");
             trainingOutputPump ??= new(Dispatcher, ApplyTrainingOutput); var token = trainingOutputPump.Begin();
             Action<TrainingOutputSnapshot> changed = snapshot => trainingOutputPump.Post(token, snapshot);
@@ -135,6 +152,7 @@ public partial class MainWindow
                 try { RefreshExamples(); SetStatus(status); }
                 catch (Exception error) { ShowError(error); }
                 UpdateModelTrainingControls();
+                UpdateBotTrainingControls();
             }
         }
     }
