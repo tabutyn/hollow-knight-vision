@@ -1,5 +1,6 @@
 import base64
 from collections import Counter
+from errno import EACCES
 import io
 import json
 import os
@@ -593,6 +594,39 @@ class HackerGymTests(unittest.TestCase):
             reply.write_text(json.dumps(dict(initial, simulationHz=60, renderHz=60)))
             with self.assertRaisesRegex(RuntimeError, "simulation timing"):
                 env._receive(0)
+
+    def test_windows_reply_retries_sharing_errors_during_read_and_removal(self):
+        with TemporaryDirectory() as directory:
+            env = HackerGym(game="game", vision="vision", labels="labels", version=7)
+            env.directory, env.episode = Path(directory), "fresh"
+            env.worker = SimpleNamespace(poll=lambda: None)
+            env.render_hz = 60
+            reply = env.directory / "reply.json"
+            initial = dict(step=0, episode=env.episode, noSave=True, invincible=False, ticks=0)
+            payload = json.dumps(initial).encode()
+            reply.write_bytes(payload)
+
+            with patch("hacker_gym.os", SimpleNamespace(name="nt")), \
+                    patch("hacker_gym.time.sleep") as sleep, \
+                    patch.object(Path, "read_bytes", side_effect=[PermissionError(EACCES, "File is busy"), payload]) as read, \
+                    patch.object(Path, "unlink", side_effect=[PermissionError(EACCES, "File is busy"), None]) as remove:
+                self.assertEqual(env._receive(0), initial)
+                self.assertEqual(read.call_count, 2)
+                self.assertEqual(remove.call_count, 2)
+                self.assertEqual(sleep.call_count, 2)
+            self.assertEqual(env.last_frame, initial)
+
+    def test_windows_reply_sharing_error_respects_the_deadline(self):
+        with TemporaryDirectory() as directory:
+            env = HackerGym(game="game", vision="vision", labels="labels", version=7, deadline=0)
+            env.directory = Path(directory)
+            env.worker = SimpleNamespace(poll=lambda: None)
+            (env.directory / "reply.json").touch()
+            with patch("hacker_gym.os", SimpleNamespace(name="nt")), \
+                    patch.object(Path, "read_bytes", side_effect=PermissionError(EACCES, "File is busy")):
+                with self.assertRaisesRegex(TimeoutError, "stopped responding at step 0"):
+                    env._receive(0)
+            self.assertIsNone(env.last_frame)
 
     def test_reset_relaunches_an_invalid_spawn_with_the_same_seed_and_render_rate(self):
         env = HackerGym(game="game", vision="vision", labels="labels", version=7)
