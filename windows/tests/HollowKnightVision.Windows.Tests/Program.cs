@@ -340,6 +340,7 @@ var tests = new List<(string Name, Action Run)>
     ("ground surface fragments cannot borrow support across a step", GroundSurfaceEvidenceTests.TestSplitFragmentCannotBorrowBodySupportAcrossStep),
     ("ground surface bottom band keeps clipped floor and rejects decoration", GroundSurfaceEvidenceTests.TestVisibleBottomBandRejectsDecorationAndKeepsClippedFloor),
     ("ground surface rejected decoration cannot suppress nearby floor", GroundSurfaceEvidenceTests.TestRejectedDecorationCannotSuppressNearbyRealFloor),
+    ("Mac wall replay retains the original archived floor support rules", GroundSurfaceEvidenceTests.TestMacReplayUsesTheOriginalSurfaceRule),
     ("ground surface dark gaps cannot approve bright edges", GroundSurfaceEvidenceTests.TestEvidenceScoringDoesNotLetDarkGapApproveBrightEdge),
     ("ground surface masked pixels do not change body support", GroundSurfaceEvidenceTests.TestMaskedPixelsDoNotChangeSupportedBodyVote),
     ("ground labels reject bright decoration and keep dark platform body", TestSurfaceSupportRejectsBrightDecorationAndKeepsDarkPlatformBody),
