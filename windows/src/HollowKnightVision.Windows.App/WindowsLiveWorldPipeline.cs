@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using HollowKnightVision.Windows.Core;
 
 namespace HollowKnightVision.Windows.App;
@@ -188,6 +189,18 @@ internal sealed class WindowsLiveWorldPipeline
 
     internal bool HasDurableEvidence => Volatile.Read(ref hasDurableEvidence);
     internal LiveWorldGroundProjection SavedWorld => Volatile.Read(ref savedGround);
+
+    internal int? TileCacheWorldRevision(long registrations)
+    {
+        lock (gate)
+        {
+            // There may be unreadable or tile-only data with no recoverable
+            // graph. A cache containing those pixels cannot be replayed.
+            if (committedGraph is not { Observations.Count: > 0 } graph) return null;
+            return registrations == graph.Observations.Count - graph.UnplacedObservationIds().Count
+                ? graph.MapRevision : null;
+        }
+    }
 
     internal WindowsLiveWorldPipeline(string rootDirectory)
         : this(rootDirectory, transactionObserver: null, transactionFault: null) { }
@@ -1132,21 +1145,23 @@ internal sealed class WindowsLiveWorldPipeline
     }
 
     internal static IReadOnlyDictionary<int, VisualRoomCompositionBounds>? RestorePortableRoomTopology(
-        string directory, LiveWorldSnapshot snapshot)
+        string directory, LiveWorldSnapshot snapshot, bool repair = true)
     {
         // Legacy Mac portals are separately persisted in world coordinates.
         // Preserve their horizontal crop boundaries while the graph owns floor elevation.
         var path = Path.Combine(directory, "visual-rooms.json");
-        if (!File.Exists(path) && (!snapshot.UsesSwiftWireFormat || snapshot.Observations.Count == 0)) return null;
+        if (!File.Exists(path) && (!repair || !snapshot.UsesSwiftWireFormat || snapshot.Observations.Count == 0)) return null;
         try
         {
             var topology = new VisualRoomTransitionTracker();
-            var restored = topology.RestoreOrImportDisconnectedRooms(path, snapshot);
+            var restored = repair
+                ? topology.RestoreOrImportDisconnectedRooms(path, snapshot)
+                : topology.RestoreTopology(path);
             if (snapshot.Observations.FirstOrDefault() is { } entry && restored.RoomID != entry.RoomId
                 && snapshot.Observations.All(observation => observation.RoomId == entry.RoomId))
             {
                 topology.RestoreActiveRoomFromDurableEvidence(entry.RoomId, entry.OptimizedPose);
-                topology.SaveTopology(path);
+                if (repair) topology.SaveTopology(path);
             }
             if (snapshot.UsesSwiftWireFormat && restored.Portals.Count > 0)
             {
@@ -1154,7 +1169,7 @@ internal sealed class WindowsLiveWorldPipeline
                     .Distinct().ToDictionary(room => room, topology.CompositionBounds);
             }
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
         {
             // A failed backup leaves the original sidecar untouched. The
             // independently validated world can still be displayed.

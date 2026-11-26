@@ -161,6 +161,71 @@ internal static class ActiveAtlasReplacementTests
         });
     }
 
+    public static void TestReopenRebuildsTilesFromCommittedWorld()
+    {
+        WithTemporaryDirectory(root =>
+        {
+            const int tileSize = 32;
+            var active = Directory.CreateDirectory(Path.Combine(root, "active")).FullName;
+            var evidence = new LiveWorldSessionStore(Path.Combine(active, "live-world"));
+            var metadata = new VisionResetController.PersistedAtlasMetadata(0, DateTimeOffset.UnixEpoch, tileSize, 1);
+            VisionResetController.WritePersistedAtlasMetadata(active, metadata);
+            var firstImage = SolidTile(tileSize, blue: 17, green: 21, red: 25);
+            var nextImage = SolidTile(tileSize, blue: 65, green: 71, red: 75);
+
+            LiveWorldObservation Append(BgraFrame frame, double timestamp, AtlasPoint pose)
+            {
+                var source = evidence.Append(frame, timestamp, pose, tileSize);
+                return LiveWorldObservation.Create(source.Id, source.Id, timestamp, tileSize, tileSize,
+                    tileSize, tileSize, [], pose, pose);
+            }
+
+            var first = Append(firstImage, 1, new AtlasPoint(16, -16));
+            var initialWorld = new LiveWorldSnapshot(mapRevision: 1, anchoredObservationId: first.Id, observations: [first]);
+            Check(evidence.Commit(initialWorld, 0, 1), "The first image must reach the committed graph.");
+            var beforeFirstFlush = SnapshotTree(active);
+            var recovered = VisionResetController.ReadPersistedAtlas(active);
+            CheckAtlas(recovered, metadata with { RegistrationCount = 1, WorldMapRevision = 1 }, new(0, 0),
+                firstImage, "first committed frame before the tile flush");
+            CheckTree(beforeFirstFlush, SnapshotTree(active), "Rebuilding flushed an unrequested Atlas change.");
+
+            var pipeline = new WindowsLiveWorldPipeline(evidence.RootDirectory);
+            Check(pipeline.TileCacheWorldRevision(recovered.Mosaic.AcceptedFrameCount) == 1
+                && pipeline.TileCacheWorldRevision(2) is null,
+                "Only a cache with the graph's registration count can carry the graph revision.");
+            WritePersistedAtlas(active, recovered.Metadata, new(0, 0), firstImage);
+            CheckAtlas(VisionResetController.ReadPersistedAtlas(active), recovered.Metadata, new(0, 0),
+                firstImage, "tiles at the current graph revision");
+
+            var second = Append(nextImage, 2, new AtlasPoint(112, -16)) with
+            {
+                WalkedGround = [new(-10, 10, -4)]
+            };
+            var movedFirst = first with { OptimizedPose = new(80, -16) };
+            var latestWorld = new LiveWorldSnapshot(mapRevision: 2, anchoredObservationId: first.Id,
+                observations: [movedFirst, second]);
+            Check(evidence.Commit(latestWorld, 1, 2), "The corrected placement must reach the graph before the tile flush.");
+            var staleTree = SnapshotTree(active);
+            var reopened = VisionResetController.ReadPersistedAtlas(active);
+            var tiles = reopened.Mosaic.Snapshot();
+            Check(reopened.Metadata == metadata with { RegistrationCount = 2, WorldMapRevision = 2 }
+                && tiles.Select(tile => tile.Coordinate).SequenceEqual([new(2, 0), new(3, 0)])
+                && tiles[0].Frame.Row(0).SequenceEqual(firstImage.Row(0))
+                && tiles[1].Frame.Row(0).SequenceEqual(nextImage.Row(0)),
+                "Reopen must show both committed frames at their corrected coordinates and remove stale tiles.");
+            Check(new WindowsLiveWorldPipeline(evidence.RootDirectory).SavedWorld.DisplayLines.Any(
+                line => line.AtlasStart == new AtlasPoint(86, -36) && line.AtlasEnd == new AtlasPoint(106, -36)),
+                "Reopened walked ground must come from the same graph as those pixels.");
+            CheckTree(staleTree, SnapshotTree(active), "Recovery changed the original tile cache or source graph.");
+
+            VisionResetController.WritePersistedAtlasMetadata(active, recovered.Metadata with { WorldMapRevision = null });
+            CheckAtlas(VisionResetController.ReadPersistedAtlas(active), recovered.Metadata with { WorldMapRevision = null },
+                new(0, 0), firstImage, "unattributed legacy tiles");
+            VisionResetController.WritePersistedAtlasMetadata(active, recovered.Metadata with { WorldMapRevision = 3 });
+            _ = Expect<InvalidDataException>(() => VisionResetController.ReadPersistedAtlas(active));
+        });
+    }
+
     public static void TestCopyFailurePreservesActive()
     {
         WithTemporaryDirectory(workspace =>

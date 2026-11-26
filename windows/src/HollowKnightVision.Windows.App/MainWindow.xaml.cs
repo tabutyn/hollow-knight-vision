@@ -5402,8 +5402,12 @@ public partial class MainWindow : Window
         {
             var atlasAtWrite = gameplayAtlas;
             var snapshot = atlasAtWrite.SnapshotSince(-1);
+            var registrations = atlasAtWrite.AcceptedFrameCount;
             var metadata = new VisionResetController.PersistedAtlasMetadata(
-                atlasAtWrite.AcceptedFrameCount, activeAtlasCreatedAt, atlasAtWrite.TileSize, atlasAtWrite.PixelsPerWorldUnit);
+                registrations, activeAtlasCreatedAt, atlasAtWrite.TileSize, atlasAtWrite.PixelsPerWorldUnit)
+            {
+                WorldMapRevision = liveWorldPipeline?.TileCacheWorldRevision(registrations)
+            };
             var saveStarted = Stopwatch.GetTimestamp();
             _ = WriteAtlasGeneration(
                 snapshot,
