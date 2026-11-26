@@ -23,8 +23,12 @@ $repositoryRoot = Split-Path -Parent $commonGitDirectory
 if ([string]::IsNullOrWhiteSpace($LoaderDirectory)) {
     $LoaderDirectory = Join-Path $repositoryRoot '.tools\hollow-knight-modding-api-unity6\OutputFinal'
 }
-if ([string]::IsNullOrWhiteSpace($ReceiverDll)) {
-    $ReceiverDll = Join-Path $scriptRoot '..\macos\hollow-knight-input-receiver\src\bin\Release\net472\HollowKnightVisionInputReceiver.dll'
+$buildReceiver = [string]::IsNullOrWhiteSpace($ReceiverDll)
+$receiverProject = [IO.Path]::GetFullPath((Join-Path $scriptRoot '..\macos\hollow-knight-input-receiver\src\HollowKnightVisionInputReceiver.csproj'))
+$receiver = if ($buildReceiver) {
+    Join-Path (Split-Path -Parent $receiverProject) 'bin\Release\net472\HollowKnightVisionInputReceiver.dll'
+} else {
+    [IO.Path]::GetFullPath($ReceiverDll)
 }
 
 $game = [IO.Path]::GetFullPath($GameDirectory)
@@ -39,12 +43,49 @@ if (-not (Test-Path -LiteralPath $gameExecutable -PathType Leaf) -or
     -not (Test-Path -LiteralPath $assembly -PathType Leaf)) {
     throw "Not a Hollow Knight Windows installation: $game"
 }
-if (Get-Process -Name hollow_knight -ErrorAction SilentlyContinue) {
-    throw 'Close Hollow Knight before installing or restoring runtime files.'
+function Assert-GameStopped {
+    if (Get-Process -Name hollow_knight -ErrorAction SilentlyContinue) {
+        throw 'Close Hollow Knight before installing or restoring runtime files.'
+    }
 }
+Assert-GameStopped
 
 function Get-Hash([string]$Path) {
     (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash
+}
+
+function Build-CurrentReceiver {
+    $localDotnet = Join-Path $repositoryRoot '.tools\dotnet-8\dotnet.exe'
+    $dotnet = if (Test-Path -LiteralPath $localDotnet -PathType Leaf) {
+        $localDotnet
+    } else {
+        (Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    }
+    $build = Join-Path ([IO.Path]::GetTempPath()) ('hkv-receiver-build-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $build | Out-Null
+    try {
+        Push-Location $scriptRoot
+        try {
+            # Isolate both compiler outputs and intermediates from the previous build.
+            $buildArguments = @('build', $receiverProject, '--configuration', 'Release',
+                '--artifacts-path', $build, "-p:HK_MANAGED_DIR=$managed", "-p:HK_LOADER_DIR=$loader")
+            $PSNativeCommandUseErrorActionPreference = $false
+            & $dotnet @buildArguments
+            if ($LASTEXITCODE -ne 0) { throw "Receiver build failed with exit code $LASTEXITCODE." }
+        } finally {
+            Pop-Location
+        }
+
+        $output = Join-Path $build 'bin'
+        $binaries = @(Get-ChildItem -LiteralPath $output -Recurse -File -Filter 'HollowKnightVisionInputReceiver.dll')
+        if ($binaries.Count -ne 1) {
+            throw 'Receiver build did not produce a single HollowKnightVisionInputReceiver.dll.'
+        }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $receiver) | Out-Null
+        Copy-Item -LiteralPath $binaries[0].FullName -Destination $receiver -Force
+    } finally {
+        Remove-Item -LiteralPath $build -Recurse -Force
+    }
 }
 
 function Restore-Backup([string]$Backup) {
@@ -85,12 +126,11 @@ if ($Mode -eq 'Restore') {
 }
 
 $loader = [IO.Path]::GetFullPath($LoaderDirectory)
-$receiver = [IO.Path]::GetFullPath($ReceiverDll)
 if (-not (Test-Path -LiteralPath (Join-Path $loader 'Assembly-CSharp.dll') -PathType Leaf) -or
     -not (Test-Path -LiteralPath (Join-Path $loader 'MMHOOK_Assembly-CSharp.dll') -PathType Leaf)) {
     throw "Loader output is incomplete: $loader"
 }
-if (-not (Test-Path -LiteralPath $receiver -PathType Leaf)) {
+if (-not $buildReceiver -and -not (Test-Path -LiteralPath $receiver -PathType Leaf)) {
     throw "Receiver DLL missing: $receiver"
 }
 
@@ -107,6 +147,12 @@ if (-not $loaderAlreadyPresent -and
     throw 'Vanilla game assembly hashes do not match supported Hollow Knight 1.5.12620 / Unity 6000.0.61f1 files.'
 }
 
+if ($Mode -eq 'Install' -and $buildReceiver) {
+    Build-CurrentReceiver
+    Assert-GameStopped
+}
+$deferredReceiver = $Mode -eq 'Plan' -and $buildReceiver
+
 $plan = @($loaderFiles | ForEach-Object {
     $target = Join-Path $managed $_.Name
     [pscustomobject]@{
@@ -116,10 +162,10 @@ $plan = @($loaderFiles | ForEach-Object {
         Sha256 = Get-Hash $_.FullName
     }
 }) + [pscustomobject]@{
-    Source = $receiver
+    Source = if ($deferredReceiver) { $receiverProject } else { $receiver }
     Destination = $receiverTarget
     Action = if (Test-Path -LiteralPath $receiverTarget) { 'replace' } else { 'add' }
-    Sha256 = Get-Hash $receiver
+    Sha256 = if ($deferredReceiver) { $null } else { Get-Hash $receiver }
 }
 
 if ($Mode -eq 'Plan') {
@@ -129,13 +175,14 @@ if ($Mode -eq 'Plan') {
         Managed = $managed
         VanillaAssemblySha256 = $currentAssemblyHash
         LoaderAlreadyPresent = $loaderAlreadyPresent
+        ReceiverBuildRequired = $deferredReceiver
         FileCount = $plan.Count
         Files = $plan
     } | ConvertTo-Json -Depth 5
     exit 0
 }
 
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fffffff'
 $backup = Join-Path $backupRoot $stamp
 $backupFiles = Join-Path $backup 'files'
 New-Item -ItemType Directory -Force -Path $backupFiles | Out-Null
@@ -156,7 +203,7 @@ $manifest = [pscustomobject]@{
     game = $game
     supportedVersion = '1.5.12620 / Unity 6000.0.61f1'
     vanillaAssemblySha256 = $currentAssemblyHash
-    addedFiles = @($addedFiles)
+    addedFiles = $addedFiles.ToArray()
     files = $plan
 }
 $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $backup 'manifest.json') -Encoding utf8

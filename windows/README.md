@@ -575,6 +575,10 @@ automatic per-file backup, or restored with:
 ```
 
 Installation refuses unsupported vanilla assembly hashes and a running game.
+Install builds the receiver from the current checkout using .NET 8, the game's
+managed assemblies, and the matching loader output. Plan lists that build
+without compiling. Use `-ReceiverDll` to plan or install a specific prebuilt
+receiver.
 Backups live under `hollow_knight_Data/Managed/.hkv-windows-backups` and the
 installer rolls back automatically if any copied file fails hash verification.
 

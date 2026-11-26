@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - name: Verify Windows game runtime installer
+        run: .\tests\runtime-installer.ps1
       - name: Build and measure Windows test coverage
         env:
           HKV_TEST_NATIVE_KEYBOARD: '1'
