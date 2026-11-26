@@ -2021,11 +2021,8 @@ public partial class MainWindow : Window
         ReplayInputPathButton.Visibility = StepReplayButton.Visibility = replayVisibility;
         ModelWorkspaceButton.Visibility = initialization.IsFirstPhaseComplete ? Visibility.Visible : Visibility.Collapsed;
         StencilDetectionCheck.IsEnabled = initialization.IsFirstPhaseComplete;
-        ObjectDetectionCheck.IsEnabled = initialization.IsFirstPhaseComplete && trainedGameplayModelReady;
-        if (!ObjectDetectionCheck.IsEnabled) ObjectDetectionCheck.IsChecked = false;
-        ObjectDetectionOptions.IsEnabled = ObjectDetectionCheck.IsEnabled && ObjectDetectionCheck.IsChecked == true;
+        UpdateObjectDetectionAvailability();
         StencilLockedText.Visibility = StencilDetectionCheck.IsEnabled ? Visibility.Collapsed : Visibility.Visible;
-        ModelLockedText.Visibility = ObjectDetectionCheck.IsEnabled ? Visibility.Collapsed : Visibility.Visible;
         HackerWorkspaceButton.IsEnabled = CanUseHacker();
         OpsWorkspaceButton.IsEnabled = CanUseOps() && ShowsOpsControl();
         OpsWorkspaceButton.Visibility = Visibility.Collapsed;
@@ -2182,6 +2179,7 @@ public partial class MainWindow : Window
             RefreshExamples();
             menuStencilRecognizer.Refresh(initialization.LanguageIdentifier);
             RefreshInitializationStatus();
+            appliedDefaultObjectDetection = false;
             if (workspace == "Stencil") RefreshStencilsWorkspace();
             SetStatus(backup is null ? "Stencil setup was already empty."
                 : $"Stencil setup reset. Backup: {backup}");
@@ -4546,6 +4544,7 @@ public partial class MainWindow : Window
         RefreshTrainingNotification();
         RefreshModelReviewSession();
         trainedGameplayModelReady = HasTrainedGameplayModel();
+        UpdateObjectDetectionAvailability();
         SetStatus($"Loaded {examples.Count} labeling examples.");
         if (ModelSummaryPanel is not null && workspace == "Model") RefreshModelWorkspace();
     }

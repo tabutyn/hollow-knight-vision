@@ -18,6 +18,7 @@ public partial class MainWindow
         VisionRunText.Text = activeModelRuns.FirstOrDefault() ?? BundledModelRun() ?? "";
         TrainingControls.VersionText.Text = modelLifecycle.ActiveVersionName();
         trainedGameplayModelReady = HasTrainedGameplayModel();
+        UpdateObjectDetectionAvailability();
     }
 
     private void InitializeModels()
@@ -35,6 +36,7 @@ public partial class MainWindow
             activeModelArtifacts = [];
             VisionRunText.Text = BundledModelRun() ?? "";
             trainedGameplayModelReady = false;
+            UpdateObjectDetectionAvailability();
             TrainingControls.VersionText.Text = "Unavailable";
             TrainingControls.VersionText.ToolTip = error.Message;
             SetStatus($"Model review failed: {error.Message}");

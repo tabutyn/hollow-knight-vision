@@ -9,6 +9,21 @@ namespace HollowKnightVision.Windows.App;
 
 public partial class MainWindow
 {
+    private bool appliedDefaultObjectDetection;
+
+    private void UpdateObjectDetectionAvailability()
+    {
+        ObjectDetectionCheck.IsEnabled = initialization.IsFirstPhaseComplete && trainedGameplayModelReady;
+        if (!ObjectDetectionCheck.IsEnabled) ObjectDetectionCheck.IsChecked = false;
+        else if (!appliedDefaultObjectDetection)
+        {
+            appliedDefaultObjectDetection = true;
+            ObjectDetectionCheck.IsChecked = true;
+        }
+        ObjectDetectionOptions.IsEnabled = ObjectDetectionCheck.IsEnabled && ObjectDetectionCheck.IsChecked == true;
+        ModelLockedText.Visibility = ObjectDetectionCheck.IsEnabled ? Visibility.Collapsed : Visibility.Visible;
+    }
+
     private sealed record HackerObjectFrame(long CaptureGeneration, long WorkGeneration, long LabelRevision,
         long MenuGeneration, long CaptureId, Guid SessionId, GroundTruthCameraTransform Camera,
         LiveObjectDetectionSnapshot Objects);
