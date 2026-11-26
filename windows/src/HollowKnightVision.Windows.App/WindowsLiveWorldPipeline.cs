@@ -1284,7 +1284,9 @@ internal sealed class WindowsLiveWorldPipeline
             var source = loadSource(observation.SourceObservationId);
             if (source.Width != observation.SourceWidth || source.Height != observation.SourceHeight)
                 throw new InvalidDataException($"Live-world observation {observation.Id} has incorrect source dimensions.");
-            var masks = SceneRegions.PixelRectangles(source.Width, source.Height, snapshot.CompositionMasks(observation));
+            var exclusions = snapshot.CompositionMasks(observation);
+            var masks = SceneRegions.PixelRectangles(source.Width, source.Height,
+                GameplayTutorialPromptMask.Find(source) is { } prompt ? exclusions.Append(prompt) : exclusions);
             if (!rebuilt.AddFrame(source, AtlasTelemetry(source, observation), masks))
                 throw new InvalidDataException($"Live-world observation {observation.Id} could not be rebuilt.");
         }

@@ -909,6 +909,7 @@ var tests = new List<(string Name, Action Run)>
     ("live admission blocks HUD-only writes and reseeds after blackouts", FrameSignalTests.TestLiveAtlasAdmission),
     ("controller tutorial prompt is excluded from atlas and ground at capture resolution", GameplayTutorialPromptTests.TestPromptIsExcludedFromAtlasAndGround),
     ("tutorial band preserves scenery without a complete prompt", GameplayTutorialPromptTests.TestPromptBandRetainsSceneryWithoutCompletePrompt),
+    ("rebuilding an older saved Atlas keeps tutorial prompts out of the map", GameplayTutorialPromptTests.TestRebuildExcludesSavedTutorialPrompt),
     ("scene model regions own only the highest-confidence exact Knight class", SceneRegionTests.TestMovingKnightOnly),
     ("weak Knight masks require the explicit ground policy", SceneRegionTests.TestWeakKnightPolicy),
     ("legacy HUD geometry and conditional exclusions match Mac", SceneRegionTests.TestHudGeometry),
