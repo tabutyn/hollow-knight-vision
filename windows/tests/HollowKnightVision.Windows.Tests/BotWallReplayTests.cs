@@ -34,6 +34,41 @@ internal static class BotWallReplayTests
         finally { directory.Delete(recursive: true); }
     }
 
+    internal static void TestMacWallRecoveryUsesTheRecordedHudShield()
+    {
+        var directory = Directory.CreateTempSubdirectory("hkv-wall-replay-hud-");
+        try
+        {
+            var fixture = WriteFixture(directory.FullName);
+            var filename = Path.Combine(fixture.Archive, "manifest.json");
+            var manifest = JsonSerializer.Deserialize<VisualReplayManifest>(File.ReadAllBytes(filename), Json)!;
+            double[][][] shield = [[[0, Height - 28], [64, 28]]];
+            WriteMask(windows: false);
+            var mac = BotWallReplay.Recover(fixture.Clip, fixture.Archive);
+            Check(mac is [{ }, { }] && mac[0].Features is [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                "The full recorded Mac HUD shield must keep a short visible wall tail below the admission threshold.");
+
+            WriteMask(windows: true);
+            var windows = BotWallReplay.Recover(fixture.Clip, fixture.Archive);
+            Check(windows is [{ }, { }]
+                && windows[0].Features is [1, < -.18 and > -.24, _, _, _, 1, 0, 0, 0, 0, 0],
+                "The Windows recorder's separate Atlas mask must retain the existing Windows ground mask policy.");
+            Check(mac.Select(row => row.CaptureTimestamp).SequenceEqual(windows.Select(row => row.CaptureTimestamp)),
+                "Reading the recorded mask must preserve the exact capture join.");
+
+            void WriteMask(bool windows)
+            {
+                var masks = manifest.GroundInputs.Select(input => input.CaptureTimestamp != Timestamp(0) ? input : input with
+                {
+                    ExcludingRects = shield,
+                    WindowsAtlasExcludingRects = windows ? shield : null
+                }).ToArray();
+                File.WriteAllBytes(filename, JsonSerializer.SerializeToUtf8Bytes(manifest with { GroundInputs = masks }, Json));
+            }
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
     internal static Fixture WriteFixture(string root)
     {
         var replay = Guid.NewGuid();
