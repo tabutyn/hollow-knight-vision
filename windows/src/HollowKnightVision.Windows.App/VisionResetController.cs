@@ -36,7 +36,10 @@ internal static class VisionResetController
         long RegistrationCount,
         DateTimeOffset CreatedAt,
         int TileSize,
-        double PixelsPerWorldUnit);
+        double PixelsPerWorldUnit)
+    {
+        public int? WorldMapRevision { get; init; }
+    }
 
     internal sealed record ValidatedPersistedAtlas(
         GroundTruthAtlasMosaic Mosaic,
@@ -134,17 +137,24 @@ internal static class VisionResetController
             throw new InvalidDataException("This Atlas is missing Windows tiles and has no supported macOS snapshot.");
 
         var roomBounds = WindowsLiveWorldPipeline.RestorePortableRoomTopology(evidenceRoot, snapshot);
-        using var evidence = SceneSessionStore.OpenReadOnly(evidenceRoot);
-        var entries = evidence.Manifest.Observations.ToDictionary(entry => entry.Id);
-        var mosaic = WindowsLiveWorldPipeline.RebuildAtlas(snapshot, id => evidence.Source(entries[id]),
-            pixelsPerWorldUnit: 1, tileSize: LiveTiledAtlas.TileSize, roomBounds: roomBounds);
+        var mosaic = RebuildWorldTiles(evidenceRoot, snapshot, 1, LiveTiledAtlas.TileSize, roomBounds);
         foreach (var tile in mosaic.Snapshot())
         {
             var name = FormattableString.Invariant($"tile_{tile.Coordinate.X}_{tile.Coordinate.Y}.bmp");
             saveTile(tile.Frame, Path.Combine(staging, name));
         }
         WritePersistedAtlasMetadata(staging, new(mosaic.AcceptedFrameCount, createdAt,
-            mosaic.TileSize, mosaic.PixelsPerWorldUnit));
+            mosaic.TileSize, mosaic.PixelsPerWorldUnit) { WorldMapRevision = snapshot.MapRevision });
+    }
+
+    private static GroundTruthAtlasMosaic RebuildWorldTiles(
+        string evidenceRoot, LiveWorldSnapshot snapshot, double pixelsPerWorldUnit, int tileSize,
+        IReadOnlyDictionary<int, VisualRoomCompositionBounds>? roomBounds)
+    {
+        using var evidence = SceneSessionStore.OpenReadOnly(evidenceRoot);
+        var entries = evidence.Manifest.Observations.ToDictionary(entry => entry.Id);
+        return WindowsLiveWorldPipeline.RebuildAtlas(snapshot, id => evidence.Source(entries[id]),
+            pixelsPerWorldUnit, tileSize, roomBounds);
     }
 
     internal static void WritePersistedAtlasMetadata(string directory, PersistedAtlasMetadata metadata)
@@ -524,7 +534,22 @@ internal static class VisionResetController
                         "Atlas tile coordinates span an unsupported world extent.");
             }
             mosaic.RestoreAcceptedFrameCount(metadata.RegistrationCount);
-            ValidateLiveWorld(root);
+            var evidenceRoot = Path.Combine(root, "live-world");
+            var world = ValidateLiveWorld(evidenceRoot);
+            if (metadata.WorldMapRevision is int cached && (world is null || cached > world.MapRevision))
+                throw new InvalidDataException("Atlas tiles are ahead of the saved live world.");
+
+            // Older Atlases can contain original pixels without attributed
+            // source frames. Keep those caches unless they were graph-owned.
+            var missingTiles = mosaic.TileCount == 0;
+            var staleGraphTiles = metadata.WorldMapRevision is int revision && world?.MapRevision > revision;
+            if (world is { Observations.Count: > 0 }
+                && (staleGraphTiles || missingTiles && (metadata.WorldMapRevision.HasValue || metadata.RegistrationCount == 0)))
+            {
+                var roomBounds = WindowsLiveWorldPipeline.RestorePortableRoomTopology(evidenceRoot, world, repair: false);
+                mosaic = RebuildWorldTiles(evidenceRoot, world, metadata.PixelsPerWorldUnit, metadata.TileSize, roomBounds);
+                metadata = metadata with { RegistrationCount = mosaic.AcceptedFrameCount, WorldMapRevision = world.MapRevision };
+            }
             return new ValidatedPersistedAtlas(mosaic, metadata);
         }
         catch (InvalidDataException)
@@ -813,21 +838,32 @@ internal static class VisionResetController
             throw new InvalidDataException(
                 "Atlas pixels-per-world-unit is outside the supported range.");
         }
-        return new PersistedAtlasMetadata(
-            registrationCount, createdAt, tileSize, pixelsPerWorldUnit);
+        int? worldMapRevision = null;
+        if (values.TryGetValue("WorldMapRevision", out var worldRevisionValue)
+            && worldRevisionValue.ValueKind != JsonValueKind.Null)
+        {
+            if (worldRevisionValue.ValueKind != JsonValueKind.Number
+                || !worldRevisionValue.TryGetInt32(out var revision) || revision < 0)
+                throw new InvalidDataException("Atlas world revision must be nonnegative.");
+            worldMapRevision = revision;
+        }
+        return new PersistedAtlasMetadata(registrationCount, createdAt, tileSize, pixelsPerWorldUnit)
+        {
+            WorldMapRevision = worldMapRevision
+        };
     }
 
-    private static void ValidateLiveWorld(string atlasRoot)
+    private static LiveWorldSnapshot? ValidateLiveWorld(string liveWorld)
     {
-        var liveWorld = Path.Combine(atlasRoot, "live-world");
         // Atlas generations created before live-world persistence are the only
         // valid case with no live-world directory at all. Once the directory
         // exists, every byte must belong to a complete, read-only-valid session.
-        if (!Directory.Exists(liveWorld)) return;
+        if (!Directory.Exists(liveWorld)) return null;
         try
         {
             var state = LiveWorldSessionStore.ValidateExisting(liveWorld);
             _ = new LiveWorldTracker(state.Snapshot);
+            return state.Snapshot;
         }
         catch (InvalidDataException)
         {

@@ -272,6 +272,21 @@ internal static class NativeAtlasImportTests
                 && File.ReadAllBytes(Path.Combine(active, "live-world", raw)).SequenceEqual(rawBytes)
                 && File.ReadAllBytes(Path.Combine(original, raw)).SequenceEqual(rawBytes),
                 "the portal metadata and source PNG bytes stay available for recovery");
+
+            var evidence = new LiveWorldSessionStore(Path.Combine(active, "live-world"));
+            var graph = evidence.Load().Snapshot;
+            var revised = graph.ReplaceOptimizedPoses(
+                graph.Observations.ToDictionary(row => row.Id, row => row.OptimizedPose), graph.MapRevision);
+            Check(restored.ValidatedWorld.Metadata.WorldMapRevision == graph.MapRevision
+                && evidence.Commit(revised, graph.MapRevision, revised.MapRevision),
+                "the imported cache records the older world revision after a subsequent graph commit");
+            var recovered = VisionResetController.ReadPersistedAtlas(active);
+            Check(recovered.Metadata.WorldMapRevision == revised.MapRevision
+                && recovered.Mosaic.TryReadPixel(-180, 0, out _, out _, out _, out _)
+                && recovered.Mosaic.TryReadPixel(220, 0, out _, out _, out _, out _)
+                && !recovered.Mosaic.TryReadPixel(0, 0, out _, out _, out _, out _)
+                && File.ReadAllBytes(Path.Combine(evidence.RootDirectory, "visual-rooms.json")).SequenceEqual(topologyBytes),
+                "the reopened cache retains the legacy doorway crop without rewriting its saved topology");
         });
     }
 

@@ -39,6 +39,7 @@ internal static class AtlasWindowIntegrationTests
             VerifyUnloadedHackerAutosaveSurvivesProfileSwitch(Path.Combine(temporary.FullName, "unloaded-profile"));
             VerifyRoomReset(Directory.CreateDirectory(Path.Combine(temporary.FullName, "room-reset")).FullName);
             VerifyRestoredPassageAlignment(Directory.CreateDirectory(Path.Combine(temporary.FullName, "passages")).FullName);
+            VerifyCommittedGameplayAutosaveRecovery(Path.Combine(temporary.FullName, "recovered-world"));
             VerifyGameplayWorldHandoff(Directory.CreateDirectory(Path.Combine(temporary.FullName, "handoff")).FullName);
             VerifyQueuedAtlasRebuild(Directory.CreateDirectory(Path.Combine(temporary.FullName, "publication")).FullName);
         }
@@ -52,6 +53,7 @@ internal static class AtlasWindowIntegrationTests
         Console.WriteLine("PASS Windows Reset Room handles local and game-focused R, protects capture, and clears both atlases only after confirmation");
         Console.WriteLine("PASS Windows Player Ops serializes requests, applies invincibility, and persists Label randomization");
         Console.WriteLine("PASS Hacker Atlas draws restored rooms at the measured passage elevation");
+        Console.WriteLine("PASS Game Play restores committed Atlas pixels and walked ground and refreshes the tile cache");
         Console.WriteLine("PASS Gameplay Atlas draws measured doorways independently of optional outlines and hides them outside gameplay");
         Console.WriteLine("PASS Gameplay window applies only ordered Atlas placements and keeps menu images in capture coordinates");
         Console.WriteLine("PASS desktop Atlas publishes the rebuilt tiles, live frame, and new origin together");
@@ -789,6 +791,48 @@ internal static class AtlasWindowIntegrationTests
     private static ReceiverGroundTruthSample Camera(double x, double y) => new(
         2, "groundTruth", Guid.Empty, 0, 0, 0, "Tutorial_01", false, 0, 0, 0, 0, 0, false, false, true,
         x, y, -38, x, y, -38, 12, 1, 1, null, null, 32, 24, 32, 24);
+
+    private static void VerifyCommittedGameplayAutosaveRecovery(string root)
+    {
+        const int tileSize = 32;
+        var active = Directory.CreateDirectory(Path.Combine(root, "atlas-v1", "active")).FullName;
+        var evidence = new LiveWorldSessionStore(Path.Combine(active, "live-world"));
+        VisionResetController.WritePersistedAtlasMetadata(active, new(0, DateTimeOffset.UnixEpoch, tileSize, 1));
+        var image = SolidFrame(1, tileSize, tileSize);
+        var pose = new AtlasPoint(16, -16);
+        var source = evidence.Append(image, 1, pose, tileSize);
+        var observation = LiveWorldObservation.Create(source.Id, source.Id, 1, tileSize, tileSize,
+            tileSize, tileSize, [], pose, pose) with
+        {
+            WalkedGround = [new(-10, 10, -4)]
+        };
+        var snapshot = new LiveWorldSnapshot(mapRevision: 1, anchoredObservationId: observation.Id,
+            observations: [observation]);
+        Check(evidence.Commit(snapshot, 0, 1), "The graph must be committed before opening Vision.");
+
+        var window = new MainWindow(GameRuntimeMode.Normal, gamePath: null, root: root, documents: root);
+        try
+        {
+            Wait(InvokeTask(window, "InitializePersistentWorldAsync"));
+            var tile = GetField<GroundTruthAtlasMosaic>(window, "gameplayAtlas").Snapshot().Single();
+            var floor = GetField<LiveWorldGroundProjection>(window, "gameplaySavedWorld").DisplayLines.Single();
+            Check(tile.Coordinate == new AtlasTileCoordinate(0, 0)
+                && tile.Frame.Row(0).SequenceEqual(image.Row(0))
+                && floor.AtlasStart == new AtlasPoint(-10, -36)
+                && floor.AtlasEnd == new AtlasPoint(10, -36),
+                "Startup must load the newest pixels and walked ground together without a new game frame.");
+
+            Wait(InvokeTask(window, "FlushActiveAtlasAsync"));
+            Check(File.Exists(Path.Combine(active, "tile_0_0.bmp"))
+                && VisionResetController.ReadPersistedAtlas(active).Metadata.WorldMapRevision == snapshot.MapRevision,
+                "A successful flush must tag the new tile cache with its committed world revision.");
+        }
+        finally
+        {
+            SetField(window, "isClosing", true);
+            Wait(InvokeTask(window, "PrepareShutdownAsync"));
+        }
+    }
 
     private static void VerifyRestoredPassageAlignment(string root)
     {
