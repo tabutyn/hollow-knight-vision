@@ -18,7 +18,8 @@ internal sealed class LiveIslandComponents
     private readonly Dictionary<int, Group> vertical;
     private readonly HashSet<Group> doorwayGroups;
 
-    internal LiveIslandComponents(LiveWorldSnapshot snapshot, IReadOnlySet<int>? fixedObservations = null)
+    internal LiveIslandComponents(LiveWorldSnapshot snapshot, IReadOnlySet<int>? fixedObservations = null,
+        Predicate<int>? fixedHorizontalRoom = null)
     {
         owners = snapshot.TrackingIslands.SelectMany(island =>
             island.Members.Select(member => (member.ObservationId, Island: island)))
@@ -42,7 +43,12 @@ internal sealed class LiveIslandComponents
             .Select(island => island.Id).ToHashSet();
         var doors = snapshot.DoorwayFloorConstraints.Select(link =>
             (From: owners[link.DepartureObservationId].Id, To: owners[link.ArrivalObservationId].Id)).ToArray();
-        horizontal = Groups(snapshot.TrackingIslands, visual, fixedIds);
+        // A legacy room's crop belongs to its recorded horizontal doorway position.
+        // Fix already placed room views on that axis while still solving elevation.
+        var horizontalIds = fixedHorizontalRoom is null ? fixedIds : fixedIds.Concat(snapshot.TrackingIslands
+            .Where(island => !island.RequiresPlacement && fixedHorizontalRoom(island.RoomId))
+            .Select(island => island.Id)).ToHashSet();
+        horizontal = Groups(snapshot.TrackingIslands, visual, horizontalIds);
         vertical = Groups(snapshot.TrackingIslands, visual.Concat(doors), fixedIds);
         doorwayGroups = doors.Select(link => vertical[link.From]).ToHashSet();
     }

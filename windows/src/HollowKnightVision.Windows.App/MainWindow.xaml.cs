@@ -3542,7 +3542,8 @@ public partial class MainWindow : Window
                 botAtlas = new(graph, committedRoom, center)
                 {
                     MeasuredOwner = wallLineage.HasValue ? worldPlacement : null,
-                    DoorPlacement = center.HasValue ? placement.BotDoorPlacement(walkedCoordinateEpoch) : null
+                    DoorPlacement = center.HasValue ? placement.BotDoorPlacement(walkedCoordinateEpoch) : null,
+                    PortableRoomBounds = placement.PortableRoomBounds
                 };
             }
             CaptureBotObservations(frame, captureGeneration, recognition.Generation, captureTimestamp,

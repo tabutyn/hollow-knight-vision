@@ -286,12 +286,19 @@ public sealed record LiveWorldSnapshot
         .SelectMany(island => island.Members.Select(member => member.ObservationId))
         .ToHashSet();
 
-    public IReadOnlyList<StencilRect> CompositionMasks(LiveWorldObservation observation) =>
-        observation.ExcludedRects.Select(rectangle =>
+    public IReadOnlyList<StencilRect> CompositionMasks(LiveWorldObservation observation,
+        VisualRoomCompositionBounds roomBounds = default)
+    {
+        var exclusions = observation.ExcludedRects.Select(rectangle =>
         {
             var mask = new StencilRect(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height);
             return UsesSwiftWireFormat ? LiveWorldJson.FlipMask(mask, observation.SourceHeight) : mask;
-        }).ToArray();
+        });
+        if (roomBounds != VisualRoomCompositionBounds.Unbounded)
+            exclusions = exclusions.Concat(VisualRoomCompositionMask.OmittedRects(roomBounds,
+                observation.OptimizedPose, observation.SolveWidth, new(observation.SourceWidth, observation.SourceHeight)));
+        return exclusions.ToArray();
+    }
 
     public LiveWorldSnapshot ReplaceOptimizedPoses(
         IReadOnlyDictionary<int, AtlasPoint> poses,

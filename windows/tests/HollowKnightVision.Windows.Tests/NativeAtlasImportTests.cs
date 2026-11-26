@@ -244,6 +244,88 @@ internal static class NativeAtlasImportTests
         });
     }
 
+    internal static void TestRestoredMacAtlasCropsLegacyDoorwayViews()
+    {
+        WithFixture((root, _, _) =>
+        {
+            var topology = new VisualRoomTransitionTracker();
+            topology.BootstrapTwoRoomTopology(SourceRoom, TargetRoom, 200, 440,
+                new(.15, .85), new(.15, .85), new(0, 70), new(150, 40));
+            topology.SaveTopology(Path.Combine(root, "visual-rooms.json"));
+            var temporary = Directory.GetParent(root)!.FullName;
+            var states = new AtlasStateStore(Path.Combine(temporary, "states"));
+            var saved = states.Save("Mac Atlas with a saved doorway", destination => Directory.Move(root, destination));
+            var original = states.WorldPath(saved);
+            var topologyBytes = File.ReadAllBytes(Path.Combine(original, "visual-rooms.json"));
+            var raw = Path.Combine("frames", "00000003.png");
+            var rawBytes = File.ReadAllBytes(Path.Combine(original, raw));
+            var active = Path.Combine(temporary, "active");
+            var restored = VisionResetController.LoadNamedAtlasForCurrentProfile(states, saved, active,
+                saveTile: HollowKnightVision.Windows.Host.BmpWriter.Write);
+            var mosaic = restored.ValidatedWorld.Mosaic;
+            Check(mosaic.TryReadPixel(-180, 0, out _, out _, out _, out _) &&
+                mosaic.TryReadPixel(220, 0, out _, out _, out _, out _),
+                "saved terrain on both sides of the doorway remains in the Windows mosaic");
+            Check(!mosaic.TryReadPixel(0, 0, out _, out _, out _, out _),
+                "scenery captured before the doorway was known must not fill its saved corridor");
+            Check(File.ReadAllBytes(Path.Combine(original, "visual-rooms.json")).SequenceEqual(topologyBytes)
+                && File.ReadAllBytes(Path.Combine(active, "live-world", raw)).SequenceEqual(rawBytes)
+                && File.ReadAllBytes(Path.Combine(original, raw)).SequenceEqual(rawBytes),
+                "the portal metadata and source PNG bytes stay available for recovery");
+        });
+    }
+
+    internal static void TestImportedAtlasResumesPaintingInsideLegacyRoom()
+    {
+        WithRecoveryFixture(identicalRooms: false, (root, savedGraph) =>
+        {
+            var topology = new VisualRoomTransitionTracker();
+            topology.BootstrapTwoRoomTopology(SourceRoom, TargetRoom, 260, 330,
+                new(.15, .85), new(.15, .85), new(100, 20), new(270, 20));
+            topology.SaveTopology(Path.Combine(root, "visual-rooms.json"));
+            var pipeline = new WindowsLiveWorldPipeline(root);
+            var mosaic = new GroundTruthAtlasMosaic(1, 128, sourceTopInsetFraction: 0);
+            var first = pipeline.Process(ResumeFrame(1, 191), mosaic);
+            var confirmed = pipeline.Process(ResumeFrame(2, 191), mosaic);
+            Check(first.ConfirmedRecoveryPose is null && confirmed.ConfirmedRecoveryPose == new AtlasPoint(270, 20),
+                "a resumed frame uses the saved right-room coordinate basis");
+            var update = pipeline.Process(ResumeFrame(3, 191, localX: 84), mosaic);
+            Check(update.AllowsAtlasComposition && mosaic.TryReadPixel(230, 0, out _, out _, out _, out _)
+                && !mosaic.TryReadPixel(135, 0, out _, out _, out _, out _),
+                "new captures paint the restored room with its saved portal crop");
+            Check(update.PortableRoomBounds?.GetValueOrDefault(TargetRoom) is { MinimumWorldX: 330 },
+                "the bot receives the same room boundary as the saved Atlas");
+
+            var store = new LiveWorldSessionStore(root);
+            var graph = store.Load().Snapshot;
+            var committed = graph.Observations[^1];
+            Check(graph.Observations.Count == savedGraph.Observations.Count + 1 && committed.RoomId == TargetRoom
+                && store.Source(committed.SourceObservationId).Row(90)[4 + 3] == 255,
+                "lasting room ownership is applied to composition without dropping raw recovery pixels");
+        }, neighboringRoomPose: new(270, 20));
+    }
+
+    internal static void TestLegacyPortalFixesHorizontalPlacementOnly()
+    {
+        WithFixture((_, store, _) =>
+        {
+            var snapshot = store.Load().Snapshot;
+            var graph = new LiveWorldSnapshot(snapshot.SchemaVersion, snapshot.MapRevision, snapshot.AnchoredObservationId,
+                snapshot.Observations, snapshot.Keyframes, snapshot.Landmarks, snapshot.RelativeMotionEdges,
+                snapshot.LoopClosureEdges, snapshot.TrackingIslands);
+            var regular = new LiveIslandComponents(graph, new HashSet<int>());
+            var legacy = new LiveIslandComponents(graph, new HashSet<int>(), room => room is SourceRoom or TargetRoom);
+            Check(regular.Plan(SourceIsland, TargetIsland, new(12, 0), tolerance: 4) is { } movable
+                && movable.Shifts[TargetIsland] == new AtlasPoint(12, 0),
+                "an ordinary estimated room can align its horizontal position");
+            Check(legacy.Plan(SourceIsland, TargetIsland, new(12, 0), tolerance: 4) is null,
+                "a fixed legacy portal cannot be shifted by an incompatible closure");
+            Check(legacy.Plan(SourceIsland, TargetIsland, new(0, 6), tolerance: 4) is { } elevation
+                && elevation.Shifts[TargetIsland] == new AtlasPoint(0, 6),
+                "the fixed horizontal room still accepts ground elevation evidence");
+        });
+    }
+
     internal static void TestImportedAtlasRequiresTwoMatchesInTheSameRoom()
     {
         WithRecoveryFixture(identicalRooms: false, (root, before) =>
@@ -1964,7 +2046,7 @@ internal static class NativeAtlasImportTests
 
     internal static void TestConfirmedLoopPreservesMeasuredDoorwayElevation()
     {
-        foreach (var fixedNeighbor in new[] { false, true })
+        foreach (var (fixedNeighbor, legacyRoom) in new[] { (false, false), (true, false), (false, true) })
         {
             var world = new LiveWorldTracker();
             Observe(0, 1, 0, 1, default, 71, right: false);
@@ -1993,14 +2075,14 @@ internal static class NativeAtlasImportTests
             Check(result.Snapshot.Observations.Take(9).Select(row => row.RawPose)
                 .SequenceEqual(initial.Observations.Select(row => row.RawPose)),
                 "an Atlas correction retains raw capture motion");
-            if (fixedNeighbor)
+            if (fixedNeighbor || legacyRoom)
             {
                 Check(result.AcceptedClosure is null
                     && result.Review.Rejections.Contains(LiveWorldTrackerRejection.InconsistentConfirmation)
                     && result.Snapshot.LoopClosureEdges.Count == 1
                     && result.Snapshot.Observations.Take(9).Select(row => row.OptimizedPose)
                         .SequenceEqual(initial.Observations.Select(row => row.OptimizedPose)),
-                    "a conflicting image vote cannot tear the floor or move either fixed component");
+                    "a conflicting image vote cannot move a fixed floor or legacy portal boundary");
                 continue;
             }
 
@@ -2031,7 +2113,8 @@ internal static class NativeAtlasImportTests
                 return world.Ingest(id, time, frame, pose, frame.Width, searchForClosure: search,
                     localPose: pose, captureGeneration: 1, localEpoch: 1, roomId: room,
                     captureEvidence: new LiveWorldCaptureEvidence(time, new([new(id, new(left, floor), new(left + 100, floor))]),
-                        PlayerBounds: player) { MeasuredLineage = lineage });
+                        PlayerBounds: player) { MeasuredLineage = lineage },
+                    fixedHorizontalRoom: legacyRoom ? roomId => roomId == 0 : null);
             }
         }
     }

@@ -5,9 +5,9 @@ public sealed class BotCommittedAtlasCoverage
 {
     private readonly record struct Owner(int Island, bool Measured, bool Pending);
 
-    private sealed record Placement(LiveWorldObservation Observation, Owner? Owner)
+    private sealed record Placement(LiveWorldObservation Observation, Owner? Owner, VisualRoomCompositionBounds RoomBounds)
     {
-        public bool Matches(Placement current) => Owner == current.Owner
+        public bool Matches(Placement current) => Owner == current.Owner && RoomBounds == current.RoomBounds
             && Observation.RoomId == current.Observation.RoomId
             && Observation.SourceObservationId == current.Observation.SourceObservationId
             && Observation.OptimizedPose == current.Observation.OptimizedPose
@@ -23,6 +23,7 @@ public sealed class BotCommittedAtlasCoverage
     private readonly HashSet<(int Room, int X, int Y)> seen = [];
     private readonly Dictionary<int, AtlasPoint> lastMeasuredByIsland = [];
     private IReadOnlyList<LiveWorldObservation>? previousRows;
+    private IReadOnlyDictionary<int, VisualRoomCompositionBounds>? previousRoomBounds;
     private int revision, schema, earned;
 
     internal (int Covered, int Earned) Totals => (occupied.Count, earned);
@@ -30,6 +31,7 @@ public sealed class BotCommittedAtlasCoverage
     public void Reset()
     {
         previousRows = null;
+        previousRoomBounds = null;
         placements.Clear();
         occupied.Clear();
         seen.Clear();
@@ -37,14 +39,17 @@ public sealed class BotCommittedAtlasCoverage
         earned = 0;
     }
 
-    public void Update(LiveWorldSnapshot snapshot, bool creditNewCells = true)
+    public void Update(LiveWorldSnapshot snapshot, bool creditNewCells = true,
+        IReadOnlyDictionary<int, VisualRoomCompositionBounds>? roomBounds = null)
     {
-        if (revision == snapshot.MapRevision && ReferenceEquals(previousRows, snapshot.Observations)) return;
+        if (revision == snapshot.MapRevision && ReferenceEquals(previousRows, snapshot.Observations)
+            && ReferenceEquals(previousRoomBounds, roomBounds)) return;
         var owners = snapshot.TrackingIslands.SelectMany(island => island.Members.Select(member =>
             (member.ObservationId, Owner: new Owner(island.Id, member.Measured, island.RequiresPlacement))))
             .ToDictionary(pair => pair.ObservationId, pair => pair.Owner);
         var current = snapshot.Observations.ToDictionary(row => row.Id,
-            row => new Placement(row, owners.TryGetValue(row.Id, out var owner) ? owner : null));
+            row => new Placement(row, owners.TryGetValue(row.Id, out var owner) ? owner : null,
+                roomBounds?.GetValueOrDefault(row.RoomId) ?? default));
         var corrected = previousRows is not null && (schema != snapshot.SchemaVersion
             || placements.Any(pair => !current.TryGetValue(pair.Key, out var currentPlacement)
                 || !pair.Value.Matches(currentPlacement)));
@@ -61,6 +66,7 @@ public sealed class BotCommittedAtlasCoverage
             if (!placements.ContainsKey(row.Id)) Add(current[row.Id], snapshot, credit: continuing);
         placements = current;
         previousRows = snapshot.Observations;
+        previousRoomBounds = roomBounds;
         revision = snapshot.MapRevision;
         schema = snapshot.SchemaVersion;
     }
@@ -97,7 +103,7 @@ public sealed class BotCommittedAtlasCoverage
             lastMeasuredByIsland[owner.Island] = center;
         }
 
-        var masks = snapshot.CompositionMasks(row);
+        var masks = snapshot.CompositionMasks(row, placement.RoomBounds);
         var left = center.X - width / 2;
         var bottom = center.Y - height / 2;
         const double step = BotAtlasFrontiers.CellSize;

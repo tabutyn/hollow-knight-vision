@@ -64,6 +64,7 @@ internal sealed record WindowsLiveWorldPipelineResult(
     internal LiveWorldGroundProjection? SavedWorld { get; init; }
     internal GameplayPathRegistration? PathRegistration { get; init; }
     internal LiveWorldSnapshot? CommittedGraph { get; init; }
+    internal IReadOnlyDictionary<int, VisualRoomCompositionBounds>? PortableRoomBounds { get; init; }
     internal int? CommittedRoomId { get; init; }
     internal ulong PersistentCaptureGeneration { get; init; }
     internal ulong LocalEpoch { get; init; }
@@ -147,6 +148,7 @@ internal sealed class WindowsLiveWorldPipeline
     private readonly Dictionary<int, string> roomNames = [];
     private readonly Dictionary<int, int> placedRoomIds = [];
     private readonly Dictionary<int, (IReadOnlyList<WorldRect> Stored, IReadOnlyList<WorldRect> Image)> compositionExclusions = [];
+    private IReadOnlyDictionary<int, VisualRoomCompositionBounds>? portableRoomBounds;
     private readonly Dictionary<int, IReadOnlyList<GroundHypothesisAtlasLine>> projectedWalkedGround = [];
     private readonly record struct WalkScope(ulong Capture, int Room, long CoordinateEpoch, long? Lineage);
     private readonly Dictionary<WalkScope, IReadOnlyList<GroundHypothesisAtlasLine>> committedLocalWalk = [];
@@ -690,7 +692,8 @@ internal sealed class WindowsLiveWorldPipeline
                     carriedWalks: carriedWalks,
                     loadGroundSource: measuredIsland
                         ? id => (id == source.Id ? request.MaskedFrame : activeStore.Source(id), compositionExclusions[id].Image)
-                        : null);
+                        : null,
+                    fixedHorizontalRoom: portableRoomBounds is { } roomBounds ? roomBounds.ContainsKey : null);
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 transactionObserver?.Invoke("ingest");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
@@ -716,7 +719,7 @@ internal sealed class WindowsLiveWorldPipeline
                 {
                     if (!IsWorkCurrent(processEpoch)) return Cancelled();
                     rebuiltAtlas = RebuildAtlas(durableSnapshot, activeStore.Source,
-                        request.AtlasPixelsPerWorldUnit, request.AtlasTileSize);
+                        request.AtlasPixelsPerWorldUnit, request.AtlasTileSize, portableRoomBounds);
                     if (!IsWorkCurrent(processEpoch)) return Cancelled();
                     transactionObserver?.Invoke(doorwayAligned ? "doorway-rebuild" : "closure-rebuild");
                     if (!IsWorkCurrent(processEpoch)) return Cancelled();
@@ -736,7 +739,7 @@ internal sealed class WindowsLiveWorldPipeline
                 {
                     var frame = request.MaskedFrame;
                     var masks = SceneRegions.PixelRectangles(frame.Width, frame.Height,
-                        durableSnapshot.CompositionMasks(committed));
+                        durableSnapshot.CompositionMasks(committed, portableRoomBounds?.GetValueOrDefault(committed.RoomId) ?? default));
                     saved = incrementalAtlas.AddFrameAndCommit(frame, AtlasTelemetry(frame, committed), masks, CommitSnapshot);
                 }
                 else
@@ -842,6 +845,7 @@ internal sealed class WindowsLiveWorldPipeline
                     SavedWorld = projected,
                     PathRegistration = PathRegistrationFor(resolvedRoomId, basis),
                     CommittedGraph = committedGraph,
+                    PortableRoomBounds = portableRoomBounds,
                     CommittedRoomId = resolvedRoomId,
                     PersistentCaptureGeneration = persistentCaptureGeneration,
                     LocalEpoch = ticket.LocalEpoch,
@@ -998,6 +1002,7 @@ internal sealed class WindowsLiveWorldPipeline
             SavedWorld = SavedWorld,
             PathRegistration = PathRegistrationFor(committedRoomId, basis),
             CommittedGraph = committedGraph,
+            PortableRoomBounds = portableRoomBounds,
             CommittedRoomId = committedRoomId,
             PersistentCaptureGeneration = persistentCaptureGeneration,
             LocalEpoch = localEpoch,
@@ -1081,7 +1086,7 @@ internal sealed class WindowsLiveWorldPipeline
                     var image = height > 0 ? CompositionRects(observation.ExcludedRects, height) : stored;
                     return (Stored: stored, Image: image);
                 });
-            RestorePortableRoomTopology(reopened.RootDirectory, snapshot);
+            portableRoomBounds = RestorePortableRoomTopology(reopened.RootDirectory, snapshot);
             store = reopened;
             tracker = reopenedTracker;
             placedRoomIds.Clear();
@@ -1118,6 +1123,7 @@ internal sealed class WindowsLiveWorldPipeline
         {
             store = null;
             tracker = null;
+            portableRoomBounds = null;
             committedGraph = null;
             Volatile.Write(ref savedGround, LiveWorldGroundProjection.Empty);
             LastError = $"live-world reopen failed: {error.Message}";
@@ -1125,12 +1131,13 @@ internal sealed class WindowsLiveWorldPipeline
         }
     }
 
-    private static void RestorePortableRoomTopology(string directory, LiveWorldSnapshot snapshot)
+    internal static IReadOnlyDictionary<int, VisualRoomCompositionBounds>? RestorePortableRoomTopology(
+        string directory, LiveWorldSnapshot snapshot)
     {
-        // Preserve the Mac topology alongside imported worlds. Windows camera
-        // recovery still derives placements and doorway evidence from the graph.
+        // Legacy Mac portals are separately persisted in world coordinates.
+        // Preserve their horizontal crop boundaries while the graph owns floor elevation.
         var path = Path.Combine(directory, "visual-rooms.json");
-        if (!File.Exists(path) && (!snapshot.UsesSwiftWireFormat || snapshot.Observations.Count == 0)) return;
+        if (!File.Exists(path) && (!snapshot.UsesSwiftWireFormat || snapshot.Observations.Count == 0)) return null;
         try
         {
             var topology = new VisualRoomTransitionTracker();
@@ -1141,6 +1148,11 @@ internal sealed class WindowsLiveWorldPipeline
                 topology.RestoreActiveRoomFromDurableEvidence(entry.RoomId, entry.OptimizedPose);
                 topology.SaveTopology(path);
             }
+            if (snapshot.UsesSwiftWireFormat && restored.Portals.Count > 0)
+            {
+                return restored.Portals.SelectMany(portal => new[] { portal.LeftRoomID, portal.RightRoomID })
+                    .Distinct().ToDictionary(room => room, topology.CompositionBounds);
+            }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
         {
@@ -1148,6 +1160,7 @@ internal sealed class WindowsLiveWorldPipeline
             // independently validated world can still be displayed.
             System.Diagnostics.Trace.TraceWarning($"Could not restore portable room topology: {error.Message}");
         }
+        return null;
     }
 
     internal static int RoomIdentifier(string roomName) => BinaryPrimitives.ReadInt32LittleEndian(SHA256.HashData(Encoding.UTF8.GetBytes(roomName))) & int.MaxValue;
@@ -1271,7 +1284,8 @@ internal sealed class WindowsLiveWorldPipeline
         LiveWorldSnapshot snapshot,
         Func<int, BgraFrame> loadSource,
         double pixelsPerWorldUnit,
-        int tileSize)
+        int tileSize,
+        IReadOnlyDictionary<int, VisualRoomCompositionBounds>? roomBounds = null)
     {
         if (!double.IsFinite(pixelsPerWorldUnit) || pixelsPerWorldUnit <= 0 || tileSize <= 0)
             throw new InvalidDataException("Live-world atlas geometry is invalid.");
@@ -1284,7 +1298,7 @@ internal sealed class WindowsLiveWorldPipeline
             var source = loadSource(observation.SourceObservationId);
             if (source.Width != observation.SourceWidth || source.Height != observation.SourceHeight)
                 throw new InvalidDataException($"Live-world observation {observation.Id} has incorrect source dimensions.");
-            var exclusions = snapshot.CompositionMasks(observation);
+            var exclusions = snapshot.CompositionMasks(observation, roomBounds?.GetValueOrDefault(observation.RoomId) ?? default);
             var masks = SceneRegions.PixelRectangles(source.Width, source.Height,
                 GameplayTutorialPromptMask.Find(source) is { } prompt ? exclusions.Append(prompt) : exclusions);
             if (!rebuilt.AddFrame(source, AtlasTelemetry(source, observation), masks))

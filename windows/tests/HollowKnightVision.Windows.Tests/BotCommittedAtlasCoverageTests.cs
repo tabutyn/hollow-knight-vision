@@ -60,6 +60,21 @@ internal static class BotCommittedAtlasCoverageTests
             "Only the visible part of a successfully placed extension should earn cell credit.");
     }
 
+    internal static void TestSavedRoomCropsNeverEarnExploration()
+    {
+        var coverage = new BotCommittedAtlasCoverage();
+        var start = Snapshot(1, [Row(0, 320)]);
+        coverage.Update(start);
+        Check(coverage.Totals == (30, 0), "The full frame supplies the initial coverage baseline.");
+
+        var bounds = new Dictionary<int, VisualRoomCompositionBounds> { [7] = new(null, 576) };
+        coverage.Update(start, roomBounds: bounds);
+        Check(coverage.Totals == (12, 0), "Loading the doorway metadata removes cropped cells from the baseline.");
+
+        coverage.Update(Snapshot(2, [.. start.Observations, Row(1, 448)]), roomBounds: bounds);
+        Check(coverage.Totals == (12, 0), "Moving the camera past the saved room edge does not award cropped cells.");
+    }
+
     private static LiveWorldObservation Row(int id, double x) => LiveWorldObservation.Create(
         id, id, id + 1, 640, 360, 640, 160, [], new(x, 180), new(x, 180), roomId: 7);
 

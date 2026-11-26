@@ -20,6 +20,7 @@ public partial class MainWindow
     {
         public LiveIslandPlacementProjection? MeasuredOwner { get; init; }
         internal LiveWorldPlacementProjection? DoorPlacement { get; init; }
+        internal IReadOnlyDictionary<int, VisualRoomCompositionBounds>? PortableRoomBounds { get; init; }
 
         internal IReadOnlyList<BotLine>? ProjectDoors(WorldSize size)
         {
@@ -157,7 +158,7 @@ public partial class MainWindow
             {
                 if (committedAtlas is { } placement)
                 {
-                    botCommittedCoverage.Update(placement.Graph);
+                    botCommittedCoverage.Update(placement.Graph, roomBounds: placement.PortableRoomBounds);
                     atlasView = botCommittedCoverage.View(placement.CameraCenter, size, placement.Room, visual.MeasuredHealth);
                 }
             }
