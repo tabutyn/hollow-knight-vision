@@ -100,6 +100,11 @@ print('PASS Windows PNG/JSON -> shared Python reader, normalized coordinates, kn
 '@
   & $Python -B -c $validation $trainerRoot $dataset
   if ($LASTEXITCODE -ne 0) { throw 'Windows/Python dataset interchange assertions failed.' }
+  & $Python -B (Join-Path $PSScriptRoot 'tests\incremental_trainer_interop.py') $trainerRoot $dataset $TrainerLauncher $fixtureRoot
+  if ($LASTEXITCODE -ne 0) { throw 'Windows incremental object training or its learned class evidence failed.' }
+  $incremental = Join-Path $fixtureRoot 'detector-incremental'
+  & $Dotnet $tests --verify-object-trainer-probe $incremental 'enemies.crawlid' 'game.playable-knight' 'world.geo-deposit'
+  if ($LASTEXITCODE -ne 0) { throw 'Native Windows inference rejected the trained detector or its class evidence.' }
   $botFixture = Join-Path $fixtureRoot 'paired-captures'
   $botSource = Join-Path $repositoryRoot 'macos\BotPython'
   & $Python -B -m unittest discover -s $botSource -p test_training_ipc.py

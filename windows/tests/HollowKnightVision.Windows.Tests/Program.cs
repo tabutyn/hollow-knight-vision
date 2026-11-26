@@ -28,6 +28,12 @@ if (args is ["--export-dataset-probe", var probeRoot])
     return;
 }
 
+if (args is ["--verify-object-trainer-probe", var objectTrainerRun, .. var expectedObjectClasses])
+{
+    ModelVersionTests.VerifyTrainedObjectDetector(objectTrainerRun, expectedObjectClasses);
+    return;
+}
+
 if (args is ["--export-bot-capture-probe", var captureRoot])
 {
     if (BotCaptureTests.WriteFixture(captureRoot).Published.Count != 2)
