@@ -1,4 +1,5 @@
 using HollowKnightVision.Windows.Core;
+using HollowKnightVision.Windows.App;
 
 internal static class GameplayTutorialPromptTests
 {
@@ -36,6 +37,42 @@ internal static class GameplayTutorialPromptTests
         var tiny = new BgraFrame(1, 1, 4, [255, 255, 255, 255], 0, DateTimeOffset.UnixEpoch);
         Check(GameplaySceneMasks.Create(tiny, [], null).GroundRegions.TutorialPrompt is null,
             "A one-pixel frame produced a tutorial prompt.");
+    }
+
+    internal static void TestRebuildExcludesSavedTutorialPrompt()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-rebuild-tutorial-prompt-");
+        try
+        {
+            var store = new LiveWorldSessionStore(root.FullName);
+            var tracker = new LiveWorldTracker();
+            AddFrame(1, BuildFrame(1, glyph: false, letters: false));
+            var oldCapture = AddFrame(2, BuildFrame(1, glyph: true, letters: true));
+            var snapshot = tracker.Snapshot;
+            Check(store.Commit(snapshot, 0, snapshot.MapRevision), "Could not commit the old Atlas fixture.");
+            var evidencePath = Path.Combine(root.FullName, oldCapture.ImagePath);
+            var archivedPixels = File.ReadAllBytes(evidencePath);
+
+            var rebuilt = WindowsLiveWorldPipeline.RebuildAtlas(store.Load().Snapshot, store.Source, 1, 128);
+            foreach (var x in new[] { 289, 335 })
+                Check(rebuilt.TryReadPixel(x - 320, 323 - 180, out var blue, out var green, out var red, out _)
+                    && (blue, green, red) == (76, 51, 25),
+                    "A tutorial from saved evidence replaced the earlier room texture.");
+            Check(rebuilt.TryReadPixel(400 - 320, 323 - 180, out var surroundingBlue, out _, out _, out _)
+                && surroundingBlue == 76 && rebuilt.AcceptedFrameCount == 2,
+                "Rebuilding skipped the unmasked parts of the old capture.");
+            Check(File.ReadAllBytes(evidencePath).SequenceEqual(archivedPixels)
+                && PixelAlpha(store.Source(oldCapture.Id), 289, 323) == 255,
+                "Rebuilding modified the archived frame.");
+
+            StoredFrameObservation AddFrame(int time, BgraFrame frame)
+            {
+                var source = store.Append(frame, time, default, frame.Width);
+                tracker.Ingest(source.Id, time, frame, default, frame.Width, searchForClosure: false);
+                return source;
+            }
+        }
+        finally { root.Delete(recursive: true); }
     }
 
     private static BgraFrame BuildFrame(int scale, bool glyph, bool letters, bool square = false)

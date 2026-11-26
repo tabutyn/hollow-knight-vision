@@ -1,13 +1,13 @@
 namespace HollowKnightVision.Windows.Core;
 
 /// <summary>Finds a controller tutorial in the bottom band of the game capture.</summary>
-internal static class GameplayTutorialPromptMask
+public static class GameplayTutorialPromptMask
 {
     private const int ReferenceWidth = 640;
     private const int ReferenceHeight = 360;
     private const int BandTop = 300;
 
-    internal static StencilRect? Find(BgraFrame frame)
+    public static StencilRect? Find(BgraFrame frame)
     {
         var scaleX = frame.Width / (double)ReferenceWidth;
         var scaleY = frame.Height / (double)ReferenceHeight;
