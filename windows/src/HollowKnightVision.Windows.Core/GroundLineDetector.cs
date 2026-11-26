@@ -171,6 +171,35 @@ public static class GroundPixels
         return luma;
     }
 
+    // Approximate ImageIO's conversion of an sRGB archive into DeviceGray.
+    // Use the D50-adapted luminance and composite the encoded gray onto black.
+    internal static byte[] SrgbArchiveLuma(BgraFrame frame)
+    {
+        var linear = Srgb.Linear;
+        var luma = new byte[checked(frame.Width * frame.Height)];
+        for (var y = 0; y < frame.Height; y++)
+        {
+            var row = frame.Row(y);
+            for (var x = 0; x < frame.Width; x++)
+            {
+                var offset = x * BgraFrame.BytesPerPixel;
+                var intensity = .2225045 * linear[row[offset + 2]] + .7168786 * linear[row[offset + 1]]
+                    + .0606169 * linear[row[offset]];
+                var gray = Math.Round(255 * (intensity <= .0031308
+                    ? 12.92 * intensity : 1.055 * Math.Pow(intensity, 1 / 2.4) - .055));
+                luma[y * frame.Width + x] = (byte)((gray * row[offset + 3] + 127) / 255);
+            }
+        }
+        return luma;
+    }
+
+    private static class Srgb
+    {
+        internal static readonly double[] Linear = Enumerable.Range(0, 256)
+            .Select(value => value <= 10 ? value / 255d / 12.92 : Math.Pow((value / 255d + .055) / 1.055, 2.4))
+            .ToArray();
+    }
+
     public static byte[]? Patch(
         IReadOnlyList<byte>? pixels,
         int width,
@@ -207,17 +236,43 @@ public static class GroundPixels
 public static class GroundLineDetector
 {
     public const int ComparisonKernelSpan = 32;
+    private const int ExclusionPaddingX = 8 + ComparisonKernelSpan / 2;
+    private const int ExclusionPaddingY = 12;
     internal static ReadOnlySpan<int> ComparisonWeights => [-1, -2, -3, -4, 4, 3, 2, 1];
 
     public static GroundEdgeAnalysis Analyze(
         BgraFrame frame,
-        IReadOnlyList<PixelRect>? excludedRects = null)
+        IReadOnlyList<PixelRect>? excludedRects = null) =>
+        Analyze(frame, excludedRects, exclusionsAlreadyPadded: false, useArchiveLuma: false);
+
+    internal static GroundEdgeAnalysis AnalyzeMacReplay(BgraFrame frame, IReadOnlyList<StencilRect> exclusions,
+        bool hasSrgbProfile) => Analyze(frame, CaptureCenterExclusions(frame, exclusions, ExclusionPaddingX, ExclusionPaddingY),
+        exclusionsAlreadyPadded: true, useArchiveLuma: hasSrgbProfile);
+
+    internal static IReadOnlyList<PixelRect> CaptureCenterExclusions(BgraFrame frame, IReadOnlyList<StencilRect> exclusions,
+        int paddingX = 0, int paddingY = 0)
+    {
+        var pixels = new List<PixelRect>(exclusions.Count);
+        foreach (var rect in exclusions)
+        {
+            if (!rect.IsFinite || rect.IsEmpty) continue;
+            var left = (int)Math.Clamp(Math.Ceiling(rect.X - paddingX - .5), 0, frame.Width);
+            var top = (int)Math.Clamp(Math.Ceiling(rect.Y - paddingY - .5), 0, frame.Height);
+            var right = (int)Math.Clamp(Math.Floor(rect.Right + paddingX - .5) + 1, 0, frame.Width);
+            var bottom = (int)Math.Clamp(Math.Floor(rect.Bottom + paddingY - .5) + 1, 0, frame.Height);
+            if (left < right && top < bottom) pixels.Add(new(left, top, right - left, bottom - top));
+        }
+        return pixels;
+    }
+
+    private static GroundEdgeAnalysis Analyze(BgraFrame frame, IReadOnlyList<PixelRect>? excludedRects,
+        bool exclusionsAlreadyPadded, bool useArchiveLuma)
     {
         ArgumentNullException.ThrowIfNull(frame);
         var width = frame.Width;
         var height = frame.Height;
         var length = checked(width * height);
-        var luma = GroundPixels.Luma(frame, width, height)
+        var luma = useArchiveLuma ? GroundPixels.SrgbArchiveLuma(frame) : GroundPixels.Luma(frame, width, height)
             ?? throw new InvalidOperationException("Capture could not be converted to luma.");
 
         var edges = new byte[length];
@@ -228,13 +283,15 @@ public static class GroundLineDetector
 
         var valid = new byte[length];
         Array.Fill(valid, (byte)1);
+        var paddingX = exclusionsAlreadyPadded ? 0 : ExclusionPaddingX;
+        var paddingY = exclusionsAlreadyPadded ? 0 : ExclusionPaddingY;
         foreach (var rect in excludedRects ?? [])
         {
             if (rect.Width <= 0 || rect.Height <= 0) continue;
-            var left = Math.Clamp((long)rect.X - 24, 0, width);
-            var right = Math.Clamp((long)rect.Right + 24, 0, width);
-            var top = Math.Clamp((long)rect.Y - 12, 0, height);
-            var bottom = Math.Clamp((long)rect.Bottom + 12, 0, height);
+            var left = Math.Clamp((long)rect.X - paddingX, 0, width);
+            var right = Math.Clamp((long)rect.Right + paddingX, 0, width);
+            var top = Math.Clamp((long)rect.Y - paddingY, 0, height);
+            var bottom = Math.Clamp((long)rect.Bottom + paddingY, 0, height);
             if (left >= right || top >= bottom) continue;
             for (var row = (int)top; row < bottom; row++)
             {

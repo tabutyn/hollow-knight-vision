@@ -131,7 +131,9 @@ public sealed class VisualReplayArchiveReader
             throw new InvalidDataException("Visual replay archive is incomplete.");
     }
 
-    public BgraFrame ReadImage(VisualReplayFrame frame)
+    public BgraFrame ReadImage(VisualReplayFrame frame) => ReadImage(frame, out _);
+
+    internal BgraFrame ReadImage(VisualReplayFrame frame, out bool hasSrgbProfile)
     {
         if (frame.Index < 0 || frame.Index >= Manifest.Frames.Count || Manifest.Frames[frame.Index] != frame
             || frame.FileName is not { } fileName
@@ -144,7 +146,7 @@ public sealed class VisualReplayArchiveReader
         var checksum = Convert.ToHexString(SHA256.HashData(imageStream));
         if (!string.Equals(checksum, frame.Sha256, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException($"Visual replay frame {frame.Index} has an invalid image checksum.");
-        var image = BgraPngReader.Read(imageStream, frame.Index);
+        var image = BgraPngReader.Read(imageStream, frame.Index, out hasSrgbProfile);
         if (image.Width != frame.Width || image.Height != frame.Height)
             throw new InvalidDataException($"Visual replay frame {frame.Index} has unexpected image dimensions.");
         return image;

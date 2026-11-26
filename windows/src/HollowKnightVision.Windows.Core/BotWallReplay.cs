@@ -34,13 +34,22 @@ public static class BotWallReplay
                 || inputs[key].Take(2).ToArray() is not [{ ExcludingRects: not null, SemanticTuning: not null } input])
                 continue;
 
-            var image = reader.ReadImage(match);
+            var image = reader.ReadImage(match, out var hasSrgbProfile);
             var masks = VisualReplayGroundInput.RestoreMasks(input, image);
             // The Mac wall recovery command uses the saved scene exclusions,
-            // including its HUD shield. The live Windows solver splits that shield.
+            // including its HUD shield, and pads them before sampling pixel centers.
+            GroundEdgeAnalysis edges;
             if (input.WindowsAtlasExcludingRects is null)
-                masks = masks with { GroundExclusions = masks.AtlasExclusions };
-            var analysis = GameplayTerrainAnalysis.Analyze(image, masks, input.Tuning, input.SemanticTuning);
+            {
+                var exclusions = masks.AtlasRegions.OmittedRects;
+                masks = masks with { GroundExclusions = GroundLineDetector.CaptureCenterExclusions(image, exclusions) };
+                edges = GroundLineDetector.AnalyzeMacReplay(image, exclusions, hasSrgbProfile);
+            }
+            else
+            {
+                edges = GroundLineDetector.Analyze(image, masks.GroundExclusions);
+            }
+            var analysis = GameplayTerrainAnalysis.Analyze(edges, masks, input.Tuning, input.SemanticTuning);
             var walls = TerrainWallDetector.Detect(analysis.Edges, analysis.Floors).Walls;
             var terrain = new BotScreenTerrain(image.Width, image.Height, [], BotObservationBuilder.ProjectDetectedWalls(image, walls));
             var features = new double[BotRecordingContract.FeatureNames.Count];

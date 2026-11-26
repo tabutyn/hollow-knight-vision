@@ -69,12 +69,73 @@ internal static class BotWallReplayTests
         finally { directory.Delete(recursive: true); }
     }
 
-    internal static Fixture WriteFixture(string root)
+    internal static void TestMacWallReplayHonorsSrgbAndFractionalExclusions()
+    {
+        var directory = Directory.CreateTempSubdirectory("hkv-wall-replay-pixels-");
+        try
+        {
+            // PNG sRGB and cICP chunks with valid CRCs for intent 0 and BT.2020/PQ respectively.
+            var srgb = Convert.FromHexString("000000017352474200AECE1CE9");
+            var cicp = Convert.FromHexString("0000000463494350091000014D2323FE");
+            Check(Recover("mac-srgb", srgb, windowsArchive: false)[0].Features
+                is [1, < -.18 and > -.24, _, _, _, 1, 0, 0, 0, 0, 0],
+                "The recorded red wall must reach the wall threshold after sRGB conversion.");
+            foreach (var (name, profile, windows) in new[]
+            {
+                ("mac-untagged", Array.Empty<byte>(), false),
+                ("mac-cicp", srgb.Concat(cicp).ToArray(), false),
+                ("windows", srgb, true),
+            })
+            {
+                Check(Recover(name, profile, windows)[0].Features is [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    "A different, absent, or Windows color declaration must keep the existing grayscale path.");
+            }
+
+            var frame = StrongWallFrame();
+            StencilRect[] exclusions = [new(58.6, 75.2, .2, .2), new(5.5, 10.5, 1, 1)];
+            Check(GroundLineDetector.CaptureCenterExclusions(frame, exclusions).SequenceEqual([new PixelRect(5, 10, 2, 2)]),
+                "Inclusive pixel-center sampling must preserve half-pixel boundaries.");
+            var edges = GroundLineDetector.AnalyzeMacReplay(frame, [exclusions[0]], hasSrgbProfile: false);
+            var valid = edges.ValidSourcePixels!;
+            Check(valid[63 * Width + 35] == 0 && valid[86 * Width + 82] == 0
+                && valid[63 * Width + 34] == 1 && valid[86 * Width + 83] == 1
+                && valid[62 * Width + 35] == 1 && valid[87 * Width + 82] == 1,
+                "The archive convolution padding must be applied before quantizing a subpixel rectangle.");
+
+            // DeviceGray reference values measured by CoreGraphics on these straight-alpha sRGB samples.
+            var alpha = new BgraFrame(6, 1, 24,
+                [0, 0, 255, 255, 0, 0, 255, 128, 220, 190, 50, 80, 255, 0, 0, 0,
+                    255, 255, 255, 128, 127, 127, 127, 127], 1, DateTimeOffset.UnixEpoch);
+            Check(GroundPixels.SrgbArchiveLuma(alpha).SequenceEqual(new byte[] { 130, 65, 54, 0, 128, 63 }),
+                "Archive grayscale must handle opacity and the original sRGB colors.");
+
+            IReadOnlyList<BotRecoveredWallFrame> Recover(string name, byte[] profile, bool windowsArchive)
+            {
+                var fixture = WriteFixture(Path.Combine(directory.FullName, name), colored: true,
+                    windowsArchive, (image, path) =>
+                    {
+                        PngWriter.Write(image, path);
+                        var png = File.ReadAllBytes(path);
+                        const int endOfHeader = 33;
+                        File.WriteAllBytes(path, [.. png.AsSpan(0, endOfHeader), .. profile, .. png.AsSpan(endOfHeader)]);
+                    });
+                var rows = BotWallReplay.Recover(fixture.Clip, fixture.Archive);
+                Check(rows.Count == 2 && rows[0].CaptureTimestamp == Timestamp(0),
+                    "Image color conversions must preserve exact frame ownership.");
+                return rows;
+            }
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    internal static Fixture WriteFixture(string root, bool colored = false, bool windowsArchive = false,
+        Action<BgraFrame, string>? writeImage = null)
     {
         var replay = Guid.NewGuid();
         var archiveRoot = Path.Combine(root, "recorded_paths");
-        var archive = new VisualReplayArchiveWriter(archiveRoot, replay, new Dictionary<string, string>(), maximumPendingImages: 24);
-        var image = StrongWallFrame();
+        var archive = new VisualReplayArchiveWriter(archiveRoot, replay, new Dictionary<string, string>(), maximumPendingImages: 24,
+            writeImage);
+        var image = StrongWallFrame(colored);
         for (var index = 0; index < 9; index++)
         {
             var captureAt = Timestamp(index);
@@ -83,7 +144,8 @@ internal static class BotWallReplayTests
                 archive.Append(image, captureAt, captureAt, index == 4 ? 8UL : 7UL, Width, null);
             if (index == 2) archive.Append(image, captureAt, captureAt, 7, Width, null);
             var input = new VisualReplayGroundInput(Timestamp(index), 7,
-                index == 1 ? [[[48, 0], [20, Height]]] : [], SemanticTuning: index == 7 ? null : GroundTheoryTuning.SemanticDefault);
+                index == 1 ? [[[48, 0], [20, Height]]] : [], SemanticTuning: index == 7 ? null : GroundTheoryTuning.SemanticDefault,
+                WindowsAtlasExcludingRects: windowsArchive ? [] : null);
             archive.RecordGroundInput(input);
             if (index == 3) archive.RecordGroundInput(input);
         }
@@ -127,7 +189,7 @@ internal static class BotWallReplayTests
         }
     }
 
-    private static BgraFrame StrongWallFrame()
+    private static BgraFrame StrongWallFrame(bool colored = false)
     {
         var pixels = new byte[Width * Height * 4];
         for (var y = 0; y < Height; y++)
@@ -135,6 +197,11 @@ internal static class BotWallReplayTests
         {
             var index = (y * Width + x) * 4;
             pixels[index] = pixels[index + 1] = pixels[index + 2] = x < 58 ? (byte)92 : (byte)8;
+            if (colored && x < 58)
+            {
+                pixels[index] = pixels[index + 1] = 0;
+                pixels[index + 2] = 180;
+            }
             pixels[index + 3] = 255;
         }
         return new(Width, Height, Width * 4, pixels, 1, DateTimeOffset.UnixEpoch);
