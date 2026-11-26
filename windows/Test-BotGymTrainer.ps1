@@ -1,3 +1,5 @@
+param([string]$FixturePython)
+
 $ErrorActionPreference = 'Stop'
 $installed = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision'
 $training = Join-Path $installed 'training'
@@ -13,3 +15,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Shared bot tests failed on Windows.' }
 if ($LASTEXITCODE -ne 0) { throw 'Installed Windows Gym runtime or PPO publication failed.' }
 & dotnet $nativeTests --train-bot-probe $installed
 if ($LASTEXITCODE -ne 0) { throw 'Installed Windows Bot training from captures failed.' }
+if ($FixturePython) {
+  $hostProgram = Join-Path $installed 'HollowKnightVision.Windows.Host.exe'
+  & $botPython -B (Join-Path $PSScriptRoot 'tests\gym_receiver_lifecycle.py') (Join-Path $training 'BotPython') $hostProgram $nativeTests $FixturePython
+  if ($LASTEXITCODE -ne 0) { throw 'Installed Windows Gym receiver reset, controls, rewards, or cleanup failed.' }
+}

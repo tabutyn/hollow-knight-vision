@@ -177,4 +177,9 @@ def check(encoder_command, root):
 
 
 if __name__ == "__main__":
-    check(sys.argv[3:], Path(sys.argv[2]))
+    root = Path(sys.argv[2])
+    if sys.argv[3:] == ["--prepare-receiver-fixture"]:
+        fixture_detector(root / "visual-onnx")
+        (root / "frame.rgb").write_bytes(pixels())
+    else:
+        check(sys.argv[3:], root)

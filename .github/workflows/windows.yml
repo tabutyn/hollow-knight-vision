@@ -109,7 +109,10 @@ jobs:
             if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
           }
       - name: Verify installed Windows Gym trainer
-        run: .\Test-BotGymTrainer.ps1
+        run: |
+          $registration = Join-Path $env:LOCALAPPDATA 'HollowKnightVision\training-v1\runtime-settings.json'
+          $fixturePython = (Get-Content -LiteralPath $registration -Raw | ConvertFrom-Json).pythonPath
+          .\Test-BotGymTrainer.ps1 -FixturePython $fixturePython
       - name: Report Windows trainer Python coverage
         run: |
           $config = $env:COVERAGE_PROCESS_START
