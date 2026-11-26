@@ -5542,7 +5542,8 @@ public partial class MainWindow : Window
                 VisionResetController.RecoverInterruptedActiveAtlasPublication(
                     atlasStateStore,
                     activeAtlasDirectory,
-                    VisionResetController.ReadPersistedAtlas);
+                    VisionResetController.ReadPersistedAtlas,
+                    validateActiveWorld: VisionResetController.ReadActivePersistedAtlas);
                 if (!Directory.Exists(activeAtlasDirectory))
                 {
                     _ = WriteAtlasGeneration(
@@ -5551,7 +5552,7 @@ public partial class MainWindow : Window
                         copyActiveWorld: false,
                         retainPrevious: false);
                 }
-                var restored = VisionResetController.ReadPersistedAtlas(
+                var restored = VisionResetController.ReadActivePersistedAtlas(
                     activeAtlasDirectory);
                 var pipeline = new WindowsLiveWorldPipeline(
                     IOPath.Combine(activeAtlasDirectory, "live-world"));

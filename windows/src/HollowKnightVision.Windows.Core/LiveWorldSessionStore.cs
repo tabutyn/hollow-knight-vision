@@ -252,7 +252,14 @@ public sealed class LiveWorldSessionStore
     /// validation, where an incomplete directory must remain available as
     /// failure evidence rather than being repaired in place.
     /// </summary>
-    public static LiveWorldSessionState ValidateExisting(string rootDirectory)
+    public static LiveWorldSessionState ValidateExisting(string rootDirectory) =>
+        ValidateExisting(rootDirectory, allowUncommittedInitialCaptures: false);
+
+    /// <summary>For an active, empty Atlas, validates pending capture files without placing them.</summary>
+    public static LiveWorldSessionState ValidateActiveInitialCaptures(string rootDirectory) =>
+        ValidateExisting(rootDirectory, allowUncommittedInitialCaptures: true);
+
+    private static LiveWorldSessionState ValidateExisting(string rootDirectory, bool allowUncommittedInitialCaptures)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootDirectory);
         var requestedRoot = Path.GetFullPath(rootDirectory);
@@ -284,13 +291,18 @@ public sealed class LiveWorldSessionStore
         var scenePath = Path.Combine(root, SceneFileName);
         if (!File.Exists(scenePath))
         {
-            if (manifest.Observations.Count != 0)
+            var empty = EmptyWorld(manifest, 0);
+            if (manifest.Observations.Count == 0) return empty;
+            if (!allowUncommittedInitialCaptures || manifest.Observations.Any(source => source.PoseRevision != 0))
             {
                 throw Error(
                     LiveWorldSessionStoreError.CorruptSnapshot,
                     "Live-world evidence exists without a committed scene snapshot.");
             }
-            return EmptyWorld(manifest, 0);
+            // The writer can publish a source PNG and manifest before its first
+            // snapshot is committed. Keep those pixels without placing them.
+            using var pendingSources = ValidateExistingEvidence(empty.Snapshot, manifest, root);
+            return empty;
         }
 
         ExistingSceneSnapshotEnvelope envelope;
