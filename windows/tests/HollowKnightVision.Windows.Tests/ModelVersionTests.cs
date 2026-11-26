@@ -436,6 +436,21 @@ internal static class ModelVersionTests
         }
         public void Dispose() => Directory.Delete(Root, recursive: true);
     }
+    internal static void VerifyTrainedObjectDetector(string run, string[] expectedClasses)
+    {
+        using var detector = new OnnxObjectDetector(run, useActorCalibrations: false);
+        if (!detector.ClassIdentifiers.SequenceEqual(expectedClasses)
+            || !detector.TrainedClassIdentifiers.SetEquals(expectedClasses))
+            throw new InvalidOperationException("Windows did not load the expected trained detector classes.");
+        const int width = 80, height = 48;
+        var frame = new BgraFrame(width, height, width * 4, new byte[width * height * 4], 17, DateTimeOffset.UnixEpoch);
+        // Reading the raw output also verifies that the actual ONNX head count matches the exported class order.
+        if (detector.Detect(frame, raw: true).Any(detection =>
+            !detector.TrainedClassIdentifiers.Contains(detection.ClassIdentifier) || detection.SourceFrameIdentifier != frame.CaptureId))
+            throw new InvalidOperationException("Windows published a detection from outside the trained class set.");
+        Console.WriteLine("PASS Windows opens the trained ONNX detector and decodes its evidence-backed class heads");
+    }
+
     private static void Check(bool condition) { if (!condition) throw new Exception("Model parity assertion failed."); }
     private static void Equal<T>(T expected, T actual) { if (!EqualityComparer<T>.Default.Equals(expected, actual)) throw new Exception($"Expected {expected}; got {actual}."); }
     private static void Throws<T>(Action action) where T : Exception
