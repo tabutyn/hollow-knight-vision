@@ -9,6 +9,17 @@ using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Host;
 
 if (await TrainingProcessTests.TryRunProbeAsync(args)) return;
+if (args is ["--export-gym-receiver-probe", var receiverFixture])
+{
+    GymReceiverFixture.Export(receiverFixture);
+    return;
+}
+if (args is ["-batchmode", ..] && Environment.GetEnvironmentVariable("HKV_GYM_TEST_FIXTURE") is { } gymFixture
+    && Environment.GetEnvironmentVariable("HKV_GYM_DIRECTORY") is { } gymEpisodeDirectory)
+{
+    GymReceiverFixture.Run(args, gymFixture, gymEpisodeDirectory);
+    return;
+}
 if (args.Contains("--gpu-only"))
 {
     GroundComputeProcessingTests.TestCudaPatchParityAndReuse();
