@@ -22,7 +22,7 @@ internal static class BotDesktopEvaluationTests
     private const int Width = 192, Height = 128;
     private const InputButtons Action = InputButtons.Right | InputButtons.ActionX;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-    private enum OpeningOutcome { Gameplay, HandoffTimeout, ArchiveFailure, EvaluationFailure, FocusLost }
+    private enum OpeningOutcome { Gameplay, HandoffTimeout, CutsceneTimeout, GameplayStartupTimeout, ArchiveFailure, EvaluationFailure, FocusLost }
 
     internal static void Run()
     {
@@ -56,6 +56,8 @@ internal static class BotDesktopEvaluationTests
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-timeout"), OpeningOutcome.HandoffTimeout, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-backup-failure"), OpeningOutcome.ArchiveFailure, timeout.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "cutscene-timeout"), OpeningOutcome.CutsceneTimeout, timeout.Token);
+            await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "gameplay-start-timeout"), OpeningOutcome.GameplayStartupTimeout, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-evaluation-failure"), OpeningOutcome.EvaluationFailure, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-focus-lost"), OpeningOutcome.FocusLost, timeout.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
@@ -1204,19 +1206,31 @@ internal static class BotDesktopEvaluationTests
         {
             Field("recentCaptureGeneration").SetValue(window, Generation);
             Field("workspace").SetValue(window, "Hacker");
-            Field("recognizedMenuContext").SetValue(window, "select-profile");
+            Field("recognizedMenuContext").SetValue(window,
+                outcome == OpeningOutcome.GameplayStartupTimeout ? "game" : "select-profile");
             var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
             bridge.Start();
             while (bridge.PauseState != GamePauseState.Ready) await Task.Delay(10, token);
             await window.StartBotPlaybackAsync(new BotDemoSaveArchive(saves, archives)).WaitAsync(token);
-            var run = Field("botPlayback").GetValue(window);
-            Check(run is not null, "An untrained bot must still start its menu routine.");
-            var owner = (Guid)run!.GetType().GetProperty("Owner", Instance)!.GetValue(run)!;
+            var run = Field("botPlayback").GetValue(window)
+                ?? throw new InvalidOperationException("An untrained bot must still start.");
+            var owner = (Guid)run.GetType().GetProperty("Owner", Instance)!.GetValue(run)!;
 
             var pixels = new byte[Width * Height * 4];
             var index = 0;
             var selector = new MenuStencilMatch("selector", "Selector", new(10, 10, 6, 6), 1, null);
             var status = (TextBlock)window.FindName("StatusText");
+            if (outcome == OpeningOutcome.GameplayStartupTimeout)
+            {
+                var deadline = HandoffDeadline();
+                Check(deadline - Clock() is > 10 and <= 15,
+                    "Starting in Gameplay must have a bounded handoff from the start.");
+                CheckStartupHeartbeat(deadline - 1);
+                Check(bridge.OwnsBotControl(owner), "The in-game startup must retain its unexpired lease.");
+                await ExpectTimeoutRelease(deadline, "Bot controls did not become ready");
+                Console.WriteLine("PASS Windows heartbeat expires an in-game bot startup without any capture");
+                return;
+            }
             if (outcome == OpeningOutcome.ArchiveFailure)
             {
                 while (Field("botPlayback").GetValue(window) is not null)
@@ -1258,6 +1272,13 @@ internal static class BotDesktopEvaluationTests
             await ExpectAction(InputButtons.ActionX, "quit-game", receiverGameplay: true);
             await ExpectAction(InputButtons.ActionZ, "brightness", receiverGameplay: true, showHud: true);
             Check(bridge.OwnsBotControl(owner), "Conflicting menu and HUD cues must preserve the opening until Gameplay is admitted.");
+            if (outcome == OpeningOutcome.CutsceneTimeout)
+            {
+                await ExpectTimeoutRelease(Clock() + 301, "Skipping the opening cutscene.");
+                Check(!Directory.Exists(evaluationRoot), "A cutscene timeout must leave no gameplay evaluation.");
+                Console.WriteLine("PASS Windows heartbeat releases cutscene controls without another captured frame");
+                return;
+            }
 
             var preparingUntil = Clock() + .8;
             var released = false;
@@ -1272,23 +1293,18 @@ internal static class BotDesktopEvaluationTests
                 await Task.Delay(40, token);
             } while (Clock() < preparingUntil);
             Check(released && bridge.OwnsBotControl(owner), "Controls must stay neutral while the receiver and profile Atlas are getting ready.");
-            var handoffDeadline = run.GetType().GetField("HandoffDeadline", Instance)!;
-            var remaining = (double)handoffDeadline.GetValue(run)! - Clock();
+            var deadlineAfterHud = HandoffDeadline();
+            var remaining = deadlineAfterHud - Clock();
             Check(remaining is > 12 and <= 15, "A stable Gameplay HUD must start the bounded handoff even before the receiver is ready.");
             Step(null, receiverGameplay: false, recognizedGameplay: true, admitGameplay: true, showHud: true);
             Check(bridge.OwnsBotControl(owner), "A lagging receiver must defer the handoff even after the Atlas is ready.");
 
             if (outcome == OpeningOutcome.HandoffTimeout)
             {
-                // Advance the pending deadline without waiting for more frames.
-                handoffDeadline.SetValue(run, Clock() - .1);
-                Method("CheckBotOwnership").Invoke(window, null);
-                Check(Field("botPlayback").GetValue(window) is null
-                    && status.Text.Contains("Bot controls did not become ready", StringComparison.Ordinal),
-                    "The heartbeat must end an expired handoff without waiting for another capture.");
-                Check(!bridge.OwnsBotControl(owner) && status.Text.Contains("Gameplay reached.", StringComparison.Ordinal)
+                await ExpectTimeoutRelease(deadlineAfterHud, "Bot controls did not become ready");
+                Check(status.Text.Contains("Gameplay reached.", StringComparison.Ordinal)
                     && status.Text.Contains("Controls returned to you.", StringComparison.Ordinal),
-                    "An expired gameplay handoff must release the receiver lease.");
+                    "A handoff timeout must identify the interrupted phase.");
             }
             else if (outcome == OpeningOutcome.EvaluationFailure)
             {
@@ -1345,6 +1361,23 @@ internal static class BotDesktopEvaluationTests
                 Check(metadata.GetProperty("actionSource").GetString() == "starter-policy"
                     && !metadata.TryGetProperty("modelSHA256", out _) && !metadata.TryGetProperty("skillEvents", out _),
                     "A built-in run must have its own evaluation with no fabricated model or skill plan.");
+            }
+
+            double HandoffDeadline() => (double)run.GetType().GetField("HandoffDeadline", Instance)!.GetValue(run)!;
+
+            void CheckStartupHeartbeat(double now) => Method("CheckBotOwnership").Invoke(window, [now]);
+
+            async Task ExpectTimeoutRelease(double now, string phase)
+            {
+                CheckStartupHeartbeat(now);
+                Check(Field("botPlayback").GetValue(window) is null && !bridge.OwnsBotControl(owner)
+                    && status.Text.Contains(phase, StringComparison.Ordinal),
+                    "The heartbeat must report the expired phase and release the receiver lease without a new capture.");
+                ReceiverInputSnapshot state;
+                do { state = await states.Reader.ReadAsync(token); }
+                while (state.Enabled || state.HeldButtons != InputButtons.None);
+                Check(Step(null, receiverGameplay: true, recognizedGameplay: true, admitGameplay: true, showHud: true) is null
+                    && !bridge.OwnsBotControl(owner), "A late capture must leave the timed-out lease released.");
             }
 
             async Task ExpectAction(InputButtons button, string context, bool receiverGameplay, bool showHud = false)

@@ -32,7 +32,7 @@ public partial class MainWindow
         internal LoadedBot? Loaded;
         internal BotEvaluationRecorder? Evaluation;
         internal int EvaluationStartQueued;
-        internal double HandoffDeadline = double.PositiveInfinity;
+        internal double HandoffDeadline = archive is null ? startedAt + BotDemoHandoffTimeout : double.PositiveInfinity;
         internal BotPlaybackUpdate PlaybackUpdate = new(BotPlaybackUpdate.WaitingForFrame);
         internal string? DisplayedPlaybackStatus; // UI thread
         internal Channel<HackerMatchedFrame>? HackerFrames { get; } = domain == BotCaptureDomain.Hacker
@@ -233,23 +233,35 @@ public partial class MainWindow
         }
     }
 
-    private void CheckBotOwnership()
+    private void CheckBotOwnership(double now)
     {
         if (Volatile.Read(ref botPlayback) is not { } run) return;
-        if (!Volatile.Read(ref run.Playing) && BotCaptureClock() >= Volatile.Read(ref run.HandoffDeadline))
-            StopBotPlayback(BotDemoHandoffIssue, reason: "handoff-timeout");
+        if (!Volatile.Read(ref run.Playing) && ExpiredBotStartup(run, now) is { } expired)
+            StopBotPlayback(expired.Status, expired.Reason);
         else if (!gameControls.OwnsBotControl(run.Owner))
             StopBotPlayback("Bot stopped. Press B to start again.");
-        else if (run.Demo is not null && !Volatile.Read(ref run.Playing) && BotCaptureClock() - run.StartedAt > 720)
-            StopBotPlayback("Bot Demo timed out.");
         else if ((run.StartedInGameplay || Volatile.Read(ref run.Playing))
             && Volatile.Read(ref run.Loaded) is { Policy: not null } loaded)
         {
-            var status = Volatile.Read(ref run.PlaybackUpdate).StatusAt(BotCaptureClock());
+            var status = Volatile.Read(ref run.PlaybackUpdate).StatusAt(now);
             if (status == run.DisplayedPlaybackStatus) return;
             run.DisplayedPlaybackStatus = status;
             SetStatus($"{status} · {loaded.ModelName} · B to stop");
         }
+    }
+
+    private (string Status, string Reason)? ExpiredBotStartup(BotRun run, double now)
+    {
+        // Menu observations share this lock and may inspect save files.
+        // Try again on the next heartbeat if the capture worker is busy.
+        if (!Monitor.TryEnter(thinkingControlLock)) return null;
+        try
+        {
+            if (Volatile.Read(ref run.Playing)) return null;
+            if (now >= Volatile.Read(ref run.HandoffDeadline)) return (BotDemoHandoffIssue, "handoff-timeout");
+            return run.Demo?.CheckTimeout(now)?.Issue is { } issue ? (issue, "startup-timeout") : null;
+        }
+        finally { Monitor.Exit(thinkingControlLock); }
     }
 
     private BotRun? ObserveBotStartup(BgraFrame frame, long generation, double capturedAt, bool admitted, bool recognizedGameplay,
@@ -269,6 +281,11 @@ public partial class MainWindow
         if (!run.Playing)
         {
             var now = BotCaptureClock();
+            if (now >= Volatile.Read(ref run.HandoffDeadline))
+            {
+                EndBotFromWorker(run, BotDemoHandoffIssue);
+                return null;
+            }
             var frameTime = (frame.ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds;
             var receiverGameplay = receiver?.AtlasGameplayActive == true;
             var freshHud = hud is { EstablishesGameplay: true }
@@ -298,17 +315,8 @@ public partial class MainWindow
                     return null;
                 }
                 if (decision.Phase != BotDemoPhase.Gameplay) return null;
-                var deadline = Volatile.Read(ref run.HandoffDeadline);
-                if (double.IsPositiveInfinity(deadline))
-                {
-                    deadline = now + BotDemoHandoffTimeout;
-                    Volatile.Write(ref run.HandoffDeadline, deadline);
-                }
-                if (now >= deadline)
-                {
-                    EndBotFromWorker(run, BotDemoHandoffIssue);
-                    return null;
-                }
+                if (double.IsPositiveInfinity(Volatile.Read(ref run.HandoffDeadline)))
+                    Volatile.Write(ref run.HandoffDeadline, now + BotDemoHandoffTimeout);
             }
             else
             {

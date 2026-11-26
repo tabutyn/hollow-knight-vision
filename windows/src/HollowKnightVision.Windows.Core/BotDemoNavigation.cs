@@ -97,12 +97,19 @@ public sealed class BotDemoNavigation(double startedAt)
         Transition(hadActiveSave ? BotDemoPhase.SelectingClear : BotDemoPhase.StartingSave, now);
     }
 
-    public BotDemoDecision Observe(BotDemoFrame frame, double now, bool? activeSave)
+    internal BotDemoDecision? CheckTimeout(double now)
     {
-        if (phase is BotDemoPhase.Gameplay or BotDemoPhase.Stopped || !double.IsFinite(now)) return new(phase);
+        if (phase is BotDemoPhase.Gameplay or BotDemoPhase.Stopped || !double.IsFinite(now)) return null;
         if (now - phaseStartedAt > (phase == BotDemoPhase.Opening ? 300 : 90)
             || phase != BotDemoPhase.Opening && now - runStartedAt > 420)
             return Fail($"Bot timed out. {Status}");
+        return null;
+    }
+
+    public BotDemoDecision Observe(BotDemoFrame frame, double now, bool? activeSave)
+    {
+        if (phase is BotDemoPhase.Gameplay or BotDemoPhase.Stopped || !double.IsFinite(now)) return new(phase);
+        if (CheckTimeout(now) is { } expired) return expired;
         if (!double.IsFinite(frame.CapturedAt) || frame.CapturedAt < runStartedAt
             || frame.CapturedAt <= lastCapture || now - frame.CapturedAt is < 0 or > .5
             || phase == BotDemoPhase.Archiving) return new(phase);

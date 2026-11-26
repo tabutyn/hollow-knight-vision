@@ -1171,6 +1171,7 @@ var tests = new List<(string Name, Action Run)>
     ("Bot Demo backs out of Gameplay and nested menus before choosing a profile", BotDemoTests.TestGameplayAndNestedMenusReturnToTitle),
     ("Bot Demo skips the opening and requires a fresh Gameplay HUD", BotDemoTests.TestEmptySlotSkipsOpeningAndRequiresFreshHud),
     ("Bot Demo keeps skipping long opening sequences until the HUD", BotDemoTests.TestLongOpeningRetainsSkipActionsUntilHud),
+    ("Bot Demo phase deadlines expire without another captured frame", BotDemoTests.TestPhaseTimeoutsReleaseStartupWithoutFrames),
     ("Bot Demo aborts before confirmation when the save changes", BotDemoTests.TestSessionStopsIfGameSaveChangesBeforeConfirm),
     ("Bot Demo sends no clear commands when its archive cannot be published", BotDemoTests.TestSessionStopsWhenArchiveCannotBePublished),
     ("Bot Demo rechecks save evidence before starting or retrying the new save", BotDemoTests.TestSessionRechecksSaveBeforeStartingOrRetrying),
