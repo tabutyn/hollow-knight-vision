@@ -204,7 +204,20 @@ class HackerGym(gym.Env):
         path = self.directory / "reply.json"
         failed = self.directory / "error.txt"
         limit = min(self.deadline, time.monotonic() + (130 if step == 0 else 12))
-        while not path.exists():
+        payload = None
+        while True:
+            try:
+                if payload is None:
+                    payload = path.read_bytes()
+                path.unlink(missing_ok=True)
+            except FileNotFoundError:
+                pass
+            except PermissionError:
+                # Windows can briefly deny opening or removing a newly published reply.
+                if os.name != "nt":
+                    raise
+            else:
+                break
             if failed.exists():
                 raise RuntimeError(failed.read_text()[:1500])
             if self.worker.poll() is not None or time.monotonic() >= limit:
@@ -212,8 +225,7 @@ class HackerGym(gym.Env):
                 debug = tail.read_bytes()[-800:].decode(errors="replace") if tail.exists() else ""
                 raise TimeoutError(f"Game worker stopped responding at step {step}. {debug}")
             time.sleep(0.006 if step else 0.05)
-        frame = json.loads(path.read_bytes())
-        path.unlink()
+        frame = json.loads(payload)
         if (frame["step"] != step or frame["episode"] != self.episode
                 or frame.get("noSave") is not True or frame.get("invincible") is not False):
             raise RuntimeError("Invalid worker, sequence, save or damage state")
