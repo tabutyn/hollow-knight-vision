@@ -37,15 +37,18 @@ internal static class GymReceiverFixture
             if (visual) File.Copy(Path.Combine(fixture, "frame.rgb"), Path.Combine(directory, "frame.rgb"));
 
             var unsafeSpawn = Environment.GetEnvironmentVariable("HKV_GYM_TEST_INVINCIBLE") == "1";
+            var rollout = Environment.GetEnvironmentVariable("HKV_GYM_TEST_ROLLOUT") == "1";
             Publish(0);
             var requestPath = Path.Combine(directory, "request.json");
-            for (var step = 1; step <= 3; step++)
+            for (var step = 1; rollout || step <= 3; step++)
             {
                 WaitForRequest(requestPath);
                 using var request = Read(requestPath);
                 var body = request.RootElement;
+                var buttons = body.GetProperty("buttons").GetInt32();
                 if (body.GetProperty("episode").GetGuid() != episode || body.GetProperty("step").GetInt32() != step
-                    || body.GetProperty("ticks").GetInt32() != 6 || body.GetProperty("buttons").GetInt32() != (step < 3 ? 66 : 2))
+                    || body.GetProperty("ticks").GetInt32() != 6
+                    || (rollout ? !IsGymInput(buttons) : buttons != (step < 3 ? 66 : 2)))
                     throw new InvalidDataException("Fixture received an unexpected Gym input or tick count.");
                 File.Delete(requestPath);
                 Publish(step);
@@ -64,13 +67,13 @@ internal static class GymReceiverFixture
                     AtlasGameplayActive = true,
                     Actors = new(1, new(1, "Knight", HeroPixelX, HeroPixelY, 28.8, 50.4),
                         [new(2, "Crawlid", 408, 131, 38.4, 39.6)], [new(3, "Geo", 296, 128, 16, 24)], []),
-                    BlueHealthOutcomes = new(episode, step == 3 ? 1 : 0)
+                    BlueHealthOutcomes = new(episode, step >= 3 ? 1 : 0)
                 };
                 var reply = JsonSerializer.SerializeToNode(sample, Json)!.AsObject();
                 reply["episode"] = episode.ToString("D");
                 reply["step"] = step;
                 reply["ticks"] = step * 6;
-                reply["health"] = step == 3 ? 6 : 5;
+                reply["health"] = step >= 3 ? 6 : 5;
                 reply["damage"] = 0;
                 reply["noSave"] = true;
                 reply["invincible"] = unsafeSpawn;
@@ -92,6 +95,15 @@ internal static class GymReceiverFixture
     }
 
     private static JsonDocument Read(string path) => JsonDocument.Parse(File.ReadAllBytes(path));
+
+    private static bool IsGymInput(int buttons)
+    {
+        const InputButtons horizontal = InputButtons.Left | InputButtons.Right;
+        const InputButtons vertical = InputButtons.Up | InputButtons.Down;
+        const InputButtons allowed = horizontal | vertical | InputButtons.ActionZ | InputButtons.ActionX;
+        return (buttons & ~(int)allowed) == 0 && (buttons & (int)horizontal) != (int)horizontal
+            && (buttons & (int)vertical) != (int)vertical;
+    }
 
     private static void WaitForRequest(string path)
     {
