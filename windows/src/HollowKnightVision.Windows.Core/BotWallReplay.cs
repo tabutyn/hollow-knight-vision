@@ -36,6 +36,10 @@ public static class BotWallReplay
 
             var image = reader.ReadImage(match);
             var masks = VisualReplayGroundInput.RestoreMasks(input, image);
+            // The Mac wall recovery command uses the saved scene exclusions,
+            // including its HUD shield. The live Windows solver splits that shield.
+            if (input.WindowsAtlasExcludingRects is null)
+                masks = masks with { GroundExclusions = masks.AtlasExclusions };
             var analysis = GameplayTerrainAnalysis.Analyze(image, masks, input.Tuning, input.SemanticTuning);
             var walls = TerrainWallDetector.Detect(analysis.Edges, analysis.Floors).Walls;
             var terrain = new BotScreenTerrain(image.Width, image.Height, [], BotObservationBuilder.ProjectDetectedWalls(image, walls));

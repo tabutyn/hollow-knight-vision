@@ -114,6 +114,7 @@ var tests = new List<(string Name, Action Run)>
     ("bot clip timeline uses the original timestamped frames and matching terrain", BotCaptureTests.TestClipTimelineUsesExactSourceRowsAndFallsBackToStills),
     ("published bot clips link the original archive and frozen authored reference", BotCaptureTests.TestPublishedCapturesLinkSourceArchiveAndFrozenReference),
     ("bot wall replay requires an exact verified PNG with the original masks", BotWallReplayTests.TestRecoveryNeedsExactOriginalImageAndMasks),
+    ("bot wall replay preserves the archived Mac HUD shield", BotWallReplayTests.TestMacWallRecoveryUsesTheRecordedHudShield),
     ("bot clip route evidence verifies clip, replay, checksum and frame identity", BotClipAnnotationTests.TestSidecarRequiresMatchingClipChecksumAndFrameIdentity),
     ("bot clip deletion keeps shared replay until the last domain is deleted", BotCaptureTests.TestDeletionKeepsSharedReplayUntilLastClipInEitherOrder),
     ("bot clip deletion validates evidence and removes a single surviving domain", BotCaptureTests.TestDeletionRejectsChangedClipsAndRemovesEligibleSingleDomain),
