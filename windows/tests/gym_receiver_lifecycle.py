@@ -22,27 +22,43 @@ from hkv_bot_dataset import ACTION_SIZES, HELD_ATTACK_COST, HISTORY_LENGTH, LAND
 from train_hacker_gym import sha
 
 
+def register_fixture_detector(support, detector):
+    model_id = "shared-object-model"
+    registry = support / "models-v1"
+    shutil.copytree(detector, registry / model_id / "v1.0")
+    manifest = json.loads((detector / "training.json").read_bytes())
+    point = dict(classIdentifier=model_id, version=dict(major=1, minor=0),
+                 sourceRunIdentifier=manifest["id"], createdAt="2026-01-01T00:00:00Z",
+                 modelFilename=manifest["modelFilename"], trainedClassIdentifiers=manifest["trainedClassIdentifiers"])
+    save_json(registry / "registry.json", dict(schemaVersion=1, objects={
+        model_id: dict(restorePoints=[point], activeMajorVersion=1)
+    }))
+
+
 def verify_receiver_lifecycle(root, source, vision, native_tests, fixture_python):
     fixture = root / "receiver-lifecycle"
     worker = native_tests.with_suffix(".exe" if os.name == "nt" else "")
     subprocess.run(["dotnet", native_tests, "--export-gym-receiver-probe", fixture], check=True, timeout=30)
     subprocess.run([fixture_python, "-B", Path(__file__).with_name("gameplay_gym_interop.py"),
                     source, fixture, "--prepare-receiver-fixture"], check=True, timeout=30)
+    detector = fixture / "visual-onnx"
+    visual_support = fixture / "visual-support"
+    register_fixture_detector(visual_support, detector)
     version = LANDING_GEOMETRY_POLICY_VERSION
     fields = SCHEMAS[version]
     attack = np.array([2, 0, 0, 1])
     release = np.array([2, 0, 0, 0])
     configuration = dict(game=worker, vision=vision, labels=fixture / "labels.json", version=version,
-                         supports_masked=True, max_steps=3, visual_support_root=fixture / "visual-support")
-    variables = dict(HKV_GYM_TEST_FIXTURE=str(fixture), HKV_GYM_TEST_INVINCIBLE="",
-                     HKV_GYM_VISUAL_MODEL_DIR=str(fixture / "visual-onnx"))
+                         supports_masked=True, max_steps=3, visual_support_root=visual_support)
+    variables = dict(HKV_GYM_TEST_FIXTURE=str(fixture), HKV_GYM_TEST_INVINCIBLE="")
     with patch.dict(os.environ, variables):
+        os.environ.pop("HKV_GYM_VISUAL_MODEL_DIR", None)
+        starts = {}
         for domain in ("hacker", "gameplay"):
             env = HackerGym(**configuration, domain=domain)
             try:
                 observation, _ = env.reset(seed=100_008, options={"render_hz": 120})
-                if domain == "hacker":
-                    hacker_start = observation.copy()
+                starts[domain] = observation.copy()
                 game, encoder, episode_directory = env.worker, env.encoder, env.directory
                 assert env.usable and env.render_hz == 120, (domain, env.issues)
                 last = observation[-len(fields):]
@@ -79,13 +95,18 @@ def verify_receiver_lifecycle(root, source, vision, native_tests, fixture_python
             print("PASS installed Windows Gym rejects and closes an invincible episode at reset")
 
         with patch.dict(os.environ, HKV_GYM_TEST_ROLLOUT="1"):
-            verify_learner_resume(root / "ppo-resume", source, configuration, hacker_start)
+            for domain, observation in starts.items():
+                support = root / f"ppo-resume-{domain}"
+                if domain == "gameplay":
+                    register_fixture_detector(support, detector)
+                verify_learner_resume(support, source, configuration | {"domain": domain}, observation)
 
 
 def verify_learner_resume(support, source, configuration, first_observation):
     torch.set_num_threads(1)
     worker, vision = configuration["game"], configuration["vision"]
-    models = support / "bot-v1/models/hacker"
+    domain = configuration["domain"]
+    models = support / "bot-v1/models" / domain
     base = models / "bot-base"
     base.mkdir(parents=True)
     shutil.copyfile(configuration["labels"], support / "world-ground-lines-v2.json")
@@ -98,12 +119,12 @@ def verify_learner_resume(support, source, configuration, first_observation):
     policy.save(base / "model.zip")
     base_hash = sha(base / "model.zip")
     version = configuration["version"]
-    save_json(base / "manifest.json", dict(name="PPO resume fixture", botDomain="hacker", schemaVersion=version,
+    save_json(base / "manifest.json", dict(name="PPO resume fixture", botDomain=domain, schemaVersion=version,
         featureNames=SCHEMAS[version], historyLength=HISTORY_LENGTH, actionSizes=ACTION_SIZES,
         modelSHA256=base_hash, datasetSHA256=sha(dataset), trainingExamples=1,
         trainingSessions=["train"], validationSessions=["held"]))
     export_policy(base)
-    save_json(base / "training-result.json", dict(botDomain="hacker", modelDirectory=base.name,
+    save_json(base / "training-result.json", dict(botDomain=domain, modelDirectory=base.name,
         createdAt="2026-01-01T00:00:00Z", nativeParity=True))
 
     # The runtime probe requires a complete mod layout. The test apphost remains
@@ -117,7 +138,7 @@ def verify_learner_resume(support, source, configuration, first_observation):
         for path in (managed / "Assembly-CSharp.dll", managed / "MMHOOK_Assembly-CSharp.dll", receiver):
             path.write_text("Gym receiver fixture\n", encoding="utf-8")
 
-        command = [sys.executable, "-B", source / "train_hacker_gym.py", "--game", worker, "--vision", vision,
+        command = [sys.executable, "-B", source / "train_hacker_gym.py", "--game", worker, "--vision", vision, "--domain", domain,
                    "--support", support, "--rounds", "1", "--training-steps", "128",
                    "--max-steps", "128", "--stall-steps", "140", "--hours", ".05"]
         previous_hash, previous_policy = base_hash, policy
@@ -127,19 +148,22 @@ def verify_learner_resume(support, source, configuration, first_observation):
             state = json.loads(state_path.read_bytes())
             evidence = json.loads((state_path.parent / f"comparison-{number:04d}.json").read_bytes())
             assert state["round"] == number + 1 and "pendingPPO" not in state
+            assert state["identity"]["domain"] == domain
+            assert ("visualDetectorAndHUD" in state["identity"]) == (domain == "gameplay")
             assert evidence["learnerSourceSHA256"] == previous_hash and evidence["trainingSeeds"]
             assert evidence["method"] == "ppo" and evidence["trainingSteps"] == 128
             assert not evidence["matched"] and state["champion"] == base.name
+            assert evidence["incumbent"]["missing"] == evidence["candidate"]["missing"] == 0
             learner_path = state_path.parent / state["learner"]
             assert sha(learner_path) == state["learnerSHA256"] != previous_hash
             learner = PPO.load(learner_path, device="cpu")
             assert learner.num_timesteps == (number + 1) * 128
             assert not torch.equal(previous_policy.policy.action_net.weight, learner.policy.action_net.weight)
-            selected = playback_checkpoint(models, "hacker", native_verifier=vision if os.name == "nt" else None)
+            selected = playback_checkpoint(models, domain, native_verifier=vision if os.name == "nt" else None)
             assert selected is not None and selected.samefile(base)
             previous_hash, previous_policy = state["learnerSHA256"], learner
         assert sha(base / "model.zip") == base_hash
-        print("PASS installed Windows Gym resumes the saved private PPO learner after a restart and keeps the verified playback policy")
+        print(f"PASS installed Windows {domain} Gym resumes the saved PPO learner and keeps the verified playback policy")
     finally:
         shutil.rmtree(game_data)
 
