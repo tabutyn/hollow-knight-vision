@@ -38,8 +38,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install training dependencies
-        run: .\setup-training-windows.ps1 -Python (Get-Command python).Source
+      - name: Set up the installed object trainer
+        run: |
+          $setup = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\training\setup-training-windows.ps1'
+          & $setup -Python (Get-Command python).Source
       - name: Prepare trainer Python coverage
         run: |
           $root = Join-Path $env:RUNNER_TEMP 'hkv-python-coverage'
@@ -88,7 +90,9 @@ jobs:
             $assembly = Join-Path $staging 'HollowKnightVision.Windows.Host.dll'
             $verifier = Join-Path $staging 'HollowKnightVision.Windows.Host.exe'
             $trainer = Join-Path $installed 'training\train-model-windows.ps1'
-            $targetArgs = '-NoProfile -File "{0}" -NativeVerifier "{1}" -TrainerLauncher "{2}"' -f (Resolve-Path .\Test-TrainingInterop.ps1), $verifier, $trainer
+            $registration = Join-Path $env:LOCALAPPDATA 'HollowKnightVision\training-v1\runtime-settings.json'
+            $python = (Get-Content -LiteralPath $registration -Raw | ConvertFrom-Json).pythonPath
+            $targetArgs = '-NoProfile -File "{0}" -NativeVerifier "{1}" -TrainerLauncher "{2}" -Python "{3}"' -f (Resolve-Path .\Test-TrainingInterop.ps1), $verifier, $trainer, $python
             & $coverlet $assembly --target (Get-Command pwsh).Source --targetargs $targetArgs `
               --include '[HollowKnightVision.Windows.Host]*' --include '[HollowKnightVision.Windows.Core]*' `
               --include-test-assembly --format lcov --output $report

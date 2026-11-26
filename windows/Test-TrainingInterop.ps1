@@ -2,7 +2,7 @@ param(
   [string]$Python,
   [string]$Dotnet = 'dotnet',
   [string]$NativeVerifier = (Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\HollowKnightVision.Windows.Host.exe'),
-  [string]$TrainerLauncher = (Join-Path $PSScriptRoot 'train-model-windows.ps1')
+  [string]$TrainerLauncher
 )
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
@@ -27,7 +27,10 @@ try {
   $env:OMP_NUM_THREADS = '1'
   $env:MKL_NUM_THREADS = '1'
   $env:PYTHONDONTWRITEBYTECODE = '1'
-  $env:HKV_TRAINER_PYTHON = $Python
+  if (-not $TrainerLauncher) {
+    $TrainerLauncher = Join-Path $PSScriptRoot 'train-model-windows.ps1'
+    $env:HKV_TRAINER_PYTHON = $Python
+  }
   & $Dotnet $tests --recorded-path-host-probe $NativeVerifier
   if ($LASTEXITCODE -ne 0) { throw 'Native recorded-path command fixtures failed.' }
   & $Dotnet $tests --trial-control-host-probe $NativeVerifier
