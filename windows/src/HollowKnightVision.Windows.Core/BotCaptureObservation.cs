@@ -183,9 +183,11 @@ public static class BotObservationBuilder
         IReadOnlyList<DetectedFloorLine> floors, IReadOnlyList<DetectedWall> walls, bool terrainAnalyzed,
         AtlasPoint? camera, HudStencilResult? hud, AtlasPoint? measuredFoot, InputButtons? input,
         BotBlueHealthOutcomes? blueHealth = null, IReadOnlyList<BotLine>? visualDoors = null,
-        IReadOnlyList<DetectedFloorLine>? supportingFloors = null, GameplaySceneMasks? masks = null)
+        IReadOnlyList<DetectedFloorLine>? supportingFloors = null, GameplaySceneMasks? masks = null,
+        bool roomTransition = false)
     {
         var issues = BaseIssues(timing);
+        if (roomTransition) issues.Add("room-transition");
         if (image.Width > MaximumFrameDimension || image.Height > MaximumFrameDimension)
         {
             issues.Add("invalid-frame-size");

@@ -42,7 +42,7 @@ public partial class MainWindow
                     }
                     if (run.PlaybackUpdate.Status == "Bot waiting for gameplay") visit.Interrupt();
                     if (ObserveBotStartupLocked(run, capture.Image, run.Generation, capture.CapturedAt, admitted: true,
-                        recognizedGameplay: false, sample, menu: null, hud: null) is null
+                        recognizedGameplay: false, sample, menu: null, hud: null, roomTransition: false) is null
                         || !playback.WantsObservation(capture.CapturedAt)) continue;
                     var projected = MatchedHackerBotFrame(match, run.Generation);
                     var availableAt = ReadBotObservationTime();

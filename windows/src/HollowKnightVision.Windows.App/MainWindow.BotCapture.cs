@@ -34,6 +34,7 @@ public partial class MainWindow
     private readonly BotVisualKnightMemory botVisualKnightMemory = new();
     private readonly BotBlockadeVisit botVisualBlockade = new();
     private (int Room, long Coordinates)? botVisualChart;
+    private (long Generation, string Room, bool Settling, long FirstFrame)? botVisualDetectionScope;
     private string BotRoot { get; }
     private string BotCaptureRoot => Path.Combine(BotRoot, "demonstrations");
     private string InputPathRoot { get; }
@@ -65,6 +66,20 @@ public partial class MainWindow
             ? published.Output.Rooms.FirstOrDefault(candidate => candidate.SceneName == scene) : null;
     }
 
+    private (bool Transition, LiveObjectDetectionBatch? Batch) ScopeBotDetections(BgraFrame frame,
+        long generation, string room, bool settling, LiveObjectDetectionBatch? batch)
+    {
+        var current = botVisualDetectionScope;
+        var changedRoom = current is { } previous && previous.Generation == generation && previous.Room != room;
+        // Inference can finish after a doorway or a fade. Keep the first frame of the current stable visit.
+        var firstFrame = current is { } scope && scope.Generation == generation && !changedRoom && scope.Settling == settling
+            ? scope.FirstFrame : frame.CaptureId;
+        botVisualDetectionScope = (generation, room, settling, firstFrame);
+        if (batch is not null && batch.SourceFrameIdentifier < firstFrame)
+            batch = null;
+        return (settling || changedRoom, batch);
+    }
+
     private void CaptureBotObservations(BgraFrame frame, long generation, long visualGeneration, double timestamp,
         int roomId, ulong roomRevision, int? renderedFrame, ReceiverGroundTruthSample? receiverTelemetry,
         LiveObjectDetectionBatch? batch, IReadOnlyList<DetectedFloorLine> floors, TerrainWallDetection terrain,
@@ -72,7 +87,8 @@ public partial class MainWindow
         BotRun? run, long walkedCoordinateEpoch, GroundHypothesisTrackingResult ground,
         bool admitsPlacement, IReadOnlyList<PixelRect> atlasExclusions, GameplaySceneMasks? auditMasks,
         bool usesDurableWorld, CommittedBotFrame? committedAtlas, IReadOnlyList<GroundHypothesisAtlasLine> walked,
-        AtlasPoint? measuredSceneryCamera, long? wallLineage, ThinkingPlaybackFrame? skillFrame, bool recentJump)
+        AtlasPoint? measuredSceneryCamera, long? wallLineage, ThinkingPlaybackFrame? skillFrame, bool recentJump,
+        bool roomTransition)
     {
         var capture = Volatile.Read(ref botCapture);
         var playbackRun = run ?? skillFrame?.Lease.PriorRun;
@@ -101,7 +117,14 @@ public partial class MainWindow
                 || oldHacker.CaptureGeneration != generation))
             Volatile.Write(ref hackerWallContacts, null);
         var policyDomain = run?.Domain ?? skillFrame?.Frame.Sight.Scope.Domain;
-        if (!usesDurableWorld && (capture is not null || policyDomain == BotCaptureDomain.Gameplay))
+        if (roomTransition)
+        {
+            botVisualCoverage.Interrupt();
+            botVisualBlockade.Interrupt();
+            botVisualKnightMemory.Reset();
+            Volatile.Write(ref gameplayWallContacts, null);
+        }
+        else if (!usesDurableWorld && (capture is not null || policyDomain == BotCaptureDomain.Gameplay))
             botVisualBlockade.ObserveVisualBasis(generation, roomId, walkedCoordinateEpoch, frame.Width,
                 timestamp, camera.HasValue, ground, measuredSceneryCamera);
         if (capture?.WantsFrame(generation, timestamp) != true) capture = null;
@@ -139,9 +162,10 @@ public partial class MainWindow
         var visual = capture is not null || (playback is not null || skillFrame is not null) && policyDomain == BotCaptureDomain.Gameplay
             ? BotObservationBuilder.Gameplay(frame, time, batch, visualFloors, terrain.Walls, analyzedTerrain,
                 camera, hud, measuredFoot, input, exact?.BlueHealthOutcomes,
-                committedAtlas?.ProjectDoors(new(frame.Width, frame.Height)), supportingFloors: floors, masks: auditMasks)
+                committedAtlas?.ProjectDoors(new(frame.Width, frame.Height)), supportingFloors: floors, masks: auditMasks,
+                roomTransition: roomTransition)
                 .WithSharedHackerPath(exact) : null;
-        if (visual is not null)
+        if (visual is not null && !roomTransition)
         {
             BotPolicyAction? appliedAction = (playback is not null || skillFrame is not null) && input is { } applied
                 ? BotPolicyAction.FromButtons(applied) : null;
