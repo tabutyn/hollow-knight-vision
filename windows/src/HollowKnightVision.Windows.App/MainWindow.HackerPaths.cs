@@ -28,7 +28,7 @@ public partial class MainWindow
         && preview.WorkGeneration == Interlocked.Read(ref hackerWorkGeneration)
         && atlasPathEvidence.AdmitsHacker(preview.CaptureGeneration, preview.Prepared.LiveImage.CaptureId,
             preview.Prepared.CapturedAt, preview.Prepared.Sample.SessionId, preview.PathSceneSignal,
-            preview.Prepared.Sample.AtlasGameplayActive);
+            preview.Prepared.Sample.AtlasGameplayActive, preview.Prepared.Sample.SceneName, preview.Prepared.Sample.Sequence);
 
     private bool ShowsHackerPaths => AtlasPathsCheck?.IsChecked == true && HasHackerPathPreview;
 

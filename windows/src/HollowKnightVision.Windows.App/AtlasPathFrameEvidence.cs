@@ -13,6 +13,7 @@ internal sealed class AtlasPathFrameEvidence
     private readonly object receiverLock = new();
     private Guid? receiverSession;
     private bool? receiverGameplay;
+    private (string Scene, ulong FirstSequence)? receiverRoom;
     private double receiverObservedAt = double.NegativeInfinity;
     private double receiverGameplayObservedAt = double.NegativeInfinity;
     private double receiverResumedAt = double.NegativeInfinity;
@@ -52,9 +53,9 @@ internal sealed class AtlasPathFrameEvidence
     }
 
     internal bool AdmitsHacker(long generation, long id, double capturedAt, Guid session, bool hasSceneSignal,
-        bool? exactReceiverGameplay)
+        bool? exactReceiverGameplay, string? scene = null, ulong sequence = 0)
     {
-        if (!hasSceneSignal || !ReceiverAdmits(capturedAt, session)) return false;
+        if (!hasSceneSignal || !ReceiverAdmitsHacker(capturedAt, session, scene, sequence)) return false;
         if (generation == visualGeneration && id <= lastHiddenId) return false;
         var recognized = generation == visualGeneration
             ? hackerVisual.FirstOrDefault(item => item.Id == id).State : AtlasPathFrameState.Unrecognized;
@@ -62,7 +63,7 @@ internal sealed class AtlasPathFrameEvidence
     }
 
     // Receiver state arrives even when the game has stopped producing camera matches.
-    internal bool ObserveReceiver(Guid session, bool? gameplay, double observedAt)
+    internal bool ObserveReceiver(Guid session, bool? gameplay, double observedAt, string? scene = null, ulong sequence = 0)
     {
         lock (receiverLock)
         {
@@ -70,7 +71,14 @@ internal sealed class AtlasPathFrameEvidence
             receiverObservedAt = observedAt;
             var changedSession = receiverSession != session;
             if (changedSession || gameplay.HasValue) receiverGameplayObservedAt = observedAt;
-            if (!changedSession && (gameplay is null || gameplay == receiverGameplay)) return false;
+            if (changedSession || gameplay == false) receiverRoom = null;
+            var changedRoom = false;
+            if (gameplay == true && scene is { Length: > 0 } && scene != receiverRoom?.Scene)
+            {
+                receiverRoom = (scene, sequence);
+                changedRoom = true;
+            }
+            if (!changedSession && !changedRoom && (gameplay is null || gameplay == receiverGameplay)) return false;
             if ((changedSession && receiverSession.HasValue) || (receiverGameplay == false && gameplay != false))
                 receiverResumedAt = observedAt;
             receiverSession = session;
@@ -81,12 +89,18 @@ internal sealed class AtlasPathFrameEvidence
 
     internal bool ReceiverAdmits(double capturedAt, Guid? session = null)
     {
-        lock (receiverLock)
-        {
-            return receiverGameplay != false && double.IsFinite(capturedAt) && capturedAt >= receiverResumedAt
-                && (session is null || receiverSession is null || receiverSession == session);
-        }
+        lock (receiverLock) return ReceiverAdmitsLocked(capturedAt, session);
     }
+
+    internal bool ReceiverAdmitsHacker(double capturedAt, Guid session, string? scene, ulong sequence)
+    {
+        lock (receiverLock) return ReceiverAdmitsLocked(capturedAt, session)
+            && (receiverRoom is not { } room || room.Scene == scene && sequence >= room.FirstSequence);
+    }
+
+    private bool ReceiverAdmitsLocked(double capturedAt, Guid? session) =>
+        receiverGameplay != false && double.IsFinite(capturedAt) && capturedAt >= receiverResumedAt
+        && (session is null || receiverSession is null || receiverSession == session);
 
     internal bool ReceiverConfirmsGameplay(double now)
     {
