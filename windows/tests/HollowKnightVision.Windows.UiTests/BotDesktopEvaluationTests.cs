@@ -1683,6 +1683,7 @@ internal static class BotDesktopEvaluationTests
                 var measured = (BotPlaybackUpdate)playbackStatus.GetValue(run)!;
                 Check(measured.Decision is { Action.Buttons: Action } && measured.Status != predicted.Status,
                     "A fresh Knight sighting must restore normal Game Play decisions.");
+                await ExpectWireState(Action);
                 var doorway = new BgraFrame(Width, Height, Width * 4, pixels, 53, DateTimeOffset.UtcNow);
                 var poised = Method("ObserveBotStartup").Invoke(window,
                     [doorway, Generation, captureTimes[^1] + .02, true, true, Telemetry(session, renderedFrame + 12), null, null, true]);
@@ -1690,7 +1691,6 @@ internal static class BotDesktopEvaluationTests
                 Check(poised is null && bridge.CaptureMovement() == InputButtons.None && bridge.OwnsBotControl(owner)
                     && ((BotPlaybackUpdate)playbackStatus.GetValue(run)!).Status == BotPlaybackUpdate.WaitingForRoom,
                     "A recognized Game Play doorway frame must release held controls before the next policy tick.");
-                await ExpectWireState(Action);
                 await ExpectWireState(InputButtons.None);
                 Console.WriteLine("PASS Windows Game Play immediately releases held controls during a room transition");
                 Check((bool)Method("HandleLocalShortcut").Invoke(window, [Key.B, false, ModifierKeys.None])!,
