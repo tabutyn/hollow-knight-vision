@@ -899,12 +899,14 @@ drives the same validator and trainer.
 
 ### Train a bot from captures
 
-Record separate runs with **K**, then open **Bot**, choose **Game Play** or
-**Hacker**, and press **Train**. Vision sets up the CPU bot environment when
-needed. It keeps one or more complete clips for validation and verifies the
-export through the installed native policy host before selecting the newest
-checkpoint. A routine update uses at least two new clips so the active policy
-can be compared on recordings it has never trained on.
+Record separate runs with **K**, then open **Bot** and press **Train Both**.
+Vision trains each eligible bot in sequence using its own Game Play or Hacker
+observations. **Stop** cancels the current trainer and clears the queue. To
+train a single bot, select its domain and press **Train**. Vision sets up the
+CPU bot environment when needed, keeps one or more complete clips for
+validation, and verifies each export through the installed native policy host
+before selecting it. A routine update uses at least two new clips so the
+active policy can be compared on recordings it has never trained on.
 
 Game Play training can recover legacy wall features if the original visual
 archive is available. For diagnostics, run the installed Host with

@@ -338,6 +338,9 @@
                             </ComboBox>
                             <Button x:Name="BotTrainButton" Content="Train" IsEnabled="False" MinWidth="70"
                                     Margin="7,0,0,0" Click="BotTrain_Click"/>
+                            <Button x:Name="BotTrainBothButton" Content="Train Both" IsEnabled="False" MinWidth="90"
+                                    Margin="7,0,0,0" Click="BotTrainBoth_Click"
+                                    ToolTip="Train each eligible bot from its own Game Play or Hacker captures."/>
                         </StackPanel>
                         <DockPanel Margin="0,8,0,0">
                             <Button x:Name="BotRestorePrevious" DockPanel.Dock="Right" Content="Restore Previous"

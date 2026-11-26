@@ -60,6 +60,8 @@ internal static class BotDesktopEvaluationTests
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-focus-lost"), OpeningOutcome.FocusLost, timeout.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
             await VerifyCheckpointControlsAsync(Path.Combine(temporary.FullName, "versions"), timeout.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(60));
+            await VerifyTrainBothAsync(Path.Combine(temporary.FullName, "train-both"), timeout.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
             await TestSummaryAndQueuedCaptureUpdateWhileEventDecodeIsBlocked(Path.Combine(temporary.FullName, "summary"), timeout.Token);
             await VerifyThinkingLeaseAsync(Path.Combine(temporary.FullName, "thinking"), timeout.Token);
@@ -922,25 +924,134 @@ internal static class BotDesktopEvaluationTests
         Console.WriteLine("PASS Desktop bot version controls restore and select each domain and follow new completed checkpoints");
         Console.WriteLine("PASS Desktop new capture counts publish before preview and follow training independently");
 
-        (Guid Hacker, Guid Gameplay) PublishPair(DateTimeOffset time)
-        {
-            var hacker = Guid.NewGuid();
-            var gameplay = Guid.NewGuid();
-            Save(hacker, gameplay, "hacker");
-            Save(gameplay, hacker, "gameplay");
-            return (hacker, gameplay);
-
-            void Save(Guid id, Guid partner, string domain)
-            {
-                var folder = Directory.CreateDirectory(Path.Combine(captures, BotCaptureSession.DirectoryName(id))).FullName;
-                var clip = new BotCaptureManifest(BotRecordingContract.SchemaVersion, id, time, 1, "modded", "fixture",
-                    "receiver-sent", "completed", .4, 4, 4, 2, 0, domain, hacker, partner);
-                File.WriteAllText(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(clip, Json));
-                File.WriteAllText(Events(id), "{\"type\":\"input\"}\n");
-            }
-        }
+        (Guid Hacker, Guid Gameplay) PublishPair(DateTimeOffset time) => PublishTrainingPair(captures, time);
 
         string Events(Guid id) => Path.Combine(captures, BotCaptureSession.DirectoryName(id), "events.jsonl");
+    }
+
+    private static async Task VerifyTrainBothAsync(string root, CancellationToken token)
+    {
+        var botRoot = Path.Combine(root, "bot-v1");
+        var captures = Path.Combine(botRoot, "demonstrations");
+        var runs = Path.Combine(botRoot, "training-runs");
+        var fixture = Path.Combine(root, "completion-fixture");
+        var created = new DateTimeOffset(2026, 11, 23, 12, 0, 0, TimeSpan.Zero);
+        var first = PublishTrainingPair(captures, created);
+        var second = PublishTrainingPair(captures, created.AddMinutes(1));
+        var launcher = Path.Combine(root, "publish-training-fixture.ps1");
+        File.WriteAllText(launcher, TrainingCompletionFixture);
+        var previousPython = Environment.GetEnvironmentVariable("HKV_BOT_PYTHON");
+        var window = new MainWindow(GameRuntimeMode.Modded, null, root, root);
+        var both = (Button)window.FindName("BotTrainBothButton");
+        var stop = (Button)window.FindName("BotTrainButton");
+        var status = (TextBlock)window.FindName("BotTrainingStatus");
+        var pending = (TextBlock)window.FindName("BotNewCaptureSummary");
+        var gameplay = new BotModelStore(botRoot, BotCaptureDomain.Gameplay);
+        var hacker = new BotModelStore(botRoot, BotCaptureDomain.Hacker);
+        try
+        {
+            Environment.SetEnvironmentVariable("HKV_BOT_PYTHON", launcher);
+            WriteCheckpoint(fixture, "gameplay", "Paired Game Play", "bot-result", created.AddMinutes(2), [first.Gameplay, second.Gameplay]);
+            WriteCheckpoint(fixture, "hacker", "Paired Hacker", "bot-result", created.AddMinutes(2), [first.Hacker, second.Hacker]);
+            await window.RefreshBotLibraryAsync().WaitAsync(token);
+            Check(both.IsEnabled && pending.Text == "2 new runs · Hacker 2 · Game Play 2",
+                "Train Both must be available when both sides of the paired captures are eligible.");
+            Start();
+            await WaitFor(() => !Training() && pending.Text == "0 new runs · Hacker 0 · Game Play 0");
+            Check(status.Text.Contains("Game Play is using Paired Game Play.", StringComparison.Ordinal)
+                && status.Text.Contains("Hacker is using Paired Hacker.", StringComparison.Ordinal) && !both.IsEnabled,
+                "Training both bots should report both selected checkpoints and clear both pending counts.");
+            var gameplayId = gameplay.Catalog().ActiveId!;
+            var hackerId = hacker.Catalog().ActiveId!;
+            Check(SelectedClips(gameplayId).SetEquals([first.Gameplay, second.Gameplay])
+                && SelectedClips(hackerId).SetEquals([first.Hacker, second.Hacker]),
+                "Each trainer must receive only its own observations of the same runs.");
+
+            var third = PublishTrainingPair(captures, created.AddMinutes(3));
+            var fourth = PublishTrainingPair(captures, created.AddMinutes(4));
+            WriteCheckpoint(fixture, "gameplay", "Continuing Game Play", "bot-result", created.AddMinutes(5),
+                [first.Gameplay, second.Gameplay, third.Gameplay, fourth.Gameplay]);
+            WriteCheckpoint(fixture, "hacker", "Continuing Hacker", "bot-result", created.AddMinutes(5),
+                [first.Hacker, second.Hacker, third.Hacker, fourth.Hacker]);
+            var hold = Path.Combine(root, "hold-gameplay");
+            File.WriteAllText(hold, "");
+            await window.RefreshBotLibraryAsync().WaitAsync(token);
+            Start();
+            await WaitFor(() => File.Exists(Path.Combine(root, "started-gameplay")));
+            Check(Directory.GetDirectories(runs).Length == 3, "The second trainer must wait while the first is running.");
+            stop.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitFor(() => !Training() && both.IsEnabled);
+            Check(status.Text == "Bot training stopped." && Directory.GetDirectories(runs).Length == 3
+                && gameplay.Catalog().ActiveId == gameplayId && hacker.Catalog().ActiveId == hackerId,
+                "Stop must cancel the queue without starting the second trainer or changing either checkpoint.");
+            File.Delete(hold);
+
+            var fail = Path.Combine(root, "fail-gameplay");
+            File.WriteAllText(fail, "");
+            Start();
+            await WaitFor(() => !Training() && pending.Text == "2 new runs · Hacker 0 · Game Play 2");
+            Check(status.Text.Contains("Game Play training failed.", StringComparison.Ordinal)
+                && status.Text.Contains("Hacker is using Continuing Hacker.", StringComparison.Ordinal)
+                && gameplay.Catalog().ActiveId == gameplayId && hacker.Catalog().ActiveId != hackerId,
+                "A failed Game Play job should preserve its checkpoint and allow the queued Hacker job to finish.");
+            File.Delete(fail);
+            var continuingHackerId = hacker.Catalog().ActiveId;
+            await WaitFor(() => both.IsEnabled);
+            Start();
+            await WaitFor(() => !Training() && pending.Text == "0 new runs · Hacker 0 · Game Play 0");
+            Check(status.Text.Contains("Game Play is using Continuing Game Play.", StringComparison.Ordinal)
+                && status.Text.Contains("Hacker skipped.", StringComparison.Ordinal)
+                && gameplay.Catalog().ActiveId != gameplayId && hacker.Catalog().ActiveId == continuingHackerId
+                && Directory.GetDirectories(runs).Length == 6,
+                "Train Both must start only the eligible bot when the two models have different pending clips.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("HKV_BOT_PYTHON", previousPython);
+            Field("isClosing").SetValue(window, true);
+            await ((Task)Method("PrepareShutdownAsync").Invoke(window, null)!).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        Console.WriteLine("PASS Train Both queues domain-specific training, stops the queue, and preserves independent checkpoints");
+
+        HashSet<Guid> SelectedClips(string model) => JsonSerializer.Deserialize<Guid[]>(File.ReadAllBytes(
+            Path.Combine(runs, model[4..], "selection.json")), Json)!.ToHashSet();
+
+        bool Training() => Field("botTrainingCancellation").GetValue(window) is not null;
+
+        void Start()
+        {
+            Check(both.IsEnabled, "Train Both was unexpectedly disabled.");
+            both.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(Training() && !both.IsEnabled && stop.IsEnabled && Equals(stop.Content, "Stop"),
+                "The Train Both queue should expose one Stop control while the trainers run.");
+        }
+
+        async Task WaitFor(Func<bool> condition, [CallerArgumentExpression(nameof(condition))] string expectation = "")
+        {
+            try { while (!condition()) await Task.Delay(25, token); }
+            catch (OperationCanceledException error) when (token.IsCancellationRequested)
+            {
+                throw new TimeoutException($"Timed out waiting for {expectation}. {status.Text} | {pending.Text}", error);
+            }
+        }
+    }
+
+    private static (Guid Hacker, Guid Gameplay) PublishTrainingPair(string captures, DateTimeOffset time)
+    {
+        var hacker = Guid.NewGuid();
+        var gameplay = Guid.NewGuid();
+        Save(hacker, gameplay, "hacker");
+        Save(gameplay, hacker, "gameplay");
+        return (hacker, gameplay);
+
+        void Save(Guid id, Guid partner, string domain)
+        {
+            var folder = Directory.CreateDirectory(Path.Combine(captures, BotCaptureSession.DirectoryName(id))).FullName;
+            var clip = new BotCaptureManifest(BotRecordingContract.SchemaVersion, id, time, 1, "modded", "fixture",
+                "receiver-sent", "completed", .4, 4, 4, 2, 0, domain, hacker, partner);
+            File.WriteAllText(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(clip, Json));
+            File.WriteAllText(Path.Combine(folder, "events.jsonl"), "{\"type\":\"input\"}\n");
+        }
     }
 
     private const string TrainingCompletionFixture = """
@@ -953,16 +1064,25 @@ internal static class BotDesktopEvaluationTests
         if ($rootIndex -lt 0 -or $runIndex -lt 0 -or $domainIndex -lt 0 -or $selectionIndex -lt 0) {
           throw 'The desktop did not pass the required training arguments.'
         }
-        if ($options[$domainIndex + 1] -ne 'hacker' -or '--follow-playback' -notin $options) {
-          throw 'The desktop did not launch the Hacker trainer in playback-following mode.'
+        $domain = $options[$domainIndex + 1]
+        if ($domain -notin @('gameplay', 'hacker') -or '--follow-playback' -notin $options) {
+          throw 'The desktop did not launch the domain trainer in playback-following mode.'
         }
         if (-not (Test-Path -LiteralPath $options[$selectionIndex + 1] -PathType Leaf)) {
           throw 'The desktop did not launch training with its domain and selected captures.'
         }
         $run = [guid]::Parse([string]$options[$runIndex + 1]).ToString('D')
         $version = 'bot-' + $run
-        $source = Join-Path $PSScriptRoot 'completion-fixture/models/hacker/bot-result'
-        $target = Join-Path $options[$rootIndex + 1] ('models/hacker/' + $version)
+        if (Test-Path -LiteralPath (Join-Path $PSScriptRoot "hold-$domain")) {
+          [IO.File]::WriteAllText((Join-Path $PSScriptRoot "started-$domain"), '')
+          Start-Sleep -Seconds 45
+          throw 'The held trainer was not stopped.'
+        }
+        if (Test-Path -LiteralPath (Join-Path $PSScriptRoot "fail-$domain")) {
+          throw 'Training failed for the requested domain.'
+        }
+        $source = Join-Path $PSScriptRoot "completion-fixture/models/$domain/bot-result"
+        $target = Join-Path $options[$rootIndex + 1] "models/$domain/$version"
         $null = [IO.Directory]::CreateDirectory($target)
         foreach ($name in @('model.zip', 'runtime-policy.json', 'runtime-manifest.json', 'manifest.json')) {
           Copy-Item -LiteralPath (Join-Path $source $name) -Destination $target
