@@ -32,12 +32,12 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-    <Content Include="../../train-model-windows.ps1;../../setup-training-windows.ps1;../../training-environment-windows.ps1">
+    <Content Include="../../train-model-windows.ps1;../../setup-training-windows.ps1;../../training-environment-windows.ps1;../../transfer-training-library-windows.ps1">
       <Link>training/%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-    <Content Include="../../TrainingPython/requirements-windows.txt;../../../macos/TrainingPython/hkv_incremental_trainer.py">
+    <Content Include="../../TrainingPython/requirements-windows.txt;../../../macos/TrainingPython/hkv_incremental_trainer.py;../../../macos/TrainingPython/hkv_library_transfer.py">
       <Link>training/TrainingPython/%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
