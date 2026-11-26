@@ -1902,7 +1902,7 @@ public partial class MainWindow : Window
         if (IsLoaded) SelectWorkspace("Ops");
     }
 
-    private bool SelectWorkspace(string destination, bool capture = true)
+    private bool SelectWorkspace(string destination, bool capture = true, bool keepBotPlayback = false)
     {
         if (destination == "Model" && !initialization.IsFirstPhaseComplete) return false;
         if (destination == "Hacker" && (!CanUseHacker() || recognizedMenuContext != "game"))
@@ -1939,7 +1939,7 @@ public partial class MainWindow : Window
             hackerPathLinks.CancelSelection();
             InvalidatePendingHackerWork();
         }
-        if (destination != workspace)
+        if (destination != workspace && !keepBotPlayback)
         {
             StopBotPlayback();
             ResetThinking();

@@ -27,6 +27,7 @@ public partial class MainWindow
         internal double StartedAt { get; } = startedAt;
         internal GroundTruthLineDocument Authored { get; } = authored;
         internal bool StartedInGameplay => Demo is null;
+        internal bool ReturnsToHacker => Demo is not null && Domain == BotCaptureDomain.Hacker;
         internal BotDemoSession? Demo { get; } = archive is null ? null : new(archive, startedAt);
         internal BotStartupNavigation Startup { get; } = new(startedAt);
         internal LoadedBot? Loaded;
@@ -35,6 +36,7 @@ public partial class MainWindow
         internal double HandoffDeadline = archive is null ? startedAt + BotDemoHandoffTimeout : double.PositiveInfinity;
         internal BotPlaybackUpdate PlaybackUpdate = new(BotPlaybackUpdate.WaitingForFrame);
         internal string? DisplayedPlaybackStatus; // UI thread
+        internal bool HackerWorkspaceReady;
         internal Channel<HackerMatchedFrame>? HackerFrames { get; } = domain == BotCaptureDomain.Hacker
             ? LatestHackerChannel<HackerMatchedFrame>(singleWriter: true) : null;
         // The control lock serializes startup and action ownership across workers.
@@ -130,6 +132,11 @@ public partial class MainWindow
                 "AppData", "LocalLow", "Team Cherry", "Hollow Knight"), BotDemoArchiveRoot);
         var run = new BotRun(owner, domain, Interlocked.Read(ref recentCaptureGeneration), startedAt,
             groundTruthLabels.Document.Clone(), archive);
+        if (run.ReturnsToHacker && !SelectWorkspace("Gameplay", keepBotPlayback: true))
+        {
+            gameControls.EndBotControl(owner);
+            return;
+        }
         Volatile.Write(ref botPlayback, run);
         if (run.HackerFrames is not null) _ = Task.Run(() => RunMatchedHackerPlaybackAsync(run));
         SetStatus(run.StartedInGameplay ? "Loading the latest verified bot checkpoint."
@@ -236,12 +243,18 @@ public partial class MainWindow
     private void CheckBotOwnership(double now)
     {
         if (Volatile.Read(ref botPlayback) is not { } run) return;
-        if (!Volatile.Read(ref run.Playing) && ExpiredBotStartup(run, now) is { } expired)
+        var playing = Volatile.Read(ref run.Playing);
+        if (!playing && ExpiredBotStartup(run, now) is { } expired)
             StopBotPlayback(expired.Status, expired.Reason);
         else if (!gameControls.OwnsBotControl(run.Owner))
             StopBotPlayback("Bot stopped. Press B to start again.");
-        else if ((run.StartedInGameplay || Volatile.Read(ref run.Playing))
-            && Volatile.Read(ref run.Loaded) is { Policy: not null } loaded)
+        else if (!playing && run.ReturnsToHacker && workspace == "Gameplay" && recognizedMenuContext == "game"
+            && CanUseHacker() && Volatile.Read(ref run.Evaluation)?.Preparation.IsCompletedSuccessfully == true)
+        {
+            if (SelectWorkspace("Hacker", keepBotPlayback: true))
+                Volatile.Write(ref run.HackerWorkspaceReady, true);
+        }
+        else if ((run.StartedInGameplay || playing) && Volatile.Read(ref run.Loaded) is { Policy: not null } loaded)
         {
             var status = Volatile.Read(ref run.PlaybackUpdate).StatusAt(now);
             if (status == run.DisplayedPlaybackStatus) return;
@@ -329,12 +342,15 @@ public partial class MainWindow
                 if (decision.Phase != BotStartupPhase.Gameplay) return null;
             }
             if (!admitted || receiver?.AtlasGameplayActive == false) return null;
-            if (loaded is { Policy: not null, ModelName: { } modelName }
-                && Volatile.Read(ref run.Evaluation)?.Preparation.IsCompletedSuccessfully != true)
+            if (loaded is { Policy: not null, ModelName: { } modelName })
             {
-                if (Interlocked.Exchange(ref run.EvaluationStartQueued, 1) == 0)
-                    _ = Dispatcher.InvokeAsync(() => PrepareBotEvaluationAsync(run, modelName, loaded.ModelHash)).Task.Unwrap();
-                return null;
+                if (Volatile.Read(ref run.Evaluation)?.Preparation.IsCompletedSuccessfully != true)
+                {
+                    if (Interlocked.Exchange(ref run.EvaluationStartQueued, 1) == 0)
+                        _ = Dispatcher.InvokeAsync(() => PrepareBotEvaluationAsync(run, modelName, loaded.ModelHash)).Task.Unwrap();
+                    return null;
+                }
+                if (run.ReturnsToHacker && !Volatile.Read(ref run.HackerWorkspaceReady)) return null;
             }
             Volatile.Write(ref run.Playing, true);
             gameControls.NeutralizeBotControl(run.Owner);

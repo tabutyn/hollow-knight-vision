@@ -40,7 +40,7 @@ internal static class MenuIntegrationTests
                 var capture = (LabelCaptureSession)type.GetField("labelCapture", Instance)!.GetValue(window)!;
                 capture.Apply(GamePauseState.Ready);
                 Check(capture.Accept(frame, capture.Revision), "Could not seed a frame for the normal editor.");
-                var selected = type.GetMethod("SelectWorkspace", Instance)!.Invoke(window, ["Label", false]);
+                var selected = type.GetMethod("SelectWorkspace", Instance)!.Invoke(window, ["Label", false, false]);
                 Check(selected is true, "Could not enter the label editor.");
                 type.GetMethod("ApplySavedLabelExample", Instance)!.Invoke(window, [example, null]);
                 type.GetField("initializationTargetContext", Instance)!.SetValue(window, "main-title");

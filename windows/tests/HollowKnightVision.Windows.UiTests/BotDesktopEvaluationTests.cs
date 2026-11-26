@@ -329,7 +329,9 @@ internal static class BotDesktopEvaluationTests
             await Task.Delay(100, token);
             SubmitFrame();
             await Expect(Action);
-            _ = Method("StopBotPlayback").Invoke(window, [null, "user-stop"]);
+            Check(Method("SelectWorkspace").Invoke(window, ["Gameplay", false, false]) is true
+                && Field("botPlayback").GetValue(window) is null,
+                "A manual workspace change must end the active Hacker bot run.");
             await Expect(InputButtons.None);
             await ((Task)Field("botEvaluationWrites").GetValue(window)!).WaitAsync(token);
             var directory = Directory.GetDirectories(Path.Combine(botRoot, "evaluations", "hacker")).Single();
@@ -1185,7 +1187,8 @@ internal static class BotDesktopEvaluationTests
         var port = ((IPEndPoint)server.LocalEndpoint).Port;
         var session = Guid.NewGuid();
         var states = Channel.CreateUnbounded<ReceiverInputSnapshot>();
-        var peer = ServeAsync(server, states.Writer, token);
+        var groundTruth = Channel.CreateUnbounded<ReceiverGroundTruthSample>();
+        var peer = ServeAsync(server, states.Writer, token, groundTruth: groundTruth.Reader);
         var saves = Directory.CreateDirectory(Path.Combine(root, "saves")).FullName;
         var archives = Path.Combine(root, "bot-v1", "save-archives");
         var evaluationRoot = Path.Combine(root, "bot-v1", "evaluations");
@@ -1215,6 +1218,16 @@ internal static class BotDesktopEvaluationTests
             var run = Field("botPlayback").GetValue(window)
                 ?? throw new InvalidOperationException("An untrained bot must still start.");
             var owner = (Guid)run.GetType().GetProperty("Owner", Instance)!.GetValue(run)!;
+            var startsInGameplay = outcome == OpeningOutcome.GameplayStartupTimeout;
+            Check(Equals(Field("workspace").GetValue(window), startsInGameplay ? "Hacker" : "Gameplay")
+                && Equals(run.GetType().GetProperty("Domain", Instance)!.GetValue(run), BotCaptureDomain.Hacker)
+                && bridge.OwnsBotControl(owner),
+                "Starting from a menu must show Game Play and keep the Hacker domain and the same control lease.");
+            var gameplayPanel = (FrameworkElement)window.FindName("GameplayPanel");
+            var hackerPanel = (FrameworkElement)window.FindName("HackerPanel");
+            if (!startsInGameplay)
+                Check(gameplayPanel.Visibility == Visibility.Visible && hackerPanel.Visibility == Visibility.Collapsed,
+                    "The opening must be visible in Game Play while the Hacker Atlas is hidden.");
 
             var pixels = new byte[Width * Height * 4];
             var index = 0;
@@ -1327,6 +1340,35 @@ internal static class BotDesktopEvaluationTests
                         admitGameplay: true, showHud: true, generation: Generation + 1) is null
                     && queue.GetValue(run) is 0 && bridge.OwnsBotControl(owner),
                     "A mismatched capture generation must leave the opening handoff and its evaluation untouched.");
+                var evaluationField = run.GetType().GetField("Evaluation", Instance)!;
+                while (evaluationField.GetValue(run) is not BotEvaluationRecorder { Preparation.IsCompletedSuccessfully: true })
+                {
+                    Check(Step(null, receiverGameplay: true, recognizedGameplay: true, admitGameplay: true, showHud: true) is null,
+                        "Hacker controls must wait while the run evaluation is being prepared.");
+                    await Task.Delay(20, token);
+                }
+                Field("recognizedMenuContext").SetValue(window, "game");
+                CheckStartupHeartbeat(Clock());
+                Check(gameplayPanel.Visibility == Visibility.Visible
+                    && Step(null, receiverGameplay: true, recognizedGameplay: true, admitGameplay: true, showHud: true) is null,
+                    "A ready HUD alone must leave Hacker playback waiting in Game Play.");
+
+                Field("recognizedMenuContext").SetValue(window, "brightness");
+                groundTruth.Writer.TryWrite(Telemetry(session, ++index));
+                while (!bridge.HasFreshGroundTruth)
+                {
+                    bridge.Heartbeat();
+                    await Task.Delay(10, token);
+                }
+                CheckStartupHeartbeat(Clock());
+                Check(gameplayPanel.Visibility == Visibility.Visible && bridge.OwnsBotControl(owner),
+                    "Fresh receiver telemetry must not show the Hacker Atlas over a recognized menu.");
+                Field("recognizedMenuContext").SetValue(window, "game");
+                CheckStartupHeartbeat(Clock());
+                Check(hackerPanel.Visibility == Visibility.Visible && gameplayPanel.Visibility == Visibility.Collapsed
+                    && ReferenceEquals(Field("botPlayback").GetValue(window), run) && bridge.OwnsBotControl(owner),
+                    "The startup must restore Hacker before playback and preserve the same run and receiver owner.");
+
                 object? started = null;
                 while (started is null)
                 {
@@ -1422,7 +1464,7 @@ internal static class BotDesktopEvaluationTests
             await peer.WaitAsync(TimeSpan.FromSeconds(5));
         }
         Console.WriteLine(outcome == OpeningOutcome.HandoffTimeout ? "PASS Desktop bot returns control when the Gameplay HUD handoff expires without new frames"
-            : "PASS Desktop bot stops cutscene input at the Gameplay HUD, starts the built-in explorer, and releases with B");
+            : "PASS Desktop bot shows Game Play through opening menus, resumes Hacker with the same lease, and releases with B");
     }
 
     private static async Task VerifyPlaybackCaptureFailureAsync(string root, CancellationToken token)
@@ -1682,7 +1724,8 @@ internal static class BotDesktopEvaluationTests
     }
 
     private static async Task ServeAsync(TcpListener listener, ChannelWriter<ReceiverInputSnapshot> states,
-        CancellationToken token, bool skills = false, RecordedGameCheckpoint? checkpoint = null)
+        CancellationToken token, bool skills = false, RecordedGameCheckpoint? checkpoint = null,
+        ChannelReader<ReceiverGroundTruthSample>? groundTruth = null)
     {
         using var client = await listener.AcceptTcpClientAsync(token);
         using var reader = new StreamReader(client.GetStream());
@@ -1710,6 +1753,9 @@ internal static class BotDesktopEvaluationTests
                 if (checkpoint is not null)
                     await writer.WriteAsync(ReceiverWireCodec.EncodeLine(new ReceiverInputAcknowledgement(
                         1, "ack", hello.SessionId, state.Sequence, state.HeldButtons, state.Enabled)));
+                if (groundTruth is not null)
+                    while (groundTruth.TryRead(out var sample))
+                        await writer.WriteAsync(ReceiverWireCodec.EncodeLine(sample));
             }
             else if (type == "captureCheckpoint" && checkpoint is not null)
             {
