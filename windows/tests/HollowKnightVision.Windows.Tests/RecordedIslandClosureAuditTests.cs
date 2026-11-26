@@ -37,6 +37,33 @@ internal static class RecordedIslandClosureAuditTests
             "An archived unmeasured capture retains its image and original owner without floor evidence or a keyframe.");
     }
 
+    internal static void TestRecordedMeasuredIslandsSeedSeparateKeyframes()
+    {
+        var tracker = new LiveWorldTracker();
+        var frame = new BgraFrame(64, 36, 256, new byte[64 * 36 * 4], 1, DateTimeOffset.UnixEpoch);
+        var anchor = new LiveIslandCapture(4, 0, 1, default, default, LiveIslandPlacement.Reference, default, "reference", true);
+        var next = new LiveIslandCapture(9, 0, 2, new(4, 0), default, LiveIslandPlacement.Estimated, default, "camera-gap", false);
+
+        Observe(0, anchor);
+        Observe(1, next);
+        Observe(2, next with { Measured = true });
+        Observe(3, next with { LocalPose = new(20, 0), Measured = true });
+
+        Check(tracker.Snapshot.Keyframes.Select(keyframe => keyframe.ObservationId).SequenceEqual([0, 2, 3]),
+            "The first measured frame must seed its island even when it is close to another island's keyframe.");
+        Check(tracker.Snapshot.RelativeMotionEdges.Single() is
+            { FromObservationId: 2, ToObservationId: 3, DeltaX: 20, DeltaY: 0 },
+            "Only measured keyframes in the same island can inherit a local motion edge.");
+
+        void Observe(int id, LiveIslandCapture capture)
+        {
+            var time = id + 1;
+            var pose = new AtlasPoint(capture.WorldFromLocal.X + capture.LocalPose.X, 0);
+            tracker.Ingest(id, time, frame, pose, 64, searchForClosure: false, localPose: capture.LocalPose,
+                captureEvidence: new(time, null), recordedIsland: capture);
+        }
+    }
+
     internal static void TestRecordedWorldIslandClosures()
     {
         var input = Path.Combine(Path.GetFullPath(Setting("HKV_ISLAND_AUDIT_INPUT")), "world");

@@ -252,6 +252,7 @@ var tests = new List<(string Name, Action Run)>
     ("recorded doorway floor evidence uses exact owned masks and reports black edges", LoadingGapReplayAuditTests.TestDoorwayFloorReplayNeedsExactOwnedMasks),
     ("recorded Atlas reopens with the same masked pixels and owned ground", LiveIslandReplayAuditTests.TestWorldReopenPreservesMaskedPixelsAndSavedGround),
     ("recorded unmeasured Atlas frames retain ownership without becoming keyframes", RecordedIslandClosureAuditTests.TestRecordedUnmeasuredIslandMemberDoesNotCreateKeyframe),
+    ("recorded measured Atlas islands seed their own keyframes and motion edges", RecordedIslandClosureAuditTests.TestRecordedMeasuredIslandsSeedSeparateKeyframes),
     ("accelerated scenery kernel agrees with CPU for contrast, masks and ambiguity", ScenePatchAcceleratorTests.TestKernelAndCpuAgreeForContrastMasksAndAmbiguity),
     ("CUDA scenery agrees with CPU or falls back without a device", ScenePatchAcceleratorTests.TestCudaSceneryParityWhenAvailable),
     ("room image replay requires both separated views before reusing a room", RoomReturnReplayAuditTests.TestRoomImageAuditConfirmsTwoSeparatedViews),
