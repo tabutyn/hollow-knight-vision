@@ -8,6 +8,7 @@ namespace HollowKnightVision.Windows.App;
 
 public partial class MainWindow
 {
+    private const string WaitForModelTraining = "Wait for Model training to finish before training the bot.";
     private BotTrainingPlan? gameplayTrainingPlan, hackerTrainingPlan;
     private BotCheckpointCatalog? gameplayCheckpoints, hackerCheckpoints;
     private IReadOnlyList<BotCaptureManifest> botTrainingLibrary = [];
@@ -127,17 +128,19 @@ public partial class MainWindow
         var active = botTrainingCancellation;
         var plan = SelectedBotTrainingDomain == BotCaptureDomain.Hacker ? hackerTrainingPlan : gameplayTrainingPlan;
         var canSelect = !isClosing && active is null && !changingBotCheckpoint && !refreshingBotLibrary;
+        var canTrain = canSelect && !deletingBotClip && !trainingInProgress;
         BotTrainingDomain.IsEnabled = active is null && !changingBotCheckpoint;
         BotPlaybackVersion.IsEnabled = canSelect && SelectedBotCheckpoints is { Versions.Count: > 0 };
         BotUseVersion.IsEnabled = canSelect && BotPlaybackVersion.SelectedItem is BotCheckpointVersion version
             && version.Id != SelectedBotCheckpoints?.ActiveId;
         BotRestorePrevious.IsEnabled = canSelect && SelectedBotCheckpoints?.PreviousId is not null;
         BotTrainButton.Content = active is null ? "Train" : "Stop";
-        BotTrainButton.IsEnabled = !isClosing && !changingBotCheckpoint && !deletingBotClip
-            && (active is null ? !refreshingBotLibrary && plan?.CanTrain == true : !active.IsCancellationRequested);
-        BotTrainBothButton.IsEnabled = canSelect && !deletingBotClip
+        BotTrainButton.IsEnabled = active is null ? canTrain && plan?.CanTrain == true
+            : !isClosing && !changingBotCheckpoint && !deletingBotClip && !active.IsCancellationRequested;
+        BotTrainBothButton.IsEnabled = canTrain
             && (gameplayTrainingPlan?.CanTrain == true || hackerTrainingPlan?.CanTrain == true);
-        BotTrainingStatus.Text = botTrainingMessage ?? plan?.Unavailable ?? "";
+        BotTrainingStatus.Text = trainingInProgress && active is null ? WaitForModelTraining
+            : botTrainingMessage ?? plan?.Unavailable ?? "";
         UpdateBotClipDeletionControls();
     }
 
@@ -161,10 +164,16 @@ public partial class MainWindow
     {
         if (isClosing || changingBotCheckpoint || deletingBotClip || refreshingBotLibrary
             || botTrainingCancellation is not null) return;
+        if (trainingInProgress)
+        {
+            SetStatus(WaitForModelTraining);
+            return;
+        }
         using var cancellation = new CancellationTokenSource();
         botTrainingCancellation = cancellation;
         botTrainingMessage = "Preparing bot training…";
         UpdateBotTrainingControls();
+        UpdateModelTrainingControls();
         botTrainingTask = RunBotTrainingAsync(domains, cancellation.Token);
         try
         {
@@ -177,6 +186,7 @@ public partial class MainWindow
             if (!isClosing)
             {
                 UpdateBotTrainingControls();
+                UpdateModelTrainingControls();
                 RefreshBotLibrary();
             }
         }
