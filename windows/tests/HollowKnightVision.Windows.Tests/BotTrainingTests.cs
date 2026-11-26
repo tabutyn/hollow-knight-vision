@@ -35,8 +35,13 @@ internal static class BotTrainingTests
         try
         {
             var captures = Path.Combine(temporary, "demonstrations");
-            for (var index = 0; index < 4; index++) BotCaptureTests.WriteFixture(captures);
+            for (var index = 0; index < 4; index++) BotCaptureTests.WriteFixture(captures, occludeGameplayKnight: true);
             var library = BotCaptureSession.Library(captures);
+            var maskedRows = library.Where(clip => clip.BotDomain == "gameplay").ToDictionary(clip => clip.Id, clip =>
+                BotRecordedAtlasPath.ReadCapture(Path.Combine(captures, BotCaptureSession.DirectoryName(clip.Id))).Observations
+                    .Single(row => row.HasMaskedKnightEvidence));
+            Require(maskedRows.Count == 4,
+                "Each visual demo must preserve fresh ground and input through the masked Knight frame.");
             var launcher = Path.Combine(installed, "training", "train-bot-windows.ps1");
             var host = Path.Combine(installed, "HollowKnightVision.Windows.Host.exe");
             using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
@@ -62,8 +67,21 @@ internal static class BotTrainingTests
                 Require(receipt.RootElement.GetProperty("wallEvidence").GetProperty("withWall").GetInt32() > 0,
                     "The Windows recording's saved wall geometry did not enter the trained policy inputs.");
                 if (domain == BotCaptureDomain.Gameplay)
+                {
                     Require(receipt.RootElement.GetProperty("blockadeTraining").GetProperty("validationClips").GetInt32() > 0,
                         "The legacy Game Play capture's verified pose did not recover blockade inputs during training.");
+                    using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(selected.Directory, "manifest.json")));
+                    Require(manifest.RootElement.GetProperty("maskedKnightTrainingExamples").GetInt32() > 0
+                        && selected.Policy.SupportsMaskedKnight,
+                        "Masked frames must enter training and enable masked input on the exported actor.");
+                    var masked = maskedRows[training[0]];
+                    var playback = new BotPolicyPlayback(selected.Policy, domain);
+                    Require(playback.Decide(masked, InputButtons.Right, masked.AvailableAt + .01) is not null,
+                        "The selected Game Play checkpoint must admit the original masked capture through native playback.");
+                    Console.WriteLine("PASS installed Windows trains and reloads a Game Play policy from masked-Knight captures");
+                }
+                else
+                    Require(!selected.Policy.SupportsMaskedKnight, "Hacker playback must use the receiver's Knight instead of masked observations.");
                 var repeated = BotTrainingJob.Plan(temporary, domain, library);
                 Require(!repeated.CanTrain && repeated.PolicyName == selected.Policy.Name
                     && repeated.LatestIncludedClips?.SetEquals(plan.Clips) == true,

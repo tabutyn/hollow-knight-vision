@@ -902,7 +902,8 @@ internal static class BotCaptureTests
     }
 
     internal static BotCaptureResult WriteFixture(string root, bool observeHacker = true,
-        bool skillControls = false, bool interruptSkillControls = false, string? visualArchiveRoot = null)
+        bool skillControls = false, bool interruptSkillControls = false, string? visualArchiveRoot = null,
+        bool occludeGameplayKnight = false)
     {
         var id = Guid.NewGuid();
         var labels = Labels();
@@ -932,8 +933,15 @@ internal static class BotCaptureTests
         for (var i = 0; i < 6; i++)
         {
             var input = Input(i);
+            var visual = input;
+            if (occludeGameplayKnight && i == 4)
+            {
+                var detections = input.Detections.Detections
+                    .Where(detection => detection.ClassIdentifier != "game.playable-knight").ToArray();
+                visual = input with { Detections = input.Detections with { Detections = detections } };
+            }
             record.RecordVisualFrame(input.Frame, input.Time.CaptureTimestamp, input.Time.CaptureTimestamp, Generation, null);
-            Check(active.TryRecord(input.Frame, Visual(input), observeHacker ? Hacker(input, input.Mod) : null), "A current paired sample was dropped.");
+            Check(active.TryRecord(input.Frame, Visual(visual), observeHacker ? Hacker(input, input.Mod) : null), "A current paired sample was dropped.");
         }
         // Keep attack held through stop and release right independently. The path recorder supplies the final releases.
         record.RecordInput(RecordedGameButton.Right, false, Start + .72);
