@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using InControl;
 
 namespace HollowKnightVisionInputReceiver
 {
@@ -35,12 +37,14 @@ namespace HollowKnightVisionInputReceiver
             TestNewSessionInitialNeutralIsDelivered();
             TestBoundedAcknowledgements();
             TestCommitAcknowledgementGate();
+            TestSkillControlsOnVirtualDevice();
             TestCapabilityAndPauseProtocol();
             TestPauseDisconnectPriority();
             TestPointerProtocolAndQueue();
             TestCheckpointProtocolAndQueue();
             TestPlayerPoseProtocolAndQueue();
             TestPlayerOpsProtocolAndQueue();
+            TestRoomResetClearsOnlyRoomObstaclesAndGeo();
             TestGroundTruthProtocol();
             var blue = new BlueHealthTracker();
             blue.Observe(true, 1, 0, 1, 1UL); blue.Observe(true, 1, 2, 1, 1UL); blue.Observe(true, 1, 2, 1, 1UL);
@@ -178,6 +182,73 @@ namespace HollowKnightVisionInputReceiver
             gate.Set("test", 11, true, VisionButtons.None);
             Assert("next transition acknowledges once", gate.TryTake(out session, out sequence, out enabled, out buttons) && sequence == 11 && enabled && buttons == VisionButtons.None);
             Assert("next transition stops after one ack", !gate.TryTake(out session, out sequence, out enabled, out buttons));
+        }
+
+        private static void TestSkillControlsOnVirtualDevice()
+        {
+            var device = new VisionInputDevice();
+            var bindings = new (VisionButtons Button, InputControlType Control)[] {
+                (VisionButtons.QuickCast, InputControlType.Button22),
+                (VisionButtons.Dash, InputControlType.Button23),
+                (VisionButtons.SuperDash, InputControlType.Button24),
+                (VisionButtons.DreamNail, InputControlType.Button25)
+            };
+            var sequence = 1;
+            foreach (var binding in bindings) {
+                Assert("private skill control registered", device.RegisteredControls.Contains(binding.Control));
+                device.SetState("test", sequence, true, binding.Button | VisionButtons.ActionX);
+                device.Update((ulong)sequence++, .02f);
+                Assert("skill chord keeps attack and exactly one private control",
+                    device.HeldControls.SetEquals(new[] { InputControlType.Action3, binding.Control }));
+                device.SetState("test", sequence, true, VisionButtons.ActionX);
+                device.Update((ulong)sequence++, .02f);
+                Assert("skill release preserves held attack", device.HeldControls.SetEquals(new[] { InputControlType.Action3 }));
+            }
+            device.SetState("test", sequence, false, VisionButtons.Dash | VisionButtons.ActionX);
+            device.Update((ulong)sequence, .02f);
+            Assert("disabled device releases all controls", device.HeldControls.Count == 0);
+            Console.WriteLine("PASS receiver virtual device commits and releases each private skill control");
+        }
+
+        private static void TestRoomResetClearsOnlyRoomObstaclesAndGeo()
+        {
+            const string room = "Tutorial_01";
+            const string elsewhere = "Town";
+            var data = new SceneData();
+            var localRock = new GeoRockState { sceneName = room };
+            var nearbyRock = new GeoRockState { sceneName = elsewhere };
+            data.geoRocks.AddRange(new[] { localRock, nearbyRock });
+            var discovered = State(room, "lore plaque");
+            var nearbyGate = State(elsewhere, "BREAK_WALL", true);
+            var mapProgress = State(room, "map progress");
+            var nearbyCache = State(elsewhere, "reset int");
+            data.persistentBoolItems.AddRange(new[] {
+                State(room, "respawning enemy", true), State(room, "BREAK_WALL"),
+                State(room, "reset bool"), discovered, nearbyGate
+            });
+            data.persistentIntItems.AddRange(new[] {
+                State(room, "respawning counter", true), State(room, "collapse-floor"),
+                State(room, "reset int"), mapProgress, nearbyCache
+            });
+            var obstacleBools = new HashSet<string>(StringComparer.Ordinal) { "reset bool" };
+            var obstacleInts = new HashSet<string>(StringComparer.Ordinal) { "reset int" };
+            for (var pass = 0; pass < 2; pass++) {
+                RoomResetProgress.Clear(data, room, obstacleBools, obstacleInts);
+                Assert("room reset clears only the current room geo rocks",
+                    data.geoRocks.Count == 1 && data.geoRocks[0] == nearbyRock);
+                Assert("room reset preserves unrelated and other-room bool state",
+                    data.persistentBoolItems.Count == 2 && data.persistentBoolItems[0] == discovered
+                    && data.persistentBoolItems[1] == nearbyGate);
+                Assert("room reset preserves unrelated and other-room int state",
+                    data.persistentIntItems.Count == 2 && data.persistentIntItems[0] == mapProgress
+                    && data.persistentIntItems[1] == nearbyCache);
+            }
+            Assert("an empty persistence ID is not a barrier", !RoomResetProgress.BarrierName(null)
+                && !RoomResetProgress.BarrierName(""));
+            Console.WriteLine("PASS receiver room reset clears local barriers, enemies and geo progress selectively");
+
+            PersistentItemState State(string scene, string id, bool semiPersistent = false) =>
+                new PersistentItemState { sceneName = scene, id = id, semiPersistent = semiPersistent };
         }
 
         private static void TestCapabilityAndPauseProtocol()

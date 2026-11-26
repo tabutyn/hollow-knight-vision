@@ -33,9 +33,14 @@ namespace InControl {
         public void RemoveBinding(BindingSource binding) { }
     }
     public class InputDevice {
+        public readonly HashSet<InputControlType> RegisteredControls = new HashSet<InputControlType>();
+        public readonly HashSet<InputControlType> HeldControls = new HashSet<InputControlType>();
         public InputDevice(string value) { }
-        protected void AddControl(InputControlType type, string value) { }
-        protected void UpdateWithState(InputControlType type, bool value, ulong tick, float delta) { }
+        protected void AddControl(InputControlType type, string value) { RegisteredControls.Add(type); }
+        protected void UpdateWithState(InputControlType type, bool value, ulong tick, float delta) {
+            if (value) HeldControls.Add(type);
+            else HeldControls.Remove(type);
+        }
         protected void Commit(ulong tick, float delta) { }
         public virtual void Update(ulong tick, float delta) { }
     }
@@ -56,4 +61,18 @@ public class HeroActions {
 public class InputHandler {
     public static InputHandler Instance;
     public HeroActions inputActions;
+}
+
+public sealed class SceneData {
+    public readonly List<GeoRockState> geoRocks = new List<GeoRockState>();
+    public readonly List<PersistentItemState> persistentBoolItems = new List<PersistentItemState>();
+    public readonly List<PersistentItemState> persistentIntItems = new List<PersistentItemState>();
+}
+public sealed class GeoRockState {
+    public string sceneName;
+}
+public sealed class PersistentItemState {
+    public string sceneName;
+    public string id;
+    public bool semiPersistent;
 }
