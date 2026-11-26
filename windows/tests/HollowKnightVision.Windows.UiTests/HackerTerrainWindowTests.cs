@@ -77,7 +77,7 @@ internal static class HackerTerrainWindowTests
             var showPaths = Control<CheckBox>(window, "AtlasPathsCheck");
             var target = Control<ComboBox>(window, "HackerTerrainTarget");
             Check(target.SelectedItem is ComboBoxItem { Content: "Objective" }, "Hacker should open with Objective selected.");
-            var pathActions = Control<FrameworkElement>(window, "HackerPathActions");
+            var pathActions = Control<Panel>(window, "HackerPathActions");
             var terrainActions = Control<FrameworkElement>(window, "HackerTerrainActions");
             Check(pathActions.Visibility == Visibility.Collapsed && terrainActions.Visibility == Visibility.Collapsed,
                 "Objective must keep the path and terrain editing actions closed.");
@@ -108,7 +108,7 @@ internal static class HackerTerrainWindowTests
             var originY = ((int?)Field(window, "hackerAtlasMinimumTileY").GetValue(window) ?? 0) * LiveTiledAtlas.TileSize;
             var point = new Point(395 - originX, -33 - originY);
             Check(point.X > Canvas.GetLeft(live) + live.Width, "The objective click should be beyond the live image.");
-            ClickObjective();
+            ClickAt(point);
             WaitFor(() => Objectives().SelectedFor(Room) is not null, "The viewport did not apply the objective click.");
             Check(Objectives().SelectedFor(Room) is { } chosen && Math.Abs(chosen.WorldPosition.X - 39.5) < .15,
                 "Clicking a route beyond the visited image should select its actual position.");
@@ -123,7 +123,7 @@ internal static class HackerTerrainWindowTests
             Check(routeCanvas.Visibility == Visibility.Collapsed, "A frame outside Gameplay must hide Hacker paths.");
             Present(gameplay: true);
             AssertWhiteRoute();
-            ClickObjective();
+            ClickAt(point);
             WaitFor(() => Objectives().IsAutomatic(Room), "The viewport did not clear the objective on the second click.");
             Check(!routeCanvas.Children.OfType<Line>().Any(line => line.Stroke == Brushes.White)
                 && routeCanvas.Children.OfType<Line>().Any(line => line.Stroke == Brushes.Gold),
@@ -134,12 +134,62 @@ internal static class HackerTerrainWindowTests
                 && pathActions.IsVisible && !terrainActions.IsVisible,
                 "Selecting Path must turn the overlay on and expose its editor.");
             AssertAuthoredTerrain();
+            var firstEndpoint = new Point(250 - originX, -13 - originY);
+            var secondEndpoint = new Point(360 - originX, -33 - originY);
+            var links = (AtlasPathLinkStore)Field(window, "hackerPathLinks").GetValue(window)!;
+            var connectionFile = Path.Combine(root, AtlasPathLinkStore.Filename);
+            var reopenedRoom = new AtlasPathCalibration("reopened-room", Room, default, new(10, 10));
+
+            SelectPathTool(AtlasPathEditTool.DoubleJump);
+            ClickAt(new Point(310 - originX, -13 - originY));
+            Check(!links.Selection.HasValue && !File.Exists(connectionFile),
+                "A click away from a floor must not start an authored connection.");
+            ClickAt(firstEndpoint);
+            WaitFor(() => links.Selection.HasValue, "The first endpoint click did not select a floor.");
+            var selectionMark = routeCanvas.Children.OfType<Rectangle>().Single();
+            Check(links.Selection is { } selected && selected.Point.Y == 0
+                && Math.Abs(Canvas.GetLeft(selectionMark) + selectionMark.Width / 2 - firstEndpoint.X) <= 2
+                && Canvas.GetTop(selectionMark) + selectionMark.Height / 2 == firstEndpoint.Y,
+                "The selection square must sit on the clicked floor's route.");
+            ClickAt(secondEndpoint);
+            WaitFor(() => links.Revision == 1, "The second endpoint click did not save a connection.");
+            var connection = ReopenedConnection();
+            Check(!links.Selection.HasValue && connection.DoubleJump
+                && Math.Abs(connection.First.X - 250) <= 2 && connection.First.Y == 0
+                && Math.Abs(connection.Second.X - 360) <= 2 && connection.Second.Y == 20,
+                "The double jump must save on the two clicked platforms and survive a room-key change.");
+            var shelf = routeCanvas.Children.OfType<Line>()
+                .Single(line => line.Stroke == Brushes.MediumVioletRed && line.Y1 == line.Y2);
+            var shelfCenter = new Point((shelf.X1 + shelf.X2) / 2, shelf.Y1);
+
+            SelectPathTool(AtlasPathEditTool.Jump);
+            ClickAt(firstEndpoint);
+            ClickAt(secondEndpoint);
+            WaitFor(() => links.Revision == 2, "The same endpoint pair did not replace its saved connection.");
+            Check(!ReopenedConnection().DoubleJump
+                && routeCanvas.Children.OfType<Line>().Any(line => line.Stroke == Brushes.Gold && IsSavedShelf(line))
+                && routeCanvas.Children.OfType<Line>().All(line => line.Stroke != Brushes.MediumVioletRed),
+                "Replacing the connection must update both the saved jump type and the rendered shelf.");
+
+            SelectPathTool(AtlasPathEditTool.Delete);
+            ClickAt(shelfCenter);
+            WaitFor(() => links.Revision == 3, "Clicking the saved shelf did not delete its connection.");
+            Check(new AtlasPathLinkStore(connectionFile).Connections(reopenedRoom).Count == 0
+                && routeCanvas.Children.OfType<Line>().Any(line => line.Stroke == Brushes.Gold)
+                && routeCanvas.Children.OfType<Line>().All(line => !IsSavedShelf(line)),
+                "Deleting the authored connection must preserve the automatically calculated route.");
+            AssertAuthoredTerrain();
+            SelectPathTool(AtlasPathEditTool.Jump);
+            ClickAt(firstEndpoint);
+            WaitFor(() => links.Selection.HasValue, "The editor did not start a pending connection.");
             showPaths.IsChecked = false;
-            Check(routeCanvas.Visibility == Visibility.Collapsed && target.SelectedItem is ComboBoxItem { Content: "Objective" },
+            Check(routeCanvas.Visibility == Visibility.Collapsed
+                && target.SelectedItem is ComboBoxItem { Content: "Objective" } && !links.Selection.HasValue,
                 "Turning the overlay off again must hide the paths and leave Path editing.");
             AssertAuthoredTerrain();
             Console.WriteLine("PASS Windows Hacker objective clicks beyond captured tiles immediately show the whole reachable route");
             Console.WriteLine("PASS Windows Hacker Objective and Path modes keep authored walls, doors, spikes, and ground visible");
+            Console.WriteLine("PASS Windows Hacker path gestures save, replace, and delete a connection through the viewport");
 
             HackerAtlasObjectives Objectives() => (HackerAtlasObjectives)Field(window, "hackerObjectives").GetValue(window)!;
 
@@ -168,12 +218,24 @@ internal static class HackerTerrainWindowTests
                 window.UpdateLayout();
             }
 
-            void ClickObjective()
+            AtlasPathConnection ReopenedConnection() => new AtlasPathLinkStore(connectionFile).Connections(reopenedRoom).Single();
+
+            bool IsSavedShelf(Line line) => line.Y1 == shelf.Y1 && line.Y2 == shelf.Y2
+                && Math.Abs(line.X1 - shelf.X1) <= 2 && Math.Abs(line.X2 - shelf.X2) <= 2;
+
+            void SelectPathTool(AtlasPathEditTool tool)
             {
-                var screen = atlas.PointToScreen(point);
+                var button = pathActions.Children.OfType<RadioButton>().Single(item => Equals(item.Tag, tool.ToString()));
+                button.IsChecked = true;
+                button.RaiseEvent(new RoutedEventArgs(RadioButton.ClickEvent));
+            }
+
+            void ClickAt(Point position)
+            {
+                var screen = atlas.PointToScreen(position);
                 Check(SetCursorPos((int)Math.Round(screen.X), (int)Math.Round(screen.Y)),
-                    "Could not position the pointer on the route.");
-                WaitFor(() => (Mouse.GetPosition(atlas) - point).Length < 1.5, "The pointer did not reach the objective.");
+                    "Could not position the pointer on the Atlas.");
+                WaitFor(() => (Mouse.GetPosition(atlas) - position).Length < 1.5, "The pointer did not reach the Atlas target.");
                 MouseEvent(LeftDown, 0, 0, 0, 0);
                 MouseEvent(LeftUp, 0, 0, 0, 0);
                 Pump();
