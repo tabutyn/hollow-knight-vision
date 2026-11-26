@@ -75,11 +75,12 @@ public partial class MainWindow
         && match.Capture.UnityFrame == HackerFrameSynchronizer.Key(match.Sample.UnityFrame)
         && !Volatile.Read(ref profileAtlasHeld)
         && BotCaptureClock() - match.Capture.CapturedAt is >= 0 and <= BotRecordingContract.MaximumCaptureAge
-        && atlasPathEvidence.ReceiverAdmits(match.Capture.CapturedAt, match.Sample.SessionId);
+        && atlasPathEvidence.ReceiverAdmitsHacker(match.Capture.CapturedAt, match.Sample.SessionId,
+            match.Sample.SceneName, match.Sample.Sequence);
 
-    private void ObserveHackerReceiverPause(bool? gameplay)
+    private void ObserveHackerReceiverTransition()
     {
-        if (gameplay == true || Volatile.Read(ref botPlayback) is not { UsesReceiverFrames: true } run) return;
+        if (Volatile.Read(ref botPlayback) is not { UsesReceiverFrames: true } run) return;
         lock (thinkingControlLock)
             if (ReferenceEquals(Volatile.Read(ref botPlayback), run) && thinkingLease is null)
                 PauseMatchedHackerPlayback(run);

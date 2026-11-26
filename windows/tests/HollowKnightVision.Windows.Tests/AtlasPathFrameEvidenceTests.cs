@@ -92,6 +92,31 @@ internal static class AtlasPathFrameEvidenceTests
             && state.AdmitsHacker(2, 1, 16, replacement, true, true));
     }
 
+    internal static void TestHackerUsesCurrentReceiverRoomVisit()
+    {
+        var state = new AtlasPathFrameEvidence();
+        var session = Guid.NewGuid();
+        const string first = "Tutorial_01", second = "Tutorial_02";
+        Require(state.ObserveReceiver(session, true, 10, first, 100)
+            && Admits(first, 100));
+        Require(!state.ObserveReceiver(session, true, 11, first, 101)
+            && Admits(first, 100), "Steady gameplay must leave current room frames eligible.");
+
+        Require(state.ObserveReceiver(session, true, 12, second, 102)
+            && !Admits(first, 101) && Admits(second, 102),
+            "A seamless transition must admit the first matched frame of the new scene and retire the old path.");
+        Require(state.AdmitsGameplay(1, 11.95, modded: true),
+            "The visual Game Play chart owns its own transition timing.");
+        Require(state.ObserveReceiver(session, true, 13, first, 103)
+            && !Admits(first, 100) && Admits(first, 103),
+            "Re-entering a room must reject frames from its previous visit.");
+        Require(!state.ObserveReceiver(session, true, 12.9, second, 102)
+            && Admits(first, 103), "A late receiver notification cannot restore an old room.");
+
+        bool Admits(string scene, ulong sequence) => state.AdmitsHacker(1, 1, 11.95, session,
+            hasSceneSignal: true, exactReceiverGameplay: true, scene, sequence);
+    }
+
     internal static void TestBlackoutRetiresThePreviousRegisteredPath()
     {
         var state = new AtlasPathFrameEvidence();

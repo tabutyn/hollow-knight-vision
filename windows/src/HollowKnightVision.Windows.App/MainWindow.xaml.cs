@@ -3147,9 +3147,10 @@ public partial class MainWindow : Window
         double observedAt)
     {
         if (gameMode == GameRuntimeMode.Modded
-            && atlasPathEvidence.ObserveReceiver(sample.SessionId, sample.AtlasGameplayActive, observedAt))
+            && atlasPathEvidence.ObserveReceiver(sample.SessionId, sample.AtlasGameplayActive, observedAt,
+                sample.SceneName, sample.Sequence))
         {
-            ObserveHackerReceiverPause(sample.AtlasGameplayActive);
+            ObserveHackerReceiverTransition();
             if (!Dispatcher.HasShutdownStarted)
                 _ = Dispatcher.BeginInvoke(RefreshAtlasPathVisibility, DispatcherPriority.Render);
         }

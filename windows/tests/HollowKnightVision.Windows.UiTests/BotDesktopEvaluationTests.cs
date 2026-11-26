@@ -263,6 +263,7 @@ internal static class BotDesktopEvaluationTests
 
     private static async Task VerifyHackerWithoutVisualAnalysisAsync(string root, CancellationToken token)
     {
+        const string secondScene = "Tutorial_02";
         using var server = new TcpListener(IPAddress.Loopback, 0);
         server.Start();
         var port = ((IPEndPoint)server.LocalEndpoint).Port;
@@ -277,6 +278,8 @@ internal static class BotDesktopEvaluationTests
             Field("recentCaptureGeneration").SetValue(window, Generation);
             Field("workspace").SetValue(window, "Hacker");
             Field("recognizedMenuContext").SetValue(window, null);
+            var editor = (GroundTruthLabelController)Field("groundTruthLabels").GetValue(window)!;
+            editor.Document.Lines.Add(new(secondScene, -2, 4, 1, GroundTruthLineKind.Positive, false));
             var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
             bridge.Start();
             while (bridge.PauseState != GamePauseState.Ready) await Task.Delay(10, token);
@@ -324,6 +327,25 @@ internal static class BotDesktopEvaluationTests
             await WaitForUpdate(value => value.Decision is { Action.Buttons: Action });
             await Expect(Action);
 
+            var firstVisitSequence = (ulong)marker;
+            NotifyReceiver(gameplay: true, scene: secondScene);
+            await Expect(InputButtons.None);
+            Check(CurrentUpdate() is { Decision: null, Status: "Bot waiting for gameplay" },
+                "A seamless scene change must release the old action without waiting for a new capture.");
+            SubmitFrame(sequence: firstVisitSequence);
+            await Task.Delay(110, token);
+            Check(CurrentUpdate().Decision is null, "A queued match from the previous scene cannot renew input.");
+            SubmitFrame(scene: secondScene);
+            await Expect(Action);
+
+            NotifyReceiver(gameplay: true);
+            await Expect(InputButtons.None);
+            SubmitFrame(sequence: firstVisitSequence);
+            await Task.Delay(110, token);
+            Check(CurrentUpdate().Decision is null, "A match from an older visit to the same scene cannot renew input.");
+            SubmitFrame();
+            await Expect(Action);
+
             NotifyReceiver(gameplay: false);
             await Expect(InputButtons.None);
             Check(((BotPlaybackUpdate)update.GetValue(run)!).Status == "Bot waiting for gameplay",
@@ -342,22 +364,24 @@ internal static class BotDesktopEvaluationTests
             await ((Task)Field("botEvaluationWrites").GetValue(window)!).WaitAsync(token);
             var directory = Directory.GetDirectories(Path.Combine(botRoot, "evaluations", "hacker")).Single();
             var manifest = Read<BotCaptureManifest>(directory, "manifest.json");
+            var observations = BotRecordedAtlasPath.ReadCapture(directory).Observations;
             Check(manifest is { ObservationCount: >= 2, TerrainPairedFrameCount: 0, ExpertDemonstration: false }
-                && BotRecordedAtlasPath.ReadCapture(directory).Observations.All(row =>
-                    row is { TerrainSource: "human-authored", AuthoredTerrain.Floors.Count: 1, DetectedTerrain: null }),
+                && observations.All(row => row is { TerrainSource: "human-authored", AuthoredTerrain.Floors.Count: 1, DetectedTerrain: null })
+                && observations.Select(row => row.AuthoredTerrain!.Floors[0].Y).Distinct().Count() == 2,
                 "An exact Hacker run without visual analysis must retain its own raw evaluation evidence.");
             Console.WriteLine("PASS Desktop Hacker playback drives from exact receiver frames and releases on receiver menus without visual analysis");
+            Console.WriteLine("PASS Desktop Hacker playback releases at seamless room changes and fences off earlier visits");
 
-            void NotifyReceiver(bool gameplay)
+            void NotifyReceiver(bool gameplay, string scene = Scene)
             {
-                var sample = Telemetry(session, ++marker) with { AtlasGameplayActive = gameplay };
+                var sample = Telemetry(session, ++marker) with { AtlasGameplayActive = gameplay, SceneName = scene };
                 _ = Method("OnReceiverGroundTruth").Invoke(window, [sample, Clock()]);
             }
-            void SubmitFrame(double? time = null, bool hero = true)
+            void SubmitFrame(double? time = null, bool hero = true, string scene = Scene, ulong? sequence = null)
             {
                 var frame = Frame(++marker);
                 var timestamp = time ?? Clock();
-                var sample = Telemetry(session, marker);
+                var sample = Telemetry(session, marker) with { SceneName = scene, Sequence = sequence ?? (ulong)marker };
                 if (!hero) sample = sample with { Actors = sample.Actors! with { Hero = null } };
                 BotDesktopCaptureIntegrationTests.SubmitReceiverMatch(window, Generation,
                     new(new(marker, frame, timestamp, IntegratesAtlas: false, MovementButtons: bridge.CaptureMovement()),

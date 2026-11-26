@@ -1477,6 +1477,7 @@ var tests = new List<(string Name, Action Run)>
     ("Hacker paths require evidence belonging to the exact preview", AtlasPathFrameEvidenceTests.TestHackerUsesExactPreviewEvidenceAndDropsOldResults),
     ("matched Hacker gameplay survives visual misses and stops at pause or blackout", AtlasPathFrameEvidenceTests.TestMatchedHackerGameplaySurvivesMissesUntilPauseOrBlackout),
     ("receiver pause hides Atlas paths across a restarted capture", AtlasPathFrameEvidenceTests.TestReceiverStateVetoesGameplayAndSurvivesCaptureRestart),
+    ("Hacker paths belong to the receiver's current room visit", AtlasPathFrameEvidenceTests.TestHackerUsesCurrentReceiverRoomVisit),
     ("Hacker gameplay start requires recent positive receiver evidence", AtlasPathFrameEvidenceTests.TestReceiverGameplayStartRequiresFreshPositiveEvidence),
     ("a blackout retires a registered Game Play route until a fresh one arrives", AtlasPathFrameEvidenceTests.TestBlackoutRetiresThePreviousRegisteredPath),
     ("fast preview signal agrees with the full vision analysis", AtlasPathFrameEvidenceTests.TestPreviewSignalMatchesTheFullTrackingProfile),
