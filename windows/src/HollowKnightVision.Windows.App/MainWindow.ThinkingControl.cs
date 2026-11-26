@@ -347,5 +347,5 @@ public partial class MainWindow
         && SettingsOverlay.Visibility != Visibility.Visible && gameTextWindow is null && !FirstResponderConsumesTextInput()
         && initialization.IsFirstPhaseComplete && botCapture is null && !changingBotCapture
         && !gameControls.IsRecording && !gameControls.IsReplaying && trainingProcessTask?.IsCompleted != false
-        && botTrainingProcessTask?.IsCompleted != false;
+        && botTrainingCancellation is null;
 }

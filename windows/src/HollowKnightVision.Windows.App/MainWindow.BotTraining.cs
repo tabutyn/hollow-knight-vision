@@ -14,7 +14,7 @@ public partial class MainWindow
     private bool changingBotCheckpoint;
     private int botTrainingPlanGeneration;
     private CancellationTokenSource? botTrainingCancellation;
-    private Task<TrainingProcessResult>? botTrainingProcessTask;
+    private Task? botTrainingTask;
     private string? botTrainingMessage;
 
     private BotCaptureDomain SelectedBotTrainingDomain => BotTrainingDomain.SelectedIndex == 1
@@ -135,6 +135,8 @@ public partial class MainWindow
         BotTrainButton.Content = active is null ? "Train" : "Stop";
         BotTrainButton.IsEnabled = !isClosing && !changingBotCheckpoint && !deletingBotClip
             && (active is null ? !refreshingBotLibrary && plan?.CanTrain == true : !active.IsCancellationRequested);
+        BotTrainBothButton.IsEnabled = canSelect && !deletingBotClip
+            && (gameplayTrainingPlan?.CanTrain == true || hackerTrainingPlan?.CanTrain == true);
         BotTrainingStatus.Text = botTrainingMessage ?? plan?.Unavailable ?? "";
         UpdateBotClipDeletionControls();
     }
@@ -149,69 +151,28 @@ public partial class MainWindow
             UpdateBotTrainingControls();
             return;
         }
-        if (refreshingBotLibrary) return;
+        await StartBotTrainingAsync([SelectedBotTrainingDomain]);
+    }
 
-        var domain = SelectedBotTrainingDomain;
-        var title = domain == BotCaptureDomain.Hacker ? "Hacker" : "Game Play";
-        var root = BotRoot;
-        var id = Guid.NewGuid();
+    private async void BotTrainBoth_Click(object sender, RoutedEventArgs e) =>
+        await StartBotTrainingAsync([BotCaptureDomain.Gameplay, BotCaptureDomain.Hacker]);
+
+    private async Task StartBotTrainingAsync(IReadOnlyList<BotCaptureDomain> domains)
+    {
+        if (isClosing || changingBotCheckpoint || deletingBotClip || refreshingBotLibrary
+            || botTrainingCancellation is not null) return;
         using var cancellation = new CancellationTokenSource();
         botTrainingCancellation = cancellation;
-        botTrainingMessage = $"Preparing {title} training…";
+        botTrainingMessage = "Preparing bot training…";
         UpdateBotTrainingControls();
-        var pump = new TrainingUiOutputPump(Dispatcher, output =>
-        {
-            if (isClosing || cancellation.IsCancellationRequested) return;
-            if (output.ProgressText is { } progress) BotTrainingStatus.Text = progress;
-            else if (output.LastMessage is { } message && message.StartsWith("Setting up ", StringComparison.Ordinal))
-                BotTrainingStatus.Text = message;
-        });
-        var token = pump.Begin();
+        botTrainingTask = RunBotTrainingAsync(domains, cancellation.Token);
         try
         {
-            var start = await Task.Run(() =>
-            {
-                var plan = BotTrainingJob.Plan(root, domain, BotCaptureSession.Library(BotCaptureRoot));
-                var launcher = Path.Combine(AppContext.BaseDirectory, "training", "train-bot-windows.ps1");
-                var host = Path.Combine(AppContext.BaseDirectory, "HollowKnightVision.Windows.Host.exe");
-                return BotTrainingJob.Prepare(root, launcher, host, id, plan);
-            }, cancellation.Token);
-            if (isClosing) return;
-            cancellation.Token.ThrowIfCancellationRequested();
-            botTrainingMessage = $"Training and validating {title} clips…";
-            UpdateBotTrainingControls();
-            botTrainingProcessTask = WindowsTrainingProcess.RunAsync(start, cancellation.Token, output => pump.Post(token, output));
-            var result = await botTrainingProcessTask;
-            pump.Stop();
-            if (isClosing) return;
-            var log = Path.Combine(root, "training-runs", id.ToString("D"), "training.log");
-            await File.WriteAllTextAsync(log, result.Output.Text);
-            var receipt = BotTrainingJob.CompletionPath(root, domain, id);
-            if (result.Cancelled && !File.Exists(receipt))
-            {
-                botTrainingMessage = "Bot training stopped.";
-                return;
-            }
-            if (result.ExitCode != 0 && !result.Cancelled)
-                throw new InvalidOperationException(result.FailureMessage);
-            var selected = await Task.Run(() => BotTrainingJob.VerifyCompleted(root, domain, id));
-            if (isClosing) return;
-            StopBotForCheckpointChange(domain);
-            botTrainingMessage = $"{title} is using {selected.Policy.Name}.";
-        }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
-        {
-            botTrainingMessage = "Bot training stopped.";
-        }
-        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException
-            or InvalidOperationException or JsonException or System.ComponentModel.Win32Exception)
-        {
-            botTrainingMessage = $"Bot training failed. {error.Message}";
+            await botTrainingTask;
         }
         finally
         {
-            pump.Stop();
-            botTrainingProcessTask = null;
+            botTrainingTask = null;
             botTrainingCancellation = null;
             if (!isClosing)
             {
@@ -221,13 +182,91 @@ public partial class MainWindow
         }
     }
 
+    private async Task RunBotTrainingAsync(IReadOnlyList<BotCaptureDomain> domains, CancellationToken cancellation)
+    {
+        var outcomes = new List<string>();
+        var combined = domains.Count > 1;
+        try
+        {
+            var library = await Task.Run(() => BotCaptureSession.Library(BotCaptureRoot), cancellation);
+            foreach (var domain in domains)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                var title = domain == BotCaptureDomain.Hacker ? "Hacker" : "Game Play";
+                try
+                {
+                    var plan = await Task.Run(() => BotTrainingJob.Plan(BotRoot, domain, library), cancellation);
+                    cancellation.ThrowIfCancellationRequested();
+                    if (combined && !plan.CanTrain)
+                    {
+                        outcomes.Add($"{title} skipped. {plan.Unavailable}");
+                        continue;
+                    }
+                    outcomes.Add(await TrainBotDomainAsync(domain, title, plan, cancellation));
+                }
+                catch (Exception error) when (IsBotTrainingError(error))
+                {
+                    outcomes.Add($"{(combined ? title : "Bot")} training failed. {error.Message}");
+                }
+            }
+            cancellation.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            outcomes.Add("Bot training stopped.");
+        }
+        catch (Exception error) when (IsBotTrainingError(error))
+        {
+            outcomes.Add($"Bot training failed. {error.Message}");
+        }
+        if (!isClosing) botTrainingMessage = string.Join(Environment.NewLine, outcomes);
+    }
+
+    private async Task<string> TrainBotDomainAsync(BotCaptureDomain domain, string title, BotTrainingPlan plan,
+        CancellationToken cancellation)
+    {
+        var id = Guid.NewGuid();
+        var start = await Task.Run(() => BotTrainingJob.Prepare(BotRoot,
+            Path.Combine(AppContext.BaseDirectory, "training", "train-bot-windows.ps1"),
+            Path.Combine(AppContext.BaseDirectory, "HollowKnightVision.Windows.Host.exe"), id, plan), cancellation);
+        cancellation.ThrowIfCancellationRequested();
+        botTrainingMessage = $"Training and validating {title} clips…";
+        UpdateBotTrainingControls();
+        var pump = new TrainingUiOutputPump(Dispatcher, output =>
+        {
+            if (isClosing || cancellation.IsCancellationRequested) return;
+            if (output.ProgressText is { } progress) BotTrainingStatus.Text = $"{title} · {progress}";
+            else if (output.LastMessage is { } message && message.StartsWith("Setting up ", StringComparison.Ordinal))
+                BotTrainingStatus.Text = message;
+        });
+        var token = pump.Begin();
+        TrainingProcessResult result;
+        try
+        {
+            result = await WindowsTrainingProcess.RunAsync(start, cancellation, output => pump.Post(token, output));
+        }
+        finally { pump.Stop(); }
+        var log = Path.Combine(BotRoot, "training-runs", id.ToString("D"), "training.log");
+        await File.WriteAllTextAsync(log, result.Output.Text);
+        if (result.Cancelled && !File.Exists(BotTrainingJob.CompletionPath(BotRoot, domain, id)))
+            cancellation.ThrowIfCancellationRequested();
+        if (result.ExitCode != 0 && !result.Cancelled)
+            throw new InvalidOperationException(result.FailureMessage);
+        var selected = await Task.Run(() => BotTrainingJob.VerifyCompleted(BotRoot, domain, id));
+        if (!isClosing) StopBotForCheckpointChange(domain);
+        return $"{title} is using {selected.Policy.Name}.";
+    }
+
+    private static bool IsBotTrainingError(Exception error) => error is IOException or InvalidDataException
+        or UnauthorizedAccessException or InvalidOperationException or JsonException or System.ComponentModel.Win32Exception;
+
     private async Task<string?> StopBotTrainingForShutdownAsync()
     {
         botTrainingCancellation?.Cancel();
-        if (botTrainingProcessTask is not { } process) return null;
+        if (botTrainingTask is not { } training) return null;
         try
         {
-            await process.WaitAsync(TimeSpan.FromSeconds(10));
+            await training.WaitAsync(TimeSpan.FromSeconds(10));
             return null;
         }
         catch (OperationCanceledException) { return null; }
