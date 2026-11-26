@@ -136,6 +136,11 @@ internal static class HackerTerrainWindowTests
             AssertAuthoredTerrain();
             var firstEndpoint = new Point(250 - originX, -13 - originY);
             var secondEndpoint = new Point(360 - originX, -33 - originY);
+            window.UpdateLayout();
+            var viewportHost = Control<FrameworkElement>(window, "HackerViewportPanel");
+            var panX = (viewportHost.ActualWidth - firstEndpoint.X - secondEndpoint.X) / 2;
+            var panY = (viewportHost.ActualHeight - firstEndpoint.Y - secondEndpoint.Y) / 2;
+            Invoke(window, "ApplySettledViewportTransform", atlas, viewport.SetFreeFlyTransform(new(1, panX, panY)));
             var links = (AtlasPathLinkStore)Field(window, "hackerPathLinks").GetValue(window)!;
             var connectionFile = Path.Combine(root, AtlasPathLinkStore.Filename);
             var reopenedRoom = new AtlasPathCalibration("reopened-room", Room, default, new(10, 10));
@@ -232,10 +237,13 @@ internal static class HackerTerrainWindowTests
 
             void ClickAt(Point position)
             {
+                Pump();
+                window.UpdateLayout();
                 var screen = atlas.PointToScreen(position);
                 Check(SetCursorPos((int)Math.Round(screen.X), (int)Math.Round(screen.Y)),
                     "Could not position the pointer on the Atlas.");
-                WaitFor(() => (Mouse.GetPosition(atlas) - position).Length < 1.5, "The pointer did not reach the Atlas target.");
+                WaitFor(() => (Mouse.GetPosition(atlas) - position).Length < 1.5,
+                    $"The pointer did not reach the Atlas target {position} at screen position {screen}.");
                 MouseEvent(LeftDown, 0, 0, 0, 0);
                 MouseEvent(LeftUp, 0, 0, 0, 0);
                 Pump();
