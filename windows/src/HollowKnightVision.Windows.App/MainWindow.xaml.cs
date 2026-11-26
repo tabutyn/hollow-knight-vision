@@ -532,6 +532,7 @@ public partial class MainWindow : Window
     private const int LegacyGroundMigrationVersion = 1;
     private readonly ObservableCollection<SavedLabelingExample> examples = [];
     private readonly GameRuntimeMode gameMode;
+    private readonly string supportRoot;
     private readonly string? gamePath;
     private readonly ObservableCollection<EditableBox> boxes = [];
     private SavedLabelingExample? currentExample;
@@ -815,6 +816,7 @@ public partial class MainWindow : Window
         GroundFrameAudits? groundAudits = null)
     {
         this.gameMode = gameMode;
+        supportRoot = IOPath.GetFullPath(root);
         this.gamePath = gamePath;
         BotRoot = IOPath.Combine(root, "bot-v1");
         InputPathRoot = IOPath.Combine(documents, "HollowKnightVision", "paths");
@@ -1904,7 +1906,7 @@ public partial class MainWindow : Window
 
     private bool SelectWorkspace(string destination, bool capture = true, bool keepBotPlayback = false)
     {
-        if (destination == "Model" && !initialization.IsFirstPhaseComplete) return false;
+        if ((destination is "Model" or "Bot") && !initialization.IsFirstPhaseComplete) return false;
         if (destination == "Hacker" && (!CanUseHacker() || recognizedMenuContext != "game"))
         {
             SetStatus(gameMode == GameRuntimeMode.Normal
@@ -2019,8 +2021,10 @@ public partial class MainWindow : Window
         var replayVisibility = DashboardPresentationPolicy.ShowsPathRecording(workspace, gameMode, recognizedMenuContext)
             ? Visibility.Visible : Visibility.Collapsed;
         ReplayInputPathButton.Visibility = StepReplayButton.Visibility = replayVisibility;
-        ModelWorkspaceButton.Visibility = initialization.IsFirstPhaseComplete ? Visibility.Visible : Visibility.Collapsed;
-        StencilDetectionCheck.IsEnabled = initialization.IsFirstPhaseComplete;
+        var stencilsReady = initialization.IsFirstPhaseComplete;
+        ModelWorkspaceButton.Visibility = stencilsReady ? Visibility.Visible : Visibility.Collapsed;
+        BotWorkspaceButton.Visibility = ModelWorkspaceButton.Visibility;
+        StencilDetectionCheck.IsEnabled = stencilsReady;
         UpdateObjectDetectionAvailability();
         StencilLockedText.Visibility = StencilDetectionCheck.IsEnabled ? Visibility.Collapsed : Visibility.Visible;
         HackerWorkspaceButton.IsEnabled = CanUseHacker();
@@ -2152,10 +2156,20 @@ public partial class MainWindow : Window
             ? Visibility.Collapsed : Visibility.Visible;
     }
 
+    private bool? stencilReadiness;
+
     private void RefreshInitializationStatus()
     {
         initialization.Refresh();
         initialization.HasUsableHUD = menuStencilRecognizer.HasGameplayReference;
+        var ready = initialization.IsFirstPhaseComplete;
+        if (stencilReadiness != ready)
+        {
+            stencilReadiness = ready;
+            StencilDetectionCheck.IsChecked = ready;
+        }
+        if (!ready && (workspace is "Model" or "Bot"))
+            SelectWorkspace("Gameplay");
         UpdateModeAvailability();
         StencilsWorkspaceButton.Content = initialization.ButtonTitle;
         RefreshGuidance();
@@ -2169,25 +2183,30 @@ public partial class MainWindow : Window
             != MessageBoxResult.Yes) return;
         try
         {
-            var backup = VisionResetController.ResetStencils(ExamplesRootText.Text);
-            initializationTargetContext = null;
-            stencilSelectedContext = null;
-            if (workspace is "Label" or "Model") SelectWorkspace("Gameplay");
-            currentExample = null;
-            currentFrame = null;
-            boxes.Clear();
-            RefreshExamples();
-            menuStencilRecognizer.Refresh(initialization.LanguageIdentifier);
-            RefreshInitializationStatus();
-            appliedDefaultObjectDetection = false;
-            if (workspace == "Stencil") RefreshStencilsWorkspace();
-            SetStatus(backup is null ? "Stencil setup was already empty."
-                : $"Stencil setup reset. Backup: {backup}");
+            ResetStencilReferences();
         }
         catch (Exception error)
         {
             ShowError(error);
         }
+    }
+
+    private void ResetStencilReferences()
+    {
+        var backup = VisionResetController.ResetStencils(ExamplesRootText.Text, supportRoot);
+        initializationTargetContext = null;
+        stencilSelectedContext = null;
+        if (workspace == "Label") SelectWorkspace("Gameplay");
+        currentExample = null;
+        currentFrame = null;
+        boxes.Clear();
+        RefreshExamples();
+        menuStencilRecognizer.Refresh(initialization.LanguageIdentifier);
+        appliedDefaultObjectDetection = false;
+        RefreshInitializationStatus();
+        if (workspace == "Stencil") RefreshStencilsWorkspace();
+        SetStatus(backup is null ? "Stencil setup was already empty."
+            : $"Stencil setup reset. Backup: {backup}");
     }
 
     private void RequestFactoryReset()
