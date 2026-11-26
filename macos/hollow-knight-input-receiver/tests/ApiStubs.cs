@@ -7,7 +7,28 @@ namespace UnityEngine {
         public DefaultExecutionOrder(int order) { }
     }
     public class MonoBehaviour { }
-    public class GameObject { public GameObject(string value) { } public T AddComponent<T>() where T : new() { return new T(); } }
+    public class GameObject {
+        public GameObject(string value) { }
+        public T AddComponent<T>() where T : new() { return new T(); }
+        public readonly Transform transform = new Transform();
+        public SceneManagement.Scene scene;
+        public int layer;
+        public bool activeInHierarchy = true;
+        public HealthManager ParentHealth;
+        public T GetComponentInParent<T>() where T : class { return ParentHealth as T; }
+    }
+    public class Transform {
+        public Transform parent;
+        public bool IsChildOf(Transform root) {
+            for (var node = this; node != null; node = node.parent)
+                if (node == root) return true;
+            return false;
+        }
+    }
+    public static class LayerMask {
+        public const int EnemyLayer = 8;
+        public static int NameToLayer(string name) { return name == "Enemies" ? EnemyLayer : -1; }
+    }
     public class Object { public static void DontDestroyOnLoad(GameObject value) { } }
     public static class Application {
         public static bool runInBackground { get; set; }
@@ -15,6 +36,37 @@ namespace UnityEngine {
     }
     public static class QualitySettings { public static int vSyncCount { get; set; } }
     public static class Time { public static float timeScale { get; set; } }
+}
+namespace UnityEngine.SceneManagement {
+    public struct Scene { public int handle; }
+}
+namespace HutongGames.PlayMaker {
+    public class Fsm { public FsmState ActiveState; }
+    public class FsmState { public object ActiveAction; }
+    public class FsmGameObject { public UnityEngine.GameObject Value; }
+}
+namespace HutongGames.PlayMaker.Actions {
+    public class TakeDamage { public FsmGameObject Target; }
+}
+public enum AttackTypes { Nail, Spell }
+public struct HitInstance {
+    public AttackTypes AttackType;
+    public int DamageDealt;
+    public UnityEngine.GameObject Source;
+}
+public class HeroController {
+    public static HeroController instance;
+    public readonly UnityEngine.Transform transform = new UnityEngine.Transform();
+}
+public class DamageHero { }
+public class HealthManager {
+    public int hp;
+    public UnityEngine.GameObject gameObject;
+    public DamageHero ChildDamage;
+    public event System.Action OnDeath;
+    public int DeathListeners => OnDeath?.GetInvocationList().Length ?? 0;
+    public T GetComponentInChildren<T>(bool includeInactive) where T : class { return ChildDamage as T; }
+    public void Die() { hp = 0; OnDeath?.Invoke(); }
 }
 namespace Modding {
     public abstract class Mod {

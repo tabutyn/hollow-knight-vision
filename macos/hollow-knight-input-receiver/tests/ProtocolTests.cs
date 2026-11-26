@@ -45,6 +45,7 @@ namespace HollowKnightVisionInputReceiver
             TestPlayerPoseProtocolAndQueue();
             TestPlayerOpsProtocolAndQueue();
             TestRoomResetClearsOnlyRoomObstaclesAndGeo();
+            ReceiverBehaviour.TestEnemyOutcomes();
             TestGroundTruthProtocol();
             var blue = new BlueHealthTracker();
             blue.Observe(true, 1, 0, 1, 1UL); blue.Observe(true, 1, 2, 1, 1UL); blue.Observe(true, 1, 2, 1, 1UL);
@@ -94,7 +95,7 @@ namespace HollowKnightVisionInputReceiver
             Assert("foreign pose rejected", !ControlledFrameRequest.TryParse(v.ToString(), out request));
         }
 
-        private static void Assert(string name, bool value)
+        internal static void Assert(string name, bool value)
         {
             if (!value) throw new InvalidOperationException("Protocol assertion failed: " + name);
         }
