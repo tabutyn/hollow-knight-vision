@@ -808,11 +808,14 @@ internal static class AtlasWindowIntegrationTests
         };
         var snapshot = new LiveWorldSnapshot(mapRevision: 1, anchoredObservationId: observation.Id,
             observations: [observation]);
-        Check(evidence.Commit(snapshot, 0, 1), "The graph must be committed before opening Vision.");
-
         var window = new MainWindow(GameRuntimeMode.Normal, gamePath: null, root: root, documents: root);
         try
         {
+            Wait(InvokeTask(window, "InitializePersistentWorldAsync"));
+            Check(!GetField<bool>(window, "activeAtlasPersistenceBlocked")
+                && GetField<GroundTruthAtlasMosaic>(window, "gameplayAtlas").TileCount == 0,
+                "Startup must open an empty active Atlas if only a pending capture was saved.");
+            Check(evidence.Commit(snapshot, 0, 1), "The graph must commit before restoring the tile cache.");
             Wait(InvokeTask(window, "InitializePersistentWorldAsync"));
             var tile = GetField<GroundTruthAtlasMosaic>(window, "gameplayAtlas").Snapshot().Single();
             var floor = GetField<LiveWorldGroundProjection>(window, "gameplaySavedWorld").DisplayLines.Single();

@@ -228,6 +228,59 @@ internal static class ActiveAtlasReplacementTests
         });
     }
 
+    public static void TestActiveAtlasRecoversInterruptedFirstCapture()
+    {
+        WithTemporaryDirectory(root =>
+        {
+            const int tileSize = 32;
+            var active = Directory.CreateDirectory(Path.Combine(root, "active")).FullName;
+            var evidence = new LiveWorldSessionStore(Path.Combine(active, "live-world"));
+            var metadata = new VisionResetController.PersistedAtlasMetadata(0, DateTimeOffset.UnixEpoch, tileSize, 1);
+            VisionResetController.WritePersistedAtlasMetadata(active, metadata);
+            var pose = new AtlasPoint(16, -16);
+            var first = SolidTile(tileSize, blue: 7, green: 12, red: 25);
+            var source = evidence.Append(first, 1, pose, tileSize);
+            var pending = SnapshotTree(active);
+
+            _ = Expect<InvalidDataException>(() => VisionResetController.ReadPersistedAtlas(active));
+            var states = new AtlasStateStore(Path.Combine(root, "states"));
+            var staging = Directory.CreateDirectory(Path.Combine(root, $"active.staging-load-{Guid.NewGuid():N}")).FullName;
+            VisionResetController.WritePersistedAtlasMetadata(staging, metadata);
+            Check(VisionResetController.RecoverInterruptedActiveAtlasPublication(states, active,
+                    VisionResetController.ReadPersistedAtlas, validateActiveWorld: VisionResetController.ReadActivePersistedAtlas) is null
+                && !Directory.Exists(staging),
+                "A leftover staging copy must not replace the valid active Atlas with pending evidence.");
+            var reopened = VisionResetController.ReadActivePersistedAtlas(active);
+            Check(reopened.Mosaic.TileCount == 0 && reopened.Metadata == metadata,
+                "A source written before the first commit must stay outside the visible world.");
+            CheckTree(pending, SnapshotTree(active), "Reopening the pending source mutated the writer's files.");
+            VisionResetController.WritePersistedAtlasMetadata(active, metadata with { RegistrationCount = 1 });
+            _ = Expect<InvalidDataException>(() => VisionResetController.ReadActivePersistedAtlas(active));
+            VisionResetController.WritePersistedAtlasMetadata(active, metadata);
+
+            var pipeline = new WindowsLiveWorldPipeline(evidence.RootDirectory);
+            var next = SolidTile(tileSize, blue: 40, green: 45, red: 50);
+            var request = new WindowsLiveWorldFrame(next, next, 2, 2, pose, tileSize, [], [], 1, "FirstRoom", 1, tileSize)
+            {
+                RoomIdentityIsVisual = true
+            };
+            var accepted = pipeline.Process(request, reopened.Mosaic);
+            var saved = LiveWorldSessionStore.ValidateExisting(evidence.RootDirectory);
+            Check(accepted.State == WindowsLiveWorldPipelineState.Committed
+                && saved.Snapshot.Observations.Single().SourceObservationId != source.Id
+                && reopened.Mosaic.Snapshot().Single().Frame.Row(0).SequenceEqual(next.Row(0)),
+                "The next capture must commit and paint its own pixels without placing the abandoned source.");
+            Check(evidence.Source(source.Id).Pixels.SequenceEqual(first.Pixels),
+                "The pending source must remain available as original evidence.");
+
+            var later = evidence.Append(next, 3, pose, tileSize);
+            Check(later.PoseRevision == saved.SceneRevision && later.PoseRevision > 0,
+                "Evidence from a later capture must name the revision it saw.");
+            File.Move(Path.Combine(evidence.RootDirectory, "scene.snapshot"), Path.Combine(root, "displaced-scene.fixture"));
+            _ = Expect<InvalidDataException>(() => VisionResetController.ReadActivePersistedAtlas(active));
+        });
+    }
+
     public static void TestCopyFailurePreservesActive()
     {
         WithTemporaryDirectory(workspace =>

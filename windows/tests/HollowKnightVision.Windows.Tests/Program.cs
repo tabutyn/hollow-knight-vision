@@ -1185,6 +1185,7 @@ var tests = new List<(string Name, Action Run)>
     ("atlas replacement returns the previous active archive", ActiveAtlasReplacementTests.TestSuccessfulSwapReturnsPreviousArchive),
     ("atlas pipeline load restores saved snapshot without mutating state", ActiveAtlasReplacementTests.TestPipelineLoadRestoresSavedSnapshotAndLeavesStateImmutable),
     ("atlas reopen rebuilds missing or stale tiles from the committed pose graph", ActiveAtlasReplacementTests.TestReopenRebuildsTilesFromCommittedWorld),
+    ("the active atlas resumes after interrupted first capture without placing pending evidence", ActiveAtlasReplacementTests.TestActiveAtlasRecoversInterruptedFirstCapture),
     ("atlas replacement copy failure preserves active state", ActiveAtlasReplacementTests.TestCopyFailurePreservesActive),
     ("atlas replacement validation failure preserves active state", ActiveAtlasReplacementTests.TestValidationFailurePreservesActive),
     ("atlas replacement swap failure rolls active state back", ActiveAtlasReplacementTests.TestSwapFailureRollsBackActive),

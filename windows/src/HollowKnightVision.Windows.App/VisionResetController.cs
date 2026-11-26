@@ -60,7 +60,8 @@ internal static class VisionResetController
     {
         if (launch.Slot is < 1 or > 4) throw new ArgumentOutOfRangeException(nameof(launch));
         var active = ValidatedActiveAtlasPath(states, activeDirectory);
-        RecoverInterruptedActiveAtlasPublication(states, active, ReadPersistedAtlas);
+        RecoverInterruptedActiveAtlasPublication(states, active, ReadPersistedAtlas,
+            validateActiveWorld: ReadActivePersistedAtlas);
         var previous = SaveProfileAtlas.Read(active);
         var saved = launch.IsNew || previous?.Slot == launch.Slot ? [] : states.List();
         var profile = SaveProfileAtlas.Target(launch, previous, saved);
@@ -72,7 +73,7 @@ internal static class VisionResetController
         var restore = saved.FirstOrDefault(state => state.Profile == profile);
         var adoptUnassigned = restore is null && previous is null && !launch.IsNew
             && File.Exists(Path.Combine(active, "atlas.json"));
-        if (adoptUnassigned) _ = ReadPersistedAtlas(active);
+        if (adoptUnassigned) _ = ReadActivePersistedAtlas(active);
         prepareProfile?.Invoke(previous, profile, adoptUnassigned);
         if (adoptUnassigned)
         {
@@ -349,7 +350,8 @@ internal static class VisionResetController
     internal static string? RecoverInterruptedActiveAtlasPublication<T>(
         AtlasStateStore states,
         string activeDirectory,
-        Func<string, T> validateWorld)
+        Func<string, T> validateWorld,
+        Func<string, T>? validateActiveWorld = null)
     {
         ArgumentNullException.ThrowIfNull(states);
         ArgumentNullException.ThrowIfNull(validateWorld);
@@ -372,7 +374,7 @@ internal static class VisionResetController
         {
             try
             {
-                _ = validateWorld(active);
+                _ = (validateActiveWorld ?? validateWorld)(active);
                 PreserveRetainedArchives(retainedArchives);
                 foreach (var path in staging.Concat(transientArchives).Where(IsValid))
                     TryDeleteDirectory(path);
@@ -479,7 +481,13 @@ internal static class VisionResetController
     /// Strictly materializes a persisted atlas into a fresh mosaic. The caller
     /// can validate a staging copy without reading or mutating its live mosaic.
     /// </summary>
-    internal static ValidatedPersistedAtlas ReadPersistedAtlas(string directory)
+    internal static ValidatedPersistedAtlas ReadPersistedAtlas(string directory) =>
+        ReadPersistedAtlas(directory, resumeActiveCapture: false);
+
+    internal static ValidatedPersistedAtlas ReadActivePersistedAtlas(string directory) =>
+        ReadPersistedAtlas(directory, resumeActiveCapture: true);
+
+    private static ValidatedPersistedAtlas ReadPersistedAtlas(string directory, bool resumeActiveCapture)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         var root = Path.GetFullPath(directory);
@@ -535,7 +543,9 @@ internal static class VisionResetController
             }
             mosaic.RestoreAcceptedFrameCount(metadata.RegistrationCount);
             var evidenceRoot = Path.Combine(root, "live-world");
-            var world = ValidateLiveWorld(evidenceRoot);
+            var allowUncommittedInitialCaptures = resumeActiveCapture && mosaic.TileCount == 0
+                && metadata.RegistrationCount == 0 && metadata.WorldMapRevision is null or 0;
+            var world = ValidateLiveWorld(evidenceRoot, allowUncommittedInitialCaptures);
             if (metadata.WorldMapRevision is int cached && (world is null || cached > world.MapRevision))
                 throw new InvalidDataException("Atlas tiles are ahead of the saved live world.");
 
@@ -853,7 +863,7 @@ internal static class VisionResetController
         };
     }
 
-    private static LiveWorldSnapshot? ValidateLiveWorld(string liveWorld)
+    private static LiveWorldSnapshot? ValidateLiveWorld(string liveWorld, bool allowUncommittedInitialCaptures)
     {
         // Atlas generations created before live-world persistence are the only
         // valid case with no live-world directory at all. Once the directory
@@ -861,7 +871,9 @@ internal static class VisionResetController
         if (!Directory.Exists(liveWorld)) return null;
         try
         {
-            var state = LiveWorldSessionStore.ValidateExisting(liveWorld);
+            var state = allowUncommittedInitialCaptures
+                ? LiveWorldSessionStore.ValidateActiveInitialCaptures(liveWorld)
+                : LiveWorldSessionStore.ValidateExisting(liveWorld);
             _ = new LiveWorldTracker(state.Snapshot);
             return state.Snapshot;
         }
