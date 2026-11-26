@@ -35,6 +35,7 @@ internal static class AtlasWindowIntegrationTests
         try
         {
             VerifyWorkspaceOperations(temporary.FullName);
+            VerifyAtlasDebugPreferences(Path.Combine(temporary.FullName, "debug-preferences"));
             VerifyUnloadedHackerAutosaveSurvivesProfileSwitch(Path.Combine(temporary.FullName, "unloaded-profile"));
             VerifyRoomReset(Directory.CreateDirectory(Path.Combine(temporary.FullName, "room-reset")).FullName);
             VerifyRestoredPassageAlignment(Directory.CreateDirectory(Path.Combine(temporary.FullName, "passages")).FullName);
@@ -59,6 +60,64 @@ internal static class AtlasWindowIntegrationTests
         Console.WriteLine("PASS Hacker displays fresh object detections through the measured camera and drops cross-room results");
         Console.WriteLine("PASS Hacker preview stays current during a stalled Atlas composition and pending capture is bounded");
         Console.WriteLine("PASS Game Play and Hacker draw only scoped bot wall contacts while Atlas Paths is enabled");
+    }
+
+    private static void VerifyAtlasDebugPreferences(string root)
+    {
+        var filename = Path.Combine(root, "atlas-debug-v1.json");
+        WithWindow(window =>
+        {
+            CheckPreferences(window, paths: true, outlines: false, patches: true);
+            Check(!File.Exists(filename), "Opening Debug View with defaults must not create a preferences file.");
+            Control<CheckBox>(window, "AtlasPathsCheck").IsChecked = false;
+            Control<CheckBox>(window, "EstimatedRoomOutlinesCheck").IsChecked = true;
+            Control<CheckBox>(window, "GroundTrackingPatchesCheck").IsChecked = false;
+        });
+        WithWindow(window =>
+        {
+            CheckPreferences(window, paths: false, outlines: true, patches: false);
+            var target = Control<ComboBox>(window, "HackerTerrainTarget");
+            target.SelectedItem = target.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Content, "Path"));
+            CheckPreferences(window, paths: true, outlines: true, patches: false);
+        });
+        WithWindow(window => CheckPreferences(window, paths: true, outlines: true, patches: false));
+
+        const string partial = """{"atlasPaths":false}""";
+        File.WriteAllText(filename, partial);
+        WithWindow(window => CheckPreferences(window, paths: false, outlines: false, patches: true));
+        Check(File.ReadAllText(filename) == partial, "Loading partial preferences should leave the file intact.");
+
+        File.WriteAllText(filename, "{");
+        WithWindow(window => CheckPreferences(window, paths: true, outlines: false, patches: true));
+        Check(File.ReadAllText(filename) == "{", "Loading a damaged preference file should leave it intact.");
+
+        File.Delete(filename);
+        Directory.CreateDirectory(filename);
+        WithWindow(window =>
+        {
+            Control<CheckBox>(window, "AtlasPathsCheck").IsChecked = false;
+            CheckPreferences(window, paths: false, outlines: false, patches: true);
+            Check(Control<TextBlock>(window, "StatusText").Text.StartsWith(
+                "Atlas debug settings could not be saved.", StringComparison.Ordinal),
+                "An unwritable preference should leave the current choice in effect and report the failed save.");
+        });
+        Console.WriteLine("PASS Windows Atlas Debug View restores preferences and remembers Hacker Path activation");
+
+        void WithWindow(Action<MainWindow> verify)
+        {
+            var window = new MainWindow(GameRuntimeMode.Modded, gamePath: null, root: root, documents: root);
+            try { verify(window); }
+            finally { Wait(InvokeTask(window, "PrepareShutdownAsync")); }
+        }
+
+        static void CheckPreferences(MainWindow window, bool paths, bool outlines, bool patches)
+        {
+            Check(Control<CheckBox>(window, "AtlasPathsCheck").IsChecked == paths
+                && GetField<bool>(window, "atlasPathsEnabled") == paths
+                && Control<CheckBox>(window, "EstimatedRoomOutlinesCheck").IsChecked == outlines
+                && Control<CheckBox>(window, "GroundTrackingPatchesCheck").IsChecked == patches,
+                "The Debug View checkboxes and worker state must match the saved preferences.");
+        }
     }
 
     internal static void VerifyQueuedAtlasRebuild(string root)
