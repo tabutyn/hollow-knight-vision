@@ -1371,7 +1371,21 @@ internal static class NativeAtlasImportTests
                 var store = new LiveWorldSessionStore(root.FullName);
                 var placed = new AtlasPoint(80, 0);
                 var drifted = new AtlasPoint(130, 0);
-                Check(pipeline.Process(Scan(1, .5, 71, placed, 1)).AllowsAtlasComposition, "save the placed floor and scenery");
+                var anchor = Scan(1, .5, 71, placed, 1);
+                var foreground = new StencilRect(12, 16, 32, 24);
+                anchor = anchor with
+                {
+                    Exclusions = [foreground],
+                    GroundAlignmentExclusions = [new(0, 0, anchor.Frame.Width, anchor.Frame.Height)]
+                };
+                Check(pipeline.Process(anchor).AllowsAtlasComposition, "save the placed floor and scenery");
+                var seed = store.Load().Snapshot;
+                Check(seed.Landmarks.Count >= 6 && seed.CompositionMasks(seed.Observations.Single()).SequenceEqual([foreground]),
+                    "A measured reference uses scenery outside the composition mask even when the floor-only matcher is masked out.");
+                Check(seed.Landmarks.All(landmark => landmark.SamplePoint.X * 2 < foreground.X
+                    || landmark.SamplePoint.X * 2 >= foreground.Right
+                    || landmark.SamplePoint.Y * 2 < foreground.Y || landmark.SamplePoint.Y * 2 >= foreground.Bottom),
+                    "Scenery sampling must respect the top-origin foreground mask.");
                 if (recovery)
                 {
                     pipeline.NotifyTrackingLoss(1);
