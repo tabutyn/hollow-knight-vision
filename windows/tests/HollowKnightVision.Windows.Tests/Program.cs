@@ -745,6 +745,8 @@ var tests = new List<(string Name, Action Run)>
     ("ground feature eligibility requires descriptor squares below support", GroundFeatureEligibilityTests.TestOnlyDescriptorSquaresFullyBelowSupportedSegmentsAreEligible),
     ("ground feature eligibility rejects frames without ground", GroundFeatureEligibilityTests.TestMissingGroundExcludesWholeFrame),
     ("ground feature eligibility separates platform-height bands", GroundFeatureEligibilityTests.TestSeparatePlatformHeightsCreateSeparateEligibleBands),
+    ("live Atlas ground alignment converts detected floors and foreground masks to world-up bands", GroundFeatureEligibilityTests.TestLiveAlignmentUsesCapturedFloorAndForeground),
+    ("live Atlas ground alignment rejects floorless scenery and missing ground", GroundFeatureEligibilityTests.TestLiveAlignmentRejectsUnverifiedFloor),
     ("slow refinement does not block registration publication", FeatureRefinementCoordinatorTests.TestSlowRefinementDoesNotBlockRegistrationPublication),
     ("refinement returns in generation then runs newest work", FeatureRefinementCoordinatorTests.TestSlowCorrectionReturnsInCurrentGenerationThenRunsNewestWork),
     ("refinement rejects out-of-order current-generation results", FeatureRefinementCoordinatorTests.TestOutOfOrderCurrentGenerationResultIsRejected),
