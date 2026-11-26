@@ -892,8 +892,10 @@ public partial class MainWindow : Window
         {
             normalGameInput = new WindowsNormalGameInput(this,
                 AllowsNormalGameInput,
+                CanCycleAtlasFraming,
                 key => HandleLocalShortcut(key),
-                SetStatus);
+                SetStatus,
+                (buttons, time) => Volatile.Read(ref botCapture)?.ObserveNativeInput(buttons, time));
             SettingsOverlay.IsVisibleChanged += (_, _) => normalGameInput.UpdateContext();
         }
         ExamplesList.ItemsSource = examples;
@@ -1469,9 +1471,7 @@ public partial class MainWindow : Window
         bool isRepeat = false,
         ModifierKeys modifiers = ModifierKeys.None)
     {
-        if (key == Key.Tab && modifiers == ModifierKeys.None && SettingsOverlay.Visibility != Visibility.Visible
-            && (workspace == "Gameplay" && GameplayControlsPanel.IsVisible
-                || workspace == "Hacker" && HackerCameraControlsPanel.IsVisible && !HackerTerrainTarget.IsDropDownOpen))
+        if (key == Key.Tab && modifiers == ModifierKeys.None && CanCycleAtlasFraming())
         {
             if (!isRepeat) CycleAtlasFraming();
             return true;
@@ -1576,6 +1576,10 @@ public partial class MainWindow : Window
         && NormalGameInputPolicy.AllowsGameInput(
             workspace, SettingsOverlay.Visibility == Visibility.Visible,
             IsActive && FirstResponderConsumesTextInput());
+
+    private bool CanCycleAtlasFraming() => SettingsOverlay.Visibility != Visibility.Visible
+        && (workspace == "Gameplay" && GameplayControlsPanel.IsVisible
+            || workspace == "Hacker" && HackerCameraControlsPanel.IsVisible && !HackerTerrainTarget.IsDropDownOpen);
 
     private void ReleaseForwardedInput()
     {
@@ -2630,8 +2634,6 @@ public partial class MainWindow : Window
                     var movement = gameMode == GameRuntimeMode.Normal
                         ? normalGameInput?.CaptureMovement(out recentJump) : gameControls.CaptureMovement(out recentJump);
                     if (!labelCapture.Accept(frame, labelRevision)) continue;
-                    if (gameMode == GameRuntimeMode.Normal)
-                        Volatile.Read(ref botCapture)?.ObserveNativeInput(movement, captureTimestamp);
                     gameplayPresentation.Capture(frame);
                     var bitmap = FrameBitmap(frame);
                     var firstFreshGameFrame = !hasFreshGameFrame;

@@ -1,3 +1,5 @@
+using HollowKnightVision.Windows.Core;
+
 namespace HollowKnightVision.Windows.App;
 
 internal readonly record struct NormalGameInputTarget(
@@ -19,7 +21,10 @@ internal readonly record struct NormalGameKeyMessage(
 // Virtual-key values keep the routing contract testable without a desktop.
 internal static class NormalGameInputPolicy
 {
-    internal static bool IsVisionShortcut(int key) => key is
+    internal const int AtlasTabKey = 0x09;
+
+    internal static bool IsVisionShortcut(int key, bool atlasTabActive = false) => key == AtlasTabKey
+        ? atlasTabActive : key is
         0x47 or 0x4C or 0x53 or 0x4D or 0x48 or 0x4F or 0x4B // G L S M H O K
         or >= 0x31 and <= 0x34 // 1 2 3 4
         or >= 0x61 and <= 0x64; // numpad 1 2 3 4
@@ -105,16 +110,67 @@ internal sealed class NormalGameShortcutState
 
     internal void Capture(int key) => suppressed.Add(key);
 
-    internal bool Handle(int key, bool down, bool canIntercept, bool modified, out bool invoke)
+    internal bool Handle(int key, bool down, bool canIntercept, bool modified, out bool invoke, bool atlasTabActive = false)
     {
         invoke = false;
         if (!down) return suppressed.Remove(key);
         if (suppressed.Contains(key)) return true;
-        if (!canIntercept || modified || !NormalGameInputPolicy.IsVisionShortcut(key)) return false;
+        if (!canIntercept || modified || !NormalGameInputPolicy.IsVisionShortcut(key, atlasTabActive)) return false;
         suppressed.Add(key);
         invoke = true;
         return true;
     }
 
     internal void Clear() => suppressed.Clear();
+}
+
+// Keep delivered key edges separate from the physical snapshots used by
+// ground tracking. Escape and P are distinct keys for a single pause button.
+internal sealed class NormalGameCaptureKeys
+{
+    internal const int JumpKey = 0x5A;
+    private static readonly Dictionary<int, InputButtons> Bindings = new()
+    {
+        [0x25] = InputButtons.Left,
+        [0x27] = InputButtons.Right,
+        [0x26] = InputButtons.Up,
+        [0x28] = InputButtons.Down,
+        [0x41] = InputButtons.ActionA,
+        [JumpKey] = InputButtons.ActionZ,
+        [0x58] = InputButtons.ActionX,
+        [0x49] = InputButtons.Inventory,
+        [0x50] = InputButtons.PauseMenu,
+        [0x1B] = InputButtons.PauseMenu
+    };
+    private readonly HashSet<int> held = [];
+
+    internal static InputButtons Read(Func<int, bool> isDown)
+    {
+        var buttons = InputButtons.None;
+        foreach (var (key, button) in Bindings)
+            if (isDown(key)) buttons |= button;
+        return buttons;
+    }
+
+    internal InputButtons Seed(Func<int, bool> isDown)
+    {
+        held.Clear();
+        foreach (var key in Bindings.Keys)
+            if (isDown(key)) held.Add(key);
+        return Read(held.Contains);
+    }
+
+    internal InputButtons? Observe(int key, bool down)
+    {
+        if (!Bindings.ContainsKey(key)) return null;
+        var changed = down ? held.Add(key) : held.Remove(key);
+        return changed ? Read(held.Contains) : null;
+    }
+
+    internal bool Clear()
+    {
+        if (held.Count == 0) return false;
+        held.Clear();
+        return true;
+    }
 }

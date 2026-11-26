@@ -147,8 +147,9 @@ internal static class Program
         TestSolidCapture();
         GpuCaptureTests.TestMappedBounds();
         GpuCaptureTests.RunIfRequested();
-        if (args.Contains("--input")) TestBackgroundKeyDelivery();
-        Console.WriteLine($"Windows UI regressions passed: {(args.Contains("--input") ? 79 : 78)}");
+        var nativeKeyboard = args.Contains("--input") || Environment.GetEnvironmentVariable("HKV_TEST_NATIVE_KEYBOARD") == "1";
+        if (nativeKeyboard) TestBackgroundKeyDelivery();
+        Console.WriteLine($"Windows UI regressions passed: {(nativeKeyboard ? 79 : 78)}");
         Application.Current.Shutdown();
     }
 
@@ -2379,11 +2380,13 @@ internal static class Program
         owner.Show(); Pump();
         var messages = new ConcurrentQueue<(int Message, nint WParam, bool IsDown)>();
         var shortcuts = new ConcurrentQueue<Key>();
+        var recordedControls = new ConcurrentQueue<(InputButtons Buttons, double Time)>();
         using var gameReady = new ManualResetEventSlim();
         Dispatcher? gameDispatcher = null;
         nint gameHandle = 0;
         var lockOnFocus = 0;
         var allowsInput = true;
+        var atlasTabActive = false;
         Exception? gameError = null;
         var gameThread = new Thread(() =>
         {
@@ -2423,7 +2426,9 @@ internal static class Program
             $"Could not create the separate-thread test game: {gameError}");
         var type = typeof(MainWindow).Assembly.GetType("HollowKnightVision.Windows.App.WindowsNormalGameInput")!;
         var input = Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.NonPublic, null,
-            [owner, (Func<bool>)(() => allowsInput), (Action<Key>)(key => shortcuts.Enqueue(key)), (Action<string>)(message => Console.WriteLine(message))], null)!;
+            [owner, (Func<bool>)(() => allowsInput), (Func<bool>)(() => atlasTabActive),
+                (Action<Key>)(key => shortcuts.Enqueue(key)),
+                (Action<string>)Console.WriteLine, (Action<InputButtons, double>)((buttons, time) => recordedControls.Enqueue((buttons, time)))], null)!;
         object? Invoke(string name, params object[] values) => type.GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(input, values);
         try
         {
@@ -2453,6 +2458,12 @@ internal static class Program
             Check(GetCursorPos(out var activationPointer)
                     && activationPointer.X == previousPointer.X && activationPointer.Y == previousPointer.Y,
                 "Game activation did not preserve the free pointer position.");
+            object[] movementSample = [true];
+            Check(Invoke("CaptureMovement", movementSample) is InputButtons.None && movementSample[0] is false,
+                "Ground tracking must be able to sample neutral movement independently of the recorded edges.");
+            Invoke("SeedCaptureInput");
+            Check(recordedControls.TryDequeue(out var seed) && seed.Buttons == InputButtons.None,
+                "A new clip must receive an initial keyboard state from the foreground game.");
 
             SendNativeKey(0x27, extended: true);
             for (var index = 0; index < 40 && messages.Count < 2; index++) { Pump(); Thread.Sleep(5); }
@@ -2463,13 +2474,33 @@ internal static class Program
             Check(messages.Select(item => item.IsDown).SequenceEqual(new[] { true, false }),
                 "The foreground game could not observe the native Right key state.");
 
+            SendNativeKey(0x5A, extended: false);
+            for (var index = 0; index < 40 && (messages.Count < 4 || recordedControls.Count < 4); index++) { Pump(); Thread.Sleep(5); }
+            Check(messages.Skip(2).Select(item => (item.Message, item.WParam)).SequenceEqual(
+                    new[] { (0x0100, new nint(0x5A)), (0x0101, new nint(0x5A)) }),
+                "The jump tap observed by Vision did not reach the foreground game.");
+            var captured = recordedControls.ToArray();
+            Check(captured.Select(item => item.Buttons).SequenceEqual(
+                    [InputButtons.Right, InputButtons.None, InputButtons.ActionZ, InputButtons.None])
+                && captured.Zip(captured.Skip(1)).All(pair => pair.Second.Time >= pair.First.Time),
+                "Both edges of the native jump tap must reach capture without an intervening frame sample.");
+
             var gameMessageCount = messages.Count;
             SendNativeKey(0x4C, extended: false);
             for (var index = 0; index < 40 && shortcuts.IsEmpty; index++) { Pump(); Thread.Sleep(5); }
             Check(shortcuts.SequenceEqual([Key.L]),
                 "The overlay did not reserve the Vision L shortcut.");
-            Check(messages.Count == gameMessageCount,
-                "The Vision L shortcut leaked into the foreground game.");
+            Check(messages.Count == gameMessageCount && recordedControls.Count == captured.Length,
+                "The Vision L shortcut leaked into the foreground game or the demonstration.");
+            atlasTabActive = true;
+            Invoke("ReserveLocalKey", Key.Tab);
+            Check(Invoke("HandleKeyboardEvent", 0x09, false) is true,
+                "Tab's release must stay reserved when WPF handled its press before the game took focus.");
+            SendNativeKey(0x09, extended: false);
+            for (var index = 0; index < 40 && shortcuts.Count < 2; index++) { Pump(); Thread.Sleep(5); }
+            Check(shortcuts.SequenceEqual([Key.L, Key.Tab]) && messages.Count == gameMessageCount
+                && recordedControls.Count == captured.Length,
+                "Tab must reach Vision while stock Hollow Knight is foreground and Atlas framing is visible.");
             Check(GetForegroundWindow() == gameHandle,
                 "Reserving a Vision shortcut unexpectedly deactivated the game.");
             Check(GetCursorPos(out var currentPointer)
@@ -2516,13 +2547,25 @@ internal static class Program
             Check(GetClipCursor(out var preservedClip) && preservedClip.Equals(foreignClip),
                 "Overlay cleared cursor confinement outside the target game.");
             _ = ClipCursor(ref previousClip);
+            Check(Invoke("HandleKeyboardEvent", 0x58, true) is false
+                && recordedControls.Last().Buttons == InputButtons.ActionX,
+                "The last attack before leaving gameplay must enter the capture.");
             allowsInput = false;
+            Check(Invoke("HandleKeyboardEvent", 0x58, false) is false
+                && recordedControls.Last().Buttons == InputButtons.None,
+                "Opening an editor must release held controls even before the focus monitor runs.");
             Invoke("UpdateContext");
+            var controlsAfterExit = recordedControls.Count;
+            Check(Invoke("HandleKeyboardEvent", 0x58, false) is false && recordedControls.Count == controlsAfterExit,
+                "A key release over the editor must leave gameplay capture neutral.");
             Check(ClipCursor(ref foreignClip), "Could not set editor cursor confinement.");
             Invoke("MaintainOverlay");
             Check(GetClipCursor(out preservedClip) && preservedClip.Equals(foreignClip),
                 "Inactive overlay cleared another context's cursor confinement.");
             Console.WriteLine("PASS native game focus receives arrows beneath Vision and reserves Vision shortcuts");
+            Console.WriteLine("PASS stock Windows gameplay hook captures both edges of a jump between frames");
+            Console.WriteLine("PASS foreground game yields Tab to the visible Atlas camera controls");
+            Console.WriteLine("PASS stock gameplay capture initializes held controls and clears them at editor handoff");
             Console.WriteLine("PASS activation and repeated game cursor locks preserve GUI access without stealing keyboard focus");
         }
         finally

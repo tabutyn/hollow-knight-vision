@@ -20,6 +20,8 @@ jobs:
         with:
           dotnet-version: 8.0.x
       - name: Build and measure Windows test coverage
+        env:
+          HKV_TEST_NATIVE_KEYBOARD: '1'
         run: |
           dotnet --version
           $tools = Join-Path $env:RUNNER_TEMP 'hkv-coverage'
