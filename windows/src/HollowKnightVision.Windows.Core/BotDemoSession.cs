@@ -13,10 +13,18 @@ public sealed class BotDemoSession(BotDemoSaveArchive saves, double startedAt)
     public string Status => failure ?? navigation.Status;
     public BotDemoPhase Phase => failure is null ? navigation.Phase : BotDemoPhase.Stopped;
 
+    public BotDemoDecision? CheckTimeout(double now)
+    {
+        if (failure is not null || navigation.CheckTimeout(now) is not { } expired) return null;
+        failure = expired.Issue;
+        return expired;
+    }
+
     public BotDemoDecision Observe(BotDemoFrame frame, double now)
     {
         if (failure is not null) return new(BotDemoPhase.Stopped, Issue: failure);
         if (!double.IsFinite(now)) return new(navigation.Phase);
+        if (CheckTimeout(now) is { } expired) return expired;
         try
         {
             if (archiveTask is { IsCompleted: true } finished)

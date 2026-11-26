@@ -218,6 +218,35 @@ internal static class BotDemoTests
         Expect(At(108.28, gameplay: true), BotDemoPhase.Gameplay);
     }
 
+    public static void TestPhaseTimeoutsReleaseStartupWithoutFrames()
+    {
+        using var fixture = new Fixture();
+        var session = new BotDemoSession(fixture.Store, 0);
+        Check(session.CheckTimeout(90) is null, "The menu must be allowed its full 90 seconds.");
+        var menuTimeout = session.CheckTimeout(90.01);
+        Check(menuTimeout is { Phase: BotDemoPhase.Stopped, Buttons: InputButtons.None }
+            && menuTimeout.Value.Issue == "Bot timed out. Finding Select Profile.",
+            "The demo must report its timed-out menu phase without another capture.");
+        var late = session.Observe(new(91, false, "select-profile", "select-profile.slot-4", 91,
+            15, 0, InputButtons.None), 91);
+        Check(late == menuTimeout && session.CheckTimeout(100) is null,
+            "Late frames must keep the original failure and leave the demo stopped.");
+
+        var navigation = new BotDemoNavigation(0);
+        BotDemoDecision Profile(double time) => navigation.Observe(new(time, false, "select-profile",
+            "select-profile.slot-4", time, 15, 0, InputButtons.None), time, false);
+        _ = Profile(.1);
+        Expect(Profile(.4), BotDemoPhase.Archiving, action: BotDemoSaveAction.Archive);
+        navigation.ArchiveCompleted(false, .5);
+        _ = Profile(.6);
+        Expect(Profile(.9), BotDemoPhase.LeavingProfile, InputButtons.ActionZ);
+        Expect(navigation.Observe(new(2, false, "brightness", "shared.no", 2, 0, 0, InputButtons.None),
+            2, null), BotDemoPhase.Opening, InputButtons.ActionX);
+        Check(navigation.CheckTimeout(302) is null, "The opening must be allowed its full five minutes.");
+        Check(navigation.CheckTimeout(302.01) is { Phase: BotDemoPhase.Stopped, Buttons: InputButtons.None,
+            Issue: "Bot timed out. Skipping the opening cutscene." }, "A stalled opening must time out without another capture.");
+    }
+
     public static void TestSessionStopsIfGameSaveChangesBeforeConfirm()
     {
         using var fixture = new Fixture();

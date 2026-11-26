@@ -858,7 +858,7 @@ public partial class MainWindow : Window
         inputHeartbeat.Tick += (_, _) =>
         {
             gameControls.Heartbeat();
-            CheckBotOwnership();
+            CheckBotOwnership(BotCaptureClock());
             CheckThinkingControl();
             SyncLabelPauseState();
             UpdateModeAvailability();
