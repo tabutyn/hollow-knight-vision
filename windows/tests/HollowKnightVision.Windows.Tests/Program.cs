@@ -511,6 +511,8 @@ var tests = new List<(string Name, Action Run)>
     ("input acknowledgement bounds pending state and calculates p95", InputAcknowledgementTrackerTests.TestAcknowledgementTrackerBoundsPendingStatesAndCalculatesRollingP95),
     ("visual replay verifies pixels timing and exact frame identity", VisualReplayArchiveTests.TestInspectionKeepsPixelsTimingAndExactCaptureIdentity),
     ("visual replay reports partial and legacy recordings", VisualReplayArchiveTests.TestPartialArchiveAndLegacyPathRemainReadable),
+    ("opaque Mac images reopen in the Atlas and visual replay", VisualReplayArchiveTests.TestMacOpaqueImageReopensInAtlasAndReplay),
+    ("RGB screenshot transparency and label chronology survive decoding", VisualReplayArchiveTests.TestMacRgbEvidencePreservesTransparencyAndLabelTime),
     ("visual replay rejects mismatched checksums and archive metadata", VisualReplayArchiveTests.TestCorruptedOrSwappedFrameEvidenceIsRejected),
     ("input recording links a lossless visual archive and capture metadata", VisualReplayArchiveTests.TestRecorderLinksLosslessArchiveToTheSavedPath),
     ("visual archive writer bounds pending images and drains without reordering", VisualReplayArchiveTests.TestWriterBoundsRetainedFramesAndDrainsInCaptureOrder),

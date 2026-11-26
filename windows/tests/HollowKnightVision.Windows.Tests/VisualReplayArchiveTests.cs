@@ -1,5 +1,7 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text.Json;
+using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 
 internal static class VisualReplayArchiveTests
@@ -51,6 +53,98 @@ internal static class VisualReplayArchiveTests
         Check(report.ArchiveAvailable && !report.Complete && report.ReadableFrames == 1
             && report.CapturedFrames == 3 && report.DroppedFrames == 1 && report.FailedFrames == 1
             && report.LastCaptureTimestamp == 8 && report.GroundInputsWithImages == 0);
+    }
+
+    public static void TestMacOpaqueImageReopensInAtlasAndReplay()
+    {
+        using var fixture = new Fixture();
+        var rgb = MacRgbFixture();
+        var frame = fixture.SaveImage(0, 90.1) with
+        {
+            Width = 32,
+            Height = 32,
+            Sha256 = Convert.ToHexString(SHA256.HashData(rgb)).ToLowerInvariant()
+        };
+        File.WriteAllBytes(Path.Combine(fixture.Frames, frame.FileName!), rgb);
+        var manifest = fixture.Write([frame], [new(90.1, 9)]);
+        var replay = new VisualReplayArchiveReader(fixture.Root, manifest.Summary, fixture.Id);
+        var image = replay.ReadImage(frame, out var srgb);
+        Check(srgb && image.Width == 32 && image.Height == 32 && image.CaptureId == frame.Index,
+            "Mac RGB8 evidence must keep its color profile, extent and replay identity.");
+        for (var y = 0; y < image.Height; y++)
+        {
+            var row = image.Row(y);
+            for (var x = 0; x < image.Width; x++)
+            {
+                var pixel = row.Slice(x * BgraFrame.BytesPerPixel, BgraFrame.BytesPerPixel);
+                Check(pixel is [89, var green, var red, 255] && red == x * 7 && green == y * 7,
+                    "Mac RGB8 pixels must round-trip as opaque BGRA.");
+            }
+        }
+
+        var atlasRoot = Directory.CreateDirectory(Path.Combine(fixture.Root, "atlas")).FullName;
+        var store = new LiveWorldSessionStore(Path.Combine(atlasRoot, "live-world"));
+        var pose = new AtlasPoint(16, -16);
+        var source = store.Append(image, 90.1, pose, image.Width);
+        File.WriteAllBytes(Path.Combine(store.RootDirectory, source.ImagePath), rgb);
+        var observation = LiveWorldObservation.Create(source.Id, source.Id, 90.1,
+            image.Width, image.Height, image.Width, image.Width, [], pose, pose);
+        Check(store.Commit(new LiveWorldSnapshot(mapRevision: 1, anchoredObservationId: observation.Id,
+            observations: [observation]), 0, 1));
+        Check(LiveWorldSessionStore.ValidateExisting(store.RootDirectory).Snapshot.Observations.Count == 1);
+        using var sources = SceneSessionStore.OpenReadOnly(store.RootDirectory);
+        var reopened = sources.Source(sources.Manifest.Observations.Single());
+        Check(reopened.Pixels.SequenceEqual(image.Pixels) && reopened.CaptureId == source.Id,
+            "The Atlas must reopen the same pixels its archive validation accepts.");
+
+        const string invalidTopology = "{invalid saved topology";
+        var topology = Path.Combine(store.RootDirectory, "visual-rooms.json");
+        File.WriteAllText(topology, invalidTopology);
+        VisionResetController.WritePersistedAtlasMetadata(atlasRoot, new(0, DateTimeOffset.UnixEpoch, 32, 1));
+        var restored = VisionResetController.ReadPersistedAtlas(atlasRoot);
+        Check(restored.Metadata.WorldMapRevision == 1
+            && restored.Mosaic.Snapshot().Single().Frame.Pixels.SequenceEqual(image.Pixels)
+            && File.ReadAllText(topology) == invalidTopology,
+            "The production Atlas restore must rebuild RGB tiles and preserve an unreadable optional topology sidecar.");
+    }
+
+    public static void TestMacRgbEvidencePreservesTransparencyAndLabelTime()
+    {
+        var opaque = MacRgbFixture();
+        // A truecolor transparency chunk for the RGB value (0, 0, 89).
+        var transparency = Convert.FromHexString("0000000674524E530000000000597C11EEC1");
+        const int afterHeader = 33;
+        var rgb = new byte[opaque.Length + transparency.Length];
+        opaque.AsSpan(0, afterHeader).CopyTo(rgb);
+        transparency.CopyTo(rgb, afterHeader);
+        opaque.AsSpan(afterHeader).CopyTo(rgb.AsSpan(afterHeader + transparency.Length));
+        var observedAt = DateTimeOffset.UnixEpoch.AddSeconds(34);
+        var labeled = GroundLabelPngDecoder.Decode(rgb, observedAt);
+        Check(labeled.ObservedAt == observedAt
+            && labeled.Row(0)[..8].SequenceEqual(new byte[] { 89, 0, 0, 0, 89, 0, 7, 255 }),
+            "Only the specified RGB color is transparent, and label chronology is preserved.");
+        Reject(() => BgraPngReader.Decode(opaque, 0, observedAt, 1, 31, out _), "dimensions");
+
+        var duplicateTransparency = rgb[..afterHeader].Concat(transparency).Concat(rgb[afterHeader..]).ToArray();
+        Reject(() => GroundLabelPngDecoder.Decode(duplicateTransparency, observedAt), "transparency");
+        // Supply valid IHDR checksums for heights that disagree with the 32 stored rows.
+        foreach (var (height, crc) in new (int, uint)[] { (31, 0x093458db), (33, 0x37443e06) })
+        {
+            var wrongHeight = opaque.ToArray();
+            BinaryPrimitives.WriteInt32BigEndian(wrongHeight.AsSpan(20, 4), height);
+            BinaryPrimitives.WriteUInt32BigEndian(wrongHeight.AsSpan(29, 4), crc);
+            Reject(() => GroundLabelPngDecoder.Decode(wrongHeight, observedAt), "pixel data length");
+        }
+    }
+
+    private static byte[] MacRgbFixture()
+    {
+        using var stream = typeof(VisualReplayArchiveTests).Assembly
+            .GetManifestResourceStream("mac-imageio-rgb8.png")
+            ?? throw new InvalidOperationException("The Mac ImageIO PNG fixture is missing.");
+        var bytes = new byte[checked((int)stream.Length)];
+        stream.ReadExactly(bytes);
+        return bytes;
     }
 
     public static void TestCorruptedOrSwappedFrameEvidenceIsRejected()

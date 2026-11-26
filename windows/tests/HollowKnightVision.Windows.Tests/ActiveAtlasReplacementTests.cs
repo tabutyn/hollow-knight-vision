@@ -223,6 +223,8 @@ internal static class ActiveAtlasReplacementTests
                 new(0, 0), firstImage, "unattributed legacy tiles");
             VisionResetController.WritePersistedAtlasMetadata(active, recovered.Metadata with { WorldMapRevision = 3 });
             _ = Expect<InvalidDataException>(() => VisionResetController.ReadPersistedAtlas(active));
+            VisionResetController.WritePersistedAtlasMetadata(active, recovered.Metadata with { WorldMapRevision = -1 });
+            _ = Expect<InvalidDataException>(() => VisionResetController.ReadPersistedAtlas(active));
         });
     }
 
