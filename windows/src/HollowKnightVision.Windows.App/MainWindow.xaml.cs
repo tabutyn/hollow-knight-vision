@@ -3531,13 +3531,15 @@ public partial class MainWindow : Window
         }
         else trackingPipeline.Paths.Suspend();
         var botGameplay = !holdAtlas && admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";
+        var (botRoomTransition, botDetections) = ScopeBotDetections(frame, captureGeneration, atlasRoomId,
+            !tracked.RoomAllowsAtlasWrite || admission.Transition.ResumedAfterTransition, recognition.Objects.MeasuredBatch);
         var handledByThinking = ObserveThinkingFrame(frame, captureGeneration, captureTimestamp,
             WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), walkedCoordinateEpoch, recognition.Status?.ContextIdentifier,
-            profileMenu, receiverTelemetry, renderedGameFrame, paths, botGameplay, movementButtons,
+            profileMenu, receiverTelemetry, renderedGameFrame, paths, botGameplay && (!botRoomTransition || workspace == "Hacker"), movementButtons,
             terrainContact.Wall is { } policyWall ? policyWall.SolidOnRight ? 1 : -1 : 0);
         var activeBot = handledByThinking || Volatile.Read(ref botPlayback) is null ? null
             : ObserveBotStartup(frame, captureGeneration, captureTimestamp, botGameplay,
-                recognition.RecognizedStatus?.IsGameplay == true, receiverTelemetry, recognition.Menu, hudStencil);
+                recognition.RecognizedStatus?.IsGameplay == true, receiverTelemetry, recognition.Menu, hudStencil, botRoomTransition);
         if (botGameplay)
         {
             if (Volatile.Read(ref botPlayback) is { UsesReceiverFrames: true } hackerRun
@@ -3567,12 +3569,12 @@ public partial class MainWindow : Window
             }
             CaptureBotObservations(frame, captureGeneration, recognition.Generation, captureTimestamp,
                 WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), (ulong)Math.Max(0, liveWorldResult?.Revision ?? 0),
-                renderedGameFrame, receiverTelemetry, recognition.Objects.MeasuredBatch, ground, terrain,
+                renderedGameFrame, receiverTelemetry, botDetections, ground, terrain,
                 groundAnalysis is not null, visualObservation.GroundVerified ? groundDisplayCamera : null, hudStencil,
                 terrainContact.MeasuredFoot, movementButtons, activeBot, walkedCoordinateEpoch, groundHypotheses,
                 gameplayAdmitted, atlasCompositionExclusions, masks, usesDurableWorld, botAtlas,
                 tracked.RoomAllowsAtlasWrite && tracked.MeasuredLineage is not null ? localWalkedGround : [],
-                tracked.MeasuredSceneryCamera, wallLineage, thinkingPlaybackFrame, recentJump);
+                tracked.MeasuredSceneryCamera, wallLineage, thinkingPlaybackFrame, recentJump, botRoomTransition);
         }
         else
         {

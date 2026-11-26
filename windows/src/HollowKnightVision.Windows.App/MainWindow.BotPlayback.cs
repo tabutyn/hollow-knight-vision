@@ -278,16 +278,17 @@ public partial class MainWindow
     }
 
     private BotRun? ObserveBotStartup(BgraFrame frame, long generation, double capturedAt, bool admitted, bool recognizedGameplay,
-        ReceiverGroundTruthSample? receiver, MenuStencilResult? menu, HudStencilResult? hud)
+        ReceiverGroundTruthSample? receiver, MenuStencilResult? menu, HudStencilResult? hud, bool roomTransition)
     {
         lock (thinkingControlLock)
             return Volatile.Read(ref botPlayback) is { UsesReceiverFrames: false } run
-                ? ObserveBotStartupLocked(run, frame, generation, capturedAt, admitted, recognizedGameplay, receiver, menu, hud)
+                ? ObserveBotStartupLocked(run, frame, generation, capturedAt, admitted, recognizedGameplay, receiver, menu, hud,
+                    roomTransition && run.Domain == BotCaptureDomain.Gameplay)
                 : null;
     }
 
     private BotRun? ObserveBotStartupLocked(BotRun run, BgraFrame frame, long generation, double capturedAt, bool admitted,
-        bool recognizedGameplay, ReceiverGroundTruthSample? receiver, MenuStencilResult? menu, HudStencilResult? hud)
+        bool recognizedGameplay, ReceiverGroundTruthSample? receiver, MenuStencilResult? menu, HudStencilResult? hud, bool roomTransition)
     {
         if (run.Generation != generation || capturedAt < run.StartedAt
             || !gameControls.OwnsBotControl(run.Owner) || Volatile.Read(ref run.Loaded) is not { } loaded) return null;
@@ -303,8 +304,8 @@ public partial class MainWindow
             var receiverGameplay = receiver?.AtlasGameplayActive == true;
             var freshHud = hud is { EstablishesGameplay: true }
                 && frameTime - hud.SourceTimestamp is >= 0 and <= .25;
-            var freshGameplay = recognizedGameplay && freshHud
-                || run.StartedInGameplay && admitted && receiverGameplay;
+            var freshGameplay = !roomTransition && (recognizedGameplay && freshHud
+                || run.StartedInGameplay && admitted && receiverGameplay);
             if (run.Demo is { } demo)
             {
                 var decision = demo.Observe(BotDemoFrame.FromVision(capturedAt, frameTime, freshGameplay, menu), now);
@@ -341,7 +342,7 @@ public partial class MainWindow
                 }
                 if (decision.Phase != BotStartupPhase.Gameplay) return null;
             }
-            if (!admitted || receiver?.AtlasGameplayActive == false) return null;
+            if (roomTransition || !admitted || receiver?.AtlasGameplayActive == false) return null;
             if (loaded is { Policy: not null, ModelName: { } modelName })
             {
                 if (Volatile.Read(ref run.Evaluation)?.Preparation.IsCompletedSuccessfully != true)
@@ -361,11 +362,12 @@ public partial class MainWindow
             EndBotFromWorker(run, $"Gameplay reached. {loaded.Issue ?? "No verified checkpoint is available."} Controls returned to you.");
             return null;
         }
-        if (admitted && receiver?.AtlasGameplayActive != false) return run;
+        if (!roomTransition && admitted && receiver?.AtlasGameplayActive != false) return run;
         loaded.Policy.ResetHistory();
         gameControls.NeutralizeBotControl(run.Owner);
-        if (run.PlaybackUpdate.Status != "Bot waiting for gameplay")
-            Volatile.Write(ref run.PlaybackUpdate, new("Bot waiting for gameplay"));
+        var waiting = roomTransition ? BotPlaybackUpdate.WaitingForRoom : "Bot waiting for gameplay";
+        if (run.PlaybackUpdate.Status != waiting)
+            Volatile.Write(ref run.PlaybackUpdate, new(waiting));
         return null;
     }
 

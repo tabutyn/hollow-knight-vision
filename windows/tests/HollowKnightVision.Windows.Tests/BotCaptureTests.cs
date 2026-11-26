@@ -253,11 +253,18 @@ internal static class BotCaptureTests
                 "The observation must declare both the delayed capture and the missing terrain analysis.");
             Check(Hacker(input, input.Mod with { AtlasGameplayActive = false }) is null,
                 "A receiver transition must never produce an authored training observation.");
+            var doorway = Input(2);
+            var brightTransition = Visual(doorway, roomTransition: true);
+            Check(brightTransition.Issues is ["room-transition"] && !brightTransition.CanTrain
+                && brightTransition.DetectionFrameId == doorway.Frame.CaptureId
+                && brightTransition.DetectedTerrain is { Floors.Count: 1 },
+                "Even fresh visual Knight and ground evidence cannot train during a transition.");
             var capture = new BotCaptureSession(root, "normal", "visual", Generation, Start, Labels());
             Check(capture.TryRecord(input.Frame, observation, null), "The recorder must be able to evaluate the stale row.");
+            Check(capture.TryRecord(doorway.Frame, brightTransition, null), "The recorder must be able to evaluate the transition row.");
             var result = capture.FinishAsync(Start + 1, null, completed: true).GetAwaiter().GetResult();
             Check(result.Published.Count == 0 && result.Discarded == 1 && BotCaptureSession.Library(root).Count == 0,
-                "A clip made entirely of late frames must be discarded.");
+                "A clip made entirely of late or transitioning frames must be discarded.");
         });
     }
 
@@ -998,10 +1005,10 @@ internal static class BotCaptureTests
     private static BotCaptureObservation? Hacker(Fixture input, ReceiverGroundTruthSample source) =>
         BotObservationBuilder.Hacker(input.Frame, (int)input.Frame.CaptureId, source, Labels(), input.Time, InputButtons.Right);
 
-    private static BotCaptureObservation Visual(Fixture input, IReadOnlyList<BotLine>? doors = null) =>
+    private static BotCaptureObservation Visual(Fixture input, IReadOnlyList<BotLine>? doors = null, bool roomTransition = false) =>
         BotObservationBuilder.Gameplay(input.Frame, input.Time, input.Detections, [new(36, new(5, 62))],
             [new(70, 10, 42, true)], terrainAnalyzed: true, new(0, 0), null, new(30, 36), InputButtons.Right,
-            input.Mod.BlueHealthOutcomes, doors);
+            input.Mod.BlueHealthOutcomes, doors, roomTransition: roomTransition);
 
     private static void WithLibrary(Action<string> run)
     {

@@ -5,6 +5,7 @@ public readonly record struct BotPlaybackDecision(BotPolicyAction Action, double
 public sealed record BotPlaybackUpdate(string Status, BotPlaybackDecision? Decision = null)
 {
     public const string WaitingForFrame = "Bot waiting for a fresh frame";
+    public const string WaitingForRoom = "Bot waiting for the room transition";
     internal const string WaitingForObservation = "Bot waiting for a fresh observation";
 
     public string StatusAt(double now) => Decision is { Deadline: var deadline } && now >= deadline
@@ -99,6 +100,7 @@ public sealed class BotPolicyPlayback
         var issues = row.Issues;
         if (issues.Contains("stale-capture") || now - row.CapturedAt is not (>= 0 and <= BotRecordingContract.MaximumCaptureAge))
             return "Bot waiting for a fresh capture";
+        if (issues.Contains("room-transition")) return BotPlaybackUpdate.WaitingForRoom;
         if (issues.Contains("stale-or-missing-detection")) return "Bot waiting for fresh object detection";
         if (issues.Contains("missing-hacker-actor-telemetry") || issues.Contains("invalid-hacker-actors"))
             return "Bot waiting for mod actor telemetry";
@@ -106,7 +108,6 @@ public sealed class BotPolicyPlayback
         if (issues.Contains("missing-hacker-enemies")) return "Bot waiting for mod enemy positions";
         if (issues.Contains("missing-knight") || now >= row.KnightPredictionDeadline) return "Bot waiting for Knight detection";
         if (issues.Contains("missing-terrain-analysis")) return "Bot waiting for ground lines";
-        if (issues.Contains("room-transition")) return "Bot waiting for the room transition";
         return BotPlaybackUpdate.WaitingForObservation;
     }
 }

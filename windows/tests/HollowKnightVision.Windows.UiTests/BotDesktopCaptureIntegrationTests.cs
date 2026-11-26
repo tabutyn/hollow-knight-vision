@@ -38,6 +38,7 @@ internal static class BotDesktopCaptureIntegrationTests
                 Wait(VerifyTimedClipAsync(window, root));
                 VerifyMatchedHackerRecording(window, Path.Combine(root, "paired-hacker"));
                 VerifyHackerVisualEvidence(window, hudFrame, Path.Combine(root, "hacker-evaluation"));
+                VerifyVisualBotRoomScope(window, hudFrame);
             }
             finally
             {
@@ -443,7 +444,7 @@ internal static class BotDesktopCaptureIntegrationTests
                     new[] { new DetectedFloorLine(101, new(70, 100)), new DetectedFloorLine(112, new(30, 60)) },
                     TerrainWallDetection.Empty, true, groundCamera, null, new AtlasPoint(42, 100), input,
                     null, epoch, ground, !usesDurableWorld, Array.Empty<PixelRect>(), null, usesDurableWorld,
-                    usesDurableWorld ? world : null, walked, sceneryCamera, null, null, false
+                    usesDurableWorld ? world : null, walked, sceneryCamera, null, null, false, false
                 ]);
                 return captureAt;
             }
@@ -452,6 +453,34 @@ internal static class BotDesktopCaptureIntegrationTests
         {
             Field("botCapture").SetValue(window, null);
             if (!finished) _ = capture.FinishAsync(stoppedAt, null, completed: false).GetAwaiter().GetResult();
+        }
+    }
+
+    private static void VerifyVisualBotRoomScope(MainWindow window, BgraFrame hudFrame)
+    {
+        const long roomGeneration = Generation + 1;
+        var first = new LiveObjectDetectionBatch([], 1000, 400, roomGeneration, 0);
+        var pending = first with { SourceFrameIdentifier = 1001, SourceTimestamp = 400.04 };
+        var arrived = first with { SourceFrameIdentifier = 1002, SourceTimestamp = 400.08 };
+        Check(Scope("room-a", 1000, false, first) == (false, first)
+            && Scope("room-a", 1001, true, first) == (true, null)
+            && Scope("room-b", 1002, true, pending) == (true, null)
+            && Scope("room-b", 1003, false, arrived) == (false, null),
+            "A detector batch within the normal age limit cannot cross a doorway or outlive settling.");
+        var current = arrived with { SourceFrameIdentifier = 1003, SourceTimestamp = 400.12 };
+        Check(Scope("room-b", 1004, false, current) == (false, current)
+            && Scope("room-a", 1005, false, current) == (true, null)
+            && Scope("room-a", 1006, false, first) == (false, null),
+            "Late results remain usable inside the stable visit. A return to the same room requires new evidence.");
+        Console.WriteLine("PASS Windows visual bot rejects old detector batches across doorways and resumes within the new visit");
+
+        (bool, LiveObjectDetectionBatch?) Scope(string room, long id, bool settling, LiveObjectDetectionBatch batch)
+        {
+            var time = 400 + (id - 1000) * .04;
+            var frame = new BgraFrame(hudFrame.Width, hudFrame.Height, hudFrame.Stride, hudFrame.Pixels, id,
+                DateTimeOffset.UnixEpoch.AddSeconds(time));
+            return ((bool, LiveObjectDetectionBatch?))Method("ScopeBotDetections").Invoke(window,
+                [frame, roomGeneration, room, settling, batch])!;
         }
     }
 

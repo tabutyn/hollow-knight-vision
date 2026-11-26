@@ -306,7 +306,7 @@ internal static class BotDesktopEvaluationTests
             {
                 var previous = CurrentUpdate().Decision!.Value;
                 var late = Frame(++marker);
-                _ = Method("ObserveBotStartup").Invoke(window, [late, Generation, Clock() - 1, false, false, null, null, null]);
+                _ = Method("ObserveBotStartup").Invoke(window, [late, Generation, Clock() - 1, false, false, null, null, null, true]);
                 Check(CurrentUpdate().Decision == previous,
                     "A delayed visual result must leave the current receiver action intact.");
                 await Task.Delay(110, token);
@@ -481,7 +481,7 @@ internal static class BotDesktopEvaluationTests
                         new TerrainWallDetection([new(135, 20, 100, true)], []),
                         true, new AtlasPoint(0, 0), null, new AtlasPoint(76, 100), InputButtons.Right,
                         null, 1L, GroundHypothesisTrackingResult.Empty, true, Array.Empty<PixelRect>(), null, false, null,
-                        Array.Empty<GroundHypothesisAtlasLine>(), null, null, null, false
+                        Array.Empty<GroundHypothesisAtlasLine>(), null, null, null, false, false
                     ]);
                     bridge.Release(InputButtons.Right);
                     await WaitFor(() => Clock() >= availableAt + BotRecordingContract.SampleInterval);
@@ -653,7 +653,7 @@ internal static class BotDesktopEvaluationTests
             {
                 if (index > 0) await Task.Delay(140, token);
                 var initial = Frame();
-                ready = Method("ObserveBotStartup").Invoke(window, [initial.Image, Generation, initial.Time, true, true, first, null, null]);
+                ready = Method("ObserveBotStartup").Invoke(window, [initial.Image, Generation, initial.Time, true, true, first, null, null, false]);
             }
             Check(ReferenceEquals(ready, run), "The starter requires live gameplay before passing the PPO lease to Thinking.");
             Observe(first);
@@ -762,7 +762,7 @@ internal static class BotDesktopEvaluationTests
                         current.Image, Generation, Generation, current.Time, 1, 1UL, 42, truth, null,
                         Array.Empty<DetectedFloorLine>(), TerrainWallDetection.Empty, true, null, null, null, InputButtons.None,
                         null, 1L, GroundHypothesisTrackingResult.Empty, true, Array.Empty<PixelRect>(), null, false,
-                        null, Array.Empty<GroundHypothesisAtlasLine>(), null, null, skillFrame, false
+                        null, Array.Empty<GroundHypothesisAtlasLine>(), null, null, skillFrame, false, false
                     ]);
                 return handled;
             }
@@ -1413,7 +1413,7 @@ internal static class BotDesktopEvaluationTests
                     gameplayFrame, Generation, Generation, Clock(), 1, 1UL, index, Telemetry(session, index), null,
                     Array.Empty<DetectedFloorLine>(), TerrainWallDetection.Empty, true, null, null, null, InputButtons.None,
                     run, 1L, GroundHypothesisTrackingResult.Empty, true, Array.Empty<PixelRect>(), null, false,
-                    null, Array.Empty<GroundHypothesisAtlasLine>(), null, null, null, false
+                    null, Array.Empty<GroundHypothesisAtlasLine>(), null, null, null, false, false
                 ]);
                 while ((await states.Reader.ReadAsync(token)).HeldButtons != InputButtons.Right) { }
                 Check((bool)Method("HandleLocalShortcut").Invoke(window, [Key.B, false, ModifierKeys.None])!
@@ -1484,7 +1484,7 @@ internal static class BotDesktopEvaluationTests
                     : null;
                 return Method("ObserveBotStartup").Invoke(window,
                     [image, generation, Clock(), admitGameplay, recognizedGameplay,
-                        Telemetry(session, index) with { AtlasGameplayActive = receiverGameplay }, menu, hud]);
+                        Telemetry(session, index) with { AtlasGameplayActive = receiverGameplay }, menu, hud, false]);
             }
         }
         finally
@@ -1609,7 +1609,7 @@ internal static class BotDesktopEvaluationTests
             {
                 var image = new BgraFrame(Width, Height, Width * 4, pixels, index, DateTimeOffset.UtcNow);
                 run = Method("ObserveBotStartup").Invoke(window,
-                    [image, Generation, Clock(), true, true, Telemetry(session, index), null, null]);
+                    [image, Generation, Clock(), true, true, Telemetry(session, index), null, null, false]);
                 if (run is null) await Task.Delay(80, token);
             }
             Check(run is not null, "The loaded checkpoint never reached gameplay playback.");
@@ -1683,7 +1683,16 @@ internal static class BotDesktopEvaluationTests
                 var measured = (BotPlaybackUpdate)playbackStatus.GetValue(run)!;
                 Check(measured.Decision is { Action.Buttons: Action } && measured.Status != predicted.Status,
                     "A fresh Knight sighting must restore normal Game Play decisions.");
+                var doorway = new BgraFrame(Width, Height, Width * 4, pixels, 53, DateTimeOffset.UtcNow);
+                var poised = Method("ObserveBotStartup").Invoke(window,
+                    [doorway, Generation, captureTimes[^1] + .02, true, true, Telemetry(session, renderedFrame + 12), null, null, true]);
+                var owner = (Guid)run.GetType().GetProperty("Owner", Instance)!.GetValue(run)!;
+                Check(poised is null && bridge.CaptureMovement() == InputButtons.None && bridge.OwnsBotControl(owner)
+                    && ((BotPlaybackUpdate)playbackStatus.GetValue(run)!).Status == BotPlaybackUpdate.WaitingForRoom,
+                    "A recognized Game Play doorway frame must release held controls before the next policy tick.");
                 await ExpectWireState(Action);
+                await ExpectWireState(InputButtons.None);
+                Console.WriteLine("PASS Windows Game Play immediately releases held controls during a room transition");
                 Check((bool)Method("HandleLocalShortcut").Invoke(window, [Key.B, false, ModifierKeys.None])!,
                     "B did not handle stopping the active desktop bot.");
             }
@@ -1762,7 +1771,7 @@ internal static class BotDesktopEvaluationTests
                     batch, new[] { new DetectedFloorLine(100, new(20, 170)) }, TerrainWallDetection.Empty,
                     true, new AtlasPoint(0, 0), null, new AtlasPoint(96, 100), previous,
                     run, 1L, GroundHypothesisTrackingResult.Empty, true, masks.AtlasExclusions, masks, true, null,
-                    Array.Empty<GroundHypothesisAtlasLine>(), null, null, null, frameId == 42
+                    Array.Empty<GroundHypothesisAtlasLine>(), null, null, null, frameId == 42, false
                 ]);
                 return now;
             }
