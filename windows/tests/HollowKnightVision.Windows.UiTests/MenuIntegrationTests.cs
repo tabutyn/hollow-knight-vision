@@ -61,28 +61,31 @@ internal static class MenuIntegrationTests
         var root = Directory.CreateTempSubdirectory("hkv-object-detection-default-");
         try
         {
-            var store = new LabelingExampleStore(Path.Combine(root.FullName, "labeling-v1", "examples"));
+            var support = Path.Combine(root.FullName, "support");
+            var store = new LabelingExampleStore(Path.Combine(support, "labeling-v1", "examples"));
             var image = HudStencilTests.SaveGameplayReference(store);
             const string knight = "game.playable-knight";
             LabelingExampleAnnotation knightBox = new(Guid.NewGuid(), knight, .4, .55, .08, .2);
             var example = store.Save(image, "game", [knightBox]);
             SaveModel(Guid.NewGuid(), DateTimeOffset.UnixEpoch.AddSeconds(1));
-            var window = new MainWindow(GameRuntimeMode.Normal, null, root.FullName, root.FullName);
+            var window = new MainWindow(GameRuntimeMode.Normal, null, support, root.FullName);
             try
             {
                 const BindingFlags Instance = BindingFlags.Instance | BindingFlags.NonPublic;
                 var type = typeof(MainWindow);
                 var setup = (StencilInitializationCoordinator)type.GetField("initialization", Instance)!.GetValue(window)!;
+                var recognizer = (WindowsMenuStencilRecognizer)type.GetField("menuStencilRecognizer", Instance)!.GetValue(window)!;
                 var detection = (CheckBox)window.FindName("ObjectDetectionCheck");
                 var options = (FrameworkElement)window.FindName("ObjectDetectionOptions");
-                foreach (var context in StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal)
-                    .Where(context => context.Identifier is "main-title" or "select-profile"))
-                {
-                    var labels = context.Requirements.SelectMany(requirement => Enumerable.Range(0, requirement.Count)
-                        .Select(_ => new LabelingExampleAnnotation(Guid.NewGuid(), requirement.Identifier, .1, .2, .1, .04)));
-                    store.Save(image, context.Identifier, labels.ToArray(), languageIdentifier: "en");
-                }
-                type.GetMethod("RefreshInitializationStatus", Instance)!.Invoke(window, null);
+                var stencil = (CheckBox)window.FindName("StencilDetectionCheck");
+                var model = (RadioButton)window.FindName("ModelWorkspaceButton");
+                var bot = (RadioButton)window.FindName("BotWorkspaceButton");
+                var gameplay = (RadioButton)window.FindName("GameplayWorkspaceButton");
+                Check(model.Visibility == Visibility.Collapsed && bot.Visibility == Visibility.Collapsed
+                    && !Select("Model") && !Select("Bot") && stencil.IsChecked == false,
+                    "Both training workspaces must wait for the required stencil campaign.");
+                SaveRequiredMenuStencils();
+                RefreshStencils();
                 Check(setup.IsFirstPhaseComplete && !detection.IsEnabled && detection.IsChecked != true,
                     "An active artifact trained against an earlier example set must leave object detection locked.");
 
@@ -92,24 +95,69 @@ internal static class MenuIntegrationTests
                     && setup.HasEnabledObjectDetection,
                     "The first verified model for current gameplay labels must enable the normal detection controls.");
                 detection.IsChecked = false;
+                stencil.IsChecked = false;
                 type.GetMethod("UpdateModeAvailability", Instance)!.Invoke(window, null);
                 type.GetMethod("RefreshExamples", Instance)!.Invoke(window, null);
-                Check(detection.IsEnabled && detection.IsChecked == false && !options.IsEnabled,
-                    "Refreshing detection readiness must keep the user's off choice.");
+                RefreshStencils();
+                Check(detection.IsEnabled && detection.IsChecked == false && !options.IsEnabled && stencil.IsChecked == false,
+                    "Refreshing unchanged readiness must preserve both manual off choices.");
 
-                detection.IsChecked = true;
+                Check(Select("Bot") && bot.IsChecked == true, "Completed stencils must unlock the Bot workspace.");
+                var cache = new MenuStencilLiveCaptureStore(MenuStencilLiveCaptureStore.RootForExamples(store.RootDirectory));
+                var capturedMenu = cache.Save(image, "main-title", "main-title.start-game", "Start Game");
+                type.GetMethod("ResetStencilReferences", Instance)!.Invoke(window, null);
+                Check(!setup.IsFirstPhaseComplete && gameplay.IsChecked == true
+                    && model.Visibility == Visibility.Collapsed && bot.Visibility == Visibility.Collapsed
+                    && !stencil.IsEnabled && !detection.IsEnabled,
+                    "Resetting stencils must return Bot to Game Play and suspend both detectors.");
+                var backup = Directory.GetDirectories(Path.Combine(root.FullName, "HollowKnightVision Backups"), "stencils-*").Single();
+                var cachedImage = Path.GetRelativePath(support, capturedMenu.ImagePath);
+                Check(cache.Load().Count == 0 && File.Exists(Path.Combine(backup, cachedImage))
+                    && store.Load().Select(item => item.Id).SequenceEqual([example.Id]),
+                    "Reset must archive this window's cached stencils and preserve its gameplay label.");
+
+                HudStencilTests.SaveGameplayReference(store);
+                SaveRequiredMenuStencils();
+                RefreshStencils();
+                Check(stencil.IsChecked == true && detection.IsChecked == true && Select("Model") && model.IsChecked == true,
+                    "Recapturing the stencils must restore both defaults and reuse the current trained model.");
                 store.Delete(example);
                 type.GetMethod("RefreshExamples", Instance)!.Invoke(window, null);
                 Check(!detection.IsEnabled && detection.IsChecked == false && !options.IsEnabled,
                     "Deleting the last training evidence must immediately turn off detection and lock its controls.");
+                store.Delete(store.Load().Single(item => item.Manifest.ContextIdentifier == "gameplay-hud"));
+                RefreshStencils();
+                Check(!setup.IsFirstPhaseComplete && gameplay.IsChecked == true && stencil.IsChecked == false,
+                    "Removing a required reference outside reset must also return Model to Game Play.");
+
+                bool Select(string destination) =>
+                    type.GetMethod("SelectWorkspace", Instance)!.Invoke(window, [destination, false, false]) is true;
+
+                void RefreshStencils()
+                {
+                    recognizer.Refresh(setup.LanguageIdentifier);
+                    type.GetMethod("RefreshInitializationStatus", Instance)!.Invoke(window, null);
+                }
             }
             finally { CloseFixture(window); }
             Console.WriteLine("PASS Windows defaults object detection on only with complete stencils and current gameplay training evidence");
+            Console.WriteLine("PASS Windows resets the active stencil archive, relocks training workspaces and recovers detection");
+
+            void SaveRequiredMenuStencils()
+            {
+                foreach (var context in StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal)
+                    .Where(context => context.Identifier is "main-title" or "select-profile"))
+                {
+                    var labels = context.Requirements.SelectMany(requirement => Enumerable.Range(0, requirement.Count)
+                        .Select(_ => new LabelingExampleAnnotation(Guid.NewGuid(), requirement.Identifier, .1, .2, .1, .04)));
+                    store.Save(image, context.Identifier, labels.ToArray(), languageIdentifier: "en");
+                }
+            }
 
             void SaveModel(Guid exampleId, DateTimeOffset completed)
             {
                 var id = Guid.NewGuid();
-                var run = Directory.CreateDirectory(Path.Combine(root.FullName, "training-v1", "runs", id.ToString("D"))).FullName;
+                var run = Directory.CreateDirectory(Path.Combine(support, "training-v1", "runs", id.ToString("D"))).FullName;
                 File.WriteAllText(Path.Combine(run, "model.onnx"), "Model availability fixture");
                 ModelStoreJson.Write(Path.Combine(run, "training.json"), new LabelingTrainingRunSummary
                 {
