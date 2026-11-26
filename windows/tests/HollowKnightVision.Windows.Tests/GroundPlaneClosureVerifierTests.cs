@@ -70,23 +70,40 @@ internal static class GroundPlaneClosureVerifierTests
             "Patch proposals in distinct rooms must compete even when their coordinates agree.");
     }
 
-    internal static void TestPlacedAtlasUsesFloorVerifiedPatchFallback()
+    internal static void TestPlacedAtlasUsesFloorVerifiedPatchFallback() => VerifyPlacedAtlasPatchFallback(sharedAtlas: false);
+
+    internal static void TestSharedAtlasPatchFallbackUsesImageMasks() => VerifyPlacedAtlasPatchFallback(sharedAtlas: true);
+
+    private static void VerifyPlacedAtlasPatchFallback(bool sharedAtlas)
     {
         var root = Directory.CreateTempSubdirectory("hkv-placed-atlas-patches-");
         try
         {
+            if (sharedAtlas)
+                File.WriteAllBytes(Path.Combine(root.FullName, "manifest.json"),
+                    LiveWorldJson.WriteManifest(new SessionManifest { UsesSwiftWireFormat = true }));
+            IReadOnlyList<StencilRect> masks = sharedAtlas ? [new(0, 0, 320, 90)] : [];
             var pipeline = new WindowsLiveWorldPipeline(root.FullName);
             var placed = new AtlasPoint(80, 20);
             var drifted = new AtlasPoint(130, 20);
-            var bright = Image();
-            var dimmed = Image(dimmed: true);
+            var bright = Mask(Image(height: sharedAtlas ? 180 : 120));
+            var dimmed = Mask(Image(dimmed: true, height: bright.Height));
             var matcher = new GlobalFeatureMatcher();
-            var reference = matcher.MakeReference(bright, placed, bright.Width)!;
-            Require(matcher.Match(dimmed, [reference], currentSolveWidth: bright.Width) is null
+            var alignmentMasks = masks.Select(mask => mask with { Y = bright.Height - mask.Bottom }).ToArray();
+            var reference = matcher.MakeReference(bright, placed, bright.Width, excluding: alignmentMasks)!;
+            Require(matcher.Match(dimmed, [reference], currentSolveWidth: bright.Width, excluding: alignmentMasks) is null
                 && !matcher.LastMatchWasAmbiguous, "The return must need patches after the ordinary feature search finds no unique proposal.");
+            if (sharedAtlas)
+            {
+                var source = LiveWorldObservation.Create(0, 0, 1, bright.Width, bright.Height, bright.Width, 160, [], placed, placed);
+                var imageMask = new WorldRect(default, new WorldSize(320, 90));
+                var proposal = new LiveGroundClosureSearch().ProposePatchClosure([(new(0, source), reference)],
+                    dimmed, masks, bright.Width, _ => (bright, [imageMask]));
+                Require(proposal is not null, "The shared-atlas fixture must support a closure when patches use image rows.");
+            }
             Require(pipeline.Process(Scan(bright, 1, .5, placed, 1)).AllowsAtlasComposition,
                 "Save the bright room reference.");
-            Require(pipeline.Process(Scan(Image(dx: 700, dy: 1000), 2, .9, new(400, 20), 2)).AllowsAtlasComposition,
+            Require(pipeline.Process(Scan(Mask(Image(dx: 700, dy: 1000, height: bright.Height)), 2, .9, new(400, 20), 2)).AllowsAtlasComposition,
                 "Record the excursion on a separate measured island.");
 
             Require(pipeline.Process(Scan(dimmed, 3, 1.26, drifted, 2, floorY: 60)).AcceptedClosure is null
@@ -99,22 +116,30 @@ internal static class GroundPlaneClosureVerifierTests
                 && Math.Abs(corrected.CameraPose.X - placed.X) < .25 && corrected.CameraPose.Y == placed.Y,
                 $"Two floor-verified patch proposals must correct the drawn Atlas ({corrected.Diagnostic}).");
             var saved = new LiveWorldSessionStore(root.FullName).Load().Snapshot;
-            Require(saved.LoopClosureEdges.Count == 1 && saved.Observations[0].OptimizedPose == placed
+            Require(saved.UsesSwiftWireFormat == sharedAtlas && saved.LoopClosureEdges.Count == 1
+                && saved.CompositionMasks(saved.Observations[0]).SequenceEqual(masks)
+                && saved.Observations[0].OptimizedPose == placed
                 && saved.Observations[^1].RawPose == drifted && saved.Observations[^1].OptimizedPose == corrected.CameraPose,
                 "Save the corrected placement without rewriting the raw capture.");
+
+            BgraFrame Mask(BgraFrame frame)
+            {
+                if (sharedAtlas) Array.Clear(frame.Pixels, 0, frame.Stride * 90);
+                return frame;
+            }
+
+            WindowsLiveWorldFrame Scan(BgraFrame pixels, long id, double time, AtlasPoint pose,
+                long lineage, double floorY = 30)
+            {
+                var frame = new BgraFrame(pixels.Width, pixels.Height, pixels.Stride, pixels.Pixels, id,
+                    DateTimeOffset.UnixEpoch.AddSeconds(time));
+                return new(frame, frame, time, time, pose, frame.Width, masks, [], 1, "exposure-room", 1, 128)
+                {
+                    WorldEvidence = new(time, new(Ground(floorY))) { MeasuredLineage = lineage }
+                };
+            }
         }
         finally { root.Delete(recursive: true); }
-
-        static WindowsLiveWorldFrame Scan(BgraFrame pixels, long id, double time, AtlasPoint pose,
-            long lineage, double floorY = 30)
-        {
-            var frame = new BgraFrame(pixels.Width, pixels.Height, pixels.Stride, pixels.Pixels, id,
-                DateTimeOffset.UnixEpoch.AddSeconds(time));
-            return new(frame, frame, time, time, pose, frame.Width, [], [], 1, "exposure-room", 1, 128)
-            {
-                WorldEvidence = new(time, new(Ground(floorY))) { MeasuredLineage = lineage }
-            };
-        }
     }
 
     internal static void TestPatchSearchBoundsItsCacheAndReloadsChangedSource()
@@ -267,10 +292,10 @@ internal static class GroundPlaneClosureVerifierTests
         return spans.Select((span, index) => new LiveGroundLineEvidence(index, new(span.Left, y), new(span.Right, y))).ToArray();
     }
 
-    private static BgraFrame Image(int dx = 0, int dy = 0, int pattern = 0, (int Left, int Right)? black = null, bool dimmed = false)
+    private static BgraFrame Image(int dx = 0, int dy = 0, int pattern = 0, (int Left, int Right)? black = null,
+        bool dimmed = false, int height = 120)
     {
         const int width = 320;
-        const int height = 120;
         var pixels = new byte[width * height * 4];
         for (var row = 0; row < height; row++)
         for (var x = 0; x < width; x++)

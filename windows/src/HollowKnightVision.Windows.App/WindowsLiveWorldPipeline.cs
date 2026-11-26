@@ -146,7 +146,7 @@ internal sealed class WindowsLiveWorldPipeline
     private readonly Func<string, bool>? transactionFault;
     private readonly Dictionary<int, string> roomNames = [];
     private readonly Dictionary<int, int> placedRoomIds = [];
-    private readonly Dictionary<int, IReadOnlyList<WorldRect>> compositionExclusions = [];
+    private readonly Dictionary<int, (IReadOnlyList<WorldRect> Stored, IReadOnlyList<WorldRect> Image)> compositionExclusions = [];
     private readonly Dictionary<int, IReadOnlyList<GroundHypothesisAtlasLine>> projectedWalkedGround = [];
     private readonly record struct WalkScope(ulong Capture, int Room, long CoordinateEpoch, long? Lineage);
     private readonly Dictionary<WalkScope, IReadOnlyList<GroundHypothesisAtlasLine>> committedLocalWalk = [];
@@ -528,7 +528,7 @@ internal sealed class WindowsLiveWorldPipeline
                     {
                         var floorRecovery = activeTracker.RecoverFromPlacedGround(request.MaskedFrame,
                             request.LocalPose, request.SolveWidth, evidence, request.Exclusions,
-                            activeStore.Source, id => compositionExclusions[id], findSavedRoom ? null : resolvedRoomId);
+                            activeStore.Source, id => compositionExclusions[id].Image, findSavedRoom ? null : resolvedRoomId);
                         if (floorRecovery.MatchedReferenceKeyframeId is not null
                             || floorRecovery.Review.Rejections.Contains(LiveWorldTrackerRejection.AmbiguousPlacement))
                             recovery = floorRecovery;
@@ -644,7 +644,9 @@ internal sealed class WindowsLiveWorldPipeline
                     request.SolveWidth,
                     request.Exclusions);
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
-                compositionExclusions[source.Id] = CompositionRects(source.ExcludedRects);
+                var storedMask = CompositionRects(source.ExcludedRects);
+                compositionExclusions[source.Id] = (storedMask, priorSnapshot.UsesSwiftWireFormat
+                    ? CompositionRects(request.Exclusions) : storedMask);
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 transactionObserver?.Invoke("append");
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
@@ -687,7 +689,7 @@ internal sealed class WindowsLiveWorldPipeline
                     placementPending: placementPending,
                     carriedWalks: carriedWalks,
                     loadGroundSource: measuredIsland
-                        ? id => (id == source.Id ? request.MaskedFrame : activeStore.Source(id), compositionExclusions[id])
+                        ? id => (id == source.Id ? request.MaskedFrame : activeStore.Source(id), compositionExclusions[id].Image)
                         : null);
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 transactionObserver?.Invoke("ingest");
@@ -698,7 +700,7 @@ internal sealed class WindowsLiveWorldPipeline
                 var groundClosure = placementPending && update.AcceptedClosure is null
                     && restoredPlacement is null && activeTracker.WantsGroundRecovery(request.MonotonicTimestamp)
                     ? activeTracker.LinkGroundRecovery(request.MaskedFrame, request.Exclusions, activeStore.Source,
-                        id => compositionExclusions[id])
+                        id => compositionExclusions[id].Image)
                     : null;
                 if (!IsWorkCurrent(processEpoch)) return Cancelled();
                 var acceptedClosure = groundClosure ?? update.AcceptedClosure;
@@ -1067,9 +1069,18 @@ internal sealed class WindowsLiveWorldPipeline
             var snapshot = reopenedTracker.Snapshot;
             var restoredGround = LiveWorldGroundOverlay.ProjectWorld(snapshot);
             var manifest = new SceneSessionStore(reopened.RootDirectory).Manifest;
+            var sharedSourceHeights = manifest.UsesSwiftWireFormat
+                ? snapshot.Observations.ToLookup(observation => observation.SourceObservationId, observation => observation.SourceHeight)
+                : null;
             var reopenedCompositionExclusions = manifest.Observations.ToDictionary(
                 observation => observation.Id,
-                observation => CompositionRects(observation.ExcludedRects));
+                observation =>
+                {
+                    var stored = CompositionRects(observation.ExcludedRects);
+                    var height = sharedSourceHeights?[observation.Id].FirstOrDefault() ?? 0;
+                    var image = height > 0 ? CompositionRects(observation.ExcludedRects, height) : stored;
+                    return (Stored: stored, Image: image);
+                });
             RestorePortableRoomTopology(reopened.RootDirectory, snapshot);
             store = reopened;
             tracker = reopenedTracker;
@@ -1224,7 +1235,7 @@ internal sealed class WindowsLiveWorldPipeline
                 throw new InvalidDataException(
                     $"Live-world observation {observation.SourceObservationId} has no composition mask.");
             }
-            return observation with { ExcludedRects = exclusions };
+            return observation with { ExcludedRects = exclusions.Stored };
         }).ToArray();
         return new LiveWorldSnapshot(
             snapshot.SchemaVersion,
@@ -1240,9 +1251,9 @@ internal sealed class WindowsLiveWorldPipeline
     }
 
     private static IReadOnlyList<WorldRect> CompositionRects(
-        IReadOnlyList<StencilRect> exclusions) => exclusions.Select(rectangle =>
+        IReadOnlyList<StencilRect> exclusions, int? imageHeight = null) => exclusions.Select(rectangle =>
             new WorldRect(
-                new AtlasPoint(rectangle.X, rectangle.Y),
+                new AtlasPoint(rectangle.X, imageHeight is { } height ? height - rectangle.Bottom : rectangle.Y),
                 new WorldSize(rectangle.Width, rectangle.Height))).ToArray();
 
     internal static double StoredCaptureTimestamp(WindowsLiveWorldFrame request, LiveWorldSnapshot snapshot)
