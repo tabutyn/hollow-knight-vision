@@ -10,13 +10,14 @@ using System.Windows.Shapes;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 using HollowKnightVision.Windows.Host;
+using Path = System.IO.Path;
 
 internal static class MenuIntegrationTests
 {
     private static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
     internal static void Run()
     {
-        TestSavedReferenceRecognition(); TestEditorDeletionRestoresCaptureGuidance(); TestRenderer();
+        TestSavedReferenceRecognition(); TestEditorDeletionRestoresCaptureGuidance(); TestObjectDetectionDefaultsAfterTraining(); TestRenderer();
         Console.WriteLine("PASS Menu integration reads contract-valid PNG labels, invalidates old generations, and renders Mac diagnostic geometry");
     }
 
@@ -40,7 +41,7 @@ internal static class MenuIntegrationTests
                 var capture = (LabelCaptureSession)type.GetField("labelCapture", Instance)!.GetValue(window)!;
                 capture.Apply(GamePauseState.Ready);
                 Check(capture.Accept(frame, capture.Revision), "Could not seed a frame for the normal editor.");
-                var selected = type.GetMethod("SelectWorkspace", Instance)!.Invoke(window, ["Label", false]);
+                var selected = type.GetMethod("SelectWorkspace", Instance)!.Invoke(window, ["Label", false, false]);
                 Check(selected is true, "Could not enter the label editor.");
                 type.GetMethod("ApplySavedLabelExample", Instance)!.Invoke(window, [example, null]);
                 type.GetField("initializationTargetContext", Instance)!.SetValue(window, "main-title");
@@ -50,24 +51,96 @@ internal static class MenuIntegrationTests
                     && guidance.Text.Contains("Capture with L only when Clear Save is visible.", StringComparison.Ordinal),
                     $"Deleting the Select Profile screenshot did not restore capture guidance. Blue text was {guidance.Text}");
             }
-            finally
+            finally { CloseFixture(window); }
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    private static void TestObjectDetectionDefaultsAfterTraining()
+    {
+        var root = Directory.CreateTempSubdirectory("hkv-object-detection-default-");
+        try
+        {
+            var store = new LabelingExampleStore(Path.Combine(root.FullName, "labeling-v1", "examples"));
+            var image = HudStencilTests.SaveGameplayReference(store);
+            const string knight = "game.playable-knight";
+            LabelingExampleAnnotation knightBox = new(Guid.NewGuid(), knight, .4, .55, .08, .2);
+            var example = store.Save(image, "game", [knightBox]);
+            SaveModel(Guid.NewGuid(), DateTimeOffset.UnixEpoch.AddSeconds(1));
+            var window = new MainWindow(GameRuntimeMode.Normal, null, root.FullName, root.FullName);
+            try
             {
                 const BindingFlags Instance = BindingFlags.Instance | BindingFlags.NonPublic;
                 var type = typeof(MainWindow);
-                type.GetField("isClosing", Instance)!.SetValue(window, true);
-                var closing = (Task)type.GetMethod("PrepareShutdownAsync", Instance)!.Invoke(window, null)!;
-                var deadline = Stopwatch.StartNew();
-                while (!closing.IsCompleted && deadline.Elapsed < TimeSpan.FromSeconds(15))
+                var setup = (StencilInitializationCoordinator)type.GetField("initialization", Instance)!.GetValue(window)!;
+                var detection = (CheckBox)window.FindName("ObjectDetectionCheck");
+                var options = (FrameworkElement)window.FindName("ObjectDetectionOptions");
+                foreach (var context in StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal)
+                    .Where(context => context.Identifier is "main-title" or "select-profile"))
                 {
-                    Program.Pump();
-                    Thread.Sleep(5);
+                    var labels = context.Requirements.SelectMany(requirement => Enumerable.Range(0, requirement.Count)
+                        .Select(_ => new LabelingExampleAnnotation(Guid.NewGuid(), requirement.Identifier, .1, .2, .1, .04)));
+                    store.Save(image, context.Identifier, labels.ToArray(), languageIdentifier: "en");
                 }
-                Check(closing.IsCompleted, "The stencil editor fixture did not finish shutdown.");
-                closing.GetAwaiter().GetResult();
+                type.GetMethod("RefreshInitializationStatus", Instance)!.Invoke(window, null);
+                Check(setup.IsFirstPhaseComplete && !detection.IsEnabled && detection.IsChecked != true,
+                    "An active artifact trained against an earlier example set must leave object detection locked.");
+
+                SaveModel(example.Id, DateTimeOffset.UnixEpoch.AddSeconds(2));
+                type.GetMethod("InitializeModels", Instance)!.Invoke(window, null);
+                Check(detection.IsEnabled && detection.IsChecked == true && options.IsEnabled
+                    && setup.HasEnabledObjectDetection,
+                    "The first verified model for current gameplay labels must enable the normal detection controls.");
+                detection.IsChecked = false;
+                type.GetMethod("UpdateModeAvailability", Instance)!.Invoke(window, null);
+                type.GetMethod("RefreshExamples", Instance)!.Invoke(window, null);
+                Check(detection.IsEnabled && detection.IsChecked == false && !options.IsEnabled,
+                    "Refreshing detection readiness must keep the user's off choice.");
+
+                detection.IsChecked = true;
+                store.Delete(example);
+                type.GetMethod("RefreshExamples", Instance)!.Invoke(window, null);
+                Check(!detection.IsEnabled && detection.IsChecked == false && !options.IsEnabled,
+                    "Deleting the last training evidence must immediately turn off detection and lock its controls.");
+            }
+            finally { CloseFixture(window); }
+            Console.WriteLine("PASS Windows defaults object detection on only with complete stencils and current gameplay training evidence");
+
+            void SaveModel(Guid exampleId, DateTimeOffset completed)
+            {
+                var id = Guid.NewGuid();
+                var run = Directory.CreateDirectory(Path.Combine(root.FullName, "training-v1", "runs", id.ToString("D"))).FullName;
+                File.WriteAllText(Path.Combine(run, "model.onnx"), "Model availability fixture");
+                ModelStoreJson.Write(Path.Combine(run, "training.json"), new LabelingTrainingRunSummary
+                {
+                    Id = id, DatasetIdentifier = Guid.NewGuid(), CompletedAt = completed,
+                    ClassIdentifier = LabelingModelVersionStore.SharedObjectModel, ModelFilename = "model.onnx",
+                    ModelFormat = "onnx", ClassIdentifiers = [knight], TrainedClassIdentifiers = [knight],
+                    PredictionsFilename = "predictions.json"
+                });
+                ModelStoreJson.Write(Path.Combine(run, "predictions.json"), new LabelingPredictionReview(
+                    [new(exampleId, "example.png", "validation", [], [])], new(.5, .5, 0, 0, 0, 0, 0, 0)));
             }
         }
         finally { root.Delete(recursive: true); }
     }
+
+    private static void CloseFixture(MainWindow window)
+    {
+        const BindingFlags Instance = BindingFlags.Instance | BindingFlags.NonPublic;
+        var type = typeof(MainWindow);
+        type.GetField("isClosing", Instance)!.SetValue(window, true);
+        var closing = (Task)type.GetMethod("PrepareShutdownAsync", Instance)!.Invoke(window, null)!;
+        var deadline = Stopwatch.StartNew();
+        while (!closing.IsCompleted && deadline.Elapsed < TimeSpan.FromSeconds(15))
+        {
+            Program.Pump();
+            Thread.Sleep(5);
+        }
+        Check(closing.IsCompleted, "The Windows fixture did not finish shutdown.");
+        closing.GetAwaiter().GetResult();
+    }
+
     private static void TestSavedReferenceRecognition()
     {
         var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "hkv-menu-integration-" + Guid.NewGuid().ToString("N"));
