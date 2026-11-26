@@ -830,6 +830,7 @@ public partial class MainWindow : Window
         thinkingClient = policyClient ?? new LocalThinkingClient();
         thinkingEnabled = enableThinking;
         InitializeComponent();
+        InitializeAtlasDebugPreferences(root);
         InitializeThinkingPanel();
         reviewClient.RequestPrepared += RecordThinkingRequest;
         thinkingClient.RequestPrepared += RecordThinkingRequest;

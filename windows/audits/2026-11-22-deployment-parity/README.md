@@ -47,6 +47,12 @@ scripts.
 
 ## Windows port inventory
 
+Atlas paths, Estimated Room Outlines, and Ground Tracking Patches retain
+their Debug View choices across Windows launches. Tracking patches default on
+and outlines default off. The Windows desktop regression reopens the same
+settings, checks that choosing Hacker Path also saves the enabled path display,
+and covers missing, partial, damaged, and unwritable preferences.
+
 | Deployed behavior | Windows evidence |
 | --- | --- |
 | Reset Room returns to the room entrance and clears both atlases | Windows uses the shared receiver reload command and requires a confirmed scene from its current receiver session before replacing the active maps. R works in the Vision window and has a game-focused route scoped to the managed modded process. The desktop loopback test exercises both routes with simulated game focus and checks fresh key presses, modifier rejection, focus loss, active bot-capture protection, preservation on an unconfirmed reset, both active map replacements, profile and saved map retention, and invalidation of stale Gameplay and Hacker frames. The actual reload at the room entrance and physical key delivery with Hollow Knight focused still need live verification. |
