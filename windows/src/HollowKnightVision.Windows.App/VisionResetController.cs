@@ -133,10 +133,11 @@ internal static class VisionResetController
         if (!snapshot.UsesSwiftWireFormat)
             throw new InvalidDataException("This Atlas is missing Windows tiles and has no supported macOS snapshot.");
 
+        var roomBounds = WindowsLiveWorldPipeline.RestorePortableRoomTopology(evidenceRoot, snapshot);
         using var evidence = SceneSessionStore.OpenReadOnly(evidenceRoot);
         var entries = evidence.Manifest.Observations.ToDictionary(entry => entry.Id);
         var mosaic = WindowsLiveWorldPipeline.RebuildAtlas(snapshot, id => evidence.Source(entries[id]),
-            pixelsPerWorldUnit: 1, tileSize: LiveTiledAtlas.TileSize);
+            pixelsPerWorldUnit: 1, tileSize: LiveTiledAtlas.TileSize, roomBounds: roomBounds);
         foreach (var tile in mosaic.Snapshot())
         {
             var name = FormattableString.Invariant($"tile_{tile.Coordinate.X}_{tile.Coordinate.Y}.bmp");

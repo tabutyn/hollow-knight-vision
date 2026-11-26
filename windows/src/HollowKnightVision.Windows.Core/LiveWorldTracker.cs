@@ -388,7 +388,8 @@ public sealed class LiveWorldTracker
         bool placementPending = false,
         IReadOnlyList<LiveWalkedGroundBatch>? carriedWalks = null,
         Func<int, (BgraFrame Image, IReadOnlyList<WorldRect> Exclusions)>? loadGroundSource = null,
-        LiveIslandCapture? recordedIsland = null)
+        LiveIslandCapture? recordedIsland = null,
+        Predicate<int>? fixedHorizontalRoom = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         var excluded = exclusions?.ToArray() ?? [];
@@ -632,13 +633,13 @@ public sealed class LiveWorldTracker
         // Use the axis-specific graph whenever either view shares a measured
         // doorway height. Moving a single island could split that floor seam.
         var doorwayComponents = Snapshot.DoorwayFloorConstraints.Count > 0
-            ? new LiveIslandComponents(Snapshot, FixedRoomObservations()) : null;
+            ? new LiveIslandComponents(Snapshot, FixedRoomObservations(), fixedHorizontalRoom) : null;
         var refinesDoorwayPlacement = doorwayComponents is not null
             && (doorwayComponents.HasDoorwayElevation(observationId)
                 || doorwayComponents.HasDoorwayElevation(reference.ObservationId));
         var refinesPlacement = loadGroundSource is not null || refinesDoorwayPlacement || recordedIsland is not null;
         var components = refinesPlacement
-            ? doorwayComponents ?? new LiveIslandComponents(Snapshot, FixedRoomObservations())
+            ? doorwayComponents ?? new LiveIslandComponents(Snapshot, FixedRoomObservations(), fixedHorizontalRoom)
             : placementPending || Snapshot.TrackingIslands.LastOrDefault()?.Placement == LiveIslandPlacement.Connected
                 ? new LiveIslandComponents(Snapshot) : null;
         LiveIslandComponents.LinkPlan? plan = null;
