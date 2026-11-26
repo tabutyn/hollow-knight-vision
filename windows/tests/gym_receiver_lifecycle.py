@@ -1,18 +1,25 @@
 """Drive the installed Python Gym wrapper with a deterministic receiver process."""
 
+import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 from unittest.mock import patch
 
 import numpy as np
+from stable_baselines3 import PPO
+import torch
 
 source, vision, native_tests, fixture_python = (Path(arg).absolute() for arg in sys.argv[1:])
 sys.path.insert(0, str(source))
-from hacker_gym import HackerGym
-from hkv_bot_dataset import HELD_ATTACK_COST, LANDING_GEOMETRY_POLICY_VERSION, SCHEMAS
+from bot_policy_continuation import playback_checkpoint
+from export_bot_policy import export_policy
+from hacker_gym import HackerGym, save_json
+from hkv_bot_dataset import ACTION_SIZES, HELD_ATTACK_COST, HISTORY_LENGTH, LANDING_GEOMETRY_POLICY_VERSION, SCHEMAS
+from train_hacker_gym import sha
 
 
 def verify_receiver_lifecycle(root, source, vision, native_tests, fixture_python):
@@ -34,6 +41,8 @@ def verify_receiver_lifecycle(root, source, vision, native_tests, fixture_python
             env = HackerGym(**configuration, domain=domain)
             try:
                 observation, _ = env.reset(seed=100_008, options={"render_hz": 120})
+                if domain == "hacker":
+                    hacker_start = observation.copy()
                 game, encoder, episode_directory = env.worker, env.encoder, env.directory
                 assert env.usable and env.render_hz == 120, (domain, env.issues)
                 last = observation[-len(fields):]
@@ -68,6 +77,71 @@ def verify_receiver_lifecycle(root, source, vision, native_tests, fixture_python
             finally:
                 env.close()
             print("PASS installed Windows Gym rejects and closes an invincible episode at reset")
+
+        with patch.dict(os.environ, HKV_GYM_TEST_ROLLOUT="1"):
+            verify_learner_resume(root / "ppo-resume", source, configuration, hacker_start)
+
+
+def verify_learner_resume(support, source, configuration, first_observation):
+    torch.set_num_threads(1)
+    worker, vision = configuration["game"], configuration["vision"]
+    models = support / "bot-v1/models/hacker"
+    base = models / "bot-base"
+    base.mkdir(parents=True)
+    shutil.copyfile(configuration["labels"], support / "world-ground-lines-v2.json")
+    run = support / "bot-v1/training-runs/base"
+    run.mkdir(parents=True)
+    dataset = run / "dataset.npz"
+    np.savez(dataset, observations=np.stack([first_observation, first_observation]),
+             actions=np.zeros((2, 4), dtype=np.int64), session_ids=["train", "held"], segments=[0, 0])
+    policy = PPO("MlpPolicy", HackerGym(**configuration), device="cpu", n_steps=128, batch_size=64, seed=4)
+    policy.save(base / "model.zip")
+    base_hash = sha(base / "model.zip")
+    version = configuration["version"]
+    save_json(base / "manifest.json", dict(name="PPO resume fixture", botDomain="hacker", schemaVersion=version,
+        featureNames=SCHEMAS[version], historyLength=HISTORY_LENGTH, actionSizes=ACTION_SIZES,
+        modelSHA256=base_hash, datasetSHA256=sha(dataset), trainingExamples=1,
+        trainingSessions=["train"], validationSessions=["held"]))
+    export_policy(base)
+    save_json(base / "training-result.json", dict(botDomain="hacker", modelDirectory=base.name,
+        createdAt="2026-01-01T00:00:00Z", nativeParity=True))
+
+    # The runtime probe requires a complete mod layout. The test apphost remains
+    # the executable; these files are markers for the Windows preflight only.
+    game_data = worker.parent / "hollow_knight_Data"
+    game_data.mkdir()
+    try:
+        managed = game_data / "Managed"
+        receiver = managed / "Mods/HollowKnightVisionInputReceiver/HollowKnightVisionInputReceiver.dll"
+        receiver.parent.mkdir(parents=True)
+        for path in (managed / "Assembly-CSharp.dll", managed / "MMHOOK_Assembly-CSharp.dll", receiver):
+            path.write_text("Gym receiver fixture\n", encoding="utf-8")
+
+        command = [sys.executable, "-B", source / "train_hacker_gym.py", "--game", worker, "--vision", vision,
+                   "--support", support, "--rounds", "1", "--training-steps", "128",
+                   "--max-steps", "128", "--stall-steps", "140", "--hours", ".05"]
+        previous_hash, previous_policy = base_hash, policy
+        for number in range(2):
+            subprocess.run(command, check=True, timeout=200)
+            (state_path,) = (support / "bot-v1/gym").glob("*/state.json")
+            state = json.loads(state_path.read_bytes())
+            evidence = json.loads((state_path.parent / f"comparison-{number:04d}.json").read_bytes())
+            assert state["round"] == number + 1 and "pendingPPO" not in state
+            assert evidence["learnerSourceSHA256"] == previous_hash and evidence["trainingSeeds"]
+            assert evidence["method"] == "ppo" and evidence["trainingSteps"] == 128
+            assert not evidence["matched"] and state["champion"] == base.name
+            learner_path = state_path.parent / state["learner"]
+            assert sha(learner_path) == state["learnerSHA256"] != previous_hash
+            learner = PPO.load(learner_path, device="cpu")
+            assert learner.num_timesteps == (number + 1) * 128
+            assert not torch.equal(previous_policy.policy.action_net.weight, learner.policy.action_net.weight)
+            selected = playback_checkpoint(models, "hacker", native_verifier=vision if os.name == "nt" else None)
+            assert selected is not None and selected.samefile(base)
+            previous_hash, previous_policy = state["learnerSHA256"], learner
+        assert sha(base / "model.zip") == base_hash
+        print("PASS installed Windows Gym resumes the saved private PPO learner after a restart and keeps the verified playback policy")
+    finally:
+        shutil.rmtree(game_data)
 
 
 if __name__ == "__main__":
