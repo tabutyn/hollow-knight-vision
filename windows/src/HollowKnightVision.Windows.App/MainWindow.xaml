@@ -730,6 +730,13 @@
                                     <TextBlock x:Name="SettingsLanguageTitle" Text="Game language" Margin="0,0,0,5"/>
                                     <ComboBox x:Name="SettingsLanguageCombo" SelectionChanged="SettingsLanguage_Changed" Margin="0,0,0,12"/>
                                     <Separator Margin="0,12"/>
+                                    <TextBlock Text="Training library" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="Export Training Library…" Click="ExportTrainingLibrary_Click"/>
+                                        <Button Content="Import Training Library…" Click="ImportTrainingLibrary_Click"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="TrainingTransferStatusText" Foreground="#999999" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                    <Separator Margin="0,12"/>
                                     <Button x:Name="SettingsFactoryButton" Content="Factory Reset…" Foreground="#FF6868" HorizontalAlignment="Left" Click="FactoryReset_Click"/>
                                 </StackPanel>
                             </ScrollViewer>

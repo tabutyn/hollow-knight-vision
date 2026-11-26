@@ -41,6 +41,8 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Native Gym detector identity fixtures failed.' }
   & $Python -B -m unittest discover -s $trainerRoot -p test_incremental_trainer.py
   if ($LASTEXITCODE -ne 0) { throw 'Shared trainer unit tests failed.' }
+  & $Python -B -m unittest discover -s $trainerRoot -p test_hkv_library_transfer.py
+  if ($LASTEXITCODE -ne 0) { throw 'Training library transfer regressions failed.' }
   $null = New-Item -ItemType Directory -Path $fixtureRoot
   $dataset = & $Dotnet $tests --export-dataset-probe $fixtureRoot
   if ($LASTEXITCODE -ne 0) { throw 'Synthetic Windows export failed.' }
@@ -105,6 +107,19 @@ print('PASS Windows PNG/JSON -> shared Python reader, normalized coordinates, kn
   $incremental = Join-Path $fixtureRoot 'detector-incremental'
   & $Dotnet $tests --verify-object-trainer-probe $incremental 'enemies.crawlid' 'game.playable-knight' 'world.geo-deposit'
   if ($LASTEXITCODE -ne 0) { throw 'Native Windows inference rejected the trained detector or its class evidence.' }
+  $transfer = Join-Path (Split-Path -Parent $TrainerLauncher) 'transfer-training-library-windows.ps1'
+  $sourceLibrary = Join-Path $fixtureRoot 'transfer-source'
+  $targetLibrary = Join-Path $fixtureRoot 'transfer-target'
+  $sourceRuns = Join-Path $sourceLibrary 'training-v1\runs'
+  $null = New-Item -ItemType Directory -Path $sourceRuns -Force
+  Copy-Item -Recurse -LiteralPath $incremental -Destination $sourceRuns
+  $bundle = Join-Path $fixtureRoot 'vision training transfer.hkvtraining'
+  & $transfer -Operation export -Support $sourceLibrary -Bundle $bundle
+  if ($LASTEXITCODE -ne 0) { throw 'Windows training library export failed.' }
+  & $transfer -Operation import -Support $targetLibrary -Bundle $bundle
+  if ($LASTEXITCODE -ne 0) { throw 'Windows training library import failed.' }
+  & $Dotnet $tests --verify-object-trainer-probe (Join-Path $targetLibrary 'training-v1\runs\detector-incremental') 'enemies.crawlid' 'game.playable-knight' 'world.geo-deposit'
+  if ($LASTEXITCODE -ne 0) { throw 'Native Windows inference rejected the detector restored from the transfer bundle.' }
   $botFixture = Join-Path $fixtureRoot 'paired-captures'
   $botSource = Join-Path $repositoryRoot 'macos\BotPython'
   & $Python -B -m unittest discover -s $botSource -p test_training_ipc.py

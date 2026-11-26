@@ -21,8 +21,11 @@ private func launch() throws -> Never {
     let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
     let helpersDirectory = executable.deletingLastPathComponent()
     let contentsDirectory = helpersDirectory.deletingLastPathComponent()
-    let trainer = contentsDirectory
-        .appendingPathComponent("Resources/TrainingPython/hkv_incremental_trainer.py")
+    var forwarded = Array(CommandLine.arguments.dropFirst())
+    let transfer = forwarded.first == "--library-transfer"
+    if transfer { forwarded.removeFirst() }
+    let script = transfer ? "hkv_library_transfer.py" : "hkv_incremental_trainer.py"
+    let trainer = contentsDirectory.appendingPathComponent("Resources/TrainingPython/\(script)")
     guard fileManager.fileExists(atPath: trainer.path) else {
         throw LauncherError.trainerMissing(trainer.path)
     }
@@ -32,7 +35,7 @@ private func launch() throws -> Never {
         throw LauncherError.environmentMissing(python.path)
     }
 
-    let arguments = [python.path, trainer.path] + Array(CommandLine.arguments.dropFirst())
+    let arguments = [python.path, "-B", trainer.path] + forwarded
     var pointers = arguments.map { strdup($0) }
     pointers.append(nil)
     execv(python.path, &pointers)

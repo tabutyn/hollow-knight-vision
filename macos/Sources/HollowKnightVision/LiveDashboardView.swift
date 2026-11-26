@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum LabelingTrainingNotificationPolicy {
     static func untrainedImageCount(
@@ -599,6 +600,8 @@ struct DashboardView: View {
     @State private var hackerRoomDrag: (id: UUID, point: CGPoint)?
     @State private var showsGameState = true
     @State private var showingSettings = false
+    @State private var trainingTransferBusy = false
+    @State private var trainingTransferStatus = ""
     @State private var settingsSection = DashboardSettingsSection.atlas
     @AppStorage("HollowKnightVision.debug.estimatedRoomOutlines") private var showsEstimatedPlacement = false
     @AppStorage("HollowKnightVision.debug.groundTrackingPatches")
@@ -726,7 +729,9 @@ struct DashboardView: View {
         .overlay {
             if showingSettings {
                 ZStack {
-                    Color.black.opacity(0.55).ignoresSafeArea().onTapGesture { showingSettings = false }
+                    Color.black.opacity(0.55).ignoresSafeArea().onTapGesture {
+                        if !trainingTransferBusy { showingSettings = false }
+                    }
                     settingsContent.environment(\.visionLanguage, initialization.language)
                 }
                 .accessibilityAddTraits(.isModal)
@@ -1868,12 +1873,13 @@ struct DashboardView: View {
                 Text(initialization.text("settings")).font(.title2.weight(.semibold))
                 Spacer()
                 Button(visionText("Done")) { showingSettings = false }
+                    .disabled(trainingTransferBusy)
                     .keyboardShortcut(.cancelAction)
             }.padding(20)
             Divider()
             HStack(alignment: .top, spacing: 0) {
                 VStack(spacing: 4) {
-                    ForEach(DashboardSettingsSection.allCases) { section in
+                        ForEach(DashboardSettingsSection.allCases) { section in
                         Button { settingsSection = section } label: {
                             Label(visionText(section.rawValue), systemImage: section.symbol)
                                 .fontWeight(settingsSection == section ? .semibold : .regular)
@@ -1923,10 +1929,21 @@ struct DashboardView: View {
                                 }
                             }
                             Divider()
+                            Text("Training library").font(.headline)
+                            HStack {
+                                Button("Export Training Library…") { transferTrainingLibrary(importing: false) }
+                                Button("Import Training Library…") { transferTrainingLibrary(importing: true) }
+                            }
+                            .disabled(trainingTransferBusy)
+                            if !trainingTransferStatus.isEmpty {
+                                Text(trainingTransferStatus).foregroundStyle(.secondary).textSelection(.enabled)
+                            }
+                            Divider()
                             Button(initialization.text("factory"), role: .destructive) {
                                 showingSettings = false
                                 confirmsFactoryReset = true
                             }
+                            .disabled(trainingTransferBusy)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1938,6 +1955,51 @@ struct DashboardView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.15)))
         .padding(24)
+    }
+
+    private func transferTrainingLibrary(importing: Bool) {
+        guard !trainingTransferBusy else { return }
+        guard !labelingTrainer.isRunning, !botTrainer.isRunning, !model.botDemonstrations.isRecording else {
+            trainingTransferStatus = "Finish training or recording before transferring the library."
+            return
+        }
+        let fileType = UTType(filenameExtension: "hkvtraining") ?? .data
+        let panel: NSSavePanel
+        if importing {
+            let open = NSOpenPanel()
+            open.canChooseDirectories = false
+            open.allowsMultipleSelection = false
+            panel = open
+        } else {
+            panel = NSSavePanel()
+            let day = Date().formatted(.iso8601.year().month().day().dateSeparator(.dash))
+            let suffix = UUID().uuidString.prefix(8).lowercased()
+            panel.nameFieldStringValue = "Vision Training \(day) \(suffix).hkvtraining"
+        }
+        panel.allowedContentTypes = [fileType]
+        guard panel.runModal() == .OK, let bundle = panel.url else { return }
+        let support = LabelingExampleStore.defaultRootURL().deletingLastPathComponent().deletingLastPathComponent()
+        let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/HollowKnightVisionTrainer")
+        trainingTransferBusy = true
+        trainingTransferStatus = importing ? "Importing training library…" : "Exporting training library…"
+        Task { @MainActor in
+            defer { trainingTransferBusy = false }
+            do {
+                trainingTransferStatus = try await Task.detached(priority: .utility) {
+                    try TrainingLibraryTransfer.run(importing: importing, bundle: bundle, support: support, helper: helper)
+                }.value
+                if importing {
+                    initialization.refresh(mode: model.gameMode)
+                    refreshTrainingEligibility()
+                    refreshLatestModelCandidate()
+                    botTrainer.refresh()
+                    model.refreshMenuStencilCatalog()
+                    model.reloadActiveObjectModels()
+                }
+            } catch {
+                trainingTransferStatus = error.localizedDescription
+            }
+        }
     }
 
     private func openGroundLabelContext() {

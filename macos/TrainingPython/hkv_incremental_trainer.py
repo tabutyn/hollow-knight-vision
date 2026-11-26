@@ -828,6 +828,23 @@ def export_model(
     return filename, export_format
 
 
+def export_checkpoint(checkpoint_path: Path, output: Path, model_format: str) -> tuple[Path, dict]:
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    if checkpoint.get("algorithm") != ALGORITHM:
+        raise ValueError("The saved detector checkpoint uses an incompatible trainer.")
+    class_names = checkpoint["class_names"]
+    model = HKVDetector(len(class_names), pretrained=False)
+    model.load_state_dict(checkpoint["state_dict"], strict=True)
+    filename, model_format = export_model(model, class_names, output, model_format)
+    return output / filename, {
+        "algorithm": ALGORITHM,
+        "modelFilename": filename,
+        "modelFormat": model_format,
+        "classIdentifiers": class_names,
+        "trainedClassIdentifiers": checkpoint.get("trained_class_names", class_names),
+    }
+
+
 def iso_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
