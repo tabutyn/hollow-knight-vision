@@ -24,7 +24,9 @@ public static class BgraPngReader
         return Read(stream, captureId);
     }
 
-    public static BgraFrame Read(Stream stream, long captureId = 0)
+    public static BgraFrame Read(Stream stream, long captureId = 0) => Read(stream, captureId, out _);
+
+    internal static BgraFrame Read(Stream stream, long captureId, out bool hasSrgbProfile)
     {
         ArgumentNullException.ThrowIfNull(stream);
         if (!stream.CanRead || !stream.CanSeek || stream.Length > int.MaxValue)
@@ -45,6 +47,8 @@ public static class BgraPngReader
         var height = 0;
         var sawHeader = false;
         var sawEnd = false;
+        var declaredSrgb = false;
+        var hasOtherProfile = false;
         using var compressed = new MemoryStream();
         while (offset < encoded.Length)
         {
@@ -112,6 +116,14 @@ public static class BgraPngReader
                 sawEnd = true;
                 break;
             }
+            else if (chunkType == "sRGB" && sawHeader && compressed.Length == 0 && data is [<= 3])
+            {
+                declaredSrgb = true;
+            }
+            else if (chunkType is "iCCP" or "cICP")
+            {
+                hasOtherProfile = true;
+            }
         }
         if (!sawHeader || !sawEnd || compressed.Length == 0)
         {
@@ -174,6 +186,7 @@ public static class BgraPngReader
             bgra[index + 2] = rgba[index];
             bgra[index + 3] = rgba[index + 3];
         }
+        hasSrgbProfile = declaredSrgb && !hasOtherProfile;
         return new BgraFrame(
             width,
             height,
