@@ -2458,6 +2458,12 @@ internal static class Program
             Check(GetCursorPos(out var activationPointer)
                     && activationPointer.X == previousPointer.X && activationPointer.Y == previousPointer.Y,
                 "Game activation did not preserve the free pointer position.");
+            object[] movementSample = [true];
+            Check(Invoke("CaptureMovement", movementSample) is InputButtons.None && movementSample[0] is false,
+                "Ground tracking must be able to sample neutral movement independently of the recorded edges.");
+            Invoke("SeedCaptureInput");
+            Check(recordedControls.TryDequeue(out var seed) && seed.Buttons == InputButtons.None,
+                "A new clip must receive an initial keyboard state from the foreground game.");
 
             SendNativeKey(0x27, extended: true);
             for (var index = 0; index < 40 && messages.Count < 2; index++) { Pump(); Thread.Sleep(5); }
@@ -2487,6 +2493,9 @@ internal static class Program
             Check(messages.Count == gameMessageCount && recordedControls.Count == captured.Length,
                 "The Vision L shortcut leaked into the foreground game or the demonstration.");
             atlasTabActive = true;
+            Invoke("ReserveLocalKey", Key.Tab);
+            Check(Invoke("HandleKeyboardEvent", 0x09, false) is true,
+                "Tab's release must stay reserved when WPF handled its press before the game took focus.");
             SendNativeKey(0x09, extended: false);
             for (var index = 0; index < 40 && shortcuts.Count < 2; index++) { Pump(); Thread.Sleep(5); }
             Check(shortcuts.SequenceEqual([Key.L, Key.Tab]) && messages.Count == gameMessageCount
@@ -2538,8 +2547,17 @@ internal static class Program
             Check(GetClipCursor(out var preservedClip) && preservedClip.Equals(foreignClip),
                 "Overlay cleared cursor confinement outside the target game.");
             _ = ClipCursor(ref previousClip);
+            Check(Invoke("HandleKeyboardEvent", 0x58, true) is false
+                && recordedControls.Last().Buttons == InputButtons.ActionX,
+                "The last attack before leaving gameplay must enter the capture.");
             allowsInput = false;
+            Check(Invoke("HandleKeyboardEvent", 0x58, false) is false
+                && recordedControls.Last().Buttons == InputButtons.None,
+                "Opening an editor must release held controls even before the focus monitor runs.");
             Invoke("UpdateContext");
+            var controlsAfterExit = recordedControls.Count;
+            Check(Invoke("HandleKeyboardEvent", 0x58, false) is false && recordedControls.Count == controlsAfterExit,
+                "A key release over the editor must leave gameplay capture neutral.");
             Check(ClipCursor(ref foreignClip), "Could not set editor cursor confinement.");
             Invoke("MaintainOverlay");
             Check(GetClipCursor(out preservedClip) && preservedClip.Equals(foreignClip),
@@ -2547,6 +2565,7 @@ internal static class Program
             Console.WriteLine("PASS native game focus receives arrows beneath Vision and reserves Vision shortcuts");
             Console.WriteLine("PASS stock Windows gameplay hook captures both edges of a jump between frames");
             Console.WriteLine("PASS foreground game yields Tab to the visible Atlas camera controls");
+            Console.WriteLine("PASS stock gameplay capture initializes held controls and clears them at editor handoff");
             Console.WriteLine("PASS activation and repeated game cursor locks preserve GUI access without stealing keyboard focus");
         }
         finally
