@@ -277,6 +277,7 @@ public partial class MainWindow
                 Interlocked.Read(ref recentCaptureGeneration), recording?.StartedAt ?? BotCaptureClock(),
                 groundTruthLabels.Document, recording?.Id, paired, replayRoot: InputPathRoot,
                 hackerPathLinks: hackerPathLinks, observationClock: ReadBotObservationTime));
+            normalGameInput?.SeedCaptureInput();
             PathRecordingButton.Background = Brushes.Firebrick;
             SetStatus(paired ? "Recording Hacker and Game Play. Press K to stop." : "Recording Game Play. Press K to stop.");
         }

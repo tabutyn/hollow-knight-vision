@@ -21,7 +21,6 @@ internal sealed class WindowsNormalGameInput : IDisposable
     private const int GwlExStyle = -20;
     private const long WsExNoActivate = 0x08000000L;
     private const int SwRestore = 9;
-    private const int JumpVirtualKey = 0x5A;
     private const uint SwpNoSize = 0x0001;
     private const uint SwpNoMove = 0x0002;
     private const uint SwpNoActivate = 0x0010;
@@ -33,10 +32,13 @@ internal sealed class WindowsNormalGameInput : IDisposable
 
     private readonly Window owner;
     private readonly Func<bool> allowsGameInput;
+    private readonly Func<bool> reservesAtlasTab;
     private readonly Action<Key> shortcut;
     private readonly Action<string> status;
+    private readonly Action<InputButtons, double> recordInput;
     private readonly DispatcherTimer monitor;
     private readonly NormalGameShortcutState shortcutState = new();
+    private readonly NormalGameCaptureKeys captureKeys = new();
     private readonly JumpContactGate jumpContact = new();
     private readonly WindowsKeyboardHook keyboardHook;
     private HollowKnightWindow? target;
@@ -48,13 +50,17 @@ internal sealed class WindowsNormalGameInput : IDisposable
     internal WindowsNormalGameInput(
         Window owner,
         Func<bool> allowsGameInput,
+        Func<bool> reservesAtlasTab,
         Action<Key> shortcut,
-        Action<string> status)
+        Action<string> status,
+        Action<InputButtons, double> recordInput)
     {
         this.owner = owner;
         this.allowsGameInput = allowsGameInput;
+        this.reservesAtlasTab = reservesAtlasTab;
         this.shortcut = shortcut;
         this.status = status;
+        this.recordInput = recordInput;
         keyboardHook = new WindowsKeyboardHook(HandleKeyboardEvent);
         // Cursor confinement must be released even while gameplay continuously
         // queues Render work. Input priority is lower than Render in WPF.
@@ -68,6 +74,7 @@ internal sealed class WindowsNormalGameInput : IDisposable
     internal void Start(HollowKnightWindow game)
     {
         if (disposed) return;
+        ReleaseCaptureInput();
         target = game;
         jumpContact.Reset();
         ownerHandle = new WindowInteropHelper(owner).Handle;
@@ -84,7 +91,7 @@ internal sealed class WindowsNormalGameInput : IDisposable
     internal void ReserveLocalKey(Key key)
     {
         var virtualKey = KeyInterop.VirtualKeyFromKey(key);
-        if (NormalGameInputPolicy.IsVisionShortcut(virtualKey))
+        if (NormalGameInputPolicy.IsVisionShortcut(virtualKey, key == Key.Tab && reservesAtlasTab()))
             shortcutState.Capture(virtualKey);
     }
 
@@ -112,17 +119,20 @@ internal sealed class WindowsNormalGameInput : IDisposable
     {
         recentJump = false;
         if (!overlayActive || !IsGameForeground()) return null;
-        var jumpDown = IsKeyDown(JumpVirtualKey);
-        recentJump = jumpContact.Observe(jumpDown, MonotonicSeconds());
-        return (IsKeyDown(0x25) ? InputButtons.Left : InputButtons.None)
-            | (IsKeyDown(0x27) ? InputButtons.Right : InputButtons.None)
-            | (IsKeyDown(0x26) ? InputButtons.Up : InputButtons.None)
-            | (IsKeyDown(0x28) ? InputButtons.Down : InputButtons.None)
-            | (IsKeyDown(0x41) ? InputButtons.ActionA : InputButtons.None)
-            | (jumpDown ? InputButtons.ActionZ : InputButtons.None)
-            | (IsKeyDown(0x58) ? InputButtons.ActionX : InputButtons.None)
-            | (IsKeyDown(0x49) ? InputButtons.Inventory : InputButtons.None)
-            | (IsKeyDown(0x50) || IsKeyDown(0x1B) ? InputButtons.PauseMenu : InputButtons.None);
+        var buttons = NormalGameCaptureKeys.Read(IsKeyDown);
+        recentJump = jumpContact.Observe((buttons & InputButtons.ActionZ) != 0, MonotonicSeconds());
+        return buttons;
+    }
+
+    internal void SeedCaptureInput()
+    {
+        if (overlayActive && CanUseTarget() && IsGameForeground() && allowsGameInput())
+            recordInput(captureKeys.Seed(IsKeyDown), MonotonicSeconds());
+    }
+
+    private void ReleaseCaptureInput()
+    {
+        if (captureKeys.Clear()) recordInput(InputButtons.None, MonotonicSeconds());
     }
 
     internal bool ForwardKeyUp(Key key) =>
@@ -230,6 +240,7 @@ internal sealed class WindowsNormalGameInput : IDisposable
     {
         ReleaseGameCursor();
         overlayActive = false;
+        ReleaseCaptureInput();
         jumpContact.Reset();
         freePointer = null;
         ApplyOverlayStyle(enabled: false);
@@ -277,10 +288,25 @@ internal sealed class WindowsNormalGameInput : IDisposable
 
     private bool HandleKeyboardEvent(int virtualKey, bool down)
     {
-        if (disposed || !overlayActive || !CanUseTarget() || !IsGameForeground()) return false;
+        if (disposed) return false;
+        if (!overlayActive || !CanUseTarget() || !IsGameForeground())
+        {
+            ReleaseCaptureInput();
+            // A release over another window still ends our shortcut's hold.
+            if (!down) shortcutState.Handle(virtualKey, false, false, false, out _);
+            return false;
+        }
         var allowsInput = allowsGameInput();
-        if (allowsInput && virtualKey == JumpVirtualKey) jumpContact.Record(MonotonicSeconds());
-        if (!shortcutState.Handle(virtualKey, down, allowsInput, IsModifierDown(), out var invoke))
+        if (allowsInput)
+        {
+            var now = MonotonicSeconds();
+            if (virtualKey == NormalGameCaptureKeys.JumpKey) jumpContact.Record(now);
+            if (captureKeys.Observe(virtualKey, down) is { } buttons) recordInput(buttons, now);
+        }
+        else ReleaseCaptureInput();
+        var atlasTab = virtualKey == NormalGameInputPolicy.AtlasTabKey;
+        var modified = IsModifierDown() || atlasTab && IsKeyDown(0x10); // Shift+Tab remains native.
+        if (!shortcutState.Handle(virtualKey, down, allowsInput, modified, out var invoke, atlasTab && reservesAtlasTab()))
             return false;
         if (invoke)
         {

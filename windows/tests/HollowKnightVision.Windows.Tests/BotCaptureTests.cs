@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
 
 internal static class BotCaptureTests
@@ -329,8 +330,9 @@ internal static class BotCaptureTests
         WithLibrary(root =>
         {
             var active = new BotCaptureSession(root, "normal", "fixture", Generation, Start, Labels());
-            active.ObserveNativeInput(InputButtons.Right, Start + .05);
-            active.ObserveNativeInput(InputButtons.Right, Start + .06);
+            var keys = new NormalGameCaptureKeys();
+            active.ObserveNativeInput(keys.Seed(key => key == 0x27), Start + .05);
+            Deliver(0x27, true, Start + .06);
             for (var index = 0; index < 15; index++)
             {
                 var time = Start + .125 * (index + 1);
@@ -338,13 +340,13 @@ internal static class BotCaptureTests
                 var row = Visual(source with { Time = new(time, time, Generation, 1, 0) });
                 if (index == 4)
                 {
-                    active.ObserveNativeInput(InputButtons.Right | InputButtons.ActionZ, time + .03);
-                    active.ObserveNativeInput(InputButtons.Right, time + .05);
+                    Deliver(NormalGameCaptureKeys.JumpKey, true, time + .03);
+                    Deliver(NormalGameCaptureKeys.JumpKey, false, time + .05);
                 }
                 Check(SpinWait.SpinUntil(() => active.TryRecord(source.Frame, row, null), TimeSpan.FromSeconds(5)),
                     $"The capture writer did not admit frame {index}.");
             }
-            active.ObserveNativeInput(InputButtons.None, Start + 2);
+            Deliver(0x27, false, Start + 2);
             var staging = Directory.GetDirectories(root, ".pending-demo-*").Single();
             Check(SpinWait.SpinUntil(() => Directory.EnumerateFiles(staging, "0.png", SearchOption.AllDirectories).Any(),
                     TimeSpan.FromSeconds(5)) && BotCaptureSession.Library(root).Count == 0,
@@ -361,6 +363,13 @@ internal static class BotCaptureTests
             Check(recorded.Select(edge => (edge.Button, edge.IsPressed)).SequenceEqual(
                 new[] { ("right", true), ("z", true), ("z", false), ("right", false) }),
                 "A repeated held key must not create an extra edge or erase the jump tap.");
+            Check(Math.Abs(recorded[2].Timestamp - recorded[1].Timestamp - .02) < 1e-9
+                && recorded[1].Timestamp > Start + .625 && recorded[2].Timestamp < Start + .75,
+                "The 20 ms tap must retain both timestamps between visual observations.");
+            void Deliver(int key, bool down, double time)
+            {
+                if (keys.Observe(key, down) is { } buttons) active.ObserveNativeInput(buttons, time);
+            }
             var interrupted = new BotCaptureSession(root, "modded", "fixture", Generation + 1, Start + 10, Labels());
             var previous = Input(0);
             Check(!interrupted.TryRecord(previous.Frame, Visual(previous), null)

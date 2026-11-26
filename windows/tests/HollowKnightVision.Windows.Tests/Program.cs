@@ -1104,6 +1104,7 @@ var tests = new List<(string Name, Action Run)>
     ("normal input replacement game cannot inherit held keys", NormalGameKeyForwarderParityTests.TestReplacementGameCannotInheritHeldKeys),
     ("normal input workspace and settings routing matches platform focus", NormalGameKeyForwarderParityTests.TestWorkspaceAndSettingsRouting),
     ("normal input overlay passes gameplay and reserves Vision shortcuts", NormalGameKeyForwarderParityTests.TestNativeOverlayPassesGameplayAndReservesVisionShortcuts),
+    ("stock gameplay capture preserves pause aliases and clears held keys when focus is lost", NormalGameKeyForwarderParityTests.TestCaptureKeysPreservePauseAliasesAndClearOnFocusLoss),
     ("ordinary launch always requires mode choice", TestRuntimeModeLaunchPolicy),
     ("gameplay output waits for fresh game capture", TestGameplayOutputGate),
     ("menu framing ignores atlas coordinates", TestGameplayFrameCoordinatePolicy),

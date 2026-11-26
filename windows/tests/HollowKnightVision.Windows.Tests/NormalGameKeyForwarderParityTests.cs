@@ -1,4 +1,5 @@
 using HollowKnightVision.Windows.App;
+using HollowKnightVision.Windows.Core;
 
 internal static class NormalGameKeyForwarderParityTests
 {
@@ -99,5 +100,33 @@ internal static class NormalGameKeyForwarderParityTests
         }
         Check(!shortcuts.Handle(0x47, down: true, canIntercept: true, modified: true, out _),
             "A modified Vision key was swallowed instead of preserving the OS shortcut.");
+        const int tab = NormalGameInputPolicy.AtlasTabKey;
+        Check(!shortcuts.Handle(tab, down: true, canIntercept: true, modified: false, out _),
+            "Tab should reach the foreground game while Atlas controls are hidden.");
+        Check(!shortcuts.Handle(tab, down: true, canIntercept: true, modified: true, out _, atlasTabActive: true),
+            "Modified Tab should reach Windows even when Atlas controls are visible.");
+        Check(shortcuts.Handle(tab, down: true, canIntercept: true, modified: false, out invoke, atlasTabActive: true)
+              && invoke, "Tab should drive Atlas framing while the foreground game is receiving input.");
+        Check(shortcuts.Handle(tab, down: true, canIntercept: true, modified: false, out invoke, atlasTabActive: true)
+              && !invoke, "A held Tab must advance the Atlas preset only once.");
+        Check(shortcuts.Handle(tab, down: false, canIntercept: true, modified: false, out invoke)
+              && !invoke, "The reserved Tab release must stay consumed if Atlas controls are hidden after its press.");
+    }
+
+    public static void TestCaptureKeysPreservePauseAliasesAndClearOnFocusLoss()
+    {
+        var capture = new NormalGameCaptureKeys();
+        Check(capture.Seed(key => key is 0x27 or 0x1B) == (InputButtons.Right | InputButtons.PauseMenu),
+            "A recording must start with the gameplay keys already held.");
+        Check(capture.Observe(0x50, true) == (InputButtons.Right | InputButtons.PauseMenu)
+            && capture.Observe(0x1B, false) == (InputButtons.Right | InputButtons.PauseMenu)
+            && capture.Observe(0x50, false) == InputButtons.Right,
+            "Pause must remain held until both physical bindings are released.");
+        Check(capture.Observe(0x4B, true) is null && capture.Observe(0x27, true) is null,
+            "Vision shortcuts and keyboard repeats must not generate training edges.");
+        Check(capture.Clear() && !capture.Clear() && capture.Observe(0x27, false) is null,
+            "Releases without a pressed key must not be recorded after focus is lost.");
+        Check(capture.Observe(0x58, true) == InputButtons.ActionX,
+            "A fresh attack must not inherit movement from the earlier focus.");
     }
 }
