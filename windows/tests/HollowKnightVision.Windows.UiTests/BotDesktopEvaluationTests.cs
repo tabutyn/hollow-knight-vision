@@ -21,6 +21,7 @@ internal static class BotDesktopEvaluationTests
     private const long Generation = 18;
     private const int Width = 192, Height = 128;
     private const InputButtons Action = InputButtons.Right | InputButtons.ActionX;
+    private const InputButtons OccludedAction = InputButtons.Right | InputButtons.ActionZ;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private enum OpeningOutcome { Gameplay, HandoffTimeout, CutsceneTimeout, GameplayStartupTimeout, ArchiveFailure, EvaluationFailure, FocusLost }
 
@@ -1535,7 +1536,7 @@ internal static class BotDesktopEvaluationTests
         var modelName = $"Desktop {domain}";
         var usesTrialControl = domain == "hacker";
         var botRoot = Path.Combine(root, "bot-v1");
-        var modelHash = WriteCheckpoint(botRoot, domain, modelName);
+        var modelHash = WriteCheckpoint(botRoot, domain, modelName, supportsMaskedKnight: !usesTrialControl);
         var window = new MainWindow(GameRuntimeMode.Modded, null, root, root, () => new ReceiverClient(session, port: port));
         try
         {
@@ -1598,6 +1599,8 @@ internal static class BotDesktopEvaluationTests
             await ExpectWireState(Action);
             var captureTimes = new List<double> { timestamp, secondTimestamp };
             var movement = new List<InputButtons?> { InputButtons.None, Action };
+            var maskedFrames = 0;
+            var heldAttacks = usesTrialControl ? 1 : 2;
             if (usesTrialControl)
             {
                 var status = (await BotTrialControl.SendAsync("status", token)).Status
@@ -1620,8 +1623,30 @@ internal static class BotDesktopEvaluationTests
                     "Game Play must keep driving on a fresh frame with a valid Knight estimate.");
                 await ExpectWireState(Action);
 
-                // No more frames arrive before the last confirmed sighting expires.
-                var remaining = secondTimestamp + .61 - Clock();
+                var applied = Action;
+                for (var index = 0; index < 8; index++)
+                {
+                    await Task.Delay(110, token);
+                    captureTimes.Add(Capture(44 + index, renderedFrame + 3 + index, applied, 2, knightVisible: false));
+                    movement.Add(applied);
+                    var update = (BotPlaybackUpdate)playbackStatus.GetValue(run)!;
+                    var isMasked = update.Status.EndsWith(" · Knight occluded", StringComparison.Ordinal);
+                    var expected = isMasked ? OccludedAction : Action;
+                    Check(update.Decision is { } decision && decision.Action.Buttons == expected
+                        && (isMasked || update.Status.EndsWith(" · estimating Knight", StringComparison.Ordinal))
+                        && (maskedFrames == 0 || isMasked),
+                        "Fresh occluded frames must keep producing decisions and select the policy's jump once the estimate expires.");
+                    if (isMasked) maskedFrames++;
+                    if ((applied & expected & InputButtons.ActionX) != 0) heldAttacks++;
+                    applied = expected;
+                    await ExpectWireState(expected);
+                }
+                Check(maskedFrames >= 2 && captureTimes[^1] > secondTimestamp + .6,
+                    "The fixture must run the checkpoint through sustained occlusion beyond the visual estimate.");
+
+                // The last masked action can be renewed only by another fresh frame.
+                var lastOccluded = (BotPlaybackUpdate)playbackStatus.GetValue(run)!;
+                var remaining = lastOccluded.Decision!.Value.Deadline + .02 - Clock();
                 if (remaining > 0) await Task.Delay(TimeSpan.FromSeconds(remaining), token);
                 bridge.Heartbeat();
                 await ExpectWireState(InputButtons.None);
@@ -1629,7 +1654,7 @@ internal static class BotDesktopEvaluationTests
                     (Guid)run.GetType().GetProperty("Owner", Instance)!.GetValue(run)!),
                     "Expired evidence must release buttons while leaving the policy ready to reacquire Knight.");
 
-                captureTimes.Add(Capture(44, renderedFrame + 3, InputButtons.None, 2));
+                captureTimes.Add(Capture(52, renderedFrame + 11, InputButtons.None, 2));
                 movement.Add(InputButtons.None);
                 var measured = (BotPlaybackUpdate)playbackStatus.GetValue(run)!;
                 Check(measured.Decision is { Action.Buttons: Action } && measured.Status != predicted.Status,
@@ -1644,7 +1669,8 @@ internal static class BotDesktopEvaluationTests
             var directory = Directory.GetDirectories(Path.Combine(botRoot, "evaluations", domain)).Single();
             var manifest = Read<BotCaptureManifest>(directory, "manifest.json");
             Check(manifest is { Status: "completed", ExpertDemonstration: false, InputEventCount: >= 4 }
-                && manifest.ObservationCount == captureTimes.Count && manifest.UsableObservationCount == captureTimes.Count
+                && manifest.ObservationCount == captureTimes.Count
+                && manifest.UsableObservationCount == captureTimes.Count - maskedFrames
                 && manifest.TerrainPairedFrameCount == captureTimes.Count
                 && manifest.BotDomain == domain && manifest.StopReason == (usesTrialControl ? "local-control" : "user-stop"),
                 "The finalized evaluation did not describe the desktop playback.");
@@ -1655,21 +1681,25 @@ internal static class BotDesktopEvaluationTests
                 : row is { TerrainSource: "detected", DetectionFrameId: 41, DetectedTerrain.Floors.Count: 1 },
                 "The evaluation saved the wrong input source for its policy.");
             if (!usesTrialControl)
-                Check(JsonSerializer.Deserialize<BotCaptureObservation>(events[2], Json) is
+            {
+                var observations = events.Take(captureTimes.Count)
+                    .Select(line => JsonSerializer.Deserialize<BotCaptureObservation>(line, Json)!).ToArray();
+                Check(observations[2] is
                     { KnightSource: "visual-predicted", KnightPrediction.CameraCompensated: true }
-                    && JsonSerializer.Deserialize<BotCaptureObservation>(events[3], Json) is
-                    { KnightSource: "visual", KnightPrediction: null },
-                    "The evaluation must distinguish the estimated and reacquired Knight.");
+                    && observations[^1] is { KnightSource: "visual", KnightPrediction: null }
+                    && observations.Count(observation => observation.HasMaskedKnightEvidence) == maskedFrames,
+                    "The evaluation must distinguish estimated, fully occluded, and reacquired Knight observations.");
+            }
             var controls = events.Skip(captureTimes.Count)
                 .Select(line => JsonSerializer.Deserialize<BotCaptureInput>(line, Json)!).ToArray();
             var perButton = controls.GroupBy(edge => edge.Button).OrderBy(group => group.Key).ToArray();
-            Check(perButton.Select(group => group.Key).SequenceEqual(["right", "x"])
+            string[] expectedButtons = usesTrialControl ? ["right", "x"] : ["right", "x", "z"];
+            Check(perButton.Select(group => group.Key).SequenceEqual(expectedButtons)
                 && perButton.All(group => group.First() is { IsPressed: true } first && first.Timestamp >= timestamp
-                    && group.Select(edge => edge.IsPressed).SequenceEqual(usesTrialControl
+                    && group.Select(edge => edge.IsPressed).SequenceEqual(usesTrialControl || group.Key == "z"
                         ? new[] { true, false } : new[] { true, false, true, false })),
                 "The archive did not preserve the controls sent to the receiver and their release.");
             var score = Read<BotAtlasScore>(directory, "atlas-score.json");
-            var heldAttacks = usesTrialControl ? 1 : 2;
             Check(score is { BlueHealthGained: 2 } && score.HeldAttackDecisions == heldAttacks
                 && Math.Abs(score.Reward - (2 - .05 * heldAttacks)) < 1e-8,
                 "The saved Atlas score must come from the admitted desktop policy decisions.");
@@ -1690,6 +1720,8 @@ internal static class BotDesktopEvaluationTests
                 "The evaluation lost the verified checkpoint, frame, masks, or frozen authored reference.");
             Check(BotCaptureSession.Library(Path.Combine(botRoot, "demonstrations")).Count == 0,
                 "Bot playback contaminated the training clips.");
+            if (!usesTrialControl)
+                Console.WriteLine("PASS Windows desktop sends the learned masked-Knight action and releases it on capture loss");
 
             double Capture(long frameId, int unityFrame, InputButtons previous, int blueHealth, bool knightVisible = true)
             {
@@ -1781,7 +1813,8 @@ internal static class BotDesktopEvaluationTests
     };
 
     private static string WriteCheckpoint(string root, string domain, string modelName,
-        string version = "verified-fixture", DateTimeOffset? createdAt = null, Guid[]? included = null, object? candidate = null)
+        string version = "verified-fixture", DateTimeOffset? createdAt = null, Guid[]? included = null, object? candidate = null,
+        bool supportsMaskedKnight = false)
     {
         var directory = Directory.CreateDirectory(Path.Combine(root, "models", domain, version)).FullName;
         var checkpoint = Path.Combine(directory, "model.zip");
@@ -1790,14 +1823,23 @@ internal static class BotDesktopEvaluationTests
         const int observationSchemaVersion = BotPolicyContract.LandingVersion;
         var featureNames = BotPolicyContract.Names(observationSchemaVersion)!;
         var inputs = featureNames.Count * BotRecordingContract.HistoryLength;
+        var weights = new float[inputs * 10];
+        float[] biases = [0, 0, 4, 4, 0, 0, 4, 0, 0, 4];
+        if (supportsMaskedKnight)
+        {
+            // With no Knight confidence, jump and release attack. Any admitted
+            // sighting or estimate selects the normal right-and-attack action.
+            var confidence = inputs - featureNames.Count + Array.IndexOf(featureNames.ToArray(), "knight_confidence");
+            biases[7] = biases[8] = 5;
+            weights[6 * inputs + confidence] = weights[9 * inputs + confidence] = 8;
+        }
         var policy = JsonSerializer.SerializeToUtf8Bytes(new
         {
             schemaVersion = 1, observationSchemaVersion, modelName,
             featureNames, historyLength = BotRecordingContract.HistoryLength, actionSizes = BotRecordingContract.ActionSizes,
-            sourceCheckpointSHA256, layers = new[]
+            sourceCheckpointSHA256, supportsMaskedKnight, layers = new[]
             {
-                new { inputSize = inputs, outputSize = 10, activation = "linear",
-                    weights = new float[inputs * 10], biases = new float[] { 0, 0, 4, 4, 0, 0, 4, 0, 0, 4 } }
+                new { inputSize = inputs, outputSize = 10, activation = "linear", weights, biases }
             }
         }, Json);
         File.WriteAllBytes(Path.Combine(directory, "runtime-policy.json"), policy);
