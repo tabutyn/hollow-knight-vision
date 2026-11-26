@@ -658,6 +658,7 @@ var tests = new List<(string Name, Action Run)>
     ("Atlas ground verification rejects a clipped optimum", GroundPlaneClosureVerifierTests.TestSearchBoundaryDoesNotAcceptClippedOptimum),
     ("Atlas patch proposals handle exposure changes after features fail", GroundPlaneClosureVerifierTests.TestPatchProposalSurvivesExposureChange),
     ("placed Atlas verifies floor texture after a scenery patch fallback", GroundPlaneClosureVerifierTests.TestPlacedAtlasUsesFloorVerifiedPatchFallback),
+    ("shared Atlas converts saved masks to image rows for scenery patch fallback", GroundPlaneClosureVerifierTests.TestSharedAtlasPatchFallbackUsesImageMasks),
     ("Atlas patch cache stays bounded and reloads changed image identity", GroundPlaneClosureVerifierTests.TestPatchSearchBoundsItsCacheAndReloadsChangedSource),
     ("Atlas patch search recovers displacement under exposure and occlusion", GroundPlaneClosureVerifierTests.TestPatchSearchRecoversDisplacementWithExposureAndOcclusion),
     ("Atlas patch search distinguishes rival positions from coincident views", GroundPlaneClosureVerifierTests.TestPatchSearchRejectsSeparateMatchesAndAcceptsCoincidentViews),
