@@ -1,9 +1,10 @@
 # November deployment coverage and Windows parity
 
 The original deployment spans `b6f647c..8d67fa3`. The Mac coverage run used
-`6a15e70`, whose `macos/` tree matches the deployment. The latest Windows
-numbers cover the original Windows changes and the ports deployed through
-main commit `44989f75e940328c2f83c8ff0e6844ae491a68b2`.
+`6a15e70`, whose `macos/` tree matches the deployment. The reviewed main
+counters use `b6f647c..44989f75e940328c2f83c8ff0e6844ae491a68b2` and include
+all measured Windows and shared-source changes in that range. The behavior
+inventory below follows the original deployment and its Windows ports.
 [Original deployment](https://github.com/tabutyn/hollow-knight-vision/compare/b6f647c...8d67fa3), [reviewed main](https://github.com/tabutyn/hollow-knight-vision/commit/44989f75e940328c2f83c8ff0e6844ae491a68b2)
 
 The source inventory accounts for all **489** introduced or modified XCTest
