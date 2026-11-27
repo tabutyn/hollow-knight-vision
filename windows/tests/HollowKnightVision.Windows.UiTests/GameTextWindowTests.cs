@@ -17,7 +17,7 @@ using HollowKnightVision.Windows.Core;
 
 internal static class GameTextWindowTests
 {
-    internal static void TestNativeGameTextRecognitionAndOverlay()
+    internal static void TestNativeGameTextRecognitionAndOverlay(string? screenshot = null)
     {
         foreach (var (language, _) in StencilInitializationCoordinator.SupportedLanguages)
         {
@@ -28,7 +28,9 @@ internal static class GameTextWindowTests
 
         using var recognizer = new WindowsGameTextRecognition();
         var frame = RenderText("CLEAR SAVE");
+        var started = Stopwatch.GetTimestamp();
         var lines = recognizer.Read(frame, "en");
+        var processingTime = Stopwatch.GetElapsedTime(started);
         var clear = lines.FirstOrDefault(line => line.Text.Contains("CLEAR SAVE", StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException("Native game text result: " + string.Join(" | ", lines.Select(line => line.Text)));
         Require(clear.Confidence > .6 && clear.Bounds.X is > .17 and < .24 && clear.Bounds.Y is > .36 and < .5
@@ -37,7 +39,7 @@ internal static class GameTextWindowTests
 
         var reader = new GameTextReader("unused");
         var work = reader.TryStart(frame, "en", "Select Profile", 1)!;
-        Require(reader.Complete(work, lines, 25, 1.05), "publish native scan");
+        Require(reader.Complete(work, lines, processingTime.TotalMilliseconds, 1.05), "publish native scan");
         var window = new GameTextDebugWindow(_ => { }, _ => { }, _ => { });
         window.Present(reader, new(), null);
         var boxes = (Canvas)window.FindName("LineBoxes");
@@ -49,6 +51,23 @@ internal static class GameTextWindowTests
         var selected = boxes.Children.OfType<Rectangle>().FirstOrDefault(rectangle => rectangle.Stroke == Brushes.Orange);
         Require(selected is not null && Math.Abs(Canvas.GetTop(selected) - clear.Bounds.Y * frame.Height) < .01,
             "selected row highlights the same source rectangle");
+        if (screenshot is not null)
+        {
+            ((TabControl)window.FindName("SourceTabs")).SelectedIndex = 0;
+            window.ShowActivated = window.ShowInTaskbar = false;
+            window.WindowStartupLocation = WindowStartupLocation.Manual;
+            window.Left = window.Top = -10000;
+            window.Show();
+            window.UpdateLayout();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            var image = new RenderTargetBitmap((int)Math.Ceiling(window.ActualWidth), (int)Math.Ceiling(window.ActualHeight),
+                96, 96, PixelFormats.Pbgra32);
+            image.Render(window);
+            var png = new PngBitmapEncoder();
+            png.Frames.Add(BitmapFrame.Create(image));
+            using var file = File.Create(screenshot);
+            png.Save(file);
+        }
         reader.SetEnabled(false);
         window.Present(reader, new(), null);
         Require(preview.Source is null && boxes.Children.Count == 0, "disabling releases the inspector image and boxes");
@@ -150,7 +169,7 @@ internal static class GameTextWindowTests
             var shortcut = Method("HandleLocalShortcut").Invoke(window, [Key.T, false, ModifierKeys.None]);
             var capturedAt = (double)Method("BotCaptureClock").Invoke(null, null)!;
             Method("ObserveThinkingFrame").Invoke(window,
-                [RenderText("INSPECT"), 1L, capturedAt, 1, 1L, "game", null, null, null, null, true, null, 0d]);
+                [RenderText("INSPECT"), 1L, capturedAt, 1, 1L, "game", null, null, null, null, true, null, 0d, 0L, null]);
             Method("StartThinkingQuestion").Invoke(window, null);
             Require(shortcut is true && !((ThinkingContextPanel)window.FindName("ContextPanel")).IsExpanded
                 && Field("latestThinkingFrame").GetValue(window) is null
@@ -245,9 +264,12 @@ internal static class GameTextWindowTests
                 "an opted-in launch loads its model and exposes T before any screenshot");
             CollectFrame();
             var rows = (IReadOnlyList<ThinkingCandidateRow>)Field("thinkingRows").GetValue(window)!;
-            Require(service.RequestCount == 1 && rows is [{ Id: "c0", Target: "Inspect", Score: 96 }]
+            Require(service.RequestCount == 1 && rows is [{ Id: "c0", Target: "Inspect", Score: 80 }]
                 && (string?)Field("thinkingHandoff").GetValue(window) == "Inspection only · Normal mode.",
-                "the real request resolves into the scored inspector row without taking a Normal control lease");
+                "the validated choice appears in the inspector and Normal mode keeps control with the player");
+            var decision = Directory.GetFiles(root.FullName, "latest-policy.json", SearchOption.AllDirectories).Single();
+            using var saved = JsonDocument.Parse(File.ReadAllBytes(decision));
+            Require(saved.RootElement.GetProperty("policy").GetString() == "interact", "save the validated current decision");
 
             var panel = (ThinkingContextPanel)window.FindName("ContextPanel");
             Require(((TextBox)panel.FindName("FullLog")).Text.Contains("INSPECT")
@@ -262,14 +284,15 @@ internal static class GameTextWindowTests
                 "Debug View hides the entire context and its shortcut");
             showContext.IsChecked = true;
 
-            service.Reply = """{"scores":{"c7":96}}""";
-            Field("nextThinkingQuestion").SetValue(window, 0d);
             CollectFrame();
+            Require(service.RequestCount == 1, "unchanged observations must not generate more requests");
+            service.Reply = """{"policy":"traverse","parameters":{"waypointId":7}}""";
+            CollectFrame(generation: 2);
             Require(service.RequestCount == 2 && (string?)Field("thinkingHandoff").GetValue(window) == "Reply rejected."
-                && ((string)Field("thinkingReply").GetValue(window)!).Contains("c7", StringComparison.Ordinal),
-                "the inspector preserves a model reply that tried to score an unavailable candidate");
+                && ((string)Field("thinkingReply").GetValue(window)!).Contains("waypointId", StringComparison.Ordinal),
+                "the inspector preserves a model reply that selected an unavailable waypoint");
 
-            void CollectFrame()
+            void CollectFrame(long generation = 1)
             {
                 const string context = "Gameplay";
                 var frame = RenderText("INSPECT");
@@ -285,7 +308,7 @@ internal static class GameTextWindowTests
                     "publish the fixture OCR result on the captured frame");
                 Invoke("PresentGameText");
                 Field("latestThinkingReading").SetValue(window, reader.LatestReading);
-                Invoke("ObserveThinkingFrame", frame, 1L, capturedAt, 1, 1L, "game", null, null, null, null, true, null, 0d);
+                Invoke("ObserveThinkingFrame", frame, generation, capturedAt, 1, 1L, "game", null, null, null, null, true, null, 0d, 0L, null);
                 Invoke("StartThinkingQuestion");
                 if (Field("thinkingQuestionTask").GetValue(window) is Task question) Await(question);
             }
@@ -300,6 +323,89 @@ internal static class GameTextWindowTests
         Console.WriteLine("PASS Windows Thinking request attaches its captured PNG, reads notebook context and displays the validated reply");
 
         void Invoke(string name, params object?[] arguments) => Method(name).Invoke(window, arguments);
+    }
+
+    internal static void TestFastMenusKeepSourceImagesAndExpireOlderReplies()
+    {
+        var contexts = new[] { "main-title", "options", "select-profile" };
+        var frames = contexts.Select(RenderText).ToArray();
+        var firstRequest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var received = 0;
+        using var service = new LocalThinkingFixture
+        {
+            Chat = async (body, token) =>
+            {
+                var index = Interlocked.Increment(ref received) - 1;
+                var user = body.GetProperty("messages")[1];
+                Require(user.GetProperty("content").GetString()!.Contains("Goal on " + contexts[index], StringComparison.Ordinal),
+                    "the pending question retains the goal at capture time");
+                using var image = new MemoryStream(Convert.FromBase64String(user.GetProperty("images")[0].GetString()!));
+                var source = new PngBitmapDecoder(image, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames[0];
+                var bitmap = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+                var frame = frames[index];
+                var pixels = new byte[frame.Pixels.Length];
+                bitmap.CopyPixels(pixels, frame.Stride, 0);
+                Require(pixels.AsSpan().SequenceEqual(frame.Pixels), "each menu question attaches its recognized source image in order");
+                if (index == 0) { firstRequest.SetResult(); await release.Task.WaitAsync(token); }
+                return JsonSerializer.Serialize(new { menu = "select", elementId = contexts[index] + ".item" });
+            }
+        };
+        using var transport = new HttpClient(service);
+        using var capture = new CancellationTokenSource();
+        var root = Directory.CreateTempSubdirectory("hkv-thinking-menus-");
+        var window = new MainWindow(GameRuntimeMode.Normal, null, root.FullName, root.FullName,
+            policyClient: new(transport), enableThinking: true);
+        try
+        {
+            Field("visionCancellation").SetValue(window, capture);
+            var reader = (GameTextReader)Field("gameTextReader").GetValue(window)!;
+            reader.SetEnabled(false);
+            var laterFrame = RenderText("next capture");
+            void Observe(int index)
+            {
+                var state = contexts[index];
+                reader.SetGoal("Goal on " + state);
+                var id = state + ".item";
+                var rect = new StencilRect(5, 5, 40, 10);
+                var option = new MenuStencilMatch(id, "Item", rect, 1, null);
+                var time = (double)Method("BotCaptureClock").Invoke(null, null)!;
+                var menu = new MenuStencilResult(state, true, 1, "Item", [option], [option, option],
+                    [new(id, "Item", MenuSelectorSide.Left, rect, true)], 1, 1, 1, MenuStencilPhase.Tracking, 1,
+                    (frames[index].ObservedAt - DateTimeOffset.UnixEpoch).TotalSeconds, "en") { SelectedOptionIdentifier = id };
+                Method("ObserveThinkingFrame").Invoke(window,
+                    [laterFrame, 1L, time, 1, 1L, state, menu, null, null, null, false, null, 0d, 0L, frames[index]]);
+            }
+            Task Ask()
+            {
+                Method("StartThinkingQuestion").Invoke(window, null);
+                return (Task)Field("thinkingQuestionTask").GetValue(window)!;
+            }
+            Observe(0);
+            var first = Ask();
+            Await(firstRequest.Task);
+            Observe(1);
+            Observe(2);
+            release.SetResult();
+            Await(first);
+            Await(Ask());
+            Require(!Directory.EnumerateFiles(root.FullName, "latest-policy.json", SearchOption.AllDirectories).Any(),
+                "superseded menu decisions may be inspected but cannot replace the current decision file");
+            Await(Ask());
+            var path = Directory.GetFiles(root.FullName, "latest-policy.json", SearchOption.AllDirectories).Single();
+            using var saved = JsonDocument.Parse(File.ReadAllBytes(path));
+            Require(received == contexts.Length && saved.RootElement.GetProperty("elementId").GetString() == "select-profile.item",
+                "only the current menu reply becomes the saved decision");
+        }
+        finally
+        {
+            release.TrySetResult();
+            capture.Cancel();
+            Field("isClosing").SetValue(window, true);
+            Await((Task)Method("PrepareShutdownAsync").Invoke(window, null)!);
+            root.Delete(recursive: true);
+        }
+        Console.WriteLine("PASS fast menu transitions submit each source image and goal in order and expire older replies");
     }
 
     private static void Await(Task task)
@@ -320,9 +426,10 @@ internal static class GameTextWindowTests
 
     private sealed class LocalThinkingFixture : HttpMessageHandler
     {
-        public string Reply { get; set; } = """{"scores":{"c0":96}}""";
+        public string Reply { get; set; } = """{"policy":"interact","parameters":{"verb":"inspect","targetId":0}}""";
         public string? Modelfile { get; init; }
         public Func<CancellationToken, Task>? BeforeLoadReceipt { get; init; }
+        public Func<JsonElement, CancellationToken, Task<string>>? Chat { get; init; }
         public int InventoryCount { get; private set; }
         public int LoadCount { get; private set; }
         public int RequestCount { get; private set; }
@@ -351,13 +458,21 @@ internal static class GameTextWindowTests
                 if (BeforeLoadReceipt is { } before) await before(cancellationToken);
                 return new(HttpStatusCode.OK) { Content = new StringContent("""{"done":true,"done_reason":"load"}""") };
             }
+            if (Chat is { } chat && request.RequestUri?.AbsolutePath == "/api/chat")
+            {
+                RequestCount++;
+                var reply = await chat(body, cancellationToken);
+                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { message = new { content = reply } })) };
+            }
             var user = body.GetProperty("messages")[1];
             var image = Convert.FromBase64String(user.GetProperty("images")[0].GetString()!);
             Require(request.RequestUri?.AbsolutePath == "/api/chat" && image.Length > 8
                 && image.AsSpan(0, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 })
                 && user.GetProperty("content").GetString()!.Contains("Read the King's Pass tablet", StringComparison.Ordinal)
-                && body.GetProperty("format").GetProperty("properties").GetProperty("scores")
-                    .GetProperty("properties").TryGetProperty("c0", out _), "native request must use the captured image and bound cue");
+                && user.GetProperty("content").GetString()!.Contains("[R1 · Gameplay] INSPECT", StringComparison.Ordinal)
+                && body.GetProperty("format").GetProperty("properties").GetProperty("parameters")
+                    .GetProperty("properties").GetProperty("verb").GetProperty("const").GetString() == "inspect",
+                "native request must use the unique notebook reading, captured image and bound cue");
             RequestCount++;
             return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { message = new { content = Reply } })) };
         }

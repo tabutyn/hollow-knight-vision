@@ -23,6 +23,8 @@ public sealed record ObjectDetection(
     float Confidence)
 {
     public long SourceFrameIdentifier { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long? TrackIdentifier { get; init; }
     // A manually selected run need not have a registry version. Do not invent one.
     public LabelingModelSemanticVersion? ModelVersion { get; init; }
 }

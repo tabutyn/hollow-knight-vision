@@ -127,9 +127,7 @@ public static partial class HollowKnightGameLauncher
     private static string? ResolveSteamExecutable()
     {
         if (!OperatingSystem.IsWindows()) return null;
-        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
-        var steamExe = key?.GetValue("SteamExe") as string;
-        var steamPath = key?.GetValue("SteamPath") as string;
+        var (steamExe, steamPath) = ReadSteamRegistryPaths();
         var candidates = new[]
         {
             steamExe?.Replace('/', Path.DirectorySeparatorChar),
@@ -142,6 +140,21 @@ public static partial class HollowKnightGameLauncher
             !string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate));
     }
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static (string? Executable, string? Directory) ReadSteamRegistryPaths()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
+            return (key?.GetValue("SteamExe") as string, key?.GetValue("SteamPath") as string);
+        }
+        catch (Exception error) when (error is UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            // Steam's registration is optional. Continue checking the standard install locations.
+            return (null, null);
+        }
+    }
+
     private static IEnumerable<string> CandidateExecutables()
     {
         yield return @"D:\Games\Hollow Knight\hollow_knight.exe";
@@ -152,8 +165,7 @@ public static partial class HollowKnightGameLauncher
             "Steam", RelativeGamePath);
 
         if (!OperatingSystem.IsWindows()) yield break;
-        var steamPath = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam")
-            ?.GetValue("SteamPath") as string;
+        var (_, steamPath) = ReadSteamRegistryPaths();
         if (!string.IsNullOrWhiteSpace(steamPath))
         {
             yield return Path.Combine(steamPath, RelativeGamePath);

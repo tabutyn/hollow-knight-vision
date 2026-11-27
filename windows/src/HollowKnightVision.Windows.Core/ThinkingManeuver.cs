@@ -8,6 +8,10 @@ public sealed class ThinkingManeuver(ThinkingCandidate candidate, ThinkingSight 
     private bool sent;
     private double lastNativeAt = double.NegativeInfinity;
     private InputButtons nativeButtons;
+    private readonly HashSet<string> visited = new(StringComparer.Ordinal);
+    private string? pulsedFrom;
+    private double pulseAt;
+    private InputButtons menuPulse;
     public ThinkingCandidate Candidate { get; } = candidate;
     public double StartedAt { get; } = startedAt;
 
@@ -15,13 +19,21 @@ public sealed class ThinkingManeuver(ThinkingCandidate candidate, ThinkingSight 
     {
         if (sight.Scope != began.Scope || !sight.IsFresh(now))
             return Finish("Policy context changed.");
+        if (Candidate.MenuPage is not null) return MenuStep(sight, now);
+        if (Candidate.Route is { } target && sight.Chart == target.Chart && sight.NavigationFeet is { } feet)
+        {
+            bool Arrived(AtlasPathPoint point) => Math.Pow(feet.X - point.X, 2) + Math.Pow(feet.Y - point.Y, 2)
+                <= sight.ArrivalRadius * sight.ArrivalRadius;
+            if (Arrived(target.Objective)) return Finish(target.Road.Frontier ? "Explore destination reached" : "Target reached");
+            if (Arrived(target.Waypoint)) return Finish("Waypoint reached");
+        }
         if (!sent && !Candidate.IsEligible(sight))
             return Finish("The chosen target is no longer available.");
         var elapsed = now - StartedAt;
         var duration = Candidate.Action switch
         {
             ThinkingAction.Focus => 1.55,
-            ThinkingAction.Traverse or ThinkingAction.Fight or ThinkingAction.Lifeblood => 2,
+            ThinkingAction.Explore or ThinkingAction.Traverse or ThinkingAction.Fight or ThinkingAction.Lifeblood => 2,
             _ => .12
         };
         if (Candidate.Action == ThinkingAction.Focus)
@@ -43,18 +55,22 @@ public sealed class ThinkingManeuver(ThinkingCandidate candidate, ThinkingSight 
             }
             return Finish(Candidate.Action == ThinkingAction.Focus ? "No healing verified." : "Policy window ended.");
         }
-        if (Candidate.Action is ThinkingAction.Traverse or ThinkingAction.Fight or ThinkingAction.Lifeblood
+        if (Candidate.Action is ThinkingAction.Explore or ThinkingAction.Traverse or ThinkingAction.Fight or ThinkingAction.Lifeblood
             && !Candidate.IsEligible(sight))
             return Finish("Bound target expired.");
         if (Candidate.Action == ThinkingAction.Continue && !Candidate.IsEligible(sight))
             return Finish("Menu selection changed.");
         InputButtons buttons;
-        if (Candidate.Action is ThinkingAction.Traverse or ThinkingAction.Fight or ThinkingAction.Lifeblood)
+        if (Candidate.Action is ThinkingAction.Explore or ThinkingAction.Traverse or ThinkingAction.Fight or ThinkingAction.Lifeblood)
         {
             if (now - lastNativeAt >= .075)
             {
-                nativeButtons = Candidate.Action == ThinkingAction.Traverse
-                    ? Traverse(sight.Scene!, previous, blockage) : Approach(sight.Scene!, previous);
+                nativeButtons = Candidate.Action switch
+                {
+                    ThinkingAction.Explore when Candidate.Route is null => InputButtons.None,
+                    ThinkingAction.Explore or ThinkingAction.Traverse => Traverse(sight.Scene!, previous, blockage),
+                    _ => Approach(sight.Scene!, previous)
+                };
                 lastNativeAt = now;
             }
             buttons = nativeButtons;
@@ -66,6 +82,32 @@ public sealed class ThinkingManeuver(ThinkingCandidate candidate, ThinkingSight 
         sent = true;
         return new(buttons, Math.Min(now + .14, Math.Min(sight.CapturedAt + .45, StartedAt + duration)),
             "Policy · " + Candidate.Action, BeginReading: beginReading);
+    }
+
+    private ThinkingMotion MenuStep(ThinkingSight sight, double now)
+    {
+        if (Candidate.Action == ThinkingAction.MenuWait) return Finish("Waiting for new menu evidence.");
+        if (sight.Gameplay || sight.Page is not { } page || page.State != Candidate.MenuPage!.State)
+            return Finish("Menu changed.");
+        if (pulsedFrom is null && !Candidate.IsEligible(sight)) return Finish("Menu or highlight changed.");
+        if (pulsedFrom is not null)
+        {
+            var elapsed = now - pulseAt;
+            if (elapsed < .1 && page.Selected == pulsedFrom)
+                return new(menuPulse, pulseAt + .1, "Menu input");
+            if (menuPulse == InputButtons.ActionZ) return Finish("Sent confirm · " + pulsedFrom);
+            if (elapsed > 2) return Finish("No menu advance observed.");
+            if (elapsed < .15 || page.Selected is null || page.Selected == pulsedFrom)
+                return new(InputButtons.None, 0, "Waiting for a new highlight.");
+            if (Candidate.Action == ThinkingAction.MenuMore) return Finish("Menu advanced · " + page.Selected);
+        }
+        if (page.Selected is null) return now - StartedAt < 2 ? new(InputButtons.None, 0, "Waiting for a verified highlight.")
+            : Finish("No verified menu highlight.");
+        if (!visited.Add(page.Selected) || page.Next(Candidate.ElementId) is not { } button) return Finish("Menu navigation ended.");
+        pulsedFrom = page.Selected;
+        menuPulse = button;
+        pulseAt = now;
+        return new(button, now + .1, "Menu input");
     }
 
     private InputButtons Traverse(ThinkingScene scene, InputButtons previous, double blockage)

@@ -54,7 +54,8 @@ public partial class App : Application
                 throw new FileNotFoundException(
                     $"A compatible {selectedMode} Hollow Knight installation was not found.");
             }
-            var window = new MainWindow(selectedMode, selectedExecutable, thinkingEnabled, GroundFrameAudits.Launch(e.Args));
+            var window = new MainWindow(selectedMode, selectedExecutable, thinkingEnabled, GroundFrameAudits.Launch(e.Args),
+                options.NotebookTraceDirectory);
             if (HollowKnightVisionLaunchOptions.Parse(e.Args).AutomationControlEnabled)
                 window.EnableBotTrialControl();
             MainWindow = window;

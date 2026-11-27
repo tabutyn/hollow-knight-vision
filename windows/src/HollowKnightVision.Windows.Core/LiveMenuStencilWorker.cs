@@ -7,7 +7,10 @@ namespace HollowKnightVision.Windows.Core;
 public sealed class LiveMenuStencilWorker
 {
     public sealed record Observation(MenuStencilResult? Result, string? Diagnostic);
-    public sealed record Snapshot(Observation Observation, double Timestamp);
+    public sealed record Snapshot(Observation Observation, double Timestamp)
+    {
+        public BgraFrame? SourceImage { get; init; }
+    }
     private sealed record Frame(BgraFrame Image, double Timestamp);
     public const double MaximumResultAge = .25;
     private readonly LatestFramePump<Frame> pump = new();
@@ -95,7 +98,7 @@ public sealed class LiveMenuStencilWorker
         lastProcessedTimestamp = frame.Timestamp; var started = Stopwatch.GetTimestamp();
         var observation = recognize(frame.Image, frame.Timestamp);
         didProcess?.Invoke(Stopwatch.GetElapsedTime(started).TotalSeconds);
-        return new(observation, frame.Timestamp);
+        return new(observation, frame.Timestamp) { SourceImage = observation.Result is { IsMatch: true } ? frame.Image : null };
     }
     private void Publish(Snapshot result) { lock (snapshotGate) latest = result; }
 }

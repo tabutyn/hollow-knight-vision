@@ -3,14 +3,14 @@ using System.Text.Json;
 namespace HollowKnightVision.Windows.Core;
 
 /// <summary>Owns the current reading session. Call from one dispatcher.</summary>
-public sealed class GameTextReader(string notebookDirectory)
+public sealed class GameTextReader(string notebookDirectory, bool traceMatches = false)
 {
     public sealed record Work(BgraFrame Image, string Language, string Context, long Version, double CapturedAt);
     public sealed record Reading(string Context, double CapturedAt, IReadOnlyList<string> Lines,
         IReadOnlyList<ThinkingCue> Cues, double? SatisfiedInspection);
     private sealed record Inspection(string Context, double StartedAt, IReadOnlySet<string> Prior, string? Candidate = null);
     private Inspection? inspection;
-    private readonly HashSet<string> passageLines = new(StringComparer.Ordinal);
+    private string[] passageLines = [];
     private GameTextNotebook notebook = new();
     private GameTextNotebook? opening;
     private string? goalPath;
@@ -32,9 +32,35 @@ public sealed class GameTextReader(string notebookDirectory)
     public GameTextLogEntry[] Entries { get; private set; } = [];
     public string? Issue { get; private set; }
     public string Goal { get; private set; } = "";
+    public byte[] ScanTrace(int sequence, string image, double capturedAt)
+    {
+        var scan = Scan ?? throw new InvalidOperationException("A completed game text scan is required.");
+        return GameTextNotebook.EncodeTrace(new
+        {
+            scan = sequence, timestamp = capturedAt, recognitionMs = scan.Milliseconds, scan.Context, scan.Language,
+            Profile, image, lines = scan.Lines.Select(line => new { line.Id, line.Text, line.Confidence,
+                rect = new[] { line.Bounds.X, 1 - line.Bounds.Bottom, line.Bounds.Width, line.Bounds.Height } }),
+            decisions = notebook.Trace, notebook = rows
+        });
+    }
     public string DefaultGoal => AtlasQuestReview.DefaultObjective;
     public string QuestEvidence => QuestLog.SelectionEvidence(QuestContext.NotesFor(QuestLog),
         string.IsNullOrEmpty(Goal) ? AtlasQuestReview.DefaultObjective : Goal);
+
+    public string PolicyContext()
+    {
+        var excerpts = new Stack<string>();
+        var budget = 1250;
+        for (var i = rows.Count - 1; i >= 0; i--)
+        {
+            var line = $"[R{i + 1} · {rows[i].Context}] " + GameTextObservation.Prefix(rows[i].DisplayText, 300);
+            var bytes = System.Text.Encoding.UTF8.GetByteCount(line) + 1;
+            if (bytes > budget) continue;
+            excerpts.Push(line);
+            budget -= bytes;
+        }
+        return "Unique OCR readings from this playthrough\n" + string.Join('\n', excerpts);
+    }
     internal long NotebookGeneration { get; private set; }
     internal IReadOnlyList<GameTextObservation> Observations => rows;
     internal AtlasQuestContext QuestContext { get; private set; } = new(null);
@@ -94,7 +120,7 @@ public sealed class GameTextReader(string notebookDirectory)
         Scan = null;
         LatestReading = null;
         inspection = null;
-        passageLines.Clear();
+        passageLines = [];
         Issue = null;
         latestCapture = null;
         nextAt = double.NegativeInfinity;
@@ -128,6 +154,7 @@ public sealed class GameTextReader(string notebookDirectory)
             try
             {
                 _ = ReadNotebook();
+                if (traceMatches) notebook.Trace = [];
                 StoreReading(work, scan, previous);
             }
             catch (Exception error) when (IsNotebookError(error))
@@ -144,7 +171,6 @@ public sealed class GameTextReader(string notebookDirectory)
     {
         var visible = scan.Lines.Where(line => line.Confidence >= .45).Select(line => line.Text).ToArray();
         var keys = visible.Select(GameTextObservation.Key).ToArray();
-        passageLines.IntersectWith(keys);
         var stable = LatestReading is { } reading && reading.Context == work.Context
             && work.CapturedAt - reading.CapturedAt is >= 0 and <= 2.5 ? reading : null;
         var cues = new[] { "inspect", "listen" }.Where(cue => keys.Count(key => key == cue) == 1)
@@ -157,14 +183,13 @@ public sealed class GameTextReader(string notebookDirectory)
         {
             if (work.CapturedAt > current.StartedAt)
             {
-                var fresh = visible.Where(text => !current.Prior.Contains(GameTextObservation.Key(text))
-                    && text.Count(char.IsLetter) >= 4).ToArray();
-                var passage = string.Join(' ', fresh);
-                if (passage.Length != 0 && current.Candidate == passage)
+                var fresh = scan.Lines.Where(line => line.Confidence >= .45 && !current.Prior.Contains(GameTextObservation.Key(line.Text))
+                    && line.Text.Count(char.IsLetter) >= 4).ToArray();
+                var passage = string.Join(' ', fresh.Select(line => line.Text));
+                if (passage.Length != 0 && current.Candidate is { } prior && NotebookTextMatch.Same(prior, passage))
                 {
-                    var id = string.Join('\u001f', work.Language, work.Context, GameTextObservation.Key(passage), "passage");
-                    Refresh(notebook.Import([new(id, passage, work.Context, work.Language, work.Image.ObservedAt, IsPassage: true)]));
-                    passageLines.UnionWith(fresh.Select(GameTextObservation.Key));
+                    RememberPassage(passage, fresh);
+                    passageLines = fresh.Select(line => line.Text).ToArray();
                     satisfied = current.StartedAt;
                     inspection = null;
                 }
@@ -173,13 +198,30 @@ public sealed class GameTextReader(string notebookDirectory)
         }
         else
         {
-            var independent = passageLines.Count == 0 ? scan : scan with
+            var independent = scan;
+            if (passageLines.Length != 0)
             {
-                Lines = scan.Lines.Where(line => !passageLines.Contains(GameTextObservation.Key(line.Text))).ToArray()
-            };
+                var page = scan.Lines.Where(line => line.Confidence >= .45
+                    && passageLines.Any(prior => NotebookTextMatch.Same(prior, line.Text))).ToArray();
+                if (page.Length == 0) passageLines = [];
+                else
+                {
+                    var text = string.Join(' ', page.Select(line => line.Text));
+                    if (NotebookTextMatch.Same(string.Join(' ', passageLines), text)) RememberPassage(text, page);
+                    var ids = page.Select(line => line.Id).ToHashSet();
+                    independent = scan with { Lines = scan.Lines.Where(line => !ids.Contains(line.Id)).ToArray() };
+                }
+            }
             Refresh(notebook.Remember(independent, previous));
         }
         LatestReading = new(work.Context, work.CapturedAt, visible, cues, satisfied);
+
+        void RememberPassage(string text, GameTextLine[] page)
+        {
+            var id = string.Join('\u001f', work.Language, work.Context, GameTextObservation.Key(text), "passage");
+            Refresh(notebook.Import([new(id, text, work.Context, work.Language, work.Image.ObservedAt,
+                IsPassage: true, Confidence: page.Min(line => line.Confidence))]));
+        }
     }
 
     private IReadOnlyList<GameTextObservation> ReadNotebook()
@@ -195,7 +237,7 @@ public sealed class GameTextReader(string notebookDirectory)
         if (ReferenceEquals(rows, current)) return;
         rows = current;
         questLog = null;
-        Entries = GameTextLogEntry.Group(current);
+        Entries = GameTextLogEntry.Current(current);
     }
 
     private static bool IsNotebookError(Exception error) =>

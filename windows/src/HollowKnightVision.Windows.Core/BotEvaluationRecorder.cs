@@ -325,7 +325,7 @@ public sealed class BotEvaluationRecorder
         };
         object? target = candidate.Action switch
         {
-            ThinkingAction.Traverse when candidate.Route is { } route => new
+            ThinkingAction.Traverse or ThinkingAction.Explore when candidate.Route is { } route => new
             {
                 traverse = new { _0 = new { route.Chart, goal = route.Objective, route.Waypoint, hint = route.Road } }
             },
