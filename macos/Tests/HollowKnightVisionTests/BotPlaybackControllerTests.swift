@@ -199,6 +199,34 @@ final class BotPlaybackControllerTests: XCTestCase {
         wait(for: [drained], timeout: 1)
     }
 
+    func testActorGetsFreshHistoryAfterItsLastInputExpires() throws {
+        let names = BotObservationContract.legacyFeatureNames
+        let frames = BotObservationContract.historyLength
+        let width = names.count * frames
+        var weights = [Float](repeating: 0, count: width * 10)
+        // The right-action logit reads the newest frame's sequence-start flag.
+        weights[2 * width + (frames - 1) * names.count + 8] = 1
+        let model = try BotNativePolicy(document: BotRuntimePolicyDocument(schemaVersion: 1, observationSchemaVersion: 1,
+            modelName: "Lease-sensitive actor", featureNames: names, historyLength: frames, actionSizes: [3, 3, 2, 2],
+            sourceCheckpointSHA256: "test", layers: [.init(inputSize: width, outputSize: 10, activation: "linear",
+                weights: weights, biases: [0.5, 0, 0, 1, 0, 0, 1, 0, 1, 0])]))
+        var time = 100.0, actions = [BotAction](), deadline = 0.0
+        let bot = BotPlaybackController(policy: model, domain: .gameplay, now: { time }, hasFocus: { true })
+        bot.configure(canContinue: { true }, begin: { UUID() }, apply: { action, expires, _ in
+            actions.append(action); deadline = expires; return true
+        }, neutralize: { _ in }, end: { _ in })
+        bot.start(domain: .gameplay)
+        defer { bot.stop() }
+        func frame(at capture: Double) {
+            time = capture + 0.01
+            observe(bot, time: capture, terrainSource: "detected")
+        }
+        frame(at: 100)
+        frame(at: 100.1)
+        frame(at: deadline + 0.02)
+        XCTAssertEqual(actions.map { $0.values[0] }, [2, 0, 2])
+    }
+
     func testStartsWaitingThenReleasesOnStalePerceptionAndStop() throws {
         var time = 100.0
         let session = UUID()

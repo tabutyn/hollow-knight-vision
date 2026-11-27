@@ -8,6 +8,10 @@ struct BotVisualTrackingContext: Codable, Equatable {
     let frameHeight: Double
     let cameraX: Double?
     let cameraY: Double?
+    var hasValidFrameDimensions: Bool {
+        frameWidth.isFinite && frameWidth > 0 && frameHeight.isFinite && frameHeight > 0
+    }
+
     var camera: CGPoint? {
         guard let cameraX, let cameraY, cameraX.isFinite, cameraY.isFinite else { return nil }
         return CGPoint(x: cameraX, y: cameraY)
@@ -21,6 +25,9 @@ struct BotKnightPrediction: Codable, Equatable {
     let cameraCompensated: Bool
     let observedIssues: [String]
     var usedWeakDetection: Bool? = nil
+    static func canBridge(_ issue: String) -> Bool {
+        issue == "missing-knight" || issue == "stale-or-missing-detection"
+    }
     var maximumAge: Double { cameraCompensated ? BotVisualKnightMemory.maximumPredictionAge : 0.35 }
 }
 
@@ -47,15 +54,14 @@ struct BotVisualKnightMemory {
     mutating func resolve(_ raw: BotObservation, previousAction: BotAction? = nil,
                           terrain: [BotTerrainSegment]? = nil,
                           detections: LiveObjectDetectionBatch? = nil) -> BotObservation {
-        guard raw.terrainSource != "human-authored", raw.knightSource != "hacker-frame" else {
+        guard raw.terrainSource == "detected", raw.knightSource != "hacker-frame" else {
             reset(); return raw
         }
         guard raw.features.count == BotObservationContract.featureCount,
               raw.features.allSatisfy(\.isFinite),
               raw.captureTimestamp.isFinite, raw.capturedAt.isFinite, raw.availableAt.isFinite,
               (0...BotObservationContract.maximumCaptureAge).contains(raw.availableAt - raw.capturedAt),
-              raw.visualContext.map({ $0.frameWidth.isFinite && $0.frameWidth > 0
-                  && $0.frameHeight.isFinite && $0.frameHeight > 0 }) == true else {
+              raw.visualContext?.hasValidFrameDimensions == true else {
             reset(); return raw
         }
         if let latestTimestamp, raw.captureTimestamp <= latestTimestamp { return raw }
@@ -65,8 +71,7 @@ struct BotVisualKnightMemory {
             || track.observation.visualContext?.frameWidth != raw.visualContext?.frameWidth {
             self.track = nil
         }
-        let bridgeable = Set(["missing-knight", "stale-or-missing-detection"])
-        guard raw.issues.allSatisfy(bridgeable.contains) else { track = nil; return raw }
+        guard raw.issues.allSatisfy(BotKnightPrediction.canBridge) else { track = nil; return raw }
         let measured = raw.knightSource == "visual" && !raw.issues.contains("missing-knight")
             && !raw.issues.contains("stale-or-missing-detection") && raw.features[4] >= 0.5
             && (0..<1).contains(raw.features[2]) && raw.features[2] > 0
