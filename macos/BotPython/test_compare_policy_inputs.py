@@ -9,7 +9,7 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import gymnasium as gym
 import numpy as np
@@ -180,6 +180,34 @@ class PolicyComparisonTests(unittest.TestCase):
                 with self.subTest(support_args=support_args), self.assertRaises(BlockingIOError):
                     comparison.main(args + support_args)
         self.assertFalse((custom.parent / "worker.lock").exists())
+
+    def test_default_stage_trains_verifies_and_evaluates_in_one_run(self):
+        self.make_run()
+        self.enterContext(patch.object(comparison, "HackerGym", return_value=PairedRoom()))
+        if not self.native:
+            verify = self.enterContext(patch.object(comparison.subprocess, "run"))
+        comparison.main(self.arguments)
+        report = self.report()
+        self.assertEqual(set(report["models"]), {"full", "compact"})
+        hashes = report["evaluationSHA256"]
+        self.assertEqual(report["nativeParityVisionSHA256"], hashes.get("visionSource", hashes["vision"]))
+        self.assertCountEqual([(row["role"], row["seed"]) for row in report["trials"]],
+                              [(role, seed) for role in ("champion", "full", "compact") for seed in (17, 18)])
+        if not self.native:
+            self.assertEqual(verify.call_count, 2)
+
+    def test_evaluation_stops_at_the_step_limit_when_the_room_does_not_end(self):
+        class EndlessRoom(PairedRoom):
+            def step(self, action):
+                obs, reward, _, _, info = super().step(action)
+                return obs, reward, False, False, info
+
+        room = EndlessRoom()
+        actor = Mock()
+        actor.predict.return_value = (np.zeros(len(ACTION_SIZES), dtype=np.int64), None)
+        with self.assertRaisesRegex(RuntimeError, "exceeded the Gym step limit"):
+            comparison.episode(room, actor, 17)
+        self.assertEqual(actor.predict.call_count, room.max_steps)
 
     def test_changed_receiver_during_training_leaves_branch_unrecorded(self):
         self.make_run()
