@@ -62,7 +62,8 @@ internal static class BotDesktopEvaluationTests
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "gameplay-start-timeout"), OpeningOutcome.GameplayStartupTimeout, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-evaluation-failure"), OpeningOutcome.EvaluationFailure, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-focus-lost"), OpeningOutcome.FocusLost, timeout.Token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            // This fixture starts the installed PowerShell trainer twice under coverage.
+            timeout.CancelAfter(TimeSpan.FromSeconds(60));
             await VerifyCheckpointControlsAsync(Path.Combine(temporary.FullName, "versions"), timeout.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(60));
             await VerifyTrainBothAsync(Path.Combine(temporary.FullName, "train-both"), timeout.Token);
