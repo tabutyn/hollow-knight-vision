@@ -36,6 +36,24 @@ final class BotDemoControllerTests: XCTestCase {
         XCTAssertFalse(model.botDemo.isActive)
     }
 
+    func testActiveControlCanStopAndReleaseItsSessionWhileAStartIsBlocked() {
+        let demo = BotDemoController(hasFocus: { true })
+        let session = UUID()
+        var released: [UUID] = []
+        demo.configure(canContinue: { true }, begin: { session }, press: { _, _ in true },
+                       end: { released.append($0) }, botIsPlaying: { false })
+        XCTAssertTrue(BotControlPresentationPolicy.canToggle(active: demo.isActive, startIssue: nil))
+        demo.start()
+        let issue = BotControlPresentationPolicy.startIssue(mode: .modded, capturing: true, training: true,
+                                                           stencilsReady: true, controlsReady: true)
+        XCTAssertNotNil(issue)
+        XCTAssertTrue(BotControlPresentationPolicy.canToggle(active: demo.isActive, startIssue: issue))
+        XCTAssertEqual(BotControlPresentationPolicy.help(active: demo.isActive, startIssue: issue, lastIssue: demo.issue), "Press B to stop the bot.")
+        demo.stop(reason: "Stopped with B")
+        XCTAssertEqual(released, [session])
+        XCTAssertFalse(BotControlPresentationPolicy.canToggle(active: demo.isActive, startIssue: issue))
+    }
+
     func testBFromGameplayHandsOffWithoutArchivingOrMenuNavigation() throws {
         var playing = false, presses = 0, releases = 0
         let demo = BotDemoController(now: { 100 }, hasFocus: { true })

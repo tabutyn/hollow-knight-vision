@@ -20,6 +20,8 @@ enum BotControlPresentationPolicy {
         if active { return "Press B to stop the bot." }
         return startIssue ?? lastIssue ?? "Press B to start the bot. From a game menu it archives slot 4 and starts a fresh game. During Gameplay it runs the model for the current workspace."
     }
+
+    static func canToggle(active: Bool, startIssue: String?) -> Bool { active || startIssue == nil }
 }
 
 enum BotShortcutPolicy {
@@ -79,7 +81,7 @@ struct BotControlsView: View {
                     if player.isActive || bot.isActive { Image(systemName: "stop.circle.fill") }
                 }
             }
-            .disabled(!active && startIssue != nil)
+            .disabled(!BotControlPresentationPolicy.canToggle(active: active, startIssue: startIssue))
             .tint(player.isActive || bot.isActive ? .green : .accentColor)
             .accessibilityIdentifier("bot-control")
             .accessibilityLabel(player.isActive || bot.isActive ? "Stop Hollow Knight Bot" : "Start Hollow Knight Bot")
