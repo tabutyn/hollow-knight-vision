@@ -19,6 +19,7 @@ def main():
     required = {
         installed / "BotPython/train_bot_job.py",
         installed / "BotPython/train_hacker_gym.py",
+        installed / "BotPython/compare_policy_inputs.py",
         installed / "TrainingPython/hkv_incremental_trainer.py",
     }
     measured = set()
