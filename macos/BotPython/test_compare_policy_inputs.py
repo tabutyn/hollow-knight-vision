@@ -49,7 +49,7 @@ class PolicyComparisonTests(unittest.TestCase):
     def setUp(self):
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        root = Path(directory.name)
+        root = Path(directory.name).resolve()
         self.run_dir = root / "bot-v1/gym/paired run"
         self.run_dir.mkdir(parents=True)
         self.output = root / "paired report"
@@ -177,6 +177,8 @@ class PolicyComparisonTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "changed during the comparison"):
                 comparison.main(self.arguments)
         self.assertEqual(self.report()["models"], {})
+        with self.assertRaisesRegex(ValueError, "requires both trained branches"):
+            comparison.main(self.arguments + ["--stage", "evaluate"])
 
 
 if __name__ == "__main__":
