@@ -1,5 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <EmbeddedResource Include="../../../macos/Sources/HollowKnightVision/Resources/thinking-*.schema.json" LogicalName="%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../../macos/Sources/HollowKnightVision/Resources/notebook-english.txt;../../../macos/Sources/HollowKnightVision/Resources/notebook-hallownest.txt" LogicalName="%(Filename)%(Extension)" />
+    <None Include="../../../macos/Sources/HollowKnightVision/Resources/notebook-english-NOTICE.txt" Link="ThirdPartyNotices/notebook-english-NOTICE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <EmbeddedResource Include="../../../macos/Sources/HollowKnightVision/Resources/labeling-contracts.json" LogicalName="labeling-contracts.json" />
     <EmbeddedResource Include="../../../macos/Sources/HollowKnightVision/Resources/labeling-contexts.json" LogicalName="labeling-contexts.json" />
     <EmbeddedResource Include="../../../macos/Sources/HollowKnightVision/Resources/menu-stencil-positions.json" LogicalName="menu-stencil-positions.json" />

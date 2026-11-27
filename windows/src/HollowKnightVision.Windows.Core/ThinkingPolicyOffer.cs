@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace HollowKnightVision.Windows.Core;
 
-public enum ThinkingAction { Traverse, Fight, Focus, Lifeblood, Inspect, Listen, Continue }
+public enum ThinkingAction { Traverse, Fight, Focus, Lifeblood, Inspect, Listen, Continue, Explore, MenuSelect, MenuMore, MenuWait }
 
 public sealed record ThinkingRoute(string Chart, AtlasPathPoint Objective, AtlasPathPoint Waypoint, BotRoadHint Road)
 {
@@ -44,20 +44,39 @@ public sealed record ThinkingScene(int Room, bool Grounded, ReceiverRecovery? Re
 }
 
 public sealed record ThinkingCue(string Text, double FirstSeen);
-public sealed record ThinkingScope(long Generation, BotCaptureDomain Domain, string Context, Guid? ReceiverSession);
+public sealed record ThinkingScope(long Generation, BotCaptureDomain Domain, string Context, Guid? ReceiverSession, int RoomIdentifier = 0,
+    long Visit = 0);
 public sealed record ThinkingSight(ThinkingScope Scope, double CapturedAt, bool Gameplay, string? Menu, string? Selection,
     IReadOnlyList<ThinkingCue> Cues, ThinkingScene? Scene)
 {
     public bool IsFresh(double now) => now - CapturedAt is >= 0 and <= .45;
+    public ThinkingMenuPage? Page { get; init; }
+    public bool Blocked { get; init; }
+    public IReadOnlyList<long> SignTracks { get; init; } = [];
+    public IReadOnlyList<long> NpcTracks { get; init; } = [];
+    public ThinkingRoute? ActiveRoute { get; init; }
+    public AtlasPathPoint? NavigationFeet { get; init; }
+    public string? Chart { get; init; }
+    public double ArrivalRadius { get; init; }
+    public long? OutcomeId { get; init; }
+    public string? Outcome { get; init; }
+    public string? PreviousConfirm { get; init; }
 }
 
 public sealed record ThinkingCandidate(string Id, string Policy, IReadOnlyDictionary<string, object> Parameters,
     ThinkingAction Action, int? Room = null, int? ActorId = null, ThinkingRoute? Route = null, double? PromptStart = null)
 {
+    public ThinkingMenuPage? MenuPage { get; init; }
+    public string? ElementId { get; init; }
     public bool IsEligible(ThinkingSight sight)
     {
+        if (MenuPage is { } page)
+            return sight.Page is { } live && !sight.Gameplay && page.State == live.State
+                && (page.Selected is null || page.Key == live.Key)
+                && (ElementId is null || live.Elements.Any(element => element.Id == ElementId && element.CanSelect));
         if (Action == ThinkingAction.Continue) return sight.Menu == "pause" && sight.Selection == "pause.continue";
         if (!sight.Gameplay) return false;
+        if (Action == ThinkingAction.Explore && Route is null) return true;
         if (Action is ThinkingAction.Inspect or ThinkingAction.Listen)
         {
             var cue = Action == ThinkingAction.Inspect ? "inspect" : "listen";
@@ -66,7 +85,7 @@ public sealed record ThinkingCandidate(string Id, string Policy, IReadOnlyDictio
         if (sight.Scene is not { } scene || scene.Room != Room) return false;
         return Action switch
         {
-            ThinkingAction.Traverse => Route is { } route && scene.Routes.Any(current => current.Matches(route)),
+            ThinkingAction.Traverse or ThinkingAction.Explore => Route is { } route && scene.Routes.Any(current => current.Matches(route)),
             ThinkingAction.Fight => scene.Enemies.Any(actor => actor.Id == ActorId),
             ThinkingAction.Lifeblood => scene.Cocoons.Any(actor => actor.Id == ActorId),
             ThinkingAction.Focus => scene.CanStartFocus,
@@ -88,7 +107,8 @@ public sealed class ThinkingPolicyOffer
 {
     private static long sequence;
     private readonly ThinkingScope scope;
-    public long DecisionId { get; } = Interlocked.Increment(ref sequence);
+    internal static long NextDecisionId() => Interlocked.Increment(ref sequence);
+    public long DecisionId { get; } = NextDecisionId();
     public IReadOnlyList<ThinkingCandidate> Candidates { get; }
 
     public ThinkingPolicyOffer(ThinkingSight sight)

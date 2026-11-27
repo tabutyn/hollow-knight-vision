@@ -23,6 +23,7 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
 
     public bool ObjectiveReachable { get; private set; }
     public IReadOnlyList<ThinkingRoute> ThinkingRoutes { get; private set; } = [];
+    public (string Chart, AtlasPathPoint Feet, int ArrivalRadius)? ThinkingPosition { get; private set; }
 
     private sealed class RouteRoom(AtlasPathCalibration calibration, AtlasPlatformGraph graph, int linkRevision)
     {
@@ -96,6 +97,7 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
     {
         ObjectiveReachable = false;
         ThinkingRoutes = [];
+        ThinkingPosition = null;
         if (size.Width > 8192 || size.Height > 8192
             || GroundTruthCameraTransform.FromSample(sample, row.CaptureTimestamp, size) is not { } camera
             || camera.PixelsPerWorldUnitX > 10_000 || camera.PixelsPerWorldUnitY > 10_000
@@ -140,6 +142,7 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
             return result;
         }
 
+        if (includeThinkingRoutes) ThinkingPosition = (room.Calibration.Room, feet, Math.Max(3, graph.KnightWidth / 2));
         var automatic = automaticObjective && objective is null && !fixedWorldGoal.HasValue;
         var goal = automatic ? null : objective is null ? graph.UpperRightObjective : objective.Project(camera.SceneName, scale, graph);
         if (fixedWorldGoal is { } fixedGoal)
@@ -211,6 +214,7 @@ public sealed class BotHackerVisit(GroundTruthLineDocument labels, AtlasPathLink
     {
         ObjectiveReachable = false;
         ThinkingRoutes = [];
+        ThinkingPosition = null;
         previous = null;
         contact.Interrupt();
         activeRoom?.Navigation.Interrupt();

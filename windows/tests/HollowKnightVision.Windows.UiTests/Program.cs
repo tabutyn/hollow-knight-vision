@@ -55,12 +55,15 @@ internal static class Program
             Application.Current.Shutdown();
             return;
         }
-        GameTextWindowTests.TestNativeGameTextRecognitionAndOverlay();
+        var textOnly = args is ["--game-text"] or ["--game-text", _];
+        GameTextWindowTests.TestNativeGameTextRecognitionAndOverlay(textOnly && args.Length == 2 ? args[1] : null);
         GameTextWindowTests.TestProofreadingControlAndQuestView();
         GameTextWindowTests.TestThinkingInspectorShowsItsCapturedOffer();
         GameTextWindowTests.TestDisabledThinkingLeavesModelIdleAndSkipsCaptureAndInference();
         GameTextWindowTests.TestThinkingInspectorReportsLoadProgressUntilReceipt();
         GameTextWindowTests.TestThinkingRequestUsesBoundFrameAndNotebook();
+        GameTextWindowTests.TestFastMenusKeepSourceImagesAndExpireOlderReplies();
+        if (textOnly) { Application.Current.Shutdown(); return; }
         InputPathReplayIntegrationTests.Run();
         BotDesktopEvaluationTests.Run();
         MenuParticleTests.Run();

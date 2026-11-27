@@ -18,6 +18,8 @@ public partial class MainWindow
     private LocalThinkingModel thinkingModel = LocalThinkingModel.Gemma;
     private bool thinkingSeparateLlama;
     private readonly string thinkingPanelPreference;
+    private readonly Guid thinkingSessionId = Guid.NewGuid();
+    private string? thinkingDecisionFile;
     private string thinkingEvidence = "";
     private string thinkingBrief = "";
     private double nextThinkingBrief;
@@ -29,16 +31,53 @@ public partial class MainWindow
     private long? thinkingLoadStarted;
     private OllamaLoadProgress? thinkingLoadProgress;
     private TimeSpan? thinkingLastLoad;
-    private double nextThinkingQuestion;
+    private ThinkingEventDetector thinkingEvents = new();
+    private readonly HashSet<string> browsedMenuPages = new(StringComparer.Ordinal);
     private string thinkingStatus = "Waiting for the local model…";
     private string thinkingReply = "";
     private string? thinkingHandoff;
     private BitmapSource? thinkingScreenshot;
     private BitmapSource? thinkingAttachment;
     private ThinkingFrame? thinkingDisplayFrame;
-    private ThinkingFrame? pendingThinkingFrame;
+    private readonly Queue<QueuedThinkingFrame> pendingThinkingFrames = new();
+    private ThinkingFrame? newestPendingFrame;
     private ThinkingFrame? thinkingAttachedFrame;
     private IReadOnlyList<ThinkingCandidateRow> thinkingRows = [];
+
+    // Older events wait on disk while the newest preview stays available to the UI.
+    private sealed class QueuedThinkingFrame(ThinkingFrame sample) : IDisposable
+    {
+        private ThinkingFrame? memory = sample;
+        private Func<ThinkingFrame>? restore;
+        private FileStream? backing;
+
+        public void Spill()
+        {
+            if (memory is not { } frame) return;
+            var image = frame.Image;
+            var (width, height, stride, id, date) = (image.Width, image.Height, image.Stride, image.CaptureId, image.ObservedAt);
+            var (sight, reading, reason, more, previous, evidence) = (frame.Sight, frame.Reading, frame.Event, frame.AllowsMore,
+                frame.PreviousState, frame.DetectorEvidence);
+            var notebook = frame.Notebook;
+            var file = new FileStream(Path.Combine(Path.GetTempPath(), "hkv-event-" + Guid.NewGuid().ToString("N")),
+                FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 64 * 1024, FileOptions.DeleteOnClose);
+            try { file.Write(image.Pixels, 0, checked(stride * height)); }
+            catch { file.Dispose(); throw; }
+            backing = file;
+            restore = () =>
+            {
+                file.Position = 0;
+                var pixels = new byte[checked(stride * height)];
+                file.ReadExactly(pixels);
+                return new(new(width, height, stride, pixels, id, date), sight, reading)
+                    { Event = reason, AllowsMore = more, PreviousState = previous, DetectorEvidence = evidence, Notebook = notebook };
+            };
+            memory = null;
+        }
+
+        public ThinkingFrame Read() => memory ?? restore!();
+        public void Dispose() => backing?.Dispose();
+    }
 
     private ThinkingOptions CurrentThinkingOptions => new(thinkingAutomatic, thinkingModel, thinkingSeparateLlama);
 
@@ -54,6 +93,12 @@ public partial class MainWindow
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Trace.TraceWarning(error.Message); }
         panelInitialized = true;
         ContextPanel.OptionsEdited += SetThinkingOptions;
+        ContextPanel.ShowDecision += () =>
+        {
+            if (thinkingDecisionFile is not { } path || !File.Exists(path)) return;
+            try { Process.Start(new ProcessStartInfo("explorer.exe") { Arguments = "/select,\"" + path + "\"", UseShellExecute = true }); }
+            catch (System.ComponentModel.Win32Exception e) { ShowError(e); }
+        };
         UpdateThinkingPanelVisibility();
         PresentThinking();
     }
@@ -110,15 +155,20 @@ public partial class MainWindow
         thinkingCancellation?.Cancel();
         StopThinkingControl();
         Volatile.Write(ref latestThinkingFrame, null);
-        nextThinkingQuestion = nextThinkingBrief = 0;
+        Volatile.Write(ref latestThinkingLandmarks, null);
+        Volatile.Write(ref thinkingEvents, new());
+        browsedMenuPages.Clear();
+        while (pendingThinkingFrames.TryDequeue(out var queued)) queued.Dispose();
+        nextThinkingBrief = 0;
         thinkingEvidence = thinkingBrief = "";
         ContextPanel.ClearMessages();
         if (thinkingPreloadTask is not { IsCompleted: false })
             thinkingStatus = "Waiting for a game frame…";
         thinkingReply = "";
+        thinkingDecisionFile = null;
         thinkingHandoff = null;
         thinkingScreenshot = thinkingAttachment = null;
-        thinkingDisplayFrame = pendingThinkingFrame = thinkingAttachedFrame = null;
+        thinkingDisplayFrame = newestPendingFrame = thinkingAttachedFrame = null;
         thinkingRows = [];
         PresentThinking();
     }
@@ -127,9 +177,10 @@ public partial class MainWindow
     {
         if (!panelInitialized) return;
         ContextPanel.Present(CurrentThinkingOptions, thinkingEnabled, ThinkingStatusText(), thinkingEvidence, thinkingBrief,
-            thinkingScreenshot, thinkingDisplayFrame is { } frame ? $"Captured frame {frame.Image.CaptureId}" : null,
+            thinkingScreenshot, thinkingDisplayFrame is { } frame ? $"{frame.Event} · frame {frame.Image.CaptureId}" : null,
             ReferenceEquals(thinkingDisplayFrame, thinkingAttachedFrame) ? null : thinkingAttachment,
-            thinkingReply, thinkingAttachedFrame is { } answered ? $"Reply for frame {answered.Image.CaptureId} · {thinkingHandoff}" : null);
+            thinkingReply, thinkingAttachedFrame is { } answered ? $"Reply for frame {answered.Image.CaptureId} · {thinkingHandoff}" : null,
+            thinkingDecisionFile is not null);
     }
 
     private string DecisionBrief(ThinkingSight sight, string goal)
@@ -236,31 +287,71 @@ public partial class MainWindow
         }
     }
 
+    private void CaptureThinkingEvent(ThinkingFrame live, ThinkingEventDetector detector)
+    {
+        var sight = live.Sight;
+        var lease = Volatile.Read(ref thinkingLease);
+        if (lease?.Maneuver.Candidate.MenuPage is { } running && lease.Plan.Scope == sight.Scope && running.State == sight.Page?.State) return;
+        var reason = detector.Observe(sight, sight.CapturedAt);
+        if (reason is null) return;
+        var changedState = detector.ChangedState;
+        var sample = live with { Landmarks = null, Event = reason, PreviousState = detector.PreviousState };
+        if (detector.NewSign && live.Landmarks is { } marks)
+            sample = sample with { Image = marks.Image, Reading = null, DetectorEvidence = "Detector: world.sign, frame "
+                + marks.Image.CaptureId + ", normalized bounds: " + JsonSerializer.Serialize(marks.Signs.Select(s => s.Box)) };
+        if (Dispatcher.CheckAccess()) Publish();
+        else _ = Dispatcher.InvokeAsync(Publish);
+
+        void Publish()
+        {
+            if (isClosing || !ReferenceEquals(detector, Volatile.Read(ref thinkingEvents))
+                || visionCancellation is not { IsCancellationRequested: false }) return;
+            if (changedState) { browsedMenuPages.Clear(); nextThinkingBrief = 0; }
+            if (newestPendingFrame is { } older)
+            {
+                var queued = new QueuedThinkingFrame(older);
+                try { queued.Spill(); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Trace.TraceWarning(e.Message); }
+                pendingThinkingFrames.Enqueue(queued);
+            }
+            newestPendingFrame = thinkingDisplayFrame = sample with
+            {
+                AllowsMore = sight.Page is not { } page || !browsedMenuPages.Contains(page.Key),
+                Notebook = new(gameTextReader.Profile?.Id, initialization.LanguageIdentifier, gameTextReader.Enabled,
+                    gameTextReader.PolicyContext(), gameTextReader.Goal.Length == 0 ? gameTextReader.DefaultGoal : gameTextReader.Goal)
+            };
+            thinkingScreenshot = FrameBitmap(sample.Image);
+            PresentThinking();
+        }
+    }
+
     private void StartThinkingQuestion()
     {
         var now = BotCaptureClock();
-        if (isClosing || !thinkingEnabled || thinkingPreloadTask is { IsCompleted: false }
-            || visionCancellation is not { IsCancellationRequested: false }) return;
+        if (isClosing || !thinkingEnabled || visionCancellation is not { IsCancellationRequested: false }) return;
         if (now >= nextThinkingBrief && Volatile.Read(ref latestThinkingFrame) is { } live && live.Sight.IsFresh(now))
         {
             nextThinkingBrief = now + 5;
             thinkingBrief = DecisionBrief(live.Sight, gameTextReader.Goal.Length == 0 ? gameTextReader.DefaultGoal : gameTextReader.Goal);
             PresentThinking();
         }
-        if (now >= nextThinkingQuestion && Volatile.Read(ref latestThinkingFrame) is { } latest && latest.Sight.IsFresh(now))
+        if (thinkingPreloadTask is { IsCompleted: false } || thinkingQuestionTask is { IsCompleted: false }) return;
+        ThinkingFrame frame;
+        if (pendingThinkingFrames.TryDequeue(out var waiting))
         {
-            nextThinkingQuestion = now + 60;
-            pendingThinkingFrame = thinkingDisplayFrame = latest;
-            thinkingScreenshot = FrameBitmap(latest.Image);
-            PresentThinking();
+            using (waiting)
+            {
+                try { frame = waiting.Read(); }
+                catch (IOException error) { thinkingStatus = error.Message; PresentThinking(); return; }
+            }
         }
-        if (thinkingQuestionTask is { IsCompleted: false } || pendingThinkingFrame is not { } frame) return;
-        pendingThinkingFrame = null;
+        else if (newestPendingFrame is { } latest) { frame = latest; newestPendingFrame = null; }
+        else return;
+        if (frame.Notebook is not { } notebook || notebook.Profile != gameTextReader.Profile?.Id) return;
         var source = new CancellationTokenSource();
         thinkingCancellation = source;
-        thinkingQuestionTask = AskThinkingAsync(frame, CurrentThinkingOptions, gameTextReader.Profile?.Id,
-            initialization.LanguageIdentifier, gameTextReader.Enabled, gameTextReader.QuestEvidence,
-            gameTextReader.Goal.Length == 0 ? gameTextReader.DefaultGoal : gameTextReader.Goal, source);
+        thinkingQuestionTask = AskThinkingAsync(frame, CurrentThinkingOptions, notebook.Profile, notebook.Language,
+            notebook.ReadsText && gameTextReader.Enabled, notebook.Memory, notebook.Goal, source);
     }
 
     private async Task AskThinkingAsync(ThinkingFrame frame, ThinkingOptions options, Guid? profile,
@@ -280,10 +371,11 @@ public partial class MainWindow
             token.ThrowIfCancellationRequested();
             var sight = frame.Sight with
             {
-                Cues = frame.Sight.Cues.Where(cue => encoded.Lines.Count(text =>
-                    string.Equals(text.Trim(), cue.Text, StringComparison.OrdinalIgnoreCase)) == 1).ToArray()
+                Cues = new[] { "inspect", "listen" }.Where(cue => encoded.Lines.Count(text =>
+                    string.Equals(text.Trim(), cue, StringComparison.OrdinalIgnoreCase)) == 1)
+                    .Select(cue => frame.Sight.Cues.FirstOrDefault(c => c.Text == cue) ?? new(cue, frame.Sight.CapturedAt)).ToArray()
             };
-            var offer = new ThinkingPolicyOffer(sight);
+            var offer = new ThinkingDecisionOffer(sight, frame.AllowsMore);
             var system = """
                 Complete the Atlas, including the progression needed to beat Hollow Knight.
                 Seek reachable unexplored exits or unrecorded ground. Treat newly mapped ground or a new room as evidence of progress.
@@ -294,6 +386,10 @@ public partial class MainWindow
             var visibleText = visible.LengthInTextElements <= 650 ? visible.String : visible.SubstringByTextElements(0, 650);
             thinkingEvidence = "Current room or menu: " + sight.Scope.Context
                 + "\nGame mode: " + gameMode + "\nCurrent goal: " + goal
+                + "\nReason for capture: " + frame.Event
+                + (frame.PreviousState is { } previous ? "\nPrevious detected state: " + previous : "")
+                + (sight.PreviousConfirm is { } confirm ? "\nVision sent confirm on: " + confirm : "")
+                + (frame.DetectorEvidence is { } evidence ? "\n" + evidence : "")
                 + "\nGameplay recognized: " + sight.Gameplay + "\nSelected menu identifier: " + (sight.Selection ?? "")
                 + "\nVisible OCR on the captured frame:\n" + visibleText;
             thinkingBrief = DecisionBrief(sight, goal);
@@ -303,16 +399,23 @@ public partial class MainWindow
                 new JsonSerializerOptions { WriteIndented = true });
             var schema = offer.Schema;
             thinkingRows = Rows(offer, null);
+            if (thinkingRows.Count == 0)
+            {
+                thinkingStatus = "Waiting for a recognized game or menu target.";
+                return;
+            }
             var resident = await LocateThinkingModelAsync(options, token);
 
             thinkingStatus = "Generating policy JSON…";
             PresentThinking();
             var messages = new LocalThinkingMessage[] { new("system", system), new("user", user, [encoded.Image]) };
-            var reply = await thinkingClient.ChatTextAsync(resident, messages, schema, 640, keepResident: true, token);
+            var reply = await thinkingClient.ChatTextAsync(resident, messages, schema, 640, keepResident: true, token,
+                sight.Page is null ? ThinkingRequestKind.Policy : ThinkingRequestKind.Menu);
             token.ThrowIfCancellationRequested();
             thinkingAttachedFrame = frame;
             thinkingAttachment = attachment;
             thinkingHandoff = null;
+            thinkingDecisionFile = null;
             receivedReply = true;
             thinkingReply = reply;
             using var document = JsonDocument.Parse(reply);
@@ -320,9 +423,13 @@ public partial class MainWindow
             var plan = offer.Resolve(document.RootElement);
             thinkingRows = Rows(offer, plan);
             thinkingStatus = options.Model.Title + " returned a decision.";
-            thinkingHandoff = !ReferenceEquals(frame, thinkingDisplayFrame) || BotCaptureClock() - sight.CapturedAt > 60
-                || profile != gameTextReader.Profile?.Id
-                || options.Model != thinkingModel ? "Decision expired or its save changed." : await SubmitThinkingPlanAsync(plan, token);
+            if (!ReferenceEquals(frame, thinkingDisplayFrame) || profile != gameTextReader.Profile?.Id || options.Model != thinkingModel)
+                thinkingHandoff = "Decision expired or its save changed.";
+            else
+            {
+                thinkingDecisionFile = offer.SaveDecision(supportRoot, profile, thinkingSessionId, document.RootElement);
+                thinkingHandoff = await SubmitThinkingPlanAsync(plan, token, frame);
+            }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception error) when (error is HttpRequestException or IOException or InvalidDataException
@@ -364,12 +471,13 @@ public partial class MainWindow
         }
     }
 
-    private static IReadOnlyList<ThinkingCandidateRow> Rows(ThinkingPolicyOffer offer, ThinkingPlan? plan) =>
+    private static IReadOnlyList<ThinkingCandidateRow> Rows(ThinkingDecisionOffer offer, ThinkingPlan? plan) =>
         offer.Candidates.Select(candidate => new ThinkingCandidateRow(candidate.Id, candidate.Policy, candidate.Action switch
         {
             ThinkingAction.Traverse when candidate.Route is { } route => $"Waypoint ({route.Waypoint.X}, {route.Waypoint.Y})",
             ThinkingAction.Fight => $"Enemy {candidate.ActorId}",
             ThinkingAction.Lifeblood => $"Lifeblood cocoon {candidate.ActorId}",
+            ThinkingAction.MenuSelect => candidate.ElementId!,
             _ => candidate.Action.ToString()
         }, plan?.Scores.FirstOrDefault(score => score.Candidate.Id == candidate.Id)?.Points)).ToArray();
 }

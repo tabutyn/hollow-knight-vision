@@ -83,6 +83,7 @@ public sealed class LiveObjectDetectionTracker
 {
     private sealed record Track(ObjectDetection Detection, double Confidence, int Hits, int Misses);
     private List<Track> tracks = [];
+    private long nextTrackId;
     private long? generation;
     public void Reset() { tracks.Clear(); generation = null; }
     public IReadOnlyList<ObjectDetection> Update(IReadOnlyList<ObjectDetection> detections, long captureGeneration)
@@ -107,7 +108,7 @@ public sealed class LiveObjectDetectionTracker
                 var score = iou * 2 - distance;
                 if (score > best) { best = score; match = index; }
             }
-            if (match < 0) next.Add(new(detection with { ClassIdentifier = id }, detection.Confidence, 1, 0));
+            if (match < 0) next.Add(new(detection with { ClassIdentifier = id, TrackIdentifier = ++nextTrackId }, detection.Confidence, 1, 0));
             else
             {
                 unmatched.Remove(match);
@@ -117,7 +118,8 @@ public sealed class LiveObjectDetectionTracker
                 var blended = new NormalizedBox(box.X + (current.X - box.X) * alpha,
                     box.Y + (current.Y - box.Y) * alpha, box.Width + (current.Width - box.Width) * alpha,
                     box.Height + (current.Height - box.Height) * alpha);
-                next[match] = new(detection with { ClassIdentifier = id, Box = blended }, confidence, previous.Hits + 1, 0);
+                next[match] = new(detection with { ClassIdentifier = id, Box = blended, TrackIdentifier = previous.Detection.TrackIdentifier },
+                    confidence, previous.Hits + 1, 0);
             }
         }
         foreach (var index in unmatched)

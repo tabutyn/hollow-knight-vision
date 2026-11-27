@@ -64,7 +64,11 @@ public sealed class GameTextReviewSession(GameTextReader reader, LocalThinkingCl
                 attempted.UnionWith(batch.Select(row => row.Id));
                 var edits = await cleanup.CorrectAsync(batch, reader.Entries, resident, token);
                 RequireCurrentNotebook();
-                reader.ApplyCorrections(generation, edits);
+                var current = reader.Observations.ToDictionary(row => row.Id, StringComparer.Ordinal);
+                var unchanged = batch.Where(row => current.TryGetValue(row.Id, out var latest) && latest.DisplayText == row.DisplayText)
+                    .ToDictionary(row => row.Id, row => edits[row.Id], StringComparer.Ordinal);
+                foreach (var id in edits.Keys.Except(unchanged.Keys)) attempted.Remove(id);
+                reader.ApplyCorrections(generation, unchanged);
             }
 
             var log = reader.QuestLog;
@@ -104,7 +108,7 @@ public sealed class GameTextReviewSession(GameTextReader reader, LocalThinkingCl
         foreach (var row in pending)
         {
             if (attempted.Contains(row.Id)) continue;
-            var length = GameTextObservation.Length(row.Text);
+            var length = GameTextObservation.Length(row.DisplayText);
             if (batch.Count == batchSize || (batch.Count != 0 && characters + length > 1000)) break;
             batch.Add(row);
             characters += length;

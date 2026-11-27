@@ -12,11 +12,15 @@ if ($LASTEXITCODE -eq 0 -and $gitCommonDirectory) {
   $repositoryRoot = (Resolve-Path (Join-Path $root "..\..\..")).Path
 }
 $localDotnet = Join-Path $repositoryRoot ".tools\dotnet-8\dotnet.exe"
+$installedDotnet = Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
 $dotnetCommand = Get-Command dotnet -ErrorAction SilentlyContinue
 $dotnet = if (Test-Path -LiteralPath $localDotnet) {
   $localDotnet
 } elseif ($dotnetCommand) {
   $dotnetCommand.Source
+} elseif (Test-Path -LiteralPath $installedDotnet -PathType Leaf) {
+  # A shell opened before SDK installation still has its old PATH.
+  $installedDotnet
 } else {
   throw "Install .NET 8 or place it at $localDotnet."
 }

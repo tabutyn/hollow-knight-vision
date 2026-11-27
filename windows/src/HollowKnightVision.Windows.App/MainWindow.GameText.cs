@@ -13,6 +13,8 @@ public partial class MainWindow
     private GameTextDebugWindow? gameTextWindow;
     private Task? gameTextTask;
     private string? gameTextScene;
+    private readonly string? gameTextTraceDirectory;
+    private int gameTextTraceSequence;
 
     private void InitializeGameText()
     {
@@ -128,6 +130,30 @@ public partial class MainWindow
         {
             Volatile.Write(ref latestThinkingReading, gameTextReader.LatestReading);
             PresentGameText();
+            TraceGameTextScan(work);
+        }
+    }
+
+    private void TraceGameTextScan(GameTextReader.Work work)
+    {
+        if (gameTextTraceDirectory is null || gameTextReader.Scan is null || gameTextReader.Issue is not null) return;
+        try
+        {
+            var sequence = ++gameTextTraceSequence;
+            var name = sequence.ToString("D6", System.Globalization.CultureInfo.InvariantCulture);
+            var image = name + ".jpg";
+            Directory.CreateDirectory(gameTextTraceDirectory);
+            var encoder = new System.Windows.Media.Imaging.JpegBitmapEncoder { QualityLevel = 90 };
+            encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(FrameBitmap(work.Image)));
+            using (var file = File.Create(Path.Combine(gameTextTraceDirectory, image))) encoder.Save(file);
+            var json = gameTextReader.ScanTrace(sequence, image, work.CapturedAt);
+            var path = Path.Combine(gameTextTraceDirectory, name + ".json");
+            File.WriteAllBytes(path + ".tmp", json);
+            File.Move(path + ".tmp", path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            Trace.TraceWarning("Notebook trace failed: " + e.Message);
         }
     }
 }

@@ -39,13 +39,13 @@ public sealed partial class GameTextCleanup(LocalThinkingClient client)
         ResidentThinkingModel resident, CancellationToken cancellationToken)
     {
         if (rows.Count == 0) return new Dictionary<string, GameTextCorrection>();
-        var inputs = rows.Select((row, index) => new Reading(index, row.Language, row.Context, row.Text, row.IsPassage == true)).ToArray();
+        var inputs = rows.Select((row, index) => new Reading(index, row.Language, row.Context, row.DisplayText, row.IsPassage == true)).ToArray();
         var related = entries.Select(entry => entry.Observation)
             .Where(entry => entry.Interpretation is not null && rows.Any(row =>
-                row.Language == entry.Language && SharedWords(row.Text, entry.Reading) >= 2))
+                row.Language == entry.Language && SharedWords(row.DisplayText, entry.Reading) >= 2))
             .Take(4).ToArray();
         var prior = related.Select((row, index) => new Prior(index, GameTextObservation.Prefix(row.Reading, 180))).ToArray();
-        var tutorials = rows.All(row => HasControlInstruction(row.Text, row.IsPassage == true, row.Language));
+        var tutorials = rows.All(row => HasControlInstruction(row.DisplayText, row.IsPassage == true, row.Language));
         var instructions = Transcription + "\n\n" + Classification;
         if (!tutorials) instructions += "\nReturn detail as a short heading for the reading.";
         if (prior.Length != 0)
@@ -64,7 +64,7 @@ public sealed partial class GameTextCleanup(LocalThinkingClient client)
         foreach (var correction in corrections)
         {
             var raw = rows[correction.Id];
-            var text = ConservativeText(correction.Text, raw.Text);
+            var text = ConservativeText(correction.Text, raw.DisplayText);
             var label = correction.Label?.Trim().ToLowerInvariant();
             if (HasControlInstruction(text, raw.IsPassage == true, raw.Language)) label = "tutorial";
             if (label is null || !Labels.Contains(label)) label = "unknown";

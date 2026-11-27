@@ -65,6 +65,43 @@ internal static class ThinkingHandoffTests
         Check(ThinkingScene.FromMatchedReceiver(12, duplicate, null) is null, "duplicated signed instance IDs are ambiguous");
     }
 
+    internal static void TestEventAndMenuDecisions()
+    {
+        var events = new ThinkingEventDetector();
+        var sight = Sight();
+        Check(events.Observe(sight, 0)!.Contains("First observation") && events.Observe(sight, 90) is null,
+            "continuous gameplay and prompts do not resubmit decisions");
+        var offer = new ThinkingDecisionOffer(sight);
+        var traverse = offer.Resolve(JsonSerializer.SerializeToElement(new { parameters = new { waypointId = 0 }, policy = "traverse" }));
+        Check(traverse.Pick(sight, 10)?.Route == Route && traverse.Pick(sight with { Scene = Scene with { Routes = [] } }, 10) is null,
+            "one captured route is bound and revalidated");
+        foreach (var bad in new[] { """{"policy":"traverse","parameters":{"waypointId":1}}""",
+            """{"policy":"explore","parameters":{"extra":true}}""", """{"scores":{"c0":99}}""",
+            """{"policy":"explore","policy":"explore"}""" })
+        {
+            using var doc = JsonDocument.Parse(bad);
+            Reject<InvalidDataException>(() => offer.Resolve(doc.RootElement));
+        }
+        var elements = new ThinkingMenuElement[]
+        {
+            new("shared.no", "No", new(10, 10, 10, 8), true), new("shared.yes", "Yes", new(30, 10, 10, 8), false),
+            new("shared.back", "Back", new(50, 10, 10, 8), true)
+        };
+        var page = new ThinkingMenuPage("clear-save", "shared.no", elements);
+        var menu = sight with { Page = page, Menu = page.State, Selection = page.Selected, Gameplay = false };
+        Check(events.Observe(menu, 91)!.Contains("Menu entered"), "fresh menu event");
+        var menuOffer = new ThinkingDecisionOffer(menu);
+        Check(!menuOffer.Candidates.Any(c => c.ElementId == "shared.yes"), "clear-save confirmation excluded");
+        var selected = menuOffer.Resolve(JsonSerializer.SerializeToElement(new { menu = "select", elementId = "shared.back" })).Scores.Single().Candidate;
+        var maneuver = new ThinkingManeuver(selected, menu, 10);
+        Check(maneuver.Step(menu, 10, default, false, 0).Buttons == InputButtons.Right, "move toward offered element");
+        Check(maneuver.Step(menu, 10.14, default, false, 0).Buttons == InputButtons.None, "release before reading next highlight");
+        var advanced = menu with { Page = new(page.State, "shared.back", elements), Selection = "shared.back", CapturedAt = 10.2 };
+        Check(events.Observe(advanced, 92)!.Contains("selection changed") &&
+            maneuver.Step(advanced, 10.2, default, false, 0).Buttons == InputButtons.ActionZ, "confirm only the observed target");
+        Check(maneuver.Step(advanced, 10.31, default, false, 0).Finished, "confirm sent once");
+    }
+
     internal static void TestBoundManeuversAndRelease()
     {
         var sight = Sight();

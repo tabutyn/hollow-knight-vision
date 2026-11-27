@@ -28,7 +28,7 @@ public sealed record GameplayPathView(
     public AtlasPathPoint? SelectedObjective { get; init; }
     public IReadOnlyList<AtlasPathPoint> SelectedRoute { get; init; } = [];
     internal AtlasPlatformGraph? Graph { get; init; }
-    internal AtlasPathPoint? Feet { get; init; }
+    public AtlasPathPoint? Feet { get; internal init; }
     internal object? ChartIdentity { get; init; }
     internal AtlasPathPoint? RequestedObjective { get; init; }
     internal long ObjectiveRevision { get; init; }

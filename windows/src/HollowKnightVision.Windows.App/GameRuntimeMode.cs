@@ -9,14 +9,23 @@ namespace HollowKnightVision.Windows.App;
 
 internal sealed record GameLaunchOptions(GameRuntimeMode? Mode, string? GamePath, bool ThinkingEnabled)
 {
+    internal string? NotebookTraceDirectory { get; init; }
     internal static GameLaunchOptions Parse(string[] arguments)
     {
         GameRuntimeMode? mode = null;
         string? gamePath = null;
         var thinkingEnabled = false;
+        string? trace = null;
         for (var index = 0; index < arguments.Length; index++)
         {
             var argument = arguments[index];
+            if (argument == "--notebook-trace")
+            {
+                if (trace is not null || ++index >= arguments.Length || !Path.IsPathFullyQualified(arguments[index]))
+                    throw new ArgumentException("--notebook-trace requires one absolute directory path.");
+                trace = arguments[index];
+                continue;
+            }
             if (argument == "--enable-thinking")
             {
                 thinkingEnabled = true;
@@ -64,7 +73,7 @@ internal sealed record GameLaunchOptions(GameRuntimeMode? Mode, string? GamePath
                 gamePath = pathValue;
             }
         }
-        return new GameLaunchOptions(mode, gamePath, thinkingEnabled);
+        return new GameLaunchOptions(mode, gamePath, thinkingEnabled) { NotebookTraceDirectory = trace };
     }
 }
 

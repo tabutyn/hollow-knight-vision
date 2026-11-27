@@ -16,7 +16,7 @@ public sealed record ResidentThinkingModel(LocalThinkingModel Model, int? Contex
 public sealed record LocalThinkingMessage(string Role, string Content,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Images = null);
 
-public enum ThinkingRequestKind { Policy, Transcription, QuestNotes }
+public enum ThinkingRequestKind { Policy, Transcription, QuestNotes, Menu }
 public sealed record ThinkingRequestView(ThinkingRequestKind Kind, string System, string User, string ResponseSchema);
 
 public sealed class LocalThinkingClient
