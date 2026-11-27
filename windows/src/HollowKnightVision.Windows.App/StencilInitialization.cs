@@ -76,11 +76,10 @@ internal static class StencilInitializationPolicy
     internal static IReadOnlyList<StencilInitializationStep> MissingSteps(
         IReadOnlyList<SavedLabelingExample> examples,
         string languageIdentifier,
-        GameRuntimeMode mode,
-        ContextRequirements[]? contexts = null)
+        GameRuntimeMode mode)
     {
         var missing = new List<StencilInitializationStep>();
-        foreach (var context in contexts ?? Contexts(mode, examples, languageIdentifier))
+        foreach (var context in Contexts(mode, examples, languageIdentifier))
         {
             var requirements = context.Requirements
                 .Where(item => !item.ModdedOnly || mode == GameRuntimeMode.Modded).ToArray();
@@ -281,7 +280,7 @@ internal sealed class StencilInitializationCoordinator
     {
         var examples = store.Load();
         Contexts = StencilInitializationPolicy.Contexts(mode, examples, LanguageIdentifier);
-        Steps = StencilInitializationPolicy.MissingSteps(examples, LanguageIdentifier, mode, Contexts);
+        Steps = StencilInitializationPolicy.MissingSteps(examples, LanguageIdentifier, mode);
     }
 
     private string LoadLanguage()
