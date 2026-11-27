@@ -13,9 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Portable Swift tests
-        # MenuStencilTests audit a user-generated local screenshot/calibration
-        # corpus. The standalone repository intentionally does not distribute it.
-        run: swift test --package-path macos --enable-code-coverage --skip MenuStencilTests
+        run: swift test --package-path macos --enable-code-coverage
       - name: Upload measured Swift coverage
         if: always()
         run: |

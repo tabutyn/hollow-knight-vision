@@ -55,6 +55,24 @@ public sealed record LabelingContractEvaluation(string Id, string Title, bool Is
 }
 
 /// <summary>Mac occurrence, pair and screen contracts. Completion/Draft is not a validity test.</summary>
+public static class ControllerStencilPolicy
+{
+    public const string Inactive = "controller.no-active-controller";
+    public const string Diagram = "controller.controller-diagram";
+    public const string Remap = "controller.remap-controls";
+
+    public static bool HasConnectedLabels(IReadOnlyDictionary<string, int> counts) =>
+        counts.ContainsKey(Diagram) || counts.ContainsKey(Remap);
+
+    public static bool IsRequired(string id, IReadOnlyDictionary<string, int> counts) =>
+        counts.ContainsKey(Inactive) || !HasConnectedLabels(counts)
+            ? id is not (Diagram or Remap) : id != Inactive;
+
+    public static bool IsAvailable(string id, IReadOnlyDictionary<string, int> counts) =>
+        counts.ContainsKey(Inactive) ? id is not (Diagram or Remap)
+            : HasConnectedLabels(counts) ? id != Inactive : id != Remap;
+}
+
 public static class LabelingContractEvaluator
 {
     public static Dictionary<string, int> PositiveCounts(IEnumerable<LabelingExampleAnnotation> annotations) => annotations
@@ -75,10 +93,15 @@ public static class LabelingContractEvaluator
         var contextIds = (context?.Labels ?? []).Select(item => Canonical(item.Identifier)).ToHashSet(StringComparer.Ordinal);
         void Add(string id, string title, bool satisfied) => result.Add(new(id, title, satisfied, exemptions?.Contains(id) == true));
         if (example.Manifest.Annotations.Count == 0) Add("screenshot.has-label", "Screenshot has at least one label", false);
+        if (context?.Identifier == "controller")
+            Add("set.controller.layout", "Controller layout labels must match one screen",
+                !counts.ContainsKey(ControllerStencilPolicy.Inactive) || !ControllerStencilPolicy.HasConnectedLabels(counts));
         if (set?.RequiresAllContextObjects == true && context is not null)
             foreach (var label in context.Labels.Where(label => LabelingHudStencilPolicy.IsLabelable(context.Identifier, label.Identifier)))
             {
-                var id = Canonical(label.Identifier); var bounds = set.OccurrenceOverrides?.GetValueOrDefault(id);
+                var id = Canonical(label.Identifier);
+                if (context.Identifier == "controller" && !ControllerStencilPolicy.IsRequired(id, counts)) continue;
+                var bounds = set.OccurrenceOverrides?.GetValueOrDefault(id);
                 var minimum = bounds?.Minimum ?? 1; var maximum = bounds?.Maximum ?? RequiredMaximum(id, catalog);
                 var count = counts.GetValueOrDefault(id);
                 var range = maximum is null ? $"{minimum}+" : minimum == maximum ? $"{minimum}" : $"{minimum}…{maximum}";

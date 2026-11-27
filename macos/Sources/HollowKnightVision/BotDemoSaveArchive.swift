@@ -57,8 +57,16 @@ struct BotDemoSaveArchive {
         return occupiedSlots.contains(4)
     }
 
+    private func readRegularFile(_ url: URL) throws -> Data {
+        let info = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard info.isRegularFile == true, info.isSymbolicLink != true else {
+            throw BotRuntimeError.incompatible("Slot 4 contains an unexpected file; archive was not authorized.")
+        }
+        return try Data(contentsOf: url)
+    }
+
     func verifySourceMatchesArchive(at url: URL) throws {
-        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: url.appendingPathComponent("manifest.json")))
+        let manifest = try JSONDecoder().decode(Manifest.self, from: readRegularFile(url.appendingPathComponent("manifest.json")))
         let files = try slotFiles()
         guard manifest.schemaVersion == 1, manifest.slot == 4,
               Set(files.map(\.lastPathComponent)) == Set(manifest.files.keys) else {
@@ -66,8 +74,8 @@ struct BotDemoSaveArchive {
         }
         for file in files {
             let name = file.lastPathComponent
-            guard BotNativePolicy.sha256(try Data(contentsOf: file)) == manifest.files[name],
-                  BotNativePolicy.sha256(try Data(contentsOf: url.appendingPathComponent(name))) == manifest.files[name] else {
+            guard BotNativePolicy.sha256(try readRegularFile(file)) == manifest.files[name],
+                  BotNativePolicy.sha256(try readRegularFile(url.appendingPathComponent(name))) == manifest.files[name] else {
                 throw BotRuntimeError.incompatible("Slot 4 or its archive changed. No save was cleared.")
             }
         }
@@ -80,13 +88,11 @@ struct BotDemoSaveArchive {
         let active = activeSavePresent ?? files.contains { $0.pathExtension == "dat" }
         let url = rootURL.appendingPathComponent("slot-4-\(UUID().uuidString.lowercased())", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        var complete = false
+        defer { if !complete { try? FileManager.default.removeItem(at: url) } }
         var hashes = [String: String]()
         for source in files {
-            let info = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-            guard info.isRegularFile == true, info.isSymbolicLink != true else {
-                throw BotRuntimeError.incompatible("Slot 4 contains an unexpected file; archive was not authorized.")
-            }
-            let data = try Data(contentsOf: source)
+            let data = try readRegularFile(source)
             let destination = url.appendingPathComponent(source.lastPathComponent)
             try data.write(to: destination, options: .atomic)
             let hash = BotNativePolicy.sha256(data)
@@ -100,13 +106,14 @@ struct BotDemoSaveArchive {
             throw BotRuntimeError.incompatible("Slot 4 changed while archiving. Start Demo again from Select Profile.")
         }
         for source in files {
-            guard BotNativePolicy.sha256(try Data(contentsOf: source)) == hashes[source.lastPathComponent] else {
+            guard BotNativePolicy.sha256(try readRegularFile(source)) == hashes[source.lastPathComponent] else {
                 throw BotRuntimeError.incompatible("Slot 4 changed while archiving. No save was cleared.")
             }
         }
         let manifest = Manifest(schemaVersion: 1, slot: 4, createdAt: Date(), sourceDirectory: savesURL.path,
                                 files: hashes, hadActiveSave: active)
         try JSONEncoder().encode(manifest).write(to: url.appendingPathComponent("manifest.json"), options: .atomic)
+        complete = true
         return Result(url: url, hadActiveSave: active)
     }
 }

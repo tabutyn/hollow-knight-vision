@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace HollowKnightVision.Windows.Core;
 
 public sealed record LabelingModelSemanticVersion(int Major, int Minor)
@@ -52,8 +55,32 @@ public sealed class LabelingModelVersionStore(string rootDirectory)
         public int SchemaVersion { get; set; } = 1;
         public Dictionary<string, ObjectRecord> Objects { get; set; } = [];
     }
+    private sealed class CandidateVersionsConverter : JsonConverter<Dictionary<Guid, LabelingModelSemanticVersion>>
+    {
+        public override Dictionary<Guid, LabelingModelSemanticVersion> Read(ref Utf8JsonReader reader, Type type,
+            JsonSerializerOptions options)
+        {
+            var entries = JsonSerializer.Deserialize<Dictionary<string, LabelingModelSemanticVersion>>(ref reader, options)
+                ?? throw new JsonException("Missing candidate versions.");
+            var versions = new Dictionary<Guid, LabelingModelSemanticVersion>();
+            foreach (var (key, version) in entries)
+            {
+                if (!TrainingRunIdentifierConverter.TryParse(key, out var id) || version is null)
+                    throw new JsonException("Invalid candidate version entry.");
+                // Older Mac imports could assign the same run a second version under another UUID spelling.
+                if (!versions.TryGetValue(id, out var prior)
+                    || (version.Major, version.Minor).CompareTo((prior.Major, prior.Minor)) < 0)
+                    versions[id] = version;
+            }
+            return versions;
+        }
+
+        public override void Write(Utf8JsonWriter writer, Dictionary<Guid, LabelingModelSemanticVersion> value,
+            JsonSerializerOptions options) => JsonSerializer.Serialize(writer, value, options);
+    }
     private sealed class ObjectRecord
     {
+        [JsonConverter(typeof(CandidateVersionsConverter))]
         public Dictionary<Guid, LabelingModelSemanticVersion> CandidateVersions { get; set; } = [];
         public List<LabelingModelRestorePoint> RestorePoints { get; set; } = [];
         public int? ActiveMajorVersion { get; set; }

@@ -51,11 +51,13 @@ public sealed record LabelingTrainingRunSummary
 internal sealed class TrainingRunIdentifierConverter : JsonConverter<Guid>
 {
     public TrainingRunIdentifierConverter() { }
+    internal static bool TryParse(string? text, out Guid identifier) =>
+        Guid.TryParseExact(text, "D", out identifier) || Guid.TryParseExact(text, "N", out identifier);
+
     public override Guid Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         if (reader.TokenType == JsonTokenType.String
-            && (Guid.TryParseExact(reader.GetString(), "D", out var identifier)
-                || Guid.TryParseExact(reader.GetString(), "N", out identifier))) return identifier;
+            && TryParse(reader.GetString(), out var identifier)) return identifier;
         throw new JsonException("Training run identifier must be a UUID.");
     }
     public override void Write(Utf8JsonWriter writer, Guid value, JsonSerializerOptions options) => writer.WriteStringValue(value);

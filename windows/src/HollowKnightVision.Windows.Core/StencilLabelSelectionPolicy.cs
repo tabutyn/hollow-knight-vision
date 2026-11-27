@@ -7,12 +7,15 @@ public static class StencilLabelSelectionPolicy
         IReadOnlyList<MenuStencilLabel>? custom = null)
     {
         var definitions = LabelingContractCatalog.Contexts.FirstOrDefault(item => item.Identifier == context)?.Labels ?? [];
+        var controllerCounts = hidesCompleted && context == "controller"
+            ? LabelingContractEvaluator.PositiveCounts(rectangles) : null;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         return definitions.Concat(custom ?? []).Where(definition =>
         {
             var identifier = LabelingClassIdentity.CanonicalIdentifier(definition.Identifier);
             if (!seen.Add(identifier) || (!modded && identifier == "shared.mods")
                 || !LabelingHudStencilPolicy.IsLabelable(context, identifier)) return false;
+            if (controllerCounts is not null && !ControllerStencilPolicy.IsAvailable(identifier, controllerCounts)) return false;
             // Recognition accepts an empty profile. Setup needs one positive
             // Clear Save stencil on its occupied-slot reference.
             if (hidesCompleted && identifier == "select-profile.clear-save")
