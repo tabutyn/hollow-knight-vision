@@ -1,8 +1,8 @@
 """Compare one full-width and one compact PPO branch on private King's Pass starts."""
 import argparse
-import fcntl
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -12,9 +12,11 @@ from stable_baselines3 import PPO
 
 from bot_policy_inputs import policy_columns
 from bot_projected_ppo import warm_start
+from bot_training_ipc import exclusive_file_lock
 from export_bot_policy import export_policy, write_parity_fixture
 from hacker_gym import HackerGym
 from hkv_bot_dataset import SCHEMAS
+from train_hacker_gym import SUPPORT, VISION, gym_checkpoint_path, windows_gym_identity
 
 
 def sha(path):
@@ -65,16 +67,28 @@ def compare(args):
     state = json.loads((args.run / "state.json").read_text())
     identity = state["identity"]
     domain = identity["domain"]
-    champion = args.run.parent.parent / "models" / domain / state["champion"]
+    bot_root = args.support / "bot-v1"
+    champion = gym_checkpoint_path(bot_root / "models" / domain, state["champion"], args.run)
     manifest = json.loads((champion / "manifest.json").read_text())
     schema = manifest["schemaVersion"]
     parent = args.run / state["learner"]
     labels = args.run / "authored-ground.json"
     connections = args.run / "path-connections.json"
     files = dict(learner=parent, champion=champion / "model.zip", labels=labels, connections=connections,
-                 vision=args.vision, game=args.game, receiver=args.game.parents[1] / "Resources/Data/Managed/Mods"
-                 / "HollowKnightVisionInputReceiver/HollowKnightVisionInputReceiver.dll")
-    initial = {key: sha(path) for key, path in files.items()}
+                 vision=args.vision, game=args.game)
+    if os.name != "nt":
+        files["receiver"] = (args.game.parents[1] / "Resources/Data/Managed/Mods"
+                             / "HollowKnightVisionInputReceiver/HollowKnightVisionInputReceiver.dll")
+
+    def snapshot():
+        hashes = {key: sha(path) for key, path in files.items()}
+        if os.name == "nt":
+            # The Windows apphost loads the encoder from managed assemblies.
+            runtime = argparse.Namespace(vision=args.vision, game=args.game, domain=domain, support=args.support)
+            hashes.update({key: value.lower() for key, value in windows_gym_identity(runtime).items()})
+        return hashes
+
+    initial = snapshot()
     if (initial["learner"] != state["learnerSHA256"] or initial["champion"] != manifest["modelSHA256"]
             or manifest["botDomain"] != domain or manifest["featureNames"] != SCHEMAS[schema]
             or initial["labels"] != identity["labels"] or initial["connections"] != identity["pathConnections"]):
@@ -83,9 +97,10 @@ def compare(args):
     report_path = args.output / "comparison.json"
     env = HackerGym(game=args.game, vision=args.vision, labels=labels, path_connections=connections,
                     domain=domain, version=schema, supports_masked=manifest.get("supportsMaskedKnight", False),
-                    max_steps=identity["max_steps"], stall_steps=identity["stall_steps"])
+                    max_steps=identity["max_steps"], stall_steps=identity["stall_steps"],
+                    visual_support_root=args.support if os.name == "nt" else None)
     def verify_files():
-        if any(sha(path) != initial[key] for key, path in files.items()):
+        if snapshot() != initial:
             raise RuntimeError("A checkpoint, game input or executable changed during the comparison")
     try:
         if args.stage in ("all", "train"):
@@ -120,7 +135,8 @@ def compare(args):
                 subprocess.run([args.vision, "--hacker-gym-observations", "verify", folder, folder / "parity.json"],
                                check=True, timeout=45)
         if args.stage in ("all", "verify"):
-            report["nativeParityVisionSHA256"] = initial["vision"]
+            verify_files()
+            report["nativeParityVisionSHA256"] = initial.get("visionSource", initial["vision"])
             write_json(report_path, report)
             if args.stage == "verify":
                 return
@@ -148,21 +164,32 @@ def compare(args):
         env.close()
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True, help="Existing PPO run with a verified learner")
+    parser.add_argument("--support", type=Path, help="Gym trainer support directory for a custom run location")
     parser.add_argument("--game", type=Path, required=True)
-    parser.add_argument("--vision", type=Path, default=Path("/Applications/Hollow Knight Vision.app/Contents/MacOS/HollowKnightVision"))
+    parser.add_argument("--vision", type=Path, default=VISION)
     parser.add_argument("--output", type=Path, required=True, help="New experiment directory")
     parser.add_argument("--stage", choices=("all", "train", "evaluate", "verify"), default="all",
                         help="Train weights, evaluate paired starts, verify the native export, or run all stages")
     parser.add_argument("--steps", type=int, default=512)
     parser.add_argument("--seed", type=int, default=100071)
     parser.add_argument("--eval-seeds", nargs="+", type=int, default=[23112301, 23112302, 23112303])
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if len(set(args.eval_seeds)) != len(args.eval_seeds) or args.seed in args.eval_seeds:
         parser.error("Training and evaluation require distinct seeds")
+    args.run, args.game, args.vision = (path.resolve() for path in (args.run, args.game, args.vision))
+    if args.support is None:
+        # Preserve relocated libraries. Runs written with the trainer's --output
+        # still share its normal model library and worker lock.
+        library = args.run.parent.parent.parent
+        args.support = library if args.run.parent == library / "bot-v1/gym" else SUPPORT
+    args.support = args.support.resolve()
     torch.set_num_threads(1)
-    with (args.run.parent / "worker.lock").open("rb") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with exclusive_file_lock(args.support / "bot-v1/gym/worker.lock", wait=False):
         compare(args)
+
+
+if __name__ == "__main__":
+    main()

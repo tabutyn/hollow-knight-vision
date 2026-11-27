@@ -9,6 +9,8 @@ $botPython = Join-Path $env:LOCALAPPDATA 'HollowKnightVision\bot-v1\runtime\.bot
 $source = Join-Path $PSScriptRoot '..\macos\BotPython'
 $detector = Join-Path $PSScriptRoot '..\models\shared-object-model'
 $nativeTests = Join-Path $PSScriptRoot 'tests\HollowKnightVision.Windows.Tests\bin\Release\net8.0\HollowKnightVision.Windows.Tests.dll'
+$env:HKV_TEST_COMPARE_VISION = Join-Path $installed 'HollowKnightVision.Windows.Host.exe'
+$env:HKV_TEST_COMPARE_SCRIPT = Join-Path $training 'BotPython\compare_policy_inputs.py'
 & $botPython -B -m unittest discover -s $source -p 'test_*.py'
 if ($LASTEXITCODE -ne 0) { throw 'Shared bot tests failed on Windows.' }
 & $botPython -B (Join-Path $PSScriptRoot 'tests\gym_trainer_interop.py') $installed $detector $nativeTests
