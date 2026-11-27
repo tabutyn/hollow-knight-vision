@@ -76,10 +76,11 @@ internal static class StencilInitializationPolicy
     internal static IReadOnlyList<StencilInitializationStep> MissingSteps(
         IReadOnlyList<SavedLabelingExample> examples,
         string languageIdentifier,
-        GameRuntimeMode mode)
+        GameRuntimeMode mode,
+        ContextRequirements[]? contexts = null)
     {
         var missing = new List<StencilInitializationStep>();
-        foreach (var context in Contexts(mode, examples, languageIdentifier))
+        foreach (var context in contexts ?? Contexts(mode, examples, languageIdentifier))
         {
             var requirements = context.Requirements
                 .Where(item => !item.ModdedOnly || mode == GameRuntimeMode.Modded).ToArray();
@@ -229,14 +230,14 @@ internal sealed class StencilInitializationCoordinator
                 name = LabelingVisualIdentity.DisplayName(selected);
             return Text("gameplayLabel", ("object", Text(name)));
         }
-        if (context is not null && StencilInitializationPolicy.RequiredContexts.Any(item => item.Identifier == context))
+        if (Contexts.FirstOrDefault(item => item.Identifier == context) is { } currentContext)
         {
             var remaining = Steps.Where(step => step.ContextIdentifier == context).ToArray();
             if (context == "controller" && selected == ControllerStencilPolicy.Diagram
                 && !LabelingContractEvaluator.PositiveCounts(ExampleFor(context)?.Manifest.Annotations ?? []).ContainsKey(selected))
                 return Text("draw", ("object", Text("Controller Diagram")));
             var next = remaining.FirstOrDefault(step => step.ClassIdentifier == selected) ?? remaining.FirstOrDefault();
-            var name = StencilInitializationPolicy.RequiredContexts.First(item => item.Identifier == context).Name;
+            var name = currentContext.Name;
             if (next is null && context == "gameplay-hud" && !HasUsableHUD) return Text("invalidHUD");
             if (next is null) return Text("screenDone", ("screen", ScreenName(name)));
             return next.ClassIdentifier == StencilInitializationPolicy.ProfileClearSaveClass
@@ -280,7 +281,7 @@ internal sealed class StencilInitializationCoordinator
     {
         var examples = store.Load();
         Contexts = StencilInitializationPolicy.Contexts(mode, examples, LanguageIdentifier);
-        Steps = StencilInitializationPolicy.MissingSteps(examples, LanguageIdentifier, mode);
+        Steps = StencilInitializationPolicy.MissingSteps(examples, LanguageIdentifier, mode, Contexts);
     }
 
     private string LoadLanguage()

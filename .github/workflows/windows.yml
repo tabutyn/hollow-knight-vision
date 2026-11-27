@@ -37,8 +37,10 @@ jobs:
             -Coverlet (Join-Path $tools 'coverlet.exe')
       - name: Verify installed Windows startup
         run: dotnet run --project tests/HollowKnightVision.Windows.UiTests -c Release -- --installed-startup
-      - name: Report remaining Mac parity obligations
-        run: .\Test-MacParity.ps1
+      - name: Report cross-platform test links
+        run: |
+          .\Test-MacParity.ps1 -Json | Set-Content -Encoding utf8 artifacts/coverage/feature-parity.json
+          (Get-Content artifacts/coverage/feature-parity.json -Raw | ConvertFrom-Json).summary | Format-List
       - name: Set up the installed object trainer
         run: |
           $setup = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\training\setup-training-windows.ps1'
@@ -128,9 +130,9 @@ jobs:
           name: HollowKnightVision-Windows-coverage
           path: windows/artifacts/coverage/
           if-no-files-found: error
-      - name: Publish
-        run: dotnet publish src/HollowKnightVision.Windows.App/HollowKnightVision.Windows.App.csproj -c Release -r win-x64 --self-contained false -o artifacts/publish
-      - uses: actions/upload-artifact@v4
+      - name: Upload the hash-verified Windows desktop package
+        uses: actions/upload-artifact@v4
         with:
           name: HollowKnightVision-Windows
-          path: windows/artifacts/publish
+          path: windows/artifacts/app-win-x64
+          if-no-files-found: error

@@ -128,8 +128,16 @@ final class MenuStencilTests: XCTestCase {
     }
 
     func testSelectProfileIncludesFourClearSaveSelectorRows() throws {
+        let store = LabelingExampleStore()
+        let examples = try store.loadExamples()
+        try XCTSkipUnless(examples.contains { example in
+            example.manifest.contextIdentifier == LabelingContext.selectProfile.storageIdentifier
+                && example.manifest.annotations.contains {
+                    !$0.isHardNegative && $0.classIdentifier == StencilInitializationPolicy.profileClearSaveClass
+                }
+        }, "Requires an occupied Select Profile reference with a Clear Save label")
         let catalog = try MenuStencilCatalog(
-            examplesRootURL: LabelingExampleStore.defaultRootURL(),
+            examplesRootURL: store.rootURL,
             calibration: try bundledCalibration(),
             liveCapturesOverride: []
         )
@@ -201,6 +209,7 @@ final class MenuStencilTests: XCTestCase {
         let available = expected.filter { item in
             examples.contains { $0.id == UUID(uuidString: item.0) }
         }
+        try XCTSkipUnless(!available.isEmpty, "Requires one of the reviewed localized menu screenshots")
         let catalog = try MenuStencilCatalog(
             examplesRootURL: store.rootURL,
             calibration: try bundledCalibration(),
