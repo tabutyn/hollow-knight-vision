@@ -54,8 +54,48 @@ public partial class MainWindow
     private string BotEvaluationRoot => Path.Combine(BotRoot, "evaluations");
     private readonly object botEvaluationLock = new();
     private Task botEvaluationWrites = Task.CompletedTask;
+    private long botDetailsGeneration;
 
     private async void BotPlayback_Click(object sender, RoutedEventArgs e) => await ToggleBotPlaybackAsync();
+
+    private async void BotDetails_Opened(object sender, RoutedEventArgs e) => await PresentBotDetailsAsync(reload: false);
+    private void BotDetails_Closed(object sender, RoutedEventArgs e) => ++botDetailsGeneration;
+    private async void BotReloadModel_Click(object sender, RoutedEventArgs e) => await PresentBotDetailsAsync(reload: true);
+
+    private async Task PresentBotDetailsAsync(bool reload)
+    {
+        var generation = ++botDetailsGeneration;
+        var run = Volatile.Read(ref botPlayback);
+        var domain = run?.Domain ?? (workspace == "Hacker" ? BotCaptureDomain.Hacker : BotCaptureDomain.Gameplay);
+        if (reload && (run is not null || Volatile.Read(ref thinkingLease) is not null))
+        {
+            thinkingAutomatic = false;
+            StopBotPlayback("Bot stopped for model reload.", "model-changed");
+            PresentThinking();
+            run = null;
+        }
+        BotDetailsInputs.Header = domain == BotCaptureDomain.Hacker
+            ? "Frame-matched receiver actors and authored floors"
+            : "Detected terrain and visual actors";
+        BotDetailsModel.Header = $"{domain} · Loading bot model…";
+        BotDetailsStatus.Header = "Checking the selected checkpoint";
+        BotReloadModel.IsEnabled = false;
+        var loaded = run is null ? await ReadBotModelAsync(domain) : Volatile.Read(ref run.Loaded);
+        if (isClosing || generation != botDetailsGeneration) return;
+        BotReloadModel.IsEnabled = true;
+        if (loaded is null)
+        {
+            BotDetailsStatus.Header = "Playback is loading its model";
+            return;
+        }
+        ShowBotDetailsModel(domain, loaded);
+        BotDetailsStatus.Header = loaded.Issue ?? (run is null ? "Ready" : BotPlaybackCaption.Text);
+    }
+
+    private void ShowBotDetailsModel(BotCaptureDomain domain, LoadedBot loaded)
+    {
+        BotDetailsModel.Header = $"{domain} · {loaded.ModelName ?? "Checkpoint unavailable"}";
+    }
 
     private void BotEvaluations_Click(object sender, RoutedEventArgs e)
     {
@@ -114,6 +154,8 @@ public partial class MainWindow
         BotPlaybackCaption.Text = run is null ? (active ? "Policy active" : "")
             : run.DisplayedPlaybackStatus ?? Volatile.Read(ref run.ReportedDemoStatus)
                 ?? (run.StartedInGameplay ? "Loading bot policy" : "Bot Demo active");
+        if (BotDetailsMenu.IsSubmenuOpen && run is not null && Volatile.Read(ref run.Loaded) is { } loaded)
+            BotDetailsStatus.Header = loaded.Issue ?? BotPlaybackCaption.Text;
     }
 
     private async Task ToggleBotPlaybackAsync()
@@ -164,12 +206,27 @@ public partial class MainWindow
         SetStatus(run.StartedInGameplay ? "Loading the latest verified bot checkpoint."
             : "Bot Demo active. Press B again to stop.");
 
-        LoadedBot loaded;
+        var loaded = await ReadBotModelAsync(domain);
+        if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
+        if (run.StartedInGameplay && loaded is { Policy: not null, ModelName: { } modelName })
+            await PrepareBotEvaluationAsync(run, modelName, loaded.ModelHash);
+        if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
+        if (run.StartedInGameplay && loaded.Policy is null)
+            StopBotPlayback(loaded.Issue);
+        else
+        {
+            Volatile.Write(ref run.Loaded, loaded);
+            if (BotDetailsMenu.IsSubmenuOpen) ShowBotDetailsModel(run.Domain, loaded);
+        }
+    }
+
+    private async Task<LoadedBot> ReadBotModelAsync(BotCaptureDomain domain)
+    {
         try
         {
             var root = BotRoot;
             var selected = await Task.Run(() => new BotModelStore(root, domain).LoadPlayback());
-            loaded = selected is null ? new(new BotPolicyPlayback(BotStarterPolicy.Load(), domain), "Built-in playing policies", null)
+            return selected is null ? new(new BotPolicyPlayback(BotStarterPolicy.Load(), domain), "Built-in playing policies", null)
                 : new(new BotPolicyPlayback(selected.Policy, domain), selected.Policy.Name, null)
                 {
                     Motor = selected.Policy,
@@ -178,16 +235,8 @@ public partial class MainWindow
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
         {
-            loaded = new(null, null, $"Bot checkpoint unavailable. {error.Message}");
+            return new(null, null, $"Bot checkpoint unavailable. {error.Message}");
         }
-        if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
-        if (run.StartedInGameplay && loaded is { Policy: not null, ModelName: { } modelName })
-            await PrepareBotEvaluationAsync(run, modelName, loaded.ModelHash);
-        if (!ReferenceEquals(Volatile.Read(ref botPlayback), run)) return;
-        if (run.StartedInGameplay && loaded.Policy is null)
-            StopBotPlayback(loaded.Issue);
-        else
-            Volatile.Write(ref run.Loaded, loaded);
     }
 
     private async Task PrepareBotEvaluationAsync(BotRun run, string modelName, string? modelHash)

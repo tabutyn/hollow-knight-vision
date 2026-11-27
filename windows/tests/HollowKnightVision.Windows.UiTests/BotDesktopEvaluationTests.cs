@@ -235,6 +235,23 @@ internal static class BotDesktopEvaluationTests
             Check(Method("SelectWorkspace").Invoke(window, ["Gameplay", false, false]) is true
                 && Field("botPlayback").GetValue(window) is null && !bridge.OwnsBotControl(workspaceOwner),
                 "A manual workspace change must end the active Hacker bot run and release its controls.");
+            var details = (MenuItem)window.FindName("BotDetailsMenu");
+            var model = (MenuItem)window.FindName("BotDetailsModel");
+            var reload = (MenuItem)window.FindName("BotReloadModel");
+            details.RaiseEvent(new RoutedEventArgs(MenuItem.SubmenuOpenedEvent, details));
+            await WaitFor(() => Equals(model.Header, "Gameplay · Built-in playing policies") && reload.IsEnabled);
+            Check(Field("botPlayback").GetValue(window) is null, "Reading bot details must leave the receiver idle.");
+            await window.StartBotPlaybackAsync().WaitAsync(token);
+            var liveRun = Field("botPlayback").GetValue(window)!;
+            var liveOwner = (Guid)liveRun.GetType().GetProperty("Owner", Instance)!.GetValue(liveRun)!;
+            WriteCheckpoint(Path.Combine(root, "bot-v1"), "gameplay", "Updated explorer");
+            details.RaiseEvent(new RoutedEventArgs(MenuItem.SubmenuOpenedEvent, details));
+            Check(Equals(model.Header, "Gameplay · Built-in playing policies") && bridge.OwnsBotControl(liveOwner),
+                "Inspecting a running bot must show the actual model and preserve control after a new export.");
+            reload.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            await WaitFor(() => Equals(model.Header, "Gameplay · Updated explorer") && reload.IsEnabled);
+            Check(Field("botPlayback").GetValue(window) is null && !bridge.OwnsBotControl(liveOwner),
+                "Reloading must release the receiver and show the verified replacement without starting it.");
             Console.WriteLine("PASS Windows B starts either bot before training and preserves text entry, dialogs, and modifiers");
             Console.WriteLine("PASS Windows B respects stencil readiness and active trainers while preserving Stop");
 

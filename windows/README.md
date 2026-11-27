@@ -119,6 +119,10 @@ button to see what it needs. During playback it shows a green stop mark beside
 the B and the current bot status. In menus, starting the bot archives slot 4
 and begins a fresh save. In gameplay it uses the current save.
 
+Right-click **🤖 B** and open **Bot details** to see the current model and its input
+source. **Reload model** stops active playback and reads the selected checkpoint
+again. Press **B** when you want to start it.
+
 The **+N 🤖** badge in Bot Summary counts new runs since training. Paired Hacker
 and Game Play recordings count once. The adjacent breakdown shows each domain's clips.
 
