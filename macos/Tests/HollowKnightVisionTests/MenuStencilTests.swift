@@ -2288,6 +2288,8 @@ final class MenuStencilTests: XCTestCase {
     }
 
     func testLiveSelectorTransitionsCannotRemainStuckOnPreviousRow() throws {
+        let captures = try MenuStencilLiveCaptureStore().load()
+        try XCTSkipUnless(!captures.isEmpty, "No live menu transition captures")
         let catalog = try MenuStencilCatalog(
             examplesRootURL: LabelingExampleStore.defaultRootURL(),
             calibration: try bundledCalibration()
@@ -2312,7 +2314,7 @@ final class MenuStencilTests: XCTestCase {
             }
         })
         var latest = [String: (capture: MenuStencilLiveCapture, imageURL: URL)]()
-        for source in try MenuStencilLiveCaptureStore().load() {
+        for source in captures {
             let selectionKey = source.capture.contextIdentifier + ":"
                 + source.capture.selectedIdentifier
             let key = source.capture.resolvedLanguageIdentifier + ":"
