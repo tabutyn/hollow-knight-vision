@@ -305,6 +305,34 @@ internal static class ActiveAtlasReplacementTests
         });
     }
 
+    public static void TestLoadingSavedWorldWithoutManifestPreservesActiveAndSavedWorlds()
+    {
+        WithTemporaryDirectory(workspace =>
+        {
+            static void WriteWorld(string directory)
+            {
+                Directory.CreateDirectory(directory);
+                VisionResetController.WritePersistedAtlasMetadata(directory, new(0, DateTimeOffset.UnixEpoch, 32, 1));
+                _ = new LiveWorldSessionStore(Path.Combine(directory, "live-world"));
+            }
+
+            var active = Path.Combine(workspace, "active");
+            WriteWorld(active);
+            var states = new AtlasStateStore(Path.Combine(workspace, "states"));
+            var saved = states.Save("First room", WriteWorld);
+            var world = states.WorldPath(saved);
+            File.Delete(Path.Combine(world, "live-world", "manifest.json"));
+            var activeTree = SnapshotTree(active);
+            var savedTree = SnapshotTree(world);
+
+            _ = Expect<InvalidDataException>(() => VisionResetController.LoadNamedAtlasForCurrentProfile(states, saved, active));
+            CheckTree(activeTree, SnapshotTree(active), "Loading an incomplete save replaced the active Atlas.");
+            CheckTree(savedTree, SnapshotTree(world), "Loading an incomplete save rewrote its files.");
+            Check(!StagingDirectories(workspace).Any() && !ArchiveDirectories(workspace).Any(),
+                "A rejected save left a staging directory or archive behind.");
+        });
+    }
+
     public static void TestValidationFailurePreservesActive()
     {
         WithTemporaryDirectory(workspace =>

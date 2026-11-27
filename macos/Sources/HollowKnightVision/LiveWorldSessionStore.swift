@@ -30,8 +30,12 @@ final class LiveWorldSessionStore {
     let rootURL: URL
     private let sceneStore: SceneSessionStore
 
-    init(rootURL: URL) throws {
-        let sceneStore = try SceneSessionStore(rootURL: rootURL)
+    convenience init(rootURL: URL) throws {
+        try self.init(rootURL: rootURL, createIfMissing: true)
+    }
+
+    init(rootURL: URL, createIfMissing: Bool) throws {
+        let sceneStore = try SceneSessionStore(rootURL: rootURL, createIfMissing: createIfMissing)
         self.rootURL = sceneStore.rootURL
         self.sceneStore = sceneStore
         _ = try load()

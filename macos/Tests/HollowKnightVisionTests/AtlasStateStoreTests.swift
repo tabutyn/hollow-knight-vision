@@ -87,6 +87,25 @@ final class AtlasStateStoreTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(try AtlasDiskUsage.allocatedByteCount(at: workspace), 12_288)
     }
 
+    func testLoadingSavedWorldWithoutManifestPreservesActiveAndSavedWorlds() throws {
+        let files = FileManager.default
+        let workspace = files.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? files.removeItem(at: workspace) }
+        let active = workspace.appendingPathComponent("active")
+        let pipeline = LiveAtlasPipeline(context: CIContext(), worldRootURL: active)
+        let manifest = active.appendingPathComponent("manifest.json")
+        let previousManifest = try Data(contentsOf: manifest)
+        let states = AtlasStateStore(rootURL: workspace.appendingPathComponent("states"))
+        let saved = try states.save(name: "First room") { try pipeline.copyActiveWorld(to: $0) }
+        let world = try states.worldURL(for: saved)
+        try files.removeItem(at: world.appendingPathComponent("manifest.json"))
+
+        XCTAssertThrowsError(try pipeline.loadSavedWorld(from: world))
+        XCTAssertFalse(files.fileExists(atPath: world.appendingPathComponent("manifest.json").path))
+        XCTAssertEqual(try Data(contentsOf: manifest), previousManifest)
+        XCTAssertEqual(try files.contentsOfDirectory(atPath: workspace.path).sorted(), ["active", "states"])
+    }
+
     func testPipelineLoadRestoresSavedSnapshotAndLeavesStateImmutable() throws {
         let workspace = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: workspace) }
