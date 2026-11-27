@@ -8,11 +8,20 @@ namespace HollowKnightVision.Windows.App;
 
 public partial class MainWindow
 {
-    private async void ExportTrainingLibrary_Click(object sender, RoutedEventArgs e) =>
-        await TransferTrainingLibraryAsync(importing: false);
+    internal Func<FileDialog, bool?>? ShowTrainingLibraryPicker { get; init; }
+    private Task? trainingTransferTask;
 
-    private async void ImportTrainingLibrary_Click(object sender, RoutedEventArgs e) =>
-        await TransferTrainingLibraryAsync(importing: true);
+    private void ExportTrainingLibrary_Click(object sender, RoutedEventArgs e) =>
+        BeginTrainingLibraryTransfer(importing: false);
+
+    private void ImportTrainingLibrary_Click(object sender, RoutedEventArgs e) =>
+        BeginTrainingLibraryTransfer(importing: true);
+
+    private void BeginTrainingLibraryTransfer(bool importing)
+    {
+        if (isClosing || trainingTransferTask is { IsCompleted: false }) return;
+        trainingTransferTask = TransferTrainingLibraryAsync(importing);
+    }
 
     private async Task TransferTrainingLibraryAsync(bool importing)
     {
@@ -22,20 +31,24 @@ public partial class MainWindow
             return;
         }
 
-        const string filter = "Vision Training Library (*.hkvtraining)|*.hkvtraining";
-        FileDialog dialog = importing
-            ? new OpenFileDialog { Filter = filter, CheckFileExists = true }
-            : new SaveFileDialog
-            {
-                Filter = filter, AddExtension = true, DefaultExt = ".hkvtraining",
-                FileName = $"Vision Training {DateTime.Now:yyyy-MM-dd} {Guid.NewGuid().ToString("N")[..8]}.hkvtraining"
-            };
-        if (dialog.ShowDialog(this) != true) return;
-        IsEnabled = false;
-        var resumeCapture = importing && visionCancellation is not null;
-        TrainingTransferStatusText.Text = importing ? "Importing training library…" : "Exporting training library…";
+        var transferStarted = false;
+        var resumeCapture = false;
         try
         {
+            const string filter = "Vision Training Library (*.hkvtraining)|*.hkvtraining";
+            FileDialog dialog = importing
+                ? new OpenFileDialog { Filter = filter, CheckFileExists = true }
+                : new SaveFileDialog
+                {
+                    Filter = filter, AddExtension = true, DefaultExt = ".hkvtraining",
+                    FileName = $"Vision Training {DateTime.Now:yyyy-MM-dd} {Guid.NewGuid().ToString("N")[..8]}.hkvtraining"
+                };
+            var accepted = ShowTrainingLibraryPicker is { } picker ? picker(dialog) : dialog.ShowDialog(this);
+            if (accepted != true || isClosing) return;
+            transferStarted = true;
+            IsEnabled = false;
+            resumeCapture = importing && visionCancellation is not null;
+            TrainingTransferStatusText.Text = importing ? "Importing training library…" : "Exporting training library…";
             if (resumeCapture)
             {
                 StopVision();
@@ -50,7 +63,7 @@ public partial class MainWindow
             var result = await WindowsTrainingProcess.RunAsync(start, CancellationToken.None);
             if (result.ExitCode != 0)
                 throw new InvalidOperationException(result.FailureMessage);
-            if (importing)
+            if (importing && !isClosing)
             {
                 modelLifecycle.Refresh();
                 RefreshExamples();
@@ -67,7 +80,7 @@ public partial class MainWindow
         }
         finally
         {
-            IsEnabled = true;
+            if (transferStarted) IsEnabled = true;
             if (resumeCapture && !isClosing && !gameLostCountdownStarted)
                 StartVision_Click(this, new RoutedEventArgs());
         }
