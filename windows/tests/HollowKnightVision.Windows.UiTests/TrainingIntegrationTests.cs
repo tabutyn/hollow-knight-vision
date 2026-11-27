@@ -298,7 +298,8 @@ internal static class TrainingIntegrationTests
             {
                 ShowTrainingLibraryPicker = dialog =>
                 {
-                    Check(dialog is SaveFileDialog { DefaultExt: ".hkvtraining" }, "Export did not open a library save dialog.");
+                    Check(dialog is SaveFileDialog && dialog.DefaultExt.TrimStart('.') == "hkvtraining",
+                        "Export did not open a library save dialog.");
                     dialog.FileName = bundle;
                     return true;
                 }
