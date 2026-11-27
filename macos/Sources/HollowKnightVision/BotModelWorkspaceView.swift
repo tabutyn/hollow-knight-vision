@@ -156,12 +156,8 @@ struct BotModelWorkspaceView: View, Equatable {
                         if version.id == model.activeID { Label("Active", systemImage: "checkmark.circle.fill").foregroundStyle(.green) }
                         else { Button("Use Version") { model.activate(version, reload: reloadModel) }.disabled(model.isRunning || !model.store.canActivate(version)) }
                     }
-                    if let result = version.result {
-                        score("Action agreement", result.candidate.exactActionAccuracy, result.baseline?.exactActionAccuracy)
-                        if let jump = result.candidate.heads.first(where: { $0.name == "jump" }) {
-                            score("Jump balanced accuracy", jump.balancedAccuracy, result.baseline?.heads.first(where: { $0.name == "jump" })?.balancedAccuracy)
-                        }
-                        if let feedback = result.candidateSequential { score("Own-action agreement", feedback.exactActionAccuracy, result.baselineSequential?.exactActionAccuracy) }
+                    ForEach(version.result?.scores ?? [], id: \.label) { row in
+                        score(row.label, row.value, row.baseline)
                     }
 
                 }.padding(12).background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
