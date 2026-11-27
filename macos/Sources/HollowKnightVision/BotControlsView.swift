@@ -5,6 +5,23 @@ enum BotControlPresentationPolicy {
     static func shows(in workspace: DashboardWorkspace) -> Bool {
         workspace == .gameplay || workspace == .hacker
     }
+
+    static func startIssue(mode: HollowKnightRuntimeMode, capturing: Bool, training: Bool,
+                           stencilsReady: Bool, controlsReady: Bool) -> String? {
+        if mode != .modded { return "Choose Modded game mode to start the bot." }
+        if !capturing { return "Start a modded game capture before starting the bot." }
+        if training { return "Wait for training to finish before starting the bot." }
+        if !stencilsReady { return "Complete stencil setup before starting the bot." }
+        if !controlsReady { return "Return to live capture and finish any recording, replay, or Atlas operation before starting the bot." }
+        return nil
+    }
+
+    static func help(active: Bool, startIssue: String?, lastIssue: String?) -> String {
+        if active { return "Press B to stop the bot." }
+        return startIssue ?? lastIssue ?? "Press B to start the bot. From a game menu it archives slot 4 and starts a fresh game. During Gameplay it runs the model for the current workspace."
+    }
+
+    static func canToggle(active: Bool, startIssue: String?) -> Bool { active || startIssue == nil }
 }
 
 enum BotShortcutPolicy {
@@ -45,15 +62,17 @@ struct BotControlsView: View {
     @ObservedObject private var player: BotPlaybackController
     @ObservedObject private var bot: BotDemoController
     let domain: BotDomain
-    let canStart: Bool
+    let startIssue: String?
     let action: () -> Void
     @State private var showsBotDetails = false
 
-    init(model: LiveCaptureModel, domain: BotDomain, canStart: Bool, action: @escaping () -> Void) {
-        self.model = model; self.domain = domain; self.canStart = canStart; self.action = action
+    init(model: LiveCaptureModel, domain: BotDomain, startIssue: String?, action: @escaping () -> Void) {
+        self.model = model; self.domain = domain; self.startIssue = startIssue; self.action = action
         collection = model.botDemonstrations; player = model.botPlayer; bot = model.botDemo
     }
     var body: some View {
+        let active = player.isActive || bot.isActive
+        let help = BotControlPresentationPolicy.help(active: active, startIssue: startIssue, lastIssue: bot.issue)
         HStack(spacing: 5) {
             Button(action: action) {
                 HStack(spacing: 4) {
@@ -62,11 +81,12 @@ struct BotControlsView: View {
                     if player.isActive || bot.isActive { Image(systemName: "stop.circle.fill") }
                 }
             }
-            .disabled(!player.isActive && !bot.isActive && !canStart)
+            .disabled(!BotControlPresentationPolicy.canToggle(active: active, startIssue: startIssue))
             .tint(player.isActive || bot.isActive ? .green : .accentColor)
             .accessibilityIdentifier("bot-control")
             .accessibilityLabel(player.isActive || bot.isActive ? "Stop Hollow Knight Bot" : "Start Hollow Knight Bot")
-            .help(bot.issue ?? "B starts or stops the bot. In game menus it archives slot 4 and starts a fresh game; during Gameplay it runs the model for the current workspace.")
+            .help(help)
+            .accessibilityHint(Text(help))
             .contextMenu {
                 Button("Bot details") { showsBotDetails = true }
                 Button("Show save archives") { NSWorkspace.shared.open(bot.lastArchiveURL ?? BotDemoSaveArchive.archivesURL) }

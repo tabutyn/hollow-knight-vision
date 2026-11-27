@@ -62,7 +62,8 @@ internal static class BotDesktopEvaluationTests
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "gameplay-start-timeout"), OpeningOutcome.GameplayStartupTimeout, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-evaluation-failure"), OpeningOutcome.EvaluationFailure, timeout.Token);
             await VerifyOpeningWithoutCheckpointAsync(Path.Combine(temporary.FullName, "opening-focus-lost"), OpeningOutcome.FocusLost, timeout.Token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            // This fixture starts the installed PowerShell trainer twice under coverage.
+            timeout.CancelAfter(TimeSpan.FromSeconds(60));
             await VerifyCheckpointControlsAsync(Path.Combine(temporary.FullName, "versions"), timeout.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(60));
             await VerifyTrainBothAsync(Path.Combine(temporary.FullName, "train-both"), timeout.Token);
@@ -892,6 +893,8 @@ internal static class BotDesktopEvaluationTests
             var use = (Button)window.FindName("BotUseVersion");
             var restore = (Button)window.FindName("BotRestorePrevious");
             var pending = (TextBlock)window.FindName("BotNewCaptureSummary");
+            var domainBadge = (TextBlock)window.FindName("BotDomainCaptureBadge");
+            var summaryBadge = (TextBlock)window.FindName("BotNewCaptureBadge");
             var scores = (ItemsControl)window.FindName("BotCheckpointScores");
             Refresh();
             await WaitFor(() => versions.SelectedValue as string == "bot-gameplay");
@@ -938,6 +941,8 @@ internal static class BotDesktopEvaluationTests
             {
                 Refresh();
                 await WaitFor(() => pending.Text == "1 new run · Hacker 1 · Game Play 1");
+                Check(domainBadge.Text == "+1 🤖" && AutomationProperties.GetName(domainBadge) == "1 new Hacker clip",
+                    "A paired recording must contribute one clip to the selected domain.");
             }
             WriteCheckpoint(botRoot, "hacker", "Trained Hacker", "bot-trained", created.AddMinutes(4), [initial.Hacker, fresh.Hacker]);
             await window.StartBotPlaybackAsync().WaitAsync(token);
@@ -950,6 +955,13 @@ internal static class BotDesktopEvaluationTests
             Check(versions.SelectedValue as string == "bot-trained", "New training must reduce the correct count while activating its policy.");
 
             await WaitFor(() => !(bool)Field("refreshingBotLibrary").GetValue(window)!);
+            Check(domainBadge.Text == "+0 🤖" && AutomationProperties.GetName(domainBadge) == "0 new Hacker clips",
+                "Training Hacker must clear its domain badge.");
+            domain.SelectedIndex = 0;
+            Check(domainBadge.Text == "+1 🤖" && AutomationProperties.GetName(domainBadge) == "1 new Game Play clip"
+                && summaryBadge.Text == "+1 🤖" && AutomationProperties.GetName(summaryBadge) == "1 new run",
+                "Switching domains must immediately show its pending clips and preserve the distinct run count.");
+            domain.SelectedIndex = 1;
             versions.SelectedValue = "bot-second";
             Check(use.IsEnabled, "A verified rollback must remain available before starting training.");
             use.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

@@ -339,6 +339,9 @@
                                 <ComboBoxItem Content="Game Play"/>
                                 <ComboBoxItem Content="Hacker"/>
                             </ComboBox>
+                            <TextBlock x:Name="BotDomainCaptureBadge" FontFamily="Segoe UI Emoji" Margin="7,0,0,0"
+                                       VerticalAlignment="Center" Visibility="{Binding Visibility, ElementName=BotNewCaptureSummary}"
+                                       ToolTip="New clips since this bot last finished training."/>
                             <Button x:Name="BotTrainButton" Content="Train" IsEnabled="False" MinWidth="70"
                                     Margin="7,0,0,0" Click="BotTrain_Click"/>
                             <Button x:Name="BotTrainBothButton" Content="Train Both" IsEnabled="False" MinWidth="90"

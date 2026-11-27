@@ -29,13 +29,37 @@ jobs:
           name: HollowKnightVision-macOS-coverage
           path: coverage/
           if-no-files-found: error
-      - name: Python unit tests
-        run: |
-          python3 macos/test-analyze-input-paths.py
-          python3 macos/test-camera-diagnostics.py
-          python3 macos/test-score-visual-replay.py
-          python3 macos/test-report-gpu-coverage.py
       - name: Build macOS app bundle
         env:
           HKV_CODE_SIGN_IDENTITY: "-"
         run: macos/build-app.sh --package-only
+
+  python-coverage:
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: diagnostics
+          - suite: bot
+            requirements: macos/BotPython/requirements.txt
+          - suite: object
+            requirements: macos/TrainingPython/requirements.txt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install coverage and suite dependencies
+        env:
+          REQUIREMENTS: ${{ matrix.requirements }}
+        run: |
+          python -m pip install 'coverage==7.10.7'
+          if [[ -n "$REQUIREMENTS" ]]; then python -m pip install -r "$REQUIREMENTS"; fi
+      - name: Measure line and branch coverage
+        run: bash macos/measure-python-coverage.sh "${{ matrix.suite }}" "coverage/${{ matrix.suite }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HollowKnightVision-macOS-python-${{ matrix.suite }}
+          path: coverage/${{ matrix.suite }}.json
+          if-no-files-found: error

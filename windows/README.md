@@ -124,7 +124,8 @@ source. **Reload model** stops active playback and reads the selected checkpoint
 again. Press **B** when you want to start it.
 
 The **+N 🤖** badge in Bot Summary counts new runs since training. Paired Hacker
-and Game Play recordings count once. The adjacent breakdown shows each domain's clips.
+and Game Play recordings count once. The badge beside the training domain selector
+shows new clips for that bot and updates when you switch domains.
 
 Before the first training run, **B** uses the built-in explorer in modded Game
 Play or Hacker. It waits for admitted gameplay and fresh movement observations.
