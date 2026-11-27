@@ -80,6 +80,31 @@ final class BotVisualKnightMemoryTests: XCTestCase {
         XCTAssertTrue(memory.resolve(sample(100.9)).isUsable)
     }
 
+    func testPolicyRejectsPredictionsWhoseEvidenceCannotDescribeThisFrame() throws {
+        var memory = BotVisualKnightMemory(), history = BotObservationHistory()
+        _ = memory.resolve(sample(100, x: 0.3))
+        let row = memory.resolve(sample(100.1))
+        let evidence = try XCTUnwrap(row.knightPrediction)
+        func accepts(_ change: (inout BotObservation) -> Void) -> Bool {
+            var edited = row
+            change(&edited)
+            return history.input(edited, previousAction: .neutral, now: edited.availableAt) != nil
+        }
+        func evidenceWith(lastSeenAt: Double = 100, issues: [String] = ["missing-knight"]) -> BotKnightPrediction {
+            .init(lastSeenAt: lastSeenAt, age: evidence.age, uncertainty: evidence.uncertainty,
+                  cameraCompensated: evidence.cameraCompensated, observedIssues: issues)
+        }
+        XCTAssertTrue(accepts { _ in })
+        XCTAssertFalse(accepts { $0.knightPrediction = evidenceWith(lastSeenAt: 100.05) })
+        XCTAssertFalse(accepts { $0.knightPrediction = evidenceWith(issues: []) })
+        XCTAssertFalse(accepts { $0.knightPrediction = evidenceWith(issues: ["missing-knight", "room-transition"]) })
+        XCTAssertFalse(accepts { $0.terrainSource = "human-authored" })
+        XCTAssertFalse(accepts { $0.visualContext = nil })
+        XCTAssertFalse(accepts { $0.visualContext = .init(frameWidth: 0, frameHeight: 0.56, cameraX: 0, cameraY: 0) })
+        XCTAssertFalse(accepts { $0.visualContext = .init(frameWidth: 640, frameHeight: 0.56, cameraX: nil, cameraY: nil) })
+        XCTAssertTrue(accepts { $0.knightPrediction = evidenceWith(issues: ["missing-knight", "stale-or-missing-detection"]) })
+    }
+
     func testReusedDetectionCannotRefreshTheAnchor() {
         var memory = BotVisualKnightMemory()
         _ = memory.resolve(sample(100, x: 0.3))

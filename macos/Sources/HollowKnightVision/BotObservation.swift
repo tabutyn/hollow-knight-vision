@@ -177,7 +177,12 @@ struct BotObservation: Codable, Equatable {
     var isUsable: Bool { issues.isEmpty }
     var knightPredictionDeadline: Double {
         guard knightSource == "visual-predicted" || knightPrediction != nil else { return .infinity }
-        guard knightSource == "visual-predicted", let prediction = knightPrediction,
+        guard knightSource == "visual-predicted", terrainSource == "detected",
+              let context = visualContext, context.hasValidFrameDimensions,
+              let prediction = knightPrediction, !prediction.cameraCompensated || context.camera != nil,
+              abs(captureTimestamp - prediction.lastSeenAt - prediction.age) <= 0.000_001,
+              prediction.observedIssues.contains("missing-knight"),
+              prediction.observedIssues.allSatisfy(BotKnightPrediction.canBridge),
               prediction.age.isFinite, prediction.age > 0, prediction.age <= prediction.maximumAge + 0.000_001,
               prediction.uncertainty.isFinite, (0...0.06).contains(prediction.uncertainty)
         else { return -.infinity }
