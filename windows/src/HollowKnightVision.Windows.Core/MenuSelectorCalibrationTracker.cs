@@ -13,6 +13,7 @@ public sealed class MenuSelectorCalibrationTracker
 {
     private readonly string? calibrationPath, mirrorPath;
     private readonly bool allowWrites;
+    private readonly MenuStencilCalibration? fallbackCalibration;
     private sealed record Sample(MenuSelectorBounds Bounds, double Timestamp);
     private readonly Dictionary<string, MenuSelectorBounds> learnedBounds = new(StringComparer.Ordinal);
     private string? pendingKey;
@@ -30,14 +31,23 @@ public sealed class MenuSelectorCalibrationTracker
         this.calibrationPath = ResolveCalibrationPath(false, calibrationPath);
         this.mirrorPath = mirrorPath is null ? null : Path.GetFullPath(mirrorPath);
         this.allowWrites = allowWrites;
+        this.fallbackCalibration = this.calibrationPath is null
+            ? null : fallbackCalibration ?? MenuStencilCalibration.LoadBundled();
         Calibration = this.calibrationPath is null ? null
-            : MenuStencilCalibration.Load(this.calibrationPath) ?? fallbackCalibration ?? MenuStencilCalibration.LoadDefault();
+            : MenuStencilCalibration.Load(this.calibrationPath) ?? this.fallbackCalibration;
     }
 
     public void Reset()
     {
         pending.Clear(); pendingKey = null; Diagnostic = null;
         // A capture/context reset does not discard positions already learned on disk.
+    }
+
+    internal void ReloadPersistedCalibration()
+    {
+        if (calibrationPath is null || !allowWrites) return;
+        Calibration = MenuStencilCalibration.Load(calibrationPath) ?? fallbackCalibration;
+        learnedBounds.Clear();
     }
 
     public void WaitingForMatch() => Diagnostic = "waiting-match";

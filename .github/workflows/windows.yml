@@ -19,6 +19,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - name: Verify Windows game runtime installer
         run: .\tests\runtime-installer.ps1
       - name: Build and measure Windows test coverage
@@ -26,6 +29,7 @@ jobs:
           HKV_TEST_NATIVE_KEYBOARD: '1'
         run: |
           dotnet --version
+          $env:HKV_TEST_TRAINING_LIBRARY_PYTHON = (Get-Command python).Source
           $tools = Join-Path $env:RUNNER_TEMP 'hkv-coverage'
           dotnet tool install --tool-path $tools coverlet.console --version 10.1.0
           if ($LASTEXITCODE -ne 0) { throw 'Could not install Coverlet.' }
@@ -35,9 +39,6 @@ jobs:
         run: dotnet run --project tests/HollowKnightVision.Windows.UiTests -c Release -- --installed-startup
       - name: Report remaining Mac parity obligations
         run: .\Test-MacParity.ps1
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
       - name: Set up the installed object trainer
         run: |
           $setup = Join-Path $env:LOCALAPPDATA 'Programs\Hollow Knight Vision\training\setup-training-windows.ps1'

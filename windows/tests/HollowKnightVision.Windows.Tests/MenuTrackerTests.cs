@@ -345,6 +345,36 @@ internal static class MenuTrackerTests
         Near(48, selector.RightRect.X); Near(20, selector.RightRect.Y);
     }
 
+    internal static void TestCatalogReplacementReloadsSelectorCalibration()
+    {
+        using var fixture = new CalibrationFixture();
+        const string context = "main-title", option = "fixture-option", language = "en";
+        MenuSelectorBounds Bounds(double x) => new(new(x, 20, 4, 4), new(x + 38, 20, 4, 4));
+        var nominal = Bounds(10);
+        var learned = Bounds(14);
+        var imported = Bounds(22);
+        var empty = new MenuStencilCalibration(1, 160, 120, Now, []);
+        var calibration = new MenuSelectorCalibrationTracker(fixture.Output, fallbackCalibration: empty);
+        var worker = new LiveMenuStencilWorker(new MenuStencilTracker(calibration: calibration));
+        for (var index = 0; index < 8; index++)
+            calibration.RecordMatch(context, option, language, nominal, learned, index * .3, Now);
+        Equal<MenuSelectorBounds?>(learned, calibration.CurrentBounds(context, option, language, nominal));
+
+        var importedReview = Guid.NewGuid();
+        empty.ReplacingSelector(context, option, imported.Left, imported.Right, language, Now)
+            .RecordingReviewedCorrections([importedReview], Now).Write(fixture.Output);
+        var newReview = new MenuSelectorCorrection(context, "fixture-other-option", language,
+            nominal.Left, nominal.Right, Guid.NewGuid());
+        worker.ReplaceCatalog(new([], 160, 120, 0, 120, [newReview]));
+
+        Equal<MenuSelectorBounds?>(imported, calibration.CurrentBounds(context, option, language, imported));
+        var persisted = MenuStencilCalibration.Load(fixture.Output)!;
+        Equal<MenuSelectorBounds?>(imported, MenuSelectorCalibrationTracker.PersistedBounds(persisted, context, option, language));
+        Equal<MenuSelectorBounds?>(nominal, MenuSelectorCalibrationTracker.PersistedBounds(persisted, context, newReview.OptionIdentifier, language));
+        Check(persisted.ReviewedCorrectionIdentifiers!.ToHashSet().SetEquals([importedReview, newReview.SourceExampleIdentifier]),
+            "Refreshing the catalog lost imported correction history.");
+    }
+
     internal static void TestIntermittentSelectorMatchesDoNotPersistCalibration()
     {
         using var fixture = new CalibrationFixture();

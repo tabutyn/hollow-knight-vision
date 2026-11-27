@@ -569,9 +569,14 @@ internal static class HackerTerrainWindowTests
                 var originX = (int?)Field(window, "hackerAtlasMinimumTileX").GetValue(window) ?? 0;
                 var originY = (int?)Field(window, "hackerAtlasMinimumTileY").GetValue(window) ?? 0;
                 var local = new Point(global.X - originX * size, -global.Y - originY * size);
-                var screen = atlas.PointToScreen(local);
-                Check(SetCursorPos((int)Math.Round(screen.X), (int)Math.Round(screen.Y)), "Could not move the native test pointer.");
-                WaitFor(() => (Mouse.GetPosition(atlas) - local).Length < 1.5, "The pointer did not reach the projected room coordinate.");
+                // Reproject while WPF settles the layout and the animated viewport.
+                WaitFor(() =>
+                {
+                    if ((Mouse.GetPosition(atlas) - local).Length < 1.5) return true;
+                    var screen = atlas.PointToScreen(local);
+                    Check(SetCursorPos((int)Math.Round(screen.X), (int)Math.Round(screen.Y)), "Could not move the native test pointer.");
+                    return false;
+                }, $"The pointer did not reach the projected room coordinate {local}.");
             }
 
             void Press()

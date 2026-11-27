@@ -1010,6 +1010,8 @@ public partial class MainWindow : Window
 
     private async Task PrepareShutdownAsync()
     {
+        // Let a library transaction finish before closing the process or resetting user data.
+        if (trainingTransferTask is { } transfer) await transfer;
         if (botTrialControl is { } trialControl)
         {
             botTrialControl = null;

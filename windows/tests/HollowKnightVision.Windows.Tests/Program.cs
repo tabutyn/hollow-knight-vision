@@ -1008,6 +1008,7 @@ var tests = new List<(string Name, Action Run)>
     ("menu tracking stays near the captured stencil after gradual shifts", MenuTrackerTests.TestTrackingStaysNearCapturedPositions),
     ("dialog selector search pose follows stable rows rather than animated title", MenuTrackerTests.TestDialogPoseUsesStableRows),
     ("synthetic stable selector matches persist measured product calibration", MenuTrackerTests.TestStableSelectorMatchPersistsProductCalibration),
+    ("replacing the catalog uses imported selector calibration and correction history", MenuTrackerTests.TestCatalogReplacementReloadsSelectorCalibration),
     ("synthetic intermittent selector matches do not persist calibration", MenuTrackerTests.TestIntermittentSelectorMatchesDoNotPersistCalibration),
     ("synthetic selector transitions cannot remain stuck on the previous row", MenuTrackerTests.TestLiveSelectorTransitionsCannotRemainStuckOnPreviousRow),
     ("synthetic tracked menu scans use fewer comparisons than acquisition", MenuTrackerTests.TestTrackingUsesFarFewerComparisonsWhenRequested),
@@ -1740,14 +1741,27 @@ if (args is ["--game-text"])
     Console.WriteLine($"Windows notebook and Thinking core tests passed: {focused.Length}");
     return;
 }
+
+var skipped = 0;
 foreach (var test in tests)
 {
-    test.Run();
+    try
+    {
+        test.Run();
+    }
+    catch (IOException error) when (OperatingSystem.IsWindows()
+        && test.Run == (Action)BotDemoTests.TestSaveArchiveRejectsFileLinks
+        && error.HResult == unchecked((int)0x80070522))
+    {
+        Console.WriteLine($"SKIP {test.Name}: Windows did not grant the file symlink privilege.");
+        skipped++;
+        continue;
+    }
     Console.WriteLine($"PASS {test.Name}");
 }
 await TestReceiverClientLoopback();
 Console.WriteLine("PASS receiver client loopback");
-Console.WriteLine($"Windows core tests passed: {tests.Count + 1}");
+Console.WriteLine($"Windows core tests passed: {tests.Count + 1 - skipped}");
 return;
 
 static void TestHudAtlasExclusions()

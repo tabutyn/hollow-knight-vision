@@ -3,6 +3,41 @@ import XCTest
 @testable import HollowKnightVision
 
 final class LabelingModelVersionStoreTests: XCTestCase {
+    func testWindowsRegistryKeepsExistingCandidateVersions() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let models = root.appendingPathComponent("models")
+        let runs = root.appendingPathComponent("runs")
+        try FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: runs, withIntermediateDirectories: true)
+        let model = LabelingModelIdentity.sharedObjectModel
+        let first = try candidate(classIdentifier: model, completedAt: Date(timeIntervalSince1970: 100),
+            modelContents: "first", runsRoot: runs,
+            id: UUID(uuidString: "A0000000-0000-4000-8000-000000000001")!)
+        let second = try candidate(classIdentifier: model, completedAt: Date(timeIntervalSince1970: 200),
+            modelContents: "second", runsRoot: runs,
+            id: UUID(uuidString: "A0000000-0000-4000-8000-000000000002")!)
+        let third = try candidate(classIdentifier: model, completedAt: Date(timeIntervalSince1970: 300),
+            modelContents: "third", runsRoot: runs)
+        let registryURL = models.appendingPathComponent(LabelingModelVersionStore.registryFilename)
+        let imported = Data("""
+        {"schemaVersion":1,"objects":{"\(model)":{"restorePoints":[],"candidateVersions":{
+          "\(first.id.uuidString.lowercased())":{"major":0,"minor":1},
+          "\(second.id.uuidString.lowercased())":{"major":0,"minor":2},
+          "\(second.id.uuidString)":{"major":0,"minor":3}
+        }}}}
+        """.utf8)
+        try imported.write(to: registryURL)
+
+        let store = LabelingModelVersionStore(rootURL: models)
+        try store.synchronizeCandidates([first, second])
+        XCTAssertEqual(try Data(contentsOf: registryURL), imported)
+        XCTAssertEqual(try store.candidateVersion(for: first), .init(major: 0, minor: 1))
+        XCTAssertEqual(try store.candidateVersion(for: second), .init(major: 0, minor: 2))
+        try store.synchronizeCandidates([third])
+        XCTAssertEqual(try store.candidateVersion(for: third), .init(major: 0, minor: 3))
+    }
+
     func testPromotedModelPreservesEvidenceWhenTrainingFilesAreUnavailable() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -327,9 +362,9 @@ final class LabelingModelVersionStoreTests: XCTestCase {
         runsRoot: URL,
         baseRunIdentifier: String? = nil,
         classIdentifiers: [String]? = nil,
-        averagePrecisionByClass: [String: Double]? = nil
+        averagePrecisionByClass: [String: Double]? = nil,
+        id: UUID = UUID()
     ) throws -> LabelingModelCandidate {
-        let id = UUID()
         let runURL = runsRoot.appendingPathComponent(id.uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: runURL, withIntermediateDirectories: false)
         try Data(modelContents.utf8).write(to: runURL.appendingPathComponent("Detector.mlmodel"))
