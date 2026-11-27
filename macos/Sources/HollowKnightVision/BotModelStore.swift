@@ -1,71 +1,62 @@
 import Foundation
 
-struct BotTrainingScore: Codable {
-    struct Head: Codable {
-        let name: String
-        let accuracy: Double
-        let balancedAccuracy: Double
-    }
-    let negativeLogLikelihood: Double
-    let exactActionAccuracy: Double
-    let heads: [Head]
+struct BotCheckpointScore: Equatable {
+    let label: String
+    let value: Double
+    let baseline: Double?
 }
 
-struct BotTrainingResult: Codable {
-    let id: String
-    let name: String
+// Training writes a richer report. Playback only needs the version identity,
+// export verification and the measurements shown in the checkpoint catalog.
+struct BotTrainingResult: Decodable {
+    let id: String?
     let modelDirectory: String
     let createdAt: String
-    let trainingExamples: Int
-    let validationExamples: Int
-    let candidate: BotTrainingScore
-    let baseline: BotTrainingScore?
-    var candidateSequential: BotTrainingScore? = nil
-    var baselineSequential: BotTrainingScore? = nil
-    struct ParentPolicy: Codable {
-        let directory, modelSHA256: String
-    }
-    var parentPolicy: ParentPolicy? = nil
-    var lastGymPolicy: ParentPolicy? = nil
-    struct GymEvidence: Codable {
-        let parent: String?
-        let trainingSteps: Int?
-    }
-    var gymEvidence: GymEvidence? = nil
-    let baselineSHA256: String?
-    let baselineError: String?
-    let eligibleForActivation: Bool
-    let reason: String
-    struct WallEvidence: Codable {
-        let trainingWithWall: Int
-        let analyzed: Int
-        let withWall: Int
-        let actionsChangedWhenMasked: Int
-    }
-    var wallEvidence: WallEvidence? = nil
-    struct PitTraining: Codable {
-        struct Evaluation: Codable { let episodes: Int; let landed: Int }
-        let heldOut: Evaluation
-    }
-    var pitTraining: PitTraining? = nil
-    struct AtlasTraining: Codable {
-        struct Evaluation: Codable { let episodes, choseFrontier, clearStarts: Int; let meanNewCells: Double }
-        let heldOut: Evaluation
-    }
-    var atlasTraining: AtlasTraining? = nil
-    struct CombatTraining: Codable {
-        let clips, validationClips: Int
-        let attackRecall, releaseRecall: Double?
-    }
-    var combatTraining: CombatTraining? = nil
-    struct EnemyOutcomes: Codable { let damage, kills: Int }
-    var enemyOutcomes: EnemyOutcomes? = nil
-    struct BlockadeTraining: Codable {
-        let clips, examples, attackExamples: Int
-    }
-    var blockadeTraining: BlockadeTraining? = nil
     let nativeParity: Bool
-    var botDomain: BotDomain? = nil
+    let botDomain: BotDomain?
+
+    private let candidate, baseline, candidateSequential, baselineSequential: Metrics?
+
+    var scores: [BotCheckpointScore] {
+        var rows: [BotCheckpointScore] = []
+        func add(_ label: String, _ value: Double?, _ comparison: Double?) {
+            if let value { rows.append(BotCheckpointScore(label: label, value: value, baseline: comparison)) }
+        }
+        add("Action agreement", candidate?.action, baseline?.action)
+        add("Jump balanced accuracy", candidate?.jump, baseline?.jump)
+        add("Own-action agreement", candidateSequential?.action, baselineSequential?.action)
+        return rows
+    }
+
+    private struct Metrics: Decodable {
+        let action: Double?
+        let jump: Double?
+
+        private enum Field: String, CodingKey { case exactActionAccuracy, heads, name, balancedAccuracy }
+
+        init(from decoder: Decoder) throws {
+            let fields = try? decoder.container(keyedBy: Field.self)
+            action = fields?.accuracy(forKey: .exactActionAccuracy)
+            var jumpAccuracy: Double?
+            if var heads = try? fields?.nestedUnkeyedContainer(forKey: .heads) {
+                while !heads.isAtEnd {
+                    let element = try heads.superDecoder()
+                    guard let head = try? element.container(keyedBy: Field.self),
+                          (try? head.decode(String.self, forKey: .name)) == "jump" else { continue }
+                    jumpAccuracy = head.accuracy(forKey: .balancedAccuracy)
+                    break
+                }
+            }
+            jump = jumpAccuracy
+        }
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func accuracy(forKey key: Key) -> Double? {
+        guard let value = try? decode(Double.self, forKey: key), (0...1).contains(value) else { return nil }
+        return value
+    }
 }
 
 struct BotModelVersion: Identifiable {
@@ -127,12 +118,19 @@ struct BotModelStore {
         try Self.selectionLock.withLock {
             let saved = try selection()
             let current = try directory(named: saved.directory)
-            guard let latest = try versions().first(where: { $0.result != nil && canActivate($0) }),
-                  latest.id != saved.directory, latest.id != saved.manualChoiceThrough,
-                  (try? BotNativePolicy.load(from: latest.directory)) != nil else { return current }
+            let catalog = try versions()
+            guard let latest = newestVerified(in: catalog) else { return current }
+            if latest.id == saved.manualChoiceThrough,
+               catalog.contains(where: { $0.id == saved.directory && canActivate($0) }),
+               (try? BotNativePolicy.load(from: current)) != nil { return current }
             try saveSelection(latest.id, previous: saved, manualChoiceThrough: nil)
             return try directory(named: latest.id)
         }
+    }
+
+    private func newestVerified(in catalog: [BotModelVersion]) -> BotModelVersion? {
+        // The catalog is newest first. An incomplete copy can still have a manifest.
+        catalog.first { canActivate($0) && (try? BotNativePolicy.load(from: $0.directory)) != nil }
     }
 
     func versions() throws -> [BotModelVersion] {
@@ -145,6 +143,8 @@ struct BotModelStore {
                       let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       FileManager.default.fileExists(atPath: url.appendingPathComponent("runtime-manifest.json").path)
                 else { return nil }
+                if let declared = manifest["botDomain"], !(declared is NSNull),
+                   declared as? String != domain.rawValue { return nil }
                 let result = (try? Data(contentsOf: url.appendingPathComponent("training-result.json")))
                     .flatMap { try? JSONDecoder().decode(BotTrainingResult.self, from: $0) }
                 // Partial candidates are never offered as usable versions.
@@ -198,7 +198,7 @@ struct BotModelStore {
     private func select(_ name: String) throws {
         let target = try directory(named: name)
         _ = try BotNativePolicy.load(from: target)
-        let newest = try versions().first(where: { $0.result != nil && canActivate($0) })?.id
+        let newest = newestVerified(in: try versions())?.id
         try saveSelection(name, previous: selection(), manualChoiceThrough: name == newest ? nil : newest)
     }
     private func saveSelection(_ name: String, previous: Selection, manualChoiceThrough: String?) throws {
