@@ -98,6 +98,9 @@ final class BotModelStoreTests: XCTestCase {
         XCTAssertEqual(workspace.hacker.newClipCount, 1)
         XCTAssertEqual(workspace.gameplay.newClipCount, 1)
         XCTAssertEqual(workspace.newClipCount, 1)
+        XCTAssertEqual(BotModelTab.summary.newCaptureLabel(workspace.newClipCount), "1 new run")
+        XCTAssertEqual(BotModelTab.gameplay.newCaptureLabel(workspace.gameplay.newClipCount), "1 new Gameplay clip")
+        XCTAssertEqual(BotModelTab.hacker.newCaptureLabel(workspace.hacker.newClipCount), "1 new Hacker clip")
 
         for (controller, clip) in [(workspace.hacker, hacker), (workspace.gameplay, visual)] {
             _ = try makeVersion(controller.store, name: "v1")
@@ -116,6 +119,8 @@ final class BotModelStoreTests: XCTestCase {
             XCTAssertEqual(controller.newClipCount, 0)
             XCTAssertEqual(workspace.newClipCount, controller.store.domain == .hacker ? 1 : 0)
         }
+        XCTAssertEqual(BotModelTab.summary.newCaptureLabel(workspace.newClipCount), "0 new runs")
+        XCTAssertEqual(BotModelTab.hacker.newCaptureLabel(workspace.hacker.newClipCount), "0 new Hacker clips")
         let candidate = try XCTUnwrap(workspace.gameplay.versions.first)
         var reloads = 0
         for controller in [workspace.gameplay, workspace.hacker] {
