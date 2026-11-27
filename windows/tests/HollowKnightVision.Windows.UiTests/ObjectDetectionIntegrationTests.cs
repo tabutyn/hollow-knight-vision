@@ -86,8 +86,9 @@ internal static class ObjectDetectionIntegrationTests
         try
         {
             var type = typeof(MainWindow).Assembly.GetType("HollowKnightVision.Windows.App.WindowsMenuStencilRecognizer")!;
-            var instance = Activator.CreateInstance(type, BindingFlags.NonPublic | BindingFlags.Instance, null,
+            object NewRecognizer() => Activator.CreateInstance(type, BindingFlags.NonPublic | BindingFlags.Instance, null,
                 [Path.Combine(root, "labeling-v1", "examples"), "en"], null)!;
+            var instance = NewRecognizer();
             var analyze = type.GetMethod("Analyze", BindingFlags.NonPublic | BindingFlags.Instance)!;
             void Call(string name, params object?[] args) => type.GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(instance, args);
             LiveObjectDetectionSnapshot Snapshot(object observation) => (LiveObjectDetectionSnapshot)observation.GetType().GetProperty("Objects")!.GetValue(observation)!;
@@ -102,7 +103,9 @@ internal static class ObjectDetectionIntegrationTests
             Check(snapshot.PixelDiagnostic is not null, "Pixel diagnostic was not produced by the live recognizer.");
             Check(snapshot.Masks[1].ClassIdentifier == "game.playable-knight" && snapshot.Masks[1].Box.Width > snapshot.Tracked[0].Box.Width,
                 "Motion masks reused the lagging display box.");
-            Call("ResetTracking"); Call("ConfigureObjectDiagnostics", .5, false);
+            // A reset retires track IDs. Start both runs with the same identity history.
+            instance = NewRecognizer();
+            Call("ConfigureObjectDiagnostics", .5, false);
             var quiet = Snapshot(Observe(10, [Knight(), new("enemies.crawlid", new(.5, .4, .1, .1), .9f)]));
             Check(quiet.PixelDiagnostic is null && quiet.Tracked.SequenceEqual(snapshot.Tracked) && quiet.Masks.SequenceEqual(snapshot.Masks),
                 "Pixel debug toggle changed recognition or mapping evidence.");
