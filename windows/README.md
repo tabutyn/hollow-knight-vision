@@ -120,7 +120,8 @@ the B and the current bot status. In menus, starting the bot archives slot 4
 and begins a fresh save. In gameplay it uses the current save.
 
 The **+N 🤖** badge in Bot Summary counts new runs since training. Paired Hacker
-and Game Play recordings count once. The adjacent breakdown shows each domain's clips.
+and Game Play recordings count once. The badge beside the training domain selector
+shows new clips for that bot and updates when you switch domains.
 
 Before the first training run, **B** uses the built-in explorer in modded Game
 Play or Hacker. It waits for admitted gameplay and fresh movement observations.

@@ -9,6 +9,12 @@ enum BotModelTab: String, CaseIterable, Identifiable {
     var domain: BotDomain? {
         switch self { case .summary: nil; case .gameplay: .gameplay; case .hacker: .hacker }
     }
+    func newCaptureLabel(_ count: Int) -> String {
+        if let domain {
+            return "\(count) new \(domain.title) \(count == 1 ? "clip" : "clips")"
+        }
+        return "\(count) new \(count == 1 ? "run" : "runs")"
+    }
 }
 
 struct BotModelWorkspaceView: View, Equatable {
@@ -84,8 +90,9 @@ struct BotModelWorkspaceView: View, Equatable {
                 Spacer(minLength: 8)
                 HStack(spacing: 3) { Text("+\(count)"); Text("🤖") }
                     .font(.caption.monospacedDigit()).foregroundStyle(count > 0 ? .blue : .secondary)
+                    .accessibilityElement(children: .ignore)
                     .accessibilityIdentifier("bot-new-sample-count")
-                    .accessibilityLabel("\(count) new clips")
+                    .accessibilityLabel(tab.newCaptureLabel(count))
                     .help(domain == nil
                         ? "New recordings since each bot last finished training. Paired recordings count once."
                         : "New clips since this bot last finished training.")

@@ -61,16 +61,26 @@ public partial class MainWindow
         }
         var pending = BotTrainingJob.CountNewCaptures(botTrainingLibrary, hacker, gameplay);
         var runs = pending.Runs == 1 ? "1 new run" : $"{pending.Runs} new runs";
-        BotNewCaptureBadge.Text = $"+{pending.Runs} 🤖";
-        BotNewCaptureBadge.Foreground = pending.Runs > 0 ? System.Windows.Media.Brushes.DeepSkyBlue : System.Windows.Media.Brushes.Silver;
-        System.Windows.Automation.AutomationProperties.SetName(BotNewCaptureBadge, runs);
+        ShowBotCaptureCount(BotNewCaptureBadge, pending.Runs, runs);
+        var isHacker = SelectedBotTrainingDomain == BotCaptureDomain.Hacker;
+        var clips = isHacker ? pending.HackerClips : pending.GameplayClips;
+        var domain = isHacker ? "Hacker" : "Game Play";
+        ShowBotCaptureCount(BotDomainCaptureBadge, clips, $"{clips} new {domain} {(clips == 1 ? "clip" : "clips")}");
         BotNewCaptureSummary.Text = $"{runs} · Hacker {pending.HackerClips} · Game Play {pending.GameplayClips}";
         BotNewCaptureSummary.Visibility = Visibility.Visible;
+    }
+
+    private static void ShowBotCaptureCount(TextBlock badge, int count, string label)
+    {
+        badge.Text = $"+{count} 🤖";
+        badge.Foreground = count > 0 ? System.Windows.Media.Brushes.DeepSkyBlue : System.Windows.Media.Brushes.Silver;
+        System.Windows.Automation.AutomationProperties.SetName(badge, label);
     }
 
     private void BotTrainingDomain_Changed(object sender, SelectionChangedEventArgs e)
     {
         botTrainingMessage = null;
+        if (BotDomainCaptureBadge is not null) PresentNewBotCaptures();
         PresentBotCheckpoints();
         UpdateBotTrainingControls();
     }
