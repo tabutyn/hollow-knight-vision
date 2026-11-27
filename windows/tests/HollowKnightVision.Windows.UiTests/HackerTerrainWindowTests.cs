@@ -319,7 +319,6 @@ internal static class HackerTerrainWindowTests
             var modify = Control<RadioButton>(window, "GroundModifyButton");
             var delete = Control<RadioButton>(window, "GroundDeleteButton");
             var undo = Control<Button>(window, "GroundUndoButton");
-            var framing = viewport.Transform.Scale;
             TestDoorDragUsesPathBeyondCapturedTiles();
             TestEndpointHandlesFollowVisibleLinesAndRemainReadableWhenZoomed();
             TestOverlappingRoomEditsKeepTheirOwner();
@@ -370,9 +369,12 @@ internal static class HackerTerrainWindowTests
             Check(ReadDoors().Count == 1, "Delete must remove only the selected door.");
             undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(ReadDoors().Count == 2, "Undo must restore the edited door on disk.");
+            var framing = viewport.Transform;
             Choose("Objective");
-            Check(overlay.Children.OfType<Line>().Count() == 2 && !overlay.Children.OfType<Rectangle>().Any()
-                && viewport.Transform.Scale == framing, "Objective must display both doors without changing the camera framing.");
+            var doorLines = overlay.Children.OfType<Line>().Count();
+            var editHandles = overlay.Children.OfType<Rectangle>().Count();
+            Check(doorLines == 2 && editHandles == 0 && viewport.Transform == framing,
+                $"Objective expected two doors, no handles and framing {framing}. Found {doorLines} lines, {editHandles} handles and framing {viewport.Transform}.");
 
             Choose("Door");
             SetMode(add);
