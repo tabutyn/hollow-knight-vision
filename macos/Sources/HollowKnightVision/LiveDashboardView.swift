@@ -1807,8 +1807,7 @@ struct DashboardView: View {
             }
             if BotControlPresentationPolicy.shows(in: workspace) {
                 BotControlsView(model: model, domain: workspace == .hacker ? .hacker : .gameplay,
-                    canStart: !labelingTrainer.isRunning && !botTrainer.isRunning
-                    && initialization.isFirstPhaseComplete && model.canStartBotDemo,
+                    startIssue: botStartIssue,
                     action: toggleBotControl)
             }
             if let issue = model.pathRecordingIssue {
@@ -1837,11 +1836,15 @@ struct DashboardView: View {
         .lineLimit(1)
     }
 
+    private var botStartIssue: String? {
+        model.botDemoStartIssue(training: labelingTrainer.isRunning || botTrainer.isRunning,
+                                stencilsReady: initialization.isFirstPhaseComplete)
+    }
+
     private func toggleBotControl() {
         if model.botDemo.isActive { model.botPlayer.automaticPoliciesEnabled = false; model.stopBotDemo(reason: "Stopped with B"); return }
         if model.botPlayer.isActive { model.botPlayer.automaticPoliciesEnabled = false; model.botPlayer.stop(); return }
-        guard !labelingTrainer.isRunning && !botTrainer.isRunning else { model.botDemo.rejectStart("Wait for Model training to finish before starting the bot."); return }
-        guard initialization.isFirstPhaseComplete else { model.botDemo.rejectStart("Complete stencil setup before starting the bot."); return }
+        if let issue = botStartIssue { model.botDemo.rejectStart(issue); return }
         let inGameplay = model.liveGameStatus == "Gameplay"
         let domain: BotDomain = workspace == .hacker ? .hacker : .gameplay
         if !inGameplay { selectWorkspace(.gameplay) }

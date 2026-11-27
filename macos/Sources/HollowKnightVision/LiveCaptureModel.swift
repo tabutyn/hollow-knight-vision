@@ -1693,16 +1693,19 @@ final class LiveCaptureModel: NSObject, ObservableObject, @unchecked Sendable {
 
     var canCollectBotDemonstration: Bool { botGameplayReady && !botPlayer.isActive && !botDemo.isActive }
 
-    var canStartBotDemo: Bool {
-        isCapturing && gameMode == .modded && labelPauseState == .ready
+    func botDemoStartIssue(training: Bool = false, stencilsReady: Bool = true) -> String? {
+        let controlsReady = labelPauseState == .ready
             && !isPathRecording && !isPathPlaybackActive && !isPathCheckpointPending && !playerOpsBusy
             && ((!atlasManagementBusy && (!hackerAtlasBlocksGameplay || botDemo.isHandingOff))
                 || (switchingProfileAtlas && botDemo.isActive)) && !botDemonstrations.isRecording
-
+        return BotControlPresentationPolicy.startIssue(mode: gameMode, capturing: isCapturing, training: training,
+            stencilsReady: stencilsReady, controlsReady: controlsReady)
     }
 
+    var canStartBotDemo: Bool { botDemoStartIssue() == nil }
+
     func startBotDemo(inGameplay: Bool = false, domain: BotDomain = .hacker) {
-        guard canStartBotDemo else { botDemo.rejectStart("Bot is not ready: check capture and recording or editing state."); return }
+        if let issue = botDemoStartIssue() { botDemo.rejectStart(issue); return }
         botPlayer.stop(reason: "Starting bot control")
         botDemo.start(inGameplay: inGameplay, domain: domain)
     }
