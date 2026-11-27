@@ -263,13 +263,71 @@ internal static class StencilGuidanceParityTests
         });
     }
 
+    public static void TestControllerLayouts()
+    {
+        var common = new[] { "shared.controller", "shared.advanced-settings", "shared.back",
+            "shared.select-decoration", "shared.select-decoration" };
+        var inactive = LabelingContractTests.Example("controller", [.. common, ControllerStencilPolicy.Inactive]);
+        var connected = LabelingContractTests.Example("controller", [.. common, ControllerStencilPolicy.Diagram, ControllerStencilPolicy.Remap]);
+        foreach (var example in new[] { inactive, connected })
+        {
+            Check(LabelingContractEvaluator.AcceptsMenuExample(example));
+            var steps = StencilInitializationPolicy.MissingSteps([example], "en", GameRuntimeMode.Normal);
+            Check(!steps.Any(step => step.ContextIdentifier == "controller"));
+            Check(steps.Any(step => step.ContextIdentifier == "remap-controller") == (example == connected));
+            Check(steps.Any(step => step.ContextIdentifier == "controller-advanced-settings"));
+        }
+        Check(!LabelingContractEvaluator.AcceptsMenuExample(LabelingContractTests.Example("controller", common)));
+        Check(!LabelingContractEvaluator.AcceptsMenuExample(LabelingContractTests.Example("controller", [.. common, ControllerStencilPolicy.Diagram])));
+        Check(!LabelingContractEvaluator.AcceptsMenuExample(LabelingContractTests.Example("controller",
+            [.. common, ControllerStencilPolicy.Inactive, ControllerStencilPolicy.Diagram])));
+    }
+
+    public static void TestControllerReferenceAndGuidance()
+    {
+        WithTemporaryDirectory(root =>
+        {
+            var store = new LabelingExampleStore(root);
+            var coordinator = new StencilInitializationCoordinator(store, GameRuntimeMode.Normal);
+            Check(coordinator.Guidance("controller", ControllerStencilPolicy.Diagram) == "Draw a box around Controller Diagram.");
+            var inactive = store.Save(Frame(), "controller", [Box("shared.controller"), Box(ControllerStencilPolicy.Inactive)]);
+            coordinator.Refresh();
+            Check(coordinator.ScreenCount == 24 && coordinator.CompletedCount == 2);
+            Check(coordinator.Guidance("controller", null) == "Draw a box around Advanced Settings.");
+            var completed = store.Update(inactive, "controller", [.. inactive.Manifest.Annotations,
+                Box("shared.advanced-settings"), Box("shared.back"), Box("shared.select-decoration"), Box("shared.select-decoration")]);
+            coordinator.Refresh();
+            Check(coordinator.IsScreenComplete("controller") && coordinator.CompletedScreenCount == 1 && coordinator.CompletedCount == 6);
+            var partial = LabelingContractTests.Example("controller", ControllerStencilPolicy.Diagram);
+            partial = partial with { Manifest = partial.Manifest with { CreatedAt = completed.Manifest.CreatedAt.AddMinutes(1) } };
+            bool NeedsRemap(params SavedLabelingExample[] examples) =>
+                StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal, examples).Any(context => context.Identifier == "remap-controller");
+            Check(NeedsRemap(completed, partial));
+            Check(!NeedsRemap(completed, partial with { Manifest = partial.Manifest with { LanguageIdentifier = "fr" } }));
+            Check(!NeedsRemap(completed, partial with { Manifest = partial.Manifest with { ImageWidth = 1280 } }));
+        });
+    }
+
+    public static void TestControllerPicker()
+    {
+        static string[] Options(bool add, params LabelingExampleAnnotation[] rectangles) =>
+            StencilLabelSelectionPolicy.AvailableLabels("controller", rectangles, false, add).Select(label => label.Identifier).ToArray();
+        Check(Options(true).Contains(ControllerStencilPolicy.Inactive) && Options(true).Contains(ControllerStencilPolicy.Diagram));
+        Check(!Options(true).Contains(ControllerStencilPolicy.Remap));
+        Check(Options(true, Box(ControllerStencilPolicy.Diagram)).Contains(ControllerStencilPolicy.Remap));
+        Check(!Options(true, Box(ControllerStencilPolicy.Diagram)).Contains(ControllerStencilPolicy.Inactive));
+        Check(!Options(true, Box(ControllerStencilPolicy.Inactive)).Contains(ControllerStencilPolicy.Diagram));
+        Check(Options(false, Box(ControllerStencilPolicy.Inactive)).Contains(ControllerStencilPolicy.Diagram));
+        Check(Options(true, Box(ControllerStencilPolicy.Inactive) with { IsNegative = true }).Contains(ControllerStencilPolicy.Inactive));
+    }
+
     public static void TestEmptySetupIncludesEveryRequiredScreen()
     {
         WithTemporaryDirectory(root =>
         {
             var coordinator = new StencilInitializationCoordinator(
                 new LabelingExampleStore(root), GameRuntimeMode.Modded);
-            Check(coordinator.TotalCount == 190);
+            Check(coordinator.TotalCount == 189);
             Check(coordinator.ScreenCount == 26);
             Check(coordinator.ButtonTitle == "Stencil (0 / 26)");
             Check(coordinator.CompletedScreenCount == 0);

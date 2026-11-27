@@ -204,6 +204,7 @@ public sealed partial class MenuStencilCatalogBuilder
         // The shared Clear Save label expands into one option per occupied-row
         // location below. A second generic option would tie its own selector pair.
         if (context == "select-profile" && id == "select-profile.clear-save") return false;
+        if (id == ControllerStencilPolicy.Inactive) return false;
         if (id.Contains(".header", StringComparison.Ordinal) || id.Contains(".heading", StringComparison.Ordinal) || id.EndsWith(".pointer", StringComparison.Ordinal) || id == "controller-advanced.mfi") return false;
         if (context is "quit-to-menu" or "quit-game") return id != firstDefinition;
         return context == "main-title" || anchor.Bounds.Y >= 80 || id != firstDefinition;

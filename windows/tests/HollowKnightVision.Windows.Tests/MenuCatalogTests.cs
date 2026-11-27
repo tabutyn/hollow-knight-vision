@@ -718,6 +718,23 @@ internal static class MenuCatalogTests
     private static void Check(bool value, string message) { if (!value) throw new Exception(message); }
     private static void Throws(Action action) { try { action(); } catch (InvalidOperationException) { return; } throw new Exception("Unusable scene accepted."); }
 
+    internal static void TestInactiveControllerAnchor()
+    {
+        var fixture = new Fixture();
+        var bounds = new StencilRect(45, 45, 70, 10);
+        (string Id, StencilRect Bounds)[] labels = [
+            ("shared.controller", new(58, 10, 44, 8)), (ControllerStencilPolicy.Inactive, bounds),
+            ("shared.advanced-settings", new(54, 90, 52, 8)), ("shared.back", new(70, 102, 20, 8))];
+        var example = fixture.Example("controller", [.. labels, (Decoration, new(42, 90, 8, 8)), (Decoration, new(110, 90, 8, 8))]);
+        var context = LabelingContractCatalog.ScreenContexts.Single(item => item.Identifier == "controller");
+        var builder = new MenuStencilCatalogBuilder([context], path => fixture.Images.GetValueOrDefault(path),
+            saved => LabelingContractEvaluator.AcceptsMenuExample(saved));
+        var scene = builder.Build([example], null).Scenes.Single();
+        Equal(bounds, scene.Anchors.Single(anchor => anchor.ClassIdentifier == ControllerStencilPolicy.Inactive).Bounds);
+        Check(scene.Options.Select(option => option.ClassIdentifier).ToHashSet().SetEquals(["shared.advanced-settings", "shared.back"]),
+            "Only interactive controller rows should offer a selection.");
+    }
+
     private sealed class Fixture
     {
         internal Dictionary<string, BgraFrame> Images { get; } = new(StringComparer.Ordinal);

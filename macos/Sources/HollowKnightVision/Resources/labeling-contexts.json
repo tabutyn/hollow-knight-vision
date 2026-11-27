@@ -292,6 +292,10 @@
         "name": "Controller"
       },
       {
+        "id": "controller.no-active-controller",
+        "name": "No Active Controller"
+      },
+      {
         "id": "controller.controller-diagram",
         "name": "Controller Diagram"
       },

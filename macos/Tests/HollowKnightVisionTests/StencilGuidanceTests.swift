@@ -182,10 +182,8 @@ final class StencilGuidanceTests: XCTestCase {
         for item in contexts {
             let context = try XCTUnwrap(LabelingContext(storageIdentifier: item.contextIdentifier))
             XCTAssertEqual(item.name, context.rawValue)
-            // Mac additionally supports the game's inactive-controller layout.
-            let sharedLabels = context.labels.filter { $0.id != ControllerStencilPolicy.noActiveController }
-            XCTAssertEqual(item.objects.map(\.id), sharedLabels.map(\.id))
-            XCTAssertEqual(item.objects.map(\.name), sharedLabels.map(\.name))
+            XCTAssertEqual(item.objects.map(\.id), context.labels.map(\.id))
+            XCTAssertEqual(item.objects.map(\.name), context.labels.map(\.name))
             if StencilInitializationPolicy.requiredContexts.contains(context) {
                 for language in HollowKnightMenuLanguage.allCases {
                     let words = StencilGuidanceText.catalog[language.rawValue]!

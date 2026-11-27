@@ -60,8 +60,18 @@ internal static class StencilInitializationPolicy
         }).ToArray();
     }
 
-    internal static ContextRequirements[] Contexts(GameRuntimeMode mode) => RequiredContexts
-        .Where(context => mode == GameRuntimeMode.Modded || context.Identifier != "mods").ToArray();
+    internal static ContextRequirements[] Contexts(GameRuntimeMode mode,
+        IReadOnlyList<SavedLabelingExample>? examples = null, string languageIdentifier = "en")
+    {
+        var reference = RepresentativeExample(examples ?? [], "controller", languageIdentifier, mode);
+        var counts = LabelingContractEvaluator.PositiveCounts(reference?.Manifest.Annotations ?? []);
+        return RequiredContexts.Where(context => (mode == GameRuntimeMode.Modded || context.Identifier != "mods")
+                && (context.Identifier != "remap-controller" || !counts.ContainsKey(ControllerStencilPolicy.Inactive)))
+            .Select(context => context.Identifier == "controller"
+                ? context with { Requirements = context.Requirements.Where(item =>
+                    ControllerStencilPolicy.IsRequired(item.Identifier, counts)).ToArray() }
+                : context).ToArray();
+    }
 
     internal static IReadOnlyList<StencilInitializationStep> MissingSteps(
         IReadOnlyList<SavedLabelingExample> examples,
@@ -69,7 +79,7 @@ internal static class StencilInitializationPolicy
         GameRuntimeMode mode)
     {
         var missing = new List<StencilInitializationStep>();
-        foreach (var context in Contexts(mode))
+        foreach (var context in Contexts(mode, examples, languageIdentifier))
         {
             var requirements = context.Requirements
                 .Where(item => !item.ModdedOnly || mode == GameRuntimeMode.Modded).ToArray();
@@ -99,10 +109,12 @@ internal static class StencilInitializationPolicy
         return examples.Where(example => NormalizeContext(example.Manifest.ContextIdentifier) == context
                 && example.Manifest.ResolvedLanguageIdentifier == languageIdentifier
                 && example.Manifest.ImageWidth == 640 && example.Manifest.ImageHeight == 360)
-            .OrderByDescending(example =>
+            .OrderByDescending(example => context == "controller" ? example.Manifest.CreatedAt : DateTimeOffset.MinValue)
+            .ThenByDescending(example =>
             {
                 var counts = PositiveCounts(example);
-                return requirements.Sum(item => Math.Min(item.Count, counts.GetValueOrDefault(item.Identifier)));
+                return requirements.Where(item => context != "controller" || ControllerStencilPolicy.IsRequired(item.Identifier, counts))
+                    .Sum(item => Math.Min(item.Count, counts.GetValueOrDefault(item.Identifier)));
             })
             .ThenByDescending(example => example.Manifest.CreatedAt)
             .ThenBy(example => example.Id)
@@ -110,11 +122,10 @@ internal static class StencilInitializationPolicy
     }
 
     private static Dictionary<string, int> PositiveCounts(SavedLabelingExample example) =>
-        example.Manifest.Annotations.Where(annotation => !annotation.IsHardNegative)
-            .GroupBy(annotation => LabelingClassIdentity.CanonicalIdentifier(annotation.ClassIdentifier), StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+        LabelingContractEvaluator.PositiveCounts(example.Manifest.Annotations);
 
-    internal static int RequiredCount(GameRuntimeMode mode) => Contexts(mode).Sum(context =>
+    internal static int RequiredCount(GameRuntimeMode mode, ContextRequirements[]? contexts = null) =>
+        (contexts ?? Contexts(mode)).Sum(context =>
         context.Requirements.Where(item => !item.ModdedOnly || mode == GameRuntimeMode.Modded)
             .Sum(item => item.Count));
 
@@ -160,13 +171,13 @@ internal sealed class StencilInitializationCoordinator
 
     internal string LanguageIdentifier { get; private set; }
     internal IReadOnlyList<StencilInitializationStep> Steps { get; private set; } = [];
-    internal int TotalCount => StencilInitializationPolicy.RequiredCount(mode);
+    internal int TotalCount => StencilInitializationPolicy.RequiredCount(mode, Contexts);
     internal int CompletedCount => Math.Max(0, TotalCount - Steps.Count);
     internal bool IsComplete => Steps.Count == 0 && HasUsableHUD;
     internal bool HasUsableHUD { get; set; }
     internal bool IsFirstPhaseComplete => HasUsableHUD && !Steps.Any(StencilInitializationPolicy.IsFirstPhaseStep);
     internal GameRuntimeMode Mode => mode;
-    internal StencilInitializationPolicy.ContextRequirements[] Contexts => StencilInitializationPolicy.Contexts(mode);
+    internal StencilInitializationPolicy.ContextRequirements[] Contexts { get; private set; } = [];
     internal int ScreenCount => Contexts.Length;
     internal bool IsScreenComplete(string context) => !Steps.Any(step => step.ContextIdentifier == context)
         && (context != "gameplay-hud" || HasUsableHUD);
@@ -221,6 +232,9 @@ internal sealed class StencilInitializationCoordinator
         if (context is not null && StencilInitializationPolicy.RequiredContexts.Any(item => item.Identifier == context))
         {
             var remaining = Steps.Where(step => step.ContextIdentifier == context).ToArray();
+            if (context == "controller" && selected == ControllerStencilPolicy.Diagram
+                && !LabelingContractEvaluator.PositiveCounts(ExampleFor(context)?.Manifest.Annotations ?? []).ContainsKey(selected))
+                return Text("draw", ("object", Text("Controller Diagram")));
             var next = remaining.FirstOrDefault(step => step.ClassIdentifier == selected) ?? remaining.FirstOrDefault();
             var name = StencilInitializationPolicy.RequiredContexts.First(item => item.Identifier == context).Name;
             if (next is null && context == "gameplay-hud" && !HasUsableHUD) return Text("invalidHUD");
@@ -262,8 +276,12 @@ internal sealed class StencilInitializationCoordinator
         Refresh();
     }
 
-    internal void Refresh() => Steps = StencilInitializationPolicy.MissingSteps(
-        store.Load(), LanguageIdentifier, mode);
+    internal void Refresh()
+    {
+        var examples = store.Load();
+        Contexts = StencilInitializationPolicy.Contexts(mode, examples, LanguageIdentifier);
+        Steps = StencilInitializationPolicy.MissingSteps(examples, LanguageIdentifier, mode);
+    }
 
     private string LoadLanguage()
     {

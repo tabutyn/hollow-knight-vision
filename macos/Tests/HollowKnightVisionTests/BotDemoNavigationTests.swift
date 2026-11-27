@@ -172,9 +172,23 @@ final class BotDemoNavigationTests: XCTestCase {
         try FileManager.default.createDirectory(at: saves, withIntermediateDirectories: true)
         let target = root.appendingPathComponent("other.dat")
         try Data("original".utf8).write(to: target)
-        try FileManager.default.createSymbolicLink(at: saves.appendingPathComponent("user4.dat"), withDestinationURL: target)
-        XCTAssertThrowsError(try BotDemoSaveArchive(savesURL: saves, rootURL: root.appendingPathComponent("archives")).create())
-        XCTAssertEqual(try Data(contentsOf: target), Data("original".utf8))
+        let archiveDirectory = root.appendingPathComponent("archives")
+        let archive = BotDemoSaveArchive(savesURL: saves, rootURL: archiveDirectory)
+        let names = ["user4.dat", "user4.dat.bak1"]
+        for name in names { try Data("original".utf8).write(to: saves.appendingPathComponent(name)) }
+        let verified = try archive.create()
+        for name in names {
+            let entry = saves.appendingPathComponent(name)
+            try FileManager.default.removeItem(at: entry)
+            try FileManager.default.createSymbolicLink(at: entry, withDestinationURL: target)
+            XCTAssertThrowsError(try archive.create())
+            XCTAssertThrowsError(try archive.verifySourceMatchesArchive(at: verified.url))
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: archiveDirectory.path), [verified.url.lastPathComponent])
+            XCTAssertEqual(try Data(contentsOf: target), Data("original".utf8))
+            try FileManager.default.removeItem(at: entry)
+            try Data("original".utf8).write(to: entry)
+        }
+        XCTAssertNoThrow(try archive.verifySourceMatchesArchive(at: verified.url))
     }
 
     func testSaveFamiliesFollowLiveProfileOccupancyAndArchiveEveryVersion() throws {

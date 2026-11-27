@@ -1141,6 +1141,10 @@ var tests = new List<(string Name, Action Run)>
     ("stencil visible controls and campaign instructions are translated", StencilGuidanceParityTests.TestVisibleButtonsAndCampaignInstructionsHaveTranslations),
     ("stencil languages have complete guidance and matching placeholders", StencilGuidanceParityTests.TestAllLanguagesHaveGuidanceAndMatchingPlaceholders),
     ("stencil progress uses one compatible reference screenshot", StencilGuidanceParityTests.TestProgressUsesOneReferenceAndRejectsWrongLanguageOrSize),
+    ("controller layouts request only visible stencils", StencilGuidanceParityTests.TestControllerLayouts),
+    ("controller guidance follows the latest compatible reference", StencilGuidanceParityTests.TestControllerReferenceAndGuidance),
+    ("controller stencil picker follows the labeled layout", StencilGuidanceParityTests.TestControllerPicker),
+    ("inactive controller text is a recognition anchor only", MenuCatalogTests.TestInactiveControllerAnchor),
     ("stencil required screens follow contracts and the shipped catalog", StencilGuidanceParityTests.TestRequiredScreensFollowContractsAndWindowsCatalogMatches),
     ("stencil partial reference resumes and counts its saved Back label", StencilGuidanceParityTests.TestPartialReferenceResumesEditingAndSavedBackCounts),
     ("stencil empty setup includes every required screen", StencilGuidanceParityTests.TestEmptySetupIncludesEveryRequiredScreen),
@@ -2211,8 +2215,8 @@ static void TestStencilContractCoverage()
 {
     Equal(26, StencilInitializationPolicy.Contexts(GameRuntimeMode.Modded).Length);
     Equal(25, StencilInitializationPolicy.Contexts(GameRuntimeMode.Normal).Length);
-    Equal(190, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Modded));
-    Equal(184, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Normal));
+    Equal(189, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Modded));
+    Equal(183, StencilInitializationPolicy.RequiredCount(GameRuntimeMode.Normal));
     var normal = StencilInitializationPolicy.MissingSteps([], "en", GameRuntimeMode.Normal);
     True(!normal.Any(step => step.ContextIdentifier == "mods" || step.ClassIdentifier == "shared.mods"));
     Equal("main-title", normal[0].ContextIdentifier);
