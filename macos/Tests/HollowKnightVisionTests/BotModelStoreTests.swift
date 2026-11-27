@@ -21,18 +21,26 @@ final class BotModelStoreTests: XCTestCase {
         return root
     }
 
+    private func writeCompletedTraining(to directory: URL, id: String, createdAt: String, accuracy: Double,
+                                        baselineSHA256: String? = nil) throws {
+        let score: [String: Any] = ["negativeLogLikelihood": 0.5, "exactActionAccuracy": accuracy, "heads": []]
+        var result: [String: Any] = [
+            "id": id, "name": "Candidate", "modelDirectory": directory.lastPathComponent, "createdAt": createdAt,
+            "trainingExamples": 100, "validationExamples": 20, "candidate": score, "baseline": score,
+            "eligibleForActivation": false, "reason": "Below baseline", "nativeParity": true
+        ]
+        result["baselineSHA256"] = baselineSHA256
+        try JSONSerialization.data(withJSONObject: result).write(to: directory.appendingPathComponent("training-result.json"))
+    }
+
     func testPlaybackSelectsVerifiedLatestDespiteLowerScoreAndRemembersRollback() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = BotModelStore(root: root)
         let original = try makeVersion(store, name: "v1"), candidate = try makeVersion(store, name: "bot-test")
         XCTAssertEqual(try store.activeDirectory(), original)
-        let score = BotTrainingScore(negativeLogLikelihood: 0.5, exactActionAccuracy: 0.8, heads: [])
-        let result = BotTrainingResult(id: "test", name: "Candidate", modelDirectory: "bot-test", createdAt: "2026-11-18",
-            trainingExamples: 100, validationExamples: 20, candidate: score, baseline: score,
-            baselineSHA256: "older-comparison-baseline", baselineError: nil,
-            eligibleForActivation: false, reason: "Below baseline", nativeParity: true)
-        try JSONEncoder().encode(result).write(to: candidate.appendingPathComponent("training-result.json"))
+        try writeCompletedTraining(to: candidate, id: "test", createdAt: "2026-11-18", accuracy: 0.8,
+                                   baselineSHA256: "older-comparison-baseline")
         let version = try XCTUnwrap(store.versions().first { $0.id == "bot-test" })
         XCTAssertTrue(store.canActivate(version))
         try Data("corrupt".utf8).write(to: candidate.appendingPathComponent("model.zip"))
@@ -47,14 +55,88 @@ final class BotModelStoreTests: XCTestCase {
         let reopened = BotModelStore(root: root)
         XCTAssertEqual(try reopened.playbackDirectory(), original)
         let next = try makeVersion(store, name: "bot-next")
-        let nextResult = BotTrainingResult(id: "next", name: "Next", modelDirectory: "bot-next",
-            createdAt: "2026-11-19", trainingExamples: 110, validationExamples: 25, candidate: score,
-            baseline: score, baselineSHA256: nil, baselineError: nil, eligibleForActivation: false,
-            reason: "Below baseline", nativeParity: true)
-        try JSONEncoder().encode(nextResult).write(to: next.appendingPathComponent("training-result.json"))
+        try writeCompletedTraining(to: next, id: "next", createdAt: "2026-11-19", accuracy: 0.8)
         XCTAssertEqual(try reopened.playbackDirectory(), next)
         XCTAssertEqual(try reopened.selection().previousDirectory, "v1")
         XCTAssertEqual(try Data(contentsOf: original.appendingPathComponent("model.zip")), Data("v1".utf8))
+    }
+
+    func testRollbackAndPlaybackUseNewestIntactCheckpoint() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = BotModelStore(root: root)
+        let original = try makeVersion(store, name: "v1")
+        let intact = try makeVersion(store, name: "bot-intact")
+        let newest = try makeVersion(store, name: "bot-newest")
+        try writeCompletedTraining(to: intact, id: "intact", createdAt: "2026-11-21", accuracy: 0.8)
+        try writeCompletedTraining(to: newest, id: "newest", createdAt: "2026-11-22", accuracy: 0.9)
+        try Data("interrupted copy".utf8).write(to: newest.appendingPathComponent("model.zip"))
+
+        XCTAssertEqual(try store.playbackDirectory(), intact)
+        try store.restorePrevious()
+        XCTAssertEqual(try store.playbackDirectory(), original)
+        XCTAssertEqual(try store.selection().manualChoiceThrough, "bot-intact")
+        try Data("invalidated rollback".utf8).write(to: original.appendingPathComponent("runtime-policy.json"))
+        XCTAssertEqual(try store.playbackDirectory(), intact)
+        try Data("bot-newest".utf8).write(to: newest.appendingPathComponent("model.zip"))
+        XCTAssertEqual(try store.playbackDirectory(), newest)
+    }
+
+    func testPlaybackAcceptsVerifiedCheckpointWithPartialValidationScores() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = BotModelStore(root: root, domain: .gameplay)
+        _ = try makeVersion(store, name: "v1")
+        let trained = try makeVersion(store, name: "bot-trained")
+        var report: [String: Any] = [
+            "id": NSNull(), "modelDirectory": "bot-trained", "createdAt": "2026-11-22T01:00:00Z",
+            "botDomain": "gameplay", "nativeParity": true, "eligibleForActivation": false
+        ]
+        func catalogEntry() throws -> BotModelVersion {
+            try JSONSerialization.data(withJSONObject: report).write(to: trained.appendingPathComponent("training-result.json"))
+            return try XCTUnwrap(store.versions().first { $0.id == "bot-trained" })
+        }
+        XCTAssertEqual(try catalogEntry().result?.scores, [])
+        report["candidate"] = ["exactActionAccuracy": 0.72, "heads": [NSNull(), ["name": "jump", "balancedAccuracy": 0.65]]]
+        report["baseline"] = ["exactActionAccuracy": 0.58, "heads": [["name": "jump", "balancedAccuracy": 0.42]]]
+        report["candidateSequential"] = ["exactActionAccuracy": 0.69]
+        report["baselineSequential"] = ["exactActionAccuracy": 0.53]
+        XCTAssertEqual(try catalogEntry().result?.scores, [
+            .init(label: "Action agreement", value: 0.72, baseline: 0.58),
+            .init(label: "Jump balanced accuracy", value: 0.65, baseline: 0.42),
+            .init(label: "Own-action agreement", value: 0.69, baseline: 0.53)
+        ])
+
+        report["candidate"] = ["exactActionAccuracy": 0.87, "heads": [NSNull(), ["name": "jump", "balancedAccuracy": 1.5]]]
+        report["baseline"] = true
+        report["candidateSequential"] = ["exactActionAccuracy": "invalid"]
+        let version = try catalogEntry()
+        XCTAssertEqual(version.result?.scores, [.init(label: "Action agreement", value: 0.87, baseline: nil)])
+        XCTAssertTrue(store.canActivate(version))
+        XCTAssertEqual(try store.playbackDirectory(), trained)
+
+        report["candidate"] = ["exactActionAccuracy": true, "heads": [["name": "jump", "balancedAccuracy": 0]]]
+        report["baseline"] = ["heads": [["name": "jump", "balancedAccuracy": 1]]]
+        XCTAssertEqual(try catalogEntry().result?.scores, [.init(label: "Jump balanced accuracy", value: 0, baseline: 1)])
+    }
+
+    func testPartialReportsStillRequireMatchingDomainDirectoryAndNativeParity() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = BotModelStore(root: root, domain: .hacker)
+        let original = try makeVersion(store, name: "v1")
+        let candidate = try makeVersion(store, name: "bot-next")
+        let matching: [String: Any] = ["modelDirectory": "bot-next", "createdAt": "2026-11-22", "nativeParity": true]
+        for invalid: [String: Any] in [["botDomain": "gameplay"], ["botDomain": "unknown"],
+                                       ["modelDirectory": "bot-other"], ["nativeParity": false], ["nativeParity": "true"]] {
+            let report = matching.merging(invalid) { _, new in new }
+            try JSONSerialization.data(withJSONObject: report).write(to: candidate.appendingPathComponent("training-result.json"))
+            XCTAssertEqual(try store.playbackDirectory(), original)
+        }
+        try JSONSerialization.data(withJSONObject: matching).write(to: candidate.appendingPathComponent("training-result.json"))
+        try JSONEncoder().encode(["botDomain": "gameplay"]).write(to: candidate.appendingPathComponent("manifest.json"))
+        XCTAssertFalse(try store.versions().contains { $0.id == "bot-next" })
+        XCTAssertEqual(try store.playbackDirectory(), original)
     }
 
     func testSelectionCannotEscapeModelsDirectoryAndPartialRunsAreHidden() throws {
@@ -109,11 +191,7 @@ final class BotModelStoreTests: XCTestCase {
                 .write(to: candidate.appendingPathComponent("manifest.json"))
             controller.refreshVersions()
             XCTAssertEqual(controller.newClipCount, 1, "A partial run must leave the clip pending")
-            let score = BotTrainingScore(negativeLogLikelihood: 1, exactActionAccuracy: 0.5, heads: [])
-            let result = BotTrainingResult(id: "next", name: "Candidate", modelDirectory: "bot-next",
-                createdAt: "2026-11-18", trainingExamples: 20, validationExamples: 4, candidate: score, baseline: nil,
-                baselineSHA256: nil, baselineError: nil, eligibleForActivation: false, reason: "Below baseline", nativeParity: true)
-            try JSONEncoder().encode(result).write(to: candidate.appendingPathComponent("training-result.json"))
+            try writeCompletedTraining(to: candidate, id: "next", createdAt: "2026-11-18", accuracy: 0.5)
             controller.refreshVersions()
             XCTAssertEqual(controller.activeID, "v1")
             XCTAssertEqual(controller.newClipCount, 0)
