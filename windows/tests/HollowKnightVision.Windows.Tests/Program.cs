@@ -1651,6 +1651,7 @@ var tests = new List<(string Name, Action Run)>
     ("game text scan cadence and invalidation", GameTextReaderTests.TestReaderCadenceAndInvalidation),
     ("game text opening transfer and notebook reopen", GameTextReaderTests.TestOpeningTransferAndNotebookReopen),
     ("game text reads Swift notebook evidence", GameTextReaderTests.TestSwiftNotebookCompatibility),
+    ("game text opening fragments and spelling", GameTextReaderTests.TestOpeningFragmentsAndSpelling),
     ("proofreading keeps prices and rejects invented text", GameTextReviewTests.TestConservativeTranscription),
     ("resident model discovery uses local inventory", GameTextReviewTests.TestResidentDiscovery),
     ("save-specific notebook review and quest notes", GameTextReviewTests.TestSavedReviewAndQuestNotes),
@@ -1660,6 +1661,7 @@ var tests = new List<(string Name, Action Run)>
     ("quest pages bound their evidence and reject missing sources", AtlasQuestMemoryTests.TestPagedEvidenceAndRejectedCitations),
     ("quest prompts, destinations and cancelled responses", AtlasQuestMemoryTests.TestPromptsDestinationsAndCancellation),
     ("Thinking offers only scored local targets", ThinkingHandoffTests.TestOfferScoresAndBindings),
+    ("Thinking event captures and constrained menu decisions", ThinkingHandoffTests.TestEventAndMenuDecisions),
     ("Thinking uses matched actor and Focus telemetry", ThinkingHandoffTests.TestMatchedActorsAndRecovery),
     ("Thinking maneuvers expire and release controls", ThinkingHandoffTests.TestBoundManeuversAndRelease),
     ("Thinking inspection records settled text", ThinkingHandoffTests.TestInspectionUsesSettledText),
@@ -1730,6 +1732,14 @@ if (Environment.GetEnvironmentVariable("HKV_ROOM_FEATURE_AUDIT_INPUT") is not nu
 if (Environment.GetEnvironmentVariable("HKV_CROSS_ROOM_AUDIT_INPUT") is not null)
     tests.Add(("recorded cross-room proposals require matching floor texture", RoomReturnReplayAuditTests.TestEarlierRoomGroundClosuresWhenRequested));
 
+if (args is ["--game-text"])
+{
+    var focused = tests.Where(t => t.Run.Method.DeclaringType == typeof(GameTextReaderTests)
+        || t.Run.Method.DeclaringType == typeof(GameTextReviewTests) || t.Run.Method.DeclaringType == typeof(ThinkingHandoffTests)).ToArray();
+    foreach (var test in focused) { test.Run(); Console.WriteLine($"PASS {test.Name}"); }
+    Console.WriteLine($"Windows notebook and Thinking core tests passed: {focused.Length}");
+    return;
+}
 foreach (var test in tests)
 {
     test.Run();

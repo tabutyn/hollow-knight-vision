@@ -15,6 +15,7 @@ internal sealed class WindowsMenuStencilRecognizer
         public string? Context => Status?.ContextIdentifier;
         public bool GameplayEnabled => Status?.IsGameplay == true;
         public bool HasFreshGameplayEvidence => RecognizedStatus?.IsGameplay == true;
+        public BgraFrame? MenuSourceImage { get; init; }
         public LiveObjectDetectionSnapshot Objects { get; init; } = LiveObjectDetectionSnapshot.Empty;
         public LiveObjectInferenceDiagnostics ObjectDiagnostics { get; init; } = new();
     }
@@ -151,8 +152,9 @@ internal sealed class WindowsMenuStencilRecognizer
             // Fresh health evidence suppresses menu lookalikes while the
             // object worker independently verifies Gameplay entry.
             var hudResult = hud.Observe(frame, true, timestamp, generation);
-            var menuObservation = hudResult?.EstablishesGameplay == true ? null
-                : menuWorker.Observe(frame, timestamp, asynchronously)?.Observation;
+            var menuSnapshot = hudResult?.EstablishesGameplay == true ? null
+                : menuWorker.Observe(frame, timestamp, asynchronously);
+            var menuObservation = menuSnapshot?.Observation;
             var rawMenu = menuObservation?.Result;
             var snapshot = LiveObjectDetectionSnapshot.Empty;
             IReadOnlyList<ObjectDetection> InferAndTrack()
@@ -169,7 +171,8 @@ internal sealed class WindowsMenuStencilRecognizer
             var diagnostic = rawMenu is null ? "raw=none admitted=false" : FormattableString.Invariant(
                 $"raw={rawMenu.ContextIdentifier}/{rawMenu.SelectedOption ?? "none"} phase={rawMenu.Phase} confidence={rawMenu.Confidence:F3} evidence={rawMenu.SceneEvidenceRatio:F3} language={rawMenu.LanguageIdentifier ?? "shared"} comparisons={rawMenu.ComparisonCount} admitted={(state.Menu is null ? "false" : "true")}; calibration={menuObservation?.Diagnostic ?? "idle"}");
             return new(state.Status, state.RecognizedStatus, state.Menu, hudResult, generation, state.Detections, diagnostic)
-                { Objects = snapshot, ObjectDiagnostics = objects.Diagnostics };
+                { Objects = snapshot, ObjectDiagnostics = objects.Diagnostics,
+                  MenuSourceImage = state.Menu is null ? null : menuSnapshot?.SourceImage };
         }
     }
     private static BgraFrame LoadFrame(string path)

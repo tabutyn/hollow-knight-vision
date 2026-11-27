@@ -6,9 +6,37 @@ namespace HollowKnightVision.Windows.App;
 
 public partial class MainWindow
 {
-    private sealed record ThinkingFrame(BgraFrame Image, ThinkingSight Sight, GameTextReader.Reading? Reading);
+    private sealed record ThinkingFrame(BgraFrame Image, ThinkingSight Sight, GameTextReader.Reading? Reading)
+    {
+        internal string Event { get; init; } = "";
+        internal bool AllowsMore { get; init; } = true;
+        internal string? PreviousState { get; init; }
+        internal ThinkingLandmarks? Landmarks { get; init; }
+        internal string? DetectorEvidence { get; init; }
+        internal ThinkingNotebookContext? Notebook { get; init; }
+    }
+    private sealed record ThinkingNotebookContext(Guid? Profile, string Language, bool ReadsText, string Memory, string Goal);
+    private sealed record ThinkingLandmarks(BgraFrame Image, long Generation, double CapturedAt, ObjectDetection[] Signs, long[] Npcs);
+    private ThinkingLandmarks? latestThinkingLandmarks;
+    // These game-state transitions are observed on the capture worker, including short intervening fades.
+    private ThinkingScope? lastThinkingScope;
+    private long thinkingStateVisit;
+    private (ThinkingScope Scope, string Element, double At)? sentMenuConfirm;
+    private string? previousMenuConfirm;
+    private sealed record ThinkingOutcome(ThinkingScope Scope, long DecisionId, string Status);
+    private ThinkingOutcome? lastThinkingOutcome;
+
+    private void ObserveThinkingLandmarks(LiveObjectInferencePublication publication, long generation, double capturedAt)
+    {
+        if (!thinkingEnabled) return;
+        var current = publication.Detections.Where(d => d.TrackIdentifier.HasValue && d.SourceFrameIdentifier == publication.Frame.CaptureId);
+        var signs = current.Where(d => d.ClassIdentifier == "world.sign").ToArray();
+        var npcs = current.Where(d => d.ClassIdentifier.Split('.', '-').Contains("npc")).Select(d => d.TrackIdentifier!.Value).ToArray();
+        if (signs.Length != 0 || npcs.Length != 0)
+            Volatile.Write(ref latestThinkingLandmarks, new(publication.Frame, generation, capturedAt, signs, npcs));
+    }
     private sealed record ThinkingAuthored(int Epoch, GroundTruthLineDocument Labels);
-    private sealed record ThinkingAbilityModel(BotLearnedSkill Skill, BotNativePolicy? Motor);
+    private sealed record ThinkingAbilityModel(BotLearnedSkill? Skill, BotNativePolicy? Motor, BotStarterPolicy? Starter = null);
     private sealed record ThinkRequest(ThinkingPlan Plan, double Time, IReadOnlyDictionary<string, ThinkingAbilityModel>? Models);
     private sealed record ThinkingLease(Guid Owner, BotRun? PriorRun, ThinkingManeuver Maneuver, ThinkingAbilityDrive? Ability,
         ThinkingPlan Plan, GroundTruthLineDocument Authored, BotEvaluationRecorder? Evaluation);
@@ -35,17 +63,22 @@ public partial class MainWindow
     // does not run on a frame handled by this maneuver.
     private bool ObserveThinkingFrame(BgraFrame frame, long generation, double capturedAt, int room,
         long chartEpoch, string? menuContext, MenuStencilResult? menu, ReceiverGroundTruthSample? receiver,
-        int? renderedFrame, GameplayPathView? paths, bool admitted, InputButtons? input, double blockage)
+        int? renderedFrame, GameplayPathView? paths, bool admitted, InputButtons? input, double blockage,
+        long firstVisitFrame = 0, BgraFrame? menuSource = null)
     {
         thinkingPlaybackFrame = null;
         if (!thinkingEnabled) return false;
+        var detector = Volatile.Read(ref thinkingEvents);
         var domain = workspace == "Hacker" ? BotCaptureDomain.Hacker : BotCaptureDomain.Gameplay;
         if (receiver is not null) thinkingReceiverSession = receiver.SessionId;
-        var gameplay = admitted && menu is not { IsMatch: true };
+        var page = ThinkingMenuPage.From(menu);
+        if (page is null && menuContext is not (null or "game")) page = new(menuContext, null, []);
+        var gameplay = admitted && page is null;
         if (gameplay) thinkingScene = receiver?.SceneName ?? thinkingScene;
         else thinkingScene = null;
         var context = gameplay ? thinkingScene ?? "Gameplay"
-            : menuContext is null || menuContext == "game" ? "Game capture" : ContextDisplayName(menuContext);
+            : page?.State == "opening-cutscene" ? GameTextNotebook.OpeningContext
+            : page is null ? "Game capture" : ContextDisplayName(page.State);
         var reading = Volatile.Read(ref latestThinkingReading);
         if (reading is null || reading.Context != context || capturedAt - reading.CapturedAt is not (>= 0 and <= 2.5)) reading = null;
         ThinkingScene? scene = null;
@@ -62,12 +95,40 @@ public partial class MainWindow
                 hint, paths.KnightWidth, frame.Width, frontier: paths.SelectedObjective is null);
             scene = new(room, false, null, [], [], [route]);
         }
-        var scope = new ThinkingScope(generation, domain, context, thinkingReceiverSession);
-        var sight = new ThinkingSight(scope, capturedAt, gameplay, menu?.ContextIdentifier,
-            menu is { IsMatch: true, SelectedPairAccepted: true } ? menu.SelectedOptionIdentifier : null,
-            reading?.Cues ?? [], scene);
-        var publication = new ThinkingFrame(frame, sight, reading);
+        var scope = new ThinkingScope(generation, domain, context, thinkingReceiverSession, gameplay ? room : 0);
+        if (scope != lastThinkingScope)
+        {
+            thinkingStateVisit++;
+            previousMenuConfirm = sentMenuConfirm is { } confirm && confirm.Scope.Generation == generation
+                && capturedAt - confirm.At is >= 0 and <= 5 ? confirm.Element : null;
+            if (gameplay || page is not null) sentMenuConfirm = null;
+            lastThinkingScope = scope;
+        }
+        scope = scope with { Visit = thinkingStateVisit };
+        var outcome = Volatile.Read(ref lastThinkingOutcome);
+        var position = scene is not null && gameMode == GameRuntimeMode.Modded && thinkingRouteScene == receiver?.SceneName
+            && thinkingRouteSession == receiver?.SessionId && capturedAt - thinkingRouteAt is >= 0 and <= .075
+            ? thinkingVisit?.ThinkingPosition : null;
+        var landmarks = Volatile.Read(ref latestThinkingLandmarks);
+        if (!gameplay || landmarks is null || landmarks.Generation != generation || landmarks.Image.CaptureId < firstVisitFrame
+            || capturedAt - landmarks.CapturedAt is not (>= 0 and <= 1.5)) landmarks = null;
+        var sight = new ThinkingSight(scope, capturedAt, gameplay, page?.State, page?.Selected, reading?.Cues ?? [], scene)
+        {
+            Page = page, Blocked = Math.Abs(blockage) > .5,
+            SignTracks = landmarks?.Signs.Select(d => d.TrackIdentifier!.Value).ToArray() ?? [], NpcTracks = landmarks?.Npcs ?? [],
+            ActiveRoute = Volatile.Read(ref thinkingLease)?.Maneuver.Candidate.Route,
+            Chart = gameMode == GameRuntimeMode.Normal ? FormattableString.Invariant($"gameplay/{room}/{chartEpoch}")
+                : position is { } p ? FormattableString.Invariant($"{p.Chart}/{thinkingVisitEpoch.Epoch}") : null,
+            NavigationFeet = gameMode == GameRuntimeMode.Normal ? paths?.Feet : position?.Feet,
+            ArrivalRadius = position?.ArrivalRadius ?? Math.Max(3, (paths?.KnightWidth ?? 0) / 2),
+            OutcomeId = outcome?.Scope == scope ? outcome.DecisionId : null,
+            Outcome = outcome?.Scope == scope ? outcome.Status : null, PreviousConfirm = previousMenuConfirm
+        };
+        var eventImage = sight.Page is not null && menuSource is not null ? menuSource : frame;
+        var publication = new ThinkingFrame(eventImage, sight, ReferenceEquals(eventImage, frame) ? reading : null)
+            { Landmarks = landmarks };
         Volatile.Write(ref latestThinkingFrame, publication);
+        CaptureThinkingEvent(publication, detector);
 
         lock (thinkingControlLock)
         {
@@ -122,6 +183,11 @@ public partial class MainWindow
         var motion = lease.Maneuver.Step(frame.Sight, now, input ?? InputButtons.None, passage, blockage);
         if (motion.Finished)
         {
+            if (lease.Maneuver.Candidate.MenuPage is null)
+                Volatile.Write(ref lastThinkingOutcome, new(lease.Plan.Scope, lease.Plan.DecisionId, motion.Status));
+            if (lease.Maneuver.Candidate is { Action: ThinkingAction.MenuMore, MenuPage: { } page }
+                && motion.Status.StartsWith("Menu advanced", StringComparison.Ordinal))
+                _ = Dispatcher.InvokeAsync(() => { if (thinkingDisplayFrame?.Sight.Scope == lease.Plan.Scope) browsedMenuPages.Add(page.Key); });
             StopThinkingControlLocked(motion.Status, "skill-finished");
             return;
         }
@@ -147,6 +213,8 @@ public partial class MainWindow
             StopThinkingControlLocked("Policy controls expired.");
             return;
         }
+        else if (buttons == InputButtons.ActionZ && lease.Maneuver.Candidate is { Action: ThinkingAction.MenuSelect, ElementId: { } id })
+            sentMenuConfirm = (frame.Sight.Scope, id, now);
         if (observation is not null && input is { } applied)
             lease.Evaluation?.RecordDecision(observation, buttons, applied, frame.Sight.Scope.Context);
         if (motion.BeginReading)
@@ -215,9 +283,10 @@ public partial class MainWindow
             PostThinkingHandoff("Release the game controls before a policy can start.");
             return;
         }
-        var ability = model is null || !gameControls.SkillControlsAvailable ? null : new ThinkingAbilityDrive(model.Skill, model.Motor, candidate);
+        var ability = model is null || model.Starter is null && !gameControls.SkillControlsAvailable
+            ? null : new ThinkingAbilityDrive(model.Skill, model.Motor, candidate, model.Starter);
         var authored = prior?.Authored ?? Volatile.Read(ref thinkingAuthored)?.Labels ?? new GroundTruthLineDocument();
-        var motor = candidate.Action == ThinkingAction.Traverse && ability is not null ? model?.Motor : null;
+        var motor = candidate.Action is ThinkingAction.Traverse or ThinkingAction.Explore && ability is not null ? model?.Motor : null;
         var evaluation = prior is null
             ? new BotEvaluationRecorder(BotEvaluationRoot, sight.Scope.Domain, motor?.Name ?? "Built-in playing policies",
                 motor?.SourceCheckpointSha256, authored, sight.Scope.Generation, sight.CapturedAt)
@@ -227,14 +296,14 @@ public partial class MainWindow
         PostThinkingHandoff($"Dispatched · {candidate.Id} · {candidate.Action}" + (ability is null ? "" : " · learned abilities"));
     }
 
-    private async Task<string> SubmitThinkingPlanAsync(ThinkingPlan plan, CancellationToken token)
+    private async Task<string> SubmitThinkingPlanAsync(ThinkingPlan plan, CancellationToken token, ThinkingFrame sourceFrame)
     {
         if (gameMode == GameRuntimeMode.Normal) return "Inspection only · Normal mode.";
         if (!thinkingAutomatic || !CanDispatchThinking()) return "Automatic policies are paused or controls are unavailable.";
         var active = Volatile.Read(ref botPlayback);
         var motor = active?.Domain == plan.Scope.Domain ? Volatile.Read(ref active.Loaded)?.Motor : null;
         IReadOnlyDictionary<string, ThinkingAbilityModel>? models = null;
-        if (gameControls.SkillControlsAvailable && plan.Scores.Count > 0)
+        if (plan.Scores.Any(s => s.Candidate.Action == ThinkingAction.Explore) || gameControls.SkillControlsAvailable && plan.Scores.Count > 0)
         {
             try
             {
@@ -246,6 +315,7 @@ public partial class MainWindow
             }
         }
         token.ThrowIfCancellationRequested();
+        if (!ReferenceEquals(sourceFrame, thinkingDisplayFrame)) return "A newer event is available.";
         if (!thinkingAutomatic || !CanDispatchThinking()) return "Automatic policies are paused or controls are unavailable.";
         return QueueThinkingPlan(plan, models);
     }
@@ -260,14 +330,17 @@ public partial class MainWindow
             var ability = candidate.Action switch
             {
                 ThinkingAction.Traverse => Load(BotAbilitySkill.Traverse),
+                ThinkingAction.Explore => Load(BotAbilitySkill.Explore),
                 ThinkingAction.Fight => Load(BotAbilitySkill.Fight),
                 _ => null
             };
-            if (ability is null) continue;
+            if (ability is null && candidate.Action != ThinkingAction.Explore) continue;
             motor ??= new BotModelStore(BotRoot, plan.Scope.Domain).LoadPlayback()?.Policy;
-            if (motor is not null && motor.Version != ability.ObservationSchema)
+            if (motor is not null && ability is not null && motor.Version != ability.ObservationSchema)
                 throw new InvalidDataException("The ability model observation schema differs from the selected PPO checkpoint.");
-            models[candidate.Id] = new(ability, motor);
+            var starter = candidate.Action == ThinkingAction.Explore ? BotStarterPolicy.Load(BotAbilitySkill.Explore,
+                Math.Max(BotPolicyContract.CurrentVersion, ability?.ObservationSchema ?? motor?.Version ?? BotPolicyContract.CurrentVersion)) : null;
+            models[candidate.Id] = new(ability, motor, starter);
         }
         return models;
 

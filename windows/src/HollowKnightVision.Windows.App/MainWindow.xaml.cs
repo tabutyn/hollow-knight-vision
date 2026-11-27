@@ -804,16 +804,18 @@ public partial class MainWindow : Window
     {
     }
 
-    public MainWindow(GameRuntimeMode gameMode, string? gamePath = null, bool enableThinking = false, GroundFrameAudits? groundAudits = null)
+    public MainWindow(GameRuntimeMode gameMode, string? gamePath = null, bool enableThinking = false, GroundFrameAudits? groundAudits = null,
+        string? notebookTraceDirectory = null)
         : this(gameMode, gamePath,
             IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HollowKnightVision"),
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), enableThinking: enableThinking, groundAudits: groundAudits)
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), enableThinking: enableThinking, groundAudits: groundAudits,
+            notebookTraceDirectory: notebookTraceDirectory)
     {
     }
 
     internal MainWindow(GameRuntimeMode gameMode, string? gamePath, string root, string documents,
         Func<ReceiverClient>? createReceiver = null, LocalThinkingClient? policyClient = null, bool enableThinking = false,
-        GroundFrameAudits? groundAudits = null)
+        GroundFrameAudits? groundAudits = null, string? notebookTraceDirectory = null)
     {
         this.gameMode = gameMode;
         supportRoot = IOPath.GetFullPath(root);
@@ -823,7 +825,8 @@ public partial class MainWindow : Window
         this.groundAudits = groundAudits;
         gameControls = new(createReceiver, rawGroundAudit: groundAudits?.RecordsRawFrames == true);
         playerOpsPreferences = new(root);
-        gameTextReader = new(IOPath.Combine(root, "Notebooks"));
+        gameTextTraceDirectory = notebookTraceDirectory is null ? null : IOPath.Combine(notebookTraceDirectory, Guid.NewGuid().ToString("D"));
+        gameTextReader = new(IOPath.Combine(root, "Notebooks"), gameTextTraceDirectory is not null);
         gameTextPreference = IOPath.Combine(root, "read-game-text.txt");
         gameTextReviewPreference = IOPath.Combine(root, "game-text-review.json");
         var reviewClient = new LocalThinkingClient();
@@ -3319,6 +3322,7 @@ public partial class MainWindow : Window
             publication =>
             {
                 recentCapturedFrames.ReplaceDetections(publication.Detections, captureGeneration, publication.Frame.CaptureId);
+                ObserveThinkingLandmarks(publication, captureGeneration, captureTimestamp);
                 if (ownsHackerWork && exactReceiverTelemetry is { AtlasGameplayActive: not false } sample)
                     PublishHackerObjectDetections(publication, sample, captureTimestamp, captureGeneration,
                         pendingHackerWorkGeneration, labelRevision);
@@ -3533,10 +3537,14 @@ public partial class MainWindow : Window
         var botGameplay = !holdAtlas && admission.AdmitsTracking && recognition.Status?.ContextIdentifier is "game" or "Gameplay";
         var (botRoomTransition, botDetections) = ScopeBotDetections(frame, captureGeneration, atlasRoomId,
             !tracked.RoomAllowsAtlasWrite || admission.Transition.ResumedAfterTransition, recognition.Objects.MeasuredBatch);
+        var confirmedContext = recognition.RecognizedStatus?.ContextIdentifier == recognition.Status?.ContextIdentifier
+            ? recognition.RecognizedStatus?.ContextIdentifier : null;
+        var thinkingContext = readingOpening && confirmedContext is null ? "opening-cutscene" : confirmedContext;
         var handledByThinking = ObserveThinkingFrame(frame, captureGeneration, captureTimestamp,
-            WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), walkedCoordinateEpoch, recognition.Status?.ContextIdentifier,
+            WindowsLiveWorldPipeline.RoomIdentifier(atlasRoomId), walkedCoordinateEpoch, thinkingContext,
             profileMenu, receiverTelemetry, renderedGameFrame, paths, botGameplay && (!botRoomTransition || workspace == "Hacker"), movementButtons,
-            terrainContact.Wall is { } policyWall ? policyWall.SolidOnRight ? 1 : -1 : 0);
+            terrainContact.Wall is { } policyWall ? policyWall.SolidOnRight ? 1 : -1 : 0,
+            botVisualDetectionScope?.FirstFrame ?? frame.CaptureId, recognition.MenuSourceImage);
         var activeBot = handledByThinking || Volatile.Read(ref botPlayback) is null ? null
             : ObserveBotStartup(frame, captureGeneration, captureTimestamp, botGameplay,
                 recognition.RecognizedStatus?.IsGameplay == true, receiverTelemetry, recognition.Menu, hudStencil, botRoomTransition);

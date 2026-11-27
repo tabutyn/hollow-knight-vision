@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Game Text Log" Width="900" Height="520" MinWidth="720" MinHeight="380"
+        Background="#0E1014" Foreground="#E6EDF3"
         WindowStartupLocation="CenterOwner">
     <DockPanel Margin="16" LastChildFill="True">
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
@@ -71,8 +72,23 @@
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Margin="3,4">
-                                        <TextBlock Text="{Binding Observation.DisplayLabel}" FontWeight="SemiBold"/>
-                                        <TextBlock Text="{Binding Observation.Reading}" TextWrapping="Wrap" MaxWidth="710"/>
+                                        <TextBlock Text="{Binding Observation.Kind}" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding Observation.DisplayText}" TextWrapping="Wrap" MaxWidth="710"/>
+                                        <Expander Header="Earlier model annotation">
+                                            <Expander.Style>
+                                                <Style TargetType="Expander">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Observation.Annotation}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Expander.Style>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Observation.DisplayLabel}"/>
+                                                <TextBlock Text="{Binding Observation.Annotation}" TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                        </Expander>
                                         <TextBlock Text="{Binding ContextText}" Foreground="#AABAD0"/>
                                         <TextBlock Text="{Binding Updated, StringFormat={}{0:g}}" Foreground="#AABAD0"/>
                                     </StackPanel>

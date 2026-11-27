@@ -82,7 +82,10 @@ the arrows to browse the same ground line. A black cell marks a missing patch.
 notebook. Select a line to highlight its bounds on the captured frame. Turn off
 **Read game text** to stop scanning. The build downloads and verifies the OCR
 language data for Vision's 11 languages, then includes it in the installation.
-Recognition runs locally using the selected game language.
+Recognition runs locally using the selected game language. Repeated sightings
+can complete a partial line. The notebook preserves its first reading. To
+record scan images and matching decisions, pass `--notebook-trace` followed
+by an absolute output directory.
 
 Turn on **Proofread game text** in the Log to use a supported model already
 loaded in Ollama. The preferred model is Gemma 3, Qwen2.5-VL, or Llama 3.2
@@ -92,7 +95,19 @@ playthrough goal. Raw OCR remains in the log and corrections and goals stay
 with their save.
 
 Choose **Enable Thinking** in the launch chooser or pass `--enable-thinking`
-to load the local Ollama model at startup. In Gameplay or Hacker, click the orange notebook at the bottom right or press **T**. The **Context** tab shows this save’s text log, captured game evidence, Vision’s five-second decision brief and a message/schema explorer. Choose Policy, OCR transcription or Quest notes to inspect the latest request of that kind and its expected response. **Screenshot** shows the most recently sampled frame. **JSON** shows the latest policy reply and its handoff. Settings → Debug View → Thinking context hides the panel across launches. The notebook also opens with inference disabled. Windows currently uses its scored policy offer. The explorer displays the exact Windows contract. With automatic policies enabled and Modded Gameplay or Hacker in focus, Vision rechecks the selected target against registered routes and frame-matched actors, then acquires the same input lease as PPO. **B** stops playback. Normal mode supports inspection.
+to load the local Ollama model at startup. In Gameplay or Hacker, click the
+orange notebook or press **T**. The notebook also opens with inference disabled.
+**Context** shows the save's readings, the current goal and the evidence
+submitted with each question. Select a gameplay or menu request to inspect
+its messages and response schema. **Screenshot** shows the event frame.
+**JSON** displays the model reply and its handoff status.
+
+Thinking asks for one decision when a room, recognized menu, landmark or
+navigation event changes. Older events retain their own images while the
+model is busy. Only the latest event can dispatch a decision. In Modded
+Gameplay or Hacker, Vision checks the selected waypoint, interaction or menu
+element against fresh observations before sending controls. Normal mode
+supports inspection. **B** stops playback.
 
 While a model is loading, Thinking shows elapsed time and the stages Ollama
 has logged for that model. Windows uses the local Ollama tray app's
@@ -105,8 +120,8 @@ After a verified checkpoint is available for that domain, **B** uses the
 selected trained policy.
 
 Bot evaluations record the built-in, trained, or Thinking policy that ran.
-When Thinking takes control, `skill-events.jsonl` records the original
-scores, selected target, and outcome beside the captured frames and receiver
+When Thinking takes control, `skill-events.jsonl` records the selected target,
+its internal priority and the outcome beside the captured frames and receiver
 button events. These archives are stored under **Evaluations**.
 
 ### Repeat a bot trial

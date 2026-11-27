@@ -43,8 +43,9 @@ if ($running.Count -gt 0) {
 
 New-Item -ItemType Directory -Path $install -Force | Out-Null
 $sourceFiles = @(Get-ChildItem -LiteralPath $source -File -Recurse)
+$sourcePrefix = $source.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 foreach ($file in $sourceFiles) {
-  $relative = [IO.Path]::GetRelativePath($source, $file.FullName)
+  $relative = $file.FullName.Substring($sourcePrefix.Length)
   $destination = Join-Path $install $relative
   $destinationParent = Split-Path -Parent $destination
   New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
@@ -67,7 +68,7 @@ try {
 }
 
 foreach ($file in $sourceFiles) {
-  $relative = [IO.Path]::GetRelativePath($source, $file.FullName)
+  $relative = $file.FullName.Substring($sourcePrefix.Length)
   $destination = Join-Path $install $relative
   if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) {
     throw "Installed file is missing after deployment: $destination"

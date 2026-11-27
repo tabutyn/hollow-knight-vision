@@ -756,7 +756,7 @@ internal static class BotDesktopEvaluationTests
             {
                 var current = Frame();
                 var handled = (bool)Method("ObserveThinkingFrame").Invoke(window,
-                    [current.Image, Generation, current.Time, 1, 1L, "game", null, truth, 42, null, true, InputButtons.None, 0d])!;
+                    [current.Image, Generation, current.Time, 1, 1L, "game", null, truth, 42, null, true, InputButtons.None, 0d, 0L, null])!;
                 if (Field("thinkingPlaybackFrame").GetValue(window) is { } skillFrame)
                     _ = Method("CaptureBotObservations").Invoke(window, [
                         current.Image, Generation, Generation, current.Time, 1, 1UL, 42, truth, null,

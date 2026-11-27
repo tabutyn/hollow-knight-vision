@@ -60,7 +60,7 @@ internal static class GameTextReaderTests
                 "group a repeated reading observed in two rooms");
             var reopened = new GameTextReader(root);
             reopened.SelectProfile(firstSave);
-            Require(reopened.Entries.Length == 2 && reopened.Entries[0].Updated == Frame(8).ObservedAt, "durable dated observations");
+            Require(reopened.Entries.Length == 2 && reopened.Entries[0].Updated == Frame(6).ObservedAt, "retain the original sighting date across rooms");
             reader.SelectProfile(new SaveProfileAtlas(1, Guid.NewGuid()));
             Require(reader.Entries.Length == 0, "a reused slot has its own notebook");
             reader.SelectProfile(firstSave);
@@ -98,11 +98,11 @@ internal static class GameTextReaderTests
             File.WriteAllText(path, swiftJson);
             var reader = new GameTextReader(root);
             reader.SelectProfile(profile);
-            Require(reader.Entries is [{ Observation: { Reading: "Queen's Path", Text: "Queens Path", IsPassage: true } }],
-                "display Mac corrections while retaining the original OCR");
-            Require(reader.Entries[0].Contexts.SequenceEqual(new[] { "Room A", "Room B" })
+            Require(reader.Entries is [{ Observation: { Annotation: "Queen's Path", DisplayText: "Queens Path", IsPassage: true } }, _],
+                "retain earlier annotations separately from observed text");
+            Require(reader.Entries[0].Contexts.SequenceEqual(new[] { "Room B" })
                 && reader.Entries[0].Updated == new DateTimeOffset(2001, 1, 1, 0, 1, 10, TimeSpan.Zero),
-                "Mac Date and explicit aliases");
+                "Mac Date and original contexts");
             File.WriteAllText(path, "[{\"date\":\"broken\"}]");
             var damaged = new GameTextReader(root);
             damaged.SelectProfile(profile);
@@ -115,6 +115,61 @@ internal static class GameTextReaderTests
                 "an unreadable notebook should preserve both its contents and the on-screen result");
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+
+    internal static void TestOpeningFragmentsAndSpelling()
+    {
+        const string first = "In wilds beyond they speak your name with reverence and regret,";
+        const string second = "For none could tame our savage souls yet you the challenge met,";
+        const string third = "Under palest watch, you taught, we changed, base instincts were redeemed,";
+        const string fourth = "A world you gave to bug and beast as they had never dreamed.";
+        var root = Directory.CreateTempSubdirectory("hkv-poem-");
+        try
+        {
+            var path = Path.Combine(root.FullName, "book.json");
+            File.WriteAllText(path, """
+                [{"id":"T9","text":"In wild","language":"en","context":"Opening cutscene","date":0,"confidence":1},
+                 {"id":"T10","text":"In wilds beyond they l","language":"en","context":"Opening cutscene","date":0.5,"confidence":1},
+                 {"id":"T11","text":"our name with rererence and regret,","language":"en","context":"Opening cutscene","date":0.5,"confidence":1}]
+                """);
+            var book = new GameTextNotebook(path);
+            // Reopen migration without recent sightings, then replay the first live scans.
+            Require(book.Read().Count == 2, "migration joins adjacent opening fragments");
+            void See(double t, string text, double confidence = 1, StencilRect bounds = default, string context = GameTextNotebook.OpeningContext)
+            {
+                var date = new DateTimeOffset(2001, 1, 1, 0, 0, 0, TimeSpan.Zero).AddSeconds(t);
+                var image = new BgraFrame(2, 2, 8, new byte[16], (long)(t * 10), date);
+                var line = new GameTextLine(1, text, bounds, confidence);
+                book.Remember(new(image, "en", context, [line], 1), [line]);
+            }
+            See(1, "In wilds beyond they l");
+            See(1, "our name with rererence and regret,");
+            See(1.5, first.Replace("reverence", "rererence"));
+            See(2, first, .9);
+            See(3, "For none could tame our svare souls fet vou the challengc mek");
+            See(3.5, second.Replace("savage", "sarage"));
+            See(4, "Under palest wal");
+            See(4.5, third.Replace("watch", "watçh"));
+            See(5, third);
+            See(6, "For none could tame out sarage souls yet you the challenge met,");
+            See(7, second.Replace("savage", "sayage"));
+            See(8, fourth);
+            See(17, third.Replace("we changed", "wre changed"));
+            See(17.5, third.Replace("we changed", "me changed"));
+            See(17.5, "A world you gonc to bug and beast as they had newer drcamod!");
+            var bytes = File.ReadAllBytes(path);
+            var rows = new GameTextNotebook(path).Read();
+            Require(rows.Select(r => r.DisplayText).SequenceEqual([first, second, third, fourth])
+                && rows[0] is { Id: "T9", Text: "In wild", MatchingVersion: 2 }, "four stable poem lines with original evidence");
+            Require(bytes.SequenceEqual(File.ReadAllBytes(path)), "a version-two notebook reopens without rewriting");
+            See(19, "In Hall", bounds: new(1, 1, 10, 1));
+            See(20, "In Hallownest there is a gate", bounds: new(1, 7, 10, 1));
+            See(21, "Pay 35 Geo to open the gate");
+            See(22, "Pay 36 Geo to open the gate");
+            Require(book.Read().Count == 8 && !NotebookTextMatch.Same("They had never dreamed", "They had ever dreamed"),
+                "vertical scope, amounts and protected words prevent false matches");
+        }
+        finally { root.Delete(true); }
     }
 
     private static void Require(bool condition, string operation)

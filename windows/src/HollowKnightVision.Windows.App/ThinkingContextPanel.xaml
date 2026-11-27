@@ -52,6 +52,8 @@
                         </DockPanel></TabItem>
                         <TabItem Header="JSON"><DockPanel>
                             <TextBlock x:Name="HandoffText" DockPanel.Dock="Top" TextWrapping="Wrap"/>
+                            <Button x:Name="DecisionFile" DockPanel.Dock="Top" HorizontalAlignment="Left" Visibility="Collapsed"
+                                    Content="Show decision JSON in Explorer" Click="RevealDecision"/>
                             <Expander x:Name="AttachmentPanel" DockPanel.Dock="Top" Header="Screenshot for this reply" Foreground="White" Visibility="Collapsed">
                                 <Image x:Name="Attachment" Height="105" Stretch="Uniform"/>
                             </Expander>
