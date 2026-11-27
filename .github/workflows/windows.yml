@@ -60,6 +60,7 @@ jobs:
           '@ | Set-Content -LiteralPath (Join-Path $modules 'sitecustomize.py') -Encoding utf8
           @"
           [run]
+          branch = True
           parallel = True
           data_file = $root\.coverage
           source =

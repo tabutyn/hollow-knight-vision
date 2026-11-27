@@ -31,6 +31,8 @@ def main():
         raise SystemExit("No execution counters for installed trainer entry points:\n" + "\n".join(map(str, sorted(missing))))
 
     coverage.combine(strict=True)
+    if not coverage.get_data().has_arcs():
+        raise SystemExit("Windows trainer coverage is missing branch measurements.")
     coverage.json_report(outfile=str(args.report))
     for path in sorted(required):
         print(f"PASS Windows coverage measured installed {path.relative_to(installed).as_posix()}")
