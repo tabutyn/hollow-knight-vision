@@ -91,23 +91,11 @@ rm -rf "$contents_dir/Resources/TrainingPython"
 cp -R "$script_dir/TrainingPython" "$contents_dir/Resources/TrainingPython"
 rm -rf "$contents_dir/Resources/BotPython"
 cp -R "$script_dir/BotPython" "$contents_dir/Resources/BotPython"
-# Keep the local interpreter outside the app bundle; only its location is bundled.
-bot_venv_dir="$script_dir/.bot-venv"
-print -r -- "${bot_venv_dir:A}/bin/python" > "$contents_dir/Resources/bot-training-environment.txt"
 cp "$script_dir/setup-incremental-trainer.sh" "$contents_dir/Resources/setup-incremental-trainer.sh"
 cp "$script_dir/Info.plist" "$contents_dir/Info.plist"
 plutil -replace CFBundleVersion -string "$build_version" "$contents_dir/Info.plist"
 plutil -replace CFBundleIconFile -string "$icon_filename" "$contents_dir/Info.plist"
-python3 - "$script_dir" "$contents_dir/Resources/runtime-build-info.json" <<'PY'
-import hashlib, json, pathlib, subprocess, sys
-root = pathlib.Path(sys.argv[1])
-digest = hashlib.sha256()
-for path in sorted((root / "Sources").rglob("*.swift")):
-    digest.update(str(path.relative_to(root)).encode())
-    digest.update(path.read_bytes())
-revision = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
-pathlib.Path(sys.argv[2]).write_text(json.dumps({"gitRevision": revision, "swiftSourceSHA256": digest.hexdigest()}))
-PY
+python3 "$script_dir/write-runtime-build-info.py" "$script_dir" "$contents_dir/Resources"
 sign_item() {
   local identifier=$1
   local item=$2
