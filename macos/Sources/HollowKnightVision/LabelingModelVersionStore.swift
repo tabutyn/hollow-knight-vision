@@ -443,7 +443,18 @@ final class LabelingModelVersionStore {
         guard fileManager.fileExists(atPath: url.path) else { return Registry() }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(Registry.self, from: Data(contentsOf: url))
+        var registry = try decoder.decode(Registry.self, from: Data(contentsOf: url))
+        for (identifier, var record) in registry.objects {
+            // Windows serializes UUID dictionary keys in lowercase. Prior imports
+            // may already have added a second assignment for the same run.
+            record.candidateVersions = Dictionary(record.candidateVersions.map { key, version in
+                (TrainingRunIdentifier.parse(key)?.uuidString ?? key, version)
+            }, uniquingKeysWith: { first, second in
+                (first.major, first.minor) <= (second.major, second.minor) ? first : second
+            })
+            registry.objects[identifier] = record
+        }
+        return registry
     }
 
     private func saveRegistry(_ registry: Registry) throws {
