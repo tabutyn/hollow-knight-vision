@@ -513,7 +513,8 @@
                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                            ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
                 <Button x:Name="BotPlaybackButton" AutomationProperties.Name="Start Hollow Knight Bot"
-                        Visibility="Collapsed" Click="BotPlayback_Click" ToolTipService.ShowOnDisabled="True">
+                        Visibility="Collapsed" Click="BotPlayback_Click" ToolTipService.ShowOnDisabled="True"
+                        ContextMenuService.ShowOnDisabled="True">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock x:Name="BotRobotGlyph" Text="🤖" FontFamily="Segoe UI Emoji" Margin="0,0,4,0"/>
                         <TextBlock Text="B" FontWeight="SemiBold"/>
@@ -521,6 +522,15 @@
                     </StackPanel>
                     <Button.ContextMenu>
                         <ContextMenu>
+                            <MenuItem x:Name="BotDetailsMenu" Header="Bot details" SubmenuOpened="BotDetails_Opened"
+                                      SubmenuClosed="BotDetails_Closed">
+                                <MenuItem x:Name="BotDetailsModel" IsEnabled="False" Header="Loading bot model…"/>
+                                <MenuItem x:Name="BotDetailsStatus" IsEnabled="False"/>
+                                <MenuItem x:Name="BotDetailsInputs" IsEnabled="False"/>
+                                <Separator/>
+                                <MenuItem x:Name="BotReloadModel" Header="Reload model" StaysOpenOnClick="True"
+                                          Click="BotReloadModel_Click"/>
+                            </MenuItem>
                             <MenuItem Header="Show bot evaluations" Click="BotEvaluations_Click"/>
                             <MenuItem Header="Show save archives" Click="BotDemoArchives_Click"/>
                         </ContextMenu>
