@@ -327,8 +327,11 @@
                     <TextBlock Text="Summary" FontSize="20" FontWeight="SemiBold"/>
                     <StackPanel Grid.Row="1" Margin="0,10,0,12">
                         <TextBlock x:Name="BotCaptureSummary" Foreground="#B5C2CC"/>
-                        <TextBlock x:Name="BotNewCaptureSummary" Margin="0,5,0,0" Foreground="#B5C2CC"
-                                   Visibility="Collapsed" TextWrapping="Wrap"/>
+                        <DockPanel Margin="0,5,0,0" Visibility="{Binding Visibility, ElementName=BotNewCaptureSummary}">
+                            <TextBlock x:Name="BotNewCaptureBadge" Margin="0,0,8,0" FontFamily="Segoe UI Emoji"
+                                       ToolTip="New runs since training. Paired Hacker and Game Play clips count once."/>
+                            <TextBlock x:Name="BotNewCaptureSummary" Foreground="#B5C2CC" Visibility="Collapsed" TextWrapping="Wrap"/>
+                        </DockPanel>
                         <TextBlock x:Name="BotModelSummary" Margin="0,5,0,0" Foreground="#B5C2CC" TextWrapping="Wrap"/>
                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                             <ComboBox x:Name="BotTrainingDomain" AutomationProperties.Name="Bot training domain" MinWidth="110"
@@ -503,9 +506,16 @@
             <TextBlock x:Name="StencilGuidanceText" Grid.Column="1" Foreground="#5AA7FF" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="10,0"
                        ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
             <StackPanel Grid.Column="2" Orientation="Horizontal">
-                <Button x:Name="BotPlaybackButton" Content="B" AutomationProperties.Name="Start or stop Hollow Knight Bot"
-                        Visibility="Collapsed" Click="BotPlayback_Click"
-                        ToolTip="Start or stop the bot. In menus, archive slot 4 and start a fresh save. In Gameplay, play the current save.">
+                <TextBlock x:Name="BotPlaybackCaption" Visibility="Collapsed" MaxWidth="160" Margin="4,0"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                           ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+                <Button x:Name="BotPlaybackButton" AutomationProperties.Name="Start Hollow Knight Bot"
+                        Visibility="Collapsed" Click="BotPlayback_Click" ToolTipService.ShowOnDisabled="True">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock x:Name="BotRobotGlyph" Text="🤖" FontFamily="Segoe UI Emoji" Margin="0,0,4,0"/>
+                        <TextBlock Text="B" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="BotStopGlyph" Text="■" Foreground="LightGreen" Margin="4,0,0,0" Visibility="Collapsed"/>
+                    </StackPanel>
                     <Button.ContextMenu>
                         <ContextMenu>
                             <MenuItem Header="Show bot evaluations" Click="BotEvaluations_Click"/>

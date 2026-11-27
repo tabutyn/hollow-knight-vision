@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Automation;
 using System.Text.Json;
 using System.Threading.Channels;
 using HollowKnightVision.Windows.Core;
@@ -83,6 +84,38 @@ public partial class MainWindow
         }
     }
 
+    private const string BotCaptureRequired = "Bot playback requires an active modded game capture.";
+    private const string BotControlsBusy = "Release the controls and finish the current recording or replay before starting the bot.";
+
+    private string? BotStartIssue()
+    {
+        if (gameMode != GameRuntimeMode.Modded) return "Choose Modded game mode to start the bot.";
+        if (visionCancellation is null || isClosing || workspace is not ("Gameplay" or "Hacker")) return BotCaptureRequired;
+        if (trainingInProgress || botTrainingCancellation is not null) return "Wait for training to finish before starting the bot.";
+        if (!initialization.IsFirstPhaseComplete) return "Complete stencil setup before starting the bot.";
+        if (botCapture is not null || changingBotCapture || forwardedKeys.Count != 0 || !gameControls.CanBeginBotControl)
+            return BotControlsBusy;
+        return null;
+    }
+
+    private void PresentBotPlaybackControl()
+    {
+        var visible = workspace is "Gameplay" or "Hacker";
+        BotPlaybackButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        var run = Volatile.Read(ref botPlayback);
+        var active = run is not null || Volatile.Read(ref thinkingLease) is not null;
+        var issue = active || !visible ? null : BotStartIssue();
+        BotPlaybackButton.IsEnabled = visible && (active || issue is null);
+        var name = active ? "Stop Hollow Knight Bot" : "Start Hollow Knight Bot";
+        if (AutomationProperties.GetName(BotPlaybackButton) != name) AutomationProperties.SetName(BotPlaybackButton, name);
+        BotPlaybackButton.ToolTip = active ? name : issue ?? "Start the bot. In menus, archive slot 4 and start a fresh save. In Gameplay, play the current save.";
+        BotStopGlyph.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+        BotPlaybackCaption.Visibility = active && visible ? Visibility.Visible : Visibility.Collapsed;
+        BotPlaybackCaption.Text = run is null ? (active ? "Policy active" : "")
+            : run.DisplayedPlaybackStatus ?? Volatile.Read(ref run.ReportedDemoStatus)
+                ?? (run.StartedInGameplay ? "Loading bot policy" : "Bot Demo active");
+    }
+
     private async Task ToggleBotPlaybackAsync()
     {
         var stoppedThinking = StopThinkingControl("Policy stopped with B.", "user-stop");
@@ -93,20 +126,9 @@ public partial class MainWindow
             StopBotPlayback("Bot stopped.", reason: "user-stop");
             return;
         }
-        if (gameMode != GameRuntimeMode.Modded || visionCancellation is null || !IsActive
-            || workspace is not ("Gameplay" or "Hacker") || isClosing)
+        if ((!IsActive ? BotCaptureRequired : BotStartIssue()) is { } issue)
         {
-            SetStatus("Bot playback requires an active modded game capture.");
-            return;
-        }
-        if (trainingInProgress || botTrainingCancellation is not null)
-        {
-            SetStatus("Wait for training to finish before starting the bot.");
-            return;
-        }
-        if (!initialization.IsFirstPhaseComplete)
-        {
-            SetStatus("Complete stencil setup before starting the bot.");
+            SetStatus(issue);
             return;
         }
         thinkingAutomatic = true;
@@ -119,7 +141,7 @@ public partial class MainWindow
         if (botCapture is not null || changingBotCapture || forwardedKeys.Count != 0
             || gameControls.BeginBotControl() is not { } owner)
         {
-            SetStatus("Release the controls and finish the current recording or replay before starting the bot.");
+            SetStatus(BotControlsBusy);
             return;
         }
 

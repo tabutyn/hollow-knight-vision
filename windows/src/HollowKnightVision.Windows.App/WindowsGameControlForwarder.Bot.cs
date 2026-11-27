@@ -16,11 +16,18 @@ internal sealed partial class WindowsGameControlForwarder
     private long inputEpoch;
     internal event Action<Guid, InputButtons, double>? BotInputSent;
 
+    internal bool CanBeginBotControl
+    {
+        get { lock (stateLock) return CanBeginBotControlLocked; }
+    }
+
+    private bool CanBeginBotControlLocked => CanDriveBotLocked && !botOwner.HasValue && heldButtons == InputButtons.None;
+
     internal Guid? BeginBotControl()
     {
         lock (stateLock)
         {
-            if (!CanDriveBotLocked || botOwner.HasValue || heldButtons != InputButtons.None) return null;
+            if (!CanBeginBotControlLocked) return null;
             botOwner = Guid.NewGuid();
             inputEpoch++;
             isEnabled = false;
