@@ -2,6 +2,58 @@ import XCTest
 @testable import HollowKnightVision
 
 final class BotDemoControllerTests: XCTestCase {
+    func testStartHelpFollowsCurrentBlockerAndOffersStopDuringPlayback() {
+        func issue(_ mode: HollowKnightRuntimeMode = .modded, capturing: Bool = true,
+                   training: Bool = false, stencils: Bool = true, controls: Bool = true) -> String? {
+            BotControlPresentationPolicy.startIssue(mode: mode, capturing: capturing, training: training,
+                                                   stencilsReady: stencils, controlsReady: controls)
+        }
+        XCTAssertEqual(issue(.normal, capturing: false), "Choose Modded game mode to start the bot.")
+        XCTAssertEqual(issue(capturing: false, training: true), "Start a modded game capture before starting the bot.")
+        XCTAssertEqual(issue(training: true, stencils: false), "Wait for training to finish before starting the bot.")
+        let stencilIssue = issue(stencils: false, controls: false)
+        XCTAssertEqual(stencilIssue, "Complete stencil setup before starting the bot.")
+        XCTAssertEqual(BotControlPresentationPolicy.help(active: false, startIssue: stencilIssue, lastIssue: "Old error"), stencilIssue)
+        XCTAssertEqual(BotControlPresentationPolicy.help(active: true, startIssue: stencilIssue, lastIssue: "Old error"), "Press B to stop the bot.")
+        XCTAssertTrue(issue(controls: false)?.contains("recording") == true)
+        XCTAssertNil(issue())
+        XCTAssertEqual(BotControlPresentationPolicy.help(active: false, startIssue: nil, lastIssue: "Archive failed"), "Archive failed")
+        XCTAssertTrue(BotControlPresentationPolicy.help(active: false, startIssue: nil, lastIssue: nil).contains("archives slot 4"))
+    }
+
+    @MainActor
+    func testStartRejectionMatchesButtonHelpBeforeFirstCapture() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = LiveCaptureModel(gameMode: .modded, visualReplayMode: true,
+                                     worldRootOverride: root.appendingPathComponent("world"))
+        XCTAssertNil(model.botDemo.issue)
+        let issue = try XCTUnwrap(model.botDemoStartIssue())
+        XCTAssertFalse(model.canStartBotDemo)
+        let help = BotControlPresentationPolicy.help(active: false, startIssue: issue, lastIssue: model.botDemo.issue)
+        model.startBotDemo()
+        XCTAssertEqual(model.botDemo.issue, help)
+        XCTAssertFalse(model.botDemo.isActive)
+    }
+
+    func testActiveControlCanStopAndReleaseItsSessionWhileAStartIsBlocked() {
+        let demo = BotDemoController(hasFocus: { true })
+        let session = UUID()
+        var released: [UUID] = []
+        demo.configure(canContinue: { true }, begin: { session }, press: { _, _ in true },
+                       end: { released.append($0) }, botIsPlaying: { false })
+        XCTAssertTrue(BotControlPresentationPolicy.canToggle(active: demo.isActive, startIssue: nil))
+        demo.start()
+        let issue = BotControlPresentationPolicy.startIssue(mode: .modded, capturing: true, training: true,
+                                                           stencilsReady: true, controlsReady: true)
+        XCTAssertNotNil(issue)
+        XCTAssertTrue(BotControlPresentationPolicy.canToggle(active: demo.isActive, startIssue: issue))
+        XCTAssertEqual(BotControlPresentationPolicy.help(active: demo.isActive, startIssue: issue, lastIssue: demo.issue), "Press B to stop the bot.")
+        demo.stop(reason: "Stopped with B")
+        XCTAssertEqual(released, [session])
+        XCTAssertFalse(BotControlPresentationPolicy.canToggle(active: demo.isActive, startIssue: issue))
+    }
+
     func testBFromGameplayHandsOffWithoutArchivingOrMenuNavigation() throws {
         var playing = false, presses = 0, releases = 0
         let demo = BotDemoController(now: { 100 }, hasFocus: { true })
