@@ -114,6 +114,14 @@ has logged for that model. Windows uses the local Ollama tray app's
 `%LOCALAPPDATA%\Ollama\server.log`. For a separate Llama service, set
 `HKV_OLLAMA_COMPAT_LOG` to its absolute log path. [Ollama log locations](https://docs.ollama.com/troubleshooting)
 
+The **🤖 B** button is visible in Gameplay and Hacker. Hover over a disabled
+button to see what it needs. During playback it shows a green stop mark beside
+the B and the current bot status. In menus, starting the bot archives slot 4
+and begins a fresh save. In gameplay it uses the current save.
+
+The **+N 🤖** badge in Bot Summary counts new runs since training. Paired Hacker
+and Game Play recordings count once. The adjacent breakdown shows each domain's clips.
+
 Before the first training run, **B** uses the built-in explorer in modded Game
 Play or Hacker. It waits for admitted gameplay and fresh movement observations.
 After a verified checkpoint is available for that domain, **B** uses the

@@ -61,6 +61,9 @@ public partial class MainWindow
         }
         var pending = BotTrainingJob.CountNewCaptures(botTrainingLibrary, hacker, gameplay);
         var runs = pending.Runs == 1 ? "1 new run" : $"{pending.Runs} new runs";
+        BotNewCaptureBadge.Text = $"+{pending.Runs} 🤖";
+        BotNewCaptureBadge.Foreground = pending.Runs > 0 ? System.Windows.Media.Brushes.DeepSkyBlue : System.Windows.Media.Brushes.Silver;
+        System.Windows.Automation.AutomationProperties.SetName(BotNewCaptureBadge, runs);
         BotNewCaptureSummary.Text = $"{runs} · Hacker {pending.HackerClips} · Game Play {pending.GameplayClips}";
         BotNewCaptureSummary.Visibility = Visibility.Visible;
     }

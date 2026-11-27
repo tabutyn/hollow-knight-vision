@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Channels;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -99,6 +100,10 @@ internal static class BotDesktopEvaluationTests
             Field("recognizedMenuContext").SetValue(window, "game");
             var bridge = (WindowsGameControlForwarder)Field("gameControls").GetValue(window)!;
             var button = (Button)window.FindName("BotPlaybackButton");
+            var keyTarget = (RadioButton)window.FindName("GameplayWorkspaceButton");
+            var robot = (TextBlock)window.FindName("BotRobotGlyph");
+            var stop = (TextBlock)window.FindName("BotStopGlyph");
+            var caption = (TextBlock)window.FindName("BotPlaybackCaption");
             var settings = (FrameworkElement)window.FindName("SettingsOverlay");
             var status = (TextBlock)window.FindName("StatusText");
             var text = new TextBox { Width = 100, Height = 25, HorizontalAlignment = HorizontalAlignment.Left,
@@ -118,7 +123,10 @@ internal static class BotDesktopEvaluationTests
             }
             Field("recognizedMenuContext").SetValue(window, "select-profile");
             Method("UpdateModeAvailability").Invoke(window, null);
-            Check(button.Visibility == Visibility.Visible, "B must remain available during pre-training menus.");
+            Check(button.IsVisible && robot.IsVisible && robot.Text == "🤖" && stop.Visibility == Visibility.Collapsed
+                && !button.IsEnabled && Equals(button.ToolTip, "Complete stencil setup before starting the bot.")
+                && AutomationProperties.GetName(button) == "Start Hollow Knight Bot",
+                "The idle robot must remain visible and explain the incomplete stencil campaign.");
             Field("recognizedMenuContext").SetValue(window, "game");
 
             var modal = new Window { Owner = window, Width = 220, Height = 100, Content = new TextBox(), ShowInTaskbar = false };
@@ -139,8 +147,8 @@ internal static class BotDesktopEvaluationTests
             await WaitFor(() => text.IsKeyboardFocused);
             Check(!PressB(text) && Field("botPlayback").GetValue(window) is null,
                 "Text entry must keep its B key.");
-            Keyboard.Focus(button);
-            await WaitFor(() => button.IsKeyboardFocused);
+            Keyboard.Focus(keyTarget);
+            await WaitFor(() => keyTarget.IsKeyboardFocused);
             foreach (var modifier in new[] { ModifierKeys.Control, ModifierKeys.Shift, ModifierKeys.Alt, ModifierKeys.Windows })
                 Check(!LocalB(modifiers: modifier), $"B with {modifier} must remain the user's shortcut.");
             settings.Visibility = Visibility.Visible;
@@ -148,9 +156,7 @@ internal static class BotDesktopEvaluationTests
             Check(Field("botPlayback").GetValue(window) is null, "B must leave bot control alone while settings is open.");
             settings.Visibility = Visibility.Collapsed;
 
-            Keyboard.Focus(button);
-            await WaitFor(() => button.IsKeyboardFocused);
-            Check(PressB(button) && Field("botPlayback").GetValue(window) is null
+            Check(PressB(keyTarget) && Field("botPlayback").GetValue(window) is null
                 && status.Text == "Complete stencil setup before starting the bot.",
                 "B should identify the unfinished stencil campaign before requesting receiver control.");
             var examples = new LabelingExampleStore(Path.Combine(root, "labeling-v1", "examples"));
@@ -168,7 +174,8 @@ internal static class BotDesktopEvaluationTests
             Method("RefreshInitializationStatus").Invoke(window, null);
             Check(setup.IsFirstPhaseComplete, "The captured menu and HUD references must unlock the first campaign.");
 
-            Check(PressB(button) && Field("botPlayback").GetValue(window) is null
+            Method("UpdateModeAvailability").Invoke(window, null);
+            Check(!button.IsEnabled && PressB(keyTarget) && Field("botPlayback").GetValue(window) is null
                 && !Directory.Exists(Path.Combine(root, "bot-v1", "evaluations"))
                 && status.Text == "Release the controls and finish the current recording or replay before starting the bot.",
                 "An unavailable receiver must report the failure and remain outside playback.");
@@ -181,11 +188,17 @@ internal static class BotDesktopEvaluationTests
 
             Field("workspace").SetValue(window, "Gameplay");
             Field("recognizedMenuContext").SetValue(window, "select-profile");
+            Method("UpdateModeAvailability").Invoke(window, null);
+            Check(button.IsEnabled && !stop.IsVisible, "A ready receiver must enable the idle robot.");
             Keyboard.Focus(button);
             await WaitFor(() => button.IsKeyboardFocused);
             Check(PressB(button) && Field("botPlayback").GetValue(window) is { } menuRun
                 && menuRun.GetType().GetProperty("Demo", Instance)?.GetValue(menuRun) is not null,
                 "B must start the menu demo with a complete stencil campaign and no trained model.");
+            Method("UpdateModeAvailability").Invoke(window, null);
+            Check(stop.IsVisible && caption.IsVisible && caption.Text.Length > 0
+                && AutomationProperties.GetName(button) == "Stop Hollow Knight Bot",
+                "The running menu demo must expose its status and a visible, accessible Stop action.");
             Check(PressB(button) && Field("botPlayback").GetValue(window) is null,
                 "B must stop the menu demo.");
             Field("recognizedMenuContext").SetValue(window, "game");
@@ -209,7 +222,8 @@ internal static class BotDesktopEvaluationTests
                 Field("trainingInProgress").SetValue(window, true);
                 try
                 {
-                    Check(PressB(button) && Field("botPlayback").GetValue(window) is null,
+                    Method("UpdateModeAvailability").Invoke(window, null);
+                    Check(button.IsEnabled && stop.IsVisible && PressB(button) && Field("botPlayback").GetValue(window) is null,
                         "A second B press must stop the current bot even while training.");
                 }
                 finally { Field("trainingInProgress").SetValue(window, false); }
@@ -229,7 +243,8 @@ internal static class BotDesktopEvaluationTests
                 Field(field).SetValue(window, active);
                 try
                 {
-                    Check(PressB(button) && Field("botPlayback").GetValue(window) is null
+                    Method("UpdateModeAvailability").Invoke(window, null);
+                    Check(!button.IsEnabled && PressB(keyTarget) && Field("botPlayback").GetValue(window) is null
                         && status.Text == "Wait for training to finish before starting the bot.",
                         "B must leave receiver controls available while training is already in progress.");
                 }
@@ -553,6 +568,15 @@ internal static class BotDesktopEvaluationTests
         Task first = Task.CompletedTask, second = Task.CompletedTask;
         try
         {
+            var robot = (Button)window.FindName("BotPlaybackButton");
+            foreach (var workspace in new[] { "Gameplay", "Hacker" })
+            {
+                Field("workspace").SetValue(window, workspace);
+                Method("UpdateModeAvailability").Invoke(window, null);
+                Check(robot.Visibility == Visibility.Visible && !robot.IsEnabled && Equals(robot.ToolTip, "Choose Modded game mode to start the bot."),
+                    $"Normal {workspace} must show the robot and explain how to enable it.");
+            }
+            Field("workspace").SetValue(window, "Gameplay");
             await window.RefreshBotLibraryAsync().WaitAsync(token);
             var legacy = await WriteCapture();
             var legacyManifest = Path.Combine(library, BotCaptureSession.DirectoryName(legacy.Id), "manifest.json");
@@ -1033,13 +1057,15 @@ internal static class BotDesktopEvaluationTests
         var pending = (TextBlock)window.FindName("BotNewCaptureSummary");
         var gameplay = new BotModelStore(botRoot, BotCaptureDomain.Gameplay);
         var hacker = new BotModelStore(botRoot, BotCaptureDomain.Hacker);
+        var badge = (TextBlock)window.FindName("BotNewCaptureBadge");
         try
         {
             Environment.SetEnvironmentVariable("HKV_BOT_PYTHON", launcher);
             WriteCheckpoint(fixture, "gameplay", "Paired Game Play", "bot-result", created.AddMinutes(2), [first.Gameplay, second.Gameplay]);
             WriteCheckpoint(fixture, "hacker", "Paired Hacker", "bot-result", created.AddMinutes(2), [first.Hacker, second.Hacker]);
             await window.RefreshBotLibraryAsync().WaitAsync(token);
-            Check(both.IsEnabled && pending.Text == "2 new runs · Hacker 2 · Game Play 2",
+            Check(both.IsEnabled && pending.Text == "2 new runs · Hacker 2 · Game Play 2"
+                && badge.Text == "+2 🤖" && AutomationProperties.GetName(badge) == "2 new runs",
                 "Train Both must be available when both sides of the paired captures are eligible.");
             Field("trainingInProgress").SetValue(window, true);
             try
@@ -1071,6 +1097,8 @@ internal static class BotDesktopEvaluationTests
             Check(Field("trainingInProgress").GetValue(window) is false,
                 "Dataset validation must wait while the bot trainer owns the training workspace.");
             await WaitFor(() => !Training() && pending.Text == "0 new runs · Hacker 0 · Game Play 0");
+            Check(badge.Text == "+0 🤖" && AutomationProperties.GetName(badge) == "0 new runs",
+                "Training both checkpoints must clear the combined robot count.");
             Check(modelTraining.TrainButton.IsEnabled, "The Model trainer must be available again when the bot job finishes.");
             Check(status.Text.Contains("Game Play is using Paired Game Play.", StringComparison.Ordinal)
                 && status.Text.Contains("Hacker is using Paired Hacker.", StringComparison.Ordinal) && !both.IsEnabled,

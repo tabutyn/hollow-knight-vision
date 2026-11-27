@@ -2018,8 +2018,7 @@ public partial class MainWindow : Window
             && DashboardPresentationPolicy.ShowsGameplayFraming(
                 workspace, initialization.IsFirstPhaseComplete, recognizedMenuContext)
             ? Visibility.Visible : Visibility.Collapsed;
-        BotPlaybackButton.Visibility = gameMode == GameRuntimeMode.Modded && visionCancellation is not null
-            && workspace is "Gameplay" or "Hacker" ? Visibility.Visible : Visibility.Collapsed;
+        PresentBotPlaybackControl();
         PathRecordingButton.Visibility = botCapture is not null
             || DashboardPresentationPolicy.ShowsBotCapture(workspace, gameMode, recognizedMenuContext)
             ? Visibility.Visible : Visibility.Collapsed;
