@@ -74,7 +74,12 @@ public sealed partial class MenuStencilTracker
         calibration.Reset(); cadence.Reset();
     }
     public void ReplaceCatalog(MenuStencilCatalog value)
-    { catalog = value; Reset(preservingLanguage: true); calibration.SynchronizeCorrections(value.SelectorCorrections); }
+    {
+        catalog = value;
+        Reset(preservingLanguage: true);
+        calibration.ReloadPersistedCalibration();
+        calibration.SynchronizeCorrections(value.SelectorCorrections);
+    }
 
     public MenuStencilResult? Observe(BgraFrame image, double timestamp)
     {

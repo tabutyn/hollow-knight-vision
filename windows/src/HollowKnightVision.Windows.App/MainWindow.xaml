@@ -732,8 +732,8 @@
                                     <Separator Margin="0,12"/>
                                     <TextBlock Text="Training library" FontWeight="SemiBold" Margin="0,0,0,8"/>
                                     <StackPanel Orientation="Horizontal">
-                                        <Button Content="Export Training Library…" Click="ExportTrainingLibrary_Click"/>
-                                        <Button Content="Import Training Library…" Click="ImportTrainingLibrary_Click"/>
+                                        <Button x:Name="ExportTrainingLibraryButton" Content="Export Training Library…" Click="ExportTrainingLibrary_Click"/>
+                                        <Button x:Name="ImportTrainingLibraryButton" Content="Import Training Library…" Click="ImportTrainingLibrary_Click"/>
                                     </StackPanel>
                                     <TextBlock x:Name="TrainingTransferStatusText" Foreground="#999999" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                     <Separator Margin="0,12"/>

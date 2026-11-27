@@ -10,6 +10,7 @@ using System.Xml.Linq;
 using System.Text.Json;
 using HollowKnightVision.Windows.App;
 using HollowKnightVision.Windows.Core;
+using Microsoft.Win32;
 
 internal static class TrainingIntegrationTests
 {
@@ -25,11 +26,18 @@ internal static class TrainingIntegrationTests
         TestSharedDatasetExport(); TestPackagedTrainingEnvironment(); TestControlsAndLayout(); TestOutputGenerationsAndShutdown();
         TestPowerShellFailureMessage();
         var scope = new DispatcherFrame();
-        var objectFailure = VerifyObjectTrainerFailureAsync();
-        objectFailure.GetAwaiter().OnCompleted(() => scope.Continue = false);
+        var integration = RunAsync();
+        integration.GetAwaiter().OnCompleted(() => scope.Continue = false);
         Dispatcher.PushFrame(scope);
-        objectFailure.GetAwaiter().GetResult();
+        integration.GetAwaiter().GetResult();
         Console.WriteLine("PASS native training count/dot, Stop/progress states, narrow toolbar, coalesced output and nonblocking shutdown");
+    }
+
+    private static async Task RunAsync()
+    {
+        await VerifyObjectTrainerFailureAsync();
+        if (Environment.GetEnvironmentVariable("HKV_TEST_TRAINING_LIBRARY_PYTHON") is { Length: > 0 } python)
+            await VerifyTrainingLibraryTransferAsync(python);
     }
     private static void TestSharedDatasetExport()
     {
@@ -71,7 +79,8 @@ internal static class TrainingIntegrationTests
     {
         var packaged = Path.Combine(AppContext.BaseDirectory, "training");
         foreach (var file in new[] { "train-model-windows.ps1", "setup-training-windows.ps1", "training-environment-windows.ps1",
-            "TrainingPython/requirements-windows.txt", "TrainingPython/hkv_incremental_trainer.py" })
+            "transfer-training-library-windows.ps1", "TrainingPython/requirements-windows.txt",
+            "TrainingPython/hkv_incremental_trainer.py", "TrainingPython/hkv_library_transfer.py" })
             Check(File.Exists(Path.Combine(packaged, file)), "Installed training asset missing: " + file);
         var root = Directory.CreateTempSubdirectory("hkv-training-runtime-");
         try
@@ -264,6 +273,92 @@ internal static class TrainingIntegrationTests
                 await closed.Task.WaitAsync(TimeSpan.FromSeconds(10));
             }
             root.Delete(recursive: true);
+        }
+    }
+
+    private static async Task VerifyTrainingLibraryTransferAsync(string python)
+    {
+        const string environment = "HKV_TRAINER_PYTHON";
+        var savedPython = Environment.GetEnvironmentVariable(environment);
+        var root = Directory.CreateTempSubdirectory("hkv-training-library-");
+        var source = root.CreateSubdirectory("source library").FullName;
+        var destination = root.CreateSubdirectory("destination library").FullName;
+        var bundle = Path.Combine(root.FullName, "vision training transfer.hkvtraining");
+        var selectedPath = bundle;
+        var acceptImport = false;
+        var sourceExamples = new LabelingExampleStore(Path.Combine(source, "labeling-v1", "examples"));
+        HudStencilTests.SaveGameplayReference(sourceExamples);
+        var stencilId = sourceExamples.Load().Single().Id;
+        MainWindow? exporter = null;
+        MainWindow? importer = null;
+        try
+        {
+            Environment.SetEnvironmentVariable(environment, python);
+            exporter = new MainWindow(GameRuntimeMode.Modded, null, source, source)
+            {
+                ShowTrainingLibraryPicker = dialog =>
+                {
+                    Check(dialog is SaveFileDialog { DefaultExt: ".hkvtraining" }, "Export did not open a library save dialog.");
+                    dialog.FileName = bundle;
+                    return true;
+                }
+            };
+            importer = new MainWindow(GameRuntimeMode.Modded, null, destination, destination)
+            {
+                ShowTrainingLibraryPicker = dialog =>
+                {
+                    Check(dialog is OpenFileDialog { CheckFileExists: true }, "Import did not open a library picker.");
+                    dialog.FileName = selectedPath;
+                    return acceptImport;
+                }
+            };
+            var recognizer = (WindowsMenuStencilRecognizer)typeof(MainWindow)
+                .GetField("menuStencilRecognizer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(importer)!;
+            Check(!recognizer.HasGameplayReference, "An empty library already had a HUD reference.");
+            Check(await Click(importer, "ImportTrainingLibraryButton") == "" && !recognizer.HasGameplayReference,
+                "Cancelling the picker changed the library.");
+            var export = await Click(exporter, "ExportTrainingLibraryButton");
+            Check(File.Exists(bundle) && export.StartsWith("Exported version ", StringComparison.Ordinal), $"Export failed. {export}");
+
+            acceptImport = true;
+            selectedPath = Path.Combine(root.FullName, "invalid training transfer.hkvtraining");
+            File.WriteAllText(selectedPath, "not a training library");
+            var failure = await Click(importer, "ImportTrainingLibraryButton");
+            Check(failure.Contains("Training library transfer failed.", StringComparison.Ordinal) && !recognizer.HasGameplayReference,
+                $"Invalid import changed the active library or lost the diagnostic. {failure}");
+
+            selectedPath = bundle;
+            var import = await Click(importer, "ImportTrainingLibraryButton");
+            var restored = new LabelingExampleStore(Path.Combine(destination, "labeling-v1", "examples")).Load();
+            Check(import.StartsWith("Imported version ", StringComparison.Ordinal) && restored.Single().Id == stencilId
+                && recognizer.HasGameplayReference, $"Imported HUD stencil was not available to live recognition. {import}");
+            Console.WriteLine("PASS Windows settings exports and imports a versioned training library and refreshes active HUD recognition");
+        }
+        finally
+        {
+            await Close(importer);
+            await Close(exporter);
+            Environment.SetEnvironmentVariable(environment, savedPython);
+            root.Delete(recursive: true);
+        }
+
+        static async Task<string> Click(MainWindow window, string button)
+        {
+            ((Button)window.FindName(button)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var transfer = (Task)typeof(MainWindow).GetField("trainingTransferTask", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(window)!;
+            await transfer.WaitAsync(TimeSpan.FromSeconds(30));
+            Check(window.IsEnabled, "The settings window stayed disabled after transfer.");
+            return ((TextBlock)window.FindName("TrainingTransferStatusText")).Text;
+        }
+
+        static async Task Close(MainWindow? window)
+        {
+            if (window is null) return;
+            var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            window.Closed += (_, _) => closed.TrySetResult();
+            window.Close();
+            await closed.Task.WaitAsync(TimeSpan.FromSeconds(10));
         }
     }
 

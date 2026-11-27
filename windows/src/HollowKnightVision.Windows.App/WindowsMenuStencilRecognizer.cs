@@ -51,8 +51,7 @@ internal sealed class WindowsMenuStencilRecognizer
         this.examplesRoot = Path.GetFullPath(examplesRoot); this.language = language;
         calibrationPath = MenuStencilCalibration.WritablePath(this.examplesRoot);
         var calibration = new MenuSelectorCalibrationTracker(calibrationPath,
-            MenuStencilCalibration.ProjectMirrorPath(Environment.GetCommandLineArgs()),
-            fallbackCalibration: MenuStencilCalibration.LoadDefault(calibrationPath));
+            MenuStencilCalibration.ProjectMirrorPath(Environment.GetCommandLineArgs()));
         menuWorker = new(new MenuStencilTracker(minimumSearchInterval: .1, calibration: calibration));
         Refresh();
     }

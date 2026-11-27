@@ -1008,6 +1008,7 @@ var tests = new List<(string Name, Action Run)>
     ("menu tracking stays near the captured stencil after gradual shifts", MenuTrackerTests.TestTrackingStaysNearCapturedPositions),
     ("dialog selector search pose follows stable rows rather than animated title", MenuTrackerTests.TestDialogPoseUsesStableRows),
     ("synthetic stable selector matches persist measured product calibration", MenuTrackerTests.TestStableSelectorMatchPersistsProductCalibration),
+    ("replacing the catalog uses imported selector calibration and correction history", MenuTrackerTests.TestCatalogReplacementReloadsSelectorCalibration),
     ("synthetic intermittent selector matches do not persist calibration", MenuTrackerTests.TestIntermittentSelectorMatchesDoNotPersistCalibration),
     ("synthetic selector transitions cannot remain stuck on the previous row", MenuTrackerTests.TestLiveSelectorTransitionsCannotRemainStuckOnPreviousRow),
     ("synthetic tracked menu scans use fewer comparisons than acquisition", MenuTrackerTests.TestTrackingUsesFarFewerComparisonsWhenRequested),
