@@ -16,7 +16,7 @@ from bot_training_ipc import exclusive_file_lock
 from export_bot_policy import export_policy, write_parity_fixture
 from hacker_gym import HackerGym
 from hkv_bot_dataset import SCHEMAS
-from train_hacker_gym import VISION, gym_checkpoint_path, windows_gym_identity
+from train_hacker_gym import SUPPORT, VISION, gym_checkpoint_path, windows_gym_identity
 
 
 def sha(path):
@@ -67,7 +67,7 @@ def compare(args):
     state = json.loads((args.run / "state.json").read_text())
     identity = state["identity"]
     domain = identity["domain"]
-    bot_root = args.run.parent.parent
+    bot_root = args.support / "bot-v1"
     champion = gym_checkpoint_path(bot_root / "models" / domain, state["champion"], args.run)
     manifest = json.loads((champion / "manifest.json").read_text())
     schema = manifest["schemaVersion"]
@@ -84,7 +84,7 @@ def compare(args):
         hashes = {key: sha(path) for key, path in files.items()}
         if os.name == "nt":
             # The Windows apphost loads the encoder from managed assemblies.
-            runtime = argparse.Namespace(vision=args.vision, game=args.game, domain=domain, support=bot_root.parent)
+            runtime = argparse.Namespace(vision=args.vision, game=args.game, domain=domain, support=args.support)
             hashes.update({key: value.lower() for key, value in windows_gym_identity(runtime).items()})
         return hashes
 
@@ -98,7 +98,7 @@ def compare(args):
     env = HackerGym(game=args.game, vision=args.vision, labels=labels, path_connections=connections,
                     domain=domain, version=schema, supports_masked=manifest.get("supportsMaskedKnight", False),
                     max_steps=identity["max_steps"], stall_steps=identity["stall_steps"],
-                    visual_support_root=bot_root.parent if os.name == "nt" else None)
+                    visual_support_root=args.support if os.name == "nt" else None)
     def verify_files():
         if snapshot() != initial:
             raise RuntimeError("A checkpoint, game input or executable changed during the comparison")
@@ -167,6 +167,7 @@ def compare(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True, help="Existing PPO run with a verified learner")
+    parser.add_argument("--support", type=Path, help="Gym trainer support directory for a custom run location")
     parser.add_argument("--game", type=Path, required=True)
     parser.add_argument("--vision", type=Path, default=VISION)
     parser.add_argument("--output", type=Path, required=True, help="New experiment directory")
@@ -179,8 +180,14 @@ def main(argv=None):
     if len(set(args.eval_seeds)) != len(args.eval_seeds) or args.seed in args.eval_seeds:
         parser.error("Training and evaluation require distinct seeds")
     args.run, args.game, args.vision = (path.resolve() for path in (args.run, args.game, args.vision))
+    if args.support is None:
+        # Preserve relocated libraries. Runs written with the trainer's --output
+        # still share its normal model library and worker lock.
+        library = args.run.parent.parent.parent
+        args.support = library if args.run.parent == library / "bot-v1/gym" else SUPPORT
+    args.support = args.support.resolve()
     torch.set_num_threads(1)
-    with exclusive_file_lock(args.run.parent / "worker.lock", wait=False):
+    with exclusive_file_lock(args.support / "bot-v1/gym/worker.lock", wait=False):
         compare(args)
 
 

@@ -170,6 +170,17 @@ class PolicyComparisonTests(unittest.TestCase):
         self.assertEqual(rejected.exception.code, 2)
         self.assertIn("distinct seeds", error.getvalue())
 
+    def test_custom_run_uses_trainers_shared_worker_lock(self):
+        support = self.run_dir.parents[2]
+        custom = support / "custom output/run"
+        custom.mkdir(parents=True)
+        args = self.arguments + ["--run", str(custom)]
+        with patch.object(comparison, "SUPPORT", support), exclusive_file_lock(self.run_dir.parent / "worker.lock"):
+            for support_args in ([], ["--support", str(support)]):
+                with self.subTest(support_args=support_args), self.assertRaises(BlockingIOError):
+                    comparison.main(args + support_args)
+        self.assertFalse((custom.parent / "worker.lock").exists())
+
     def test_changed_receiver_during_training_leaves_branch_unrecorded(self):
         self.make_run()
         self.enterContext(patch.object(comparison, "HackerGym", return_value=PairedRoom()))

@@ -44,6 +44,16 @@ macos/.bot-venv/bin/python macos/BotPython/compare_policy_inputs.py \
   --run "$PPO_RUN" --game "$MODDED_GAME_EXECUTABLE" --output ./input-comparison
 ```
 
+On Windows, use the installed bot trainer environment and the modded game's `hollow_knight.exe`:
+
+```powershell
+& "$env:LOCALAPPDATA\HollowKnightVision\bot-v1\runtime\.bot-venv\Scripts\python.exe" `
+  "$env:LOCALAPPDATA\Programs\Hollow Knight Vision\training\BotPython\compare_policy_inputs.py" `
+  --run $PpoRun --game $ModdedGameExecutable --output .\input-comparison
+```
+
+If the trainer used both a custom `--output` and a custom `--support`, pass its support directory to the comparison as well so they share the same model library and worker lock.
+
 For a runtime under development, use `--stage train` to save both branches, `--stage evaluate` for the matched Gym episodes, and `--stage verify` after installing the native player. Use the same output directory for all three commands. Evaluation can resume completed starts on the same build. On a new build it archives the previous trials and replays the comparison.
 
 1. **Collect expert clips.** In the modded game record with **K**. For each skill collect both successful uses and comparable situations where the player withholds the ability. Keep the raw key edges, chosen direction, screenshots and eventual game outcome. Group clips from the same source run together. Use separate datasets for Gameplay and Hacker. Extended export accepts clips recorded with the new receiver so an unrecorded ability cannot become a false release label.
