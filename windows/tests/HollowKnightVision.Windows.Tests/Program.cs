@@ -1059,6 +1059,7 @@ var tests = new List<(string Name, Action Run)>
     ("RGB stencil correlation and color fallback match Mac", MenuStencilTests.TestPixelKernel),
     ("stencil bands and scaled matching preserve top-origin coordinates", MenuStencilTests.TestBandAndScaling),
     ("menu predicates reject colored background and isolated dust", MenuStencilTests.TestTextPredicatesAndInvalidConsensus),
+    ("imported candidate version aliases keep their original assignments", ModelVersionTests.TestImportedCandidateVersionAliases),
     ("model versions promote durably and restore Default", ModelVersionTests.TestDurableVersions),
     ("model objects keep independent versions and selections", ModelVersionTests.TestIndependentObjects),
     ("active shared model replaces legacy per-object passes", ModelVersionTests.TestSharedModel),

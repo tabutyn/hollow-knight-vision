@@ -7,6 +7,32 @@ internal static class ModelVersionTests
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
     private static readonly LabelingReviewMetrics Metrics = new(.5, .5, 1, 1, 0, .5, 1, .75);
 
+    internal static void TestImportedCandidateVersionAliases()
+    {
+        using var fixture = new Fixture();
+        var first = fixture.Candidate(Shared, 100, "first");
+        var second = fixture.Candidate(Shared, 200, "second");
+        var third = fixture.Candidate(Shared, 300, "third");
+        var versions = new Dictionary<string, LabelingModelSemanticVersion>
+        {
+            [first.Id.ToString("N")] = new(0, 1),
+            [second.Id.ToString("D").ToUpperInvariant()] = new(0, 2),
+            [second.Id.ToString("N")] = new(0, 3)
+        };
+        var objects = new Dictionary<string, object> { [Shared] = new { candidateVersions = versions } };
+        var imported = JsonSerializer.Serialize(new { schemaVersion = 1, objects }, Json);
+        var store = fixture.Store;
+        Directory.CreateDirectory(store.RootDirectory);
+        var path = Path.Combine(store.RootDirectory, "registry.json");
+        File.WriteAllText(path, imported);
+        store.SynchronizeCandidates([first, second]);
+        Equal(imported, File.ReadAllText(path));
+        Equal("v0.1", store.CandidateVersion(first).DisplayName);
+        Equal("v0.2", store.CandidateVersion(second).DisplayName);
+        store.SynchronizeCandidates([third]);
+        Equal("v0.3", new LabelingModelVersionStore(store.RootDirectory).CandidateVersion(third).DisplayName);
+    }
+
     internal static void TestDurableVersions()
     {
         using var fixture = new Fixture(); var store = fixture.Store;
@@ -97,6 +123,7 @@ internal static class ModelVersionTests
         Equal("v0.2", store.CandidateVersion(failed).DisplayName);
         var sibling = fixture.Candidate(Shared, 300, "sibling", true, baseline.Id,
             new() { ["title"] = .99, ["decoration"] = .99 });
+        sibling = sibling with { Summary = sibling.Summary with { BaseRunIdentifier = baseline.Id.ToString("N") } };
         store.SynchronizeCandidates([baseline, failed, sibling]);
         store.ReconcileDevelopmentCandidates([baseline, failed, sibling]);
         Equal("checkpoint-sibling", File.ReadAllText(store.TrainingCheckpointPath(Shared, [baseline, failed, sibling])!));

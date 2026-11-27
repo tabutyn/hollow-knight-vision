@@ -47,7 +47,7 @@ internal static class LabelingEditorPolicyParityTests
             "Advanced Settings", "Particle Effects", "Blur Quality", "Dithering",
             "Film Grain", "Reset Defaults", "Back", "Select Decorations");
         EqualNames("controller",
-            "Controller", "Controller Diagram", "Remap Controlls", "Advanced Settings", "Back",
+            "Controller", "No Active Controller", "Controller Diagram", "Remap Controlls", "Advanced Settings", "Back",
             "Select Decorations");
         EqualNames("remap-controller",
             "Remap Controller", "Jump", "Attack", "Dash", "Focus / Cast", "Quick Map",
