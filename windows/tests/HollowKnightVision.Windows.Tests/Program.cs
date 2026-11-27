@@ -1731,14 +1731,26 @@ if (Environment.GetEnvironmentVariable("HKV_ROOM_FEATURE_AUDIT_INPUT") is not nu
 if (Environment.GetEnvironmentVariable("HKV_CROSS_ROOM_AUDIT_INPUT") is not null)
     tests.Add(("recorded cross-room proposals require matching floor texture", RoomReturnReplayAuditTests.TestEarlierRoomGroundClosuresWhenRequested));
 
+var skipped = 0;
 foreach (var test in tests)
 {
-    test.Run();
+    try
+    {
+        test.Run();
+    }
+    catch (IOException error) when (OperatingSystem.IsWindows()
+        && test.Run == (Action)BotDemoTests.TestSaveArchiveRejectsFileLinks
+        && error.HResult == unchecked((int)0x80070522))
+    {
+        Console.WriteLine($"SKIP {test.Name}: Windows did not grant the file symlink privilege.");
+        skipped++;
+        continue;
+    }
     Console.WriteLine($"PASS {test.Name}");
 }
 await TestReceiverClientLoopback();
 Console.WriteLine("PASS receiver client loopback");
-Console.WriteLine($"Windows core tests passed: {tests.Count + 1}");
+Console.WriteLine($"Windows core tests passed: {tests.Count + 1 - skipped}");
 return;
 
 static void TestHudAtlasExclusions()
