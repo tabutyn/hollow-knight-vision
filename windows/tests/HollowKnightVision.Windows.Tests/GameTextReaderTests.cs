@@ -6,6 +6,36 @@ internal static class GameTextReaderTests
     private static BgraFrame Frame(int id) => new(2, 2, 8, new byte[16], id, DateTimeOffset.UnixEpoch.AddSeconds(id));
     private static GameTextLine Line(string text, double confidence) => new(1, text, Bounds, confidence);
 
+    internal static void TestTitleOcrFragments()
+    {
+        var reader = new GameTextReader("unused");
+        string[] noise = ["Ce", "Ces", "Ce.", "Ce s", "Ce.s", "Ce's", "Cei", "Ceis", "Coi"];
+        string[] useful = ["Yes", "No", "Go", "Ces 2", "Ces gates"];
+        var scan = noise.Concat(useful).Select(text => Line(text, .99)).ToArray();
+        var work = reader.TryStart(Frame(1), "en-US", "Game capture", 1)!;
+        reader.Complete(work, scan, 20, 1.1);
+        Require(reader.Scan!.Lines.Count == scan.Length && reader.LatestReading!.Lines.SequenceEqual(useful),
+            "raw OCR retains the title fragments while frame evidence retains meaningful lines");
+        Require(!reader.Entries.Any(e => noise.Contains(e.Observation.DisplayText))
+            && !reader.PolicyContext().Contains("] Ce.s", StringComparison.Ordinal), "noise stays out of notebook evidence");
+
+        var root = Directory.CreateTempSubdirectory();
+        try
+        {
+            var path = Path.Combine(root.FullName, "notebook.json");
+            GameTextObservation Row(string id, string text, string context, string language) =>
+                new(id, text, context, language, DateTimeOffset.UnixEpoch, MatchingVersion: 2);
+            var saved = new[] { Row("noise", "Ce.s", "main-title · Start Game", "en"), Row("suffix", "Coi", "Main Title - Quit Game", "en"),
+                Row("french", "Ces", "Main Title", "fr"), Row("room", "Ces", "Dirtmouth", "en"),
+                Row("corrected", "Ces", "Main Title", "en") with { BestText = "Yes" },
+                Row("mixed", "Ce", "Main Title", "en") with { OtherContexts = ["Town"] } };
+            File.WriteAllBytes(path, GameTextNotebook.EncodeTrace(saved));
+            Require(new GameTextNotebook(path).Read().Select(row => row.Id).SequenceEqual(["french", "room", "corrected", "mixed"]),
+                "old title-only fragments are hidden while other languages, rooms and corrected readings survive");
+        }
+        finally { root.Delete(true); }
+    }
+
     internal static void TestReaderCadenceAndInvalidation()
     {
         var reader = new GameTextReader("unused");

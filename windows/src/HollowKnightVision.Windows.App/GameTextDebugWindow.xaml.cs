@@ -141,6 +141,14 @@ public partial class GameTextDebugWindow : Window
         if (!updating) DrawLineBoxes();
     }
 
+    private void ReadingFocused(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e)
+    {
+        if (ItemsControl.ContainerFromElement(LogRows, (DependencyObject)sender) is ListBoxItem log)
+            log.IsSelected = true;
+        else if (ItemsControl.ContainerFromElement(VisibleLines, (DependencyObject)sender) is ListBoxItem line)
+            line.IsSelected = true;
+    }
+
     private void ReadingChanged(object sender, RoutedEventArgs e)
     {
         if (!updating && IsLoaded) setEnabled(ReadCheck.IsChecked == true);

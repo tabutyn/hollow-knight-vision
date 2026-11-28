@@ -4,6 +4,17 @@
         Title="Game Text Log" Width="900" Height="520" MinWidth="720" MinHeight="380"
         Background="#0E1014" Foreground="#E6EDF3"
         WindowStartupLocation="CenterOwner">
+    <Window.Resources>
+        <Style x:Key="SelectableReading" TargetType="TextBox">
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#E6EDF3"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Cursor" Value="IBeam"/>
+        </Style>
+    </Window.Resources>
     <DockPanel Margin="16" LastChildFill="True">
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
             <Button DockPanel.Dock="Right" Content="Done" IsCancel="True"/>
@@ -36,7 +47,8 @@
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Margin="2,3">
-                                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap" Width="220"/>
+                                        <TextBox Style="{StaticResource SelectableReading}" Text="{Binding Text, Mode=OneWay}"
+                                                 Width="220" AutomationProperties.Name="Detected reading" GotKeyboardFocus="ReadingFocused"/>
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Text="{Binding Id}" Foreground="#AABAD0"/>
                                             <TextBlock Text="{Binding Confidence, StringFormat={} · {0:P0}}" Foreground="#AABAD0"/>
@@ -73,7 +85,8 @@
                                 <DataTemplate>
                                     <StackPanel Margin="3,4">
                                         <TextBlock Text="{Binding Observation.Kind}" FontWeight="SemiBold"/>
-                                        <TextBlock Text="{Binding Observation.DisplayText}" TextWrapping="Wrap" MaxWidth="710"/>
+                                        <TextBox Style="{StaticResource SelectableReading}" Text="{Binding Observation.DisplayText, Mode=OneWay}"
+                                                 MaxWidth="710" AutomationProperties.Name="Notebook reading" GotKeyboardFocus="ReadingFocused"/>
                                         <Expander Header="Earlier model annotation">
                                             <Expander.Style>
                                                 <Style TargetType="Expander">
@@ -86,7 +99,8 @@
                                             </Expander.Style>
                                             <StackPanel>
                                                 <TextBlock Text="{Binding Observation.DisplayLabel}"/>
-                                                <TextBlock Text="{Binding Observation.Annotation}" TextWrapping="Wrap"/>
+                                                <TextBox Style="{StaticResource SelectableReading}" Text="{Binding Observation.Annotation, Mode=OneWay}"
+                                                         AutomationProperties.Name="Model annotation" GotKeyboardFocus="ReadingFocused"/>
                                             </StackPanel>
                                         </Expander>
                                         <TextBlock Text="{Binding ContextText}" Foreground="#AABAD0"/>

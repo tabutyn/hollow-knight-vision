@@ -40,7 +40,11 @@
                                 <GroupBox Grid.Column="1" Header="Game information" Foreground="White"><TextBox x:Name="LiveEvidence"/></GroupBox>
                                 <GroupBox Grid.Column="2" Header="Reasoning" Foreground="White"><TextBox x:Name="Reasoning"/></GroupBox>
                                 <GroupBox Grid.Column="3" Header="Schema explorer" Foreground="White">
-                                    <DockPanel><ComboBox DockPanel.Dock="Top" x:Name="Messages" SelectionChanged="SelectMessage"/>
+                                    <DockPanel><DockPanel DockPanel.Dock="Top">
+                                        <Button DockPanel.Dock="Right" x:Name="CopyRequest" Content="Copy" Margin="4,0,0,0"
+                                                Click="CopySelectedRequest" AutomationProperties.Name="Copy selected request"/>
+                                        <ComboBox x:Name="Messages" SelectionChanged="SelectMessage"/>
+                                    </DockPanel>
                                         <TextBox x:Name="MessageDetails" AutomationProperties.Name="Request messages and expected JSON schema"/>
                                     </DockPanel>
                                 </GroupBox>

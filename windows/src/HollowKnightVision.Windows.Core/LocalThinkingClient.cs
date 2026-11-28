@@ -104,9 +104,10 @@ public sealed class LocalThinkingClient
         if (resident.ContextLength is > 0 and var context) options["num_ctx"] = context;
         else if (keepResident) options["num_ctx"] = 4096;
         var url = new Uri(resident.OnCompatibilityService ? Compatible : Primary, "chat");
-        var schemaText = JsonSerializer.Serialize(schema);
-        var outbound = messages.Select(message => message.Role == "system"
-            ? message with { Content = message.Content + "\nExpected response schema\n" + schemaText } : message).ToArray();
+        var outbound = kind is ThinkingRequestKind.Policy or ThinkingRequestKind.Menu ? messages
+            : messages.Select(message => message.Role == "system"
+                ? message with { Content = message.Content + "\nExpected response schema\n" + JsonSerializer.Serialize(schema) }
+                : message).ToArray();
         RequestPrepared?.Invoke(new(kind, string.Join('\n', outbound.Where(m => m.Role == "system").Select(m => m.Content)),
             string.Join('\n', outbound.Where(m => m.Role == "user").Select(m => m.Content)),
             JsonSerializer.Serialize(schema, new JsonSerializerOptions { WriteIndented = true })), cancellationToken);

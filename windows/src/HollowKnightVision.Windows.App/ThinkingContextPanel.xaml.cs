@@ -85,7 +85,8 @@ public partial class ThinkingContextPanel : UserControl
     {
         if (Messages.SelectedIndex < 0) return;
         var kind = Messages.SelectedIndex == 0 ? latestKind ?? ThinkingRequestKind.Policy : (ThinkingRequestKind)(Messages.SelectedIndex - 1);
-        if (requests.TryGetValue(kind, out var request))
+        CopyRequest.IsEnabled = requests.TryGetValue(kind, out var request);
+        if (request is not null)
             MessageDetails.Text = $"System message\n{request.System}\n\nUser message\n{request.User}\n\nExpected response schema\n{request.ResponseSchema}";
         else
         {
@@ -99,6 +100,18 @@ public partial class ThinkingContextPanel : UserControl
             MessageDetails.Text = "Example response schema · awaiting a request\n" +
                 JsonSerializer.Serialize(schema, new JsonSerializerOptions { WriteIndented = true });
         }
+    }
+
+    private void CopySelectedRequest(object sender, RoutedEventArgs e)
+    {
+        var start = MessageDetails.SelectionStart;
+        var length = MessageDetails.SelectionLength;
+        try
+        {
+            MessageDetails.SelectAll();
+            MessageDetails.Copy();
+        }
+        finally { MessageDetails.Select(start, length); }
     }
 
     private void OptionsChanged(object sender, RoutedEventArgs e)

@@ -104,6 +104,12 @@ internal static class GameTextWindowTests
                 "review checkbox and service selection route to the parent");
 
             var tabs = (TabControl)window.FindName("SourceTabs");
+            var log = (ListBox)window.FindName("LogRows");
+            var reading = FindReading(log.ItemContainerGenerator.ContainerFromIndex(0))
+                ?? throw new InvalidOperationException("No selectable reading in the log row");
+            Require(reading is { IsReadOnly: true, Text: "Go west to the gate." }, "visible notebook text is selectable");
+            reading.Select(3, 4);
+            Require(CopyText(reading, reading.Copy) == "west", "the native Copy command copies only the highlighted words");
             tabs.SelectedItem = window.FindName("QuestTab");
             var evidence = (TextBox)window.FindName("QuestEvidenceText");
             Require(evidence.Text.Contains("[R1 · Opening cutscene] Go west to the gate.", StringComparison.Ordinal),
@@ -143,6 +149,18 @@ internal static class GameTextWindowTests
                 && ((TextBox)panel.FindName("Reasoning")).Text == "Reach the frontier"
                 && ((TextBox)panel.FindName("ReplyText")).Text.Contains("96")
                 && ((TextBlock)panel.FindName("HandoffText")).Text == "Dispatched", "context uses the captured message, schema and reply");
+            panel.Record(new(ThinkingRequestKind.Menu, "menu system", "menu user", "menu grammar"));
+            var requests = (ComboBox)panel.FindName("Messages");
+            requests.SelectedIndex = 1;
+            var copy = (Button)panel.FindName("CopyRequest");
+            var details = (TextBox)panel.FindName("MessageDetails");
+            details.Select(2, 3);
+            var copied = CopyText(details, () => copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
+            Require(copy.IsEnabled && copied == details.Text && copied.Contains("User message\nuser")
+                && !copied.Contains("menu user") && details.SelectionStart == 2 && details.SelectionLength == 3,
+                "one click copies the selected request and schema, preserving the highlighted text");
+            requests.SelectedIndex = 2;
+            Require(!copy.IsEnabled, "an example schema is not a captured request");
             Require(choices.Count == 0, "opening the context must not start model work");
             ((ComboBox)panel.FindName("ModelCombo")).SelectedItem = LocalThinkingModel.Llama;
             ((CheckBox)panel.FindName("CompatibilityCheck")).IsChecked = true;
@@ -338,8 +356,14 @@ internal static class GameTextWindowTests
             {
                 var index = Interlocked.Increment(ref received) - 1;
                 var user = body.GetProperty("messages")[1];
-                Require(user.GetProperty("content").GetString()!.Contains("Goal on " + contexts[index], StringComparison.Ordinal),
-                    "the pending question retains the goal at capture time");
+                var prompt = user.GetProperty("content").GetString()!;
+                var id = contexts[index] + ".item";
+                Require(prompt.StartsWith("Choose the next menu action") && prompt.Contains("Goal on " + contexts[index])
+                    && prompt.Contains("Item [highlighted] — " + id) && prompt.Split(id).Length == 2
+                    && !prompt.Contains("Unique OCR readings") && !prompt.Contains("schema")
+                    && !body.GetProperty("messages")[0].GetProperty("content").GetString()!.Contains(id)
+                    && body.GetProperty("format").GetRawText().Contains(id),
+                    "the sent menu prompt presents each selectable ID once and retains the goal and enforced JSON grammar");
                 using var image = new MemoryStream(Convert.FromBase64String(user.GetProperty("images")[0].GetString()!));
                 var source = new PngBitmapDecoder(image, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames[0];
                 var bitmap = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
@@ -494,6 +518,28 @@ internal static class GameTextWindowTests
         var pixels = new byte[stride * height];
         bitmap.CopyPixels(pixels, stride, 0);
         return new(width, height, stride, pixels, 1, DateTimeOffset.UtcNow);
+    }
+
+    private static TextBox? FindReading(DependencyObject root)
+    {
+        if (root is TextBox box) return box;
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+            if (FindReading(VisualTreeHelper.GetChild(root, i)) is { } child) return child;
+        return null;
+    }
+
+    private static string? CopyText(TextBox box, Action copy)
+    {
+        string? copied = null;
+        void Capture(object sender, DataObjectCopyingEventArgs e)
+        {
+            copied = e.DataObject.GetData(DataFormats.UnicodeText) as string;
+            e.CancelCommand(); // Inspect the native clipboard payload without replacing the user's clipboard.
+        }
+        DataObject.AddCopyingHandler(box, Capture);
+        try { copy(); }
+        finally { DataObject.RemoveCopyingHandler(box, Capture); }
+        return copied;
     }
 
     private static void Require(bool condition, string operation)

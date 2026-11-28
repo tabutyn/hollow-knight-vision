@@ -169,6 +169,8 @@ public sealed class GameTextReader(string notebookDirectory, bool traceMatches =
 
     private void StoreReading(Work work, GameTextScan scan, IReadOnlyList<GameTextLine> previous)
     {
+        scan = scan with { Lines = scan.Lines.Where(line =>
+            !GameTextObservation.IsTitleOcrFragment(line.Text, scan.Language, scan.Context)).ToArray() };
         var visible = scan.Lines.Where(line => line.Confidence >= .45).Select(line => line.Text).ToArray();
         var keys = visible.Select(GameTextObservation.Key).ToArray();
         var stable = LatestReading is { } reading && reading.Context == work.Context
