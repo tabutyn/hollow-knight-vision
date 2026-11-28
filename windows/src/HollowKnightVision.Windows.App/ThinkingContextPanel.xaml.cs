@@ -47,7 +47,9 @@ public partial class ThinkingContextPanel : UserControl
         displayedReaderEnabled = reader.Enabled;
         var text = reader.Entries.Length == 0 ? (reader.Enabled ? "Waiting for text…" : "Text reading is off")
             : string.Join('\n', reader.Entries.Select(entry => entry.Observation.DisplayText));
-        CompactLog.Text = FullLog.Text = text;
+        CompactLog.Text = text;
+        FullLog.UpdateTranscript(reader.Entries.Length == 0 ? text : reader.Transcript);
+        CopyLog.IsEnabled = reader.Entries.Length != 0;
         LogProfile.Text = reader.Profile is { } profile ? $"Save slot {profile.Slot}" : "Before save selection";
     }
 
@@ -102,17 +104,8 @@ public partial class ThinkingContextPanel : UserControl
         }
     }
 
-    private void CopySelectedRequest(object sender, RoutedEventArgs e)
-    {
-        var start = MessageDetails.SelectionStart;
-        var length = MessageDetails.SelectionLength;
-        try
-        {
-            MessageDetails.SelectAll();
-            MessageDetails.Copy();
-        }
-        finally { MessageDetails.Select(start, length); }
-    }
+    private void CopySelectedRequest(object sender, RoutedEventArgs e) => MessageDetails.CopyTranscript();
+    private void CopyLogClicked(object sender, RoutedEventArgs e) => FullLog.CopyTranscript();
 
     private void OptionsChanged(object sender, RoutedEventArgs e)
     {

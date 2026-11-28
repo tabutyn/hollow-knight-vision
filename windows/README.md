@@ -79,7 +79,9 @@ a tracking patch to inspect its saved reference pixels. Drag the strip or use
 the arrows to browse the same ground line. A black cell marks a missing patch.
 
 **Settings → Debug View → Game Text Log** opens the recent scan and the save's
-notebook. Select a line to highlight its bounds on the captured frame. Turn off
+notebook. Drag across readings and press **Ctrl+C** to copy an excerpt, or use
+**Copy log** for the whole transcript. Expand **Reading details** to inspect the
+original OCR and annotations. On the captured frame, select a line to highlight its bounds. Turn off
 **Read game text** to stop scanning. The build downloads and verifies the OCR
 language data for Vision's 11 languages, then includes it in the installation.
 Recognition runs locally using the selected game language. Repeated sightings
@@ -97,6 +99,8 @@ with their save.
 Choose **Enable Thinking** in the launch chooser or pass `--enable-thinking`
 to load the local Ollama model at startup. In Gameplay or Hacker, click the
 orange notebook or press **T**. The notebook also opens with inference disabled.
+In **Schema explorer**, select a request and click **Copy** to copy its system
+message, user message and expected JSON response schema together.
 **Context** shows the save's readings, the current goal and the evidence
 submitted with each question. Select a gameplay or menu request to inspect
 its messages and response schema. **Screenshot** shows the event frame.

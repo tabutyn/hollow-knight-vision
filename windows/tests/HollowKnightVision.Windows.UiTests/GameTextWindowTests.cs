@@ -104,12 +104,35 @@ internal static class GameTextWindowTests
                 "review checkbox and service selection route to the parent");
 
             var tabs = (TabControl)window.FindName("SourceTabs");
+            var detailPanel = (Expander)window.FindName("ReadingDetails");
+            detailPanel.IsExpanded = true;
+            window.UpdateLayout();
             var log = (ListBox)window.FindName("LogRows");
             var reading = FindReading(log.ItemContainerGenerator.ContainerFromIndex(0))
                 ?? throw new InvalidOperationException("No selectable reading in the log row");
             Require(reading is { IsReadOnly: true, Text: "Go west to the gate." }, "visible notebook text is selectable");
             reading.Select(3, 4);
             Require(CopyText(reading, reading.Copy) == "west", "the native Copy command copies only the highlighted words");
+            detailPanel.IsExpanded = false;
+            var transcript = (TextBox)window.FindName("LogTranscript");
+            var copyLog = (Button)window.FindName("CopyLog");
+            void AddReading(int id, string text)
+            {
+                var frame = new BgraFrame(1, 1, 4, new byte[4], id, work.Image.ObservedAt.AddSeconds(id));
+                var next = reader.TryStart(frame, "en", GameTextNotebook.OpeningContext, id)!;
+                reader.Complete(next, [new(1, text, new(.2, .3, .4, .1), .98)], 30, id + .03);
+                window.Present(reader, new(), null);
+            }
+            AddReading(2, "Rest at the bench.");
+            var excerpt = "bench." + Environment.NewLine + Environment.NewLine + "Go west";
+            Require(transcript.Text.Contains(excerpt), "readings form one selectable transcript");
+            transcript.Select(transcript.Text.IndexOf(excerpt, StringComparison.Ordinal), excerpt.Length);
+            AddReading(3, "Explore Dirtmouth.");
+            Require(transcript.SelectedText == excerpt && CopyText(transcript, transcript.Copy) == excerpt,
+                "a selection crossing two readings remains copyable after an incoming scan");
+            var copiedLog = CopyText(transcript, () => copyLog.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
+            Require(copiedLog == reader.Transcript && copiedLog.StartsWith("Explore Dirtmouth.")
+                && transcript.SelectedText == excerpt, "Copy log copies every reading and preserves the selection");
             tabs.SelectedItem = window.FindName("QuestTab");
             var evidence = (TextBox)window.FindName("QuestEvidenceText");
             Require(evidence.Text.Contains("[R1 · Opening cutscene] Go west to the gate.", StringComparison.Ordinal),

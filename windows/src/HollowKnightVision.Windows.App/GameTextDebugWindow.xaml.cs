@@ -48,8 +48,10 @@ public partial class GameTextDebugWindow : Window
         LogTab.Header = $"Log ({reader.Entries.Length})";
         ProfileText.Text = reader.Profile is { } profile ? $"Save slot {profile.Slot}" : "Before save selection";
         EmptyLog.Visibility = reader.Entries.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        CopyLog.IsEnabled = reader.Entries.Length != 0;
         if (!ReferenceEquals(entries, reader.Entries))
         {
+            LogTranscript.UpdateTranscript(reader.Transcript);
             var selected = (LogRows.SelectedItem as GameTextLogEntry)?.Observation.Id;
             LogRows.ItemsSource = entries = reader.Entries;
             LogRows.SelectedItem = entries.FirstOrDefault(entry => entry.Observation.Id == selected);
@@ -140,6 +142,8 @@ public partial class GameTextDebugWindow : Window
     {
         if (!updating) DrawLineBoxes();
     }
+
+    private void CopyLogClicked(object sender, RoutedEventArgs e) => LogTranscript.CopyTranscript();
 
     private void ReadingFocused(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e)
     {

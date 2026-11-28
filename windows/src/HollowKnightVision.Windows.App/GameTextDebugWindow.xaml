@@ -63,7 +63,10 @@
             <TabItem x:Name="LogTab" Header="Log">
                 <DockPanel Background="#171A20" TextElement.Foreground="#E6EDF3" Margin="5">
                     <StackPanel DockPanel.Dock="Top" Margin="5,3,5,7">
-                        <TextBlock x:Name="ProfileText" FontWeight="SemiBold"/>
+                        <DockPanel>
+                            <Button x:Name="CopyLog" DockPanel.Dock="Right" Content="Copy log" Click="CopyLogClicked"/>
+                            <TextBlock x:Name="ProfileText" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </DockPanel>
                         <WrapPanel Margin="0,6,0,1">
                             <CheckBox x:Name="ReviewCheck" Content="Proofread game text"
                                       Foreground="#E6EDF3" VerticalAlignment="Center"
@@ -76,10 +79,11 @@
                         </WrapPanel>
                         <TextBlock x:Name="ReviewStatus" Foreground="#AABAD0" TextWrapping="Wrap" Visibility="Collapsed"/>
                     </StackPanel>
-                    <TextBox DockPanel.Dock="Bottom" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="120"
+                    <Expander DockPanel.Dock="Bottom" x:Name="ReadingDetails" Header="Reading details" Foreground="#E6EDF3">
+                      <DockPanel MaxHeight="180">
+                        <TextBox DockPanel.Dock="Bottom" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="70"
                              Text="{Binding SelectedItem.Observation.Text, ElementName=LogRows, Mode=OneWay}"
                              AutomationProperties.Name="Selected original OCR"/>
-                    <Grid>
                         <ListBox x:Name="LogRows" Background="#20262F" Foreground="#E6EDF3" AutomationProperties.Name="Remembered game text">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
@@ -109,6 +113,12 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
+                      </DockPanel>
+                    </Expander>
+                    <Grid>
+                        <TextBox x:Name="LogTranscript" Style="{StaticResource SelectableReading}" Background="#20262F"
+                                 AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Padding="8"
+                                 AutomationProperties.Name="Game text transcript"/>
                         <TextBlock x:Name="EmptyLog" Text="No text logged yet" Foreground="#AABAD0"
                                    VerticalAlignment="Center" HorizontalAlignment="Center" IsHitTestVisible="False"/>
                     </Grid>

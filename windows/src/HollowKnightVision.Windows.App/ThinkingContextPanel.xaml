@@ -35,7 +35,10 @@
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="22*"/><ColumnDefinition Width="24*"/><ColumnDefinition Width="23*"/><ColumnDefinition Width="31*"/></Grid.ColumnDefinitions>
                                 <GroupBox Header="Text log" Foreground="White">
-                                    <DockPanel><TextBlock x:Name="LogProfile" DockPanel.Dock="Top"/><TextBox x:Name="FullLog" Foreground="Orange"/></DockPanel>
+                                    <DockPanel><DockPanel DockPanel.Dock="Top">
+                                        <Button x:Name="CopyLog" DockPanel.Dock="Right" Content="Copy log" Click="CopyLogClicked" IsEnabled="False"/>
+                                        <TextBlock x:Name="LogProfile" VerticalAlignment="Center"/>
+                                    </DockPanel><TextBox x:Name="FullLog" Foreground="Orange"/></DockPanel>
                                 </GroupBox>
                                 <GroupBox Grid.Column="1" Header="Game information" Foreground="White"><TextBox x:Name="LiveEvidence"/></GroupBox>
                                 <GroupBox Grid.Column="2" Header="Reasoning" Foreground="White"><TextBox x:Name="Reasoning"/></GroupBox>
