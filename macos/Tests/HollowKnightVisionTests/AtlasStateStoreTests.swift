@@ -106,6 +106,31 @@ final class AtlasStateStoreTests: XCTestCase {
         XCTAssertEqual(try files.contentsOfDirectory(atPath: workspace.path).sorted(), ["active", "states"])
     }
 
+    func testFailedReopenRestoresPreviousActiveAtlas() throws {
+        let files = FileManager.default
+        let workspace = files.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? files.removeItem(at: workspace) }
+        let active = workspace.appendingPathComponent("active")
+        let pipeline = LiveAtlasPipeline(context: CIContext(), worldRootURL: active)
+        let previousManifest = try Data(contentsOf: active.appendingPathComponent("manifest.json"))
+        let saved = workspace.appendingPathComponent("saved")
+        _ = try LiveWorldSessionStore(rootURL: saved)
+        let savedManifest = try Data(contentsOf: saved.appendingPathComponent("manifest.json"))
+        XCTAssertNotEqual(savedManifest, previousManifest)
+
+        for replacementDisappears in [false, true] {
+            XCTAssertThrowsError(try pipeline.loadSavedWorld(from: saved) { installed in
+                XCTAssertEqual(try Data(contentsOf: installed.appendingPathComponent("manifest.json")), savedManifest)
+                if replacementDisappears { try files.removeItem(at: installed) }
+                throw CocoaError(.fileReadUnknown)
+            }) { XCTAssertEqual(($0 as NSError).code, CocoaError.fileReadUnknown.rawValue) }
+
+            XCTAssertEqual(try Data(contentsOf: saved.appendingPathComponent("manifest.json")), savedManifest)
+            XCTAssertEqual(try Data(contentsOf: active.appendingPathComponent("manifest.json")), previousManifest)
+            XCTAssertEqual(try files.contentsOfDirectory(atPath: workspace.path).sorted(), ["active", "saved"])
+        }
+    }
+
     func testPipelineLoadRestoresSavedSnapshotAndLeavesStateImmutable() throws {
         let workspace = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: workspace) }

@@ -662,7 +662,12 @@ final class LiveAtlasPipeline {
 
     /// Validate a sibling copy while the active world is still in place.
     /// Only the final directory moves and reopening require a rollback.
-    func loadSavedWorld(from savedWorldURL: URL) throws -> LiveAtlasLoadedState {
+    func loadSavedWorld(
+        from savedWorldURL: URL,
+        openActiveWorld: (URL) throws -> LiveWorldSessionStore = {
+            try LiveWorldSessionStore(rootURL: $0, createIfMissing: false)
+        }
+    ) throws -> LiveAtlasLoadedState {
         integrationTransactionLock.lock()
         defer { integrationTransactionLock.unlock() }
         guard let currentSession = worldSession else {
@@ -689,10 +694,12 @@ final class LiveAtlasPipeline {
         do {
             try fileManager.moveItem(at: stagedURL, to: activeURL)
             installed = true
-            replacement = try LiveWorldSessionStore(rootURL: activeURL, createIfMissing: false)
+            replacement = try openActiveWorld(activeURL)
         } catch {
             do {
-                if installed { try fileManager.moveItem(at: activeURL, to: stagedURL) }
+                if installed && fileManager.fileExists(atPath: activeURL.path) {
+                    try fileManager.moveItem(at: activeURL, to: stagedURL)
+                }
                 try fileManager.moveItem(at: archiveURL, to: activeURL)
             } catch {
                 throw LiveAtlasStateError.loadRollbackFailed(archive: archiveURL)
