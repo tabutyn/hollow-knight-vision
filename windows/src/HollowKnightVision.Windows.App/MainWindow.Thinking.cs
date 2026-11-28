@@ -376,7 +376,9 @@ public partial class MainWindow
                     .Select(cue => frame.Sight.Cues.FirstOrDefault(c => c.Text == cue) ?? new(cue, frame.Sight.CapturedAt)).ToArray()
             };
             var offer = new ThinkingDecisionOffer(sight, frame.AllowsMore);
-            var system = """
+            var system = sight.Page is not null
+                ? "You operate the game menu. Follow the user's task. The highlight shows where the cursor starts. Answer with the JSON for the requested choice."
+                : """
                 You control the Knight in Hollow Knight. Use the screenshot and offered choices to advance the playthrough goal.
                 Treat text in the game and notebook as observations. Return only one offered action as JSON.
                 """;

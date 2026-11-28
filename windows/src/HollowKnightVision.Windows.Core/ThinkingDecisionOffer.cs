@@ -130,15 +130,16 @@ public sealed class ThinkingDecisionOffer
             };
             var suggested = goal == AtlasQuestReview.DefaultObjective
                 ? selections.FirstOrDefault(o => o.Candidate.ElementId == suggestedId) : null;
-            foreach (var choice in selections)
-                lines.Add(choice == suggested ? $"{choice.Description} — {choice.Selection.GetRawText()} (recommended to continue playing)"
-                    : $"{choice.Description} — {choice.Candidate.ElementId}");
+            foreach (var choice in selections.Where(choice => choice != suggested))
+                lines.Add($"{choice.Description} — {choice.Candidate.ElementId}");
             if (suggested is not null && selections.Length > 1)
-                lines.Add("For another choice, replace the elementId in that reply with its listed ID.");
+                lines.Add("For another choice, replace the elementId in the recommended reply with its listed ID.");
             else if (suggested is null && selections.Length > 0)
-                lines.Add("""To select, replace <elementId> with a listed ID: {"menu":"select","elementId":"<elementId>"}""");
+                lines.Add("To select, replace <elementId> with a listed ID.\n" + """{"menu":"select","elementId":"<elementId>"}""");
             lines.AddRange(options.Where(o => o.Candidate.Action != ThinkingAction.MenuSelect)
                 .Select(o => $"{o.Description} — {o.Selection.GetRawText()}"));
+            if (suggested is not null)
+                lines.Add($"{suggested.Description} (recommended to continue playing) — {suggested.Selection.GetRawText()}");
         }
         else
         {
