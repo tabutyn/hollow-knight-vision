@@ -16,6 +16,19 @@ struct RememberedGameText: Codable, Identifiable {
     var otherContexts: [String]?
     var displayText: String { bestText ?? text }
 
+    // Recurring English OCR fragments seen in title art, including during an unlabeled capture.
+    static func isTitleArtifact(_ text: String, context: String, language: String) -> Bool {
+        guard text.count <= 8, NotebookSpelling.usesEnglish(language) else { return false }
+        let screen = context.lowercased().replacingOccurrences(of: " · ", with: " - ").components(separatedBy: " - ")[0]
+        guard ["game capture", "main title", "main-title"].contains(screen) else { return false }
+        let token = text.lowercased().filter { $0.isLetter || $0.isNumber }
+        return ["ce", "ces", "cei", "ceis", "coi"].contains(token)
+    }
+
+    var isReadable: Bool {
+        ([context] + (otherContexts ?? [])).contains { !Self.isTitleArtifact(displayText, context: $0, language: language) }
+    }
+
     static func key(_ text: String) -> String {
         text.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
@@ -267,7 +280,8 @@ actor GameTextNotebook {
         var bounds = [CGRect]()
         for line in lines {
             let key = RememberedGameText.key(line.text)
-            guard key.count >= 2, key.contains(where: { $0.isLetter }),
+            guard !RememberedGameText.isTitleArtifact(line.text, context: context, language: language),
+                  key.count >= 2, key.contains(where: { $0.isLetter }),
                   line.confidence >= 0.8 || (line.confidence >= 0.45 && confirmed.contains(key)) else { continue }
             let id = ([language, context, key] + (passage ? ["passage"] : [])).joined(separator: "\u{1f}")
             added.append(.init(id: id, text: line.text, context: context, language: language, date: date, isPassage: passage ? true : nil, confidence: line.confidence))
@@ -302,6 +316,10 @@ struct GameTextScan {
     let lines: [GameTextLine]
     let capturedAt: Double
     let milliseconds: Double
+
+    var readableLines: [GameTextLine] {
+        lines.filter { !RememberedGameText.isTitleArtifact($0.text, context: context, language: language) }
+    }
 }
 
 @MainActor
@@ -318,6 +336,7 @@ final class GameTextReader: ObservableObject {
     }
     @Published private(set) var profile: SaveProfileAtlas?
     @Published private(set) var loggedText = [String]()
+    var transcript: String { entries.map(\.reading.displayText).joined(separator: "\n\n") }
 
     private let directory: URL
     private let trace = GameTextScanTrace()
@@ -357,25 +376,26 @@ final class GameTextReader: ObservableObject {
         let snapshot = try await source.snapshot()
         guard !Task.isCancelled, notebook === source, snapshot.revision > revision else { return }
         revision = snapshot.revision
-        memory = snapshot.rows
+        memory = snapshot.rows.filter(\.isReadable)
         entries = GameTextLogEntry.current(memory)
         let lines = entries.prefix(4).map { $0.reading.displayText }
         if lines != loggedText { loggedText = lines }
     }
 
     func store(_ next: GameTextScan, previous: [GameTextLine]) async throws {
+        let linesToRead = next.readableLines
         let source = notebook
         let date = Date(timeIntervalSinceNow: next.capturedAt - ProcessInfo.processInfo.systemUptime)
         let decisions = trace.map { _ in GameTextScanTrace.Decisions() }
-        let confirmed = Set(next.lines.filter { line in previous.contains { NotebookTextMatch.same($0.text, line.text) } }.map { RememberedGameText.key($0.text) })
-        let visible = next.lines.filter { $0.confidence >= 0.45 }.map(\.text)
+        let confirmed = Set(linesToRead.filter { line in previous.contains { NotebookTextMatch.same($0.text, line.text) } }.map { RememberedGameText.key($0.text) })
+        let visible = linesToRead.filter { $0.confidence >= 0.45 }.map(\.text)
         var passage: String?
         if let pending = inspection, next.context != pending.context || next.capturedAt - pending.started > 12 {
             inspection = nil
         }
         if var pending = inspection {
             if next.capturedAt > pending.started {
-                let newLines = next.lines.filter { line in
+                let newLines = linesToRead.filter { line in
                     let key = RememberedGameText.key(line.text)
                     return line.confidence >= 0.45 && !pending.old.contains(key) && key.filter(\.isLetter).count >= 4
                 }
@@ -397,7 +417,7 @@ final class GameTextReader: ObservableObject {
             let transient = ["Game capture", "Credits", RememberedGameText.openingContext].contains(next.context)
             var pageIDs = Set<Int>()
             if let settledPassage, settledPassage.context == next.context, settledPassage.language == next.language {
-                let lines = next.lines.filter { line in
+                let lines = linesToRead.filter { line in
                     line.confidence >= 0.45 && settledPassage.lines.contains { NotebookTextMatch.same($0, line.text) }
                 }
                 pageIDs = Set(lines.map(\.id))
@@ -409,7 +429,7 @@ final class GameTextReader: ObservableObject {
                                                   confirmed: [RememberedGameText.key(page)], passage: true, date: date, trace: decisions)
                 }
             } else { settledPassage = nil }
-            let stable = next.lines.filter {
+            let stable = linesToRead.filter {
                 let key = RememberedGameText.key($0.text)
                 return (confirmed.contains(key) || (transient && $0.confidence >= 0.8)) && !pageIDs.contains($0.id)
             }
@@ -519,10 +539,10 @@ final class GameTextReader: ObservableObject {
     }
 
     func visibleLines(in image: CGImage, language: String, context: String) async -> [String] {
-        if let scan, scan.image === image, scan.language == language {
-            return scan.lines.map(\.text)
+        if let scan, scan.image === image, scan.language == language, scan.context == context {
+            return scan.readableLines.map(\.text)
         }
         let result = try? await Self.recognize(image, language: language, context: context)
-        return result?.lines.map(\.text) ?? []
+        return result?.readableLines.map(\.text) ?? []
     }
 }

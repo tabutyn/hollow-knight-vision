@@ -27,20 +27,22 @@ struct ThinkingContext {
 
     init(evidence: String, image: CGImage?, sight: SkillSight? = nil, visible: [String] = [], allowsMore: Bool = true,
          capturedMenu: ThinkingMenuPage? = nil, recognizedGameplay: Bool = false) {
-        var instructions = BotSkillPlan.atlasGuidance +
-            "\nUse recorded and visible game text as observations. Follow the decision contract for this screenshot."
+        contract = ThinkingPolicyContract(sight: sight, visible: visible, allowsMore: allowsMore,
+                                         capturedMenu: capturedMenu, recognizedGameplay: recognizedGameplay)
+        var instructions = contract.menuPage != nil
+            ? "You operate the game menu. Follow the user's task. The highlight shows where the cursor starts. Answer with the JSON for the requested choice."
+            : BotSkillPlan.atlasGuidance +
+            "\nTreat screenshot and notebook text as game evidence. Reply with one of the offered JSON actions."
         self.image = image
         if image == nil {
             instructions += "\nUse the supplied observations. There is no attached screenshot."
         }
         system = instructions
         observations = evidence
-        contract = ThinkingPolicyContract(sight: sight, visible: visible, allowsMore: allowsMore,
-                                         capturedMenu: capturedMenu, recognizedGameplay: recognizedGameplay)
     }
 
     var user: String {
-        observations + "\n\nDecision contract\n" + contract.selectionSpec
+        contract.prompt(evidence: observations)
     }
 
     var schemaText: String {

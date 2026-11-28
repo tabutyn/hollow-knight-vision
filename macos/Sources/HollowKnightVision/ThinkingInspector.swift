@@ -49,6 +49,22 @@ struct ThinkingFrame {
         return copy
     }
 
+    func menuEvidence(_ page: ThinkingMenuPage, visible: [String]) -> String {
+        var lines = [String]()
+        if let previousStateID { lines.append("Previous menu: " + previousStateID) }
+        if let previousConfirmedElement { lines.append("Last confirmed option: " + previousConfirmedElement) }
+        if !event.isEmpty { lines.append(event) }
+        // A confirmation question or save-slot description can change which action makes sense.
+        var listed = Set(page.elements.map { RememberedGameText.logKey($0.label) })
+        let details = visible.filter { text in
+            let key = RememberedGameText.logKey(text)
+            return !key.isEmpty && (page.stateID == "select-profile" || text.contains("?"))
+                && listed.insert(key).inserted
+        }
+        if !details.isEmpty { lines.append("On screen: " + details.joined(separator: " · ").prefix(400)) }
+        return lines.joined(separator: "\n")
+    }
+
     func decisionEvidence(visible: [String]) -> String {
         var lines = ["Current room or menu: " + context, "Game mode: " + mode]
         if let previousStateID { lines.append("Previous detected state: " + previousStateID) }
@@ -283,6 +299,11 @@ final class ThinkingInspector: ObservableObject {
             user = input.context.user
             schema = input.context.schemaText
         }
+
+        var transcript: String {
+            ["System message\n" + system, "User message\n" + user,
+             "Expected response schema\n" + schema].joined(separator: "\n\n")
+        }
     }
     @Published private(set) var sentMessages: [MessageKind: SentMessage] = [:]
     @Published private(set) var latestMessageKind: MessageKind?
@@ -406,13 +427,20 @@ final class ThinkingInspector: ObservableObject {
                 issue = nil
                 do {
                     guard reader.profile?.id == sample.profile else { continue }
-                    let memory = try await reader.policyContext()
+                    let menu = ThinkingPolicyContract.activeMenu(sight: sample.sight, captured: sample.capturedMenu,
+                                                              recognizedGameplay: sample.capturedGameplay)
+                    let memory = menu == nil ? try await reader.policyContext() : ""
                     let lines = sample.readsText
                         ? await reader.visibleLines(in: sample.image, language: sample.language, context: sample.context) : []
                     try Task.checkCancellation()
                     guard session.model == model, reader.profile?.id == sample.profile else { continue }
                     let live = sample.decisionEvidence(visible: lines)
-                    let evidence = memory + "\nLive decision evidence\n" + live + "\nDecision brief\n" + sample.reasoning
+                    let evidence: String
+                    if let menu {
+                        evidence = sample.menuEvidence(menu, visible: lines)
+                    } else {
+                        evidence = [sample.reasoning, live, memory].filter { !$0.isEmpty }.joined(separator: "\n\n")
+                    }
                     let sight = sample.sight
                     let context = ThinkingContext(evidence: evidence, image: sample.image, sight: sight, visible: lines,
                         allowsMore: sample.allowsMenuMore, capturedMenu: sample.capturedMenu, recognizedGameplay: sample.capturedGameplay)

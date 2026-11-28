@@ -12,6 +12,7 @@ struct ThinkingContextPanel: View {
     @State private var tab = Tab.context
     private enum Message: String, CaseIterable { case current = "Latest request", gameplay = "Gameplay", menu = "Menu" }
     @State private var message = Message.current
+    @State private var includeReference = false
 
     var body: some View {
         Group {
@@ -35,7 +36,7 @@ struct ThinkingContextPanel: View {
                 }.padding(10)
             } else {
                 ZStack(alignment: .topTrailing) {
-                    notebook(compact: true)
+                    compactNotebook
                     Image(systemName: "chevron.up").font(.caption2).foregroundStyle(.orange)
                 }
                 .padding(7).contentShape(Rectangle()).onTapGesture { expanded = true }
@@ -58,7 +59,12 @@ struct ThinkingContextPanel: View {
                 HStack(alignment: .top, spacing: 0) {
                     column("Text log", width: max(165, area.size.width * 0.22)) {
                         Text(reader.profile.map { "Save slot \($0.slot)" } ?? "Before save selection").font(.caption2)
-                        notebook(compact: false)
+                        CopyTextButton(title: "Copy log", text: reader.transcript)
+                        if reader.entries.isEmpty {
+                            Text(readsText ? "Waiting for text…" : "Text reading is off").foregroundStyle(.orange)
+                        } else {
+                            SelectableTranscript(text: reader.transcript, label: "Text log", color: .systemOrange)
+                        }
                     }
                     Divider()
                     column("Game information", width: max(177, area.size.width * 0.24)) {
@@ -67,10 +73,7 @@ struct ThinkingContextPanel: View {
                                 if let input = inspector.input {
                                     block(input.liveEvidence)
                                     DisclosureGroup("Offered actions and targets") {
-                                        if let data = try? JSONSerialization.data(withJSONObject: input.context.contract.offer,
-                                                                                  options: [.prettyPrinted, .sortedKeys]) {
-                                            block(String(decoding: data, as: UTF8.self))
-                                        }
+                                        block(input.context.contract.selectionSpec)
                                     }
                                 } else { block("Waiting for game evidence.") }
                             }
@@ -85,21 +88,15 @@ struct ThinkingContextPanel: View {
                         Picker("Message", selection: $message) {
                             ForEach(Message.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                         }.labelsHidden()
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 8) {
-                                if let kind = selectedKind, let sent = inspector.sentMessages[kind] {
-                                    Text(kind.rawValue + " · " + sent.capturedAt.formatted(date: .omitted, time: .standard)).font(.caption2)
-                                    DisclosureGroup("System message") { block(sent.system) }
-                                    DisclosureGroup("User message") { block(sent.user) }
-                                    Text("Expected response schema").font(.caption.bold())
-                                    block(sent.schema)
-                                } else { block("Waiting for the first request.") }
-                                if let kind = selectedKind {
-                                    Text("All " + kind.rawValue.lowercased() + " replies").font(.caption.bold())
-                                    block(Self.pretty(kind == .gameplay ? ThinkingPolicyContract.policySchemaText : ThinkingPolicyContract.menuSchemaText))
-                                }
-                            }.frame(maxWidth: .infinity, alignment: .leading)
-                        }
+                        let text = explorerText
+                        CopyTextButton(title: "Copy schema explorer", text: text)
+                        if let kind = selectedKind {
+                            if let sent = inspector.sentMessages[kind] {
+                                Toggle("Include reference schema", isOn: $includeReference).toggleStyle(.checkbox).font(.caption2)
+                                Text(kind.rawValue + " · " + sent.capturedAt.formatted(date: .omitted, time: .standard)).font(.caption2)
+                            }
+                            SelectableTranscript(text: text, label: "Schema explorer")
+                        } else { block("Waiting for the first request.") }
                     }
                 }.frame(height: area.size.height)
             }
@@ -114,14 +111,22 @@ struct ThinkingContextPanel: View {
         }
     }
 
+    private var explorerText: String {
+        guard let kind = selectedKind else { return "" }
+        if let sent = inspector.sentMessages[kind], !includeReference { return sent.transcript }
+        let reference = Self.pretty(kind == .gameplay ? ThinkingPolicyContract.policySchemaText : ThinkingPolicyContract.menuSchemaText)
+        let request = inspector.sentMessages[kind]?.transcript ?? "Waiting for the first request."
+        return request + "\n\nAll " + kind.rawValue.lowercased() + " replies\n" + reference
+    }
+
     private func column<V: View>(_ name: String, width: CGFloat, @ViewBuilder content: () -> V) -> some View {
         VStack(alignment: .leading, spacing: 7) { Text(name).font(.headline); content() }
             .padding(.horizontal, 6).frame(width: width, alignment: .leading)
     }
 
-    private func notebook(compact: Bool) -> some View {
+    private var compactNotebook: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: compact ? 2 : 7) {
+            LazyVStack(alignment: .leading, spacing: 2) {
                 if reader.entries.isEmpty {
                     Text(readsText ? "Waiting for text…" : "Text reading is off")
                 } else {
@@ -129,9 +134,9 @@ struct ThinkingContextPanel: View {
                         Text(verbatim: entry.reading.displayText).fixedSize(horizontal: false, vertical: true)
                     }
                 }
-            }.padding(.trailing, compact ? 14 : 0).frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(.trailing, 14).frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.system(size: compact ? 10 : 12, design: .monospaced))
+        .font(.system(size: 10, design: .monospaced))
         .foregroundStyle(.orange)
     }
 

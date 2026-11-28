@@ -1,4 +1,4 @@
-import CoreGraphics
+import AppKit
 import XCTest
 @testable import HollowKnightVision
 
@@ -124,6 +124,7 @@ final class ThinkingClientTests: XCTestCase {
         XCTAssertTrue(log.consume("srv    load_model: loading model 'unrelated'\nload_tensors: loading model tensors\n").isEmpty)
     }
 
+    @MainActor
     func testEngineeredRequestSendsExactlyTheDisplayedMessagesAndOneFrame() throws {
         let frame = try testFrame()
         let sight = SkillSight(context: "King's Pass", capturedAt: 1, generation: 1, gameplay: true,
@@ -144,12 +145,21 @@ final class ThinkingClientTests: XCTestCase {
             XCTAssertEqual(format, displayed)
             let properties = try XCTUnwrap(format["properties"] as? [String: Any])
             XCTAssertEqual(Set(properties.keys), ["policy", "parameters"])
-            XCTAssertTrue(context.user.contains(#""objective":"expandAtlas""#))
+            XCTAssertTrue(context.user.hasPrefix("Map new ground."))
+            XCTAssertTrue(context.user.contains("Read the sign at the Inspect prompt"))
             let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
             XCTAssertEqual(messages.compactMap { $0["role"] as? String }, ["system", "user"])
             XCTAssertEqual(messages.compactMap { $0["content"] as? String }, [context.system, context.user])
-            XCTAssertTrue(context.user.contains(ThinkingPolicyContract.policySchemaText))
-            XCTAssertTrue(context.user.contains(ThinkingPolicyContract.menuSchemaText))
+            let capture = ThinkingFrame(image: frame, profile: nil, generation: 1, context: "Pass",
+                mode: "modded", atlas: "", sight: sight, language: "en", readsText: true)
+            let transcript = ThinkingInspector.SentMessage(.init(frame: capture, model: model, context: context)).transcript
+            let board = NSPasteboard.withUniqueName()
+            defer { board.releaseGlobally() }
+            CopyTextButton(title: "Copy schema explorer", text: transcript).copy(to: board)
+            XCTAssertEqual(board.string(forType: .string), "System message\n" + context.system +
+                "\n\nUser message\n" + context.user + "\n\nExpected response schema\n" + context.schemaText)
+            XCTAssertFalse(context.user.contains(ThinkingPolicyContract.policySchemaText))
+            XCTAssertFalse(context.user.contains(ThinkingPolicyContract.menuSchemaText))
             XCTAssertFalse(context.user.contains("wallJumpRight"))
             XCTAssertTrue(context.image === frame)
             XCTAssertFalse(context.system.contains("no attached screenshot"))
@@ -418,8 +428,8 @@ final class ThinkingClientTests: XCTestCase {
             requests += 1
             XCTAssertTrue(context.image === images[index])
             XCTAssertEqual(context.contract.menuPage?.selected, elements[index].id)
-            XCTAssertTrue(context.user.contains(ThinkingPolicyContract.policySchemaText))
-            XCTAssertTrue(context.user.contains(ThinkingPolicyContract.menuSchemaText))
+            XCTAssertFalse(context.user.contains(ThinkingPolicyContract.policySchemaText))
+            XCTAssertFalse(context.user.contains(ThinkingPolicyContract.menuSchemaText))
             if requests == 1 { return #"{"menu":"more"}"# }
             XCTAssertTrue(context.user.contains("Menu advanced"))
             return #"{"menu":"select","elementId":"shared.options"}"#
@@ -466,7 +476,7 @@ final class ThinkingClientTests: XCTestCase {
         let input = ThinkingContext(evidence: sample.decisionEvidence(visible: []), image: sample.image, sight: sight)
         XCTAssertTrue(input.image === detected)
         XCTAssertTrue(input.user.contains("world.sign, frame 87"))
-        XCTAssertTrue(input.user.contains(ThinkingPolicyContract.menuSchemaText))
+        XCTAssertFalse(input.user.contains(ThinkingPolicyContract.menuSchemaText))
         XCTAssertEqual(input.contract.rows().map(\.policy), ["explore"])
         XCTAssertThrowsError(try input.contract.resolve(Data(#"{"policy":"interact","parameters":{"verb":"inspect","targetId":0}}"#.utf8)))
         XCTAssertEqual(detector.events(state, at: 2), [])
