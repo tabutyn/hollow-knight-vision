@@ -231,6 +231,20 @@ final class ThinkingMenuStateTests: XCTestCase {
                 XCTAssertTrue(result.input.context.image === source)
                 XCTAssertNotNil(result.script)
                 if let choice = result.script?.request.selection {
+                    // A legal reply can still quit the game or stay in settings.
+                    let available = Set(page.elements.filter(\.canSelect).map(\.id))
+                    let expected: Set<String>
+                    switch menu {
+                    case .mainTitle: expected = ["main-title.start-game"]
+                    case .options, .audio: expected = [LabelingClassIdentity.back]
+                    case .quitToMenu: expected = [LabelingClassIdentity.no]
+                    case .selectProfile: expected = Set(available.filter { $0.hasPrefix("select-profile.slot-") })
+                    default: expected = []
+                    }
+                    if !available.isDisjoint(with: expected) {
+                        XCTAssertEqual(choice["menu"] as? String, "select", page.stateID)
+                        XCTAssertTrue(expected.contains(choice["elementId"] as? String ?? ""), "\(page.stateID) returned \(choice)")
+                    }
                     evidence.append(["state": page.stateID, "screenshot": example.id.uuidString,
                                      "user": result.input.context.user, "offer": result.input.context.contract.offer, "reply": choice])
                     print("Local Gemma · \(page.stateID) · \(choice)")
