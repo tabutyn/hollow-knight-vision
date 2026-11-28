@@ -65,8 +65,11 @@ public sealed class ThinkingDecisionOffer
         if (sight.Page is { } page)
         {
             foreach (var element in page.Elements.Where(e => e.CanSelect))
+            {
+                var label = string.IsNullOrWhiteSpace(element.Label) || element.Label == element.Id ? "Option" : element.Label;
                 Menu(new { menu = "select", elementId = element.Id }, ThinkingAction.MenuSelect,
-                    $"{element.Label}{(element.Id == page.Selected ? " [highlighted]" : "")}", element.Id);
+                    $"{label}{(element.Id == page.Selected ? " [highlighted]" : "")}", element.Id);
+            }
             if (options.Count == 0) Menu(new { menu = "wait" }, ThinkingAction.MenuWait, "Wait for the menu to change");
             else if (allowsMore && page.Selected is not null)
                 Menu(new { menu = "more" }, ThinkingAction.MenuMore, "Move the highlight to see more choices");
@@ -110,8 +113,29 @@ public sealed class ThinkingDecisionOffer
         var lines = new List<string>();
         if (sight.Page is { } page)
         {
-            lines.Add($"Choose the next menu action on {location}.");
-            lines.Add($"Playthrough goal · {goal}");
+            (string task, string? target) = page.State switch
+            {
+                "main-title" => ("Start the game so the Knight can explore.", "main-title.start-game"),
+                "pause" => ("Resume the game to continue exploring.", "pause.continue"),
+                "select-profile" => ("Continue from the highlighted save slot if available, or choose a visible slot to play.",
+                    page.Selected?.StartsWith("select-profile.slot-", StringComparison.Ordinal) == true ? page.Selected : null),
+                "clear-save" => ("Keep the save and return to profile selection.", "shared.no"),
+                "quit-to-menu" or "quit-game" => ("Cancel quitting to continue exploring.", "shared.no"),
+                "options" or "audio" or "video" or "controller" or "keyboard" or "game-options" or "extras" or "mods" or "screen-scale"
+                    => ("Return to the previous menu to get back to playing.", "shared.back"),
+                _ => ("Choose the option that leads toward gameplay and exploration.", null)
+            };
+            if (goal == AtlasQuestReview.DefaultObjective)
+            {
+                lines.Add($"Menu · {location}");
+                lines.Add(task);
+            }
+            else
+            {
+                lines.Add($"Choose the next menu action on {location}.");
+                lines.Add($"Playthrough goal · {goal}");
+                target = null;
+            }
             var confirmation = page.State is "clear-save" or "quit-to-menu" or "quit-game";
             if (confirmation && sight.PreviousConfirm is { } previous) lines.Add($"Previously confirmed · {previous}");
             if (confirmation || page.State == "select-profile")
@@ -122,24 +146,16 @@ public sealed class ThinkingDecisionOffer
                 lines.AddRange(details.Select(line => $"On screen · {line}"));
             }
             var selections = options.Where(o => o.Candidate.Action == ThinkingAction.MenuSelect).ToArray();
-            var suggestedId = page.State switch
-            {
-                "main-title" => "main-title.start-game", "pause" => "pause.continue",
-                "clear-save" or "quit-to-menu" or "quit-game" => "shared.no",
-                "select-profile" => null, _ => "shared.back"
-            };
-            var suggested = goal == AtlasQuestReview.DefaultObjective
-                ? selections.FirstOrDefault(o => o.Candidate.ElementId == suggestedId) : null;
+            var suggested = selections.FirstOrDefault(o => o.Candidate.ElementId == target);
+            if (suggested is not null && selections.Length > 1) lines.Add("Other visible controls (label — ID)");
             foreach (var choice in selections.Where(choice => choice != suggested))
                 lines.Add($"{choice.Description} — {choice.Candidate.ElementId}");
-            if (suggested is not null && selections.Length > 1)
-                lines.Add("For another choice, replace the elementId in the recommended reply with its listed ID.");
-            else if (suggested is null && selections.Length > 0)
+            if (suggested is null && selections.Length > 0)
                 lines.Add("To select, replace <elementId> with a listed ID.\n" + """{"menu":"select","elementId":"<elementId>"}""");
             lines.AddRange(options.Where(o => o.Candidate.Action != ThinkingAction.MenuSelect)
                 .Select(o => $"{o.Description} — {o.Selection.GetRawText()}"));
             if (suggested is not null)
-                lines.Add($"{suggested.Description} (recommended to continue playing) — {suggested.Selection.GetRawText()}");
+                lines.Add($"Choose {suggested.Description}. Return this exact reply.\n{suggested.Selection.GetRawText()}");
         }
         else
         {
