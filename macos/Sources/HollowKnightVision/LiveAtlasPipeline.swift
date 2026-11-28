@@ -122,12 +122,12 @@ private final class LiveWorldSourceProviderBox {
 
 enum LiveAtlasStateError: LocalizedError {
     case activeWorldUnavailable
-    case loadRollbackFailed
+    case loadRollbackFailed(archive: URL)
 
     var errorDescription: String? {
         switch self {
         case .activeWorldUnavailable: "The active atlas is unavailable."
-        case .loadRollbackFailed: "Atlas load failed and its archive could not be restored."
+        case .loadRollbackFailed(let archive): "Atlas load failed. The previous atlas is at \(archive.path)."
         }
     }
 }
@@ -660,38 +660,49 @@ final class LiveAtlasPipeline {
         _ = try LiveWorldSessionStore(rootURL: destinationURL).load()
     }
 
-    /// Archives the active root before replacing it with a copy of a saved
-    /// state. The saved state itself is never modified by future auto-saves.
-    func loadSavedWorld(from savedWorldURL: URL) throws -> LiveAtlasLoadedState {
+    /// Validate a sibling copy while the active world is still in place.
+    /// Only the final directory moves and reopening require a rollback.
+    func loadSavedWorld(
+        from savedWorldURL: URL,
+        openActiveWorld: (URL) throws -> LiveWorldSessionStore = {
+            try LiveWorldSessionStore(rootURL: $0, createIfMissing: false)
+        }
+    ) throws -> LiveAtlasLoadedState {
         integrationTransactionLock.lock()
         defer { integrationTransactionLock.unlock() }
         guard let currentSession = worldSession else {
             throw LiveAtlasStateError.activeWorldUnavailable
         }
-        let savedState = try LiveWorldSessionStore(rootURL: savedWorldURL).load()
-        _ = try LiveWorldTracker(snapshot: savedState.snapshot)
         let fileManager = FileManager.default
         let activeURL = currentSession.rootURL
-        let archiveURL = activeURL.deletingLastPathComponent().appendingPathComponent(
-            "\(activeURL.lastPathComponent).archive-load-\(UUID().uuidString)", isDirectory: true
+        let parent = activeURL.deletingLastPathComponent()
+        let loadID = UUID().uuidString
+        let stagedURL = parent.appendingPathComponent(
+            "\(activeURL.lastPathComponent).staging-load-\(loadID)", isDirectory: true
+        )
+        defer { try? fileManager.removeItem(at: stagedURL) }
+        try fileManager.copyItem(at: savedWorldURL, to: stagedURL)
+        let staged = try LiveWorldSessionStore(rootURL: stagedURL, createIfMissing: false)
+        let state = try staged.load()
+        let tracker = try LiveWorldTracker(snapshot: state.snapshot)
+        let archiveURL = parent.appendingPathComponent(
+            "\(activeURL.lastPathComponent).archive-load-\(loadID)", isDirectory: true
         )
         try fileManager.moveItem(at: activeURL, to: archiveURL)
         let replacement: LiveWorldSessionStore
-        let state: LiveWorldSessionState
-        let tracker: LiveWorldTracker
+        var installed = false
         do {
-            try fileManager.copyItem(at: savedWorldURL, to: activeURL)
-            replacement = try LiveWorldSessionStore(rootURL: activeURL)
-            state = try replacement.load()
-            tracker = try LiveWorldTracker(snapshot: state.snapshot)
+            try fileManager.moveItem(at: stagedURL, to: activeURL)
+            installed = true
+            replacement = try openActiveWorld(activeURL)
         } catch {
-            if fileManager.fileExists(atPath: activeURL.path) {
-                try? fileManager.removeItem(at: activeURL)
-            }
             do {
+                if installed && fileManager.fileExists(atPath: activeURL.path) {
+                    try fileManager.moveItem(at: activeURL, to: stagedURL)
+                }
                 try fileManager.moveItem(at: archiveURL, to: activeURL)
             } catch {
-                throw LiveAtlasStateError.loadRollbackFailed
+                throw LiveAtlasStateError.loadRollbackFailed(archive: archiveURL)
             }
             throw error
         }

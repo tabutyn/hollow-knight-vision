@@ -1212,6 +1212,7 @@ var tests = new List<(string Name, Action Run)>
     ("the active atlas resumes after interrupted first capture without placing pending evidence", ActiveAtlasReplacementTests.TestActiveAtlasRecoversInterruptedFirstCapture),
     ("atlas replacement copy failure preserves active state", ActiveAtlasReplacementTests.TestCopyFailurePreservesActive),
     ("atlas replacement validation failure preserves active state", ActiveAtlasReplacementTests.TestValidationFailurePreservesActive),
+    ("named atlas with missing world manifest preserves active and saved state", ActiveAtlasReplacementTests.TestLoadingSavedWorldWithoutManifestPreservesActiveAndSavedWorlds),
     ("atlas replacement swap failure rolls active state back", ActiveAtlasReplacementTests.TestSwapFailureRollsBackActive),
     ("atlas replacement rollback failure retains recovery archive", ActiveAtlasReplacementTests.TestRollbackFailureReportsRecoverableArchive),
     ("atlas archive import and trash purge", TestAtlasArchiveImportAndTrashPurge),

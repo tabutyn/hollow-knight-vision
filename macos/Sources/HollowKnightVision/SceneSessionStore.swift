@@ -57,14 +57,14 @@ final class SceneSessionStore {
     private let sceneFileName = "scene.snapshot"
     private let sceneLockFileName = "scene.snapshot.lock"
 
-    init(rootURL: URL) throws {
+    init(rootURL: URL, createIfMissing: Bool = true) throws {
         // `/tmp` is commonly a symlink to `/private/tmp`. Canonicalize once at
         // the boundary so evidence containment compares like with like.
         let resolvedRootURL = rootURL.standardizedFileURL.resolvingSymlinksInPath()
         let manifestURL = resolvedRootURL.appendingPathComponent("manifest.json")
         let fileManager = FileManager.default
         let loadedManifest: SessionManifest
-        if fileManager.fileExists(atPath: manifestURL.path) {
+        if !createIfMissing || fileManager.fileExists(atPath: manifestURL.path) {
             let data = try Data(contentsOf: manifestURL)
             let decoded = try JSONDecoder().decode(SessionManifest.self, from: data)
             guard decoded.schemaVersion == SessionManifest.currentSchemaVersion else {
