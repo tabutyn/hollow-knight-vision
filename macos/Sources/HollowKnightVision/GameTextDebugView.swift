@@ -13,6 +13,11 @@ struct GameTextDebugView: View {
                 Text("Game Text Log").font(.title2.bold())
                 Spacer()
                 Toggle("Read game text", isOn: $enabled)
+                if showingMemory {
+                    CopyTextButton(title: "Copy log", text: reader.transcript)
+                } else {
+                    CopyTextButton(title: "Copy on-screen text", text: reader.scan?.lines.map(\.text).joined(separator: "\n") ?? "")
+                }
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }
             Picker("Text source", selection: $showingMemory) {
@@ -26,23 +31,9 @@ struct GameTextDebugView: View {
                 if reader.entries.isEmpty {
                     ContentUnavailableView("No text logged yet", systemImage: "book")
                 } else {
-                    List(reader.entries) { record in
-                        let entry = record.reading
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(entry.isPassage == true ? "Recorded passage" : "Notebook text").font(.caption.bold())
-                            Text(entry.displayText).textSelection(.enabled)
-                            if entry.text != entry.displayText {
-                                DisclosureGroup("First OCR reading") { Text(entry.text).textSelection(.enabled) }
-                            }
-                            if let annotation = entry.interpretation {
-                                DisclosureGroup("Earlier model annotation") {
-                                    Text(annotation.displayLabel + " · " + annotation.text).textSelection(.enabled)
-                                }
-                            }
-                            Text("\(record.contexts.joined(separator: " · ")) · \(record.updated.formatted())")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 4)
+                    SelectableTranscript(text: reader.transcript, label: "Game text log")
+                    DisclosureGroup("Reading details") {
+                        readingDetails
                     }
                 }
             } else if enabled, let scan = reader.scan {
@@ -90,4 +81,26 @@ struct GameTextDebugView: View {
         .padding(18)
         .frame(minWidth: 720, idealWidth: 900, minHeight: 380, idealHeight: 520)
     }
+
+    private var readingDetails: some View {
+        List(reader.entries) { record in
+            let entry = record.reading
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.isPassage == true ? "Recorded passage" : "Notebook text").font(.caption.bold())
+                Text(entry.displayText).textSelection(.enabled)
+                if entry.text != entry.displayText {
+                    DisclosureGroup("First OCR reading") { Text(entry.text).textSelection(.enabled) }
+                }
+                if let annotation = entry.interpretation {
+                    DisclosureGroup("Earlier model annotation") {
+                        Text(annotation.displayLabel + " · " + annotation.text).textSelection(.enabled)
+                    }
+                }
+                Text("\(record.contexts.joined(separator: " · ")) · \(record.updated.formatted())")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
 }

@@ -14,6 +14,36 @@ final class ThinkingMenuStateTests: XCTestCase {
         .init(id: id, center: CGPoint(x: 10, y: 20), label: id)
     }
 
+    func testTitlePromptListsEachSelectableIDOnceAndOffersOnlyAvailableActions() throws {
+        let elements = [
+            ThinkingMenuPage.Element(id: "main-title.start-game", center: .zero, label: "Start Game"),
+            .init(id: "shared.options", center: .zero, label: "Options"),
+            .init(id: "protected", center: .zero, label: "Unavailable", canSelect: false)
+        ]
+        let page = ThinkingMenuPage(stateID: "main-title", selected: elements[0].id, elements: elements)
+        let contract = ThinkingPolicyContract(sight: nil, visible: [], capturedMenu: page)
+        let prompt = contract.selectionSpec
+        XCTAssertTrue(prompt.contains("choose Start Game [highlighted]. Return this exact reply:"))
+        let schema = try XCTUnwrap(contract.schema["oneOf"] as? [[String: Any]])
+        let select = try XCTUnwrap(schema.first?["properties"] as? [String: [String: Any]])
+        XCTAssertEqual(select["elementId"]?["enum"] as? [String], elements.prefix(2).map(\.id))
+        XCTAssertTrue(prompt.contains("Options — shared.options"))
+        for entry in elements.prefix(2) {
+            XCTAssertEqual(prompt.components(separatedBy: entry.id).count, 2)
+            let reply = try JSONSerialization.data(withJSONObject: ["menu": "select", "elementId": entry.id])
+            XCTAssertEqual(try contract.menuScript(reply).request, .select(entry.id))
+        }
+        XCTAssertTrue(prompt.contains(#"{"menu":"more"}"#))
+        XCTAssertFalse(prompt.contains("protected"))
+        XCTAssertFalse(prompt.contains(#"{"menu":"wait"}"#))
+        let blocked = ThinkingPolicyContract(sight: nil, visible: [], allowsMore: false, capturedMenu: page)
+        XCTAssertFalse(blocked.selectionSpec.contains(#"{"menu":"more"}"#))
+        XCTAssertThrowsError(try blocked.menuScript(Data(#"{"menu":"more"}"#.utf8)))
+        let empty = ThinkingPolicyContract(sight: nil, visible: [], capturedMenu: .init(stateID: "main-title"))
+        XCTAssertTrue(empty.selectionSpec.contains(#"{"menu":"wait"}"#))
+        XCTAssertFalse(empty.selectionSpec.contains("elementId"))
+    }
+
     func testEachMenuEntryReachesModelDuringNavigationAndWaitsForMissingElements() async throws {
         let pages = [
             ThinkingMenuPage(stateID: "pause", selected: "quit", elements: [element("quit")]),
@@ -34,14 +64,14 @@ final class ThinkingMenuStateTests: XCTestCase {
         let finished = expectation(description: "Audio was observed after each previous menu")
         let inspector = ThinkingInspector(directory: dir) { _, _, context in
             let page = try XCTUnwrap(context.contract.menuPage)
-            XCTAssertTrue(context.user.contains("Decision brief\nObjective · "))
-            XCTAssertTrue(context.user.contains("Current location · " + page.stateID))
+            XCTAssertTrue(context.user.hasPrefix("Menu: " + page.stateID.replacingOccurrences(of: "-", with: " ").capitalized))
+            XCTAssertFalse(context.user.contains("Unique OCR readings"))
             requested.append(page.stateID)
             XCTAssertTrue(context.image === images[cursor])
             XCTAssertEqual(context.contract.offer["stateId"] as? String, page.stateID)
             if page.stateID == "quit-confirmation" {
-                XCTAssertTrue(context.user.contains("Previous detected state: pause"))
-                XCTAssertTrue(context.user.contains("Vision sent confirm on: quit"))
+                XCTAssertTrue(context.user.contains("Previous menu: pause"))
+                XCTAssertTrue(context.user.contains("Last confirmed option: quit"))
             }
             if let id = page.selected { return #"{"menu":"select","elementId":"\#(id)"}"# }
             return #"{"menu":"wait"}"#
@@ -201,8 +231,22 @@ final class ThinkingMenuStateTests: XCTestCase {
                 XCTAssertTrue(result.input.context.image === source)
                 XCTAssertNotNil(result.script)
                 if let choice = result.script?.request.selection {
+                    // A legal reply can still quit the game or stay in settings.
+                    let available = Set(page.elements.filter(\.canSelect).map(\.id))
+                    let expected: Set<String>
+                    switch menu {
+                    case .mainTitle: expected = ["main-title.start-game"]
+                    case .options, .audio: expected = [LabelingClassIdentity.back]
+                    case .quitToMenu: expected = [LabelingClassIdentity.no]
+                    case .selectProfile: expected = Set(available.filter { $0.hasPrefix("select-profile.slot-") })
+                    default: expected = []
+                    }
+                    if !available.isDisjoint(with: expected) {
+                        XCTAssertEqual(choice["menu"], "select", page.stateID)
+                        XCTAssertTrue(expected.contains(choice["elementId"] ?? ""), "\(page.stateID) returned \(choice)")
+                    }
                     evidence.append(["state": page.stateID, "screenshot": example.id.uuidString,
-                                     "offer": result.input.context.contract.offer, "reply": choice])
+                                     "user": result.input.context.user, "offer": result.input.context.contract.offer, "reply": choice])
                     print("Local Gemma · \(page.stateID) · \(choice)")
                 }
                 done.fulfill()

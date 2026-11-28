@@ -20,7 +20,7 @@ The checkbox starts unchecked on each ordinary launch. For a command-line
 dashboard, add `--enable-thinking` to opt in. Gymnasium observation workers
 run independently of Thinking.
 
-Click the orange log at the bottom right of Gameplay or Hacker, or press **T**, to expand the Thinking context. Context shows the current save log, game evidence, the five-second decision brief and the schema explorer. Screenshot and JSON show the event frame and actual model reply. Settings → Debug View → Thinking context hides the box. The notebook is available with Thinking off. The inspector shows the exact image attached to an earlier reply when a newer capture has arrived. **Show decision JSON in Finder** reveals the validated selection.
+Click the orange log at the bottom right of Gameplay or Hacker, or press **T**, to expand the Thinking context. Drag across readings in the Text log and press **⌘C**, or choose **Copy log** for the whole transcript. **Copy schema explorer** copies the selected request’s system message, user message and expected reply schema. Context also shows game evidence and the five-second decision brief. Screenshot and JSON show the event frame and actual model reply. Settings → Debug View → Thinking context hides the box. The notebook is available with Thinking off. The inspector shows the exact image attached to an earlier reply when a newer capture has arrived. **Show decision JSON in Finder** reveals the validated selection.
 
 Starting the dashboard with Thinking enabled loads Gemma in the background. Choosing another model
 immediately shows its load status and elapsed time. When the local Ollama log

@@ -3,6 +3,38 @@ import ImageIO
 @testable import HollowKnightVision
 
 final class GameTextReaderTests: XCTestCase {
+    @MainActor
+    func testTitleFragmentsStayInRawScanAndOutOfNotebookAndPolicy() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let profile = SaveProfileAtlas(slot: 1)
+        let url = directory.appendingPathComponent(profile.id.uuidString + ".json")
+        let legacy = RememberedGameText(id: "old", text: "Ces", context: "Game capture", language: "en",
+                                        date: Date(), matchingVersion: 2)
+        try JSONEncoder().encode([legacy]).write(to: url)
+        let reader = GameTextReader(directory: directory)
+        reader.selectProfile(profile)
+        let image = try XCTUnwrap(CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8, bytesPerRow: 8,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)?.makeImage())
+        let texts = ["Ces", "Ce.s", "Ce s", "Yes", "No", "Off", "Start Game"]
+        let lines = texts.enumerated().map { GameTextLine(id: $0.offset, text: $0.element, bounds: .zero, confidence: 1) }
+        let scan = GameTextScan(image: image, language: "en", context: "Main Title - Start Game",
+                                lines: lines, capturedAt: 10, milliseconds: 0)
+        try await reader.store(scan, previous: lines)
+        let policy = try await reader.policyContext()
+        XCTAssertEqual(scan.lines.map(\.text), texts)
+        XCTAssertEqual(scan.readableLines.map(\.text), ["Yes", "No", "Off", "Start Game"])
+        XCTAssertEqual(Set(reader.entries.map(\.reading.displayText)), Set(scan.readableLines.map(\.text)))
+        XCTAssertFalse(policy.contains("Ces"))
+        XCTAssertTrue(policy.contains("Start Game"))
+        let original = try JSONDecoder().decode([RememberedGameText].self, from: Data(contentsOf: url))
+        XCTAssertTrue(original.contains { $0.id == legacy.id && $0.text == legacy.text })
+        XCTAssertFalse(RememberedGameText.isTitleArtifact("Ces", context: "Main Title", language: "fr"))
+        XCTAssertFalse(RememberedGameText.isTitleArtifact("Ces", context: "King's Pass", language: "en"))
+        XCTAssertFalse(RememberedGameText.isTitleArtifact("Ce2", context: "Game capture", language: "en"))
+    }
+
     func testNotebookPersistsUniqueReadingsAndRetrievesOlderClue() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("readings.json")
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
