@@ -44,7 +44,7 @@ public sealed record ThinkingMenuPage(string State, string? Selected, IReadOnlyL
 /// <summary>Bind exactly one model reply to a choice offered on its captured frame.</summary>
 public sealed class ThinkingDecisionOffer
 {
-    private sealed record Option(JsonElement Selection, object Evidence, ThinkingCandidate Candidate);
+    private sealed record Option(JsonElement Selection, string Description, ThinkingCandidate Candidate);
     private readonly List<Option> options = [];
     private readonly ThinkingSight sight;
     public long DecisionId { get; } = ThinkingPolicyOffer.NextDecisionId();
@@ -65,12 +65,17 @@ public sealed class ThinkingDecisionOffer
         if (sight.Page is { } page)
         {
             foreach (var element in page.Elements.Where(e => e.CanSelect))
-                Menu(new { menu = "select", elementId = element.Id }, ThinkingAction.MenuSelect, element.Id);
-            if (options.Count == 0) Menu(new { menu = "wait" }, ThinkingAction.MenuWait);
-            else if (allowsMore && page.Selected is not null) Menu(new { menu = "more" }, ThinkingAction.MenuMore);
-            void Menu(object selection, ThinkingAction action, string? element = null)
             {
-                options.Add(new(JsonSerializer.SerializeToElement(selection), new { }, new ThinkingCandidate($"c{options.Count}",
+                var label = string.IsNullOrWhiteSpace(element.Label) || element.Label == element.Id ? "Option" : element.Label;
+                Menu(new { menu = "select", elementId = element.Id }, ThinkingAction.MenuSelect,
+                    $"{label}{(element.Id == page.Selected ? " [highlighted]" : "")}", element.Id);
+            }
+            if (options.Count == 0) Menu(new { menu = "wait" }, ThinkingAction.MenuWait, "Wait for the menu to change");
+            else if (allowsMore && page.Selected is not null)
+                Menu(new { menu = "more" }, ThinkingAction.MenuMore, "Move the highlight to see more choices");
+            void Menu(object selection, ThinkingAction action, string description, string? element = null)
+            {
+                options.Add(new(JsonSerializer.SerializeToElement(selection), description, new ThinkingCandidate($"c{options.Count}",
                     "menu", new Dictionary<string, object>(), action) { MenuPage = page, ElementId = element }));
             }
             return;
@@ -81,45 +86,87 @@ public sealed class ThinkingDecisionOffer
         {
             var r = routes[i];
             Add("traverse", new() { ["waypointId"] = i }, ThinkingAction.Traverse,
-                new { roomId = sight.Scene!.Room, chart = r.Chart, waypoint = new[] { r.Waypoint.X, r.Waypoint.Y },
-                    goal = new[] { r.Objective.X, r.Objective.Y }, road_dx = r.Road.Dx, road_dy = r.Road.Dy,
-                    road_distance = r.Road.Distance, road_frontier = r.Road.Frontier }, r);
+                FormattableString.Invariant($"Follow {r.Chart} via ({r.Waypoint.X:G4}, {r.Waypoint.Y:G4}) toward ({r.Objective.X:G4}, {r.Objective.Y:G4}){(r.Road.Frontier ? " on the frontier" : "")}"), r);
         }
         foreach (var cue in sight.Cues.Where(c => c.Text is "inspect" or "listen").DistinctBy(c => c.Text))
         {
             var inspect = cue.Text == "inspect";
             Add("interact", new() { ["verb"] = inspect ? "inspect" : "talk", ["targetId"] = inspect ? 0 : 1 },
-                inspect ? ThinkingAction.Inspect : ThinkingAction.Listen, new { }, prompt: cue.FirstSeen);
+                inspect ? ThinkingAction.Inspect : ThinkingAction.Listen,
+                inspect ? "Read the visible Inspect prompt" : "Talk at the visible Listen prompt", prompt: cue.FirstSeen);
         }
         if (options.Count == 0 || routes.Count > 0)
         {
             var frontier = routes.FirstOrDefault(r => r.Road.Frontier);
-            Add("explore", new(), ThinkingAction.Explore, frontier is null ? new { } :
-                new { chart = frontier.Chart, frontierX = frontier.Objective.X, frontierY = frontier.Objective.Y }, frontier);
+            Add("explore", new(), ThinkingAction.Explore, frontier is null ? "Seek unmapped ground" :
+                FormattableString.Invariant($"Explore the {frontier.Chart} frontier near ({frontier.Objective.X:G4}, {frontier.Objective.Y:G4})"), frontier);
         }
 
-        void Add(string policy, Dictionary<string, object> parameters, ThinkingAction action, object evidence,
+        void Add(string policy, Dictionary<string, object> parameters, ThinkingAction action, string description,
             ThinkingRoute? route = null, double? prompt = null) =>
-            options.Add(new(JsonSerializer.SerializeToElement(new { policy, parameters }), evidence,
+            options.Add(new(JsonSerializer.SerializeToElement(new { policy, parameters }), description,
                 new($"c{options.Count}", policy, parameters, action, sight.Scene?.Room, Route: route, PromptStart: prompt)));
     }
 
-    public object Wire
+    public string DecisionPrompt(string location, string goal, string visibleText, string notebook)
     {
-        get
+        var lines = new List<string>();
+        if (sight.Page is { } page)
         {
-            var candidates = options.Select(o => sight.Page is null ? (object)new { selection = o.Selection, evidence = o.Evidence }
-                : new { selection = o.Selection });
-            return sight.Page is { } page ? new { objective = "expandAtlas", candidates, stateId = page.State, highlight = page.Selected,
-                elements = page.Elements.Select(e => new { id = e.Id, label = e.Label }) } : new { objective = "expandAtlas", candidates };
+            (string task, string? target) = page.State switch
+            {
+                "main-title" => ("Start the game so the Knight can explore.", "main-title.start-game"),
+                "pause" => ("Resume the game to continue exploring.", "pause.continue"),
+                "select-profile" => ("Continue from the highlighted save slot if available, or choose a visible slot to play.",
+                    page.Selected?.StartsWith("select-profile.slot-", StringComparison.Ordinal) == true ? page.Selected : null),
+                "clear-save" => ("Keep the save and return to profile selection.", "shared.no"),
+                "quit-to-menu" or "quit-game" => ("Cancel quitting to continue exploring.", "shared.no"),
+                "options" or "audio" or "video" or "controller" or "keyboard" or "game-options" or "extras" or "mods" or "screen-scale"
+                    => ("Return to the previous menu to get back to playing.", "shared.back"),
+                _ => ("Choose the option that leads toward gameplay and exploration.", null)
+            };
+            if (goal == AtlasQuestReview.DefaultObjective)
+            {
+                lines.Add($"Menu · {location}");
+                lines.Add(task);
+            }
+            else
+            {
+                lines.Add($"Choose the next menu action on {location}.");
+                lines.Add($"Playthrough goal · {goal}");
+                target = null;
+            }
+            var confirmation = page.State is "clear-save" or "quit-to-menu" or "quit-game";
+            if (confirmation && sight.PreviousConfirm is { } previous) lines.Add($"Previously confirmed · {previous}");
+            if (confirmation || page.State == "select-profile")
+            {
+                var labels = page.Elements.Select(entry => entry.Label).Append(location).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var details = visibleText.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                    .Where(line => !labels.Contains(line)).Distinct(StringComparer.OrdinalIgnoreCase);
+                lines.AddRange(details.Select(line => $"On screen · {line}"));
+            }
+            var selections = options.Where(o => o.Candidate.Action == ThinkingAction.MenuSelect).ToArray();
+            var suggested = selections.FirstOrDefault(o => o.Candidate.ElementId == target);
+            if (suggested is not null && selections.Length > 1) lines.Add("Other visible controls (label — ID)");
+            foreach (var choice in selections.Where(choice => choice != suggested))
+                lines.Add($"{choice.Description} — {choice.Candidate.ElementId}");
+            if (suggested is null && selections.Length > 0)
+                lines.Add("To select, replace <elementId> with a listed ID.\n" + """{"menu":"select","elementId":"<elementId>"}""");
+            lines.AddRange(options.Where(o => o.Candidate.Action != ThinkingAction.MenuSelect)
+                .Select(o => $"{o.Description} — {o.Selection.GetRawText()}"));
+            if (suggested is not null)
+                lines.Add($"Choose {suggested.Description}. Return this exact reply.\n{suggested.Selection.GetRawText()}");
         }
+        else
+        {
+            lines.Add($"Choose the Knight's next action in {location}. Return one listed JSON reply.");
+            lines.Add($"Playthrough goal · {goal}");
+            lines.AddRange(options.Select(o => $"{o.Description} — {o.Selection.GetRawText()}"));
+            if (!string.IsNullOrWhiteSpace(visibleText)) lines.Add($"Visible text\n{visibleText}");
+            if (!string.IsNullOrWhiteSpace(notebook)) lines.Add(notebook);
+        }
+        return string.Join('\n', lines);
     }
-
-    public string SelectionSpecification => "Gameplay reply schema\n" + GameplayContract.GetRawText() + "\nMenu script reply schema\n"
-        + MenuContract.GetRawText() + "\nCopy exactly one offered selection as JSON. "
-        + (sight.Page is null ? "Inspect new signs. Explore seeks unmapped ground. Traverse follows an offered waypoint."
-            : "Select the visible element that advances the objective. More advances the highlight. Wait leaves controls idle.")
-        + "\n" + JsonSerializer.Serialize(Wire);
 
     public object Schema => options.Count switch
     {

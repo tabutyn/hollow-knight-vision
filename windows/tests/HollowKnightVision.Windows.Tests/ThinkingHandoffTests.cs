@@ -72,6 +72,15 @@ internal static class ThinkingHandoffTests
         Check(events.Observe(sight, 0)!.Contains("First observation") && events.Observe(sight, 90) is null,
             "continuous gameplay and prompts do not resubmit decisions");
         var offer = new ThinkingDecisionOffer(sight);
+        var gameplayPrompt = offer.DecisionPrompt("King's Pass", "Find a gate", "INSPECT", "A remembered tablet");
+        Check(gameplayPrompt.StartsWith("Choose the Knight's next action in King's Pass")
+            && gameplayPrompt.Contains("Follow start via (40, 85)") && gameplayPrompt.Contains("visible Inspect prompt")
+            && gameplayPrompt.Contains("A remembered tablet"), "gameplay task and grounded choices");
+        foreach (var line in gameplayPrompt.Split('\n').Where(line => line.Contains(" — {")))
+        {
+            using var choice = JsonDocument.Parse(line.Split(" — ")[1]);
+            _ = offer.Resolve(choice.RootElement);
+        }
         var traverse = offer.Resolve(JsonSerializer.SerializeToElement(new { parameters = new { waypointId = 0 }, policy = "traverse" }));
         Check(traverse.Pick(sight, 10)?.Route == Route && traverse.Pick(sight with { Scene = Scene with { Routes = [] } }, 10) is null,
             "one captured route is bound and revalidated");
@@ -88,9 +97,30 @@ internal static class ThinkingHandoffTests
             new("shared.back", "Back", new(50, 10, 10, 8), true)
         };
         var page = new ThinkingMenuPage("clear-save", "shared.no", elements);
-        var menu = sight with { Page = page, Menu = page.State, Selection = page.Selected, Gameplay = false };
+        var menu = sight with { Page = page, Menu = page.State, Selection = page.Selected, Gameplay = false,
+            PreviousConfirm = "profile.clear" };
         Check(events.Observe(menu, 91)!.Contains("Menu entered"), "fresh menu event");
         var menuOffer = new ThinkingDecisionOffer(menu);
+        var menuPrompt = menuOffer.DecisionPrompt("Clear Save", "Find a gate", "Clear this save?\nYes\nNo", "OLD HISTORY");
+        Check(menuPrompt.StartsWith("Choose the next menu action on Clear Save.") && menuPrompt.Contains("Find a gate")
+            && menuPrompt.Contains("Previously confirmed · profile.clear") && menuPrompt.Contains("No [highlighted] — shared.no")
+            && menuPrompt.Split("shared.no").Length == 2 && menuPrompt.Contains("""{"menu":"more"}""")
+            && !menuPrompt.Contains("OLD HISTORY") && menuPrompt.Contains("On screen · Clear this save?")
+            && !menuPrompt.Contains("On screen · No") && !menuPrompt.Contains("shared.yes")
+            && !menuPrompt.Contains("wait") && !menuPrompt.Contains("schema"), "compact legal confirmation choices");
+        Check(!new ThinkingDecisionOffer(menu, allowsMore: false).DecisionPrompt("Clear Save", "", "", "").Contains("""{"menu":"more"}"""),
+            "an exhausted menu does not advertise more");
+        var guided = menuOffer.DecisionPrompt("Clear Save", AtlasQuestReview.DefaultObjective, "", "");
+        Check(guided.EndsWith("\n" + """{"menu":"select","elementId":"shared.no"}""")
+            && guided.Split("shared.no").Length == 2 && !menuPrompt.Contains("Return this exact reply"), "a legal default reply is shown once and custom goals stay neutral");
+        var slot = new ThinkingMenuElement("select-profile.slot-2", "Slot 2", default, true);
+        var profiles = new ThinkingDecisionOffer(menu with { Page = new("select-profile", slot.Id, [slot, elements[2]]) });
+        var profilePrompt = profiles.DecisionPrompt("Select Profile", AtlasQuestReview.DefaultObjective, "Dirtmouth 13%", "");
+        Check(profilePrompt.Contains("On screen · Dirtmouth 13%") && profilePrompt.EndsWith("\n" +
+            """{"menu":"select","elementId":"select-profile.slot-2"}"""), "only a selectable highlighted slot is recommended");
+        var waiting = new ThinkingDecisionOffer(menu with { Page = new("transition", null, []) });
+        var waitPrompt = waiting.DecisionPrompt("Transition", "", "", "");
+        Check(waitPrompt.Contains("""{"menu":"wait"}""") && !waitPrompt.Contains("elementId"), "wait is the only legal response");
         Check(!menuOffer.Candidates.Any(c => c.ElementId == "shared.yes"), "clear-save confirmation excluded");
         var selected = menuOffer.Resolve(JsonSerializer.SerializeToElement(new { menu = "select", elementId = "shared.back" })).Scores.Single().Candidate;
         var maneuver = new ThinkingManeuver(selected, menu, 10);

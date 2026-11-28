@@ -47,7 +47,9 @@ public partial class ThinkingContextPanel : UserControl
         displayedReaderEnabled = reader.Enabled;
         var text = reader.Entries.Length == 0 ? (reader.Enabled ? "Waiting for text…" : "Text reading is off")
             : string.Join('\n', reader.Entries.Select(entry => entry.Observation.DisplayText));
-        CompactLog.Text = FullLog.Text = text;
+        CompactLog.Text = text;
+        FullLog.UpdateTranscript(reader.Entries.Length == 0 ? text : reader.Transcript);
+        CopyLog.IsEnabled = reader.Entries.Length != 0;
         LogProfile.Text = reader.Profile is { } profile ? $"Save slot {profile.Slot}" : "Before save selection";
     }
 
@@ -85,7 +87,8 @@ public partial class ThinkingContextPanel : UserControl
     {
         if (Messages.SelectedIndex < 0) return;
         var kind = Messages.SelectedIndex == 0 ? latestKind ?? ThinkingRequestKind.Policy : (ThinkingRequestKind)(Messages.SelectedIndex - 1);
-        if (requests.TryGetValue(kind, out var request))
+        CopyRequest.IsEnabled = requests.TryGetValue(kind, out var request);
+        if (request is not null)
             MessageDetails.Text = $"System message\n{request.System}\n\nUser message\n{request.User}\n\nExpected response schema\n{request.ResponseSchema}";
         else
         {
@@ -100,6 +103,9 @@ public partial class ThinkingContextPanel : UserControl
                 JsonSerializer.Serialize(schema, new JsonSerializerOptions { WriteIndented = true });
         }
     }
+
+    private void CopySelectedRequest(object sender, RoutedEventArgs e) => MessageDetails.CopyTranscript();
+    private void CopyLogClicked(object sender, RoutedEventArgs e) => FullLog.CopyTranscript();
 
     private void OptionsChanged(object sender, RoutedEventArgs e)
     {

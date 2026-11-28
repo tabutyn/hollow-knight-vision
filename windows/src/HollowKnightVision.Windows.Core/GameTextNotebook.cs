@@ -42,6 +42,22 @@ public sealed record GameTextObservation(string Id, string Text, string Context,
     internal static string Key(string text) =>
         string.Join(' ', text.ToLowerInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
+    public static bool IsTitleOcrFragment(string text, string language, string context)
+    {
+        var primary = language.Split(['-', '_'], 2)[0];
+        if (!primary.Equals("en", StringComparison.OrdinalIgnoreCase)
+            && !primary.Equals("English", StringComparison.OrdinalIgnoreCase)) return false;
+        var screen = context.Split([" · ", " - "], 2, StringSplitOptions.None)[0].Trim().ToLowerInvariant();
+        if (screen is not ("game capture" or "main title" or "main-title")) return false;
+        var token = new StringBuilder();
+        foreach (var rune in text.EnumerateRunes())
+            if (!Rune.IsPunctuation(rune) && !Rune.IsWhiteSpace(rune)) token.Append(Rune.ToLowerInvariant(rune).ToString());
+        return token.ToString() is "ce" or "ces" or "cei" or "ceis" or "coi";
+    }
+
+    internal bool IsTitleFragment => IsTitleOcrFragment(DisplayText, Language, Context)
+        && (OtherContexts is null || OtherContexts.All(context => IsTitleOcrFragment(DisplayText, Language, context)));
+
     internal static string LogKey(string text)
     {
         var letters = new StringBuilder(text.Length);
@@ -130,6 +146,7 @@ public sealed class GameTextNotebook(string? path = null)
         if (saved.Any(row => row is null || string.IsNullOrWhiteSpace(row.Id) || row.Text is null
             || row.Context is null || row.Language is null))
             throw new InvalidDataException("The game text notebook contains an incomplete observation.");
+        saved = saved.Where(row => !row.IsTitleFragment).ToArray();
         if (saved.All(row => row.MatchingVersion == 2))
         {
             Rebuild(saved);
@@ -168,6 +185,7 @@ public sealed class GameTextNotebook(string? path = null)
             var changed = false;
             foreach (var (row, bounds) in observations)
             {
+                if (row.IsTitleFragment) continue;
                 updated ??= existing.ToList();
                 changed |= Merge(updated, row, bounds);
             }

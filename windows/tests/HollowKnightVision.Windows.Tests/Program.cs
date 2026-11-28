@@ -1668,6 +1668,7 @@ var tests = new List<(string Name, Action Run)>
     ("quest pages bound their evidence and reject missing sources", AtlasQuestMemoryTests.TestPagedEvidenceAndRejectedCitations),
     ("quest prompts, destinations and cancelled responses", AtlasQuestMemoryTests.TestPromptsDestinationsAndCancellation),
     ("Thinking offers only scored local targets", ThinkingHandoffTests.TestOfferScoresAndBindings),
+    ("English title OCR fragments stay out of history and model evidence", GameTextReaderTests.TestTitleOcrFragments),
     ("Thinking event captures and constrained menu decisions", ThinkingHandoffTests.TestEventAndMenuDecisions),
     ("Thinking uses matched actor and Focus telemetry", ThinkingHandoffTests.TestMatchedActorsAndRecovery),
     ("Thinking maneuvers expire and release controls", ThinkingHandoffTests.TestBoundManeuversAndRelease),

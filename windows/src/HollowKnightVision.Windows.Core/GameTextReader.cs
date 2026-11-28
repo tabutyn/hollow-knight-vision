@@ -30,6 +30,7 @@ public sealed class GameTextReader(string notebookDirectory, bool traceMatches =
     public void BeginInspection(string context, double startedAt, IReadOnlyList<string> visible) =>
         inspection = new(context, startedAt, visible.Select(GameTextObservation.Key).ToHashSet(StringComparer.Ordinal));
     public GameTextLogEntry[] Entries { get; private set; } = [];
+    public string Transcript => string.Join(Environment.NewLine + Environment.NewLine, Entries.Select(entry => entry.Observation.DisplayText));
     public string? Issue { get; private set; }
     public string Goal { get; private set; } = "";
     public byte[] ScanTrace(int sequence, string image, double capturedAt)
@@ -169,6 +170,8 @@ public sealed class GameTextReader(string notebookDirectory, bool traceMatches =
 
     private void StoreReading(Work work, GameTextScan scan, IReadOnlyList<GameTextLine> previous)
     {
+        scan = scan with { Lines = scan.Lines.Where(line =>
+            !GameTextObservation.IsTitleOcrFragment(line.Text, scan.Language, scan.Context)).ToArray() };
         var visible = scan.Lines.Where(line => line.Confidence >= .45).Select(line => line.Text).ToArray();
         var keys = visible.Select(GameTextObservation.Key).ToArray();
         var stable = LatestReading is { } reading && reading.Context == work.Context
