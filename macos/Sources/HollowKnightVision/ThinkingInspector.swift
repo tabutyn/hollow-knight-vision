@@ -53,7 +53,7 @@ struct ThinkingFrame {
         var lines = [String]()
         if let previousStateID { lines.append("Previous menu: " + previousStateID) }
         if let previousConfirmedElement { lines.append("Last confirmed option: " + previousConfirmedElement) }
-        if !event.isEmpty { lines.append(event) }
+        if !event.isEmpty, event != "Menu entered · " + page.stateID { lines.append(event) }
         // A confirmation question or save-slot description can change which action makes sense.
         var listed = Set(page.elements.map { RememberedGameText.logKey($0.label) })
         let details = visible.filter { text in

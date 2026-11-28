@@ -164,11 +164,13 @@ struct ThinkingPolicyContract {
             switch page.stateID {
             case "main-title": navigation = ("Start the game so the Knight can explore.", "main-title.start-game")
             case "pause": navigation = ("Resume the game to continue exploring.", "pause.continue")
-            case "select-profile": navigation = ("Choose a save slot to enter gameplay and explore.", nil)
+            case "select-profile":
+                let slot = page.selected.flatMap { $0.hasPrefix("select-profile.slot-") ? $0 : nil }
+                navigation = ("Continue from the highlighted save slot if available, or choose a visible slot to play.", slot)
             case "quit-to-menu", "quit-game": navigation = ("Cancel quitting to continue exploring.", LabelingClassIdentity.no)
             case "clear-save": navigation = ("Keep the save and return to profile selection.", LabelingClassIdentity.no)
             case "options", "audio", "video", "controller", "keyboard", "game-options", "extras", "mods", "screen-scale":
-                navigation = ("Leave this menu to get back to the game.", LabelingClassIdentity.back)
+                navigation = ("Return from " + menu + " to the previous menu so the Knight can get back to playing.", LabelingClassIdentity.back)
             default: navigation = ("Choose the option that leads toward gameplay and exploration.", nil)
             }
             let entries = page.elements.filter(\.canSelect)
@@ -180,7 +182,9 @@ struct ThinkingPolicyContract {
             let recommended = entries.first { $0.id == navigation.target }
             let others = entries.filter { $0.id != recommended?.id }
             if !others.isEmpty {
-                lines.append(#"To select "# + (recommended == nil ? "an" : "another") + #" option, use {"menu":"select","elementId":"ID"} with one ID below."#)
+                lines.append(recommended == nil
+                    ? #"To select an option, use {"menu":"select","elementId":"ID"} with one ID below."#
+                    : "Other visible controls (label — ID)")
                 for entry in others {
                     let name = entry.label.isEmpty || entry.label == entry.id ? entry.id : entry.label + " — " + entry.id
                     lines.append("• " + name + marker(entry))
@@ -191,7 +195,7 @@ struct ThinkingPolicyContract {
             if let recommended {
                 let name = recommended.label.isEmpty || recommended.label == recommended.id ? "this option" : recommended.label
                 let reply = ThinkingMenuScript.Request.select(recommended.id)
-                lines.append("Choose " + name + marker(recommended) + ". Reply with " + Self.json(reply.selection))
+                lines.append("Your next action: choose " + name + marker(recommended) + ". Return this exact reply:\n" + Self.json(reply.selection))
             }
             return lines.joined(separator: "\n")
         }

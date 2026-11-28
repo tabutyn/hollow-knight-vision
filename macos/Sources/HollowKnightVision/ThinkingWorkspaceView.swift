@@ -109,7 +109,7 @@ enum ThinkingClient {
             "model": model.rawValue, "messages": [Message(role: "system", content: context.system).payload, input.payload],
             "format": context.contract.schema, "stream": false, "keep_alive": keepAlive,
             "options": ["num_ctx": ThinkingModel.policyContextLength, "num_predict": 640, "temperature": 0]
-        ])
+        ], options: [.sortedKeys])
         return request
     }
 

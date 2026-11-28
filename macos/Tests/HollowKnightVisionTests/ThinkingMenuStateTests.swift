@@ -23,7 +23,7 @@ final class ThinkingMenuStateTests: XCTestCase {
         let page = ThinkingMenuPage(stateID: "main-title", selected: elements[0].id, elements: elements)
         let contract = ThinkingPolicyContract(sight: nil, visible: [], capturedMenu: page)
         let prompt = contract.selectionSpec
-        XCTAssertTrue(prompt.contains("Choose Start Game [highlighted]. Reply with "))
+        XCTAssertTrue(prompt.contains("choose Start Game [highlighted]. Return this exact reply:"))
         let schema = try XCTUnwrap(contract.schema["oneOf"] as? [[String: Any]])
         let select = try XCTUnwrap(schema.first?["properties"] as? [String: [String: Any]])
         XCTAssertEqual(select["elementId"]?["enum"] as? [String], elements.prefix(2).map(\.id))
@@ -242,8 +242,8 @@ final class ThinkingMenuStateTests: XCTestCase {
                     default: expected = []
                     }
                     if !available.isDisjoint(with: expected) {
-                        XCTAssertEqual(choice["menu"] as? String, "select", page.stateID)
-                        XCTAssertTrue(expected.contains(choice["elementId"] as? String ?? ""), "\(page.stateID) returned \(choice)")
+                        XCTAssertEqual(choice["menu"], "select", page.stateID)
+                        XCTAssertTrue(expected.contains(choice["elementId"] ?? ""), "\(page.stateID) returned \(choice)")
                     }
                     evidence.append(["state": page.stateID, "screenshot": example.id.uuidString,
                                      "user": result.input.context.user, "offer": result.input.context.contract.offer, "reply": choice])
