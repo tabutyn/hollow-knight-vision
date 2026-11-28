@@ -66,7 +66,7 @@ public sealed class ThinkingDecisionOffer
         {
             foreach (var element in page.Elements.Where(e => e.CanSelect))
                 Menu(new { menu = "select", elementId = element.Id }, ThinkingAction.MenuSelect,
-                    $"{element.Label}{(element.Id == page.Selected ? " [highlighted]" : "")} — {element.Id}", element.Id);
+                    $"{element.Label}{(element.Id == page.Selected ? " [highlighted]" : "")}", element.Id);
             if (options.Count == 0) Menu(new { menu = "wait" }, ThinkingAction.MenuWait, "Wait for the menu to change");
             else if (allowsMore && page.Selected is not null)
                 Menu(new { menu = "more" }, ThinkingAction.MenuMore, "Move the highlight to see more choices");
@@ -121,8 +121,21 @@ public sealed class ThinkingDecisionOffer
                     .Where(line => !labels.Contains(line)).Distinct(StringComparer.OrdinalIgnoreCase);
                 lines.AddRange(details.Select(line => $"On screen · {line}"));
             }
-            lines.AddRange(options.Where(o => o.Candidate.Action == ThinkingAction.MenuSelect).Select(o => o.Description));
-            if (options.Any(o => o.Candidate.Action == ThinkingAction.MenuSelect))
+            var selections = options.Where(o => o.Candidate.Action == ThinkingAction.MenuSelect).ToArray();
+            var suggestedId = page.State switch
+            {
+                "main-title" => "main-title.start-game", "pause" => "pause.continue",
+                "clear-save" or "quit-to-menu" or "quit-game" => "shared.no",
+                "select-profile" => null, _ => "shared.back"
+            };
+            var suggested = goal == AtlasQuestReview.DefaultObjective
+                ? selections.FirstOrDefault(o => o.Candidate.ElementId == suggestedId) : null;
+            foreach (var choice in selections)
+                lines.Add(choice == suggested ? $"{choice.Description} — {choice.Selection.GetRawText()} (recommended to continue playing)"
+                    : $"{choice.Description} — {choice.Candidate.ElementId}");
+            if (suggested is not null && selections.Length > 1)
+                lines.Add("For another choice, replace the elementId in that reply with its listed ID.");
+            else if (suggested is null && selections.Length > 0)
                 lines.Add("""To select, replace <elementId> with a listed ID: {"menu":"select","elementId":"<elementId>"}""");
             lines.AddRange(options.Where(o => o.Candidate.Action != ThinkingAction.MenuSelect)
                 .Select(o => $"{o.Description} — {o.Selection.GetRawText()}"));

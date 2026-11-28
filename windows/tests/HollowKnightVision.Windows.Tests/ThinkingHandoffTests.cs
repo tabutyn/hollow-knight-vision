@@ -110,6 +110,9 @@ internal static class ThinkingHandoffTests
             && !menuPrompt.Contains("wait") && !menuPrompt.Contains("schema"), "compact legal confirmation choices");
         Check(!new ThinkingDecisionOffer(menu, allowsMore: false).DecisionPrompt("Clear Save", "", "", "").Contains("""{"menu":"more"}"""),
             "an exhausted menu does not advertise more");
+        var guided = menuOffer.DecisionPrompt("Clear Save", AtlasQuestReview.DefaultObjective, "", "");
+        Check(guided.Contains("""No [highlighted] — {"menu":"select","elementId":"shared.no"}""")
+            && guided.Split("shared.no").Length == 2 && !menuPrompt.Contains("recommended"), "a legal default reply is shown once and custom goals stay neutral");
         var waiting = new ThinkingDecisionOffer(menu with { Page = new("transition", null, []) });
         var waitPrompt = waiting.DecisionPrompt("Transition", "", "", "");
         Check(waitPrompt.Contains("""{"menu":"wait"}""") && !waitPrompt.Contains("elementId"), "wait is the only legal response");
